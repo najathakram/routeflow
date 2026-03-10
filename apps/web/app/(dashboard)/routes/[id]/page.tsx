@@ -8,16 +8,15 @@ import {
   Circle,
   Loader2,
   XCircle,
-  MapPin,
   Package,
   FileText,
   ChevronDown,
   ChevronRight,
-  ExternalLink,
 } from "lucide-react";
 import { Badge, Button, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useRouteRun, type RouteRunStop } from "@/lib/api/routes";
+import { RouteMap } from "./RouteMap";
 
 // ─── Stop status icon ─────────────────────────────────────────────────────────
 
@@ -217,35 +216,9 @@ export default function RouteRunDetailPage({ params }: { params: { id: string } 
           </ul>
         </div>
 
-        {/* ── Right: Map placeholder (60%) ── */}
+        {/* ── Right: Map (60%) ── */}
         <div className="flex flex-1 flex-col overflow-hidden">
-          <div className="flex flex-1 flex-col items-center justify-center gap-4 bg-surface-raised">
-            <div className="flex flex-col items-center gap-3 rounded-xl border border-surface-border bg-white p-8 text-center shadow-card">
-              <MapPin className="h-10 w-10 text-navy/20" />
-              <div>
-                <p className="font-semibold text-navy">Map will load here</p>
-                <p className="mt-1 text-sm text-navy/50">
-                  Google Maps integration coming in Phase 7.
-                </p>
-              </div>
-              <div className="flex flex-wrap justify-center gap-2">
-                <span className="rounded-full bg-success-bg px-3 py-1 text-xs font-medium text-success">
-                  {stopsDone} completed
-                </span>
-                {(() => {
-                  const currentCount = stops.filter((s) => s.status === "IN_PROGRESS").length;
-                  return currentCount > 0 ? (
-                    <span className="rounded-full bg-brand-100 px-3 py-1 text-xs font-medium text-brand-700">
-                      {currentCount} in progress
-                    </span>
-                  ) : null;
-                })()}
-                <span className="rounded-full bg-surface-raised border border-surface-border px-3 py-1 text-xs font-medium text-navy/60">
-                  {stops.filter((s) => s.status === "PENDING").length} upcoming
-                </span>
-              </div>
-            </div>
-          </div>
+          <RouteMap stops={stops} />
         </div>
       </div>
     </div>

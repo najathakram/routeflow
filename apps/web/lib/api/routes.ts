@@ -30,7 +30,7 @@ export interface RouteRunStop {
   stopNumber: number;
   customerId: string;
   customer?: { id: string; businessName: string; contactName: string };
-  customerAddress?: { line1: string; city: string; state: string };
+  customerAddress?: { line1: string; city: string; state: string; lat?: number; lng?: number };
   status: 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'SKIPPED';
   completedAt?: string;
   driverNote?: string;
