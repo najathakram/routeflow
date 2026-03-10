@@ -1,0 +1,456 @@
+// ─── Generator & Datasource ───────────────────────────────────────────────────
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-arm64-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+enum UserRole {
+  OPERATOR
+  DRIVER
+  CUSTOMER
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  OUT_FOR_DELIVERY
+  DELIVERED
+  CANCELLED
+}
+
+enum ItemStatus {
+  PENDING
+  CONFIRMED
+  OUT_FOR_DELIVERY
+  DELIVERED
+  CANCELLED
+}
+
+enum RouteRunStatus {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum MutationType {
+  DELIVERED
+  PARTIAL
+  REFUSED
+  ADD_ON
+  SUBSTITUTED
+}
+
+enum TxnStatus {
+  UNPAID
+  PARTIAL
+  PAID
+}
+
+enum PaymentMethod {
+  CASH
+  CHECK
+  ACH
+  OTHER
+}
+
+enum FulfillPath {
+  ROUTE
+  SHIP
+}
+
+enum OrderSource {
+  APP
+  PHONE
+  ROUTE
+}
+
+enum Platform {
+  IOS
+  ANDROID
+}
+
+enum SyncType {
+  ZOHO_PRODUCTS
+}
+
+enum DriverStatus {
+  ACTIVE
+  INACTIVE
+}
+
+// ─── Models ───────────────────────────────────────────────────────────────────
+
+model User {
+  id        String     @id @default(uuid())
+  email     String     @unique
+  username  String     @unique
+  password  String
+  role      UserRole
+  status    UserStatus @default(ACTIVE)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  deletedAt DateTime?
+
+  customer     Customer?
+  driver       Driver?
+  deviceTokens DeviceToken[]
+
+  @@index([role])
+  @@index([status])
+  @@index([deletedAt])
+}
+
+model Customer {
+  id            String      @id @default(uuid())
+  userId        String      @unique
+  businessName  String
+  contactName   String
+  phone         String?
+  zohoContactId String?     @unique
+  fulfillPath   FulfillPath @default(ROUTE)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  user         User              @relation(fields: [userId], references: [id])
+  addresses    CustomerAddress[]
+  routes       RouteCustomer[]
+  orders       Order[]
+  transactions Transaction[]
+
+  @@index([zohoContactId])
+  @@index([businessName])
+}
+
+model CustomerAddress {
+  id         String   @id @default(uuid())
+  customerId String
+  label      String   @default("default")
+  line1      String
+  line2      String?
+  city       String
+  state      String
+  zip        String
+  lat        Float?
+  lng        Float?
+  isDefault  Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  customer   Customer    @relation(fields: [customerId], references: [id])
+  routeStops RouteStop[]
+
+  @@index([customerId])
+}
+
+model Driver {
+  id            String       @id @default(uuid())
+  userId        String       @unique
+  status        DriverStatus @default(ACTIVE)
+  vehicleMake   String?
+  vehicleModel  String?
+  vehicleColour String?
+  vehiclePlate  String?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  user      User       @relation(fields: [userId], references: [id])
+  routes    Route[]
+  routeRuns RouteRun[]
+
+  @@index([status])
+}
+
+model Product {
+  id               String   @id @default(uuid())
+  name             String
+  description      String?
+  sku              String?  @unique
+  unit             String
+  pricePerUnit     Decimal  @db.Decimal(10, 2)
+  category         String?
+  imageKey         String?
+  isActive         Boolean  @default(true)
+  lowStock         Boolean  @default(false)
+  zohoProductId    String?  @unique
+  hasLocalOverride Boolean  @default(false)
+  syncConflict     Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  orderItems        OrderItem[]
+  deliveryMutations DeliveryMutation[]
+
+  @@index([category])
+  @@index([isActive])
+  @@index([zohoProductId])
+}
+
+model Route {
+  id        String   @id @default(uuid())
+  name      String
+  driverId  String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  driver    Driver?         @relation(fields: [driverId], references: [id])
+  stops     RouteStop[]
+  customers RouteCustomer[]
+  runs      RouteRun[]
+
+  @@index([driverId])
+  @@index([isActive])
+}
+
+model RouteStop {
+  id                String   @id @default(uuid())
+  routeId           String
+  customerId        String?
+  customerAddressId String?
+  stopNumber        Int
+  notes             String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  route           Route            @relation(fields: [routeId], references: [id])
+  customerAddress CustomerAddress? @relation(fields: [customerAddressId], references: [id])
+  routeRunStops   RouteRunStop[]
+
+  @@unique([routeId, stopNumber])
+  @@index([routeId])
+  @@index([customerId])
+  @@index([customerAddressId])
+}
+
+model RouteCustomer {
+  id         String   @id @default(uuid())
+  routeId    String
+  customerId String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  route    Route    @relation(fields: [routeId], references: [id])
+  customer Customer @relation(fields: [customerId], references: [id])
+
+  @@unique([routeId, customerId])
+  @@index([routeId])
+  @@index([customerId])
+}
+
+model RouteRun {
+  id                String         @id @default(uuid())
+  routeId           String
+  driverId          String?
+  status            RouteRunStatus @default(SCHEDULED)
+  scheduledDate     DateTime
+  startedAt         DateTime?
+  completedAt       DateTime?
+  manuallyReordered Boolean        @default(false)
+  notes             String?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  route  Route          @relation(fields: [routeId], references: [id])
+  driver Driver?        @relation(fields: [driverId], references: [id])
+  stops  RouteRunStop[]
+  orders Order[]
+
+  @@index([routeId])
+  @@index([driverId])
+  @@index([status])
+  @@index([scheduledDate])
+}
+
+model RouteRunStop {
+  id          String    @id @default(uuid())
+  routeRunId  String
+  routeStopId String
+  stopNumber  Int
+  arrivedAt   DateTime?
+  completedAt DateTime?
+  notes       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  routeRun  RouteRun  @relation(fields: [routeRunId], references: [id])
+  routeStop RouteStop @relation(fields: [routeStopId], references: [id])
+
+  @@unique([routeRunId, stopNumber])
+  @@index([routeRunId])
+  @@index([routeStopId])
+}
+
+model Order {
+  id          String      @id @default(uuid())
+  customerId  String
+  routeRunId  String?
+  status      OrderStatus @default(PENDING)
+  source      OrderSource @default(APP)
+  urgent      Boolean     @default(false)
+  notes       String?
+  driverNote  String?
+  subtotal    Decimal     @default(0) @db.Decimal(10, 2)
+  tax         Decimal     @default(0) @db.Decimal(10, 2)
+  total       Decimal     @default(0) @db.Decimal(10, 2)
+  deliveredAt DateTime?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  customer          Customer           @relation(fields: [customerId], references: [id])
+  routeRun          RouteRun?          @relation(fields: [routeRunId], references: [id])
+  items             OrderItem[]
+  deliveryMutations DeliveryMutation[]
+  transactions      Transaction[]
+
+  @@index([customerId])
+  @@index([routeRunId])
+  @@index([status])
+  @@index([urgent])
+  @@index([createdAt])
+}
+
+model OrderItem {
+  id        String     @id @default(uuid())
+  orderId   String
+  productId String
+  status    ItemStatus @default(PENDING)
+  qty       Decimal    @db.Decimal(10, 3)
+  unitPrice Decimal    @db.Decimal(10, 2)
+  subtotal  Decimal    @db.Decimal(10, 2)
+  notes     String?
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  order             Order              @relation(fields: [orderId], references: [id])
+  product           Product            @relation(fields: [productId], references: [id])
+  deliveryMutations DeliveryMutation[]
+  transactionItems  TransactionItem[]
+
+  @@index([orderId])
+  @@index([productId])
+  @@index([status])
+}
+
+model DeliveryMutation {
+  id          String       @id @default(uuid())
+  orderId     String
+  orderItemId String?
+  productId   String?
+  type        MutationType
+  qty         Decimal?     @db.Decimal(10, 3)
+  unitPrice   Decimal?     @db.Decimal(10, 2)
+  driverNote  String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  order     Order      @relation(fields: [orderId], references: [id])
+  orderItem OrderItem? @relation(fields: [orderItemId], references: [id])
+  product   Product?   @relation(fields: [productId], references: [id])
+
+  @@index([orderId])
+  @@index([orderItemId])
+  @@index([productId])
+  @@index([type])
+}
+
+model Transaction {
+  id         String    @id @default(uuid())
+  customerId String
+  orderId    String?
+  status     TxnStatus @default(UNPAID)
+  totalOwed  Decimal   @db.Decimal(10, 2)
+  totalPaid  Decimal   @default(0) @db.Decimal(10, 2)
+  dueDate    DateTime?
+  paidAt     DateTime?
+  notes      String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  customer Customer          @relation(fields: [customerId], references: [id])
+  order    Order?            @relation(fields: [orderId], references: [id])
+  items    TransactionItem[]
+  payments Payment[]
+
+  @@index([customerId])
+  @@index([orderId])
+  @@index([status])
+  @@index([dueDate])
+}
+
+model TransactionItem {
+  id            String   @id @default(uuid())
+  transactionId String
+  orderItemId   String?
+  description   String
+  qty           Decimal  @db.Decimal(10, 3)
+  unitPrice     Decimal  @db.Decimal(10, 2)
+  subtotal      Decimal  @db.Decimal(10, 2)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  transaction Transaction @relation(fields: [transactionId], references: [id])
+  orderItem   OrderItem?  @relation(fields: [orderItemId], references: [id])
+
+  @@index([transactionId])
+  @@index([orderItemId])
+}
+
+model Payment {
+  id            String        @id @default(uuid())
+  transactionId String
+  method        PaymentMethod
+  amount        Decimal       @db.Decimal(10, 2)
+  reference     String?
+  notes         String?
+  paidAt        DateTime      @default(now())
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  transaction Transaction @relation(fields: [transactionId], references: [id])
+
+  @@index([transactionId])
+  @@index([method])
+  @@index([paidAt])
+}
+
+model DeviceToken {
+  id        String   @id @default(uuid())
+  userId    String
+  token     String   @unique
+  platform  Platform
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+model SyncLog {
+  id          String    @id @default(uuid())
+  type        SyncType
+  status      String
+  recordCount Int       @default(0)
+  errorMsg    String?
+  startedAt   DateTime  @default(now())
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([type])
+  @@index([startedAt])
+}
