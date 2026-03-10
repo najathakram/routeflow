@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { router, Stack } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -9,6 +10,8 @@ import {
   selectCurrentStop,
 } from "../../../store/routeStore";
 import { RouteStop } from "../../../data/driverMockData";
+import { RouteSkeleton } from "../../../components/skeletons/RouteSkeleton";
+import { NetworkError } from "../../../components/NetworkError";
 
 const STATUS_ICON: Record<string, { name: string; color: string }> = {
   COMPLETED: { name: "checkmark-circle", color: colors.success.DEFAULT },
@@ -76,10 +79,26 @@ function StopRow({ stop }: { stop: RouteStop }) {
 }
 
 export default function RouteScreen() {
+  const [isLoading, setIsLoading] = useState(true);
+  const [isError, setIsError] = useState(false);
+
+  useEffect(() => {
+    const t = setTimeout(() => setIsLoading(false), 600);
+    return () => clearTimeout(t);
+  }, []);
+
   const route = useRouteStore((s) => s.route);
   const completedCount = useRouteStore(selectCompletedCount);
   const currentStop = useRouteStore(selectCurrentStop);
   const startRoute = useRouteStore((s) => s.startRoute);
+
+  if (isLoading) return <><Stack.Screen options={{ title: "My Route" }} /><RouteSkeleton /></>;
+  if (isError) return (
+    <>
+      <Stack.Screen options={{ title: "My Route" }} />
+      <NetworkError onRetry={() => { setIsError(false); setIsLoading(true); }} />
+    </>
+  );
 
   if (!route) {
     return (
@@ -256,6 +275,7 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     paddingHorizontal: 16,
     gap: 14,
+    minHeight: 56,
     ...shadows.card,
   },
   stopRowActive: {

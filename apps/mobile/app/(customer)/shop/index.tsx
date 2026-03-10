@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Dimensions,
   FlatList,
@@ -13,6 +13,8 @@ import { router, Stack } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, borderRadius, shadows } from "@routeflow/ui/tokens";
 import { MOCK_PRODUCTS, Product } from "../../../data/mockData";
+import { ShopSkeleton } from "../../../components/skeletons/ShopSkeleton";
+import { NetworkError } from "../../../components/NetworkError";
 
 const SCREEN_WIDTH = Dimensions.get("window").width;
 const CARD_WIDTH = (SCREEN_WIDTH - 48) / 2; // 16 padding each side + 16 gap
@@ -80,8 +82,23 @@ function ProductCard({ product }: { product: Product }) {
 }
 
 export default function ShopScreen() {
+  const [isLoading, setIsLoading] = useState(true);
+  const [isError, setIsError] = useState(false);
   const [search, setSearch] = useState("");
   const [selectedCategory, setSelectedCategory] = useState(ALL);
+
+  useEffect(() => {
+    const t = setTimeout(() => setIsLoading(false), 600);
+    return () => clearTimeout(t);
+  }, []);
+
+  if (isLoading) return <><Stack.Screen options={{ title: "Shop" }} /><ShopSkeleton /></>;
+  if (isError) return (
+    <>
+      <Stack.Screen options={{ title: "Shop" }} />
+      <NetworkError onRetry={() => { setIsError(false); setIsLoading(true); }} />
+    </>
+  );
 
   const categories = useMemo(
     () => [ALL, ...Array.from(new Set(MOCK_PRODUCTS.map((p) => p.category)))],

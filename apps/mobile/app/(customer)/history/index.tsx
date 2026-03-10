@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Pressable,
   SectionList,
@@ -11,6 +11,8 @@ import { format, parseISO } from "date-fns";
 import { StatusBadge } from "@routeflow/ui/mobile";
 import { colors, borderRadius, shadows } from "@routeflow/ui/tokens";
 import { MOCK_HISTORY, HistoryOrder } from "../../../data/mockData";
+import { HistorySkeleton } from "../../../components/skeletons/HistorySkeleton";
+import { NetworkError } from "../../../components/NetworkError";
 
 type Section = { title: string; data: HistoryOrder[] };
 
@@ -47,6 +49,14 @@ function OrderRow({ order }: { order: HistoryOrder }) {
 }
 
 export default function HistoryScreen() {
+  const [isLoading, setIsLoading] = useState(true);
+  const [isError, setIsError] = useState(false);
+
+  useEffect(() => {
+    const t = setTimeout(() => setIsLoading(false), 600);
+    return () => clearTimeout(t);
+  }, []);
+
   const sections: Section[] = useMemo(() => {
     const groups = new Map<string, HistoryOrder[]>();
     for (const order of [...MOCK_HISTORY].sort(
@@ -58,6 +68,14 @@ export default function HistoryScreen() {
     }
     return Array.from(groups.entries()).map(([title, data]) => ({ title, data }));
   }, []);
+
+  if (isLoading) return <><Stack.Screen options={{ title: "History" }} /><HistorySkeleton /></>;
+  if (isError) return (
+    <>
+      <Stack.Screen options={{ title: "History" }} />
+      <NetworkError onRetry={() => { setIsError(false); setIsLoading(true); }} />
+    </>
+  );
 
   return (
     <>

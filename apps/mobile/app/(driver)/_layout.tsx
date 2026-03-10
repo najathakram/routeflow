@@ -6,7 +6,7 @@ export default function DriverLayout() {
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: colors.brand[500],
+        tabBarActiveTintColor: "#2563EB",
         tabBarInactiveTintColor: "#94a3b8",
         tabBarStyle: {
           borderTopColor: colors.surface.border,
@@ -39,6 +39,8 @@ export default function DriverLayout() {
           ),
         }}
       />
+      {/* Hidden screen — accessible via router.push but not shown in tab bar */}
+      <Tabs.Screen name="change-password" options={{ href: null }} />
     </Tabs>
   );
 }

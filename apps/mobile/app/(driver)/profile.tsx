@@ -132,7 +132,7 @@ export default function DriverProfileScreen() {
           <ActionRow
             icon="lock-closed-outline"
             label="Change Password"
-            onPress={() => router.push("/(auth)/force-change-password")}
+            onPress={() => router.push("/(driver)/change-password")}
           />
         </View>
 

@@ -129,7 +129,7 @@ export default function ProfileScreen() {
           <ActionRow
             icon="lock-closed-outline"
             label="Change Password"
-            onPress={() => router.push("/(auth)/force-change-password")}
+            onPress={() => router.push("/(customer)/change-password")}
           />
         </View>
 
