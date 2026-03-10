@@ -67,10 +67,18 @@ cp .env.example .env
 ```bash
 # Postgres + Redis in the background
 docker compose up -d
+
+# Optional: also start Redis Commander UI at http://localhost:8081
+docker compose --profile tools up -d
 ```
 
-A `docker-compose.yml` will be added here in a future step. For now you can
-run Postgres and Redis manually or use a cloud-hosted instance.
+Services started:
+
+| Service | Port | Credentials |
+|---|---|---|
+| PostgreSQL 16 | 5432 | user/pass (from `.env`) |
+| Redis 7 | 6379 | no password in dev |
+| Redis Commander | 8081 | admin/admin (tools profile only) |
 
 ### 4. Run all apps in development
 
