@@ -5,6 +5,9 @@ export default defineConfig({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   earlyAccess: true as any,
   schema: path.join("prisma", "schema.prisma"),
+  migrations: {
+    seed: 'npx tsx ./prisma/seed.ts',
+  },
   datasource: {
     url: process.env.DATABASE_URL!,
   },
