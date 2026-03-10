@@ -1,0 +1,15 @@
+{
+  "name": "@routeflow/config",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Shared ESLint, Prettier, and TypeScript configs for routeflow",
+  "exports": {
+    "./eslint": "./eslint.js",
+    "./prettier": "./prettier.js",
+    "./tsconfig": "./tsconfig.base.json"
+  },
+  "devDependencies": {
+    "@routeflow/eslint-config": "*",
+    "@routeflow/typescript-config": "*"
+  }
+}
