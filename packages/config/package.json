@@ -11,5 +11,9 @@
   "devDependencies": {
     "@routeflow/eslint-config": "*",
     "@routeflow/typescript-config": "*"
+  },
+  "scripts": {
+    "check-types": "echo \"config package: no TS sources to check\"",
+    "lint": "echo \"config package: no sources to lint\""
   }
 }

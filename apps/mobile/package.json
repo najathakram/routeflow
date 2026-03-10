@@ -6,7 +6,11 @@
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "dev": "expo start",
+    "build": "tsc --noEmit && expo export --platform android --platform ios",
+    "lint": "eslint . --ext .ts,.tsx",
+    "check-types": "tsc --noEmit"
   },
   "dependencies": {
     "@expo/metro-runtime": "^55.0.6",
@@ -37,11 +41,14 @@
     "react-native-safe-area-context": "^5.7.0",
     "react-native-screens": "^4.24.0",
     "zod": "^3.25.76",
-    "zustand": "^5.0.11"
+    "zustand": "^5.0.11",
+    "@routeflow/types": "*"
   },
   "devDependencies": {
     "@types/react": "~19.2.2",
-    "typescript": "~5.9.2"
+    "typescript": "~5.9.2",
+    "@routeflow/eslint-config": "*",
+    "eslint": "^9.0.0"
   },
   "private": true
 }

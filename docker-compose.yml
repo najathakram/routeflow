@@ -4,6 +4,9 @@ services:
     image: postgres:16-alpine
     container_name: routeflow_postgres
     restart: unless-stopped
+    env_file:
+      - path: ./apps/api/.env
+        required: false
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pass}
