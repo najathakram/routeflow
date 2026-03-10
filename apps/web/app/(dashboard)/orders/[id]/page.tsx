@@ -34,7 +34,7 @@ function ActionButtons({
   if (localStatus === "CANCELLED" || localStatus === "LOCKED") {
     return (
       <span className="text-sm italic text-navy/40">
-        {localStatus === "LOCKED" ? "Order is locked." : "Order is cancelled."}
+        {localStatus === "CANCELLED" ? "Order is cancelled." : "No further actions available."}
       </span>
     );
   }
@@ -80,12 +80,15 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
   const order = getOrder(params.id);
   const customer = order ? getCustomer(order.customerId) : undefined;
 
-  const [localStatus, setLocalStatus] = React.useState<LocalOrderStatus>(
-    order?.status === "PENDING" ? "PENDING"
-    : order?.status === "CONFIRMED" ? "CONFIRMED"
-    : order?.status === "CANCELLED" ? "CANCELLED"
-    : "LOCKED",
-  );
+  const [localStatus, setLocalStatus] = React.useState<LocalOrderStatus>(() => {
+    switch (order?.status) {
+      case "PENDING": return "PENDING";
+      case "CONFIRMED": return "CONFIRMED";
+      case "CANCELLED": return "CANCELLED";
+      // OUT_FOR_DELIVERY and COMPLETED are read-only — treat as LOCKED
+      default: return "LOCKED";
+    }
+  });
 
   React.useEffect(() => {
     setTitle(order?.orderNumber ?? "Order");
@@ -101,8 +104,9 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
   }
 
   const total = orderTotal(order);
+  // LOCKED means the order is in a terminal/read-only state; use the original order status for the badge
   const statusForBadge: OrderStatus =
-    localStatus === "LOCKED" ? "CONFIRMED" : (localStatus as OrderStatus);
+    localStatus === "LOCKED" ? (order.status as OrderStatus) : (localStatus as OrderStatus);
 
   return (
     <div className="space-y-5 p-6">

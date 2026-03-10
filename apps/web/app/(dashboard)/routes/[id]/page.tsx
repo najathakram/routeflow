@@ -236,11 +236,14 @@ export default function RouteRunDetailPage({ params }: { params: { id: string } 
                 <span className="rounded-full bg-success-bg px-3 py-1 text-xs font-medium text-success">
                   {stopsDone} completed
                 </span>
-                {run!.stops.filter((s) => s.status === "CURRENT").length > 0 && (
-                  <span className="rounded-full bg-brand-100 px-3 py-1 text-xs font-medium text-brand-700">
-                    1 in progress
-                  </span>
-                )}
+                {(() => {
+                  const currentCount = run!.stops.filter((s) => s.status === "CURRENT").length;
+                  return currentCount > 0 ? (
+                    <span className="rounded-full bg-brand-100 px-3 py-1 text-xs font-medium text-brand-700">
+                      {currentCount} in progress
+                    </span>
+                  ) : null;
+                })()}
                 <span className="rounded-full bg-surface-raised border border-surface-border px-3 py-1 text-xs font-medium text-navy/60">
                   {run!.stops.filter((s) => s.status === "UPCOMING").length} upcoming
                 </span>

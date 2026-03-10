@@ -2,7 +2,6 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -92,7 +91,6 @@ function StopOrderCard({ run }: { run: RouteRun }) {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function DispatchPage({ params }: { params: { id: string } }) {
-  const router = useRouter();
   const { setTitle } = usePageTitle();
 
   const run = getRouteRun(params.id);

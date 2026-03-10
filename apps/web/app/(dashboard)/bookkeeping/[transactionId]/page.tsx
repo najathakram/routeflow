@@ -76,7 +76,7 @@ function RecordPaymentModal({
     await new Promise((r) => setTimeout(r, 500));
     onRecord({
       id: `PMT-${Date.now()}`,
-      date: "Mar 9, 2026",
+      date: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
       method: data.method,
       amount: data.amount,
       reference: data.reference || undefined,
@@ -271,8 +271,8 @@ export default function TransactionDetailPage({ params }: { params: { transactio
                 </tr>
               </thead>
               <tbody className="divide-y divide-surface-border">
-                {original.lineItems.map((li, i) => (
-                  <tr key={i}>
+                {original.lineItems.map((li) => (
+                  <tr key={li.sku}>
                     <td className="py-3 text-navy">{li.description}</td>
                     <td className="py-3 font-mono text-xs text-navy/50">{li.sku}</td>
                     <td className="py-3 text-right text-navy/70">{li.qty}</td>
