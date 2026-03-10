@@ -43,7 +43,18 @@ export class ProductsService {
       const existing = await this.prisma.product.findUnique({ where: { sku: dto.sku } });
       if (existing) throw new BadRequestException('SKU already exists');
     }
-    return this.prisma.product.create({ data: dto as any });
+    return this.prisma.product.create({
+      data: {
+        name: dto.name,
+        sku: dto.sku,
+        unit: dto.unit,
+        pricePerUnit: dto.pricePerUnit,
+        category: dto.category,
+        description: dto.description,
+        isActive: dto.isActive,
+        lowStock: dto.lowStock,
+      },
+    });
   }
 
   async update(id: string, dto: UpdateProductDto) {

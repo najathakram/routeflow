@@ -34,7 +34,7 @@ enum OrderStatus {
 enum ItemStatus {
   PENDING
   CONFIRMED
-  OUT_FOR_DELIVERY
+  PARTIAL
   DELIVERED
   CANCELLED
 }
@@ -44,6 +44,13 @@ enum RouteRunStatus {
   IN_PROGRESS
   COMPLETED
   CANCELLED
+}
+
+enum RouteRunStopStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  SKIPPED
 }
 
 enum MutationType {
@@ -133,6 +140,7 @@ model Customer {
   routeStops   RouteStop[]
   orders       Order[]
   transactions Transaction[]
+  routeRunStops RouteRunStop[]
 
   @@index([zohoContactId])
   @@index([businessName])
@@ -153,8 +161,9 @@ model CustomerAddress {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  customer   Customer    @relation(fields: [customerId], references: [id])
-  routeStops RouteStop[]
+  customer      Customer       @relation(fields: [customerId], references: [id])
+  routeStops    RouteStop[]
+  routeRunStops RouteRunStop[]
 
   @@index([customerId])
 }
@@ -162,6 +171,8 @@ model CustomerAddress {
 model Driver {
   id            String       @id @default(uuid())
   userId        String       @unique
+  contactName   String?
+  phone         String?
   status        DriverStatus @default(ACTIVE)
   vehicleMake   String?
   vehicleModel  String?
@@ -170,9 +181,10 @@ model Driver {
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
 
-  user      User       @relation(fields: [userId], references: [id])
-  routes    Route[]
-  routeRuns RouteRun[]
+  user              User               @relation(fields: [userId], references: [id])
+  routes            Route[]
+  routeRuns         RouteRun[]
+  deliveryMutations DeliveryMutation[]
 
   @@index([status])
 }
@@ -280,48 +292,62 @@ model RouteRun {
 }
 
 model RouteRunStop {
-  id          String    @id @default(uuid())
-  routeRunId  String
-  routeStopId String
-  stopNumber  Int
-  arrivedAt   DateTime?
-  completedAt DateTime?
-  notes       String?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id                String            @id @default(uuid())
+  routeRunId        String
+  routeStopId       String
+  customerId        String?
+  customerAddressId String?
+  stopNumber        Int
+  status            RouteRunStopStatus @default(PENDING)
+  driverNote        String?
+  arrivedAt         DateTime?
+  completedAt       DateTime?
+  notes             String?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
 
-  routeRun  RouteRun  @relation(fields: [routeRunId], references: [id])
-  routeStop RouteStop @relation(fields: [routeStopId], references: [id])
+  routeRun        RouteRun         @relation(fields: [routeRunId], references: [id])
+  routeStop       RouteStop        @relation(fields: [routeStopId], references: [id])
+  customer        Customer?        @relation(fields: [customerId], references: [id])
+  customerAddress CustomerAddress? @relation(fields: [customerAddressId], references: [id])
+  orders          Order[]
+  deliveryMutations DeliveryMutation[]
 
   @@unique([routeRunId, stopNumber])
   @@index([routeRunId])
   @@index([routeStopId])
+  @@index([customerId])
+  @@index([customerAddressId])
 }
 
 model Order {
-  id          String      @id @default(uuid())
-  customerId  String
-  routeRunId  String?
-  status      OrderStatus @default(PENDING)
-  source      OrderSource @default(APP)
-  urgent      Boolean     @default(false)
-  notes       String?
-  driverNote  String?
-  subtotal    Decimal     @default(0) @db.Decimal(10, 2)
-  tax         Decimal     @default(0) @db.Decimal(10, 2)
-  total       Decimal     @default(0) @db.Decimal(10, 2)
-  deliveredAt DateTime?
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
+  id              String      @id @default(uuid())
+  customerId      String
+  routeRunId      String?
+  routeRunStopId  String?
+  orderNumber     String?
+  status          OrderStatus @default(PENDING)
+  source          OrderSource @default(APP)
+  urgent          Boolean     @default(false)
+  notes           String?
+  driverNote      String?
+  subtotal        Decimal     @default(0) @db.Decimal(10, 2)
+  tax             Decimal     @default(0) @db.Decimal(10, 2)
+  total           Decimal     @default(0) @db.Decimal(10, 2)
+  deliveredAt     DateTime?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
 
   customer          Customer           @relation(fields: [customerId], references: [id])
   routeRun          RouteRun?          @relation(fields: [routeRunId], references: [id])
-  items             OrderItem[]
+  routeRunStop      RouteRunStop?      @relation(fields: [routeRunStopId], references: [id])
+  lineItems         OrderItem[]
   deliveryMutations DeliveryMutation[]
-  transactions      Transaction[]
+  transaction       Transaction?
 
   @@index([customerId])
   @@index([routeRunId])
+  @@index([routeRunStopId])
   @@index([status])
   @@index([urgent])
   @@index([createdAt])
@@ -334,7 +360,7 @@ model OrderItem {
   status    ItemStatus @default(PENDING)
   qty       Decimal    @db.Decimal(10, 3)
   unitPrice Decimal    @db.Decimal(10, 2)
-  subtotal  Decimal    @db.Decimal(10, 2)
+  subtotal  Decimal    @default(0) @db.Decimal(10, 2)
   notes     String?
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
@@ -350,24 +376,32 @@ model OrderItem {
 }
 
 model DeliveryMutation {
-  id          String       @id @default(uuid())
-  orderId     String
-  orderItemId String?
-  productId   String?
-  type        MutationType
-  qty         Decimal?     @db.Decimal(10, 3)
-  unitPrice   Decimal?     @db.Decimal(10, 2)
-  driverNote  String?
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+  id                String       @id @default(uuid())
+  orderId           String
+  orderItemId       String?
+  productId         String?
+  routeRunStopId    String?
+  driverId          String?
+  type              MutationType
+  qty               Decimal?     @db.Decimal(10, 3)
+  quantityDelivered Decimal?     @db.Decimal(10, 3)
+  unitPrice         Decimal?     @db.Decimal(10, 2)
+  note              String?
+  driverNote        String?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
 
-  order     Order      @relation(fields: [orderId], references: [id])
-  orderItem OrderItem? @relation(fields: [orderItemId], references: [id])
-  product   Product?   @relation(fields: [productId], references: [id])
+  order        Order         @relation(fields: [orderId], references: [id])
+  orderItem    OrderItem?    @relation(fields: [orderItemId], references: [id])
+  product      Product?      @relation(fields: [productId], references: [id])
+  routeRunStop RouteRunStop? @relation(fields: [routeRunStopId], references: [id])
+  driver       Driver?       @relation(fields: [driverId], references: [id])
 
   @@index([orderId])
   @@index([orderItemId])
   @@index([productId])
+  @@index([routeRunStopId])
+  @@index([driverId])
   @@index([type])
 }
 

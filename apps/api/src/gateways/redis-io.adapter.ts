@@ -1,7 +1,7 @@
 import { IoAdapter } from '@nestjs/platform-socket.io';
 import { ServerOptions } from 'socket.io';
 import { createAdapter } from '@socket.io/redis-adapter';
-import { createClient } from 'redis';
+import { Redis } from 'ioredis';
 import { INestApplication, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
@@ -14,11 +14,9 @@ export class RedisIoAdapter extends IoAdapter {
     super(app);
     const config = app.get(ConfigService);
     const rawUrl = config.get<string>('redis.url') ?? 'redis://localhost:6379';
-    const password = config.get<string>('redis.password');
+    const password = config.get<string>('redis.password') || undefined;
 
-    const options = password ? { password } : {};
-
-    const pubClient = createClient({ url: rawUrl, ...options });
+    const pubClient = new Redis(rawUrl, { password, lazyConnect: true });
     const subClient = pubClient.duplicate();
 
     // Surface Redis errors via logger so they're not silently swallowed
@@ -35,11 +33,13 @@ export class RedisIoAdapter extends IoAdapter {
           'Redis adapter connection failed — falling back to in-memory adapter',
           err,
         );
-        // Leave adapterConstructor null so createIOServer uses the default in-memory adapter
       });
   }
 
-  createIOServer(port: number, options?: ServerOptions) {
+  async createIOServer(port: number, options?: ServerOptions) {
+    // Wait for Redis to connect (or fail) before creating the IO server
+    await this.connectPromise;
+
     const server = super.createIOServer(port, options);
     if (this.adapterConstructor) {
       server.adapter(this.adapterConstructor);

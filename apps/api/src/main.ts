@@ -4,6 +4,13 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import { RedisIoAdapter } from './gateways/redis-io.adapter';
 
+const DEFAULT_CORS_ORIGINS = [
+  'http://localhost:3001', // web dashboard
+  'http://localhost:8081', // Expo web
+  'http://localhost:19000', // Expo DevTools
+  'http://localhost:19006', // Expo web (legacy)
+];
+
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
@@ -14,13 +21,12 @@ async function bootstrap() {
   app.setGlobalPrefix('api/v1');
 
   // ─── CORS ───────────────────────────────────────────────────────────────────
+  const corsOrigins = process.env.CORS_ORIGINS
+    ? process.env.CORS_ORIGINS.split(',').map((o) => o.trim())
+    : DEFAULT_CORS_ORIGINS;
+
   app.enableCors({
-    origin: [
-      'http://localhost:3001', // web dashboard
-      'http://localhost:8081', // Expo web
-      'http://localhost:19000', // Expo DevTools
-      'http://localhost:19006', // Expo web (legacy)
-    ],
+    origin: corsOrigins,
     credentials: true,
   });
 

@@ -14,16 +14,20 @@ import { CreateOrderDto } from './dto/create-order.dto';
 import { ChangeOrderStatusDto } from './dto/change-order-status.dto';
 import { CompleteStopDto } from './dto/complete-stop.dto';
 import { RouteFlowGateway } from '../gateways/routeflow.gateway';
-
-const TAX_RATE = 0.1; // 10%
+import { ConfigService } from '@nestjs/config';
 
 @Injectable()
 export class OrdersService {
+  private readonly taxRate: number;
+
   constructor(
     private readonly prisma: PrismaService,
     @InjectQueue('invoices') private readonly invoiceQueue: Queue,
     private readonly gateway: RouteFlowGateway,
-  ) {}
+    private readonly config: ConfigService,
+  ) {
+    this.taxRate = this.config.get<number>('taxRate') ?? 0.1;
+  }
 
   async findAll(query: ListOrdersDto, user: JwtPayload) {
     const { customerId, status, urgent, page = 1, limit = 20 } = query;
@@ -95,11 +99,12 @@ export class OrdersService {
       const product = productMap.get(item.productId);
       if (!product) throw new BadRequestException(`Product ${item.productId} not found`);
       const unitPrice = Number(product.pricePerUnit);
-      subtotal += unitPrice * item.qty;
-      return { productId: item.productId, qty: item.qty, unitPrice, notes: item.notes };
+      const itemSubtotal = unitPrice * item.qty;
+      subtotal += itemSubtotal;
+      return { productId: item.productId, qty: item.qty, unitPrice, subtotal: itemSubtotal, notes: item.notes };
     });
 
-    const tax = subtotal * TAX_RATE;
+    const tax = subtotal * this.taxRate;
     const total = subtotal + tax;
 
     return this.prisma.order.create({
@@ -138,7 +143,7 @@ export class OrdersService {
 
     await this.prisma.$transaction(async (tx) => {
       const stop = await tx.routeRunStop.findFirst({
-        where: { id: stopId, runId },
+        where: { id: stopId, routeRunId: runId },
         include: { orders: { include: { lineItems: true } } },
       });
       if (!stop) throw new NotFoundException('Route run stop not found');
@@ -149,8 +154,10 @@ export class OrdersService {
 
         await tx.deliveryMutation.create({
           data: {
-            routeRunStopId: stopId,
+            orderId: orderItem.orderId,
             orderItemId: delivery.orderItemId,
+            productId: orderItem.productId,
+            routeRunStopId: stopId,
             type: delivery.type,
             quantityDelivered: delivery.quantityDelivered,
             note: delivery.note,
@@ -165,20 +172,18 @@ export class OrdersService {
         else if (delivery.type === MutationType.REFUSED) newItemStatus = ItemStatus.CANCELLED;
 
         await tx.orderItem.update({ where: { id: delivery.orderItemId }, data: { status: newItemStatus } });
-
-        if (delivery.type === MutationType.DELIVERED || delivery.type === MutationType.PARTIAL) {
-          await tx.product.update({
-            where: { id: orderItem.productId },
-            data: { lowStock: false },
-          });
-        }
       }
 
       for (const order of stop.orders) {
         const updatedItems = await tx.orderItem.findMany({ where: { orderId: order.id } });
         const allDelivered = updatedItems.every((i) => i.status === ItemStatus.DELIVERED);
         const anyDelivered = updatedItems.some((i) => i.status === ItemStatus.DELIVERED || i.status === ItemStatus.PARTIAL);
-        const newOrderStatus = allDelivered ? OrderStatus.DELIVERED : anyDelivered ? OrderStatus.DELIVERED : order.status;
+        // Fix H2: allDelivered → DELIVERED, partiallyDelivered → OUT_FOR_DELIVERY, nothing → keep current
+        const newOrderStatus = allDelivered
+          ? OrderStatus.DELIVERED
+          : anyDelivered
+            ? OrderStatus.OUT_FOR_DELIVERY
+            : order.status;
 
         await tx.order.update({ where: { id: order.id }, data: { status: newOrderStatus } });
 
@@ -205,7 +210,7 @@ export class OrdersService {
 
     // Emit real-time updates for each affected order/customer
     const stop = await this.prisma.routeRunStop.findFirst({
-      where: { id: stopId, runId },
+      where: { id: stopId, routeRunId: runId },
       include: { orders: { select: { id: true, customerId: true } } },
     });
     if (stop) {
@@ -221,7 +226,7 @@ export class OrdersService {
     }
 
     // Enqueue PDF generation for each new invoice (after DB transaction commits).
-    // Retry up to 3× with exponential back-off (5s → 10s → 20s).
+    // Retry up to 3x with exponential back-off (5s -> 10s -> 20s).
     for (const txnId of invoiceTransactionIds) {
       await this.invoiceQueue.add(
         'generate-invoice',

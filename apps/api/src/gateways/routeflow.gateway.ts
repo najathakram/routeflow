@@ -57,12 +57,14 @@ export interface DriverLocationPayload {
 
 @WebSocketGateway({
   cors: {
-    origin: [
-      'http://localhost:3001',
-      'http://localhost:8081',
-      'http://localhost:19000',
-      'http://localhost:19006',
-    ],
+    origin: process.env.CORS_ORIGINS
+      ? process.env.CORS_ORIGINS.split(',').map((o) => o.trim())
+      : [
+          'http://localhost:3001',
+          'http://localhost:8081',
+          'http://localhost:19000',
+          'http://localhost:19006',
+        ],
     credentials: true,
   },
   namespace: '/',

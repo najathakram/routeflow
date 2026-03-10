@@ -104,6 +104,7 @@ export class RoutesService {
         notes: dto.notes,
         stops: {
           create: route.stops.map((s) => ({
+            routeStopId: s.id,
             stopNumber: s.stopNumber,
             customerId: s.customerId,
             customerAddressId: s.customerAddressId,
@@ -112,8 +113,14 @@ export class RoutesService {
       },
       include: {
         route: { select: { id: true, name: true } },
-        driver: { select: { id: true, contactName: true } },
-        stops: { include: { customer: { select: { id: true, businessName: true } } } },
+        driver: { select: { id: true, contactName: true, user: { select: { username: true } } } },
+        stops: {
+          include: {
+            customer: { select: { id: true, businessName: true } },
+            customerAddress: true,
+          },
+          orderBy: { stopNumber: 'asc' },
+        },
       },
     });
   }
@@ -141,7 +148,7 @@ export class RoutesService {
         where,
         include: {
           route: { select: { id: true, name: true } },
-          driver: { select: { id: true, contactName: true } },
+          driver: { select: { id: true, contactName: true, user: { select: { username: true } } } },
           _count: { select: { stops: true } },
         },
         skip,
@@ -159,7 +166,7 @@ export class RoutesService {
       where: { id },
       include: {
         route: { select: { id: true, name: true } },
-        driver: { select: { id: true, contactName: true } },
+        driver: { select: { id: true, contactName: true, user: { select: { username: true } } } },
         stops: {
           include: {
             customer: { select: { id: true, businessName: true, contactName: true } },
