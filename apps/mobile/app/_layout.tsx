@@ -36,7 +36,7 @@ function RootLayoutNav() {
 
     if (user.role === UserRole.CUSTOMER) {
       if (segments[0] !== "(customer)") {
-        router.replace("/(customer)");
+        router.replace("/(customer)/shop");
       }
     } else if (user.role === UserRole.DRIVER) {
       if (segments[0] !== "(driver)") {
