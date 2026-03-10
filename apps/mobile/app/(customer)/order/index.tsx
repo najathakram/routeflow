@@ -1,4 +1,5 @@
 import {
+  ActivityIndicator,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -12,6 +13,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { EmptyState } from "@routeflow/ui/mobile";
 import { colors, borderRadius, shadows } from "@routeflow/ui/tokens";
 import { useOrderStore } from "../../../store/orderStore";
+import { useMyOrders } from "../../../lib/api/orders";
 
 function QtyStepper({
   value,
@@ -70,6 +72,10 @@ export default function OrderScreen() {
   const { items, isUrgent, notes, removeItem, updateQuantity, setUrgent, setNotes } =
     useOrderStore();
 
+  // Fetch pending orders from the API so the server state is always in sync
+  const { data: pendingOrdersData, isLoading: pendingLoading } = useMyOrders({ status: "PENDING" });
+  const pendingOrders = pendingOrdersData?.data ?? [];
+
   const total = items.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
   const itemCount = items.reduce((sum, item) => sum + item.quantity, 0);
 
@@ -77,13 +83,52 @@ export default function OrderScreen() {
     return (
       <>
         <Stack.Screen options={{ title: "My Order" }} />
-        <EmptyState
-          icon={<Ionicons name="clipboard-outline" size={56} color="#cbd5e1" />}
-          title="Your order is empty"
-          subtitle="Browse the shop and add items to build your order."
-          actionLabel="Start Shopping"
-          onActionPress={() => router.push("/(customer)/shop")}
-        />
+        {pendingLoading ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color={colors.brand[500]} />
+          </View>
+        ) : pendingOrders.length > 0 ? (
+          // Show the first pending order from the server
+          <View style={styles.container}>
+            <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Pending Order</Text>
+                {pendingOrders[0].lineItems.map((item) => (
+                  <View key={item.id} style={styles.lineItem}>
+                    <View style={styles.lineItemLeft}>
+                      <Text style={styles.lineItemName}>{item.product?.name ?? item.productId}</Text>
+                      <Text style={styles.lineItemUnit}>{item.product?.unit ?? ""}</Text>
+                      <Text style={styles.lineItemPrice}>
+                        ${Number(item.unitPrice).toFixed(2)} each
+                      </Text>
+                    </View>
+                    <View style={styles.lineItemRight}>
+                      <Text style={styles.lineItemSubtotal}>
+                        ${(item.qty * Number(item.unitPrice)).toFixed(2)}
+                      </Text>
+                      <Text style={styles.qtyLabel}>Qty: {item.qty}</Text>
+                    </View>
+                  </View>
+                ))}
+              </View>
+              <View style={[styles.section, styles.totalsSection]}>
+                <Text style={styles.sectionTitle}>Order Summary</Text>
+                <View style={styles.totalRow}>
+                  <Text style={styles.totalLabel}>Total</Text>
+                  <Text style={styles.grandValue}>${Number(pendingOrders[0].total).toFixed(2)}</Text>
+                </View>
+              </View>
+            </ScrollView>
+          </View>
+        ) : (
+          <EmptyState
+            icon={<Ionicons name="clipboard-outline" size={56} color="#cbd5e1" />}
+            title="Your order is empty"
+            subtitle="Browse the shop and add items to build your order."
+            actionLabel="Start Shopping"
+            onActionPress={() => router.push("/(customer)/shop")}
+          />
+        )}
       </>
     );
   }
@@ -223,6 +268,11 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.surface.raised,
   },
+  loadingContainer: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   urgentBanner: {
     flexDirection: "row",
     alignItems: "center",
@@ -317,6 +367,11 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontFamily: "Inter_700Bold",
     color: colors.navy.DEFAULT,
+  },
+  qtyLabel: {
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    color: "#64748b",
   },
   notesInput: {
     borderWidth: 1,

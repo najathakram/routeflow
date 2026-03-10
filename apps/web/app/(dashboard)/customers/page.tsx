@@ -7,21 +7,17 @@ import { Pencil, ToggleLeft, ToggleRight, Eye } from "lucide-react";
 import { PageHeader, Table, Badge, Button, Select, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { CustomerFormModal } from "./_components/CustomerFormModal";
-import {
-  customers as initialCustomers,
-  availableRoutes,
-  type Customer,
-  type CustomerStatus,
-} from "@/mocks/customers";
+import { useCustomers, useUpdateCustomerStatus } from "@/lib/api/customers";
 
-// ─── Route pill ───────────────────────────────────────────────────────────────
+// ─── Local type ───────────────────────────────────────────────────────────────
 
-function RoutePill({ name }: { name: string }) {
-  return (
-    <span className="inline-block rounded-full bg-brand-100 px-2 py-0.5 text-xs font-medium text-brand-700">
-      {name}
-    </span>
-  );
+interface Customer {
+  id: string;
+  businessName: string;
+  contactName: string;
+  phone?: string;
+  user: { id: string; email: string; username: string; status: string };
+  addresses: any[];
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -36,32 +32,24 @@ export default function CustomersPage() {
   const [search, setSearch] = React.useState("");
   const [statusFilter, setStatusFilter] = React.useState<string>("");
   const [isAddOpen, setIsAddOpen] = React.useState(false);
-  const [editingCustomer, setEditingCustomer] = React.useState<Customer | null>(null);
-  const [localStatuses, setLocalStatuses] = React.useState<Record<string, CustomerStatus>>(
-    () => Object.fromEntries(initialCustomers.map((c) => [c.id, c.status])),
-  );
+  const [editingCustomer, setEditingCustomer] = React.useState<any>(null);
 
-  // ── Filtering ────────────────────────────────────────────────────────────
-  const filtered = React.useMemo(() => {
-    const q = search.toLowerCase();
-    return initialCustomers.filter((c) => {
-      const matchSearch =
-        !q ||
-        c.businessName.toLowerCase().includes(q) ||
-        c.contactName.toLowerCase().includes(q) ||
-        c.phone.includes(q);
-      const matchStatus = !statusFilter || localStatuses[c.id] === statusFilter;
-      return matchSearch && matchStatus;
-    });
-  }, [search, statusFilter, localStatuses]);
+  // ── API data ─────────────────────────────────────────────────────────────
+  const { data: result, isLoading } = useCustomers({
+    search: search || undefined,
+    status: statusFilter || undefined,
+  });
+  const customers: Customer[] = result?.data ?? [];
+
+  const updateStatus = useUpdateCustomerStatus();
 
   // ── Status toggle ────────────────────────────────────────────────────────
-  const toggleStatus = React.useCallback((id: string) => {
-    setLocalStatuses((prev) => ({
-      ...prev,
-      [id]: prev[id] === "ACTIVE" ? "INACTIVE" : "ACTIVE",
-    }));
-  }, []);
+  const toggleStatus = React.useCallback((id: string, currentStatus: string) => {
+    updateStatus.mutate({
+      id,
+      status: currentStatus === "ACTIVE" ? "INACTIVE" : "ACTIVE",
+    });
+  }, [updateStatus]);
 
   // ── Column definitions ───────────────────────────────────────────────────
   const columns = React.useMemo<ColumnDef<Customer, unknown>[]>(
@@ -85,33 +73,22 @@ export default function CustomersPage() {
         header: "Phone",
         enableSorting: false,
         cell: ({ row }) => (
-          <span className="text-navy/70">{row.original.phone}</span>
+          <span className="text-navy/70">{row.original.phone ?? "—"}</span>
         ),
       },
       {
         id: "routes",
         header: "Routes",
         enableSorting: false,
-        cell: ({ row }) => {
-          const names = row.original.assignedRoutes.map(
-            (id) => availableRoutes.find((r) => r.id === id)?.name ?? id,
-          );
-          return names.length > 0 ? (
-            <div className="flex flex-wrap gap-1">
-              {names.map((name) => (
-                <RoutePill key={name} name={name} />
-              ))}
-            </div>
-          ) : (
-            <span className="text-xs text-navy/30">—</span>
-          );
-        },
+        cell: () => (
+          <span className="text-xs text-navy/30">—</span>
+        ),
       },
       {
         id: "status",
         header: "Status",
         cell: ({ row }) => (
-          <Badge status={localStatuses[row.original.id] ?? row.original.status} />
+          <Badge status={row.original.user?.status ?? "ACTIVE"} />
         ),
       },
       {
@@ -119,7 +96,7 @@ export default function CustomersPage() {
         header: "",
         enableSorting: false,
         cell: ({ row }) => {
-          const status = localStatuses[row.original.id] ?? row.original.status;
+          const status = row.original.user?.status ?? "ACTIVE";
           return (
             <div
               className="flex items-center gap-1"
@@ -134,7 +111,7 @@ export default function CustomersPage() {
               </button>
               <button
                 title={status === "ACTIVE" ? "Deactivate" : "Activate"}
-                onClick={() => toggleStatus(row.original.id)}
+                onClick={() => toggleStatus(row.original.id, status)}
                 className={cn(
                   "rounded p-1.5 transition-colors",
                   status === "ACTIVE"
@@ -160,7 +137,7 @@ export default function CustomersPage() {
         },
       },
     ],
-    [localStatuses, router, toggleStatus],
+    [router, toggleStatus],
   );
 
   return (
@@ -195,23 +172,32 @@ export default function CustomersPage() {
         </div>
       </div>
 
-      {/* Table */}
-      <Table
-        data={filtered}
-        columns={columns}
-        onRowClick={(row) => router.push(`/customers/${row.original.id}`)}
-        emptyState={
-          <span className="text-sm">
-            No customers match your search.{" "}
-            <button
-              className="text-brand-500 hover:underline"
-              onClick={() => { setSearch(""); setStatusFilter(""); }}
-            >
-              Clear filters
-            </button>
-          </span>
-        }
-      />
+      {/* Loading skeleton */}
+      {isLoading ? (
+        <div className="animate-pulse space-y-3">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} className="h-12 rounded bg-surface-raised" />
+          ))}
+        </div>
+      ) : (
+        /* Table */
+        <Table
+          data={customers}
+          columns={columns}
+          onRowClick={(row) => router.push(`/customers/${row.original.id}`)}
+          emptyState={
+            <span className="text-sm">
+              No customers match your search.{" "}
+              <button
+                className="text-brand-500 hover:underline"
+                onClick={() => { setSearch(""); setStatusFilter(""); }}
+              >
+                Clear filters
+              </button>
+            </span>
+          }
+        />
+      )}
 
       {/* Add modal */}
       <CustomerFormModal

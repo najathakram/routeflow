@@ -7,25 +7,44 @@ import { Package, LayoutGrid, LayoutList, RefreshCw } from "lucide-react";
 import { PageHeader, Table, Badge, Button, Select, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useToast } from "@routeflow/ui/web";
-import {
-  products,
-  categories,
-  getStockStatus,
-  type Product,
-  type StockStatus,
-} from "@/mocks/products";
+import { useProducts } from "@/lib/api/products";
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+type StockStatus = "IN_STOCK" | "LOW" | "OUT_OF_STOCK";
+
+interface ApiProduct {
+  id: string;
+  name: string;
+  sku?: string;
+  category?: string;
+  unit: string;
+  pricePerUnit: string;
+  isActive: boolean;
+  lowStock: boolean;
+  hasLocalOverride: boolean;
+  description?: string;
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function getStockStatus(p: ApiProduct): StockStatus {
+  if (!p.isActive) return "OUT_OF_STOCK";
+  if (p.lowStock) return "LOW";
+  return "IN_STOCK";
+}
 
 // ─── Stock badge ──────────────────────────────────────────────────────────────
 
-function StockBadge({ status, level }: { status: StockStatus; level: number }) {
+function StockBadge({ status }: { status: StockStatus }) {
   if (status === "OUT_OF_STOCK") return <Badge variant="danger" label="Out of Stock" />;
-  if (status === "LOW") return <Badge variant="warning" label={`Low · ${level}`} />;
-  return <Badge variant="success" label={`${level} in stock`} />;
+  if (status === "LOW") return <Badge variant="warning" label="Low Stock" />;
+  return <Badge variant="success" label="In Stock" />;
 }
 
 // ─── Product grid card ────────────────────────────────────────────────────────
 
-function ProductCard({ product, onClick }: { product: Product; onClick: () => void }) {
+function ProductCard({ product, onClick }: { product: ApiProduct; onClick: () => void }) {
   const status = getStockStatus(product);
   return (
     <button
@@ -66,13 +85,13 @@ function ProductCard({ product, onClick }: { product: Product; onClick: () => vo
         </div>
         <div className="mt-auto flex items-end justify-between gap-1">
           <p className="text-base font-bold text-navy">
-            ${product.price.toFixed(2)}
+            ${parseFloat(String(product.pricePerUnit)).toFixed(2)}
             <span className="ml-1 text-xs font-normal text-navy/40">
-              / {product.unitOfMeasure}
+              / {product.unit}
             </span>
           </p>
         </div>
-        <StockBadge status={status} level={product.stockLevel} />
+        <StockBadge status={status} />
       </div>
     </button>
   );
@@ -80,7 +99,7 @@ function ProductCard({ product, onClick }: { product: Product; onClick: () => vo
 
 // ─── Table column defs ────────────────────────────────────────────────────────
 
-const tableColumns: ColumnDef<Product, unknown>[] = [
+const tableColumns: ColumnDef<ApiProduct, unknown>[] = [
   {
     accessorKey: "name",
     header: "Product",
@@ -97,24 +116,26 @@ const tableColumns: ColumnDef<Product, unknown>[] = [
     cell: ({ row }) => <span className="text-navy/70">{row.original.category}</span>,
   },
   {
-    accessorKey: "unitOfMeasure",
+    accessorKey: "unit",
     header: "Unit",
     enableSorting: false,
-    cell: ({ row }) => <span className="text-navy/60">{row.original.unitOfMeasure}</span>,
+    cell: ({ row }) => <span className="text-navy/60">{row.original.unit}</span>,
   },
   {
-    accessorKey: "price",
+    accessorKey: "pricePerUnit",
     header: "Price",
     cell: ({ row }) => (
-      <span className="font-medium text-navy">${row.original.price.toFixed(2)}</span>
+      <span className="font-medium text-navy">
+        ${parseFloat(String(row.original.pricePerUnit)).toFixed(2)}
+      </span>
     ),
   },
   {
-    accessorKey: "stockLevel",
+    accessorKey: "lowStock",
     header: "Stock",
     cell: ({ row }) => {
       const status = getStockStatus(row.original);
-      return <StockBadge status={status} level={row.original.stockLevel} />;
+      return <StockBadge status={status} />;
     },
   },
 ];
@@ -135,17 +156,25 @@ export default function ProductsPage() {
   const [isSyncing, setIsSyncing] = React.useState(false);
   const [lastSyncTime, setLastSyncTime] = React.useState("Today at 9:14 AM");
 
+  const { data: result, isLoading } = useProducts({
+    search,
+    category: categoryFilter || undefined,
+    lowStock: stockFilter === "LOW" ? true : undefined,
+    isActive: stockFilter === "OUT_OF_STOCK" ? false : undefined,
+  });
+
+  const productList: ApiProduct[] = result?.data ?? [];
+
+  const categories = Array.from(
+    new Set(productList.map((p) => p.category).filter(Boolean))
+  ) as string[];
+
   const filtered = React.useMemo(() => {
-    const q = search.toLowerCase();
-    return products.filter((p) => {
-      const matchSearch =
-        !q || p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q);
-      const matchCategory = !categoryFilter || p.category === categoryFilter;
-      const matchStock =
-        !stockFilter || getStockStatus(p) === stockFilter;
-      return matchSearch && matchCategory && matchStock;
-    });
-  }, [search, categoryFilter, stockFilter]);
+    if (stockFilter === "IN_STOCK") {
+      return productList.filter((p) => getStockStatus(p) === "IN_STOCK");
+    }
+    return productList;
+  }, [productList, stockFilter]);
 
   const handleSync = async () => {
     setIsSyncing(true);
@@ -154,7 +183,7 @@ export default function ProductsPage() {
     setLastSyncTime("Just now");
     toast({
       title: "Sync complete",
-      description: `${products.length} products updated from Zoho.`,
+      description: `${productList.length} products updated from Zoho.`,
       variant: "success",
     });
   };
@@ -238,7 +267,16 @@ export default function ProductsPage() {
       </div>
 
       {/* Content */}
-      {filtered.length === 0 ? (
+      {isLoading ? (
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+          {Array.from({ length: 10 }).map((_, i) => (
+            <div
+              key={i}
+              className="h-48 animate-pulse rounded-lg border border-surface-border bg-surface-raised"
+            />
+          ))}
+        </div>
+      ) : filtered.length === 0 ? (
         <div className="rounded-lg border border-surface-border bg-white py-12 text-center">
           <p className="text-sm text-navy/40">No products match your filters.</p>
         </div>

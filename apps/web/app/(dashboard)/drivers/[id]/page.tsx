@@ -11,31 +11,39 @@ import {
   Calendar,
   CheckCircle2,
   MapPin,
-  Clock,
   AlertTriangle,
 } from "lucide-react";
 import { Badge, Button, Card, StatCard, Table, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
-import {
-  getDriver,
-  getDriverRouteRuns,
-  getDriverPerformance,
-  type RouteRun,
-} from "@/mocks/drivers";
+import { useDriver, useDriverHistory, useDriverMetrics } from "@/lib/api/drivers";
 
 // ─── Route run table columns ──────────────────────────────────────────────────
 
-const runColumns: ColumnDef<RouteRun, unknown>[] = [
+interface RouteRunRow {
+  id: string;
+  createdAt: string;
+  route: { id: string; name: string } | null;
+  _count: { stops: number };
+  status: string;
+}
+
+const runColumns: ColumnDef<RouteRunRow, unknown>[] = [
   {
-    accessorKey: "date",
+    accessorKey: "createdAt",
     header: "Date",
-    cell: ({ row }) => <span className="text-navy/70">{row.original.date}</span>,
+    cell: ({ row }) => (
+      <span className="text-navy/70">
+        {new Date(row.original.createdAt).toLocaleDateString()}
+      </span>
+    ),
   },
   {
-    accessorKey: "routeName",
+    id: "routeName",
     header: "Route",
     cell: ({ row }) => (
-      <span className="font-medium text-navy">{row.original.routeName}</span>
+      <span className="font-medium text-navy">
+        {row.original.route?.name ?? "—"}
+      </span>
     ),
   },
   {
@@ -43,24 +51,14 @@ const runColumns: ColumnDef<RouteRun, unknown>[] = [
     header: "Stops",
     enableSorting: false,
     cell: ({ row }) => (
-      <span className="text-navy/70">
-        {row.original.stopsDone} / {row.original.stopsTotal}
-      </span>
+      <span className="text-navy/70">{row.original._count.stops}</span>
     ),
   },
   {
-    accessorKey: "deliveriesCompleted",
-    header: "Deliveries",
-    cell: ({ row }) => <span className="text-navy/70">{row.original.deliveriesCompleted}</span>,
-  },
-  {
-    accessorKey: "notesCount",
-    header: "Notes",
-    enableSorting: false,
+    accessorKey: "status",
+    header: "Status",
     cell: ({ row }) => (
-      <span className={cn("text-sm", row.original.notesCount > 0 ? "text-warning font-medium" : "text-navy/30")}>
-        {row.original.notesCount > 0 ? row.original.notesCount : "—"}
-      </span>
+      <span className="text-navy/70">{row.original.status}</span>
     ),
   },
 ];
@@ -100,13 +98,26 @@ function InfoRow({ icon: Icon, label, value }: { icon: React.ElementType; label:
 
 export default function DriverDetailPage({ params }: { params: { id: string } }) {
   const { setTitle } = usePageTitle();
-  const driver = getDriver(params.id);
-  const runs = getDriverRouteRuns(params.id);
-  const perf = getDriverPerformance(params.id);
+
+  const { data: driver, isLoading: driverLoading } = useDriver(params.id);
+  const { data: historyData } = useDriverHistory(params.id);
+  const { data: metrics } = useDriverMetrics(params.id);
+
+  const runs: RouteRunRow[] = historyData?.data ?? [];
+  const completedRuns: number = metrics?.completedRuns ?? 0;
+  const totalRuns: number = metrics?.totalRuns ?? 0;
 
   React.useEffect(() => {
-    setTitle(driver?.name ?? "Driver");
-  }, [setTitle, driver?.name]);
+    setTitle(driver?.contactName ?? "Driver");
+  }, [setTitle, driver?.contactName]);
+
+  if (driverLoading) {
+    return (
+      <div className="flex flex-col items-center gap-4 p-12 text-center">
+        <p className="text-base font-medium text-navy">Loading driver…</p>
+      </div>
+    );
+  }
 
   if (!driver) {
     return (
@@ -117,17 +128,20 @@ export default function DriverDetailPage({ params }: { params: { id: string } })
     );
   }
 
+  const vehicleLabel = [
+    driver.vehicleMake,
+    driver.vehicleModel,
+    driver.vehicleColour,
+    driver.vehiclePlate,
+  ]
+    .filter(Boolean)
+    .join(" · ") || "—";
+
   const statusBadge = () => {
-    if (driver.status === "IN_PROGRESS") {
-      return (
-        <Badge
-          variant="info"
-          label={driver.currentRouteName ? `On Route · ${driver.currentRouteName}` : "On Route"}
-        />
-      );
-    }
     return <Badge status={driver.status === "ACTIVE" ? "ACTIVE" : "INACTIVE"} />;
   };
+
+  const completionRate = totalRuns > 0 ? Math.round((completedRuns / totalRuns) * 100) : 0;
 
   return (
     <div className="space-y-5 p-6">
@@ -143,8 +157,8 @@ export default function DriverDetailPage({ params }: { params: { id: string } })
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-navy">{driver.name}</h1>
-          <p className="mt-1 text-sm text-navy/60">@{driver.username}</p>
+          <h1 className="text-2xl font-bold text-navy">{driver.contactName}</h1>
+          <p className="mt-1 text-sm text-navy/60">@{driver.user.username}</p>
         </div>
         <div className="flex items-center gap-3">{statusBadge()}</div>
       </div>
@@ -164,17 +178,12 @@ export default function DriverDetailPage({ params }: { params: { id: string } })
           <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
             <Card title="Driver Information">
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <InfoRow icon={Phone} label="Phone" value={driver.phone} />
-                <InfoRow icon={Truck} label="Vehicle" value={driver.vehicle} />
-                <InfoRow
-                  icon={Clock}
-                  label="Last Seen"
-                  value={driver.lastSeen}
-                />
+                <InfoRow icon={Phone} label="Phone" value={driver.phone ?? "—"} />
+                <InfoRow icon={Truck} label="Vehicle" value={vehicleLabel} />
                 <InfoRow
                   icon={Calendar}
                   label="Driver Since"
-                  value={driver.createdAt}
+                  value={new Date(driver.createdAt).toLocaleDateString()}
                 />
               </div>
             </Card>
@@ -185,17 +194,14 @@ export default function DriverDetailPage({ params }: { params: { id: string } })
                   <p className="text-sm text-navy/60">Status</p>
                   {statusBadge()}
                 </div>
-                {driver.currentRouteName && (
-                  <div className="flex items-center gap-2 rounded-lg bg-brand-50 border border-brand-100 px-3 py-2.5">
-                    <MapPin className="h-4 w-4 text-brand-500" />
-                    <div>
-                      <p className="text-xs text-brand-700/70">Currently running</p>
-                      <p className="text-sm font-medium text-brand-700">
-                        {driver.currentRouteName}
-                      </p>
-                    </div>
-                  </div>
-                )}
+                <div className="flex items-center justify-between">
+                  <p className="text-sm text-navy/60">Email</p>
+                  <p className="text-sm font-medium text-navy">{driver.user.email}</p>
+                </div>
+                <div className="flex items-center justify-between">
+                  <p className="text-sm text-navy/60">Account</p>
+                  <p className="text-sm font-medium text-navy">{driver.user.status}</p>
+                </div>
               </div>
             </Card>
           </div>
@@ -219,23 +225,18 @@ export default function DriverDetailPage({ params }: { params: { id: string } })
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
             <StatCard
               label="Routes Completed"
-              value={perf.routesCompleted}
+              value={completedRuns}
               icon={<CheckCircle2 className="h-5 w-5" />}
             />
             <StatCard
-              label="Total Stops Done"
-              value={perf.totalStops}
+              label="Total Runs"
+              value={totalRuns}
               icon={<MapPin className="h-5 w-5" />}
             />
             <StatCard
-              label="On-Time Rate"
-              value={`${perf.onTimePercent}%`}
-              icon={<Clock className={cn("h-5 w-5", perf.onTimePercent >= 95 ? "text-success" : perf.onTimePercent >= 85 ? "text-warning" : "text-danger")} />}
-            />
-            <StatCard
-              label="Stops Skipped"
-              value={perf.stopsSkipped}
-              icon={<AlertTriangle className={cn("h-5 w-5", perf.stopsSkipped === 0 ? "" : "text-warning")} />}
+              label="Completion Rate"
+              value={`${completionRate}%`}
+              icon={<AlertTriangle className={cn("h-5 w-5", completionRate >= 95 ? "text-success" : completionRate >= 85 ? "text-warning" : "text-danger")} />}
             />
           </div>
         </Tabs.Content>

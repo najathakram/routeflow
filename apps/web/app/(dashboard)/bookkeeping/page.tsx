@@ -14,33 +14,17 @@ import {
 import { PageHeader, StatCard, Table, Badge, Button, Select, cn } from "@routeflow/ui/web";
 import { useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
-import {
-  transactions,
-  grandTotal,
-  amountPaid,
-  balance,
-  getBookkeepingKPIs,
-  type Transaction,
-  type PaymentStatus,
-} from "@/mocks/bookkeeping";
+import { useBookkeepingSummary, useTransactions, type Transaction } from "@/lib/api/bookkeeping";
 
 // ─── Payment status badge ─────────────────────────────────────────────────────
+
+type PaymentStatus = "UNPAID" | "PARTIAL" | "PAID";
 
 function PaymentStatusBadge({ status }: { status: PaymentStatus }) {
   if (status === "PAID") return <Badge variant="success" label="Paid" />;
   if (status === "PARTIAL") return <Badge variant="warning" label="Partial" />;
-  if (status === "OVERDUE") return <Badge variant="danger" label="Overdue" />;
   return <Badge variant="neutral" label="Unpaid" />;
 }
-
-// ─── Date filter options ──────────────────────────────────────────────────────
-
-const DATE_OPTIONS = [
-  { value: "", label: "All Time" },
-  { value: "mar", label: "March 2026" },
-  { value: "feb", label: "February 2026" },
-  { value: "jan", label: "January 2026" },
-];
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
@@ -51,51 +35,57 @@ export default function BookkeepingPage() {
   React.useEffect(() => { setTitle("Bookkeeping"); }, [setTitle]);
 
   const [statusFilter, setStatusFilter] = React.useState("");
-  const [dateFilter, setDateFilter] = React.useState("");
   const [customerSearch, setCustomerSearch] = React.useState("");
 
-  const kpis = React.useMemo(() => getBookkeepingKPIs(), []);
+  const { data: summaryData } = useBookkeepingSummary();
+  const { data: txnData, isLoading: txnLoading } = useTransactions({
+    status: statusFilter || undefined,
+  });
+
+  const transactions = txnData?.data ?? [];
 
   const filtered = React.useMemo(() => {
     const q = customerSearch.toLowerCase();
     return transactions.filter((t) => {
-      if (statusFilter && t.status !== statusFilter) return false;
-      if (dateFilter && !t.date.toLowerCase().startsWith(dateFilter === "mar" ? "mar" : dateFilter === "feb" ? "feb" : "jan")) return false;
-      if (q && !t.customerName.toLowerCase().includes(q) && !t.transactionNumber.toLowerCase().includes(q)) return false;
+      if (q && !t.customer?.businessName?.toLowerCase().includes(q) && !t.order?.orderNumber?.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [statusFilter, dateFilter, customerSearch]);
+  }, [transactions, customerSearch]);
 
   const columns = React.useMemo<ColumnDef<Transaction, unknown>[]>(
     () => [
       {
-        accessorKey: "transactionNumber",
+        accessorKey: "order",
         header: "Invoice #",
         cell: ({ row }) => (
           <span className="font-mono text-xs font-semibold text-navy">
-            {row.original.transactionNumber}
+            {row.original.order?.orderNumber ?? row.original.id}
           </span>
         ),
       },
       {
-        accessorKey: "customerName",
+        id: "customer",
         header: "Customer",
         cell: ({ row }) => (
-          <span className="font-medium text-navy">{row.original.customerName}</span>
+          <span className="font-medium text-navy">{row.original.customer?.businessName ?? "—"}</span>
         ),
       },
       {
-        accessorKey: "date",
+        accessorKey: "createdAt",
         header: "Date",
         enableSorting: false,
-        cell: ({ row }) => <span className="text-navy/60">{row.original.date}</span>,
+        cell: ({ row }) => (
+          <span className="text-navy/60">
+            {new Date(row.original.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+          </span>
+        ),
       },
       {
         id: "total",
         header: "Total",
         cell: ({ row }) => (
           <span className="font-medium text-navy">
-            ${grandTotal(row.original).toFixed(2)}
+            ${Number(row.original.totalOwed).toFixed(2)}
           </span>
         ),
       },
@@ -105,7 +95,7 @@ export default function BookkeepingPage() {
         enableSorting: false,
         cell: ({ row }) => (
           <span className="text-success font-medium">
-            ${amountPaid(row.original).toFixed(2)}
+            ${Number(row.original.totalPaid).toFixed(2)}
           </span>
         ),
       },
@@ -114,7 +104,7 @@ export default function BookkeepingPage() {
         header: "Balance",
         enableSorting: false,
         cell: ({ row }) => {
-          const bal = balance(row.original);
+          const bal = Number(row.original.totalOwed) - Number(row.original.totalPaid);
           return (
             <span className={cn("font-medium", bal > 0 ? "text-danger" : "text-navy/40")}>
               ${bal.toFixed(2)}
@@ -175,25 +165,25 @@ export default function BookkeepingPage() {
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <StatCard
           label="Revenue (Month)"
-          value={`$${kpis.monthRevenue.toFixed(0)}`}
+          value={summaryData ? `$${summaryData.totalRevenue.toFixed(0)}` : "—"}
           icon={<DollarSign className="h-5 w-5" />}
         />
         <StatCard
           label="Outstanding"
-          value={`$${kpis.outstanding.toFixed(0)}`}
-          icon={<Clock className={cn("h-5 w-5", kpis.outstanding > 0 && "text-warning")} />}
-          className={kpis.outstanding > 0 ? "ring-1 ring-inset ring-warning/20" : ""}
+          value={summaryData ? `$${summaryData.outstandingReceivables.toFixed(0)}` : "—"}
+          icon={<Clock className={cn("h-5 w-5", summaryData && summaryData.outstandingReceivables > 0 && "text-warning")} />}
+          className={summaryData && summaryData.outstandingReceivables > 0 ? "ring-1 ring-inset ring-warning/20" : ""}
         />
         <StatCard
           label="Received (Week)"
-          value={`$${kpis.weekPayments.toFixed(0)}`}
+          value={summaryData ? `$${summaryData.paymentsThisWeek.toFixed(0)}` : "—"}
           icon={<CheckCircle2 className="h-5 w-5 text-success" />}
         />
         <StatCard
           label="Overdue Accounts"
-          value={kpis.overdueCount}
-          icon={<AlertTriangle className={cn("h-5 w-5", kpis.overdueCount > 0 && "text-danger")} />}
-          className={kpis.overdueCount > 0 ? "ring-1 ring-inset ring-danger/20" : ""}
+          value={summaryData ? summaryData.overdueCount : "—"}
+          icon={<AlertTriangle className={cn("h-5 w-5", summaryData && summaryData.overdueCount > 0 && "text-danger")} />}
+          className={summaryData && summaryData.overdueCount > 0 ? "ring-1 ring-inset ring-danger/20" : ""}
         />
       </div>
 
@@ -213,17 +203,9 @@ export default function BookkeepingPage() {
               { value: "UNPAID", label: "Unpaid" },
               { value: "PARTIAL", label: "Partial" },
               { value: "PAID", label: "Paid" },
-              { value: "OVERDUE", label: "Overdue" },
             ]}
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
-          />
-        </div>
-        <div className="w-40">
-          <Select
-            options={DATE_OPTIONS}
-            value={dateFilter}
-            onChange={(e) => setDateFilter(e.target.value)}
           />
         </div>
       </div>
@@ -232,6 +214,7 @@ export default function BookkeepingPage() {
       <Table
         data={filtered}
         columns={columns}
+        loading={txnLoading}
         onRowClick={(row) => router.push(`/bookkeeping/${row.original.id}`)}
         emptyState="No transactions match your filters."
       />

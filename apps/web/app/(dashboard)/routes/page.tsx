@@ -7,9 +7,11 @@ import { Eye, Play, Calendar } from "lucide-react";
 import { PageHeader, Badge, Table, Button, Card, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { CreateRouteModal } from "./_components/CreateRouteModal";
-import { todayRuns, routeTemplates, type RouteTemplate, type RunStatus } from "@/mocks/routes";
+import { useRoutes, useRouteRuns, type Route, type RouteRun } from "@/lib/api/routes";
 
 // ─── Status helpers ───────────────────────────────────────────────────────────
+
+type RunStatus = "IN_PROGRESS" | "COMPLETED" | "CANCELLED" | "SCHEDULED";
 
 function statusBadge(status: RunStatus) {
   if (status === "IN_PROGRESS") return <Badge status="IN_PROGRESS" />;
@@ -41,7 +43,7 @@ function ProgressBar({ done, total }: { done: number; total: number }) {
 // ─── Template table columns ───────────────────────────────────────────────────
 
 function useTemplateColumns(router: ReturnType<typeof useRouter>) {
-  return React.useMemo<ColumnDef<RouteTemplate, unknown>[]>(
+  return React.useMemo<ColumnDef<Route, unknown>[]>(
     () => [
       {
         accessorKey: "name",
@@ -51,27 +53,20 @@ function useTemplateColumns(router: ReturnType<typeof useRouter>) {
         ),
       },
       {
-        accessorKey: "defaultDriverName",
-        header: "Default Driver",
-        cell: ({ row }) => (
-          <span className="text-navy/70">{row.original.defaultDriverName}</span>
-        ),
-      },
-      {
         accessorKey: "stopCount",
         header: "Stops",
         cell: ({ row }) => (
-          <span className="text-navy/70">{row.original.stopCount}</span>
+          <span className="text-navy/70">{row.original._count?.stops ?? 0}</span>
         ),
       },
       {
-        accessorKey: "lastRunDate",
-        header: "Last Run",
+        accessorKey: "createdAt",
+        header: "Created",
         enableSorting: false,
         cell: ({ row }) => (
           <span className="flex items-center gap-1.5 text-navy/60">
             <Calendar className="h-3.5 w-3.5" />
-            {row.original.lastRunDate}
+            {new Date(row.original.createdAt).toLocaleDateString()}
           </span>
         ),
       },
@@ -113,6 +108,13 @@ export default function RoutesPage() {
 
   React.useEffect(() => { setTitle("Routes"); }, [setTitle]);
 
+  const today = new Date().toISOString().split("T")[0];
+  const { data: runsData, isLoading: runsLoading } = useRouteRuns({ date: today });
+  const { data: routesData, isLoading: routesLoading } = useRoutes();
+
+  const todayRuns = runsData?.data ?? [];
+  const routeTemplates = routesData?.data ?? [];
+
   return (
     <div className="space-y-6 p-6">
       <PageHeader
@@ -127,41 +129,62 @@ export default function RoutesPage() {
         <h2 className="text-sm font-semibold uppercase tracking-wider text-navy/50">
           Route Runs Today
         </h2>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {todayRuns.map((run) => {
-            const done = run.stops.filter(
-              (s) => s.status === "COMPLETED" || s.status === "SKIPPED",
-            ).length;
-            const total = run.stops.length;
-            return (
+        {runsLoading ? (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {[1, 2, 3].map((i) => (
               <div
-                key={run.id}
-                className="flex flex-col gap-4 rounded-lg border border-surface-border bg-white p-4 shadow-card"
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <p className="font-semibold text-navy">{run.routeName}</p>
-                    <p className="mt-0.5 text-sm text-navy/60">{run.driverName}</p>
-                  </div>
-                  {statusBadge(run.status)}
-                </div>
-                <ProgressBar done={done} total={total} />
-                <div className="flex items-center justify-between text-xs text-navy/50">
-                  <span>Started {run.startTime}</span>
-                  {run.endTime && <span>Finished {run.endTime}</span>}
-                </div>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  className="w-full"
-                  onClick={() => router.push(`/routes/${run.id}`)}
+                key={i}
+                className="h-40 animate-pulse rounded-lg border border-surface-border bg-surface-raised"
+              />
+            ))}
+          </div>
+        ) : todayRuns.length === 0 ? (
+          <p className="text-sm text-navy/50">No runs scheduled for today.</p>
+        ) : (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {todayRuns.map((run) => {
+              const total = run._count?.stops ?? run.stops?.length ?? 0;
+              const done = run.stops?.filter(
+                (s) => s.status === "COMPLETED" || s.status === "SKIPPED",
+              ).length ?? 0;
+              const driverName = run.driver?.contactName ?? "Unassigned";
+              const routeName = run.route?.name ?? "Route";
+              const startTime = run.startedAt
+                ? new Date(run.startedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                : null;
+              const endTime = run.completedAt
+                ? new Date(run.completedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                : null;
+              return (
+                <div
+                  key={run.id}
+                  className="flex flex-col gap-4 rounded-lg border border-surface-border bg-white p-4 shadow-card"
                 >
-                  View Run
-                </Button>
-              </div>
-            );
-          })}
-        </div>
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="font-semibold text-navy">{routeName}</p>
+                      <p className="mt-0.5 text-sm text-navy/60">{driverName}</p>
+                    </div>
+                    {statusBadge(run.status)}
+                  </div>
+                  <ProgressBar done={done} total={total} />
+                  <div className="flex items-center justify-between text-xs text-navy/50">
+                    {startTime && <span>Started {startTime}</span>}
+                    {endTime && <span>Finished {endTime}</span>}
+                  </div>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="w-full"
+                    onClick={() => router.push(`/routes/${run.id}`)}
+                  >
+                    View Run
+                  </Button>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </section>
 
       {/* ── Route templates ── */}
@@ -169,11 +192,15 @@ export default function RoutesPage() {
         <h2 className="text-sm font-semibold uppercase tracking-wider text-navy/50">
           Route Templates
         </h2>
-        <Table
-          data={routeTemplates}
-          columns={templateColumns}
-          onRowClick={(row) => router.push(`/routes/${row.original.id}`)}
-        />
+        {routesLoading ? (
+          <div className="h-32 animate-pulse rounded-lg border border-surface-border bg-surface-raised" />
+        ) : (
+          <Table
+            data={routeTemplates}
+            columns={templateColumns}
+            onRowClick={(row) => router.push(`/routes/${row.original.id}`)}
+          />
+        )}
       </section>
 
       <CreateRouteModal isOpen={isCreateOpen} onClose={() => setIsCreateOpen(false)} />

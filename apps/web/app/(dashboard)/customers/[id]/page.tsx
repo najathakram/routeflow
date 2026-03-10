@@ -11,7 +11,6 @@ import {
   Plus,
   Mail,
   Phone,
-  CreditCard,
   FileText,
 } from "lucide-react";
 import {
@@ -27,37 +26,31 @@ import {
 import { usePageTitle } from "@/lib/page-title-context";
 import { CustomerFormModal } from "../_components/CustomerFormModal";
 import {
-  getCustomer,
-  getCustomerOrders,
-  getRouteName,
-  availableRoutes,
-  type CustomerStatus,
-  type CustomerOrder,
-} from "@/mocks/customers";
+  useCustomer,
+  useCustomerOrders,
+  useUpdateCustomerStatus,
+  useAddCustomerAddress,
+} from "@/lib/api/customers";
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+interface ApiOrder {
+  id: string;
+  orderNumber?: string;
+  status: string;
+  createdAt: string;
+  [key: string]: unknown;
+}
 
 // ─── Order table columns (stable outside component) ──────────────────────────
 
-const orderColumns: ColumnDef<CustomerOrder, unknown>[] = [
+const orderColumns: ColumnDef<ApiOrder, unknown>[] = [
   {
     accessorKey: "orderNumber",
     header: "Order #",
     cell: ({ row }) => (
       <span className="font-mono text-xs font-semibold text-navy">
-        {row.original.orderNumber}
-      </span>
-    ),
-  },
-  {
-    accessorKey: "items",
-    header: "Items",
-    cell: ({ row }) => <span className="text-navy/70">{row.original.items}</span>,
-  },
-  {
-    accessorKey: "total",
-    header: "Total",
-    cell: ({ row }) => (
-      <span className="font-medium text-navy">
-        ${row.original.total.toLocaleString("en-US", { minimumFractionDigits: 2 })}
+        {row.original.orderNumber ?? row.original.id}
       </span>
     ),
   },
@@ -68,10 +61,14 @@ const orderColumns: ColumnDef<CustomerOrder, unknown>[] = [
     cell: ({ row }) => <Badge status={row.original.status} />,
   },
   {
-    accessorKey: "date",
+    accessorKey: "createdAt",
     header: "Date",
     enableSorting: false,
-    cell: ({ row }) => <span className="text-navy/60">{row.original.date}</span>,
+    cell: ({ row }) => (
+      <span className="text-navy/60">
+        {new Date(row.original.createdAt).toLocaleDateString()}
+      </span>
+    ),
   },
 ];
 
@@ -116,7 +113,44 @@ function InfoRow({
 
 // ─── Add Address Modal ────────────────────────────────────────────────────────
 
-function AddAddressModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
+interface AddAddressFormValues {
+  label: string;
+  line1: string;
+  line2?: string;
+  city: string;
+  state: string;
+  zip: string;
+  isDefault?: boolean;
+}
+
+function AddAddressModal({
+  isOpen,
+  onClose,
+  onSave,
+  isSaving,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  onSave: (values: AddAddressFormValues) => void;
+  isSaving: boolean;
+}) {
+  const [form, setForm] = React.useState<AddAddressFormValues>({
+    label: "",
+    line1: "",
+    city: "",
+    state: "",
+    zip: "",
+  });
+
+  const handleChange = (field: keyof AddAddressFormValues) => (
+    e: React.ChangeEvent<HTMLInputElement>,
+  ) => setForm((prev) => ({ ...prev, [field]: e.target.value }));
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    onSave(form);
+  };
+
   return (
     <Modal
       open={isOpen}
@@ -124,39 +158,66 @@ function AddAddressModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
       title="Add Delivery Address"
       footer={
         <>
-          <Button variant="secondary" onClick={onClose}>
+          <Button variant="secondary" type="button" onClick={onClose}>
             Cancel
           </Button>
-          <Button onClick={onClose}>Save Address</Button>
+          <Button type="submit" form="add-address-form" loading={isSaving}>
+            Save Address
+          </Button>
         </>
       }
     >
-      <div className="space-y-3">
-        <div className="grid grid-cols-2 gap-3">
-          <Input label="Address Label" placeholder="Warehouse, Kitchen…" />
-          <div /> {/* spacer */}
-        </div>
-        <Input label="Street" placeholder="123 Main St" />
-        <div className="grid grid-cols-3 gap-3">
-          <div className="col-span-2">
-            <Input label="City" placeholder="Austin" />
+      <form id="add-address-form" onSubmit={handleSubmit} noValidate>
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <Input
+              label="Address Label"
+              placeholder="Warehouse, Kitchen…"
+              value={form.label}
+              onChange={handleChange("label")}
+            />
+            <div />
           </div>
-          <div>
-            <label className="mb-1 block text-sm font-medium text-navy">State</label>
-            <div className="flex h-10 items-center rounded border border-surface-border bg-surface-raised px-3 text-sm text-navy/60">
-              TX
+          <Input
+            label="Street"
+            placeholder="123 Main St"
+            value={form.line1}
+            onChange={handleChange("line1")}
+          />
+          <div className="grid grid-cols-3 gap-3">
+            <div className="col-span-2">
+              <Input
+                label="City"
+                placeholder="Austin"
+                value={form.city}
+                onChange={handleChange("city")}
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-navy">State</label>
+              <Input
+                placeholder="TX"
+                value={form.state}
+                onChange={handleChange("state")}
+              />
             </div>
           </div>
+          <Input
+            label="ZIP Code"
+            placeholder="78701"
+            value={form.zip}
+            onChange={handleChange("zip")}
+          />
         </div>
-        <Input label="ZIP Code" placeholder="78701" />
-      </div>
+      </form>
     </Modal>
   );
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-const STATUS_CYCLE: CustomerStatus[] = ["ACTIVE", "INACTIVE", "SUSPENDED"];
+const STATUS_CYCLE = ["ACTIVE", "INACTIVE", "SUSPENDED"] as const;
+type CustomerStatus = (typeof STATUS_CYCLE)[number];
 
 export default function CustomerDetailPage({
   params,
@@ -164,18 +225,28 @@ export default function CustomerDetailPage({
   params: { id: string };
 }) {
   const { setTitle } = usePageTitle();
-  const customer = getCustomer(params.id);
+
+  const { data: customer, isLoading } = useCustomer(params.id);
+  const { data: ordersResult } = useCustomerOrders(params.id);
+  const updateStatus = useUpdateCustomerStatus();
+  const addAddress = useAddCustomerAddress();
+
+  const allOrders: ApiOrder[] = ordersResult?.data ?? [];
+  const addresses = customer?.addresses ?? [];
+  const currentStatus: CustomerStatus =
+    (customer?.user?.status as CustomerStatus) ?? "ACTIVE";
 
   React.useEffect(() => {
     setTitle(customer?.businessName ?? "Customer");
   }, [setTitle, customer?.businessName]);
 
-  const [localStatus, setLocalStatus] = React.useState<CustomerStatus>(
-    customer?.status ?? "ACTIVE",
-  );
   const [isEditOpen, setIsEditOpen] = React.useState(false);
   const [isAddAddressOpen, setIsAddAddressOpen] = React.useState(false);
   const [orderStatusFilter, setOrderStatusFilter] = React.useState("");
+
+  if (isLoading) {
+    return <div className="p-12 text-center text-navy/40">Loading...</div>;
+  }
 
   if (!customer) {
     return (
@@ -188,14 +259,19 @@ export default function CustomerDetailPage({
     );
   }
 
-  const allOrders = getCustomerOrders(params.id);
   const filteredOrders = orderStatusFilter
     ? allOrders.filter((o) => o.status === orderStatusFilter)
     : allOrders;
 
-  const cycleStatus = () => {
-    const idx = STATUS_CYCLE.indexOf(localStatus);
-    setLocalStatus(STATUS_CYCLE[(idx + 1) % STATUS_CYCLE.length]);
+  const handleStatusChange = (s: CustomerStatus) => {
+    updateStatus.mutate({ id: params.id, status: s });
+  };
+
+  const handleSaveAddress = (values: AddAddressFormValues) => {
+    addAddress.mutate(
+      { id: params.id, ...values },
+      { onSuccess: () => setIsAddAddressOpen(false) },
+    );
   };
 
   return (
@@ -217,7 +293,7 @@ export default function CustomerDetailPage({
           <p className="mt-1 text-sm text-navy/60">{customer.contactName}</p>
         </div>
         <div className="flex items-center gap-3">
-          <Badge status={localStatus} />
+          <Badge status={currentStatus} />
           <Button variant="secondary" size="sm" onClick={() => setIsEditOpen(true)}>
             Edit
           </Button>
@@ -232,7 +308,7 @@ export default function CustomerDetailPage({
             Orders{allOrders.length > 0 ? ` (${allOrders.length})` : ""}
           </TabTrigger>
           <TabTrigger value="addresses">
-            Delivery Addresses ({customer.addresses.length})
+            Delivery Addresses ({addresses.length})
           </TabTrigger>
         </Tabs.List>
 
@@ -246,49 +322,28 @@ export default function CustomerDetailPage({
                   <InfoRow
                     icon={Phone}
                     label="Phone"
-                    value={customer.phone}
+                    value={customer.phone ?? "—"}
                   />
                   <InfoRow
                     icon={Mail}
                     label="Email"
-                    value={customer.email}
-                  />
-                  <InfoRow
-                    icon={CreditCard}
-                    label="Credit Terms"
-                    value={customer.creditTerms}
+                    value={customer.user?.email ?? "—"}
                   />
                   <InfoRow
                     icon={FileText}
                     label="Customer Since"
-                    value={customer.createdAt}
+                    value={
+                      customer.createdAt
+                        ? new Date(customer.createdAt).toLocaleDateString()
+                        : "—"
+                    }
                   />
                 </div>
-                {customer.notes && (
-                  <div className="mt-4 rounded-lg bg-surface-raised p-3">
-                    <p className="text-xs font-medium text-navy/50 mb-1">Notes</p>
-                    <p className="text-sm text-navy/80">{customer.notes}</p>
-                  </div>
-                )}
               </Card>
 
-              {/* Assigned routes */}
+              {/* Assigned routes — not available from API yet */}
               <Card title="Assigned Routes">
-                {customer.assignedRoutes.length > 0 ? (
-                  <div className="flex flex-wrap gap-2">
-                    {customer.assignedRoutes.map((id) => (
-                      <span
-                        key={id}
-                        className="flex items-center gap-1.5 rounded-full border border-brand-100 bg-brand-50 px-3 py-1 text-sm font-medium text-brand-700"
-                      >
-                        <MapPin className="h-3.5 w-3.5" />
-                        {getRouteName(id)}
-                      </span>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-sm text-navy/40">No routes assigned.</p>
-                )}
+                <p className="text-sm text-navy/40">No routes data available.</p>
               </Card>
             </div>
 
@@ -298,16 +353,17 @@ export default function CustomerDetailPage({
                 <div className="flex flex-col gap-4">
                   <div className="flex items-center justify-between">
                     <p className="text-sm text-navy/60">Current status</p>
-                    <Badge status={localStatus} />
+                    <Badge status={currentStatus} />
                   </div>
                   <div className="space-y-2">
                     {STATUS_CYCLE.map((s) => (
                       <button
                         key={s}
-                        onClick={() => setLocalStatus(s)}
+                        onClick={() => handleStatusChange(s)}
+                        disabled={updateStatus.isPending}
                         className={cn(
                           "flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition-colors",
-                          localStatus === s
+                          currentStatus === s
                             ? "border-brand-500 bg-brand-50 text-brand-700"
                             : "border-surface-border text-navy/60 hover:border-navy/30 hover:text-navy",
                         )}
@@ -375,29 +431,35 @@ export default function CustomerDetailPage({
                 Add Address
               </Button>
             </div>
-            <ul className="-mx-6 -mb-6 divide-y divide-surface-border">
-              {customer.addresses.map((addr) => (
-                <li key={addr.id} className="flex items-start gap-3 px-6 py-4">
-                  <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-navy/40" />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <p className="text-sm font-medium text-navy">{addr.label}</p>
-                      {addr.isPrimary && (
-                        <Star className="h-3.5 w-3.5 fill-warning text-warning" />
-                      )}
+            {addresses.length === 0 ? (
+              <p className="text-sm text-navy/40">No addresses on file.</p>
+            ) : (
+              <ul className="-mx-6 -mb-6 divide-y divide-surface-border">
+                {addresses.map((addr: any) => (
+                  <li key={addr.id} className="flex items-start gap-3 px-6 py-4">
+                    <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-navy/40" />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-medium text-navy">{addr.label}</p>
+                        {addr.isDefault && (
+                          <Star className="h-3.5 w-3.5 fill-warning text-warning" />
+                        )}
+                      </div>
+                      <p className="mt-0.5 text-sm text-navy/60">
+                        {addr.line1}
+                        {addr.line2 ? `, ${addr.line2}` : ""}, {addr.city},{" "}
+                        {addr.state} {addr.zip}
+                      </p>
                     </div>
-                    <p className="mt-0.5 text-sm text-navy/60">
-                      {addr.street}, {addr.city}, {addr.state} {addr.zip}
-                    </p>
-                  </div>
-                  {addr.isPrimary && (
-                    <span className="shrink-0 rounded-full bg-brand-100 px-2 py-0.5 text-xs font-medium text-brand-700">
-                      Primary
-                    </span>
-                  )}
-                </li>
-              ))}
-            </ul>
+                    {addr.isDefault && (
+                      <span className="shrink-0 rounded-full bg-brand-100 px-2 py-0.5 text-xs font-medium text-brand-700">
+                        Primary
+                      </span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
           </Card>
         </Tabs.Content>
       </Tabs.Root>
@@ -412,6 +474,8 @@ export default function CustomerDetailPage({
       <AddAddressModal
         isOpen={isAddAddressOpen}
         onClose={() => setIsAddAddressOpen(false)}
+        onSave={handleSaveAddress}
+        isSaving={addAddress.isPending}
       />
     </div>
   );

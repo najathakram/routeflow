@@ -1,10 +1,11 @@
 import { Module } from '@nestjs/common';
-import { BookkeepingController } from './bookkeeping.controller';
 import { BookkeepingService } from './bookkeeping.service';
+import { BookkeepingController } from './bookkeeping.controller';
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
+  imports: [AuthModule],
   controllers: [BookkeepingController],
   providers: [BookkeepingService],
-  exports: [BookkeepingService],
 })
 export class BookkeepingModule {}
