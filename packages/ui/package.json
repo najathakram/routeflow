@@ -6,7 +6,8 @@
   "types": "./index.tsx",
   "exports": {
     ".": "./index.tsx",
-    "./*": "./src/*.tsx"
+    "./*": "./src/*.tsx",
+    "./web": "./src/web/index.ts"
   },
   "scripts": {
     "lint": "eslint . --max-warnings 0",
@@ -23,12 +24,28 @@
     "typescript": "^5.4.0"
   },
   "peerDependencies": {
+    "@radix-ui/react-dialog": ">=1.0.0",
+    "@radix-ui/react-toast": ">=1.0.0",
+    "@tanstack/react-table": ">=8.0.0",
+    "class-variance-authority": ">=0.7.0",
+    "clsx": ">=2.0.0",
+    "lucide-react": ">=0.400.0",
     "react": ">=18.0.0",
     "react-dom": ">=18.0.0",
-    "react-native": ">=0.73.0"
+    "react-hook-form": ">=7.0.0",
+    "react-native": ">=0.73.0",
+    "tailwind-merge": ">=2.0.0"
   },
   "peerDependenciesMeta": {
+    "@radix-ui/react-dialog": { "optional": true },
+    "@radix-ui/react-toast": { "optional": true },
+    "@tanstack/react-table": { "optional": true },
+    "class-variance-authority": { "optional": true },
+    "clsx": { "optional": true },
+    "lucide-react": { "optional": true },
     "react-dom": { "optional": true },
-    "react-native": { "optional": true }
+    "react-hook-form": { "optional": true },
+    "react-native": { "optional": true },
+    "tailwind-merge": { "optional": true }
   }
 }
