@@ -92,14 +92,6 @@ export default function ShopScreen() {
     return () => clearTimeout(t);
   }, []);
 
-  if (isLoading) return <><Stack.Screen options={{ title: "Shop" }} /><ShopSkeleton /></>;
-  if (isError) return (
-    <>
-      <Stack.Screen options={{ title: "Shop" }} />
-      <NetworkError onRetry={() => { setIsError(false); setIsLoading(true); }} />
-    </>
-  );
-
   const categories = useMemo(
     () => [ALL, ...Array.from(new Set(MOCK_PRODUCTS.map((p) => p.category)))],
     [],
@@ -115,6 +107,14 @@ export default function ShopScreen() {
       return matchesSearch && matchesCategory;
     });
   }, [search, selectedCategory]);
+
+  if (isLoading) return <><Stack.Screen options={{ title: "Shop" }} /><ShopSkeleton /></>;
+  if (isError) return (
+    <>
+      <Stack.Screen options={{ title: "Shop" }} />
+      <NetworkError onRetry={() => { setIsError(false); setIsLoading(true); }} />
+    </>
+  );
 
   return (
     <>

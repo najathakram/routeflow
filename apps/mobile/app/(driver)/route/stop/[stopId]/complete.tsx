@@ -17,10 +17,10 @@ const STATUS_CONFIG = {
 export default function StopCompleteScreen() {
   const { stopId } = useLocalSearchParams<{ stopId: string }>();
   const route = useRouteStore((s) => s.route);
-  const resolutions = useRouteStore((s) => selectStopResolutions(s, stopId));
-  const stopNote = useRouteStore((s) => s.stopNotes[stopId] ?? "");
+  const resolutions = useRouteStore((s) => selectStopResolutions(s, stopId)) ?? {};
+  const stopNote = useRouteStore((s) => s.stopNotes[stopId]) ?? "";
   const setStopNote = useRouteStore((s) => s.setStopNote);
-  const addedItems = useRouteStore((s) => s.addedItems[stopId] ?? []);
+  const addedItems = useRouteStore((s) => s.addedItems[stopId]) ?? [];
   const completeStop = useRouteStore((s) => s.completeStop);
 
   const stop = route.stops.find((s) => s.id === stopId);

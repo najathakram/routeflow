@@ -347,7 +347,7 @@ export default function StopDetailScreen() {
   const route = useRouteStore((s) => s.route);
   const stopNote = useRouteStore((s) => s.stopNotes[stopId] ?? "");
   const setStopNote = useRouteStore((s) => s.setStopNote);
-  const addedItems = useRouteStore((s) => s.addedItems[stopId] ?? []);
+  const addedItems = useRouteStore((s) => s.addedItems[stopId]) ?? [];
   const allResolved = useRouteStore((s) => selectAllItemsResolved(s, stopId));
   const [showAddForm, setShowAddForm] = useState(false);
 

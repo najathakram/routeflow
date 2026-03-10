@@ -18,7 +18,7 @@ export default function OperatorBlockedScreen() {
         </Text>
         <MobileButton
           onPress={logout}
-          variant="outline"
+          variant="secondary"
           size="lg"
           style={styles.button}
         >

@@ -1,5 +1,23 @@
 import * as SecureStore from "expo-secure-store";
+import { Platform } from "react-native";
 import { apiClient } from "./api-client";
+
+// ─── Web-safe storage (SecureStore is native-only) ────────────────────────────
+
+const storage = {
+  async get(key: string): Promise<string | null> {
+    if (Platform.OS === "web") return localStorage.getItem(key);
+    return SecureStore.getItemAsync(key);
+  },
+  async set(key: string, value: string): Promise<void> {
+    if (Platform.OS === "web") { localStorage.setItem(key, value); return; }
+    await SecureStore.setItemAsync(key, value);
+  },
+  async del(key: string): Promise<void> {
+    if (Platform.OS === "web") { localStorage.removeItem(key); return; }
+    await SecureStore.deleteItemAsync(key);
+  },
+};
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -29,7 +47,7 @@ function parseJwtPayload(token: string): Record<string, unknown> | null {
 }
 
 export async function getStoredUser(): Promise<AuthUser | null> {
-  const token = await SecureStore.getItemAsync("accessToken");
+  const token = await storage.get("accessToken");
   if (!token) return null;
   const payload = parseJwtPayload(token);
   if (!payload) return null;
@@ -55,8 +73,8 @@ export async function login(
     username,
     password,
   });
-  await SecureStore.setItemAsync("accessToken", data.accessToken);
-  await SecureStore.setItemAsync("refreshToken", data.refreshToken);
+  await storage.set("accessToken", data.accessToken);
+  await storage.set("refreshToken", data.refreshToken);
   return data;
 }
 
@@ -66,19 +84,19 @@ export async function logout(): Promise<void> {
   } catch {
     // Best-effort — clear tokens regardless of server response
   }
-  await SecureStore.deleteItemAsync("accessToken");
-  await SecureStore.deleteItemAsync("refreshToken");
+  await storage.del("accessToken");
+  await storage.del("refreshToken");
 }
 
 export async function refreshTokens(): Promise<AuthResponse | null> {
-  const refreshToken = await SecureStore.getItemAsync("refreshToken");
+  const refreshToken = await storage.get("refreshToken");
   if (!refreshToken) return null;
   try {
     const { data } = await apiClient.post<AuthResponse>("/auth/refresh", {
       refreshToken,
     });
-    await SecureStore.setItemAsync("accessToken", data.accessToken);
-    await SecureStore.setItemAsync("refreshToken", data.refreshToken);
+    await storage.set("accessToken", data.accessToken);
+    await storage.set("refreshToken", data.refreshToken);
     return data;
   } catch {
     return null;
