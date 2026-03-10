@@ -7,7 +7,9 @@
   "exports": {
     ".": "./index.tsx",
     "./*": "./src/*.tsx",
-    "./web": "./src/web/index.ts"
+    "./web": "./src/web/index.ts",
+    "./mobile": "./src/mobile/index.ts",
+    "./tokens": "./src/tokens.ts"
   },
   "scripts": {
     "lint": "eslint . --max-warnings 0",

@@ -87,7 +87,7 @@ export function Table<TData>({
           {isLoading ? (
             Array.from({ length: SKELETON_ROWS }).map((_, i) => (
               <tr key={`skeleton-${i}`}>
-                {columns.map((_, j) => (
+                {table.getVisibleLeafColumns().map((_, j) => (
                   <td key={j} className="px-4 py-3">
                     <div className="h-4 w-full animate-pulse rounded bg-surface-border" />
                   </td>

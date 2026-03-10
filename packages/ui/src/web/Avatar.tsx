@@ -41,6 +41,7 @@ export const Avatar = React.forwardRef<HTMLDivElement, AvatarProps>(
           SIZE_CLASSES[size],
           className,
         )}
+        role="img"
         aria-label={alt ?? name}
         {...props}
       >

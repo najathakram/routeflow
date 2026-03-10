@@ -34,4 +34,4 @@ export type { ToastData, ToastVariant } from "./Toast";
 export { PageHeader } from "./PageHeader";
 export type { PageHeaderProps } from "./PageHeader";
 
-export { cn } from "./utils";
+export { cn, mergeRefs } from "./utils";
