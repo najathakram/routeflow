@@ -151,3 +151,67 @@ Then add `TURBO_TOKEN` and `TURBO_TEAM` to your CI environment (see root `.env.e
 - **Env vars** — prefix with `NEXT_PUBLIC_` (web) or `EXPO_PUBLIC_` (mobile) for client-side values
 - **No secrets in `EXPO_PUBLIC_*`** — these are inlined at build time and visible in the bundle
 - **Branch strategy** — `main` is production-ready; feature branches off `main`, PRs required
+
+---
+
+## Deployment
+
+RouteFlow deploys to [Railway](https://railway.app) with Docker containers.
+
+### Architecture
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  Railway Project: routeflow                                  │
+│                                                              │
+│  ┌──────────────┐  ┌──────────────┐                         │
+│  │ routeflow-api│  │ routeflow-web│                         │
+│  │  (Docker)    │  │  (Docker)    │                         │
+│  │  :3000       │  │  :3001       │                         │
+│  └──────┬───────┘  └──────────────┘                         │
+│         │                                                    │
+│  ┌──────┴───────┐  ┌──────────────┐                         │
+│  │  PostgreSQL  │  │    Redis     │                         │
+│  │  (managed)   │  │  (managed)   │                         │
+│  └──────────────┘  └──────────────┘                         │
+└──────────────────────────────────────────────────────────────┘
+```
+
+### Service URLs
+
+| Service | URL | Notes |
+|---|---|---|
+| API | `https://<routeflow-api>.up.railway.app/api/v1` | REST + WebSocket |
+| Web Dashboard | `https://<routeflow-web>.up.railway.app` | Next.js SSR |
+| PostgreSQL | Railway internal | Auto-linked via `${{Postgres.DATABASE_URL}}` |
+| Redis | Railway internal | Auto-linked via `${{Redis.REDIS_URL}}` |
+
+> Replace `<routeflow-api>` and `<routeflow-web>` with your actual Railway-assigned domains.
+
+### Quick deploy
+
+```bash
+npm install -g @railway/cli
+railway login
+railway link                          # link to existing project
+railway up --service routeflow-api    # deploy API
+railway up --service routeflow-web    # deploy web dashboard
+```
+
+### Full deployment guide
+
+See **[docs/railway-deployment.md](docs/railway-deployment.md)** for complete
+step-by-step instructions including:
+- Project and service creation
+- Environment variable configuration
+- Database migration and seeding
+- CI/CD integration with GitHub Actions
+- Custom domain setup
+
+### CI/CD
+
+| Workflow | Trigger | What it does |
+|---|---|---|
+| `ci.yml` | Every push + PRs to main | Lint, type-check, test |
+| `deploy-staging.yml` | Push to `develop` | Build → GHCR → Railway staging |
+| `deploy-production.yml` | Push to `main` | Build → GHCR → Railway production (manual approval) |
