@@ -66,10 +66,24 @@ cp .env.example .env
 
 ```bash
 # Postgres + Redis in the background
-docker compose up -d
+npm run db:up
 
 # Optional: also start Redis Commander UI at http://localhost:8081
 docker compose --profile tools up -d
+```
+
+Verify both containers are running:
+
+```bash
+docker ps
+# You should see routeflow_postgres and routeflow_redis in the output.
+```
+
+Other database helpers:
+
+```bash
+npm run db:down   # stop containers (data is preserved in named volumes)
+npm run db:logs   # tail Postgres logs
 ```
 
 Services started:
