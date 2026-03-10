@@ -11,25 +11,44 @@ import * as SplashScreen from "expo-splash-screen";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { UserRole } from "@routeflow/types";
-import { useAuthStore } from "../store/authStore";
+import { useAuthStore } from "../lib/auth-store";
 
 SplashScreen.preventAutoHideAsync();
 
 const queryClient = new QueryClient();
 
 function RootLayoutNav() {
-  const { user, isLoading } = useAuthStore();
+  const { user, isLoading, initialize } = useAuthStore();
   const router = useRouter();
   const segments = useSegments();
 
   useEffect(() => {
+    initialize();
+  }, []);
+
+  useEffect(() => {
     if (isLoading) return;
 
-    const inAuthGroup = segments[0] === "(auth)";
-
     if (!user) {
-      if (!inAuthGroup) {
+      // Not logged in — send to login unless already there
+      if (segments[0] !== "(auth)" || segments[1] !== "login") {
         router.replace("/(auth)/login");
+      }
+      return;
+    }
+
+    if (user.forcePasswordChange) {
+      if (
+        !(segments[0] === "(auth)" && segments[1] === "force-change-password")
+      ) {
+        router.replace("/(auth)/force-change-password");
+      }
+      return;
+    }
+
+    if (user.role === UserRole.OPERATOR) {
+      if (!(segments[0] === "(auth)" && segments[1] === "operator-blocked")) {
+        router.replace("/(auth)/operator-blocked");
       }
       return;
     }
