@@ -13,11 +13,13 @@
     "check-types": "tsc --noEmit"
   },
   "dependencies": {
+    "@expo-google-fonts/inter": "^0.4.2",
     "@expo/metro-runtime": "^55.0.6",
     "@hookform/resolvers": "^5.2.2",
     "@react-navigation/bottom-tabs": "^7.15.5",
     "@react-navigation/native": "^7.1.33",
     "@react-navigation/stack": "^7.8.4",
+    "@routeflow/types": "*",
     "@tanstack/react-query": "^5.90.21",
     "axios": "^1.13.6",
     "date-fns": "^4.1.0",
@@ -41,14 +43,13 @@
     "react-native-safe-area-context": "^5.7.0",
     "react-native-screens": "^4.24.0",
     "zod": "^3.25.76",
-    "zustand": "^5.0.11",
-    "@routeflow/types": "*"
+    "zustand": "^5.0.11"
   },
   "devDependencies": {
-    "@types/react": "~19.2.2",
-    "typescript": "~5.9.2",
     "@routeflow/eslint-config": "*",
-    "eslint": "^9.0.0"
+    "@types/react": "~19.2.2",
+    "eslint": "^9.0.0",
+    "typescript": "~5.9.2"
   },
   "private": true
 }

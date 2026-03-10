@@ -6,11 +6,13 @@
   "exports": {
     "./eslint": "./eslint.js",
     "./prettier": "./prettier.js",
-    "./tsconfig": "./tsconfig.base.json"
+    "./tsconfig": "./tsconfig.base.json",
+    "./tailwind": "./tailwind.config.ts"
   },
   "devDependencies": {
     "@routeflow/eslint-config": "*",
-    "@routeflow/typescript-config": "*"
+    "@routeflow/typescript-config": "*",
+    "tailwindcss": "^3.4.0"
   },
   "scripts": {
     "check-types": "echo \"config package: no TS sources to check\"",
