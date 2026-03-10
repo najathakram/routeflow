@@ -42,16 +42,21 @@ const NAV_ITEMS = [
 // ─── Auth guard ───────────────────────────────────────────────────────────────
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, isLoading, user } = useAuth();
   const router = useRouter();
 
   React.useEffect(() => {
+    if (isLoading) return;
     if (!isAuthenticated) {
       router.push("/login");
+      return;
     }
-  }, [isAuthenticated, router]);
+    if (user?.forcePasswordChange) {
+      router.push("/change-password");
+    }
+  }, [isAuthenticated, isLoading, user, router]);
 
-  if (!isAuthenticated) return null;
+  if (isLoading || !isAuthenticated || user?.forcePasswordChange) return null;
   return <>{children}</>;
 }
 
@@ -136,9 +141,9 @@ function Header({
               className="flex items-center gap-2 rounded-lg px-2 py-1.5 transition-colors hover:bg-surface-raised"
               aria-label="Open user menu"
             >
-              <Avatar name={user.name} size="sm" />
+              <Avatar name={user?.username ?? ""} size="sm" />
               <span className="hidden text-sm font-medium text-navy sm:block">
-                {user.name}
+                {user?.username}
               </span>
               <ChevronDown className="hidden h-4 w-4 text-navy/40 sm:block" />
             </button>
@@ -159,7 +164,7 @@ function Header({
               <DropdownMenu.Separator className="my-1 border-t border-surface-border" />
               <DropdownMenu.Item
                 className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-danger outline-none hover:bg-danger-bg"
-                onSelect={logout}
+                onSelect={() => void logout()}
               >
                 <LogOut className="h-4 w-4" />
                 Sign out

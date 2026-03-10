@@ -6,6 +6,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useRouter } from "next/navigation";
 import { Input, Button } from "@routeflow/ui/web";
+import { useAuth } from "@/lib/auth-context";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -20,7 +21,9 @@ type LoginFormValues = z.infer<typeof loginSchema>;
 
 export default function LoginPage() {
   const router = useRouter();
+  const { login: authLogin } = useAuth();
   const [isLoading, setIsLoading] = React.useState(false);
+  const [apiError, setApiError] = React.useState<string | null>(null);
 
   const {
     register,
@@ -30,11 +33,23 @@ export default function LoginPage() {
     resolver: zodResolver(loginSchema),
   });
 
-  const onSubmit = async (_data: LoginFormValues) => {
+  const onSubmit = async (data: LoginFormValues) => {
     setIsLoading(true);
-    // Mock auth — simulate network delay then redirect
-    await new Promise((r) => setTimeout(r, 800));
-    router.push("/dashboard");
+    setApiError(null);
+    try {
+      const user = await authLogin(data.username, data.password);
+      if (user.forcePasswordChange) {
+        router.push("/change-password");
+      } else {
+        router.push("/dashboard");
+      }
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { message?: string } } })?.response?.data
+          ?.message ?? "Invalid username or password.";
+      setApiError(typeof msg === "string" ? msg : "Login failed.");
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -52,6 +67,11 @@ export default function LoginPage() {
         {/* Card */}
         <div className="rounded-xl bg-white p-6 shadow-card">
           <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4" noValidate>
+            {apiError && (
+              <p className="rounded-lg bg-danger-bg px-3 py-2 text-sm text-danger">
+                {apiError}
+              </p>
+            )}
             <Input
               label="Username"
               placeholder="Enter your username"

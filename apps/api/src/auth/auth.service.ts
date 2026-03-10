@@ -36,6 +36,7 @@ export class AuthService {
 
     const payload: JwtPayload = {
       sub: user.id,
+      username: user.username,
       role: user.role,
       status: user.status,
       forcePasswordChange: user.forcePasswordChange,
@@ -58,6 +59,7 @@ export class AuthService {
       refreshToken,
       user: {
         id: user.id,
+        username: user.username,
         role: user.role,
         status: user.status,
         forcePasswordChange: user.forcePasswordChange,
@@ -94,6 +96,7 @@ export class AuthService {
 
     const newPayload: JwtPayload = {
       sub: user.id,
+      username: user.username,
       role: user.role,
       status: user.status,
       forcePasswordChange: user.forcePasswordChange,
@@ -116,6 +119,7 @@ export class AuthService {
       refreshToken,
       user: {
         id: user.id,
+        username: user.username,
         role: user.role,
         status: user.status,
         forcePasswordChange: user.forcePasswordChange,
