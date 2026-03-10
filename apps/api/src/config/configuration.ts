@@ -28,6 +28,9 @@ export interface AppConfig {
   ors: {
     apiKey: string;
   };
+  googleMaps: {
+    apiKey: string;
+  };
   fcm: {
     projectId: string;
   };
@@ -62,6 +65,9 @@ export const configuration = (): AppConfig => ({
   },
   ors: {
     apiKey: process.env.ORS_API_KEY ?? '',
+  },
+  googleMaps: {
+    apiKey: process.env.GOOGLE_MAPS_API_KEY ?? '',
   },
   fcm: {
     projectId: process.env.FCM_PROJECT_ID ?? '',

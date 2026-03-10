@@ -101,3 +101,21 @@ export function useUpdateRouteRunStatus() {
     },
   });
 }
+
+export interface OptimizeResult {
+  stopOrder: Array<{ stopId: string; stopNumber: number }>;
+  reorderedCount: number;
+  usedFallback: boolean;
+}
+
+export function useOptimizeRoute() {
+  const qc = useQueryClient();
+  return useMutation<OptimizeResult, Error, string>({
+    mutationFn: (id) =>
+      apiClient.post<OptimizeResult>(`/route-runs/${id}/optimize`).then((r) => r.data),
+    onSuccess: (_, id) => {
+      qc.invalidateQueries({ queryKey: ['route-runs', id] });
+      qc.invalidateQueries({ queryKey: ['route-runs'] });
+    },
+  });
+}

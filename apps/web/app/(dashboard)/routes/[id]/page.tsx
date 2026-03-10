@@ -12,10 +12,12 @@ import {
   FileText,
   ChevronDown,
   ChevronRight,
+  Sparkles,
 } from "lucide-react";
-import { Badge, Button, cn } from "@routeflow/ui/web";
+import { Badge, Button, cn, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
-import { useRouteRun, type RouteRunStop } from "@/lib/api/routes";
+import { useAuth } from "@/lib/auth-context";
+import { useRouteRun, useOptimizeRoute, type RouteRunStop } from "@/lib/api/routes";
 import { RouteMap } from "./RouteMap";
 
 // ─── Stop status icon ─────────────────────────────────────────────────────────
@@ -127,7 +129,37 @@ function StopItem({ stop }: { stop: RouteRunStop }) {
 
 export default function RouteRunDetailPage({ params }: { params: { id: string } }) {
   const { setTitle } = usePageTitle();
+  const { user } = useAuth();
+  const { toast } = useToast();
   const { data: run, isLoading, isError } = useRouteRun(params.id);
+  const { mutate: optimizeRoute, isPending: isOptimizing } = useOptimizeRoute();
+
+  const isOperator = user?.role === "OPERATOR";
+
+  const handleOptimize = () => {
+    optimizeRoute(params.id, {
+      onSuccess: (result) => {
+        if (result.usedFallback) {
+          toast({
+            title: "Route optimized (local fallback)",
+            description: `${result.reorderedCount} stops reordered using nearest-neighbor heuristic. Set ORS_API_KEY for full optimization.`,
+          });
+        } else {
+          toast({
+            title: "Route optimized",
+            description: `${result.reorderedCount} stops reordered for the most efficient sequence.`,
+          });
+        }
+      },
+      onError: (err) => {
+        toast({
+          title: "Optimization failed",
+          description: err.message,
+          variant: "destructive",
+        });
+      },
+    });
+  };
 
   const name = run?.route?.name ?? "Route";
 
@@ -190,6 +222,21 @@ export default function RouteRunDetailPage({ params }: { params: { id: string } 
             <span className="text-sm text-navy/40">·</span>
             <span className="text-sm text-navy/60">{stopsDone}/{total} stops</span>
           </div>
+          {isOperator && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleOptimize}
+              disabled={isOptimizing}
+            >
+              {isOptimizing ? (
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Sparkles className="mr-1.5 h-3.5 w-3.5" />
+              )}
+              {isOptimizing ? "Optimizing…" : "Optimize Route"}
+            </Button>
+          )}
           <Button
             variant="secondary"
             size="sm"
