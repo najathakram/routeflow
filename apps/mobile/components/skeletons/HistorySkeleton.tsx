@@ -1,6 +1,6 @@
 import { StyleSheet, View } from "react-native";
 import { ShimmerBox } from "../Shimmer";
-import { borderRadius, shadows } from "@routeflow/ui/tokens";
+import { borderRadius, colors, shadows } from "@routeflow/ui/tokens";
 
 function SkeletonRow() {
   return (
@@ -50,7 +50,7 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#f8fafc",
+    backgroundColor: colors.surface.DEFAULT,
     borderRadius: borderRadius.lg,
     padding: 16,
     marginBottom: 8,

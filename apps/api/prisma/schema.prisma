@@ -128,6 +128,7 @@ model Customer {
   user         User              @relation(fields: [userId], references: [id])
   addresses    CustomerAddress[]
   routes       RouteCustomer[]
+  routeStops   RouteStop[]
   orders       Order[]
   transactions Transaction[]
 
@@ -227,6 +228,7 @@ model RouteStop {
   updatedAt         DateTime @updatedAt
 
   route           Route            @relation(fields: [routeId], references: [id])
+  customer        Customer?        @relation(fields: [customerId], references: [id])
   customerAddress CustomerAddress? @relation(fields: [customerAddressId], references: [id])
   routeRunStops   RouteRunStop[]
 

@@ -1,7 +1,7 @@
 // ─── Enums ────────────────────────────────────────────────────────────────────
 
 export enum UserRole {
-  ADMIN = "ADMIN",
+  OPERATOR = "OPERATOR",
   CUSTOMER = "CUSTOMER",
   DRIVER = "DRIVER",
 }
@@ -27,6 +27,7 @@ export enum RouteStatus {
 export interface User {
   id: string;
   email: string;
+  username: string;
   role: UserRole;
   createdAt: string;
 }

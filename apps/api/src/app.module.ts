@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { BullModule } from '@nestjs/bull';
 import { ScheduleModule } from '@nestjs/schedule';
+import { ThrottlerModule } from '@nestjs/throttler';
 
 import { configuration } from './config/configuration';
 import { PrismaModule } from './prisma/prisma.module';
@@ -32,13 +33,20 @@ import { AppService } from './app.service';
     // ─── Prisma (global) ──────────────────────────────────────────────────────
     PrismaModule,
 
+    // ─── Rate limiting (100 req / 60 s per IP) ────────────────────────────────
+    ThrottlerModule.forRoot([{ ttl: 60_000, limit: 100 }]),
+
     // ─── Redis queue ──────────────────────────────────────────────────────────
     BullModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService) => {
-        const redisUrl = new URL(
-          config.get<string>('redis.url') ?? 'redis://localhost:6379',
-        );
+        const rawUrl = config.get<string>('redis.url') ?? 'redis://localhost:6379';
+        let redisUrl: URL;
+        try {
+          redisUrl = new URL(rawUrl);
+        } catch {
+          redisUrl = new URL('redis://localhost:6379');
+        }
         const password = config.get<string>('redis.password');
         return {
           redis: {

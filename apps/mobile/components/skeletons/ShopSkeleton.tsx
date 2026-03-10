@@ -1,6 +1,6 @@
-import { Dimensions, ScrollView, StyleSheet, View } from "react-native";
+import { Dimensions, StyleSheet, View } from "react-native";
 import { ShimmerBox } from "../Shimmer";
-import { borderRadius, shadows } from "@routeflow/ui/tokens";
+import { borderRadius, colors, shadows } from "@routeflow/ui/tokens";
 
 const SCREEN_WIDTH = Dimensions.get("window").width;
 const CARD_WIDTH = (SCREEN_WIDTH - 48) / 2;
@@ -70,7 +70,7 @@ const styles = StyleSheet.create({
     gap: 16,
   },
   card: {
-    backgroundColor: "#f8fafc",
+    backgroundColor: colors.surface.DEFAULT,
     borderRadius: borderRadius.lg,
     overflow: "hidden",
     ...shadows.card,

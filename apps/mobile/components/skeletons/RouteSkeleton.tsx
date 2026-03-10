@@ -1,6 +1,6 @@
 import { StyleSheet, View } from "react-native";
 import { ShimmerBox } from "../Shimmer";
-import { borderRadius, shadows } from "@routeflow/ui/tokens";
+import { borderRadius, colors, shadows } from "@routeflow/ui/tokens";
 
 function SkeletonStopRow() {
   return (
@@ -45,7 +45,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   headerCard: {
-    backgroundColor: "#f8fafc",
+    backgroundColor: colors.surface.raised,
     paddingHorizontal: 20,
     paddingVertical: 18,
     gap: 14,
@@ -88,7 +88,7 @@ const styles = StyleSheet.create({
   stopRow: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#f8fafc",
+    backgroundColor: colors.surface.DEFAULT,
     borderRadius: borderRadius.lg,
     paddingVertical: 14,
     paddingHorizontal: 16,
