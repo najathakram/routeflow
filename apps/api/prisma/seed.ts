@@ -10,7 +10,21 @@ const prisma = new PrismaClient({ adapter });
 async function main() {
   const SALT_ROUNDS = 10;
 
-  // ─── Users ──────────────────────────────────────────────────────────────────
+  // ─── Admin (force password change on first login) ────────────────────────────
+  await prisma.user.upsert({
+    where: { username: 'admin' },
+    update: {},
+    create: {
+      email: 'admin@routeflow.dev',
+      username: 'admin',
+      password: await bcrypt.hash('Admin@123', SALT_ROUNDS),
+      role: 'OPERATOR',
+      status: 'ACTIVE',
+      forcePasswordChange: true,
+    },
+  });
+
+  // ─── Dev users ───────────────────────────────────────────────────────────────
   const [operatorUser, driverUser, customerUser] = await Promise.all([
     prisma.user.upsert({
       where: { email: 'operator@routeflow.dev' },
@@ -86,6 +100,7 @@ async function main() {
   });
 
   console.log('Seed complete:', {
+    admin: 'admin@routeflow.dev (forcePasswordChange: true)',
     operator: operatorUser.email,
     driver: driverUser.email,
     customer: customerUser.email,

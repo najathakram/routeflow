@@ -95,19 +95,21 @@ enum DriverStatus {
 // ─── Models ───────────────────────────────────────────────────────────────────
 
 model User {
-  id        String     @id @default(uuid())
-  email     String     @unique
-  username  String     @unique
-  password  String
-  role      UserRole
-  status    UserStatus @default(ACTIVE)
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
-  deletedAt DateTime?
+  id                  String     @id @default(uuid())
+  email               String     @unique
+  username            String     @unique
+  password            String
+  role                UserRole
+  status              UserStatus @default(ACTIVE)
+  forcePasswordChange Boolean    @default(false)
+  createdAt           DateTime   @default(now())
+  updatedAt           DateTime   @updatedAt
+  deletedAt           DateTime?
 
-  customer     Customer?
-  driver       Driver?
-  deviceTokens DeviceToken[]
+  customer      Customer?
+  driver        Driver?
+  deviceTokens  DeviceToken[]
+  refreshTokens RefreshToken[]
 
   @@index([role])
   @@index([status])
@@ -455,4 +457,17 @@ model SyncLog {
 
   @@index([type])
   @@index([startedAt])
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
 }
