@@ -13,9 +13,9 @@ import {
   CreditCard,
   Loader2,
 } from "lucide-react";
-import { Badge, Button, Card, Modal, Input, Select, cn } from "@routeflow/ui/web";
+import { Badge, Button, Card, Modal, Input, Select, cn, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
-import { useTransaction, useRecordPayment, type Payment } from "@/lib/api/bookkeeping";
+import { useTransaction, useRecordPayment, useDownloadInvoice, type Payment } from "@/lib/api/bookkeeping";
 
 // ─── Payment status badge ─────────────────────────────────────────────────────
 
@@ -121,9 +121,33 @@ function RecordPaymentModal({
 
 export default function TransactionDetailPage({ params }: { params: { transactionId: string } }) {
   const { setTitle } = usePageTitle();
+  const { toast } = useToast();
   const { data: txn, isLoading, isError } = useTransaction(params.transactionId);
   const recordPayment = useRecordPayment();
+  const downloadInvoice = useDownloadInvoice();
   const [isPaymentOpen, setIsPaymentOpen] = React.useState(false);
+
+  const handleDownloadPdf = () => {
+    downloadInvoice.mutate(params.transactionId, {
+      onSuccess: (result) => {
+        if (!result) {
+          toast({
+            title: "PDF generating",
+            description: "Your invoice PDF is being generated. Check back in a moment.",
+          });
+        } else {
+          window.open(result.url, "_blank");
+        }
+      },
+      onError: () => {
+        toast({
+          title: "Download failed",
+          description: "Unable to retrieve the invoice PDF. Please try again.",
+          variant: "destructive",
+        });
+      },
+    });
+  };
 
   React.useEffect(() => {
     if (txn) {
@@ -183,10 +207,17 @@ export default function TransactionDetailPage({ params }: { params: { transactio
           <Button
             variant="secondary"
             size="sm"
-            leftIcon={<Download className="h-4 w-4" />}
-            onClick={() => {}}
+            leftIcon={
+              downloadInvoice.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Download className="h-4 w-4" />
+              )
+            }
+            onClick={handleDownloadPdf}
+            disabled={downloadInvoice.isPending}
           >
-            Download PDF
+            {downloadInvoice.isPending ? "Loading…" : "Download PDF"}
           </Button>
           {localStatus !== "PAID" && (
             <Button

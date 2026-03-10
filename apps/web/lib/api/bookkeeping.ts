@@ -69,3 +69,21 @@ export function useRecordPayment() {
     },
   });
 }
+
+export function useDownloadInvoice() {
+  return useMutation<{ url: string } | null, Error, string>({
+    mutationFn: async (id: string) => {
+      try {
+        const response = await apiClient.get<{ url: string }>(`/bookkeeping/transactions/${id}/pdf`);
+        return response.data;
+      } catch (err: unknown) {
+        // 202 Accepted means still generating
+        if (err && typeof err === 'object' && 'response' in err) {
+          const axiosErr = err as { response?: { status?: number } };
+          if (axiosErr.response?.status === 202) return null;
+        }
+        throw err;
+      }
+    },
+  });
+}

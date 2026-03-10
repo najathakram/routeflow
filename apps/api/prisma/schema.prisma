@@ -381,6 +381,7 @@ model Transaction {
   dueDate    DateTime?
   paidAt     DateTime?
   notes      String?
+  pdfUrl     String?
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
 

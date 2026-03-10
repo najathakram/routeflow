@@ -8,6 +8,7 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
+  HttpException,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { BookkeepingService } from './bookkeeping.service';
@@ -45,5 +46,18 @@ export class BookkeepingController {
   @HttpCode(HttpStatus.OK)
   recordPayment(@Param('id') id: string, @Body() dto: RecordPaymentDto) {
     return this.bookkeepingService.recordPayment(id, dto);
+  }
+
+  @Get('transactions/:id/pdf')
+  async getInvoicePdf(@Param('id') id: string) {
+    const result = await this.bookkeepingService.getPdfUrl(id);
+    if (!result) {
+      // PDF not yet generated — return 202 Accepted
+      throw new HttpException(
+        { message: 'Invoice PDF not yet available — generation in progress' },
+        HttpStatus.ACCEPTED,
+      );
+    }
+    return result;
   }
 }

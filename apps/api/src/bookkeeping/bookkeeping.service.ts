@@ -3,10 +3,14 @@ import { PrismaService } from '../prisma/prisma.service';
 import { TxnStatus } from '@prisma/client';
 import { ListTransactionsDto } from './dto/list-transactions.dto';
 import { RecordPaymentDto } from './dto/record-payment.dto';
+import { InvoiceService } from './invoice.service';
 
 @Injectable()
 export class BookkeepingService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly invoiceService: InvoiceService,
+  ) {}
 
   async findAll(query: ListTransactionsDto) {
     const { status, customerId, dateFrom, dateTo, page = 1, limit = 20 } = query;
@@ -90,6 +94,12 @@ export class BookkeepingService {
         },
       });
     });
+  }
+
+  async getPdfUrl(id: string): Promise<{ url: string } | null> {
+    const url = await this.invoiceService.getPresignedUrl(id);
+    if (!url) return null;
+    return { url };
   }
 
   async getSummary() {

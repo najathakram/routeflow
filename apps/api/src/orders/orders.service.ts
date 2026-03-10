@@ -4,6 +4,8 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bull';
+import type { Queue } from 'bull';
 import { PrismaService } from '../prisma/prisma.service';
 import { JwtPayload } from '../auth/jwt-payload.interface';
 import { OrderStatus, UserRole, ItemStatus, TxnStatus, MutationType } from '@prisma/client';
@@ -16,7 +18,10 @@ const TAX_RATE = 0.1; // 10%
 
 @Injectable()
 export class OrdersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @InjectQueue('invoices') private readonly invoiceQueue: Queue,
+  ) {}
 
   async findAll(query: ListOrdersDto, user: JwtPayload) {
     const { customerId, status, urgent, page = 1, limit = 20 } = query;
@@ -126,7 +131,10 @@ export class OrdersService {
   }
 
   async completeStop(runId: string, stopId: string, dto: CompleteStopDto, user: JwtPayload) {
-    return this.prisma.$transaction(async (tx) => {
+    // Capture IDs of transactions created/updated so we can enqueue PDF jobs after commit
+    const invoiceTransactionIds: string[] = [];
+
+    await this.prisma.$transaction(async (tx) => {
       const stop = await tx.routeRunStop.findFirst({
         where: { id: stopId, runId },
         include: { orders: { include: { lineItems: true } } },
@@ -173,7 +181,7 @@ export class OrdersService {
         await tx.order.update({ where: { id: order.id }, data: { status: newOrderStatus } });
 
         if (newOrderStatus === OrderStatus.DELIVERED) {
-          await tx.transaction.upsert({
+          const createdTxn = await tx.transaction.upsert({
             where: { orderId: order.id },
             create: {
               orderId: order.id,
@@ -183,6 +191,7 @@ export class OrdersService {
             },
             update: {},
           });
+          invoiceTransactionIds.push(createdTxn.id);
         }
       }
 
@@ -190,12 +199,17 @@ export class OrdersService {
         where: { id: stopId },
         data: { status: 'COMPLETED', completedAt: new Date(), driverNote: dto.driverNote },
       });
-
-      console.log('TODO: emit stop.completed websocket event');
-      console.log('TODO: send push notification to customer');
-
-      return { success: true };
     });
+
+    console.log('TODO: emit stop.completed websocket event');
+    console.log('TODO: send push notification to customer');
+
+    // Enqueue PDF generation for each new invoice (after DB transaction commits)
+    for (const txnId of invoiceTransactionIds) {
+      await this.invoiceQueue.add('generate-invoice', { transactionId: txnId });
+    }
+
+    return { success: true };
   }
 
   private async findOneOrThrow(id: string) {
