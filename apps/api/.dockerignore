@@ -1,0 +1,30 @@
+# Dependencies
+node_modules
+
+# Build output
+dist
+
+# Environment files (never bake secrets into the image)
+.env
+.env.*
+!.env.example
+
+# Version control
+.git
+.gitignore
+
+# Test artefacts
+coverage
+test
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS artefacts
+.DS_Store
+Thumbs.db
+
+# Editor directories
+.vscode
+.idea
