@@ -13,6 +13,7 @@ import { ListOrdersDto } from './dto/list-orders.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { ChangeOrderStatusDto } from './dto/change-order-status.dto';
 import { CompleteStopDto } from './dto/complete-stop.dto';
+import { RouteFlowGateway } from '../gateways/routeflow.gateway';
 
 const TAX_RATE = 0.1; // 10%
 
@@ -21,6 +22,7 @@ export class OrdersService {
   constructor(
     private readonly prisma: PrismaService,
     @InjectQueue('invoices') private readonly invoiceQueue: Queue,
+    private readonly gateway: RouteFlowGateway,
   ) {}
 
   async findAll(query: ListOrdersDto, user: JwtPayload) {
@@ -201,12 +203,31 @@ export class OrdersService {
       });
     });
 
-    console.log('TODO: emit stop.completed websocket event');
-    console.log('TODO: send push notification to customer');
+    // Emit real-time updates for each affected order/customer
+    const stop = await this.prisma.routeRunStop.findFirst({
+      where: { id: stopId, runId },
+      include: { orders: { select: { id: true, customerId: true } } },
+    });
+    if (stop) {
+      for (const order of stop.orders) {
+        this.gateway.emitStopCompleted({
+          runId,
+          stopId,
+          customerId: order.customerId,
+          orderId: order.id,
+          completedAt: new Date().toISOString(),
+        });
+      }
+    }
 
-    // Enqueue PDF generation for each new invoice (after DB transaction commits)
+    // Enqueue PDF generation for each new invoice (after DB transaction commits).
+    // Retry up to 3× with exponential back-off (5s → 10s → 20s).
     for (const txnId of invoiceTransactionIds) {
-      await this.invoiceQueue.add('generate-invoice', { transactionId: txnId });
+      await this.invoiceQueue.add(
+        'generate-invoice',
+        { transactionId: txnId },
+        { attempts: 3, backoff: { type: 'exponential', delay: 5000 } },
+      );
     }
 
     return { success: true };

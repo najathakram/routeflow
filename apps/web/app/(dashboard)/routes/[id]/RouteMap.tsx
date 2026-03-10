@@ -217,6 +217,10 @@ export function RouteMap({ stops }: { stops: RouteRunStop[] }) {
 
   if (!MAPS_KEY) return <MapPlaceholder stops={stops} />;
 
+  // If we have a key but no stops have geocoded addresses, show the placeholder
+  // instead of rendering an empty map with default San Francisco center
+  if (stopsWithCoords.length === 0) return <MapPlaceholder stops={stops} />;
+
   return (
     <>
       <style>{`@keyframes routemap-ping { 75%, 100% { transform: scale(2); opacity: 0; } }`}</style>

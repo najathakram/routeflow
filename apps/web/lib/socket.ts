@@ -9,7 +9,14 @@ const SOCKET_URL = API_URL.replace(/\/api\/v1\/?$/, '');
 let socket: Socket | null = null;
 
 export function connectSocket(token: string): Socket {
-  if (socket?.connected) return socket;
+  // Guard: return existing socket if already connected OR still connecting
+  if (socket?.connected || socket?.active) return socket;
+
+  // If a stale disconnected socket exists, clean it up first
+  if (socket) {
+    socket.removeAllListeners();
+    socket = null;
+  }
 
   socket = io(SOCKET_URL, {
     auth: { token },

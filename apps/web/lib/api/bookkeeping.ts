@@ -73,17 +73,17 @@ export function useRecordPayment() {
 export function useDownloadInvoice() {
   return useMutation<{ url: string } | null, Error, string>({
     mutationFn: async (id: string) => {
-      try {
-        const response = await apiClient.get<{ url: string }>(`/bookkeeping/transactions/${id}/pdf`);
-        return response.data;
-      } catch (err: unknown) {
-        // 202 Accepted means still generating
-        if (err && typeof err === 'object' && 'response' in err) {
-          const axiosErr = err as { response?: { status?: number } };
-          if (axiosErr.response?.status === 202) return null;
-        }
-        throw err;
-      }
+      // NestJS returns 202 when the PDF is still generating. Axios treats all
+      // 2xx as successes so we check the status code in the response, not in
+      // the catch block.
+      const response = await apiClient.get<{ url?: string; message?: string }>(
+        `/bookkeeping/transactions/${id}/pdf`,
+        { validateStatus: (s) => s >= 200 && s < 300 },
+      );
+
+      if (response.status === 202 || !response.data?.url) return null;
+
+      return { url: response.data.url };
     },
   });
 }

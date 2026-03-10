@@ -40,7 +40,7 @@ export class InvoiceService {
       where: { id: transactionId },
       include: {
         customer: { select: { id: true, businessName: true, contactName: true } },
-        order: { select: { id: true } },
+        order: true,
         items: {
           include: {
             orderItem: { include: { product: { select: { id: true, name: true } } } },
@@ -54,10 +54,20 @@ export class InvoiceService {
 
     this.logger.log(`Generating PDF for transaction ${transactionId}`);
 
-    // Render React PDF to buffer
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const element = React.createElement(InvoiceTemplate as any, { transaction: txn });
-    const pdfBuffer = await renderToBuffer(element as any);
+    // Render React PDF to buffer — wrap in try/catch so that a template
+    // error surfaces a clear message rather than a generic unhandled rejection.
+    let pdfBuffer: Buffer;
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const element = React.createElement(InvoiceTemplate as any, { transaction: txn });
+      pdfBuffer = await renderToBuffer(element as any);
+    } catch (err) {
+      this.logger.error(
+        `PDF render failed for transaction ${transactionId}`,
+        err instanceof Error ? err.stack : String(err),
+      );
+      throw new Error(`PDF render failed for transaction ${transactionId}: ${err}`);
+    }
 
     // Upload to Cloudflare R2
     const key = `invoices/${transactionId}.pdf`;

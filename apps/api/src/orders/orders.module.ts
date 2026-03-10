@@ -3,11 +3,13 @@ import { BullModule } from '@nestjs/bull';
 import { OrdersService } from './orders.service';
 import { OrdersController, RouteRunDeliveryController } from './orders.controller';
 import { AuthModule } from '../auth/auth.module';
+import { GatewaysModule } from '../gateways/gateways.module';
 
 @Module({
   imports: [
     AuthModule,
     BullModule.registerQueue({ name: 'invoices' }),
+    GatewaysModule,
   ],
   controllers: [OrdersController, RouteRunDeliveryController],
   providers: [OrdersService],

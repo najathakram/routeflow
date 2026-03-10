@@ -374,7 +374,7 @@ model DeliveryMutation {
 model Transaction {
   id         String    @id @default(uuid())
   customerId String
-  orderId    String?
+  orderId    String?   @unique
   status     TxnStatus @default(UNPAID)
   totalOwed  Decimal   @db.Decimal(10, 2)
   totalPaid  Decimal   @default(0) @db.Decimal(10, 2)
@@ -391,7 +391,6 @@ model Transaction {
   payments Payment[]
 
   @@index([customerId])
-  @@index([orderId])
   @@index([status])
   @@index([dueDate])
 }

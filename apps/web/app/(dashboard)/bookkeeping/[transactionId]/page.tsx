@@ -172,9 +172,9 @@ export default function TransactionDetailPage({ params }: { params: { transactio
     );
   }
 
-  const total = Number(txn.totalOwed);
-  const paid = Number(txn.totalPaid);
-  const bal = total - paid;
+  const total = Math.round(Number(txn.totalOwed) * 100) / 100;
+  const paid = Math.round(Number(txn.totalPaid) * 100) / 100;
+  const bal = Math.round((total - paid) * 100) / 100;
   const payments: Payment[] = txn.payments ?? [];
 
   const localStatus: PaymentStatus = bal <= 0 ? "PAID" : paid > 0 ? "PARTIAL" : "UNPAID";

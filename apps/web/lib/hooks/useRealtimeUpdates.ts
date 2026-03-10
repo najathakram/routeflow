@@ -17,6 +17,15 @@ export function useRealtimeUpdates() {
 
     const socket = connectSocket(token);
 
+    socket.on('connect_error', (err) => {
+      console.error('[WS] connect_error:', err.message);
+      toast({
+        title: 'Real-time connection failed',
+        description: 'Live updates may be unavailable. Retrying…',
+        variant: 'destructive',
+      });
+    });
+
     socket.on('route.stop.completed', () => {
       void qc.invalidateQueries({ queryKey: ['routes'] });
       void qc.invalidateQueries({ queryKey: ['orders'] });
@@ -49,6 +58,7 @@ export function useRealtimeUpdates() {
     });
 
     return () => {
+      socket.off('connect_error');
       socket.off('route.stop.completed');
       socket.off('order.urgent.placed');
       socket.off('driver.status.updated');
