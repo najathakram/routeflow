@@ -19,7 +19,7 @@ const buttonVariants = cva(
         danger:
           "bg-danger text-white hover:bg-danger/90 focus-visible:ring-danger",
         link:
-          "text-brand-500 underline-offset-4 hover:underline p-0 h-auto rounded-none",
+          "text-brand-500 underline-offset-4 hover:underline focus-visible:ring-brand-500",
       },
       size: {
         sm: "h-8 px-3 text-sm rounded-sm",
@@ -27,6 +27,13 @@ const buttonVariants = cva(
         lg: "h-12 px-6 text-base rounded-lg",
       },
     },
+    // Override the height/padding/radius that size applies when variant=link,
+    // so the button renders inline like a text link regardless of size prop.
+    compoundVariants: [
+      { variant: "link", size: "sm", class: "h-auto p-0 rounded-none" },
+      { variant: "link", size: "md", class: "h-auto p-0 rounded-none" },
+      { variant: "link", size: "lg", class: "h-auto p-0 rounded-none" },
+    ],
     defaultVariants: {
       variant: "primary",
       size: "md",
@@ -63,12 +70,15 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
   ) => {
     const classes = cn(buttonVariants({ variant, size }), className);
 
+    const isDisabled = disabled || loading;
+
     if (href) {
       return (
         <a
           href={href}
-          className={cn(classes, (disabled || loading) && "pointer-events-none opacity-50")}
-          aria-disabled={disabled || loading}
+          className={cn(classes, isDisabled && "pointer-events-none opacity-50")}
+          aria-disabled={isDisabled}
+          tabIndex={isDisabled ? -1 : undefined}
         >
           {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : leftIcon}
           {children}
@@ -81,7 +91,7 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
       <button
         ref={ref}
         className={classes}
-        disabled={disabled || loading}
+        disabled={isDisabled}
         onClick={onClick}
         aria-busy={loading}
         {...props}

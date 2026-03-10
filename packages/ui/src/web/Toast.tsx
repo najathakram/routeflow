@@ -19,24 +19,21 @@ export interface ToastData {
 
 // ─── Variant config ───────────────────────────────────────────────────────────
 
-const VARIANT_CONFIG: Record<
-  ToastVariant,
-  { icon: React.ReactNode; classes: string }
-> = {
+const VARIANT_CONFIG: Record<ToastVariant, { icon: () => React.ReactNode; classes: string }> = {
   success: {
-    icon: <CheckCircle2 className="h-5 w-5 text-success" />,
+    icon: () => <CheckCircle2 className="h-5 w-5 text-success" />,
     classes: "border-success/20 bg-success-bg",
   },
   error: {
-    icon: <XCircle className="h-5 w-5 text-danger" />,
+    icon: () => <XCircle className="h-5 w-5 text-danger" />,
     classes: "border-danger/20 bg-danger-bg",
   },
   warning: {
-    icon: <AlertTriangle className="h-5 w-5 text-warning" />,
+    icon: () => <AlertTriangle className="h-5 w-5 text-warning" />,
     classes: "border-warning/20 bg-warning-bg",
   },
   info: {
-    icon: <Info className="h-5 w-5 text-brand-500" />,
+    icon: () => <Info className="h-5 w-5 text-brand-500" />,
     classes: "border-brand-100 bg-brand-50",
   },
 };
@@ -55,7 +52,10 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = React.useState<ToastData[]>([]);
 
   const addToast = React.useCallback((data: Omit<ToastData, "id">) => {
-    const id = crypto.randomUUID();
+    const id =
+      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     setToasts((prev) => [...prev, { ...data, id }]);
   }, []);
 
@@ -82,7 +82,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
                 config.classes,
               )}
             >
-              <span className="mt-0.5 flex-shrink-0">{config.icon}</span>
+              <span className="mt-0.5 flex-shrink-0">{config.icon()}</span>
               <div className="flex-1 min-w-0">
                 <RadixToast.Title className="text-sm font-semibold text-navy">
                   {t.title}
@@ -94,7 +94,6 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
                 )}
               </div>
               <RadixToast.Close
-                onClick={() => removeToast(t.id)}
                 className="flex-shrink-0 rounded p-0.5 text-navy/40 hover:text-navy transition-colors"
                 aria-label="Dismiss"
               >

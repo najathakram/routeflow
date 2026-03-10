@@ -1,5 +1,5 @@
 import * as React from "react";
-import { TrendingUp, TrendingDown } from "lucide-react";
+import { TrendingUp, TrendingDown, Minus } from "lucide-react";
 import { cn } from "./utils";
 
 export interface StatCardProps extends React.HTMLAttributes<HTMLDivElement> {
@@ -12,7 +12,8 @@ export interface StatCardProps extends React.HTMLAttributes<HTMLDivElement> {
 
 export const StatCard = React.forwardRef<HTMLDivElement, StatCardProps>(
   ({ className, label, value, icon, trend, trendLabel, ...props }, ref) => {
-    const isPositive = trend !== undefined && trend >= 0;
+    const isPositive = trend !== undefined && trend > 0;
+    const isNeutral  = trend === 0;
 
     return (
       <div
@@ -28,11 +29,13 @@ export const StatCard = React.forwardRef<HTMLDivElement, StatCardProps>(
               <div
                 className={cn(
                   "mt-2 inline-flex items-center gap-1 text-xs font-medium",
-                  isPositive ? "text-success" : "text-danger",
+                  isPositive ? "text-success" : isNeutral ? "text-navy/40" : "text-danger",
                 )}
               >
                 {isPositive ? (
                   <TrendingUp className="h-3.5 w-3.5" />
+                ) : isNeutral ? (
+                  <Minus className="h-3.5 w-3.5" />
                 ) : (
                   <TrendingDown className="h-3.5 w-3.5" />
                 )}

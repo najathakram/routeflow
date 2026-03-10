@@ -9,12 +9,13 @@ export interface ModalProps {
   open: boolean;
   onClose: () => void;
   title?: string;
+  description?: string;
   children: React.ReactNode;
   footer?: React.ReactNode;
   className?: string;
 }
 
-export const Modal = ({ open, onClose, title, children, footer, className }: ModalProps) => (
+export const Modal = ({ open, onClose, title, description, children, footer, className }: ModalProps) => (
   <Dialog.Root open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
     <Dialog.Portal>
       <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
@@ -31,14 +32,25 @@ export const Modal = ({ open, onClose, title, children, footer, className }: Mod
       >
         {/* Header */}
         <div className="mb-4 flex items-start justify-between gap-4">
-          {title && (
-            <Dialog.Title className="text-lg font-semibold text-navy">
-              {title}
-            </Dialog.Title>
-          )}
+          <div className="min-w-0">
+            {title ? (
+              <Dialog.Title className="text-lg font-semibold text-navy">
+                {title}
+              </Dialog.Title>
+            ) : (
+              <Dialog.Title className="sr-only">Dialog</Dialog.Title>
+            )}
+            {description ? (
+              <Dialog.Description className="mt-1 text-sm text-navy/60">
+                {description}
+              </Dialog.Description>
+            ) : (
+              <Dialog.Description className="sr-only">Modal dialog</Dialog.Description>
+            )}
+          </div>
+          {/* No onClick — Dialog.Close triggers onOpenChange which calls onClose via Root */}
           <Dialog.Close
-            onClick={onClose}
-            className="ml-auto rounded p-1 text-navy/40 hover:bg-surface-raised hover:text-navy transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500"
+            className="ml-auto flex-shrink-0 rounded p-1 text-navy/40 hover:bg-surface-raised hover:text-navy transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500"
             aria-label="Close"
           >
             <X className="h-4 w-4" />

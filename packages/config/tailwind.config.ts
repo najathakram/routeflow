@@ -1,6 +1,8 @@
 import type { Config } from "tailwindcss";
+import animate from "tailwindcss-animate";
 
 const preset: Omit<Config, "content"> = {
+  plugins: [animate],
   theme: {
     extend: {
       colors: {

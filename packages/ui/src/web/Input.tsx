@@ -1,6 +1,8 @@
+"use client";
+
 import * as React from "react";
 import type { UseFormRegisterReturn } from "react-hook-form";
-import { cn } from "./utils";
+import { cn, mergeRefs } from "./utils";
 
 export interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
   label?: string;
@@ -23,7 +25,6 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
           </label>
         )}
         <input
-          ref={ref}
           id={inputId}
           className={cn(
             "h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/40 transition-colors",
@@ -36,6 +37,7 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
           aria-describedby={error ? `${inputId}-error` : undefined}
           {...register}
           {...props}
+          ref={mergeRefs(ref, register?.ref)}
         />
         {error && (
           <p id={`${inputId}-error`} className="text-xs text-danger">

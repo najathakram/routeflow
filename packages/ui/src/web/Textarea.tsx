@@ -1,6 +1,8 @@
+"use client";
+
 import * as React from "react";
 import type { UseFormRegisterReturn } from "react-hook-form";
-import { cn } from "./utils";
+import { cn, mergeRefs } from "./utils";
 
 export interface TextareaProps extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {
   label?: string;
@@ -23,7 +25,6 @@ export const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
           </label>
         )}
         <textarea
-          ref={ref}
           id={inputId}
           className={cn(
             "w-full rounded border border-surface-border bg-white px-3 py-2 text-sm text-navy placeholder:text-navy/40 transition-colors resize-y min-h-[80px]",
@@ -36,6 +37,7 @@ export const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
           aria-describedby={error ? `${inputId}-error` : undefined}
           {...register}
           {...props}
+          ref={mergeRefs(ref, register?.ref)}
         />
         {error && (
           <p id={`${inputId}-error`} className="text-xs text-danger">

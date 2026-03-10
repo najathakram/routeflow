@@ -97,7 +97,7 @@ export function Table<TData>({
           ) : table.getRowModel().rows.length === 0 ? (
             <tr>
               <td
-                colSpan={columns.length}
+                colSpan={table.getVisibleLeafColumns().length}
                 className="px-4 py-12 text-center text-navy/40"
               >
                 {emptyState ?? "No data available"}
@@ -114,7 +114,7 @@ export function Table<TData>({
                 onClick={() => onRowClick?.(row)}
               >
                 {row.getVisibleCells().map((cell) => (
-                  <td key={cell.id} className="px-4 py-3 text-navy whitespace-nowrap">
+                  <td key={cell.id} className="px-4 py-3 text-navy">
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
                   </td>
                 ))}

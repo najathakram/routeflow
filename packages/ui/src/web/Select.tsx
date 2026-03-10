@@ -1,7 +1,9 @@
+"use client";
+
 import * as React from "react";
 import type { UseFormRegisterReturn } from "react-hook-form";
 import { ChevronDown } from "lucide-react";
-import { cn } from "./utils";
+import { cn, mergeRefs } from "./utils";
 
 export interface SelectOption {
   value: string;
@@ -33,7 +35,6 @@ export const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
         )}
         <div className="relative">
           <select
-            ref={ref}
             id={inputId}
             className={cn(
               "h-10 w-full appearance-none rounded border border-surface-border bg-white px-3 pr-8 text-sm text-navy transition-colors",
@@ -44,8 +45,10 @@ export const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
             )}
             aria-invalid={!!error}
             aria-describedby={error ? `${inputId}-error` : undefined}
+            defaultValue={placeholder ? "" : undefined}
             {...register}
             {...props}
+            ref={mergeRefs(ref, register?.ref)}
           >
             {placeholder && (
               <option value="" disabled>

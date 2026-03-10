@@ -1,3 +1,5 @@
+"use client";
+
 import * as React from "react";
 import { cn } from "./utils";
 
@@ -21,13 +23,14 @@ function getInitials(name: string): string {
     .split(" ")
     .filter(Boolean)
     .slice(0, 2)
-    .map((w) => w[0].toUpperCase())
+    .map((w) => w.charAt(0).toUpperCase())
     .join("");
 }
 
 export const Avatar = React.forwardRef<HTMLDivElement, AvatarProps>(
   ({ className, src, alt, name, size = "md", ...props }, ref) => {
     const [imgError, setImgError] = React.useState(false);
+    React.useEffect(() => { setImgError(false); }, [src]);
     const showImage = src && !imgError;
 
     return (
