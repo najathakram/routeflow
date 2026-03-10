@@ -23,6 +23,7 @@ import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { cn, Avatar } from "@routeflow/ui/web";
 import { useAuth } from "@/lib/auth-context";
 import { PageTitleProvider, usePageTitle } from "@/lib/page-title-context";
+import { useRealtimeUpdates } from "@/lib/hooks/useRealtimeUpdates";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -183,6 +184,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = React.useState(false);
   const pathname = usePathname();
   const toggle = () => setCollapsed((v) => !v);
+  useRealtimeUpdates();
 
   return (
     <div className="flex h-screen overflow-hidden">

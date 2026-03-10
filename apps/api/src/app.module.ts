@@ -18,6 +18,7 @@ import { BookkeepingModule } from './bookkeeping/bookkeeping.module';
 import { ZohoSyncModule } from './zoho-sync/zoho-sync.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { RouteOptimizationModule } from './route-optimization/route-optimization.module';
+import { GatewaysModule } from './gateways/gateways.module';
 
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -73,6 +74,7 @@ import { AppService } from './app.service';
     ZohoSyncModule,
     NotificationsModule,
     RouteOptimizationModule,
+    GatewaysModule,
   ],
   controllers: [AppController],
   providers: [AppService],

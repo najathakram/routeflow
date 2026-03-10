@@ -2,9 +2,13 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
+import { RedisIoAdapter } from './gateways/redis-io.adapter';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+
+  // ─── WebSocket adapter (Redis pub/sub) ──────────────────────────────────────
+  app.useWebSocketAdapter(new RedisIoAdapter(app));
 
   // ─── Global prefix ──────────────────────────────────────────────────────────
   app.setGlobalPrefix('api/v1');
