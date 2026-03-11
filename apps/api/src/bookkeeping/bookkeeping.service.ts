@@ -1,9 +1,9 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
-import { TxnStatus } from '@prisma/client';
-import { ListTransactionsDto } from './dto/list-transactions.dto';
-import { RecordPaymentDto } from './dto/record-payment.dto';
-import { InvoiceService } from './invoice.service';
+import { Injectable, NotFoundException } from "@nestjs/common";
+import { PrismaService } from "../prisma/prisma.service";
+import { TxnStatus } from "@prisma/client";
+import { ListTransactionsDto } from "./dto/list-transactions.dto";
+import { RecordPaymentDto } from "./dto/record-payment.dto";
+import { InvoiceService } from "./invoice.service";
 
 @Injectable()
 export class BookkeepingService {
@@ -30,11 +30,11 @@ export class BookkeepingService {
         where,
         include: {
           customer: { select: { id: true, businessName: true } },
-          payments: { orderBy: { createdAt: 'desc' }, take: 1 },
+          payments: { orderBy: { createdAt: "desc" }, take: 1 },
         },
         skip,
         take: limit,
-        orderBy: { createdAt: 'desc' },
+        orderBy: { createdAt: "desc" },
       }),
       this.prisma.transaction.count({ where }),
     ]);
@@ -48,18 +48,20 @@ export class BookkeepingService {
       include: {
         customer: { select: { id: true, businessName: true, contactName: true } },
         order: { select: { id: true, orderNumber: true, status: true } },
-        items: { include: { orderItem: { include: { product: { select: { id: true, name: true } } } } } },
-        payments: { orderBy: { createdAt: 'desc' } },
+        items: {
+          include: { orderItem: { include: { product: { select: { id: true, name: true } } } } },
+        },
+        payments: { orderBy: { createdAt: "desc" } },
       },
     });
-    if (!txn) throw new NotFoundException('Transaction not found');
+    if (!txn) throw new NotFoundException("Transaction not found");
     return txn;
   }
 
   async recordPayment(id: string, dto: RecordPaymentDto) {
     return this.prisma.$transaction(async (tx) => {
       const txn = await tx.transaction.findUnique({ where: { id }, include: { payments: true } });
-      if (!txn) throw new NotFoundException('Transaction not found');
+      if (!txn) throw new NotFoundException("Transaction not found");
 
       await tx.payment.create({
         data: {
@@ -90,7 +92,7 @@ export class BookkeepingService {
         data: { totalPaid, status: newStatus, paidAt },
         include: {
           customer: { select: { id: true, businessName: true } },
-          payments: { orderBy: { createdAt: 'desc' } },
+          payments: { orderBy: { createdAt: "desc" } },
         },
       });
     });

@@ -143,7 +143,7 @@ export default function TransactionDetailPage({ params }: { params: { transactio
         toast({
           title: "Download failed",
           description: "Unable to retrieve the invoice PDF. Please try again.",
-          variant: "destructive",
+          variant: "error",
         });
       },
     });

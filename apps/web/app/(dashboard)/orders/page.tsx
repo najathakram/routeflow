@@ -144,7 +144,7 @@ export default function OrdersPage() {
                 >
                   <td className="px-3 py-3">
                     {order.urgent && (
-                      <AlertTriangle className="h-4 w-4 text-danger" title="Urgent" />
+                      <AlertTriangle className="h-4 w-4 text-danger" />
                     )}
                   </td>
                   <td className="px-4 py-3 font-mono text-xs font-semibold text-navy">

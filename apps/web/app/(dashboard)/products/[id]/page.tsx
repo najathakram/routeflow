@@ -340,7 +340,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                       boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.1)",
                     }}
                     labelStyle={{ color: "#1B3A5C", fontWeight: 600 }}
-                    formatter={(v: number) => [`${v} units`, "Ordered"]}
+                    formatter={((v: number) => [`${v} units`, "Ordered"]) as any}
                   />
                   <Bar dataKey="units" fill="#3b82f6" radius={[3, 3, 0, 0]} />
                 </BarChart>

@@ -8,27 +8,27 @@ import {
   Param,
   Query,
   UseGuards,
-} from '@nestjs/common';
-import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
-import { RoutesService } from './routes.service';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { RolesGuard } from '../auth/guards/roles.guard';
-import { Roles } from '../auth/decorators/roles.decorator';
-import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import type { JwtPayload } from '../auth/jwt-payload.interface';
-import { UserRole } from '@prisma/client';
-import { ListRoutesDto } from './dto/list-routes.dto';
-import { CreateRouteDto } from './dto/create-route.dto';
-import { UpdateRouteDto } from './dto/update-route.dto';
-import { AddStopDto } from './dto/add-stop.dto';
-import { CreateRouteRunDto } from './dto/create-route-run.dto';
-import { UpdateRunStatusDto } from './dto/update-run-status.dto';
-import { ListRunsDto } from './dto/list-runs.dto';
+} from "@nestjs/common";
+import { ApiTags, ApiBearerAuth } from "@nestjs/swagger";
+import { RoutesService } from "./routes.service";
+import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
+import { RolesGuard } from "../auth/guards/roles.guard";
+import { Roles } from "../auth/decorators/roles.decorator";
+import { CurrentUser } from "../auth/decorators/current-user.decorator";
+import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { UserRole } from "@prisma/client";
+import { ListRoutesDto } from "./dto/list-routes.dto";
+import { CreateRouteDto } from "./dto/create-route.dto";
+import { UpdateRouteDto } from "./dto/update-route.dto";
+import { AddStopDto } from "./dto/add-stop.dto";
+import { CreateRouteRunDto } from "./dto/create-route-run.dto";
+import { UpdateRunStatusDto } from "./dto/update-run-status.dto";
+import { ListRunsDto } from "./dto/list-runs.dto";
 
-@ApiTags('routes')
+@ApiTags("routes")
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
-@Controller('routes')
+@Controller("routes")
 export class RoutesController {
   constructor(private readonly routesService: RoutesService) {}
 
@@ -44,37 +44,37 @@ export class RoutesController {
     return this.routesService.createRoute(dto);
   }
 
-  @Get(':id')
-  findOne(@Param('id') id: string) {
+  @Get(":id")
+  findOne(@Param("id") id: string) {
     return this.routesService.findOneRoute(id);
   }
 
-  @Patch(':id')
+  @Patch(":id")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)
-  update(@Param('id') id: string, @Body() dto: UpdateRouteDto) {
+  update(@Param("id") id: string, @Body() dto: UpdateRouteDto) {
     return this.routesService.updateRoute(id, dto);
   }
 
-  @Post(':id/stops')
+  @Post(":id/stops")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)
-  addStop(@Param('id') id: string, @Body() dto: AddStopDto) {
+  addStop(@Param("id") id: string, @Body() dto: AddStopDto) {
     return this.routesService.addStop(id, dto);
   }
 
-  @Delete(':id/stops/:stopId')
+  @Delete(":id/stops/:stopId")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)
-  removeStop(@Param('id') id: string, @Param('stopId') stopId: string) {
+  removeStop(@Param("id") id: string, @Param("stopId") stopId: string) {
     return this.routesService.removeStop(id, stopId);
   }
 }
 
-@ApiTags('route-runs')
+@ApiTags("route-runs")
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
-@Controller('route-runs')
+@Controller("route-runs")
 export class RouteRunsController {
   constructor(private readonly routesService: RoutesService) {}
 
@@ -90,14 +90,14 @@ export class RouteRunsController {
     return this.routesService.createRun(dto);
   }
 
-  @Get(':id')
-  findOne(@Param('id') id: string) {
+  @Get(":id")
+  findOne(@Param("id") id: string) {
     return this.routesService.findOneRun(id);
   }
 
-  @Patch(':id/status')
+  @Patch(":id/status")
   updateStatus(
-    @Param('id') id: string,
+    @Param("id") id: string,
     @Body() dto: UpdateRunStatusDto,
     @CurrentUser() user: JwtPayload,
   ) {

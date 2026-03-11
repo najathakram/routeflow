@@ -1,18 +1,14 @@
-import {
-  ForbiddenException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
-import { JwtPayload } from '../auth/jwt-payload.interface';
-import { UserRole, RouteRunStatus } from '@prisma/client';
-import { ListRoutesDto } from './dto/list-routes.dto';
-import { CreateRouteDto } from './dto/create-route.dto';
-import { UpdateRouteDto } from './dto/update-route.dto';
-import { AddStopDto } from './dto/add-stop.dto';
-import { CreateRouteRunDto } from './dto/create-route-run.dto';
-import { UpdateRunStatusDto } from './dto/update-run-status.dto';
-import { ListRunsDto } from './dto/list-runs.dto';
+import { ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import { PrismaService } from "../prisma/prisma.service";
+import { JwtPayload } from "../auth/jwt-payload.interface";
+import { UserRole, RouteRunStatus } from "@prisma/client";
+import { ListRoutesDto } from "./dto/list-routes.dto";
+import { CreateRouteDto } from "./dto/create-route.dto";
+import { UpdateRouteDto } from "./dto/update-route.dto";
+import { AddStopDto } from "./dto/add-stop.dto";
+import { CreateRouteRunDto } from "./dto/create-route-run.dto";
+import { UpdateRunStatusDto } from "./dto/update-run-status.dto";
+import { ListRunsDto } from "./dto/list-runs.dto";
 
 @Injectable()
 export class RoutesService {
@@ -25,15 +21,18 @@ export class RoutesService {
     const skip = (page - 1) * limit;
     const where: any = {};
     if (isActive !== undefined) where.isActive = isActive;
-    if (search) where.name = { contains: search, mode: 'insensitive' };
+    if (search) where.name = { contains: search, mode: "insensitive" };
 
     const [data, total] = await Promise.all([
       this.prisma.route.findMany({
         where,
-        include: { _count: { select: { stops: true } }, runs: { take: 1, orderBy: { createdAt: 'desc' } } },
+        include: {
+          _count: { select: { stops: true } },
+          runs: { take: 1, orderBy: { createdAt: "desc" } },
+        },
         skip,
         take: limit,
-        orderBy: { createdAt: 'desc' },
+        orderBy: { createdAt: "desc" },
       }),
       this.prisma.route.count({ where }),
     ]);
@@ -50,11 +49,11 @@ export class RoutesService {
             customer: { select: { id: true, businessName: true } },
             customerAddress: true,
           },
-          orderBy: { stopNumber: 'asc' },
+          orderBy: { stopNumber: "asc" },
         },
       },
     });
-    if (!route) throw new NotFoundException('Route not found');
+    if (!route) throw new NotFoundException("Route not found");
     return route;
   }
 
@@ -82,7 +81,7 @@ export class RoutesService {
 
   async removeStop(routeId: string, stopId: string) {
     const stop = await this.prisma.routeStop.findFirst({ where: { id: stopId, routeId } });
-    if (!stop) throw new NotFoundException('Stop not found');
+    if (!stop) throw new NotFoundException("Stop not found");
     await this.prisma.routeStop.delete({ where: { id: stopId } });
     return { success: true };
   }
@@ -92,9 +91,9 @@ export class RoutesService {
   async createRun(dto: CreateRouteRunDto) {
     const route = await this.prisma.route.findUnique({
       where: { id: dto.routeId },
-      include: { stops: { orderBy: { stopNumber: 'asc' } } },
+      include: { stops: { orderBy: { stopNumber: "asc" } } },
     });
-    if (!route) throw new NotFoundException('Route not found');
+    if (!route) throw new NotFoundException("Route not found");
 
     return this.prisma.routeRun.create({
       data: {
@@ -119,7 +118,7 @@ export class RoutesService {
             customer: { select: { id: true, businessName: true } },
             customerAddress: true,
           },
-          orderBy: { stopNumber: 'asc' },
+          orderBy: { stopNumber: "asc" },
         },
       },
     });
@@ -153,7 +152,7 @@ export class RoutesService {
         },
         skip,
         take: limit,
-        orderBy: { scheduledDate: 'desc' },
+        orderBy: { scheduledDate: "desc" },
       }),
       this.prisma.routeRun.count({ where }),
     ]);
@@ -173,22 +172,25 @@ export class RoutesService {
             customerAddress: true,
             orders: { select: { id: true, orderNumber: true, status: true } },
           },
-          orderBy: { stopNumber: 'asc' },
+          orderBy: { stopNumber: "asc" },
         },
       },
     });
-    if (!run) throw new NotFoundException('Route run not found');
+    if (!run) throw new NotFoundException("Route run not found");
     return run;
   }
 
   async updateRunStatus(id: string, dto: UpdateRunStatusDto, user: JwtPayload) {
     const run = await this.prisma.routeRun.findUnique({ where: { id } });
-    if (!run) throw new NotFoundException('Route run not found');
+    if (!run) throw new NotFoundException("Route run not found");
 
     if (user.role === UserRole.DRIVER) {
-      const allowedStatuses: RouteRunStatus[] = [RouteRunStatus.IN_PROGRESS, RouteRunStatus.COMPLETED];
+      const allowedStatuses: RouteRunStatus[] = [
+        RouteRunStatus.IN_PROGRESS,
+        RouteRunStatus.COMPLETED,
+      ];
       if (!allowedStatuses.includes(dto.status)) {
-        throw new ForbiddenException('Drivers can only set IN_PROGRESS or COMPLETED');
+        throw new ForbiddenException("Drivers can only set IN_PROGRESS or COMPLETED");
       }
     }
 
@@ -201,7 +203,7 @@ export class RoutesService {
 
   private async findRouteOrThrow(id: string) {
     const route = await this.prisma.route.findUnique({ where: { id } });
-    if (!route) throw new NotFoundException('Route not found');
+    if (!route) throw new NotFoundException("Route not found");
     return route;
   }
 }

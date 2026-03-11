@@ -14,7 +14,7 @@ import {
   XCircle,
   Loader2,
 } from "lucide-react";
-import { Badge, Button, Card, cn } from "@routeflow/ui/web";
+import { Badge, Button, Card, cn, type BadgeStatus } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useOrder, useUpdateOrderStatus } from "@/lib/api/orders";
 
@@ -220,7 +220,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                         ${(li.qty * Number(li.unitPrice)).toFixed(2)}
                       </td>
                       <td className="px-6 py-3">
-                        <Badge status={li.status} />
+                        <Badge status={li.status as BadgeStatus} />
                       </td>
                     </tr>
                   ))}

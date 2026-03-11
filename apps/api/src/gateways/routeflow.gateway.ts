@@ -7,12 +7,12 @@ import {
   MessageBody,
   ConnectedSocket,
   WsException,
-} from '@nestjs/websockets';
-import { UseGuards } from '@nestjs/common';
-import { JwtService } from '@nestjs/jwt';
-import { Server, Socket } from 'socket.io';
-import { JwtPayload } from '../auth/jwt-payload.interface';
-import { UserRole } from '@prisma/client';
+} from "@nestjs/websockets";
+import { UseGuards } from "@nestjs/common";
+import { JwtService } from "@nestjs/jwt";
+import { Server, Socket } from "socket.io";
+import { JwtPayload } from "../auth/jwt-payload.interface";
+import { UserRole } from "@prisma/client";
 
 // ─── Typed event payloads ──────────────────────────────────────────────────────
 
@@ -58,20 +58,18 @@ export interface DriverLocationPayload {
 @WebSocketGateway({
   cors: {
     origin: process.env.CORS_ORIGINS
-      ? process.env.CORS_ORIGINS.split(',').map((o) => o.trim())
+      ? process.env.CORS_ORIGINS.split(",").map((o) => o.trim())
       : [
-          'http://localhost:3001',
-          'http://localhost:8081',
-          'http://localhost:19000',
-          'http://localhost:19006',
+          "http://localhost:3001",
+          "http://localhost:8081",
+          "http://localhost:19000",
+          "http://localhost:19006",
         ],
     credentials: true,
   },
-  namespace: '/',
+  namespace: "/",
 })
-export class RouteFlowGateway
-  implements OnGatewayConnection, OnGatewayDisconnect
-{
+export class RouteFlowGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
   server: Server;
 
@@ -83,18 +81,15 @@ export class RouteFlowGateway
     try {
       const token =
         (client.handshake.auth?.token as string) ||
-        (client.handshake.headers?.authorization as string)?.replace(
-          'Bearer ',
-          '',
-        );
+        (client.handshake.headers?.authorization as string)?.replace("Bearer ", "");
 
-      if (!token) throw new WsException('No token');
+      if (!token) throw new WsException("No token");
 
       const payload = this.jwtService.verify<JwtPayload>(token);
       client.data.user = payload;
 
       if (payload.role === UserRole.OPERATOR) {
-        await client.join('operators');
+        await client.join("operators");
       } else if (payload.role === UserRole.DRIVER) {
         await client.join(`driver:${payload.sub}`);
       } else if (payload.role === UserRole.CUSTOMER) {
@@ -111,7 +106,7 @@ export class RouteFlowGateway
 
   // ─── Client → Server events ──────────────────────────────────────────────────
 
-  @SubscribeMessage('driver.location.update')
+  @SubscribeMessage("driver.location.update")
   handleDriverLocation(
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: DriverLocationPayload,
@@ -119,7 +114,7 @@ export class RouteFlowGateway
     const user: JwtPayload | undefined = client.data.user;
     if (!user || user.role !== UserRole.DRIVER) return;
 
-    this.server.to('operators').emit('driver.location.updated', {
+    this.server.to("operators").emit("driver.location.updated", {
       driverId: user.sub,
       ...payload,
       timestamp: new Date().toISOString(),
@@ -129,18 +124,18 @@ export class RouteFlowGateway
   // ─── Server → Client emitters (called from services) ─────────────────────────
 
   emitStopCompleted(payload: StopCompletedPayload) {
-    this.server.to('operators').emit('route.stop.completed', payload);
+    this.server.to("operators").emit("route.stop.completed", payload);
   }
 
   emitUrgentOrder(payload: UrgentOrderPayload) {
-    this.server.to('operators').emit('order.urgent.placed', payload);
+    this.server.to("operators").emit("order.urgent.placed", payload);
   }
 
   emitDriverStatusUpdated(payload: DriverStatusPayload) {
-    this.server.to('operators').emit('driver.status.updated', payload);
+    this.server.to("operators").emit("driver.status.updated", payload);
   }
 
   emitLowStock(payload: LowStockPayload) {
-    this.server.to('operators').emit('inventory.low.stock', payload);
+    this.server.to("operators").emit("inventory.low.stock", payload);
   }
 }

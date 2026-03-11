@@ -3,18 +3,18 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
-} from '@nestjs/common';
-import { InjectQueue } from '@nestjs/bull';
-import type { Queue } from 'bull';
-import { PrismaService } from '../prisma/prisma.service';
-import { JwtPayload } from '../auth/jwt-payload.interface';
-import { OrderStatus, UserRole, ItemStatus, TxnStatus, MutationType } from '@prisma/client';
-import { ListOrdersDto } from './dto/list-orders.dto';
-import { CreateOrderDto } from './dto/create-order.dto';
-import { ChangeOrderStatusDto } from './dto/change-order-status.dto';
-import { CompleteStopDto } from './dto/complete-stop.dto';
-import { RouteFlowGateway } from '../gateways/routeflow.gateway';
-import { ConfigService } from '@nestjs/config';
+} from "@nestjs/common";
+import { InjectQueue } from "@nestjs/bull";
+import type { Queue } from "bull";
+import { PrismaService } from "../prisma/prisma.service";
+import { JwtPayload } from "../auth/jwt-payload.interface";
+import { OrderStatus, UserRole, ItemStatus, TxnStatus, MutationType } from "@prisma/client";
+import { ListOrdersDto } from "./dto/list-orders.dto";
+import { CreateOrderDto } from "./dto/create-order.dto";
+import { ChangeOrderStatusDto } from "./dto/change-order-status.dto";
+import { CompleteStopDto } from "./dto/complete-stop.dto";
+import { RouteFlowGateway } from "../gateways/routeflow.gateway";
+import { ConfigService } from "@nestjs/config";
 
 @Injectable()
 export class OrdersService {
@@ -22,11 +22,11 @@ export class OrdersService {
 
   constructor(
     private readonly prisma: PrismaService,
-    @InjectQueue('invoices') private readonly invoiceQueue: Queue,
+    @InjectQueue("invoices") private readonly invoiceQueue: Queue,
     private readonly gateway: RouteFlowGateway,
     private readonly config: ConfigService,
   ) {
-    this.taxRate = this.config.get<number>('taxRate') ?? 0.1;
+    this.taxRate = this.config.get<number>("taxRate") ?? 0.1;
   }
 
   async findAll(query: ListOrdersDto, user: JwtPayload) {
@@ -36,7 +36,7 @@ export class OrdersService {
 
     if (user.role === UserRole.CUSTOMER) {
       const customer = await this.prisma.customer.findFirst({ where: { userId: user.sub } });
-      if (!customer) throw new ForbiddenException('Customer record not found');
+      if (!customer) throw new ForbiddenException("Customer record not found");
       where.customerId = customer.id;
     } else if (customerId) {
       where.customerId = customerId;
@@ -54,7 +54,7 @@ export class OrdersService {
         },
         skip,
         take: limit,
-        orderBy: { createdAt: 'desc' },
+        orderBy: { createdAt: "desc" },
       }),
       this.prisma.order.count({ where }),
     ]);
@@ -71,7 +71,7 @@ export class OrdersService {
         transaction: true,
       },
     });
-    if (!order) throw new NotFoundException('Order not found');
+    if (!order) throw new NotFoundException("Order not found");
 
     if (user.role === UserRole.CUSTOMER) {
       const customer = await this.prisma.customer.findFirst({ where: { userId: user.sub } });
@@ -82,10 +82,11 @@ export class OrdersService {
   }
 
   async create(dto: CreateOrderDto, user: JwtPayload) {
-    if (user.role !== UserRole.CUSTOMER) throw new ForbiddenException('Only customers can create orders');
+    if (user.role !== UserRole.CUSTOMER)
+      throw new ForbiddenException("Only customers can create orders");
 
     const customer = await this.prisma.customer.findFirst({ where: { userId: user.sub } });
-    if (!customer) throw new ForbiddenException('Customer record not found');
+    if (!customer) throw new ForbiddenException("Customer record not found");
 
     const products = await this.prisma.product.findMany({
       where: { id: { in: dto.items.map((i) => i.productId) } },
@@ -101,7 +102,13 @@ export class OrdersService {
       const unitPrice = Number(product.pricePerUnit);
       const itemSubtotal = unitPrice * item.qty;
       subtotal += itemSubtotal;
-      return { productId: item.productId, qty: item.qty, unitPrice, subtotal: itemSubtotal, notes: item.notes };
+      return {
+        productId: item.productId,
+        qty: item.qty,
+        unitPrice,
+        subtotal: itemSubtotal,
+        notes: item.notes,
+      };
     });
 
     const tax = subtotal * this.taxRate;
@@ -118,12 +125,15 @@ export class OrdersService {
         urgent: dto.urgent ?? false,
         lineItems: { create: lineItemsData },
       },
-      include: { lineItems: { include: { product: { select: { id: true, name: true, unit: true } } } } },
+      include: {
+        lineItems: { include: { product: { select: { id: true, name: true, unit: true } } } },
+      },
     });
   }
 
   async changeStatus(id: string, dto: ChangeOrderStatusDto, user: JwtPayload) {
-    if (user.role !== UserRole.OPERATOR) throw new ForbiddenException('Only operators can change order status');
+    if (user.role !== UserRole.OPERATOR)
+      throw new ForbiddenException("Only operators can change order status");
     await this.findOneOrThrow(id);
     return this.prisma.order.update({ where: { id }, data: { status: dto.status } });
   }
@@ -146,7 +156,7 @@ export class OrdersService {
         where: { id: stopId, routeRunId: runId },
         include: { orders: { include: { lineItems: true } } },
       });
-      if (!stop) throw new NotFoundException('Route run stop not found');
+      if (!stop) throw new NotFoundException("Route run stop not found");
 
       for (const delivery of dto.deliveries) {
         const orderItem = await tx.orderItem.findUnique({ where: { id: delivery.orderItemId } });
@@ -161,9 +171,10 @@ export class OrdersService {
             type: delivery.type,
             quantityDelivered: delivery.quantityDelivered,
             note: delivery.note,
-            driverId: user.role === UserRole.DRIVER
-              ? (await tx.driver.findFirst({ where: { userId: user.sub } }))?.id ?? undefined
-              : undefined,
+            driverId:
+              user.role === UserRole.DRIVER
+                ? ((await tx.driver.findFirst({ where: { userId: user.sub } }))?.id ?? undefined)
+                : undefined,
           },
         });
 
@@ -171,13 +182,18 @@ export class OrdersService {
         if (delivery.type === MutationType.PARTIAL) newItemStatus = ItemStatus.PARTIAL;
         else if (delivery.type === MutationType.REFUSED) newItemStatus = ItemStatus.CANCELLED;
 
-        await tx.orderItem.update({ where: { id: delivery.orderItemId }, data: { status: newItemStatus } });
+        await tx.orderItem.update({
+          where: { id: delivery.orderItemId },
+          data: { status: newItemStatus },
+        });
       }
 
       for (const order of stop.orders) {
         const updatedItems = await tx.orderItem.findMany({ where: { orderId: order.id } });
         const allDelivered = updatedItems.every((i) => i.status === ItemStatus.DELIVERED);
-        const anyDelivered = updatedItems.some((i) => i.status === ItemStatus.DELIVERED || i.status === ItemStatus.PARTIAL);
+        const anyDelivered = updatedItems.some(
+          (i) => i.status === ItemStatus.DELIVERED || i.status === ItemStatus.PARTIAL,
+        );
         // Fix H2: allDelivered → DELIVERED, partiallyDelivered → OUT_FOR_DELIVERY, nothing → keep current
         const newOrderStatus = allDelivered
           ? OrderStatus.DELIVERED
@@ -204,7 +220,7 @@ export class OrdersService {
 
       await tx.routeRunStop.update({
         where: { id: stopId },
-        data: { status: 'COMPLETED', completedAt: new Date(), driverNote: dto.driverNote },
+        data: { status: "COMPLETED", completedAt: new Date(), driverNote: dto.driverNote },
       });
     });
 
@@ -229,9 +245,9 @@ export class OrdersService {
     // Retry up to 3x with exponential back-off (5s -> 10s -> 20s).
     for (const txnId of invoiceTransactionIds) {
       await this.invoiceQueue.add(
-        'generate-invoice',
+        "generate-invoice",
         { transactionId: txnId },
-        { attempts: 3, backoff: { type: 'exponential', delay: 5000 } },
+        { attempts: 3, backoff: { type: "exponential", delay: 5000 } },
       );
     }
 
@@ -240,7 +256,7 @@ export class OrdersService {
 
   private async findOneOrThrow(id: string) {
     const order = await this.prisma.order.findUnique({ where: { id } });
-    if (!order) throw new NotFoundException('Order not found');
+    if (!order) throw new NotFoundException("Order not found");
     return order;
   }
 }

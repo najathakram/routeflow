@@ -1,11 +1,6 @@
-import {
-  BadRequestException,
-  Injectable,
-  Logger,
-  NotFoundException,
-} from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { PrismaService } from '../prisma/prisma.service';
+import { BadRequestException, Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import { PrismaService } from "../prisma/prisma.service";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -47,12 +42,12 @@ export class RouteOptimizationService {
               },
             },
           },
-          orderBy: { stopNumber: 'asc' },
+          orderBy: { stopNumber: "asc" },
         },
       },
     });
 
-    if (!run) throw new NotFoundException('Route run not found');
+    if (!run) throw new NotFoundException("Route run not found");
     if (run.stops.length === 0) {
       return { stopOrder: [], reorderedCount: 0, usedFallback: false };
     }
@@ -74,14 +69,10 @@ export class RouteOptimizationService {
 
     // Validate all stops have coordinates
     const missingCoords = run.stops.filter(
-      (s) =>
-        s.routeStop.customerAddress?.lat == null ||
-        s.routeStop.customerAddress?.lng == null,
+      (s) => s.routeStop.customerAddress?.lat == null || s.routeStop.customerAddress?.lng == null,
     );
     if (missingCoords.length > 0) {
-      const names = missingCoords
-        .map((s) => s.routeStop.customer?.businessName ?? s.id)
-        .join(', ');
+      const names = missingCoords.map((s) => s.routeStop.customer?.businessName ?? s.id).join(", ");
       throw new BadRequestException(
         `Missing geocoded addresses for: ${names}. Set GOOGLE_MAPS_API_KEY to auto-geocode.`,
       );
@@ -102,7 +93,7 @@ export class RouteOptimizationService {
       optimizedIds = await this.callOrsOptimization(stops);
     } catch (err: unknown) {
       this.logger.warn(
-        'ORS optimization failed — applying nearest-neighbor fallback',
+        "ORS optimization failed — applying nearest-neighbor fallback",
         err instanceof Error ? err.message : String(err),
       );
       optimizedIds = this.nearestNeighborFallback(stops);
@@ -139,15 +130,15 @@ export class RouteOptimizationService {
   // ─── ORS Vroom API ────────────────────────────────────────────────────────
 
   private async callOrsOptimization(stops: StopWithCoords[]): Promise<string[]> {
-    const apiKey = this.config.get<string>('ors.apiKey') ?? '';
-    if (!apiKey) throw new Error('ORS_API_KEY not configured');
+    const apiKey = this.config.get<string>("ors.apiKey") ?? "";
+    if (!apiKey) throw new Error("ORS_API_KEY not configured");
 
     const first = stops[0];
     const body = {
       vehicles: [
         {
           id: 1,
-          profile: 'driving-car',
+          profile: "driving-car",
           start: [first.lng, first.lat], // ORS: [lng, lat]
         },
       ],
@@ -157,13 +148,13 @@ export class RouteOptimizationService {
       })),
     };
 
-    const res = await fetch('https://api.openrouteservice.org/optimization', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: apiKey },
+    const res = await fetch("https://api.openrouteservice.org/optimization", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: apiKey },
       body: JSON.stringify(body),
     });
 
-    if (res.status === 429) throw new Error('ORS rate limit exceeded');
+    if (res.status === 429) throw new Error("ORS rate limit exceeded");
     if (!res.ok) throw new Error(`ORS error: ${res.status} ${res.statusText}`);
 
     const data = (await res.json()) as {
@@ -172,7 +163,7 @@ export class RouteOptimizationService {
 
     const steps = data.routes?.[0]?.steps ?? [];
     const optimizedIds = steps
-      .filter((s) => s.type === 'job' && s.job != null)
+      .filter((s) => s.type === "job" && s.job != null)
       .map((s) => stops[s.job! - 1].id);
 
     if (optimizedIds.length !== stops.length) {
@@ -196,7 +187,10 @@ export class RouteOptimizationService {
       let minDist = this.haversineKm(current, unvisited[0]);
       for (let i = 1; i < unvisited.length; i++) {
         const d = this.haversineKm(current, unvisited[i]);
-        if (d < minDist) { minDist = d; nearestIdx = i; }
+        if (d < minDist) {
+          minDist = d;
+          nearestIdx = i;
+        }
       }
       current = unvisited.splice(nearestIdx, 1)[0];
       result.push(current.id);
@@ -212,7 +206,7 @@ export class RouteOptimizationService {
     state: string;
     zip: string;
   }): Promise<{ lat: number; lng: number } | null> {
-    const key = this.config.get<string>('googleMaps.apiKey') ?? '';
+    const key = this.config.get<string>("googleMaps.apiKey") ?? "";
     if (!key) return null;
     const q = encodeURIComponent(
       `${address.line1}, ${address.city}, ${address.state} ${address.zip}`,
@@ -228,25 +222,20 @@ export class RouteOptimizationService {
       const loc = data.results?.[0]?.geometry?.location;
       return loc ? { lat: loc.lat, lng: loc.lng } : null;
     } catch (err) {
-      this.logger.warn('Geocoding failed', err);
+      this.logger.warn("Geocoding failed", err);
       return null;
     }
   }
 
   // ─── Haversine distance (km) ──────────────────────────────────────────────
 
-  private haversineKm(
-    a: { lat: number; lng: number },
-    b: { lat: number; lng: number },
-  ): number {
+  private haversineKm(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
     const R = 6371;
     const dLat = ((b.lat - a.lat) * Math.PI) / 180;
     const dLng = ((b.lng - a.lng) * Math.PI) / 180;
     const lat1 = (a.lat * Math.PI) / 180;
     const lat2 = (b.lat * Math.PI) / 180;
-    const h =
-      Math.sin(dLat / 2) ** 2 +
-      Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+    const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
     return R * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
   }
 }

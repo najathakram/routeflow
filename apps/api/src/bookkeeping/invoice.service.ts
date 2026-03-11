@@ -1,11 +1,11 @@
-import React from 'react';
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
-import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { renderToBuffer } from '@react-pdf/renderer';
-import { PrismaService } from '../prisma/prisma.service';
-import { InvoiceTemplate } from './invoice-template';
+import React from "react";
+import { Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { renderToBuffer } from "@react-pdf/renderer";
+import { PrismaService } from "../prisma/prisma.service";
+import { InvoiceTemplate } from "./invoice-template";
 
 // 15-minute presigned URL expiry
 const PRESIGNED_EXPIRY_SECONDS = 900;
@@ -20,14 +20,14 @@ export class InvoiceService {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
   ) {
-    const accountId = config.get<string>('r2.accountId') ?? '';
-    this.bucket = config.get<string>('r2.bucketName') ?? 'routeflow-assets';
+    const accountId = config.get<string>("r2.accountId") ?? "";
+    this.bucket = config.get<string>("r2.bucketName") ?? "routeflow-assets";
     this.s3 = new S3Client({
-      region: 'auto',
+      region: "auto",
       endpoint: `https://${accountId}.r2.cloudflarestorage.com`,
       credentials: {
-        accessKeyId: config.get<string>('r2.accessKeyId') ?? '',
-        secretAccessKey: config.get<string>('r2.secretAccessKey') ?? '',
+        accessKeyId: config.get<string>("r2.accessKeyId") ?? "",
+        secretAccessKey: config.get<string>("r2.secretAccessKey") ?? "",
       },
     });
   }
@@ -46,7 +46,7 @@ export class InvoiceService {
             orderItem: { include: { product: { select: { id: true, name: true } } } },
           },
         },
-        payments: { orderBy: { createdAt: 'desc' } },
+        payments: { orderBy: { createdAt: "desc" } },
       },
     });
 
@@ -76,7 +76,7 @@ export class InvoiceService {
         Bucket: this.bucket,
         Key: key,
         Body: pdfBuffer,
-        ContentType: 'application/pdf',
+        ContentType: "application/pdf",
         ContentDisposition: `inline; filename="invoice-${transactionId.slice(0, 8)}.pdf"`,
       }),
     );
@@ -100,7 +100,7 @@ export class InvoiceService {
       select: { pdfUrl: true },
     });
 
-    if (!txn) throw new NotFoundException('Transaction not found');
+    if (!txn) throw new NotFoundException("Transaction not found");
     if (!txn.pdfUrl) return null;
 
     return this.buildPresignedUrl(txn.pdfUrl);
@@ -109,10 +109,8 @@ export class InvoiceService {
   // ─── Internal helpers ──────────────────────────────────────────────────────
 
   private async buildPresignedUrl(key: string): Promise<string> {
-    return getSignedUrl(
-      this.s3,
-      new GetObjectCommand({ Bucket: this.bucket, Key: key }),
-      { expiresIn: PRESIGNED_EXPIRY_SECONDS },
-    );
+    return getSignedUrl(this.s3, new GetObjectCommand({ Bucket: this.bucket, Key: key }), {
+      expiresIn: PRESIGNED_EXPIRY_SECONDS,
+    });
   }
 }

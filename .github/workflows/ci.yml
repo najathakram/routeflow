@@ -30,8 +30,12 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
-      # --force: skip EBADPLATFORM for Windows-only @next/swc-win32-* in lockfile
-      - run: npm install --force
+      # Lockfile may contain Windows-only @next/swc-win32-* entries;
+      # delete it so npm resolves cleanly on the Linux runner.
+      - name: Install dependencies
+        run: |
+          rm -f package-lock.json
+          npm install
 
       - run: npm run lint
 
@@ -47,8 +51,10 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
-      # --force: skip EBADPLATFORM for Windows-only @next/swc-win32-* in lockfile
-      - run: npm install --force
+      - name: Install dependencies
+        run: |
+          rm -f package-lock.json
+          npm install
 
       # Prisma client must be generated before tsc can resolve @prisma/client types
       - name: Generate Prisma client
@@ -102,8 +108,10 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
-      # --force: skip EBADPLATFORM for Windows-only @next/swc-win32-* in lockfile
-      - run: npm install --force
+      - name: Install dependencies
+        run: |
+          rm -f package-lock.json
+          npm install
 
       # Generate Prisma client and push schema to the test database
       - name: Setup database
