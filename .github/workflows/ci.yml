@@ -30,12 +30,12 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
-      # Lockfile may contain Windows-only @next/swc-win32-* entries;
-      # delete it so npm resolves cleanly on the Linux runner.
+      # Next.js has @next/swc-win32-* as optional deps; npm in workspaces
+      # incorrectly fails on platform mismatch. Delete lockfile + --force.
       - name: Install dependencies
         run: |
           rm -f package-lock.json
-          npm install
+          npm install --force
 
       - run: npm run lint
 
@@ -54,7 +54,7 @@ jobs:
       - name: Install dependencies
         run: |
           rm -f package-lock.json
-          npm install
+          npm install --force
 
       # Prisma client must be generated before tsc can resolve @prisma/client types
       - name: Generate Prisma client
@@ -111,7 +111,7 @@ jobs:
       - name: Install dependencies
         run: |
           rm -f package-lock.json
-          npm install
+          npm install --force
 
       # Generate Prisma client and push schema to the test database
       - name: Setup database
