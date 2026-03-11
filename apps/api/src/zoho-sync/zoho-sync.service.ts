@@ -39,14 +39,20 @@ export class ZohoSyncService {
     return "https://www.zohoapis.com";
   }
 
+  private getAccountsBaseUrl(region: string): string {
+    if (region === "eu") return "https://accounts.zoho.eu";
+    if (region === "in") return "https://accounts.zoho.in";
+    if (region === "au") return "https://accounts.zoho.com.au";
+    return "https://accounts.zoho.com";
+  }
+
   private async getAccessToken(cfg: {
     clientId: string;
     clientSecret: string;
     refreshToken: string;
     region: string;
   }): Promise<string> {
-    const tld = cfg.region === "com" ? "com" : cfg.region;
-    const tokenUrl = `https://accounts.zoho.${tld}/oauth/v2/token`;
+    const tokenUrl = `${this.getAccountsBaseUrl(cfg.region)}/oauth/v2/token`;
     const params = new URLSearchParams({
       grant_type: "refresh_token",
       client_id: cfg.clientId,
@@ -94,35 +100,44 @@ export class ZohoSyncService {
       page++;
 
       for (const item of items) {
-        const existing = await this.prisma.product.findUnique({
-          where: { zohoProductId: item.item_id },
-        });
+        try {
+          const existing = await this.prisma.product.findUnique({
+            where: { zohoProductId: item.item_id },
+          });
 
-        const stockQty = item.stock_on_hand ?? 0;
-        const lowStockThreshold = 5;
+          const stockQty = item.stock_on_hand ?? 0;
+          const lowStockThreshold = 5;
 
-        const productData = {
-          name: item.name,
-          description: item.description ?? null,
-          unit: item.unit ?? "unit",
-          pricePerUnit: item.rate ?? 0,
-          category: item.category_name ?? null,
-          sku: item.sku ?? null,
-          zohoProductId: item.item_id,
-          lowStock: stockQty <= lowStockThreshold,
-        };
+          const productData = {
+            name: item.name,
+            description: item.description ?? null,
+            unit: item.unit ?? "unit",
+            pricePerUnit: item.rate ?? 0,
+            category: item.category_name ?? null,
+            sku: item.sku || null,
+            zohoProductId: item.item_id,
+            lowStock: stockQty <= lowStockThreshold,
+          };
 
-        if (existing) {
-          if (!existing.hasLocalOverride) {
-            await this.prisma.product.update({
-              where: { id: existing.id },
-              data: productData,
-            });
+          if (existing) {
+            if (!existing.hasLocalOverride) {
+              await this.prisma.product.update({
+                where: { id: existing.id },
+                data: productData,
+              });
+            }
+            updated++;
+          } else {
+            // Omit sku if it would collide with an existing product
+            const createData = item.sku
+              ? productData
+              : { ...productData, sku: null };
+            await this.prisma.product.create({ data: createData });
+            created++;
           }
-          updated++;
-        } else {
-          await this.prisma.product.create({ data: productData });
-          created++;
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          this.logger.warn(`Skipping Zoho item ${item.item_id} (${item.name}): ${msg}`);
         }
       }
 

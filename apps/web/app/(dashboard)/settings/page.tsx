@@ -34,7 +34,7 @@ import {
 import { useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useUsers, useCreateOperator, useUpdateUser, useChangeUserStatus, AppUser } from "@/lib/api/users";
-import { useZohoStatus, useZohoSync, useUpdateZohoConfig } from "@/lib/api/zoho";
+import { useZohoStatus, useZohoConfig, useZohoSync, useUpdateZohoConfig } from "@/lib/api/zoho";
 import { useNotificationsStatus, useSendTestNotification } from "@/lib/api/notifications";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -202,10 +202,22 @@ function IntegrationsTab() {
 
   // Zoho state
   const { data: zohoStatus } = useZohoStatus();
+  const { data: zohoConfig } = useZohoConfig();
   const zohoSync = useZohoSync();
   const updateZohoConfig = useUpdateZohoConfig();
   const [showZohoForm, setShowZohoForm] = React.useState(false);
   const [zohoForm, setZohoForm] = React.useState({ clientId: "", clientSecret: "", refreshToken: "", region: "com" });
+
+  // Pre-fill non-secret fields when the credential form is opened
+  React.useEffect(() => {
+    if (showZohoForm && zohoConfig) {
+      setZohoForm((prev) => ({
+        ...prev,
+        clientId: prev.clientId || zohoConfig.clientId || "",
+        region: zohoConfig.region || "com",
+      }));
+    }
+  }, [showZohoForm, zohoConfig]);
 
   // Firebase state
   const { data: notificationsStatus } = useNotificationsStatus();
