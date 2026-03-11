@@ -57,6 +57,14 @@ export function useCustomerOrders(id: string) {
   });
 }
 
+export function useCustomerRoutes(id: string) {
+  return useQuery({
+    queryKey: ["customers", id, "routes"],
+    queryFn: () => apiClient.get(`/customers/${id}/routes`).then((r) => r.data),
+    enabled: !!id,
+  });
+}
+
 export function useAddCustomerAddress() {
   const qc = useQueryClient();
   return useMutation({

@@ -29,7 +29,16 @@ export interface CustomerFormModalProps {
   isOpen: boolean;
   onClose: () => void;
   mode: "add" | "edit";
-  initialData?: { id?: string; businessName: string; contactName: string; phone: string; email: string; notes?: string; addresses?: { line1?: string; street?: string; city?: string; zip?: string }[] };
+  initialData?: {
+    id?: string;
+    businessName: string;
+    contactName: string;
+    phone?: string;
+    email?: string;
+    user?: { email?: string };
+    notes?: string;
+    addresses?: { line1?: string; street?: string; city?: string; zip?: string }[];
+  };
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -58,8 +67,8 @@ export function CustomerFormModal({
       ? {
           businessName: initialData.businessName,
           contactName: initialData.contactName,
-          phone: initialData.phone,
-          email: initialData.email,
+          phone: initialData.phone ?? "",
+          email: initialData.email ?? initialData.user?.email ?? "",
           creditTerms: "Net 30",
           street: initialData.addresses?.[0]?.line1 ?? initialData.addresses?.[0]?.street ?? "",
           city: initialData.addresses?.[0]?.city ?? "",
@@ -77,8 +86,8 @@ export function CustomerFormModal({
           ? {
               businessName: initialData.businessName,
               contactName: initialData.contactName,
-              phone: initialData.phone,
-              email: initialData.email,
+              phone: initialData.phone ?? "",
+              email: initialData.email ?? initialData.user?.email ?? "",
               creditTerms: "Net 30",
               street: initialData.addresses?.[0]?.line1 ?? initialData.addresses?.[0]?.street ?? "",
               city: initialData.addresses?.[0]?.city ?? "",
@@ -187,6 +196,7 @@ export function CustomerFormModal({
                 placeholder="contact@business.com"
                 register={register("email")}
                 error={errors.email?.message}
+                disabled={mode === "edit"}
               />
             </div>
           </section>
