@@ -1,4 +1,5 @@
 import {
+  ActivityIndicator,
   ScrollView,
   StyleSheet,
   Text,
@@ -9,19 +10,32 @@ import { format, parseISO } from "date-fns";
 import { Ionicons } from "@expo/vector-icons";
 import { StatusBadge } from "@routeflow/ui/mobile";
 import { colors, borderRadius, shadows } from "@routeflow/ui/tokens";
-import { MOCK_HISTORY, HistoryOrderItem } from "../../../data/mockData";
+import { useOrder, type OrderItem } from "../../../lib/api/orders";
 
-function itemStatusForBadge(
-  status: HistoryOrderItem["status"],
-): "DELIVERED" | "CANCELLED" | "PENDING" {
-  return status;
+type ItemStatusBadge = "DELIVERED" | "CANCELLED" | "PENDING";
+
+function itemStatusForBadge(status: string): ItemStatusBadge {
+  if (status === "DELIVERED" || status === "PARTIAL") return "DELIVERED";
+  if (status === "CANCELLED") return "CANCELLED";
+  return "PENDING";
 }
 
 export default function OrderDetailScreen() {
   const { orderId } = useLocalSearchParams<{ orderId: string }>();
-  const order = MOCK_HISTORY.find((o) => o.id === orderId);
+  const { data: order, isLoading, isError } = useOrder(orderId ?? "");
 
-  if (!order) {
+  if (isLoading) {
+    return (
+      <>
+        <Stack.Screen options={{ title: "Order", headerBackTitle: "History" }} />
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color={colors.brand[500]} />
+        </View>
+      </>
+    );
+  }
+
+  if (isError || !order) {
     return (
       <View style={styles.notFound}>
         <Text style={styles.notFoundText}>Order not found.</Text>
@@ -29,16 +43,16 @@ export default function OrderDetailScreen() {
     );
   }
 
-  const date = parseISO(order.date);
+  const date = parseISO(order.createdAt);
   const deliveryDate = format(date, "EEEE, MMMM d, yyyy");
   const deliveryTime = format(date, "h:mm a");
-  const itemCount = order.items.reduce((s, i) => s + i.qty, 0);
+  const itemCount = order.lineItems.reduce((s, i) => s + i.qty, 0);
 
   return (
     <>
       <Stack.Screen
         options={{
-          title: order.id,
+          title: order.orderNumber,
           headerBackTitle: "History",
         }}
       />
@@ -50,15 +64,15 @@ export default function OrderDetailScreen() {
         {/* Order summary card */}
         <View style={styles.summaryCard}>
           <View style={styles.summaryRow}>
-            <Text style={styles.summaryLabel}>Order ID</Text>
-            <Text style={styles.summaryValue}>{order.id}</Text>
+            <Text style={styles.summaryLabel}>Order #</Text>
+            <Text style={styles.summaryValue}>{order.orderNumber}</Text>
           </View>
           <View style={styles.summaryRow}>
             <Text style={styles.summaryLabel}>Status</Text>
-            <StatusBadge status={order.status === "IN_TRANSIT" ? "IN_PROGRESS" : order.status} />
+            <StatusBadge status={order.status === "OUT_FOR_DELIVERY" ? "IN_PROGRESS" : order.status === "CONFIRMED" ? "IN_PROGRESS" : order.status === "DELIVERED" ? "DELIVERED" : order.status === "CANCELLED" ? "CANCELLED" : "PENDING"} />
           </View>
           <View style={styles.summaryRow}>
-            <Text style={styles.summaryLabel}>Delivery Date</Text>
+            <Text style={styles.summaryLabel}>Date</Text>
             <Text style={styles.summaryValue}>{deliveryDate}</Text>
           </View>
           <View style={styles.summaryRow}>
@@ -74,23 +88,23 @@ export default function OrderDetailScreen() {
         {/* Line items */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Items</Text>
-          {order.items.map((item, idx) => (
+          {order.lineItems.map((item, idx) => (
             <View
-              key={idx}
+              key={item.id}
               style={[
                 styles.lineItem,
-                idx === order.items.length - 1 && styles.lineItemLast,
+                idx === order.lineItems.length - 1 && styles.lineItemLast,
               ]}
             >
               <View style={styles.lineLeft}>
-                <Text style={styles.itemName}>{item.name}</Text>
+                <Text style={styles.itemName}>{item.product?.name ?? item.productId}</Text>
                 <Text style={styles.itemQty}>
-                  {item.qty} × ${item.unitPrice.toFixed(2)}
+                  {item.qty} × ${Number(item.unitPrice).toFixed(2)}
                 </Text>
               </View>
               <View style={styles.lineRight}>
                 <Text style={styles.itemTotal}>
-                  ${(item.qty * item.unitPrice).toFixed(2)}
+                  ${(item.qty * Number(item.unitPrice)).toFixed(2)}
                 </Text>
                 <StatusBadge status={itemStatusForBadge(item.status)} />
               </View>
@@ -98,10 +112,10 @@ export default function OrderDetailScreen() {
           ))}
         </View>
 
-        {/* Driver note */}
-        {order.driverNote ? (
+        {/* Notes */}
+        {order.notes ? (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Driver Note</Text>
+            <Text style={styles.sectionTitle}>Order Notes</Text>
             <View style={styles.driverNoteBox}>
               <Ionicons
                 name="chatbox-ellipses-outline"
@@ -109,7 +123,7 @@ export default function OrderDetailScreen() {
                 color={colors.brand[500]}
                 style={styles.driverNoteIcon}
               />
-              <Text style={styles.driverNoteText}>{order.driverNote}</Text>
+              <Text style={styles.driverNoteText}>{order.notes}</Text>
             </View>
           </View>
         ) : null}
@@ -118,7 +132,7 @@ export default function OrderDetailScreen() {
         <View style={[styles.section, styles.totalSection]}>
           <View style={styles.totalRow}>
             <Text style={styles.totalLabel}>Order Total</Text>
-            <Text style={styles.totalValue}>${order.total.toFixed(2)}</Text>
+            <Text style={styles.totalValue}>${Number(order.total).toFixed(2)}</Text>
           </View>
         </View>
       </ScrollView>
@@ -130,6 +144,11 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.surface.raised,
+  },
+  centered: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
   },
   scroll: {
     paddingHorizontal: 16,

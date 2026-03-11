@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "check-types": "tsc --noEmit"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
@@ -22,6 +23,7 @@
     "@routeflow/ui": "*",
     "@tanstack/react-query": "^5.90.21",
     "@tanstack/react-table": "^8.21.3",
+    "@vis.gl/react-google-maps": "^1.7.1",
     "axios": "^1.13.6",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

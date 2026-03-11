@@ -21,12 +21,32 @@ import {
 } from "recharts";
 import { Badge, Button, Card, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
-import {
-  getProduct,
-  getStockStatus,
-  generateDemandData,
-  type Product,
-} from "@/mocks/products";
+import { useProduct, useUpdateProduct, useClearProductOverride } from "@/lib/api/products";
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/** Deterministic 30-day demand data seeded by product ID. */
+function generateDemandData(productId: string): { day: string; units: number }[] {
+  const seed = Array.from(productId).reduce((acc, c) => acc + c.charCodeAt(0), 0);
+  const base = new Date(2026, 1, 8); // Feb 8
+  return Array.from({ length: 30 }, (_, i) => {
+    const d = new Date(base);
+    d.setDate(d.getDate() + i);
+    const units = Math.max(
+      1,
+      Math.round(8 + ((seed * 3 + i * 7) % 14) + Math.round(Math.sin((i + seed) * 0.7) * 4)),
+    );
+    return { day: `${d.getMonth() + 1}/${d.getDate()}`, units };
+  });
+}
+
+type StockStatus = "IN_STOCK" | "LOW" | "OUT_OF_STOCK";
+
+function getStockStatus(lowStock: boolean, isActive: boolean): StockStatus {
+  if (!isActive) return "OUT_OF_STOCK";
+  if (lowStock) return "LOW";
+  return "IN_STOCK";
+}
 
 // ─── Local override banner ────────────────────────────────────────────────────
 
@@ -85,19 +105,26 @@ function EditableNumber({
 
 export default function ProductDetailPage({ params }: { params: { id: string } }) {
   const { setTitle } = usePageTitle();
-  const original = getProduct(params.id);
+  const { data: product, isLoading } = useProduct(params.id);
+  const updateProduct = useUpdateProduct();
+  const clearOverride = useClearProductOverride();
 
-  const [localProduct, setLocalProduct] = React.useState<Product | null>(original ?? null);
   const [isEditing, setIsEditing] = React.useState(false);
-  const [editDraft, setEditDraft] = React.useState<Partial<Product>>({});
+  const [editDraft, setEditDraft] = React.useState<Record<string, unknown>>({});
   const [isMounted, setIsMounted] = React.useState(false);
 
   React.useEffect(() => { setIsMounted(true); }, []);
   React.useEffect(() => {
-    setTitle(original?.name ?? "Product");
-  }, [setTitle, original?.name]);
+    setTitle(product?.name ?? "Product");
+  }, [setTitle, product?.name]);
 
-  if (!localProduct) {
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center p-12 text-navy/40">Loading...</div>
+    );
+  }
+
+  if (!product) {
     return (
       <div className="flex flex-col items-center gap-4 p-12 text-center">
         <p className="text-base font-medium text-navy">Product not found.</p>
@@ -106,24 +133,21 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
     );
   }
 
-  const demandData = generateDemandData(localProduct.id);
-  const stockStatus = getStockStatus(localProduct);
+  const priceNumber = parseFloat(String(product.pricePerUnit));
+  const stockStatus = getStockStatus(product.lowStock, product.isActive);
+  const demandData = generateDemandData(product.id);
 
   const startEdit = () => {
     setEditDraft({
-      name: localProduct.name,
-      price: localProduct.price,
-      stockLevel: localProduct.stockLevel,
-      lowStockThreshold: localProduct.lowStockThreshold,
-      description: localProduct.description,
+      name: product.name,
+      pricePerUnit: String(priceNumber),
+      description: product.description ?? "",
     });
     setIsEditing(true);
   };
 
   const saveEdit = () => {
-    setLocalProduct((prev) =>
-      prev ? { ...prev, ...editDraft, isLocalOverride: true, zohoSyncPaused: true } : prev,
-    );
+    updateProduct.mutate({ id: params.id, ...editDraft });
     setIsEditing(false);
   };
 
@@ -133,12 +157,8 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
   };
 
   const resumeSync = () => {
-    setLocalProduct((prev) =>
-      prev ? { ...prev, isLocalOverride: false, zohoSyncPaused: false } : prev,
-    );
+    clearOverride.mutate(params.id);
   };
-
-  const draft = editDraft as Required<typeof editDraft>;
 
   return (
     <div className="space-y-5 p-6">
@@ -152,7 +172,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
       </Link>
 
       {/* Override warning */}
-      {localProduct.isLocalOverride && <OverrideBanner onReset={resumeSync} />}
+      {product.hasLocalOverride && <OverrideBanner onReset={resumeSync} />}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
 
@@ -189,26 +209,10 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                 )}
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-sm text-navy/60">Units on hand</span>
-                <span className="font-bold text-navy">{localProduct.stockLevel}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-navy/60">Low stock at</span>
-                {isEditing ? (
-                  <input
-                    type="number"
-                    min={0}
-                    value={draft.lowStockThreshold ?? localProduct.lowStockThreshold}
-                    onChange={(e) =>
-                      setEditDraft((d) => ({ ...d, lowStockThreshold: Number(e.target.value) }))
-                    }
-                    className="w-20 rounded border border-surface-border px-2 py-1 text-right text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  />
-                ) : (
-                  <span className="font-medium text-navy">
-                    {localProduct.lowStockThreshold} units
-                  </span>
-                )}
+                <span className="text-sm text-navy/60">Low stock flag</span>
+                <span className="font-medium text-navy">
+                  {product.lowStock ? "Yes" : "No"}
+                </span>
               </div>
             </div>
           </Card>
@@ -223,14 +227,14 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
               <div className="min-w-0 flex-1">
                 {isEditing ? (
                   <input
-                    value={draft.name ?? ""}
+                    value={(editDraft.name as string) ?? ""}
                     onChange={(e) => setEditDraft((d) => ({ ...d, name: e.target.value }))}
                     className="w-full rounded border border-surface-border px-2 py-1 text-lg font-bold text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
                   />
                 ) : (
-                  <h1 className="text-xl font-bold text-navy">{localProduct.name}</h1>
+                  <h1 className="text-xl font-bold text-navy">{product.name}</h1>
                 )}
-                <p className="mt-1 font-mono text-xs text-navy/40">{localProduct.sku}</p>
+                <p className="mt-1 font-mono text-xs text-navy/40">{product.sku}</p>
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 {isEditing ? (
@@ -242,7 +246,12 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                     >
                       <X className="h-4 w-4" />
                     </button>
-                    <Button size="sm" onClick={saveEdit} leftIcon={<Check className="h-4 w-4" />}>
+                    <Button
+                      size="sm"
+                      onClick={saveEdit}
+                      loading={updateProduct.isPending}
+                      leftIcon={<Check className="h-4 w-4" />}
+                    >
                       Save
                     </Button>
                   </>
@@ -259,31 +268,18 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
             </div>
 
             <div className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3">
-              <InfoRow label="Category" value={localProduct.category} />
-              <InfoRow label="Unit of Measure" value={localProduct.unitOfMeasure} />
+              <InfoRow label="Category" value={product.category} />
+              <InfoRow label="Unit of Measure" value={product.unit} />
               <InfoRow
                 label="Price"
                 value={
                   isEditing ? (
                     <EditableNumber
-                      value={draft.price ?? localProduct.price}
-                      onChange={(v) => setEditDraft((d) => ({ ...d, price: v }))}
+                      value={parseFloat(String(editDraft.pricePerUnit ?? priceNumber))}
+                      onChange={(v) => setEditDraft((d) => ({ ...d, pricePerUnit: String(v) }))}
                     />
                   ) : (
-                    `$${localProduct.price.toFixed(2)}`
-                  )
-                }
-              />
-              <InfoRow
-                label="Stock Level"
-                value={
-                  isEditing ? (
-                    <EditableNumber
-                      value={draft.stockLevel ?? localProduct.stockLevel}
-                      onChange={(v) => setEditDraft((d) => ({ ...d, stockLevel: v }))}
-                    />
-                  ) : (
-                    `${localProduct.stockLevel} units`
+                    `$${priceNumber.toFixed(2)}`
                   )
                 }
               />
@@ -293,17 +289,17 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
               <p className="mb-1 text-xs text-navy/50">Description</p>
               {isEditing ? (
                 <textarea
-                  value={draft.description ?? ""}
+                  value={(editDraft.description as string) ?? ""}
                   onChange={(e) => setEditDraft((d) => ({ ...d, description: e.target.value }))}
                   rows={3}
                   className="w-full resize-y rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
                 />
               ) : (
-                <p className="text-sm text-navy/80">{localProduct.description}</p>
+                <p className="text-sm text-navy/80">{product.description}</p>
               )}
             </div>
 
-            {localProduct.isLocalOverride && (
+            {product.hasLocalOverride && (
               <p className="mt-3 flex items-center gap-1.5 text-xs text-warning">
                 <Flag className="h-3.5 w-3.5" />
                 Local overrides active — Zoho sync paused

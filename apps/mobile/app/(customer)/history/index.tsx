@@ -1,32 +1,36 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import {
   Pressable,
   SectionList,
   StyleSheet,
   Text,
   View,
+  ActivityIndicator,
 } from "react-native";
 import { router, Stack } from "expo-router";
 import { format, parseISO } from "date-fns";
 import { StatusBadge } from "@routeflow/ui/mobile";
 import { colors, borderRadius, shadows } from "@routeflow/ui/tokens";
-import { MOCK_HISTORY, HistoryOrder } from "../../../data/mockData";
 import { HistorySkeleton } from "../../../components/skeletons/HistorySkeleton";
 import { NetworkError } from "../../../components/NetworkError";
+import { useMyOrders, type Order } from "../../../lib/api/orders";
 
-type Section = { title: string; data: HistoryOrder[] };
+type Section = { title: string; data: Order[] };
 
 function statusForBadge(
-  status: HistoryOrder["status"],
+  status: Order["status"],
 ): "DELIVERED" | "IN_PROGRESS" | "PENDING" | "CANCELLED" {
-  if (status === "IN_TRANSIT") return "IN_PROGRESS";
-  return status;
+  if (status === "OUT_FOR_DELIVERY") return "IN_PROGRESS";
+  if (status === "CONFIRMED") return "IN_PROGRESS";
+  if (status === "DELIVERED") return "DELIVERED";
+  if (status === "CANCELLED") return "CANCELLED";
+  return "PENDING";
 }
 
-function OrderRow({ order }: { order: HistoryOrder }) {
-  const date = parseISO(order.date);
+function OrderRow({ order }: { order: Order }) {
+  const date = parseISO(order.createdAt);
   const timeLabel = format(date, "h:mm a");
-  const itemCount = order.items.reduce((s, i) => s + i.qty, 0);
+  const itemCount = order.lineItems.reduce((s, i) => s + i.qty, 0);
 
   return (
     <Pressable
@@ -34,14 +38,14 @@ function OrderRow({ order }: { order: HistoryOrder }) {
       onPress={() => router.push(`/(customer)/history/${order.id}`)}
     >
       <View style={styles.rowLeft}>
-        <Text style={styles.orderId}>{order.id}</Text>
+        <Text style={styles.orderId}>{order.orderNumber}</Text>
         <Text style={styles.orderMeta}>
           {itemCount} item{itemCount !== 1 ? "s" : ""} · {timeLabel}
         </Text>
         <StatusBadge status={statusForBadge(order.status)} />
       </View>
       <View style={styles.rowRight}>
-        <Text style={styles.total}>${order.total.toFixed(2)}</Text>
+        <Text style={styles.total}>${Number(order.total).toFixed(2)}</Text>
         <Text style={styles.chevron}>›</Text>
       </View>
     </Pressable>
@@ -49,31 +53,27 @@ function OrderRow({ order }: { order: HistoryOrder }) {
 }
 
 export default function HistoryScreen() {
-  const [isLoading, setIsLoading] = useState(true);
-  const [isError, setIsError] = useState(false);
+  const { data, isLoading, isError, refetch } = useMyOrders();
 
-  useEffect(() => {
-    const t = setTimeout(() => setIsLoading(false), 600);
-    return () => clearTimeout(t);
-  }, []);
+  const orders = data?.data ?? [];
 
   const sections: Section[] = useMemo(() => {
-    const groups = new Map<string, HistoryOrder[]>();
-    for (const order of [...MOCK_HISTORY].sort(
-      (a, b) => parseISO(b.date).getTime() - parseISO(a.date).getTime(),
+    const groups = new Map<string, Order[]>();
+    for (const order of [...orders].sort(
+      (a, b) => parseISO(b.createdAt).getTime() - parseISO(a.createdAt).getTime(),
     )) {
-      const key = format(parseISO(order.date), "MMMM d, yyyy");
+      const key = format(parseISO(order.createdAt), "MMMM d, yyyy");
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key)!.push(order);
     }
     return Array.from(groups.entries()).map(([title, data]) => ({ title, data }));
-  }, []);
+  }, [orders]);
 
   if (isLoading) return <><Stack.Screen options={{ title: "History" }} /><HistorySkeleton /></>;
   if (isError) return (
     <>
       <Stack.Screen options={{ title: "History" }} />
-      <NetworkError onRetry={() => { setIsError(false); setIsLoading(true); }} />
+      <NetworkError onRetry={() => refetch()} />
     </>
   );
 

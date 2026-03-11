@@ -1,9 +1,11 @@
 import { Module } from '@nestjs/common';
-import { RoutesController } from './routes.controller';
 import { RoutesService } from './routes.service';
+import { RoutesController, RouteRunsController } from './routes.controller';
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
-  controllers: [RoutesController],
+  imports: [AuthModule],
+  controllers: [RoutesController, RouteRunsController],
   providers: [RoutesService],
   exports: [RoutesService],
 })

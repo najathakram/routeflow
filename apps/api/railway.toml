@@ -1,0 +1,11 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "apps/api/Dockerfile"
+# Railway builds from the repo root — the Dockerfile COPY context is "."
+watchPatterns = ["apps/api/**", "packages/**"]
+
+[deploy]
+healthcheckPath = "/api/v1"
+healthcheckTimeout = 120
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3

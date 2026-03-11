@@ -9,7 +9,7 @@ import {
 import { router, Stack, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, borderRadius, shadows } from "@routeflow/ui/tokens";
-import { MOCK_PRODUCTS } from "../../../data/mockData";
+import { useProduct } from "../../../lib/api/products";
 import { useOrderStore } from "../../../store/orderStore";
 
 function QtyStepper({
@@ -73,9 +73,17 @@ const stepperStyles = StyleSheet.create({
 
 export default function ProductDetailScreen() {
   const { productId } = useLocalSearchParams<{ productId: string }>();
-  const product = MOCK_PRODUCTS.find((p) => p.id === productId);
+  const { data: product, isLoading } = useProduct(productId);
   const addItem = useOrderStore((s) => s.addItem);
   const [quantity, setQuantity] = useState(1);
+
+  if (isLoading) {
+    return (
+      <View style={styles.notFound}>
+        <Text style={styles.notFoundText}>Loading...</Text>
+      </View>
+    );
+  }
 
   if (!product) {
     return (
@@ -85,8 +93,21 @@ export default function ProductDetailScreen() {
     );
   }
 
+  const price = parseFloat(String(product.pricePerUnit));
+
   const handleAddToOrder = () => {
-    addItem(product, quantity);
+    addItem(
+      {
+        id: product.id,
+        name: product.name,
+        unit: product.unit,
+        price,
+        lowStock: product.lowStock,
+        category: product.category,
+        description: product.description,
+      } as any,
+      quantity,
+    );
     router.push("/(customer)/order");
   };
 
@@ -122,7 +143,7 @@ export default function ProductDetailScreen() {
           <View style={styles.details}>
             <Text style={styles.name}>{product.name}</Text>
             <Text style={styles.unit}>{product.unit}</Text>
-            <Text style={styles.price}>${product.price.toFixed(2)}</Text>
+            <Text style={styles.price}>${price.toFixed(2)}</Text>
 
             <View style={styles.divider} />
 
@@ -145,7 +166,7 @@ export default function ProductDetailScreen() {
             <View style={styles.subtotalRow}>
               <Text style={styles.subtotalLabel}>Subtotal</Text>
               <Text style={styles.subtotalValue}>
-                ${(product.price * quantity).toFixed(2)}
+                ${(price * quantity).toFixed(2)}
               </Text>
             </View>
           </View>
@@ -155,7 +176,7 @@ export default function ProductDetailScreen() {
         <View style={styles.footer}>
           <Pressable style={styles.addButton} onPress={handleAddToOrder}>
             <Text style={styles.addButtonText}>
-              Add to Order · ${(product.price * quantity).toFixed(2)}
+              Add to Order · ${(price * quantity).toFixed(2)}
             </Text>
           </Pressable>
         </View>

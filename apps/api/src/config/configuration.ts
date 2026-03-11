@@ -1,6 +1,7 @@
 export interface AppConfig {
   nodeEnv: string;
   port: number;
+  taxRate: number;
   database: {
     url: string;
   };
@@ -28,6 +29,9 @@ export interface AppConfig {
   ors: {
     apiKey: string;
   };
+  googleMaps: {
+    apiKey: string;
+  };
   fcm: {
     projectId: string;
   };
@@ -36,6 +40,7 @@ export interface AppConfig {
 export const configuration = (): AppConfig => ({
   nodeEnv: process.env.NODE_ENV ?? 'development',
   port: parseInt(process.env.PORT ?? '3000', 10),
+  taxRate: parseFloat(process.env.TAX_RATE ?? '0.1'),
   database: {
     url: process.env.DATABASE_URL ?? '',
   },
@@ -62,6 +67,9 @@ export const configuration = (): AppConfig => ({
   },
   ors: {
     apiKey: process.env.ORS_API_KEY ?? '',
+  },
+  googleMaps: {
+    apiKey: process.env.GOOGLE_MAPS_API_KEY ?? '',
   },
   fcm: {
     projectId: process.env.FCM_PROJECT_ID ?? '',

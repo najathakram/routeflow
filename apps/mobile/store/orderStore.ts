@@ -1,5 +1,12 @@
 import { create } from "zustand";
-import { Product } from "../data/mockData";
+
+export interface Product {
+  id: string;
+  name: string;
+  pricePerUnit: number | string;
+  unit: string;
+  [key: string]: unknown;
+}
 
 export interface OrderItem {
   productId: string;
@@ -44,7 +51,7 @@ export const useOrderStore = create<OrderState>((set) => ({
           {
             productId: product.id,
             name: product.name,
-            unitPrice: product.price,
+            unitPrice: Number(product.pricePerUnit),
             unit: product.unit,
             quantity,
           },

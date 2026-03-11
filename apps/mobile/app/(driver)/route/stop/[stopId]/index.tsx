@@ -3,7 +3,6 @@ import {
   Alert,
   Keyboard,
   KeyboardAvoidingView,
-  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -12,6 +11,7 @@ import {
   TextInput,
   View,
 } from "react-native";
+import * as Linking from 'expo-linking';
 import { router, Stack, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, borderRadius, shadows } from "@routeflow/ui/tokens";
@@ -347,7 +347,7 @@ export default function StopDetailScreen() {
   const route = useRouteStore((s) => s.route);
   const stopNote = useRouteStore((s) => s.stopNotes[stopId] ?? "");
   const setStopNote = useRouteStore((s) => s.setStopNote);
-  const addedItems = useRouteStore((s) => s.addedItems[stopId] ?? []);
+  const addedItems = useRouteStore((s) => s.addedItems[stopId]) ?? [];
   const allResolved = useRouteStore((s) => selectAllItemsResolved(s, stopId));
   const [showAddForm, setShowAddForm] = useState(false);
 

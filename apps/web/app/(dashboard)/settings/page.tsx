@@ -30,37 +30,9 @@ import {
 } from "@routeflow/ui/web";
 import { useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
-
-// ─── Mock users ───────────────────────────────────────────────────────────────
-
-type UserRole = "OPERATOR" | "DRIVER";
-type UserStatus = "ACTIVE" | "INACTIVE";
-
-interface SystemUser {
-  id: string;
-  username: string;
-  name: string;
-  role: UserRole;
-  status: UserStatus;
-  lastLogin: string;
-}
-
-const INITIAL_USERS: SystemUser[] = [
-  { id: "u1", username: "maria.op", name: "Maria Operator", role: "OPERATOR", status: "ACTIVE", lastLogin: "Mar 9, 2026 · 6:02 AM" },
-  { id: "u2", username: "mwebb", name: "Marcus Webb", role: "DRIVER", status: "ACTIVE", lastLogin: "Mar 9, 2026 · 6:28 AM" },
-  { id: "u3", username: "dtrevino", name: "Darlene Trevino", role: "DRIVER", status: "ACTIVE", lastLogin: "Mar 9, 2026 · 7:12 AM" },
-  { id: "u4", username: "jgallegos", name: "Jesse Gallegos", role: "DRIVER", status: "INACTIVE", lastLogin: "Mar 8, 2026 · 5:44 AM" },
-  { id: "u5", username: "rcastillo", name: "Rodrigo Castillo", role: "DRIVER", status: "ACTIVE", lastLogin: "Mar 9, 2026 · 8:00 AM" },
-  { id: "u6", username: "tokafor", name: "Tamara Okafor", role: "DRIVER", status: "ACTIVE", lastLogin: "Mar 9, 2026 · 7:55 AM" },
-];
+import { useUsers, useCreateOperator, useChangeUserStatus, AppUser } from "@/lib/api/users";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function generateTempPassword(): string {
-  const chars = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
-  const raw = Array.from({ length: 8 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
-  return `${raw.slice(0, 4)}-${raw.slice(4)}`;
-}
 
 function TabTrigger({ value, children }: { value: string; children: React.ReactNode }) {
   return (
@@ -399,11 +371,11 @@ const addUserSchema = z.object({
   name: z.string().min(1, "Required"),
   role: z.enum(["OPERATOR", "DRIVER"]),
   username: z.string().min(3, "At least 3 characters").regex(/^[a-z0-9_.]+$/, "Lowercase letters, numbers, dots, underscores"),
-  phone: z.string().min(7, "Enter a valid phone number"),
+  email: z.string().email("Enter a valid email"),
 });
 type AddUserFormValues = z.infer<typeof addUserSchema>;
 
-function RoleBadge({ role }: { role: UserRole }) {
+function RoleBadge({ role }: { role: AppUser["role"] }) {
   return (
     <Badge
       variant={role === "OPERATOR" ? "info" : "neutral"}
@@ -412,11 +384,12 @@ function RoleBadge({ role }: { role: UserRole }) {
   );
 }
 
-function AddUserModal({ isOpen, onClose, onAdd }: {
+function AddUserModal({ isOpen, onClose, onCreated }: {
   isOpen: boolean;
   onClose: () => void;
-  onAdd: (user: SystemUser) => void;
+  onCreated: (tempPassword: string) => void;
 }) {
+  const createOperator = useCreateOperator();
   const [tempPassword, setTempPassword] = React.useState<string | null>(null);
   const [copied, setCopied] = React.useState(false);
 
@@ -443,17 +416,13 @@ function AddUserModal({ isOpen, onClose, onAdd }: {
   };
 
   const onSubmit = async (data: AddUserFormValues) => {
-    await new Promise((r) => setTimeout(r, 700));
-    const pw = generateTempPassword();
-    setTempPassword(pw);
-    onAdd({
-      id: `u${Date.now()}`,
-      username: data.username,
+    const result = await createOperator.mutateAsync({
       name: data.name,
-      role: data.role,
-      status: "ACTIVE",
-      lastLogin: "Never",
+      email: data.email,
+      username: data.username,
     });
+    setTempPassword(result.tempPassword);
+    onCreated(result.tempPassword);
   };
 
   const copyPw = async () => {
@@ -478,7 +447,7 @@ function AddUserModal({ isOpen, onClose, onAdd }: {
         ) : (
           <>
             <Button variant="secondary" type="button" onClick={handleClose}>Cancel</Button>
-            <Button type="submit" form="add-user-form" loading={isSubmitting}>Create User</Button>
+            <Button type="submit" form="add-user-form" loading={isSubmitting || createOperator.isPending}>Create User</Button>
           </>
         )
       }
@@ -502,6 +471,9 @@ function AddUserModal({ isOpen, onClose, onAdd }: {
         </div>
       ) : (
         <form id="add-user-form" onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-4">
+          {createOperator.error && (
+            <p className="text-sm text-danger">{createOperator.error.message}</p>
+          )}
           <Input label="Full Name" placeholder="Jane Smith" register={register("name")} error={errors.name?.message} />
           <Select
             label="Role"
@@ -513,7 +485,7 @@ function AddUserModal({ isOpen, onClose, onAdd }: {
             error={errors.role?.message}
           />
           <Input label="Username" placeholder="jsmith" register={register("username")} error={errors.username?.message} />
-          <Input label="Phone" type="tel" placeholder="(512) 555-0100" register={register("phone")} error={errors.phone?.message} />
+          <Input label="Email" type="email" placeholder="jane@example.com" register={register("email")} error={errors.email?.message} />
         </form>
       )}
     </Modal>
@@ -521,26 +493,33 @@ function AddUserModal({ isOpen, onClose, onAdd }: {
 }
 
 function UserManagementTab() {
-  const [users, setUsers] = React.useState<SystemUser[]>(INITIAL_USERS);
+  const { data, isLoading } = useUsers();
+  const changeStatus = useChangeUserStatus();
   const [isAddOpen, setIsAddOpen] = React.useState(false);
   const { toast } = useToast();
 
-  const toggleStatus = (id: string) => {
-    setUsers((prev) =>
-      prev.map((u) =>
-        u.id === id ? { ...u, status: u.status === "ACTIVE" ? "INACTIVE" : "ACTIVE" } : u,
-      ),
+  const users = data?.data ?? [];
+
+  const toggleStatus = (user: AppUser) => {
+    const nextStatus = user.status === "ACTIVE" ? "INACTIVE" : "ACTIVE";
+    changeStatus.mutate(
+      { id: user.id, status: nextStatus },
+      {
+        onError: () => toast({ title: "Failed to update status", variant: "error" }),
+      },
     );
   };
 
-  const handleAdd = (user: SystemUser) => {
-    setUsers((prev) => [...prev, user]);
+  const handleCreated = (_tempPassword: string) => {
+    // Users list is invalidated automatically by useCreateOperator onSuccess
   };
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <p className="text-sm text-navy/60">{users.length} users total</p>
+        <p className="text-sm text-navy/60">
+          {isLoading ? "Loading..." : `${data?.meta.total ?? 0} users total`}
+        </p>
         <Button size="sm" onClick={() => setIsAddOpen(true)}>Add User</Button>
       </div>
 
@@ -549,52 +528,69 @@ function UserManagementTab() {
           <thead className="border-b border-surface-border bg-surface-raised">
             <tr>
               <th className="px-4 py-3 text-left text-xs font-medium text-navy/60">Username</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60">Name</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60">Email</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-navy/60">Role</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-navy/60">Status</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60">Last Login</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60">Created</th>
               <th className="px-4 py-3" />
             </tr>
           </thead>
           <tbody className="divide-y divide-surface-border">
-            {users.map((user) => (
-              <tr key={user.id} className="hover:bg-surface-raised transition-colors">
-                <td className="px-4 py-3 font-mono text-xs text-navy/70">{user.username}</td>
-                <td className="px-4 py-3 font-medium text-navy">{user.name}</td>
-                <td className="px-4 py-3"><RoleBadge role={user.role} /></td>
-                <td className="px-4 py-3">
-                  <Badge status={user.status === "ACTIVE" ? "ACTIVE" : "INACTIVE"} />
-                </td>
-                <td className="px-4 py-3 text-navy/60">{user.lastLogin}</td>
-                <td className="px-4 py-3">
-                  <div className="flex items-center gap-1 justify-end">
-                    <button
-                      title="Edit user"
-                      onClick={() => toast({ title: "Edit user — coming soon", variant: "info" })}
-                      className="rounded p-1.5 text-navy/40 hover:bg-surface-raised hover:text-navy transition-colors"
-                    >
-                      <Pencil className="h-4 w-4" />
-                    </button>
-                    <button
-                      title={user.status === "ACTIVE" ? "Deactivate" : "Activate"}
-                      onClick={() => toggleStatus(user.id)}
-                      className={cn(
-                        "rounded p-1.5 transition-colors",
-                        user.status === "ACTIVE"
-                          ? "text-success hover:bg-success-bg"
-                          : "text-navy/30 hover:bg-surface-raised hover:text-navy",
-                      )}
-                    >
-                      {user.status === "ACTIVE" ? (
-                        <ToggleRight className="h-4 w-4" />
-                      ) : (
-                        <ToggleLeft className="h-4 w-4" />
-                      )}
-                    </button>
-                  </div>
+            {isLoading ? (
+              <tr>
+                <td colSpan={6} className="px-4 py-8 text-center text-sm text-navy/40">
+                  Loading users...
                 </td>
               </tr>
-            ))}
+            ) : users.length === 0 ? (
+              <tr>
+                <td colSpan={6} className="px-4 py-8 text-center text-sm text-navy/40">
+                  No users found.
+                </td>
+              </tr>
+            ) : (
+              users.map((user) => (
+                <tr key={user.id} className="hover:bg-surface-raised transition-colors">
+                  <td className="px-4 py-3 font-mono text-xs text-navy/70">{user.username}</td>
+                  <td className="px-4 py-3 text-navy/70">{user.email}</td>
+                  <td className="px-4 py-3"><RoleBadge role={user.role} /></td>
+                  <td className="px-4 py-3">
+                    <Badge status={user.status === "ACTIVE" ? "ACTIVE" : "INACTIVE"} />
+                  </td>
+                  <td className="px-4 py-3 text-navy/60">
+                    {new Date(user.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-1 justify-end">
+                      <button
+                        title="Edit user"
+                        onClick={() => toast({ title: "Edit user — coming soon", variant: "info" })}
+                        className="rounded p-1.5 text-navy/40 hover:bg-surface-raised hover:text-navy transition-colors"
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </button>
+                      <button
+                        title={user.status === "ACTIVE" ? "Deactivate" : "Activate"}
+                        onClick={() => toggleStatus(user)}
+                        disabled={changeStatus.isPending}
+                        className={cn(
+                          "rounded p-1.5 transition-colors disabled:opacity-50",
+                          user.status === "ACTIVE"
+                            ? "text-success hover:bg-success-bg"
+                            : "text-navy/30 hover:bg-surface-raised hover:text-navy",
+                        )}
+                      >
+                        {user.status === "ACTIVE" ? (
+                          <ToggleRight className="h-4 w-4" />
+                        ) : (
+                          <ToggleLeft className="h-4 w-4" />
+                        )}
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </div>
@@ -602,7 +598,7 @@ function UserManagementTab() {
       <AddUserModal
         isOpen={isAddOpen}
         onClose={() => setIsAddOpen(false)}
-        onAdd={handleAdd}
+        onCreated={handleCreated}
       />
     </div>
   );

@@ -2,7 +2,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { router, Stack } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, borderRadius, shadows } from "@routeflow/ui/tokens";
-import { useAuthStore } from "../../store/authStore";
+import { useAuthStore } from "../../lib/auth-store";
 import { useRouteStore, selectCompletedCount } from "../../store/routeStore";
 import { MOCK_DRIVER } from "../../data/driverMockData";
 
@@ -59,7 +59,7 @@ function ActionRow({
 }
 
 export default function DriverProfileScreen() {
-  const setUser = useAuthStore((s) => s.setUser);
+  const logout = useAuthStore((s) => s.logout);
   const stopsCompleted = useRouteStore(selectCompletedCount);
   const route = useRouteStore((s) => s.route);
   const resolutions = useRouteStore((s) => s.itemResolutions);
@@ -78,9 +78,9 @@ export default function DriverProfileScreen() {
       return total + (Object.keys(stopRes).length > 0 ? delivered : stop.items.length);
     }, 0);
 
-  const handleSignOut = () => {
-    setUser(null);
-    router.replace("/(auth)/login");
+  const handleSignOut = async () => {
+    await logout();
+    // _layout.tsx handles routing to login
   };
 
   return (

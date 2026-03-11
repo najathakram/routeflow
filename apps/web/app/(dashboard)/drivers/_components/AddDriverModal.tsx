@@ -10,33 +10,27 @@ import { Modal, Input, Button } from "@routeflow/ui/web";
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
 const driverSchema = z.object({
-  name: z.string().min(1, "Required"),
-  phone: z.string().min(7, "Enter a valid phone number"),
+  contactName: z.string().min(1, "Required"),
+  email: z.string().email("Enter a valid email"),
+  phone: z.string().min(7, "Enter a valid phone number").optional().or(z.literal("")),
   username: z.string().min(3, "At least 3 characters").regex(/^[a-z0-9_]+$/, "Lowercase letters, numbers, underscores only"),
-  vehicle: z.string().min(1, "Required"),
+  vehicleMake: z.string().optional(),
+  vehicleModel: z.string().optional(),
+  vehicleColour: z.string().optional(),
+  vehiclePlate: z.string().optional(),
 });
 
 type DriverFormValues = z.infer<typeof driverSchema>;
-
-// ─── Temp password generator ──────────────────────────────────────────────────
-
-function generateTempPassword(): string {
-  const chars = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
-  const raw = Array.from(
-    { length: 8 },
-    () => chars[Math.floor(Math.random() * chars.length)],
-  ).join("");
-  return `${raw.slice(0, 4)}-${raw.slice(4)}`;
-}
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export interface AddDriverModalProps {
   isOpen: boolean;
   onClose: () => void;
+  onCreateDriver: (data: DriverFormValues) => Promise<string>;
 }
 
-export function AddDriverModal({ isOpen, onClose }: AddDriverModalProps) {
+export function AddDriverModal({ isOpen, onClose, onCreateDriver }: AddDriverModalProps) {
   const [tempPassword, setTempPassword] = React.useState<string | null>(null);
   const [copied, setCopied] = React.useState(false);
 
@@ -52,7 +46,7 @@ export function AddDriverModal({ isOpen, onClose }: AddDriverModalProps) {
   });
 
   // Auto-suggest username from name (only if user hasn't manually edited it)
-  const nameValue = watch("name") ?? "";
+  const nameValue = watch("contactName") ?? "";
   React.useEffect(() => {
     if (touchedFields.username) return;
     const parts = nameValue.trim().split(/\s+/);
@@ -71,9 +65,9 @@ export function AddDriverModal({ isOpen, onClose }: AddDriverModalProps) {
     onClose();
   };
 
-  const onSubmit = async (_data: DriverFormValues) => {
-    await new Promise((r) => setTimeout(r, 700));
-    setTempPassword(generateTempPassword());
+  const onSubmit = async (data: DriverFormValues) => {
+    const password = await onCreateDriver(data);
+    setTempPassword(password);
   };
 
   const copyPassword = async () => {
@@ -149,8 +143,15 @@ export function AddDriverModal({ isOpen, onClose }: AddDriverModalProps) {
           <Input
             label="Full Name"
             placeholder="Jane Smith"
-            register={register("name")}
-            error={errors.name?.message}
+            register={register("contactName")}
+            error={errors.contactName?.message}
+          />
+          <Input
+            label="Email"
+            type="email"
+            placeholder="jane.smith@example.com"
+            register={register("email")}
+            error={errors.email?.message}
           />
           <Input
             label="Phone"
@@ -166,10 +167,28 @@ export function AddDriverModal({ isOpen, onClose }: AddDriverModalProps) {
             error={errors.username?.message}
           />
           <Input
-            label="Vehicle Description"
-            placeholder="2023 Ford Transit · White · TX PLT-XXXX"
-            register={register("vehicle")}
-            error={errors.vehicle?.message}
+            label="Vehicle Make"
+            placeholder="Ford"
+            register={register("vehicleMake")}
+            error={errors.vehicleMake?.message}
+          />
+          <Input
+            label="Vehicle Model"
+            placeholder="Transit"
+            register={register("vehicleModel")}
+            error={errors.vehicleModel?.message}
+          />
+          <Input
+            label="Vehicle Colour"
+            placeholder="White"
+            register={register("vehicleColour")}
+            error={errors.vehicleColour?.message}
+          />
+          <Input
+            label="Vehicle Plate"
+            placeholder="TX PLT-XXXX"
+            register={register("vehiclePlate")}
+            error={errors.vehiclePlate?.message}
           />
         </form>
       )}

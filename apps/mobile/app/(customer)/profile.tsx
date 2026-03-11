@@ -8,7 +8,7 @@ import {
 import { router, Stack } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, borderRadius, shadows } from "@routeflow/ui/tokens";
-import { useAuthStore } from "../../store/authStore";
+import { useAuthStore } from "../../lib/auth-store";
 
 // Mock customer profile — in production this would come from an API
 const MOCK_PROFILE = {
@@ -68,11 +68,11 @@ function ActionRow({
 }
 
 export default function ProfileScreen() {
-  const setUser = useAuthStore((s) => s.setUser);
+  const logout = useAuthStore((s) => s.logout);
 
-  const handleSignOut = () => {
-    setUser(null);
-    router.replace("/(auth)/login");
+  const handleSignOut = async () => {
+    await logout();
+    // _layout.tsx handles routing to login
   };
 
   return (

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   Dimensions,
   FlatList,
@@ -12,7 +12,7 @@ import {
 import { router, Stack } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, borderRadius, shadows } from "@routeflow/ui/tokens";
-import { MOCK_PRODUCTS, Product } from "../../../data/mockData";
+import { useProducts } from "../../../lib/api/products";
 import { ShopSkeleton } from "../../../components/skeletons/ShopSkeleton";
 import { NetworkError } from "../../../components/NetworkError";
 
@@ -20,6 +20,18 @@ const SCREEN_WIDTH = Dimensions.get("window").width;
 const CARD_WIDTH = (SCREEN_WIDTH - 48) / 2; // 16 padding each side + 16 gap
 
 const ALL = "All";
+
+interface ApiProduct {
+  id: string;
+  name: string;
+  sku?: string;
+  unit: string;
+  pricePerUnit: string;
+  category?: string;
+  isActive: boolean;
+  lowStock: boolean;
+  description?: string;
+}
 
 function CategoryPill({
   label,
@@ -42,7 +54,8 @@ function CategoryPill({
   );
 }
 
-function ProductCard({ product }: { product: Product }) {
+function ProductCard({ product }: { product: ApiProduct }) {
+  const price = parseFloat(String(product.pricePerUnit));
   return (
     <Pressable
       style={[styles.card, { width: CARD_WIDTH }]}
@@ -67,7 +80,7 @@ function ProductCard({ product }: { product: Product }) {
           {product.unit}
         </Text>
         <View style={styles.cardFooter}>
-          <Text style={styles.cardPrice}>${product.price.toFixed(2)}</Text>
+          <Text style={styles.cardPrice}>${price.toFixed(2)}</Text>
           <Pressable
             style={styles.addButton}
             onPress={() => router.push(`/(customer)/shop/${product.id}`)}
@@ -82,39 +95,38 @@ function ProductCard({ product }: { product: Product }) {
 }
 
 export default function ShopScreen() {
-  const [isLoading, setIsLoading] = useState(true);
-  const [isError, setIsError] = useState(false);
   const [search, setSearch] = useState("");
   const [selectedCategory, setSelectedCategory] = useState(ALL);
 
-  useEffect(() => {
-    const t = setTimeout(() => setIsLoading(false), 600);
-    return () => clearTimeout(t);
-  }, []);
+  const { data: result, isLoading, isError, refetch } = useProducts();
+
+  const productList: ApiProduct[] = result?.data ?? [];
+
+  const categories = useMemo(
+    () => [ALL, ...Array.from(new Set(productList.map((p) => p.category).filter(Boolean)))],
+    [productList],
+  );
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return productList.filter((p) => {
+      const matchesSearch =
+        !q ||
+        p.name.toLowerCase().includes(q) ||
+        (p.category ?? "").toLowerCase().includes(q);
+      const matchesCategory =
+        selectedCategory === ALL || p.category === selectedCategory;
+      return matchesSearch && matchesCategory;
+    });
+  }, [search, selectedCategory, productList]);
 
   if (isLoading) return <><Stack.Screen options={{ title: "Shop" }} /><ShopSkeleton /></>;
   if (isError) return (
     <>
       <Stack.Screen options={{ title: "Shop" }} />
-      <NetworkError onRetry={() => { setIsError(false); setIsLoading(true); }} />
+      <NetworkError onRetry={() => refetch()} />
     </>
   );
-
-  const categories = useMemo(
-    () => [ALL, ...Array.from(new Set(MOCK_PRODUCTS.map((p) => p.category)))],
-    [],
-  );
-
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return MOCK_PRODUCTS.filter((p) => {
-      const matchesSearch =
-        !q || p.name.toLowerCase().includes(q) || p.category.toLowerCase().includes(q);
-      const matchesCategory =
-        selectedCategory === ALL || p.category === selectedCategory;
-      return matchesSearch && matchesCategory;
-    });
-  }, [search, selectedCategory]);
 
   return (
     <>
@@ -148,10 +160,10 @@ export default function ShopScreen() {
         >
           {categories.map((cat) => (
             <CategoryPill
-              key={cat}
-              label={cat}
+              key={cat as string}
+              label={cat as string}
               active={selectedCategory === cat}
-              onPress={() => setSelectedCategory(cat)}
+              onPress={() => setSelectedCategory(cat as string)}
             />
           ))}
         </ScrollView>

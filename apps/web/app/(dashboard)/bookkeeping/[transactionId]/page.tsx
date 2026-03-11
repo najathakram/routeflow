@@ -11,34 +11,26 @@ import {
   Plus,
   CheckCircle2,
   CreditCard,
+  Loader2,
 } from "lucide-react";
-import { Badge, Button, Card, Modal, Input, Select, cn } from "@routeflow/ui/web";
+import { Badge, Button, Card, Modal, Input, Select, cn, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
-import {
-  getTransaction,
-  subtotal,
-  taxAmount,
-  grandTotal,
-  amountPaid,
-  balance,
-  type Transaction,
-  type PaymentStatus,
-  type Payment,
-} from "@/mocks/bookkeeping";
+import { useTransaction, useRecordPayment, useDownloadInvoice, type Payment } from "@/lib/api/bookkeeping";
 
 // ─── Payment status badge ─────────────────────────────────────────────────────
+
+type PaymentStatus = "UNPAID" | "PARTIAL" | "PAID";
 
 function PaymentStatusBadge({ status }: { status: PaymentStatus }) {
   if (status === "PAID") return <Badge variant="success" label="Paid" />;
   if (status === "PARTIAL") return <Badge variant="warning" label="Partial" />;
-  if (status === "OVERDUE") return <Badge variant="danger" label="Overdue" />;
   return <Badge variant="neutral" label="Unpaid" />;
 }
 
 // ─── Record payment schema ────────────────────────────────────────────────────
 
 const paymentSchema = z.object({
-  method: z.enum(["Cash", "Check", "ACH", "Other"]),
+  method: z.enum(["CASH", "CHECK", "ACH", "OTHER"]),
   amount: z.coerce.number().positive("Enter an amount greater than 0"),
   reference: z.string().optional(),
 });
@@ -52,17 +44,19 @@ function RecordPaymentModal({
   onClose,
   onRecord,
   remaining,
+  isPending,
 }: {
   isOpen: boolean;
   onClose: () => void;
-  onRecord: (p: Payment) => void;
+  onRecord: (data: PaymentFormValues) => void;
   remaining: number;
+  isPending: boolean;
 }) {
   const {
     register,
     handleSubmit,
     reset,
-    formState: { errors, isSubmitting },
+    formState: { errors },
   } = useForm<PaymentFormValues>({
     resolver: zodResolver(paymentSchema),
     defaultValues: { method: "ACH", amount: remaining > 0 ? parseFloat(remaining.toFixed(2)) : 0 },
@@ -72,16 +66,8 @@ function RecordPaymentModal({
     if (isOpen) reset({ method: "ACH", amount: remaining > 0 ? parseFloat(remaining.toFixed(2)) : 0 });
   }, [isOpen, remaining, reset]);
 
-  const onSubmit = async (data: PaymentFormValues) => {
-    await new Promise((r) => setTimeout(r, 500));
-    onRecord({
-      id: `PMT-${Date.now()}`,
-      date: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
-      method: data.method,
-      amount: data.amount,
-      reference: data.reference || undefined,
-    });
-    onClose();
+  const onSubmit = (data: PaymentFormValues) => {
+    onRecord(data);
   };
 
   return (
@@ -93,7 +79,7 @@ function RecordPaymentModal({
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button type="submit" form="payment-form" loading={isSubmitting}>
+          <Button type="submit" form="payment-form" loading={isPending}>
             Record Payment
           </Button>
         </>
@@ -103,10 +89,10 @@ function RecordPaymentModal({
         <Select
           label="Payment Method"
           options={[
-            { value: "Cash", label: "Cash" },
-            { value: "Check", label: "Check" },
+            { value: "CASH", label: "Cash" },
+            { value: "CHECK", label: "Check" },
             { value: "ACH", label: "ACH / Bank Transfer" },
-            { value: "Other", label: "Other" },
+            { value: "OTHER", label: "Other" },
           ]}
           register={register("method")}
           error={errors.method?.message}
@@ -135,18 +121,49 @@ function RecordPaymentModal({
 
 export default function TransactionDetailPage({ params }: { params: { transactionId: string } }) {
   const { setTitle } = usePageTitle();
-  const original = getTransaction(params.transactionId);
-
-  const [localPayments, setLocalPayments] = React.useState<Payment[]>(
-    original?.payments ?? [],
-  );
+  const { toast } = useToast();
+  const { data: txn, isLoading, isError } = useTransaction(params.transactionId);
+  const recordPayment = useRecordPayment();
+  const downloadInvoice = useDownloadInvoice();
   const [isPaymentOpen, setIsPaymentOpen] = React.useState(false);
 
-  React.useEffect(() => {
-    setTitle(original?.transactionNumber ?? "Invoice");
-  }, [setTitle, original?.transactionNumber]);
+  const handleDownloadPdf = () => {
+    downloadInvoice.mutate(params.transactionId, {
+      onSuccess: (result) => {
+        if (!result) {
+          toast({
+            title: "PDF generating",
+            description: "Your invoice PDF is being generated. Check back in a moment.",
+          });
+        } else {
+          window.open(result.url, "_blank");
+        }
+      },
+      onError: () => {
+        toast({
+          title: "Download failed",
+          description: "Unable to retrieve the invoice PDF. Please try again.",
+          variant: "destructive",
+        });
+      },
+    });
+  };
 
-  if (!original) {
+  React.useEffect(() => {
+    if (txn) {
+      setTitle(txn.order?.orderNumber ?? "Invoice");
+    }
+  }, [txn, setTitle]);
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center p-12">
+        <Loader2 className="h-8 w-8 animate-spin text-navy/40" />
+      </div>
+    );
+  }
+
+  if (isError || !txn) {
     return (
       <div className="flex flex-col items-center gap-4 p-12 text-center">
         <p className="text-base font-medium text-navy">Invoice not found.</p>
@@ -155,19 +172,18 @@ export default function TransactionDetailPage({ params }: { params: { transactio
     );
   }
 
-  // Build a local transaction with overridden payments
-  const txn: Transaction = { ...original, payments: localPayments };
-  const sub = subtotal(txn);
-  const tax = taxAmount(txn);
-  const total = grandTotal(txn);
-  const paid = amountPaid(txn);
-  const bal = balance(txn);
+  const total = Math.round(Number(txn.totalOwed) * 100) / 100;
+  const paid = Math.round(Number(txn.totalPaid) * 100) / 100;
+  const bal = Math.round((total - paid) * 100) / 100;
+  const payments: Payment[] = txn.payments ?? [];
 
-  const localStatus: PaymentStatus =
-    bal <= 0 ? "PAID" : paid > 0 ? "PARTIAL" : original.status === "OVERDUE" ? "OVERDUE" : "UNPAID";
+  const localStatus: PaymentStatus = bal <= 0 ? "PAID" : paid > 0 ? "PARTIAL" : "UNPAID";
 
-  const addPayment = (p: Payment) => {
-    setLocalPayments((prev) => [...prev, p]);
+  const handleRecord = (data: PaymentFormValues) => {
+    recordPayment.mutate(
+      { id: txn.id, amount: data.amount, method: data.method, reference: data.reference },
+      { onSuccess: () => setIsPaymentOpen(false) },
+    );
   };
 
   return (
@@ -184,17 +200,24 @@ export default function TransactionDetailPage({ params }: { params: { transactio
       {/* Action row */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <h1 className="text-xl font-bold text-navy">{original.transactionNumber}</h1>
+          <h1 className="text-xl font-bold text-navy">{txn.order?.orderNumber ?? txn.id}</h1>
           <PaymentStatusBadge status={localStatus} />
         </div>
         <div className="flex items-center gap-2">
           <Button
             variant="secondary"
             size="sm"
-            leftIcon={<Download className="h-4 w-4" />}
-            onClick={() => {}}
+            leftIcon={
+              downloadInvoice.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Download className="h-4 w-4" />
+              )
+            }
+            onClick={handleDownloadPdf}
+            disabled={downloadInvoice.isPending}
           >
-            Download PDF
+            {downloadInvoice.isPending ? "Loading…" : "Download PDF"}
           </Button>
           {localStatus !== "PAID" && (
             <Button
@@ -226,76 +249,37 @@ export default function TransactionDetailPage({ params }: { params: { transactio
               </div>
               <div className="text-right">
                 <p className="text-xl font-bold text-navy">INVOICE</p>
-                <p className="mt-1 font-mono text-sm text-navy/60">{original.transactionNumber}</p>
+                <p className="mt-1 font-mono text-sm text-navy/60">{txn.order?.orderNumber ?? txn.id}</p>
               </div>
             </div>
 
-            {/* Billing addresses */}
+            {/* Billing info */}
             <div className="mb-6 grid grid-cols-2 gap-6 border-t border-surface-border pt-4">
               <div>
                 <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/40">Bill To</p>
-                <p className="text-sm font-semibold text-navy">{original.customerName}</p>
-                <p className="text-sm text-navy/60">{original.customerAddress}</p>
-                <p className="text-sm text-navy/60">{original.customerEmail}</p>
+                <p className="text-sm font-semibold text-navy">{txn.customer?.businessName ?? "—"}</p>
+                {txn.customer?.contactName && (
+                  <p className="text-sm text-navy/60">{txn.customer.contactName}</p>
+                )}
               </div>
               <div className="text-right">
                 <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/40">Invoice Details</p>
                 <p className="text-sm text-navy/60">
-                  <span className="font-medium text-navy">Date:</span> {original.date}
+                  <span className="font-medium text-navy">Date:</span>{" "}
+                  {new Date(txn.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
                 </p>
-                <p className="text-sm text-navy/60">
-                  <span className="font-medium text-navy">Due:</span> {original.dueDate}
-                </p>
+                {txn.dueDate && (
+                  <p className="text-sm text-navy/60">
+                    <span className="font-medium text-navy">Due:</span>{" "}
+                    {new Date(txn.dueDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                  </p>
+                )}
               </div>
             </div>
-
-            {/* Line items */}
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-y border-surface-border">
-                  <th className="py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-navy/50">
-                    Description
-                  </th>
-                  <th className="py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-navy/50">
-                    SKU
-                  </th>
-                  <th className="py-2.5 text-right text-xs font-semibold uppercase tracking-wider text-navy/50">
-                    Qty
-                  </th>
-                  <th className="py-2.5 text-right text-xs font-semibold uppercase tracking-wider text-navy/50">
-                    Unit Price
-                  </th>
-                  <th className="py-2.5 text-right text-xs font-semibold uppercase tracking-wider text-navy/50">
-                    Total
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-surface-border">
-                {original.lineItems.map((li) => (
-                  <tr key={li.sku}>
-                    <td className="py-3 text-navy">{li.description}</td>
-                    <td className="py-3 font-mono text-xs text-navy/50">{li.sku}</td>
-                    <td className="py-3 text-right text-navy/70">{li.qty}</td>
-                    <td className="py-3 text-right text-navy/70">${li.unitPrice.toFixed(2)}</td>
-                    <td className="py-3 text-right font-medium text-navy">
-                      ${(li.qty * li.unitPrice).toFixed(2)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
 
             {/* Totals */}
             <div className="mt-4 border-t border-surface-border pt-4">
               <div className="ml-auto w-56 space-y-2 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-navy/60">Subtotal</span>
-                  <span className="text-navy">${sub.toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-navy/60">Tax ({original.taxRate}%)</span>
-                  <span className="text-navy">${tax.toFixed(2)}</span>
-                </div>
                 <div className="flex justify-between border-t border-surface-border pt-2 text-base font-bold text-navy">
                   <span>Total</span>
                   <span>${total.toFixed(2)}</span>
@@ -319,11 +303,11 @@ export default function TransactionDetailPage({ params }: { params: { transactio
         {/* ── Payment history sidebar ── */}
         <div className="space-y-4">
           <Card title="Payment History">
-            {localPayments.length === 0 ? (
+            {payments.length === 0 ? (
               <p className="text-sm text-navy/40">No payments recorded.</p>
             ) : (
               <ul className="-mx-6 -mb-6 divide-y divide-surface-border">
-                {localPayments.map((pmt) => (
+                {payments.map((pmt) => (
                   <li key={pmt.id} className="flex items-start gap-3 px-6 py-4">
                     <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-success-bg">
                       <CheckCircle2 className="h-4 w-4 text-success" />
@@ -331,9 +315,11 @@ export default function TransactionDetailPage({ params }: { params: { transactio
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-sm font-semibold text-navy">
-                          ${pmt.amount.toFixed(2)}
+                          ${Number(pmt.amount).toFixed(2)}
                         </span>
-                        <span className="text-xs text-navy/50">{pmt.date}</span>
+                        <span className="text-xs text-navy/50">
+                          {new Date(pmt.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                        </span>
                       </div>
                       <p className="mt-0.5 text-xs text-navy/60">
                         {pmt.method}
@@ -385,8 +371,9 @@ export default function TransactionDetailPage({ params }: { params: { transactio
       <RecordPaymentModal
         isOpen={isPaymentOpen}
         onClose={() => setIsPaymentOpen(false)}
-        onRecord={addPayment}
+        onRecord={handleRecord}
         remaining={bal}
+        isPending={recordPayment.isPending}
       />
     </div>
   );

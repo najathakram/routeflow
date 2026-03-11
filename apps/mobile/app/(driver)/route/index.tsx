@@ -1,16 +1,9 @@
-import { useEffect, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, View, ActivityIndicator } from "react-native";
 import { router, Stack } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { EmptyState, StatusBadge } from "@routeflow/ui/mobile";
 import { colors, borderRadius, shadows } from "@routeflow/ui/tokens";
-import {
-  useRouteStore,
-  selectCompletedCount,
-  selectCurrentStop,
-} from "../../../store/routeStore";
-import { RouteStop } from "../../../data/driverMockData";
-import { RouteSkeleton } from "../../../components/skeletons/RouteSkeleton";
+import { useActiveRouteRun, useUpdateRunStatus, type RouteRunStop } from "../../../lib/api/routes";
 import { NetworkError } from "../../../components/NetworkError";
 
 const STATUS_ICON: Record<string, { name: string; color: string }> = {
@@ -43,16 +36,22 @@ const progressStyles = StyleSheet.create({
   },
 });
 
-function StopRow({ stop }: { stop: RouteStop }) {
+function StopRow({ stop }: { stop: RouteRunStop }) {
   const icon = STATUS_ICON[stop.status] ?? STATUS_ICON.PENDING;
   const isActive = stop.status === "IN_PROGRESS";
+
+  const businessName = stop.customer?.businessName ?? stop.customerId;
+  const address = stop.customerAddress
+    ? `${stop.customerAddress.line1}, ${stop.customerAddress.city}, ${stop.customerAddress.state}`
+    : null;
+  const itemCount = stop.orders?.length ?? 0;
 
   return (
     <Pressable
       style={[styles.stopRow, isActive && styles.stopRowActive]}
       onPress={() => router.push(`/(driver)/route/stop/${stop.id}`)}
       accessibilityRole="button"
-      accessibilityLabel={`Stop ${stop.stopNumber}: ${stop.businessName}`}
+      accessibilityLabel={`Stop ${stop.stopNumber}: ${businessName}`}
     >
       {/* Stop number bubble */}
       <View style={[styles.stopNumBubble, isActive && styles.stopNumBubbleActive]}>
@@ -63,13 +62,17 @@ function StopRow({ stop }: { stop: RouteStop }) {
 
       {/* Details */}
       <View style={styles.stopDetails}>
-        <Text style={styles.stopBusiness}>{stop.businessName}</Text>
-        <Text style={styles.stopAddress} numberOfLines={1}>
-          {stop.address}
-        </Text>
-        <Text style={styles.stopItemCount}>
-          {stop.items.length} item{stop.items.length !== 1 ? "s" : ""}
-        </Text>
+        <Text style={styles.stopBusiness}>{businessName}</Text>
+        {address ? (
+          <Text style={styles.stopAddress} numberOfLines={1}>
+            {address}
+          </Text>
+        ) : null}
+        {itemCount > 0 && (
+          <Text style={styles.stopItemCount}>
+            {itemCount} order{itemCount !== 1 ? "s" : ""}
+          </Text>
+        )}
       </View>
 
       {/* Status icon */}
@@ -79,60 +82,69 @@ function StopRow({ stop }: { stop: RouteStop }) {
 }
 
 export default function RouteScreen() {
-  const [isLoading, setIsLoading] = useState(true);
-  const [isError, setIsError] = useState(false);
+  const { data, isLoading, isError, refetch } = useActiveRouteRun();
+  const { mutate: updateStatus, isPending: isUpdating } = useUpdateRunStatus();
 
-  useEffect(() => {
-    const t = setTimeout(() => setIsLoading(false), 600);
-    return () => clearTimeout(t);
-  }, []);
+  if (isLoading) {
+    return (
+      <>
+        <Stack.Screen options={{ title: "My Route" }} />
+        <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
+          <ActivityIndicator size="large" color={colors.brand[500]} />
+        </View>
+      </>
+    );
+  }
 
-  const route = useRouteStore((s) => s.route);
-  const completedCount = useRouteStore(selectCompletedCount);
-  const currentStop = useRouteStore(selectCurrentStop);
-  const startRoute = useRouteStore((s) => s.startRoute);
+  if (isError) {
+    return (
+      <>
+        <Stack.Screen options={{ title: "My Route" }} />
+        <NetworkError onRetry={() => refetch()} />
+      </>
+    );
+  }
 
-  if (isLoading) return <><Stack.Screen options={{ title: "My Route" }} /><RouteSkeleton /></>;
-  if (isError) return (
-    <>
-      <Stack.Screen options={{ title: "My Route" }} />
-      <NetworkError onRetry={() => { setIsError(false); setIsLoading(true); }} />
-    </>
-  );
+  const run = data?.data?.[0] ?? null;
 
-  if (!route) {
+  if (!run) {
     return (
       <>
         <Stack.Screen options={{ title: "My Route" }} />
         <EmptyState
           icon={<Ionicons name="map-outline" size={56} color="#cbd5e1" />}
-          title="No route assigned for today."
+          title="No active run assigned."
           subtitle="Check back later or contact your dispatcher."
         />
       </>
     );
   }
 
-  const totalStops = route.stops.length;
+  const stops = run.stops ?? [];
+  const totalStops = stops.length;
+  const completedCount = stops.filter(
+    (s) => s.status === "COMPLETED" || s.status === "SKIPPED",
+  ).length;
+  const currentStop = stops.find((s) => s.status === "IN_PROGRESS") ?? null;
+  const allDone = run.status === "COMPLETED";
   const hasStarted = completedCount > 0 || currentStop !== null;
-  const allDone = route.status === "COMPLETED";
-
-  const handlePrimaryAction = () => {
-    if (allDone) return;
-    if (!hasStarted) {
-      startRoute();
-    }
-    const target = currentStop ?? route.stops.find((s) => s.status === "PENDING");
-    if (target) {
-      router.push(`/(driver)/route/stop/${target.id}`);
-    }
-  };
 
   const primaryLabel = allDone
     ? "Route Complete"
     : !hasStarted
       ? "Start Route"
       : "Next Stop";
+
+  const handlePrimaryAction = () => {
+    if (allDone) return;
+    if (!hasStarted) {
+      updateStatus({ id: run.id, status: "IN_PROGRESS" });
+    }
+    const target = currentStop ?? stops.find((s) => s.status === "PENDING");
+    if (target) {
+      router.push(`/(driver)/route/stop/${target.id}`);
+    }
+  };
 
   return (
     <>
@@ -141,9 +153,9 @@ export default function RouteScreen() {
         {/* Route header card */}
         <View style={styles.headerCard}>
           <View style={styles.headerTop}>
-            <Text style={styles.routeName}>{route.name}</Text>
+            <Text style={styles.routeName}>{run.route?.name ?? "My Route"}</Text>
             <StatusBadge
-              status={route.status === "ACTIVE" ? "IN_PROGRESS" : "COMPLETED"}
+              status={run.status === "IN_PROGRESS" ? "IN_PROGRESS" : "COMPLETED"}
             />
           </View>
 
@@ -165,7 +177,7 @@ export default function RouteScreen() {
           showsVerticalScrollIndicator={false}
         >
           <Text style={styles.stopsLabel}>Stops</Text>
-          {route.stops.map((stop) => (
+          {stops.map((stop) => (
             <StopRow key={stop.id} stop={stop} />
           ))}
         </ScrollView>
@@ -175,7 +187,7 @@ export default function RouteScreen() {
           <Pressable
             style={[styles.primaryBtn, allDone && styles.primaryBtnDone]}
             onPress={handlePrimaryAction}
-            disabled={allDone}
+            disabled={allDone || isUpdating}
             accessibilityRole="button"
             accessibilityLabel={primaryLabel}
           >

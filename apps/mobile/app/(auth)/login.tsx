@@ -1,11 +1,11 @@
+import { useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Alert, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { MobileButton, MobileInput } from "@routeflow/ui/mobile";
-import { UserRole } from "@routeflow/types";
-import { useAuthStore } from "../../store/authStore";
+import { useAuthStore } from "../../lib/auth-store";
 
 const schema = z.object({
   username: z.string().min(1, "Username is required"),
@@ -14,16 +14,9 @@ const schema = z.object({
 
 type LoginForm = z.infer<typeof schema>;
 
-// Mock credentials for development — replace with real API call
-const MOCK_USERS: Record<string, { role: UserRole; email: string }> = {
-  driver: { role: UserRole.DRIVER, email: "driver@routeflow.dev" },
-  operator: { role: UserRole.OPERATOR, email: "operator@routeflow.dev" },
-  customer: { role: UserRole.CUSTOMER, email: "customer@routeflow.dev" },
-};
-const MOCK_PASSWORD = "password";
-
 export default function LoginScreen() {
-  const setUser = useAuthStore((s) => s.setUser);
+  const login = useAuthStore((s) => s.login);
+  const [apiError, setApiError] = useState<string | null>(null);
 
   const {
     control,
@@ -35,19 +28,16 @@ export default function LoginScreen() {
   });
 
   const onSubmit = async (data: LoginForm) => {
-    // TODO: replace with real API call — POST /api/v1/auth/login
-    const mock = MOCK_USERS[data.username.toLowerCase()];
-    if (!mock || data.password !== MOCK_PASSWORD) {
-      Alert.alert("Login failed", "Invalid username or password.");
-      return;
+    setApiError(null);
+    try {
+      await login(data.username, data.password);
+      // _layout.tsx handles routing based on role / forcePasswordChange
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { message?: string } } })?.response?.data
+          ?.message ?? "Invalid username or password.";
+      setApiError(typeof msg === "string" ? msg : "Login failed.");
     }
-    setUser({
-      id: `mock-${data.username}`,
-      username: data.username,
-      email: mock.email,
-      role: mock.role,
-      createdAt: new Date().toISOString(),
-    });
   };
 
   return (
@@ -62,6 +52,12 @@ export default function LoginScreen() {
         </View>
 
         <View style={styles.form}>
+          {apiError && (
+            <View style={styles.errorBanner}>
+              <Text style={styles.errorText}>{apiError}</Text>
+            </View>
+          )}
+
           <Controller
             control={control}
             name="username"
@@ -137,6 +133,17 @@ const styles = StyleSheet.create({
   },
   form: {
     gap: 16,
+  },
+  errorBanner: {
+    backgroundColor: "#fef2f2",
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  errorText: {
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    color: "#dc2626",
   },
   submitButton: {
     marginTop: 8,

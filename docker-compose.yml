@@ -56,7 +56,7 @@ services:
       HTTP_USER: admin
       HTTP_PASSWORD: ${REDIS_COMMANDER_PASSWORD:-admin}
     ports:
-      - "8081:8081"
+      - "8082:8081"
     depends_on:
       redis:
         condition: service_healthy
