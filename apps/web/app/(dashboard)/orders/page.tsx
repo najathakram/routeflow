@@ -3,9 +3,10 @@
 import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AlertTriangle, Eye, Loader2 } from "lucide-react";
-import { PageHeader, Badge, Select, cn } from "@routeflow/ui/web";
+import { PageHeader, Badge, Select, Button, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useOrders, type Order } from "@/lib/api/orders";
+import { CreateOrderModal } from "./_components/CreateOrderModal";
 
 // ─── Status filter options ────────────────────────────────────────────────────
 
@@ -30,6 +31,7 @@ export default function OrdersPage() {
   const [statusFilter, setStatusFilter] = React.useState(statusParam);
   const [customerSearch, setCustomerSearch] = React.useState("");
   const [urgentOnly, setUrgentOnly] = React.useState(false);
+  const [isCreateOpen, setIsCreateOpen] = React.useState(false);
 
   const { data, isLoading, isError } = useOrders({
     status: statusFilter || undefined,
@@ -56,7 +58,12 @@ export default function OrdersPage() {
 
   return (
     <div className="space-y-5 p-6">
-      <PageHeader title="Orders" />
+      <PageHeader
+        title="Orders"
+        action={
+          <Button onClick={() => setIsCreateOpen(true)}>Create Order</Button>
+        }
+      />
 
       {/* Filter bar */}
       <div className="flex flex-wrap items-center gap-3">
@@ -180,6 +187,11 @@ export default function OrdersPage() {
           </tbody>
         </table>
       </div>
+
+      <CreateOrderModal
+        isOpen={isCreateOpen}
+        onClose={() => setIsCreateOpen(false)}
+      />
     </div>
   );
 }

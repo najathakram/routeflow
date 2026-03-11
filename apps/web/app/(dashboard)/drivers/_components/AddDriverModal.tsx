@@ -33,6 +33,7 @@ export interface AddDriverModalProps {
 export function AddDriverModal({ isOpen, onClose, onCreateDriver }: AddDriverModalProps) {
   const [tempPassword, setTempPassword] = React.useState<string | null>(null);
   const [copied, setCopied] = React.useState(false);
+  const [apiError, setApiError] = React.useState<string | null>(null);
 
   const {
     register,
@@ -61,13 +62,22 @@ export function AddDriverModal({ isOpen, onClose, onCreateDriver }: AddDriverMod
   const handleClose = () => {
     setTempPassword(null);
     setCopied(false);
+    setApiError(null);
     reset();
     onClose();
   };
 
   const onSubmit = async (data: DriverFormValues) => {
-    const password = await onCreateDriver(data);
-    setTempPassword(password);
+    setApiError(null);
+    try {
+      const password = await onCreateDriver(data);
+      setTempPassword(password);
+    } catch (err: unknown) {
+      // Prefer the API's error message (Axios: err.response.data.message) over the generic one
+      const apiMsg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
+      const fallbackMsg = (err as { message?: string })?.message;
+      setApiError(apiMsg || fallbackMsg || "Failed to create driver. Please try again.");
+    }
   };
 
   const copyPassword = async () => {
@@ -140,6 +150,11 @@ export function AddDriverModal({ isOpen, onClose, onCreateDriver }: AddDriverMod
           noValidate
           className="space-y-4"
         >
+          {apiError && (
+            <div className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-red-200">
+              {apiError}
+            </div>
+          )}
           <Input
             label="Full Name"
             placeholder="Jane Smith"

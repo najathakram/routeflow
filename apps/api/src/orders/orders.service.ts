@@ -82,11 +82,20 @@ export class OrdersService {
   }
 
   async create(dto: CreateOrderDto, user: JwtPayload) {
-    if (user.role !== UserRole.CUSTOMER)
-      throw new ForbiddenException("Only customers can create orders");
+    // Resolve which customer this order is for
+    let customerId: string;
 
-    const customer = await this.prisma.customer.findFirst({ where: { userId: user.sub } });
-    if (!customer) throw new ForbiddenException("Customer record not found");
+    if (user.role === UserRole.OPERATOR) {
+      // Operator creates on behalf of a customer — customerId comes from the DTO
+      const customer = await this.prisma.customer.findUnique({ where: { id: dto.customerId } });
+      if (!customer) throw new BadRequestException("Customer not found");
+      customerId = customer.id;
+    } else {
+      // Customer creates their own order
+      const customer = await this.prisma.customer.findFirst({ where: { userId: user.sub } });
+      if (!customer) throw new ForbiddenException("Customer record not found");
+      customerId = customer.id;
+    }
 
     const products = await this.prisma.product.findMany({
       where: { id: { in: dto.items.map((i) => i.productId) } },
@@ -116,7 +125,7 @@ export class OrdersService {
 
     return this.prisma.order.create({
       data: {
-        customerId: customer.id,
+        customerId,
         orderNumber,
         subtotal,
         tax,

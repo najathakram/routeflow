@@ -129,6 +129,7 @@ model Customer {
   businessName  String
   contactName   String
   phone         String?
+  notes         String?
   zohoContactId String?     @unique
   fulfillPath   FulfillPath @default(ROUTE)
   createdAt     DateTime    @default(now())

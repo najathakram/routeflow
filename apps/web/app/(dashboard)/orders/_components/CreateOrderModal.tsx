@@ -1,0 +1,459 @@
+"use client";
+
+import * as React from "react";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
+import { X, AlertTriangle } from "lucide-react";
+import { Modal, Textarea, Button, cn, useToast } from "@routeflow/ui/web";
+import { useCustomers } from "@/lib/api/customers";
+import { useProducts } from "@/lib/api/products";
+import { useCreateOrder } from "@/lib/api/orders";
+
+// ─── Schema ───────────────────────────────────────────────────────────────────
+
+const schema = z.object({
+  notes: z.string().optional(),
+  urgent: z.boolean().optional(),
+});
+
+type FormValues = z.infer<typeof schema>;
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+interface SelectedCustomer {
+  id: string;
+  businessName: string;
+  contactName?: string;
+}
+
+interface LineItem {
+  tempId: string;
+  productId: string;
+  productName: string;
+  unit: string;
+  unitPrice: number;
+  qty: number;
+}
+
+// ─── Component ────────────────────────────────────────────────────────────────
+
+export interface CreateOrderModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+}
+
+export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
+  const { toast } = useToast();
+  const createOrder = useCreateOrder();
+
+  // Customer search state
+  const [customerSearch, setCustomerSearch] = React.useState("");
+  const [debouncedCustomerSearch, setDebouncedCustomerSearch] = React.useState("");
+  const [selectedCustomer, setSelectedCustomer] = React.useState<SelectedCustomer | null>(null);
+  const [customerError, setCustomerError] = React.useState("");
+
+  // Product search state
+  const [productSearch, setProductSearch] = React.useState("");
+  const [debouncedProductSearch, setDebouncedProductSearch] = React.useState("");
+  const [lineItems, setLineItems] = React.useState<LineItem[]>([]);
+  const [lineItemsError, setLineItemsError] = React.useState("");
+
+  // Debounce customer search
+  React.useEffect(() => {
+    const t = setTimeout(() => setDebouncedCustomerSearch(customerSearch), 300);
+    return () => clearTimeout(t);
+  }, [customerSearch]);
+
+  // Debounce product search
+  React.useEffect(() => {
+    const t = setTimeout(() => setDebouncedProductSearch(productSearch), 300);
+    return () => clearTimeout(t);
+  }, [productSearch]);
+
+  const { data: customersData } = useCustomers({
+    search: debouncedCustomerSearch || undefined,
+  });
+  const { data: productsData } = useProducts({
+    search: debouncedProductSearch || undefined,
+    isActive: true,
+  });
+
+  const filteredCustomers = React.useMemo(() => {
+    if (!debouncedCustomerSearch) return [];
+    return (customersData?.data ?? []).slice(0, 8);
+  }, [customersData, debouncedCustomerSearch]);
+
+  const filteredProducts = React.useMemo(() => {
+    if (!debouncedProductSearch) return [];
+    return (productsData?.data ?? [])
+      .filter((p: { id: string }) => !lineItems.some((li) => li.productId === p.id))
+      .slice(0, 8);
+  }, [productsData, debouncedProductSearch, lineItems]);
+
+  const { register, handleSubmit, reset, watch } = useForm<FormValues>({
+    resolver: zodResolver(schema),
+    defaultValues: { urgent: false },
+  });
+
+  const isUrgent = watch("urgent");
+
+  // Reset everything when modal opens
+  React.useEffect(() => {
+    if (isOpen) {
+      reset({ urgent: false });
+      setCustomerSearch("");
+      setDebouncedCustomerSearch("");
+      setSelectedCustomer(null);
+      setCustomerError("");
+      setProductSearch("");
+      setDebouncedProductSearch("");
+      setLineItems([]);
+      setLineItemsError("");
+      createOrder.reset();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
+
+  // ── Derived totals ────────────────────────────────────────────────────────
+
+  const subtotal = lineItems.reduce((sum, li) => sum + li.unitPrice * li.qty, 0);
+  const tax = subtotal * 0.1;
+  const total = subtotal + tax;
+
+  // ── Stop management ───────────────────────────────────────────────────────
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const addLineItem = (product: any) => {
+    if (lineItems.some((li) => li.productId === product.id)) return;
+    setLineItems((prev) => [
+      ...prev,
+      {
+        tempId: product.id + "-" + Date.now(),
+        productId: product.id,
+        productName: product.name,
+        unit: product.unit ?? "each",
+        unitPrice: Number(product.pricePerUnit ?? 0),
+        qty: 1,
+      },
+    ]);
+    setProductSearch("");
+    setDebouncedProductSearch("");
+    setLineItemsError("");
+  };
+
+  const removeLineItem = (tempId: string) => {
+    setLineItems((prev) => prev.filter((li) => li.tempId !== tempId));
+  };
+
+  const updateQty = (tempId: string, delta: number) => {
+    setLineItems((prev) =>
+      prev.map((li) => {
+        if (li.tempId !== tempId) return li;
+        return { ...li, qty: Math.max(1, li.qty + delta) };
+      }),
+    );
+  };
+
+  // ── Submit ────────────────────────────────────────────────────────────────
+
+  const onSubmit = (data: FormValues) => {
+    let hasErrors = false;
+    if (!selectedCustomer) {
+      setCustomerError("Please select a customer");
+      hasErrors = true;
+    }
+    if (lineItems.length === 0) {
+      setLineItemsError("Add at least one product");
+      hasErrors = true;
+    }
+    if (hasErrors) return;
+
+    createOrder.mutate(
+      {
+        customerId: selectedCustomer!.id,
+        items: lineItems.map((li) => ({ productId: li.productId, qty: li.qty })),
+        notes: data.notes,
+        urgent: data.urgent,
+      },
+      {
+        onSuccess: () => {
+          toast({ title: "Order created", variant: "success" });
+          onClose();
+        },
+      },
+    );
+  };
+
+  // Extract the API's error message from Axios error structure
+  const apiError: string | null = (() => {
+    const err = createOrder.error as { response?: { data?: { message?: string } }; message?: string } | null;
+    if (!err) return null;
+    return err.response?.data?.message || err.message || "Something went wrong. Please try again.";
+  })();
+
+  return (
+    <Modal
+      open={isOpen}
+      onClose={onClose}
+      title="Create Order"
+      description="Create a new order on behalf of a customer."
+      className="max-w-2xl"
+      footer={
+        <>
+          <Button variant="secondary" type="button" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" form="create-order-form" loading={createOrder.isPending}>
+            Create Order
+          </Button>
+        </>
+      }
+    >
+      <form
+        id="create-order-form"
+        onSubmit={handleSubmit(onSubmit)}
+        noValidate
+        className="max-h-[65vh] overflow-y-auto pr-1"
+      >
+        <div className="space-y-5">
+          {/* API error */}
+          {apiError && (
+            <div className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-red-200">
+              {apiError}
+            </div>
+          )}
+
+          {/* ── Customer ── */}
+          <section className="space-y-2">
+            <p className="text-xs font-semibold uppercase tracking-wider text-navy/40">
+              Customer
+            </p>
+
+            {selectedCustomer ? (
+              <div className="flex items-center justify-between rounded-lg border border-brand-300 bg-brand-50 px-3 py-2.5">
+                <div>
+                  <span className="text-sm font-medium text-navy">
+                    {selectedCustomer.businessName}
+                  </span>
+                  {selectedCustomer.contactName && (
+                    <span className="ml-2 text-xs text-navy/50">{selectedCustomer.contactName}</span>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedCustomer(null)}
+                  className="rounded p-1 text-navy/40 hover:text-danger transition-colors"
+                  title="Change customer"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            ) : (
+              <div className="relative">
+                <input
+                  type="search"
+                  placeholder="Search by business name…"
+                  value={customerSearch}
+                  onChange={(e) => {
+                    setCustomerSearch(e.target.value);
+                    setCustomerError("");
+                  }}
+                  className={cn(
+                    "h-10 w-full rounded border bg-white px-3 text-sm text-navy placeholder:text-navy/40 focus:outline-none focus:ring-2 focus:ring-brand-500",
+                    customerError
+                      ? "border-danger focus:border-transparent"
+                      : "border-surface-border focus:border-transparent",
+                  )}
+                />
+                {customerError && (
+                  <p className="mt-1 text-xs text-danger">{customerError}</p>
+                )}
+                {filteredCustomers.length > 0 && customerSearch && (
+                  <ul className="absolute left-0 right-0 top-full z-10 mt-1 overflow-hidden rounded-lg border border-surface-border bg-white shadow-dropdown">
+                    {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+                    {filteredCustomers.map((c: any) => (
+                      <li key={c.id}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedCustomer(c);
+                            setCustomerSearch("");
+                            setDebouncedCustomerSearch("");
+                          }}
+                          className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-navy hover:bg-surface-raised"
+                        >
+                          <span className="font-medium">{c.businessName}</span>
+                          {c.contactName && (
+                            <span className="text-xs text-navy/50">{c.contactName}</span>
+                          )}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+          </section>
+
+          {/* ── Products / Line Items ── */}
+          <section className="space-y-2">
+            <p className="text-xs font-semibold uppercase tracking-wider text-navy/40">
+              Products
+            </p>
+
+            {/* Product search */}
+            <div className="relative">
+              <input
+                type="search"
+                placeholder="Search products to add…"
+                value={productSearch}
+                onChange={(e) => {
+                  setProductSearch(e.target.value);
+                  setLineItemsError("");
+                }}
+                className={cn(
+                  "h-10 w-full rounded border bg-white px-3 text-sm text-navy placeholder:text-navy/40 focus:outline-none focus:ring-2 focus:ring-brand-500",
+                  lineItemsError && lineItems.length === 0
+                    ? "border-danger focus:border-transparent"
+                    : "border-surface-border focus:border-transparent",
+                )}
+              />
+              {filteredProducts.length > 0 && productSearch && (
+                <ul className="absolute left-0 right-0 top-full z-10 mt-1 overflow-hidden rounded-lg border border-surface-border bg-white shadow-dropdown">
+                  {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+                  {filteredProducts.map((p: any) => (
+                    <li key={p.id}>
+                      <button
+                        type="button"
+                        onClick={() => addLineItem(p)}
+                        className="flex w-full items-center justify-between px-3 py-2.5 text-left text-sm text-navy hover:bg-surface-raised"
+                      >
+                        <div>
+                          <span className="font-medium">{p.name}</span>
+                          <span className="ml-2 text-xs text-navy/50">{p.unit}</span>
+                        </div>
+                        <span className="text-xs font-medium text-navy/60">
+                          ${Number(p.pricePerUnit ?? 0).toFixed(2)}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            {lineItemsError && lineItems.length === 0 && (
+              <p className="text-xs text-danger">{lineItemsError}</p>
+            )}
+
+            {/* Line items list */}
+            {lineItems.length > 0 ? (
+              <ul className="divide-y divide-surface-border overflow-hidden rounded-lg border border-surface-border">
+                {lineItems.map((li) => (
+                  <li key={li.tempId} className="flex items-center gap-3 px-3 py-2.5">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-navy">{li.productName}</p>
+                      <p className="text-xs text-navy/50">
+                        ${li.unitPrice.toFixed(2)} / {li.unit}
+                      </p>
+                    </div>
+                    {/* Qty controls */}
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => updateQty(li.tempId, -1)}
+                        disabled={li.qty <= 1}
+                        className="flex h-6 w-6 items-center justify-center rounded border border-surface-border text-sm text-navy/60 hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-30 transition-colors"
+                      >
+                        −
+                      </button>
+                      <span className="w-8 text-center text-sm font-semibold text-navy">
+                        {li.qty}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => updateQty(li.tempId, 1)}
+                        className="flex h-6 w-6 items-center justify-center rounded border border-surface-border text-sm text-navy/60 hover:bg-surface-raised transition-colors"
+                      >
+                        +
+                      </button>
+                    </div>
+                    {/* Line total */}
+                    <span className="w-16 text-right text-sm font-semibold text-navy">
+                      ${(li.unitPrice * li.qty).toFixed(2)}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => removeLineItem(li.tempId)}
+                      className="shrink-0 rounded p-1 text-navy/30 hover:bg-surface-raised hover:text-danger transition-colors"
+                      title="Remove"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <div className="rounded-lg border border-dashed border-surface-border bg-surface-raised py-6 text-center">
+                <p className="text-sm text-navy/40">Search for products above to add line items.</p>
+              </div>
+            )}
+          </section>
+
+          {/* ── Order totals ── */}
+          {lineItems.length > 0 && (
+            <div className="space-y-1.5 rounded-lg border border-surface-border bg-surface-raised px-4 py-3 text-sm">
+              <div className="flex justify-between text-navy/70">
+                <span>Subtotal</span>
+                <span>${subtotal.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between text-navy/70">
+                <span>Tax (10%)</span>
+                <span>${tax.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between border-t border-surface-border pt-1.5 font-semibold text-navy">
+                <span>Total</span>
+                <span>${total.toFixed(2)}</span>
+              </div>
+            </div>
+          )}
+
+          {/* ── Options ── */}
+          <section className="space-y-3">
+            <p className="text-xs font-semibold uppercase tracking-wider text-navy/40">Options</p>
+
+            <Textarea
+              label="Notes"
+              placeholder="Special instructions, delivery notes…"
+              register={register("notes")}
+            />
+
+            <label
+              className={cn(
+                "flex cursor-pointer items-center gap-2.5 rounded-lg border px-3 py-2.5 transition-colors",
+                isUrgent
+                  ? "border-danger/40 bg-danger-bg"
+                  : "border-surface-border bg-white hover:bg-surface-raised",
+              )}
+            >
+              <input
+                type="checkbox"
+                {...register("urgent")}
+                className="h-4 w-4 accent-danger"
+              />
+              <AlertTriangle
+                className={cn("h-4 w-4", isUrgent ? "text-danger" : "text-navy/30")}
+              />
+              <span
+                className={cn("text-sm font-medium", isUrgent ? "text-danger" : "text-navy")}
+              >
+                Mark as Urgent
+              </span>
+            </label>
+          </section>
+        </div>
+      </form>
+    </Modal>
+  );
+}
