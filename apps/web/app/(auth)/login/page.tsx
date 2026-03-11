@@ -5,6 +5,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useRouter } from "next/navigation";
+import { Eye, EyeOff } from "lucide-react";
 import { Input, Button } from "@routeflow/ui/web";
 import { useAuth } from "@/lib/auth-context";
 
@@ -24,6 +25,7 @@ export default function LoginPage() {
   const { login: authLogin } = useAuth();
   const [isLoading, setIsLoading] = React.useState(false);
   const [apiError, setApiError] = React.useState<string | null>(null);
+  const [showPassword, setShowPassword] = React.useState(false);
 
   const {
     register,
@@ -79,14 +81,33 @@ export default function LoginPage() {
               register={register("username")}
               error={errors.username?.message}
             />
-            <Input
-              label="Password"
-              type="password"
-              placeholder="Enter your password"
-              autoComplete="current-password"
-              register={register("password")}
-              error={errors.password?.message}
-            />
+            <div className="flex flex-col gap-1">
+              <label htmlFor="password" className="text-sm font-medium text-navy">
+                Password
+              </label>
+              <div className="relative">
+                <input
+                  id="password"
+                  type={showPassword ? "text" : "password"}
+                  placeholder="Enter your password"
+                  autoComplete="current-password"
+                  className="h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 text-sm text-navy placeholder:text-navy/40 transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent"
+                  {...register("password")}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((v) => !v)}
+                  className="absolute inset-y-0 right-0 flex items-center pr-3 text-navy/40 hover:text-navy transition-colors"
+                  tabIndex={-1}
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                >
+                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+              {errors.password && (
+                <p className="text-xs text-danger">{errors.password.message}</p>
+              )}
+            </div>
             <Button type="submit" loading={isLoading} className="mt-2 w-full">
               Sign in
             </Button>
