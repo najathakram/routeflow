@@ -11,7 +11,7 @@
     {
       "name": "web",
       "runtimeExecutable": "node",
-      "runtimeArgs": ["C:/ClaudeCode/routeflow/apps/web/node_modules/next/dist/bin/next", "dev"],
+      "runtimeArgs": ["C:/ClaudeCode/routeflow/.claude/worktrees/eloquent-cori/apps/web/node_modules/next/dist/bin/next", "dev"],
       "cwd": "apps/web",
       "port": 3001
     },
