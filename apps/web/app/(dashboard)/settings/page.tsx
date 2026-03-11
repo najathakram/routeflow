@@ -31,6 +31,8 @@ import {
 import { useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useUsers, useCreateOperator, useChangeUserStatus, AppUser } from "@/lib/api/users";
+import { useZohoStatus, useZohoSync, useUpdateZohoConfig } from "@/lib/api/zoho";
+import { useNotificationsStatus, useSendTestNotification } from "@/lib/api/notifications";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -183,47 +185,57 @@ function BusinessProfileTab() {
 
 // ─── TAB 2: Integrations ──────────────────────────────────────────────────────
 
-const ZOHO_MOCK = {
-  connected: true,
-  lastSync: "Mar 9, 2026 · 9:14 AM",
-  projectId: "routeflow-prod",
-};
-
-const FIREBASE_MOCK = {
-  fcmProjectId: "routeflow-firebase-prod",
-  senderId: "4827193048",
-};
-
 function IntegrationsTab() {
   const { toast } = useToast();
-  const [zohoConnected, setZohoConnected] = React.useState(ZOHO_MOCK.connected);
-  const [lastSync, setLastSync] = React.useState(ZOHO_MOCK.lastSync);
-  const [isSyncing, setIsSyncing] = React.useState(false);
-  const [isDisconnectOpen, setIsDisconnectOpen] = React.useState(false);
 
-  const handleSync = async () => {
-    setIsSyncing(true);
-    await new Promise((r) => setTimeout(r, 1800));
-    setIsSyncing(false);
-    setLastSync("Just now");
-    toast({ title: "Zoho sync complete", description: "Products and contacts updated.", variant: "success" });
+  // Zoho state
+  const { data: zohoStatus } = useZohoStatus();
+  const zohoSync = useZohoSync();
+  const updateZohoConfig = useUpdateZohoConfig();
+  const [showZohoForm, setShowZohoForm] = React.useState(false);
+  const [zohoForm, setZohoForm] = React.useState({ clientId: "", clientSecret: "", refreshToken: "", region: "com" });
+
+  // Firebase state
+  const { data: notificationsStatus } = useNotificationsStatus();
+  const sendTest = useSendTestNotification();
+
+  const zohoConfigured = zohoStatus?.configured ?? false;
+  const lastSync = zohoStatus?.lastSync
+    ? new Date(zohoStatus.lastSync).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })
+    : null;
+
+  const handleSync = () => {
+    zohoSync.mutate(undefined, {
+      onSuccess: (result) => toast({ title: "Sync complete", description: `${result.synced} products synced.`, variant: "success" }),
+      onError: (err) => toast({ title: "Sync failed", description: err.message, variant: "error" }),
+    });
   };
 
-  const handleDisconnect = () => {
-    setZohoConnected(false);
-    setIsDisconnectOpen(false);
-    toast({ title: "Zoho disconnected", variant: "info" });
+  const handleSaveZohoConfig = () => {
+    updateZohoConfig.mutate(zohoForm, {
+      onSuccess: () => {
+        toast({ title: "Zoho credentials saved", variant: "success" });
+        setShowZohoForm(false);
+      },
+      onError: (err) => toast({ title: "Save failed", description: err.message, variant: "error" }),
+    });
   };
 
-  const handleTestNotification = async () => {
-    await new Promise((r) => setTimeout(r, 600));
-    toast({ title: "Test notification sent", description: "Check your device for the push notification.", variant: "success" });
+  const handleTestNotification = () => {
+    sendTest.mutate(undefined, {
+      onSuccess: (result) => toast({
+        title: "Test notification sent",
+        description: `Sent to ${result.sent} of ${result.deviceCount} device(s).`,
+        variant: "success",
+      }),
+      onError: (err) => toast({ title: "Failed", description: err.message, variant: "error" }),
+    });
   };
 
   return (
     <div className="space-y-5">
       {/* Zoho CRM */}
-      <Card title="Zoho CRM">
+      <Card title="Zoho CRM / Inventory">
         <div className="space-y-4">
           {/* Status row */}
           <div className="flex items-center justify-between rounded-lg border border-surface-border bg-surface-raised p-4">
@@ -231,73 +243,81 @@ function IntegrationsTab() {
               <div
                 className={cn(
                   "flex h-10 w-10 items-center justify-center rounded-lg font-bold text-white text-sm",
-                  zohoConnected ? "bg-success" : "bg-navy/30",
+                  zohoConfigured ? "bg-success" : "bg-navy/30",
                 )}
               >
                 Z
               </div>
               <div>
-                <p className="text-sm font-semibold text-navy">Zoho CRM</p>
+                <p className="text-sm font-semibold text-navy">Zoho Inventory</p>
                 <p className="text-xs text-navy/50">
-                  {zohoConnected ? `Last synced: ${lastSync}` : "Not connected"}
+                  {zohoConfigured
+                    ? lastSync ? `Last synced: ${lastSync}` : "Configured — never synced"
+                    : "Not configured"}
                 </p>
               </div>
             </div>
             <div className="flex items-center gap-2">
-              {zohoConnected ? (
-                <Badge variant="success" label="Connected" />
+              {zohoConfigured ? (
+                <Badge variant="success" label="Configured" />
               ) : (
-                <Badge variant="danger" label="Disconnected" />
+                <Badge variant="warning" label="Not configured" />
               )}
             </div>
           </div>
 
           {/* Actions */}
           <div className="flex flex-wrap gap-2">
-            {zohoConnected ? (
-              <>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  leftIcon={<RefreshCw className={cn("h-4 w-4", isSyncing && "animate-spin")} />}
-                  loading={isSyncing}
-                  onClick={handleSync}
-                >
-                  Sync Now
-                </Button>
-                <Button
-                  variant="danger"
-                  size="sm"
-                  leftIcon={<XCircle className="h-4 w-4" />}
-                  onClick={() => setIsDisconnectOpen(true)}
-                >
-                  Disconnect
-                </Button>
-              </>
-            ) : (
+            {zohoConfigured && (
               <Button
+                variant="secondary"
                 size="sm"
-                leftIcon={<LinkIcon className="h-4 w-4" />}
-                onClick={() => {
-                  setZohoConnected(true);
-                  setLastSync("Just now");
-                  toast({ title: "Zoho connected", variant: "success" });
-                }}
+                leftIcon={<RefreshCw className={cn("h-4 w-4", zohoSync.isPending && "animate-spin")} />}
+                loading={zohoSync.isPending}
+                onClick={handleSync}
               >
-                Connect Zoho
+                Sync Now
               </Button>
             )}
+            <Button
+              variant="secondary"
+              size="sm"
+              leftIcon={<LinkIcon className="h-4 w-4" />}
+              onClick={() => setShowZohoForm((v) => !v)}
+            >
+              {zohoConfigured ? "Update Credentials" : "Configure Zoho"}
+            </Button>
           </div>
 
-          {/* OAuth placeholder */}
-          {!zohoConnected && (
-            <div className="rounded-lg border border-dashed border-surface-border p-4 text-center">
-              <p className="text-sm text-navy/50">
-                OAuth 2.0 flow will open here.{" "}
-                <span className="cursor-pointer text-brand-500 hover:underline">
-                  Configure OAuth credentials →
-                </span>
-              </p>
+          {/* Credentials form */}
+          {showZohoForm && (
+            <div className="space-y-3 rounded-lg border border-surface-border p-4">
+              <p className="text-xs font-semibold uppercase tracking-wider text-navy/40">Zoho OAuth Credentials</p>
+              <div className="grid grid-cols-2 gap-3">
+                <Input label="Client ID" value={zohoForm.clientId} onChange={(e) => setZohoForm({ ...zohoForm, clientId: e.target.value })} placeholder="1000.XXXX..." />
+                <Input label="Client Secret" value={zohoForm.clientSecret} onChange={(e) => setZohoForm({ ...zohoForm, clientSecret: e.target.value })} placeholder="••••••••" type="password" />
+              </div>
+              <Input label="Refresh Token" value={zohoForm.refreshToken} onChange={(e) => setZohoForm({ ...zohoForm, refreshToken: e.target.value })} placeholder="1000.XXXX..." type="password" />
+              <div className="w-40">
+                <Select
+                  label="Region"
+                  options={[
+                    { value: "com", label: "Global (US)" },
+                    { value: "eu", label: "Europe (EU)" },
+                    { value: "in", label: "India (IN)" },
+                    { value: "au", label: "Australia (AU)" },
+                  ]}
+                  value={zohoForm.region}
+                  onChange={(e) => setZohoForm({ ...zohoForm, region: e.target.value })}
+                />
+              </div>
+              <div className="flex gap-2">
+                <Button size="sm" loading={updateZohoConfig.isPending} onClick={handleSaveZohoConfig}>Save Credentials</Button>
+                <Button size="sm" variant="secondary" onClick={() => setShowZohoForm(false)}>Cancel</Button>
+              </div>
+              {updateZohoConfig.error && (
+                <p className="text-sm text-danger">{updateZohoConfig.error.message}</p>
+              )}
             </div>
           )}
         </div>
@@ -313,54 +333,36 @@ function IntegrationsTab() {
               </div>
               <div>
                 <p className="text-sm font-semibold text-navy">Firebase Cloud Messaging</p>
-                <p className="text-xs text-navy/50">Project: {FIREBASE_MOCK.fcmProjectId}</p>
+                <p className="text-xs text-navy/50">
+                  {notificationsStatus?.configured
+                    ? `${notificationsStatus.deviceCount} device(s) registered`
+                    : "FCM_SERVICE_ACCOUNT_JSON not set in environment"}
+                </p>
               </div>
             </div>
-            <Badge variant="success" label="Connected" />
+            {notificationsStatus?.configured ? (
+              <Badge variant="success" label="Configured" />
+            ) : (
+              <Badge variant="warning" label="Not configured" />
+            )}
           </div>
 
-          <div className="grid grid-cols-2 gap-4 text-sm">
-            <div>
-              <p className="text-xs text-navy/50 mb-1">FCM Project ID</p>
-              <p className="font-mono text-navy">{FIREBASE_MOCK.fcmProjectId}</p>
-            </div>
-            <div>
-              <p className="text-xs text-navy/50 mb-1">Sender ID</p>
-              <p className="font-mono text-navy">{FIREBASE_MOCK.senderId}</p>
-            </div>
+          <div className="text-sm text-navy/60">
+            <p>To enable push notifications, set the <code className="text-xs bg-surface-raised px-1 py-0.5 rounded">FCM_SERVICE_ACCOUNT_JSON</code> environment variable to the base64-encoded Firebase service account JSON from Firebase Console → Project Settings → Service Accounts.</p>
           </div>
 
           <Button
             variant="secondary"
             size="sm"
             leftIcon={<Bell className="h-4 w-4" />}
+            loading={sendTest.isPending}
+            disabled={!notificationsStatus?.configured}
             onClick={handleTestNotification}
           >
             Test Notification
           </Button>
         </div>
       </Card>
-
-      {/* Disconnect confirm */}
-      <Modal
-        open={isDisconnectOpen}
-        onClose={() => setIsDisconnectOpen(false)}
-        title="Disconnect Zoho CRM?"
-        description="This will stop product and contact syncing. You can reconnect at any time."
-        footer={
-          <>
-            <Button variant="secondary" onClick={() => setIsDisconnectOpen(false)}>Cancel</Button>
-            <Button variant="danger" onClick={handleDisconnect}>Disconnect</Button>
-          </>
-        }
-      >
-        <div className="flex items-center gap-3 rounded-lg border border-warning/30 bg-warning-bg p-3">
-          <XCircle className="h-5 w-5 shrink-0 text-warning" />
-          <p className="text-sm text-navy/80">
-            Products will no longer sync from Zoho. Manually-set prices and stock levels will remain.
-          </p>
-        </div>
-      </Modal>
     </div>
   );
 }

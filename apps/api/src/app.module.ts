@@ -16,6 +16,7 @@ import { RoutesModule } from "./routes/routes.module";
 import { OrdersModule } from "./orders/orders.module";
 import { BookkeepingModule } from "./bookkeeping/bookkeeping.module";
 import { ZohoSyncModule } from "./zoho-sync/zoho-sync.module";
+import { SystemConfigModule } from "./system-config/system-config.module";
 import { NotificationsModule } from "./notifications/notifications.module";
 import { RouteOptimizationModule } from "./route-optimization/route-optimization.module";
 import { GatewaysModule } from "./gateways/gateways.module";
@@ -72,6 +73,7 @@ import { AppService } from "./app.service";
     OrdersModule,
     BookkeepingModule,
     ZohoSyncModule,
+    SystemConfigModule,
     NotificationsModule,
     RouteOptimizationModule,
     GatewaysModule,

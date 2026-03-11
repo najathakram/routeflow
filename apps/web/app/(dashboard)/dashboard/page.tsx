@@ -15,31 +15,26 @@ import {
 } from "lucide-react";
 import { StatCard, Badge, Table, Button, Card, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
-import {
-  kpi,
-  urgentOrders,
-  activeRoutes,
-  drivers,
-  recentOrders,
-  type ActiveRoute,
-  type RecentOrder,
-} from "@/mocks/dashboard";
+import { useOrders, type Order } from "@/lib/api/orders";
+import { useRouteRuns, type RouteRun } from "@/lib/api/routes";
+import { useDrivers, type Driver } from "@/lib/api/drivers";
+import { useProducts } from "@/lib/api/products";
 
 // ─── Column definitions (stable refs, defined outside component) ───────────────
 
-const routeColumns: ColumnDef<ActiveRoute, unknown>[] = [
+const routeColumns: ColumnDef<RouteRun, unknown>[] = [
   {
-    accessorKey: "name",
+    accessorKey: "route.name",
     header: "Route Name",
     cell: ({ row }) => (
-      <span className="font-medium text-navy">{row.original.name}</span>
+      <span className="font-medium text-navy">{row.original.route?.name ?? "—"}</span>
     ),
   },
   {
-    accessorKey: "driver",
+    id: "driver",
     header: "Driver",
     cell: ({ row }) => (
-      <span className="text-navy/70">{row.original.driver}</span>
+      <span className="text-navy/70">{row.original.driver?.contactName ?? "Unassigned"}</span>
     ),
   },
   {
@@ -51,44 +46,55 @@ const routeColumns: ColumnDef<ActiveRoute, unknown>[] = [
     id: "stops",
     header: "Stops",
     enableSorting: false,
-    cell: ({ row }) => (
-      <span className="text-sm text-navy/70">
-        {row.original.stopsDone} / {row.original.stopsTotal}
-      </span>
-    ),
+    cell: ({ row }) => {
+      const stops = row.original.stops ?? [];
+      const done = stops.filter((s) => s.status === "COMPLETED").length;
+      const total = row.original._count?.stops ?? stops.length;
+      return (
+        <span className="text-sm text-navy/70">
+          {done} / {total}
+        </span>
+      );
+    },
   },
   {
-    accessorKey: "startTime",
+    id: "startTime",
     header: "Start Time",
     enableSorting: false,
     cell: ({ row }) => (
-      <span className="text-navy/70">{row.original.startTime}</span>
+      <span className="text-navy/70">
+        {row.original.startedAt
+          ? new Date(row.original.startedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+          : row.original.scheduledDate
+          ? new Date(row.original.scheduledDate).toLocaleDateString()
+          : "—"}
+      </span>
     ),
   },
 ];
 
-const orderColumns: ColumnDef<RecentOrder, unknown>[] = [
+const orderColumns: ColumnDef<Order, unknown>[] = [
   {
     accessorKey: "orderNumber",
     header: "Order #",
     cell: ({ row }) => (
       <span className="font-mono text-xs font-semibold text-navy">
-        {row.original.orderNumber}
+        {row.original.orderNumber ?? row.original.id.slice(0, 8).toUpperCase()}
       </span>
     ),
   },
   {
-    accessorKey: "customer",
+    id: "customer",
     header: "Customer",
     cell: ({ row }) => (
-      <span className="text-navy">{row.original.customer}</span>
+      <span className="text-navy">{row.original.customer?.businessName ?? "—"}</span>
     ),
   },
   {
-    accessorKey: "items",
+    id: "items",
     header: "Items",
     cell: ({ row }) => (
-      <span className="text-navy/70">{row.original.items}</span>
+      <span className="text-navy/70">{row.original.lineItems?.length ?? 0} item(s)</span>
     ),
   },
   {
@@ -96,7 +102,7 @@ const orderColumns: ColumnDef<RecentOrder, unknown>[] = [
     header: "Total",
     cell: ({ row }) => (
       <span className="font-medium text-navy">
-        ${row.original.total.toLocaleString("en-US", { minimumFractionDigits: 2 })}
+        ${Number(row.original.total ?? 0).toLocaleString("en-US", { minimumFractionDigits: 2 })}
       </span>
     ),
   },
@@ -107,22 +113,35 @@ const orderColumns: ColumnDef<RecentOrder, unknown>[] = [
     cell: ({ row }) => <Badge status={row.original.status} />,
   },
   {
-    accessorKey: "date",
+    accessorKey: "createdAt",
     header: "Date",
     enableSorting: false,
     cell: ({ row }) => (
-      <span className="text-navy/60">{row.original.date}</span>
+      <span className="text-navy/60">
+        {new Date(row.original.createdAt).toLocaleDateString()}
+      </span>
     ),
   },
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function formatTimeAgo(minutes: number): string {
+function timeAgo(dateStr: string): string {
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const minutes = Math.floor(diff / 60000);
   if (minutes < 60) return `${minutes}m ago`;
   const h = Math.floor(minutes / 60);
   const m = minutes % 60;
   return m > 0 ? `${h}h ${m}m ago` : `${h}h ago`;
+}
+
+function StatSkeleton() {
+  return (
+    <div className="animate-pulse rounded-xl border border-surface-border bg-white p-5">
+      <div className="mb-3 h-4 w-24 rounded bg-navy/10" />
+      <div className="h-8 w-16 rounded bg-navy/10" />
+    </div>
+  );
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -135,39 +154,94 @@ export default function DashboardPage() {
     setTitle("Dashboard");
   }, [setTitle]);
 
+  const todayISO = React.useMemo(() => new Date().toISOString().split("T")[0], []);
+
+  // ── Data fetching ──
+  const { data: allOrdersData, isLoading: ordersLoading } = useOrders({ page: 1, limit: 100 });
+  const { data: urgentOrdersData, isLoading: urgentLoading } = useOrders({ urgent: true, limit: 5 });
+  const { data: recentOrdersData, isLoading: recentLoading } = useOrders({ page: 1, limit: 5 });
+  const { data: routeRunsData, isLoading: runsLoading } = useRouteRuns({ date: todayISO });
+  const { data: driversData, isLoading: driversLoading } = useDrivers({ page: 1, limit: 20 });
+  const { data: lowStockData, isLoading: lowStockLoading } = useProducts({ lowStock: true, page: 1 });
+
+  // ── KPI calculations ──
+  const activeOrders = React.useMemo(() => {
+    const activeStatuses = ["PENDING", "CONFIRMED", "OUT_FOR_DELIVERY"];
+    return (allOrdersData?.data ?? []).filter((o) => activeStatuses.includes(o.status)).length;
+  }, [allOrdersData]);
+
+  const routesToday = routeRunsData?.meta?.total ?? 0;
+  const driversOnRoad = React.useMemo(
+    () => (driversData?.data ?? []).filter((d: Driver) => d.status === "ACTIVE").length,
+    [driversData]
+  );
+  const lowStockItems = lowStockData?.meta?.total ?? 0;
+
+  const isLoading = ordersLoading || runsLoading || driversLoading || lowStockLoading;
+
+  const urgentOrders = urgentOrdersData?.data ?? [];
+  const activeRoutes = routeRunsData?.data ?? [];
+  const recentOrders = recentOrdersData?.data ?? [];
+  const drivers = driversData?.data ?? [];
+
   return (
     <div className="space-y-6 p-6">
 
       {/* ── KPI stat cards ── */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <StatCard
-          label="Active Orders"
-          value={kpi.activeOrders}
-          trend={8}
-          trendLabel="vs last week"
-          icon={<ShoppingCart className="h-5 w-5" />}
-        />
-        <StatCard
-          label="Routes Today"
-          value={kpi.routesToday}
-          icon={<MapPin className="h-5 w-5" />}
-        />
-        <StatCard
-          label="Drivers On Road"
-          value={kpi.driversOnRoad}
-          icon={<Truck className={cn("h-5 w-5", kpi.driversOnRoad > 0 && "text-success")} />}
-          className={kpi.driversOnRoad > 0 ? "ring-1 ring-inset ring-success/20" : ""}
-        />
-        <StatCard
-          label="Low Stock Items"
-          value={kpi.lowStockItems}
-          icon={
-            <AlertTriangle
-              className={cn("h-5 w-5", kpi.lowStockItems > 0 ? "text-danger" : "")}
-            />
-          }
-          className={kpi.lowStockItems > 0 ? "ring-1 ring-inset ring-danger/20" : ""}
-        />
+        {isLoading ? (
+          <>
+            <StatSkeleton />
+            <StatSkeleton />
+            <StatSkeleton />
+            <StatSkeleton />
+          </>
+        ) : (
+          <>
+            <Link href="/orders" className="block">
+              <StatCard
+                label="Active Orders"
+                value={activeOrders}
+                icon={<ShoppingCart className="h-5 w-5" />}
+                className="cursor-pointer transition-shadow hover:shadow-md"
+              />
+            </Link>
+            <Link href="/routes" className="block">
+              <StatCard
+                label="Routes Today"
+                value={routesToday}
+                icon={<MapPin className="h-5 w-5" />}
+                className="cursor-pointer transition-shadow hover:shadow-md"
+              />
+            </Link>
+            <Link href="/drivers" className="block">
+              <StatCard
+                label="Drivers On Road"
+                value={driversOnRoad}
+                icon={<Truck className={cn("h-5 w-5", driversOnRoad > 0 && "text-success")} />}
+                className={cn(
+                  "cursor-pointer transition-shadow hover:shadow-md",
+                  driversOnRoad > 0 ? "ring-1 ring-inset ring-success/20" : ""
+                )}
+              />
+            </Link>
+            <Link href="/products?lowStock=true" className="block">
+              <StatCard
+                label="Low Stock Items"
+                value={lowStockItems}
+                icon={
+                  <AlertTriangle
+                    className={cn("h-5 w-5", lowStockItems > 0 ? "text-danger" : "")}
+                  />
+                }
+                className={cn(
+                  "cursor-pointer transition-shadow hover:shadow-md",
+                  lowStockItems > 0 ? "ring-1 ring-inset ring-danger/20" : ""
+                )}
+              />
+            </Link>
+          </>
+        )}
       </div>
 
       {/* ── Middle row: Urgent Orders + Driver Status ── */}
@@ -177,7 +251,11 @@ export default function DashboardPage() {
         <div className="flex flex-col gap-6 lg:col-span-2">
 
           {/* Urgent orders alert panel */}
-          {urgentOrders.length > 0 ? (
+          {urgentLoading ? (
+            <div className="animate-pulse rounded-lg border border-surface-border bg-white p-5">
+              <div className="h-4 w-48 rounded bg-navy/10" />
+            </div>
+          ) : urgentOrders.length > 0 ? (
             <div className="overflow-hidden rounded-lg border border-danger/30 bg-danger-bg">
               <div className="flex items-center gap-2 border-b border-danger/20 bg-danger/10 px-4 py-3">
                 <AlertTriangle className="h-4 w-4 shrink-0 text-danger" />
@@ -190,11 +268,11 @@ export default function DashboardPage() {
                   <li key={order.id} className="flex items-center gap-4 px-4 py-3">
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium text-navy">
-                        {order.customer}
+                        {order.customer?.businessName ?? "Unknown Customer"}
                       </p>
                       <p className="mt-0.5 flex items-center gap-1 text-xs text-navy/60">
                         <Clock className="h-3 w-3" />
-                        {order.itemsCount} items &middot; {formatTimeAgo(order.minutesAgo)}
+                        {order.lineItems?.length ?? 0} items &middot; {timeAgo(order.createdAt)}
                       </p>
                     </div>
                     <Button variant="secondary" size="sm" href={`/orders/${order.id}`}>
@@ -216,46 +294,65 @@ export default function DashboardPage() {
 
           {/* Active route runs */}
           <Card title="Active Route Runs">
-            <div className="-mx-6 -mb-6">
-              <Table
-                data={activeRoutes}
-                columns={routeColumns}
-                onRowClick={(row) => router.push(`/routes/${row.original.id}`)}
-              />
-            </div>
+            {runsLoading ? (
+              <div className="animate-pulse space-y-3 py-4">
+                {[1, 2, 3].map((i) => (
+                  <div key={i} className="h-10 rounded bg-navy/10" />
+                ))}
+              </div>
+            ) : (
+              <div className="-mx-6 -mb-6">
+                <Table
+                  data={activeRoutes}
+                  columns={routeColumns}
+                  onRowClick={(row) => router.push(`/routes/${row.original.id}`)}
+                />
+              </div>
+            )}
           </Card>
         </div>
 
         {/* Right: Driver Status */}
         <div>
           <Card title="Driver Status">
-            <ul className="-mx-6 -mb-6 divide-y divide-surface-border">
-              {drivers.map((driver) => (
-                <li key={driver.id} className="flex items-start gap-3 px-6 py-4">
-                  <span
-                    className={cn(
-                      "mt-1.5 h-2 w-2 shrink-0 rounded-full",
-                      driver.onlineStatus === "on_route" ? "bg-success" : "bg-navy/20",
-                    )}
-                  />
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium text-navy">{driver.name}</p>
-                    {driver.currentRoute ? (
-                      <p className="mt-0.5 truncate text-xs text-navy/60">
-                        {driver.currentRoute}
-                      </p>
-                    ) : (
-                      <p className="mt-0.5 text-xs text-navy/40">Idle</p>
-                    )}
-                    <p className="mt-0.5 text-xs text-navy/40">{driver.lastPing}</p>
+            {driversLoading ? (
+              <div className="animate-pulse space-y-4 py-2">
+                {[1, 2, 3].map((i) => (
+                  <div key={i} className="flex items-center gap-3">
+                    <div className="h-2 w-2 rounded-full bg-navy/10" />
+                    <div className="flex-1 space-y-1">
+                      <div className="h-3 w-24 rounded bg-navy/10" />
+                      <div className="h-3 w-16 rounded bg-navy/10" />
+                    </div>
                   </div>
-                  <Badge
-                    variant={driver.onlineStatus === "on_route" ? "success" : "neutral"}
-                    label={driver.onlineStatus === "on_route" ? "On Route" : "Idle"}
-                  />
-                </li>
-              ))}
-            </ul>
+                ))}
+              </div>
+            ) : (
+              <ul className="-mx-6 -mb-6 divide-y divide-surface-border">
+                {drivers.length === 0 ? (
+                  <li className="px-6 py-4 text-sm text-navy/50">No drivers found</li>
+                ) : (
+                  drivers.map((driver: Driver) => (
+                    <li key={driver.id} className="flex items-start gap-3 px-6 py-4">
+                      <span
+                        className={cn(
+                          "mt-1.5 h-2 w-2 shrink-0 rounded-full",
+                          driver.status === "ACTIVE" ? "bg-success" : "bg-navy/20",
+                        )}
+                      />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium text-navy">{driver.contactName}</p>
+                        <p className="mt-0.5 text-xs text-navy/40">{driver.vehiclePlate ?? driver.user?.username}</p>
+                      </div>
+                      <Badge
+                        variant={driver.status === "ACTIVE" ? "success" : "neutral"}
+                        label={driver.status === "ACTIVE" ? "Active" : "Inactive"}
+                      />
+                    </li>
+                  ))
+                )}
+              </ul>
+            )}
           </Card>
         </div>
       </div>
@@ -272,9 +369,17 @@ export default function DashboardPage() {
             <ArrowRight className="h-3.5 w-3.5" />
           </Link>
         </div>
-        <div className="-mx-6 -mb-6">
-          <Table data={recentOrders} columns={orderColumns} />
-        </div>
+        {recentLoading ? (
+          <div className="animate-pulse space-y-3">
+            {[1, 2, 3, 4, 5].map((i) => (
+              <div key={i} className="h-10 rounded bg-navy/10" />
+            ))}
+          </div>
+        ) : (
+          <div className="-mx-6 -mb-6">
+            <Table data={recentOrders} columns={orderColumns} />
+          </div>
+        )}
       </Card>
 
     </div>

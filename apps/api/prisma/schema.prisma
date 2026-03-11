@@ -493,6 +493,12 @@ model SyncLog {
   @@index([startedAt])
 }
 
+model SystemConfig {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
 model RefreshToken {
   id        String   @id @default(uuid())
   userId    String

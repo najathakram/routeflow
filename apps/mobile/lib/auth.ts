@@ -1,5 +1,6 @@
 import * as SecureStore from "expo-secure-store";
 import { Platform } from "react-native";
+import * as Notifications from "expo-notifications";
 import { apiClient } from "./api-client";
 
 // ─── Web-safe storage (SecureStore is native-only) ────────────────────────────
@@ -65,6 +66,43 @@ export async function getStoredUser(): Promise<AuthUser | null> {
 
 // ─── Auth functions ───────────────────────────────────────────────────────────
 
+async function registerPushToken(): Promise<void> {
+  // Expo push token only works on physical device (not simulator)
+  if (Platform.OS === "web") return;
+  try {
+    const { status: existingStatus } = await Notifications.getPermissionsAsync();
+    let finalStatus = existingStatus;
+    if (existingStatus !== "granted") {
+      const { status } = await Notifications.requestPermissionsAsync();
+      finalStatus = status;
+    }
+    if (finalStatus !== "granted") return;
+
+    const { data: token } = await Notifications.getExpoPushTokenAsync();
+    if (!token) return;
+
+    await storage.set("pushToken", token);
+    await apiClient.post("/notifications/register-token", {
+      token,
+      platform: Platform.OS === "ios" ? "IOS" : "ANDROID",
+    });
+  } catch {
+    // Best-effort — don't block login on push token failure
+  }
+}
+
+async function deregisterPushToken(): Promise<void> {
+  if (Platform.OS === "web") return;
+  try {
+    const token = await storage.get("pushToken");
+    if (!token) return;
+    await apiClient.delete(`/notifications/token/${encodeURIComponent(token)}`);
+    await storage.del("pushToken");
+  } catch {
+    // Best-effort
+  }
+}
+
 export async function login(
   username: string,
   password: string,
@@ -75,10 +113,14 @@ export async function login(
   });
   await storage.set("accessToken", data.accessToken);
   await storage.set("refreshToken", data.refreshToken);
+  // Register push token after successful login
+  await registerPushToken();
   return data;
 }
 
 export async function logout(): Promise<void> {
+  // Deregister push token before logging out
+  await deregisterPushToken();
   try {
     await apiClient.post("/auth/logout");
   } catch {

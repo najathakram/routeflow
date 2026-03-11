@@ -31,7 +31,7 @@ interface PaginatedResponse<T> {
   meta: { total: number; page: number; limit: number; totalPages: number };
 }
 
-export function useOrders(params?: { customerId?: string; status?: string; urgent?: boolean; page?: number }) {
+export function useOrders(params?: { customerId?: string; status?: string; urgent?: boolean; page?: number; limit?: number }) {
   return useQuery<PaginatedResponse<Order>>({
     queryKey: ['orders', params],
     queryFn: () => apiClient.get('/orders', { params }).then((r) => r.data),

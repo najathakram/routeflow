@@ -5,15 +5,17 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Plus, X, GripVertical } from "lucide-react";
-import { Modal, Input, Select, Button, cn } from "@routeflow/ui/web";
-import { customers } from "@/mocks/customers";
-import { drivers } from "@/mocks/drivers";
+import { Modal, Input, Select, Button, cn, useToast } from "@routeflow/ui/web";
+import { useDrivers } from "@/lib/api/drivers";
+import { useCustomers } from "@/lib/api/customers";
+import { useCreateRoute } from "@/lib/api/routes";
+import { apiClient } from "@/lib/api-client";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
 const schema = z.object({
   name: z.string().min(1, "Route name is required"),
-  defaultDriverId: z.string().min(1, "Select a driver"),
+  defaultDriverId: z.string().optional(),
 });
 
 type FormValues = z.infer<typeof schema>;
@@ -25,6 +27,7 @@ interface StopEntry {
   customerId: string;
   customerName: string;
   address: string;
+  addressId?: string;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -35,8 +38,19 @@ export interface CreateRouteModalProps {
 }
 
 export function CreateRouteModal({ isOpen, onClose }: CreateRouteModalProps) {
+  const { toast } = useToast();
   const [stops, setStops] = React.useState<StopEntry[]>([]);
   const [customerSearch, setCustomerSearch] = React.useState("");
+  const [debouncedSearch, setDebouncedSearch] = React.useState("");
+
+  const createRoute = useCreateRoute();
+  const { data: driversData } = useDrivers({ page: 1, limit: 100 });
+  const { data: customersData } = useCustomers({ search: debouncedSearch || undefined, page: 1 });
+
+  React.useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(customerSearch), 300);
+    return () => clearTimeout(t);
+  }, [customerSearch]);
 
   const {
     register,
@@ -52,44 +66,67 @@ export function CreateRouteModal({ isOpen, onClose }: CreateRouteModalProps) {
       reset();
       setStops([]);
       setCustomerSearch("");
+      setDebouncedSearch("");
     }
   }, [isOpen, reset]);
 
-  const filteredCustomers = React.useMemo(() => {
-    const q = customerSearch.toLowerCase();
-    return !q
-      ? []
-      : customers
-          .filter(
-            (c) =>
-              c.businessName.toLowerCase().includes(q) ||
-              c.contactName.toLowerCase().includes(q),
-          )
-          .slice(0, 5);
-  }, [customerSearch]);
+  const driverOptions = React.useMemo(
+    () => [
+      { value: "", label: "No driver assigned" },
+      ...(driversData?.data ?? []).map((d) => ({ value: d.id, label: d.contactName })),
+    ],
+    [driversData]
+  );
 
-  const addStop = (c: (typeof customers)[number]) => {
-    if (stops.some((s) => s.customerId === c.id)) return;
-    const addr = c.addresses.find((a) => a.isPrimary) ?? c.addresses[0];
+  const filteredCustomers = React.useMemo(() => {
+    if (!debouncedSearch) return [];
+    return (customersData?.data ?? []).slice(0, 8);
+  }, [customersData, debouncedSearch]);
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const addStop = (customer: any) => {
+    if (stops.some((s) => s.customerId === customer.id)) return;
+    const addr = (customer.addresses ?? []).find((a: { isDefault?: boolean }) => a.isDefault) ?? customer.addresses?.[0];
     setStops((prev) => [
       ...prev,
       {
-        id: `${c.id}-${Date.now()}`,
-        customerId: c.id,
-        customerName: c.businessName,
-        address: addr ? `${addr.street}, ${addr.city}, ${addr.state}` : "—",
+        id: customer.id + "-" + Date.now(),
+        customerId: customer.id,
+        customerName: customer.businessName,
+        address: addr ? (addr.line1 ?? addr.street ?? "") + ", " + (addr.city ?? "") + ", " + (addr.state ?? "") : "—",
+        addressId: addr?.id,
       },
     ]);
     setCustomerSearch("");
+    setDebouncedSearch("");
   };
 
   const removeStop = (id: string) => {
     setStops((prev) => prev.filter((s) => s.id !== id));
   };
 
-  const onSubmit = async (_data: FormValues) => {
-    await new Promise((r) => setTimeout(r, 700));
-    onClose();
+  const onSubmit = async (data: FormValues) => {
+    try {
+      const route = await new Promise<{ id: string }>((resolve, reject) => {
+        createRoute.mutate(
+          { name: data.name, driverId: data.defaultDriverId || undefined },
+          { onSuccess: resolve, onError: reject }
+        );
+      });
+      for (let i = 0; i < stops.length; i++) {
+        const stop = stops[i];
+        await apiClient.post("/routes/" + route.id + "/stops", {
+          customerId: stop.customerId,
+          customerAddressId: stop.addressId,
+          stopNumber: i + 1,
+        });
+      }
+      toast({ title: "Route created", description: data.name + " created with " + stops.length + " stop(s).", variant: "success" });
+      onClose();
+    } catch (err: unknown) {
+      const msg = (err as { message?: string })?.message ?? "Failed to create route.";
+      toast({ title: "Error", description: msg, variant: "error" });
+    }
   };
 
   return (
@@ -128,7 +165,7 @@ export function CreateRouteModal({ isOpen, onClose }: CreateRouteModalProps) {
             <Select
               label="Default Driver"
               placeholder="Select driver"
-              options={drivers.map((d) => ({ value: d.id, label: d.name }))}
+              options={driverOptions}
               register={register("defaultDriverId")}
               error={errors.defaultDriverId?.message}
             />
@@ -149,9 +186,9 @@ export function CreateRouteModal({ isOpen, onClose }: CreateRouteModalProps) {
                 onChange={(e) => setCustomerSearch(e.target.value)}
                 className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/40 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
               />
-              {filteredCustomers.length > 0 && (
+              {filteredCustomers.length > 0 && customerSearch && (
                 <ul className="absolute left-0 right-0 top-full z-10 mt-1 overflow-hidden rounded-lg border border-surface-border bg-white shadow-dropdown">
-                  {filteredCustomers.map((c) => (
+                  {filteredCustomers.map((c: { id: string; businessName: string; contactName?: string }) => (
                     <li key={c.id}>
                       <button
                         type="button"
