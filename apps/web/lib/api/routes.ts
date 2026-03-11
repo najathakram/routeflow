@@ -88,7 +88,75 @@ export function useAddStopToRoute() {
     onSuccess: (_, vars) => {
       qc.invalidateQueries({ queryKey: ['routes', vars.routeId] });
       qc.invalidateQueries({ queryKey: ['customers'] });
+      qc.invalidateQueries({ queryKey: ['customer-route-assignments'] });
     },
+  });
+}
+
+export function useUpdateRoute() {
+  const qc = useQueryClient();
+  return useMutation<Route, Error, { id: string; name?: string; driverId?: string; isActive?: boolean }>({
+    mutationFn: ({ id, ...dto }) => apiClient.patch(`/routes/${id}`, dto).then((r) => r.data),
+    onSuccess: (_, { id }) => {
+      qc.invalidateQueries({ queryKey: ['routes', id] });
+      qc.invalidateQueries({ queryKey: ['routes'] });
+    },
+  });
+}
+
+export function useRemoveStop() {
+  const qc = useQueryClient();
+  return useMutation<void, Error, { routeId: string; stopId: string }>({
+    mutationFn: ({ routeId, stopId }) =>
+      apiClient.delete(`/routes/${routeId}/stops/${stopId}`).then((r) => r.data),
+    onSuccess: (_, { routeId }) => {
+      qc.invalidateQueries({ queryKey: ['routes', routeId] });
+      qc.invalidateQueries({ queryKey: ['customer-route-assignments'] });
+      qc.invalidateQueries({ queryKey: ['route-packing-list', routeId] });
+    },
+  });
+}
+
+export function useReorderStops() {
+  const qc = useQueryClient();
+  return useMutation<void, Error, { routeId: string; order: { id: string; stopNumber: number }[] }>({
+    mutationFn: ({ routeId, order }) =>
+      apiClient.patch(`/routes/${routeId}/stops/reorder`, { order }).then((r) => r.data),
+    onSuccess: (_, { routeId }) => qc.invalidateQueries({ queryKey: ['routes', routeId] }),
+  });
+}
+
+export interface PackingItem {
+  productId: string;
+  productName: string;
+  sku?: string | null;
+  totalQty: number;
+  customers: { name: string; qty: number }[];
+}
+
+export interface PackingListResponse {
+  orders: Array<{
+    id: string;
+    orderNumber: string;
+    status: string;
+    createdAt: string;
+    total?: number;
+    customer?: { id: string; businessName: string };
+    lineItems: Array<{
+      id: string;
+      qty: number;
+      unitPrice: number;
+      product?: { id: string; name: string; sku?: string };
+    }>;
+  }>;
+  packingList: PackingItem[];
+}
+
+export function useRoutePackingList(id: string) {
+  return useQuery<PackingListResponse>({
+    queryKey: ['route-packing-list', id],
+    queryFn: () => apiClient.get(`/routes/${id}/packing-list`).then((r) => r.data),
+    enabled: !!id,
   });
 }
 

@@ -49,6 +49,11 @@ export class RoutesController {
     return this.routesService.getCustomerRouteAssignments();
   }
 
+  @Get(":id/packing-list")
+  getPackingList(@Param("id") id: string) {
+    return this.routesService.getPackingList(id);
+  }
+
   @Get(":id")
   findOne(@Param("id") id: string) {
     return this.routesService.findOneRoute(id);
@@ -66,6 +71,16 @@ export class RoutesController {
   @Roles(UserRole.OPERATOR)
   addStop(@Param("id") id: string, @Body() dto: AddStopDto) {
     return this.routesService.addStop(id, dto);
+  }
+
+  @Patch(":id/stops/reorder")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR)
+  reorderStops(
+    @Param("id") id: string,
+    @Body() body: { order: { id: string; stopNumber: number }[] },
+  ) {
+    return this.routesService.reorderStops(id, body.order);
   }
 
   @Delete(":id/stops/:stopId")

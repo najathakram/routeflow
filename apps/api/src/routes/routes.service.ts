@@ -97,6 +97,88 @@ export class RoutesService {
     return { success: true };
   }
 
+  async reorderStops(routeId: string, order: { id: string; stopNumber: number }[]) {
+    await this.findRouteOrThrow(routeId);
+    await this.prisma.$transaction(
+      order.map(({ id, stopNumber }) =>
+        this.prisma.routeStop.update({ where: { id }, data: { stopNumber } }),
+      ),
+    );
+    return { success: true };
+  }
+
+  async getPackingList(routeId: string) {
+    const route = await this.prisma.route.findUnique({
+      where: { id: routeId },
+      include: {
+        stops: {
+          include: { customer: { select: { id: true, businessName: true } } },
+          orderBy: { stopNumber: "asc" },
+        },
+      },
+    });
+    if (!route) throw new NotFoundException("Route not found");
+
+    const customerIds = route.stops
+      .map((s) => s.customerId)
+      .filter((id): id is string => !!id);
+
+    const orders = customerIds.length
+      ? await this.prisma.order.findMany({
+          where: {
+            customerId: { in: customerIds },
+            status: { in: ["PENDING", "CONFIRMED"] },
+          },
+          include: {
+            customer: { select: { id: true, businessName: true } },
+            lineItems: {
+              include: {
+                product: { select: { id: true, name: true, sku: true } },
+              },
+            },
+          },
+          orderBy: { createdAt: "desc" },
+        })
+      : [];
+
+    // Aggregate per product
+    const map: Record<
+      string,
+      {
+        productId: string;
+        productName: string;
+        sku?: string | null;
+        totalQty: number;
+        customers: { name: string; qty: number }[];
+      }
+    > = {};
+
+    for (const order of orders) {
+      for (const li of order.lineItems) {
+        if (!map[li.productId]) {
+          map[li.productId] = {
+            productId: li.productId,
+            productName: li.product?.name ?? li.productId,
+            sku: li.product?.sku ?? null,
+            totalQty: 0,
+            customers: [],
+          };
+        }
+        map[li.productId].totalQty += li.qty;
+        const cName = order.customer?.businessName ?? "Unknown";
+        const existing = map[li.productId].customers.find((c) => c.name === cName);
+        if (existing) existing.qty += li.qty;
+        else map[li.productId].customers.push({ name: cName, qty: li.qty });
+      }
+    }
+
+    const packingList = Object.values(map).sort((a, b) =>
+      a.productName.localeCompare(b.productName),
+    );
+
+    return { orders, packingList };
+  }
+
   // ── Customer Route Assignments ─────────────────────────────────────────
 
   async getCustomerRouteAssignments(): Promise<Record<string, { routeId: string; routeName: string }[]>> {

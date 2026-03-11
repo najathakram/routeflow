@@ -8,6 +8,7 @@ import { PageHeader, Table, Badge, Button, Select, cn, type BadgeStatus } from "
 import { usePageTitle } from "@/lib/page-title-context";
 import { CustomerFormModal } from "./_components/CustomerFormModal";
 import { useCustomers, useUpdateCustomerStatus } from "@/lib/api/customers";
+import { useCustomerRouteAssignments } from "@/lib/api/routes";
 
 // ─── Local type ───────────────────────────────────────────────────────────────
 
@@ -31,6 +32,7 @@ export default function CustomersPage() {
   // ── Local state ──────────────────────────────────────────────────────────
   const [search, setSearch] = React.useState("");
   const [statusFilter, setStatusFilter] = React.useState<string>("");
+  const [unassignedOnly, setUnassignedOnly] = React.useState(false);
   const [isAddOpen, setIsAddOpen] = React.useState(false);
   const [editingCustomer, setEditingCustomer] = React.useState<any>(null);
 
@@ -41,7 +43,15 @@ export default function CustomersPage() {
   });
   const customers: Customer[] = result?.data ?? [];
 
+  const { data: assignments } = useCustomerRouteAssignments();
+
   const updateStatus = useUpdateCustomerStatus();
+
+  // ── Filter: unassigned only ───────────────────────────────────────────────
+  const visibleCustomers = React.useMemo(() => {
+    if (!unassignedOnly) return customers;
+    return customers.filter((c) => !assignments?.[c.id]?.length);
+  }, [customers, assignments, unassignedOnly]);
 
   // ── Status toggle ────────────────────────────────────────────────────────
   const toggleStatus = React.useCallback((id: string, currentStatus: string) => {
@@ -80,9 +90,30 @@ export default function CustomersPage() {
         id: "routes",
         header: "Routes",
         enableSorting: false,
-        cell: () => (
-          <span className="text-xs text-navy/30">—</span>
-        ),
+        cell: ({ row }) => {
+          const customerRoutes = assignments?.[row.original.id] ?? [];
+          if (!customerRoutes.length) {
+            return <span className="text-xs text-navy/30 italic">Unassigned</span>;
+          }
+          const visible = customerRoutes.slice(0, 2);
+          const overflow = customerRoutes.length - visible.length;
+          return (
+            <div className="flex flex-wrap items-center gap-1">
+              {visible.map((r) => (
+                <span
+                  key={r.routeId}
+                  title={r.routeName}
+                  className="inline-flex max-w-[120px] items-center truncate rounded-full bg-brand-50 px-2 py-0.5 text-xs font-medium text-brand-600"
+                >
+                  {r.routeName}
+                </span>
+              ))}
+              {overflow > 0 && (
+                <span className="text-xs text-navy/50">+{overflow} more</span>
+              )}
+            </div>
+          );
+        },
       },
       {
         id: "status",
@@ -137,7 +168,7 @@ export default function CustomersPage() {
         },
       },
     ],
-    [router, toggleStatus],
+    [router, toggleStatus, assignments],
   );
 
   return (
@@ -170,6 +201,25 @@ export default function CustomersPage() {
             onChange={(e) => setStatusFilter(e.target.value)}
           />
         </div>
+
+        {/* Unassigned only toggle chip */}
+        <button
+          onClick={() => setUnassignedOnly((v) => !v)}
+          className={cn(
+            "flex h-10 items-center gap-1.5 rounded border px-3 text-sm font-medium transition-colors",
+            unassignedOnly
+              ? "border-brand-500 bg-brand-50 text-brand-600"
+              : "border-surface-border bg-white text-navy/60 hover:border-brand-300 hover:text-navy",
+          )}
+        >
+          <span className={cn(
+            "inline-flex h-4 w-4 items-center justify-center rounded-full border text-xs",
+            unassignedOnly ? "border-brand-500 bg-brand-500 text-white" : "border-navy/30",
+          )}>
+            {unassignedOnly && "✓"}
+          </span>
+          Unassigned only
+        </button>
       </div>
 
       {/* Loading skeleton */}
@@ -182,18 +232,32 @@ export default function CustomersPage() {
       ) : (
         /* Table */
         <Table
-          data={customers}
+          data={visibleCustomers}
           columns={columns}
           onRowClick={(row) => router.push(`/customers/${row.original.id}`)}
           emptyState={
             <span className="text-sm">
-              No customers match your search.{" "}
-              <button
-                className="text-brand-500 hover:underline"
-                onClick={() => { setSearch(""); setStatusFilter(""); }}
-              >
-                Clear filters
-              </button>
+              {unassignedOnly ? (
+                <>
+                  All customers are assigned to routes.{" "}
+                  <button
+                    className="text-brand-500 hover:underline"
+                    onClick={() => setUnassignedOnly(false)}
+                  >
+                    Show all
+                  </button>
+                </>
+              ) : (
+                <>
+                  No customers match your search.{" "}
+                  <button
+                    className="text-brand-500 hover:underline"
+                    onClick={() => { setSearch(""); setStatusFilter(""); }}
+                  >
+                    Clear filters
+                  </button>
+                </>
+              )}
             </span>
           }
         />
