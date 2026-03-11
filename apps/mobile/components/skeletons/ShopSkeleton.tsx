@@ -30,7 +30,7 @@ export function ShopSkeleton() {
       {/* Category pills */}
       <View style={styles.pillsRow}>
         {[96, 72, 88, 64, 80].map((w, i) => (
-          <ShimmerBox key={i} style={[styles.pill, { width: w }]} />
+          <ShimmerBox key={i} style={{ ...styles.pill, width: w }} />
         ))}
       </View>
 
