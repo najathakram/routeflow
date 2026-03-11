@@ -30,7 +30,7 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
-      - run: npm ci
+      - run: npm ci --force
 
       - run: npm run lint
 
@@ -46,7 +46,7 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
-      - run: npm ci
+      - run: npm ci --force
 
       # Prisma client must be generated before tsc can resolve @prisma/client types
       - name: Generate Prisma client
@@ -100,7 +100,7 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
-      - run: npm ci
+      - run: npm ci --force
 
       # Generate Prisma client and push schema to the test database
       - name: Setup database
