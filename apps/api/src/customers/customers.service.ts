@@ -96,6 +96,7 @@ export class CustomersService {
           businessName: dto.businessName,
           contactName: dto.contactName,
           phone: dto.phone,
+          notes: dto.notes,
           fulfillPath: dto.fulfillPath ?? "ROUTE",
         },
       });
@@ -131,6 +132,7 @@ export class CustomersService {
         ...(dto.businessName && { businessName: dto.businessName }),
         ...(dto.contactName && { contactName: dto.contactName }),
         ...(dto.phone !== undefined && { phone: dto.phone }),
+        ...(dto.notes !== undefined && { notes: dto.notes }),
         ...(dto.fulfillPath && { fulfillPath: dto.fulfillPath }),
       },
     });

@@ -7,21 +7,33 @@ import { z } from "zod";
 import { Modal, Input, Textarea, Select, Button, useToast } from "@routeflow/ui/web";
 import { useCreateCustomer, useUpdateCustomer } from "@/lib/api/customers";
 
-// ─── Schema ───────────────────────────────────────────────────────────────────
+// ─── Schemas ──────────────────────────────────────────────────────────────────
 
-const customerSchema = z.object({
+const baseFields = {
   businessName: z.string().min(1, "Required"),
   contactName: z.string().min(1, "Required"),
   phone: z.string().min(7, "Enter a valid phone number"),
   email: z.string().email("Enter a valid email"),
   creditTerms: z.enum(["Net 15", "Net 30", "Net 60", "COD"]),
+  notes: z.string().optional(),
+};
+
+// In add mode, address fields are required; in edit mode they are optional
+const addCustomerSchema = z.object({
+  ...baseFields,
   street: z.string().min(1, "Required"),
   city: z.string().min(1, "Required"),
   zip: z.string().regex(/^\d{5}(-\d{4})?$/, "Enter a valid ZIP code"),
-  notes: z.string().optional(),
 });
 
-type CustomerFormValues = z.infer<typeof customerSchema>;
+const editCustomerSchema = z.object({
+  ...baseFields,
+  street: z.string().optional(),
+  city: z.string().optional(),
+  zip: z.string().optional(),
+});
+
+type CustomerFormValues = z.infer<typeof addCustomerSchema>;
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
@@ -41,6 +53,23 @@ export interface CustomerFormModalProps {
   };
 }
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function buildDefaultValues(initialData?: CustomerFormModalProps["initialData"]) {
+  if (!initialData) return { creditTerms: "Net 30" as const };
+  return {
+    businessName: initialData.businessName,
+    contactName: initialData.contactName,
+    phone: initialData.phone ?? "",
+    email: initialData.email ?? initialData.user?.email ?? "",
+    creditTerms: "Net 30" as const,
+    street: initialData.addresses?.[0]?.line1 ?? initialData.addresses?.[0]?.street ?? "",
+    city: initialData.addresses?.[0]?.city ?? "",
+    zip: initialData.addresses?.[0]?.zip ?? "",
+    notes: initialData.notes ?? "",
+  };
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function CustomerFormModal({
@@ -52,57 +81,39 @@ export function CustomerFormModal({
   const { toast } = useToast();
   const createCustomer = useCreateCustomer();
   const updateCustomer = useUpdateCustomer();
-  const [
-    ,
-    setMutError,
-  ] = React.useState<string | null>(null);
+
+  const schema = mode === "add" ? addCustomerSchema : editCustomerSchema;
+
   const {
     register,
     handleSubmit,
     reset,
-    formState: { errors, isSubmitting },
+    formState: { errors },
   } = useForm<CustomerFormValues>({
-    resolver: zodResolver(customerSchema),
-    defaultValues: initialData
-      ? {
-          businessName: initialData.businessName,
-          contactName: initialData.contactName,
-          phone: initialData.phone ?? "",
-          email: initialData.email ?? initialData.user?.email ?? "",
-          creditTerms: "Net 30",
-          street: initialData.addresses?.[0]?.line1 ?? initialData.addresses?.[0]?.street ?? "",
-          city: initialData.addresses?.[0]?.city ?? "",
-          zip: initialData.addresses?.[0]?.zip ?? "",
-          notes: initialData.notes,
-        }
-      : { creditTerms: "Net 30" },
+    resolver: zodResolver(schema),
+    defaultValues: buildDefaultValues(initialData),
   });
 
-  // Reset form when modal opens / customer changes
+  // Reset form and clear any previous mutation errors when modal opens / customer changes
   React.useEffect(() => {
     if (isOpen) {
-      reset(
-        initialData
-          ? {
-              businessName: initialData.businessName,
-              contactName: initialData.contactName,
-              phone: initialData.phone ?? "",
-              email: initialData.email ?? initialData.user?.email ?? "",
-              creditTerms: "Net 30",
-              street: initialData.addresses?.[0]?.line1 ?? initialData.addresses?.[0]?.street ?? "",
-              city: initialData.addresses?.[0]?.city ?? "",
-              zip: initialData.addresses?.[0]?.zip ?? "",
-              notes: initialData.notes,
-            }
-          : { creditTerms: "Net 30" },
-      );
+      createCustomer.reset();
+      updateCustomer.reset();
+      reset(buildDefaultValues(initialData));
     }
-  }, [isOpen, initialData, reset]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, initialData]);
 
-  const onSubmit = async (data: CustomerFormValues) => {
-    setMutError(null);
+  const apiError = (createCustomer.error || updateCustomer.error) as Error | null;
+  const isPending = createCustomer.isPending || updateCustomer.isPending;
+
+  const onSubmit = (data: CustomerFormValues) => {
     if (mode === "add") {
-      const username = data.email.split("@")[0].replace(/[^a-z0-9]/gi, "") + "_" + Date.now().toString(36);
+      const username =
+        data.email.split("@")[0].replace(/[^a-z0-9]/gi, "") +
+        "_" +
+        Date.now().toString(36);
+
       createCustomer.mutate(
         {
           email: data.email,
@@ -111,21 +122,41 @@ export function CustomerFormModal({
           contactName: data.contactName,
           phone: data.phone,
           notes: data.notes,
-          addresses: [{ line1: data.street, city: data.city, state: "TX", zip: data.zip, lat: 0, lng: 0, isDefault: true, label: "Main" }],
+          addresses: [
+            {
+              line1: data.street!,
+              city: data.city!,
+              state: "TX",
+              zip: data.zip!,
+              isDefault: true,
+              label: "Main",
+            },
+          ],
         },
         {
-          onSuccess: () => { toast({ title: "Customer added", variant: "success" }); onClose(); },
-          onError: (err) => { setMutError(err.message ?? "Failed to create customer."); },
-        }
+          onSuccess: () => {
+            toast({ title: "Customer added", variant: "success" });
+            onClose();
+          },
+        },
       );
     } else {
       if (!initialData?.id) return;
+
       updateCustomer.mutate(
-        { id: initialData.id, businessName: data.businessName, contactName: data.contactName, phone: data.phone, notes: data.notes },
         {
-          onSuccess: () => { toast({ title: "Customer updated", variant: "success" }); onClose(); },
-          onError: (err) => { setMutError(err.message ?? "Failed to update customer."); },
-        }
+          id: initialData.id,
+          businessName: data.businessName,
+          contactName: data.contactName,
+          phone: data.phone,
+          notes: data.notes,
+        },
+        {
+          onSuccess: () => {
+            toast({ title: "Customer updated", variant: "success" });
+            onClose();
+          },
+        },
       );
     }
   };
@@ -146,11 +177,7 @@ export function CustomerFormModal({
           <Button variant="secondary" type="button" onClick={onClose}>
             Cancel
           </Button>
-          <Button
-            type="submit"
-            form="customer-form"
-            loading={isSubmitting}
-          >
+          <Button type="submit" form="customer-form" loading={isPending}>
             {mode === "add" ? "Create Customer" : "Save Changes"}
           </Button>
         </>
@@ -163,6 +190,13 @@ export function CustomerFormModal({
         className="max-h-[60vh] overflow-y-auto pr-1"
       >
         <div className="space-y-5">
+          {/* API error banner */}
+          {apiError && (
+            <div className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-red-200">
+              {apiError.message ?? "Something went wrong. Please try again."}
+            </div>
+          )}
+
           {/* Customer info */}
           <section className="space-y-3">
             <p className="text-xs font-semibold uppercase tracking-wider text-navy/40">
@@ -223,6 +257,9 @@ export function CustomerFormModal({
           <section className="space-y-3">
             <p className="text-xs font-semibold uppercase tracking-wider text-navy/40">
               Primary Delivery Address
+              {mode === "edit" && (
+                <span className="ml-1 font-normal normal-case text-navy/30">(optional)</span>
+              )}
             </p>
             <Input
               label="Street"
