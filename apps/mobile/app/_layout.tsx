@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { Slot, useRouter, useSegments } from "expo-router";
 import {
   Inter_400Regular,
@@ -8,10 +8,21 @@ import {
   useFonts,
 } from "@expo-google-fonts/inter";
 import * as SplashScreen from "expo-splash-screen";
+import * as Notifications from "expo-notifications";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { UserRole } from "@routeflow/types";
 import { useAuthStore } from "../lib/auth-store";
+
+// Configure how notifications are handled when the app is in the foreground
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowBanner: true,
+    shouldShowList: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+  }),
+});
 
 SplashScreen.preventAutoHideAsync();
 
@@ -21,9 +32,23 @@ function RootLayoutNav() {
   const { user, isLoading, initialize } = useAuthStore();
   const router = useRouter();
   const segments: string[] = useSegments();
+  const notificationListener = useRef<ReturnType<typeof Notifications.addNotificationReceivedListener> | null>(null);
 
   useEffect(() => {
     initialize();
+  }, []);
+
+  // Set up foreground notification listener
+  useEffect(() => {
+    notificationListener.current = Notifications.addNotificationReceivedListener((_notification) => {
+      // Foreground notifications are shown automatically via the handler above.
+      // Add any custom in-app handling here if needed.
+    });
+    return () => {
+      if (notificationListener.current) {
+        notificationListener.current.remove();
+      }
+    };
   }, []);
 
   useEffect(() => {

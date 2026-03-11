@@ -1,13 +1,14 @@
 "use client";
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Package, LayoutGrid, LayoutList, RefreshCw } from "lucide-react";
 import { PageHeader, Table, Badge, Button, Select, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useToast } from "@routeflow/ui/web";
 import { useProducts } from "@/lib/api/products";
+import { useZohoSync, useZohoStatus } from "@/lib/api/zoho";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -144,17 +145,21 @@ const tableColumns: ColumnDef<ApiProduct, unknown>[] = [
 
 export default function ProductsPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { setTitle } = usePageTitle();
   const { toast } = useToast();
 
   React.useEffect(() => { setTitle("Products"); }, [setTitle]);
 
+  const isLowStockParam = searchParams.get("lowStock") === "true";
+
   const [search, setSearch] = React.useState("");
   const [categoryFilter, setCategoryFilter] = React.useState("");
-  const [stockFilter, setStockFilter] = React.useState("");
+  const [stockFilter, setStockFilter] = React.useState(isLowStockParam ? "LOW" : "");
   const [viewMode, setViewMode] = React.useState<"grid" | "table">("grid");
-  const [isSyncing, setIsSyncing] = React.useState(false);
-  const [lastSyncTime, setLastSyncTime] = React.useState("Today at 9:14 AM");
+
+  const syncMutation = useZohoSync();
+  const { data: zohoStatus } = useZohoStatus();
 
   const { data: result, isLoading } = useProducts({
     search,
@@ -176,17 +181,28 @@ export default function ProductsPage() {
     return productList;
   }, [productList, stockFilter]);
 
-  const handleSync = async () => {
-    setIsSyncing(true);
-    await new Promise((r) => setTimeout(r, 1500));
-    setIsSyncing(false);
-    setLastSyncTime("Just now");
-    toast({
-      title: "Sync complete",
-      description: `${productList.length} products updated from Zoho.`,
-      variant: "success",
+  const handleSync = () => {
+    syncMutation.mutate(undefined, {
+      onSuccess: (result) => {
+        toast({
+          title: "Sync complete",
+          description: `${result.synced ?? 0} products synced from Zoho.`,
+          variant: "success",
+        });
+      },
+      onError: (err: Error) => {
+        toast({
+          title: "Sync failed",
+          description: err.message ?? "Failed to sync from Zoho.",
+          variant: "error",
+        });
+      },
     });
   };
+
+  const lastSyncTime = zohoStatus?.lastSync
+    ? new Date(zohoStatus.lastSync).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : "Never";
 
   return (
     <div className="space-y-5 p-6">
@@ -195,8 +211,8 @@ export default function ProductsPage() {
         subtitle={`Last synced: ${lastSyncTime}`}
         action={
           <Button
-            leftIcon={<RefreshCw className={cn("h-4 w-4", isSyncing && "animate-spin")} />}
-            loading={isSyncing}
+            leftIcon={<RefreshCw className={cn("h-4 w-4", syncMutation.isPending && "animate-spin")} />}
+            loading={syncMutation.isPending}
             onClick={handleSync}
             variant="secondary"
           >

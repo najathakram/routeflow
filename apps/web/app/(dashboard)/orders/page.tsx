@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { AlertTriangle, Eye, Loader2 } from "lucide-react";
 import { PageHeader, Badge, Select, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
@@ -22,10 +22,12 @@ const STATUS_OPTIONS: { value: string; label: string }[] = [
 
 export default function OrdersPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { setTitle } = usePageTitle();
   React.useEffect(() => { setTitle("Orders"); }, [setTitle]);
 
-  const [statusFilter, setStatusFilter] = React.useState("");
+  const statusParam = searchParams.get("status") ?? "";
+  const [statusFilter, setStatusFilter] = React.useState(statusParam);
   const [customerSearch, setCustomerSearch] = React.useState("");
   const [urgentOnly, setUrgentOnly] = React.useState(false);
 

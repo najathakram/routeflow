@@ -4,8 +4,8 @@ import * as React from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Modal, Input, Textarea, Select, Button } from "@routeflow/ui/web";
-import { availableRoutes, type Customer } from "@/mocks/customers";
+import { Modal, Input, Textarea, Select, Button, useToast } from "@routeflow/ui/web";
+import { useCreateCustomer, useUpdateCustomer } from "@/lib/api/customers";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -15,7 +15,6 @@ const customerSchema = z.object({
   phone: z.string().min(7, "Enter a valid phone number"),
   email: z.string().email("Enter a valid email"),
   creditTerms: z.enum(["Net 15", "Net 30", "Net 60", "COD"]),
-  routes: z.array(z.string()).optional(),
   street: z.string().min(1, "Required"),
   city: z.string().min(1, "Required"),
   zip: z.string().regex(/^\d{5}(-\d{4})?$/, "Enter a valid ZIP code"),
@@ -30,7 +29,7 @@ export interface CustomerFormModalProps {
   isOpen: boolean;
   onClose: () => void;
   mode: "add" | "edit";
-  initialData?: Customer;
+  initialData?: { id?: string; businessName: string; contactName: string; phone: string; email: string; notes?: string; addresses?: { line1?: string; street?: string; city?: string; zip?: string }[] };
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -41,6 +40,13 @@ export function CustomerFormModal({
   mode,
   initialData,
 }: CustomerFormModalProps) {
+  const { toast } = useToast();
+  const createCustomer = useCreateCustomer();
+  const updateCustomer = useUpdateCustomer();
+  const [
+    ,
+    setMutError,
+  ] = React.useState<string | null>(null);
   const {
     register,
     handleSubmit,
@@ -54,11 +60,10 @@ export function CustomerFormModal({
           contactName: initialData.contactName,
           phone: initialData.phone,
           email: initialData.email,
-          creditTerms: initialData.creditTerms,
-          routes: initialData.assignedRoutes,
-          street: initialData.addresses[0]?.street ?? "",
-          city: initialData.addresses[0]?.city ?? "",
-          zip: initialData.addresses[0]?.zip ?? "",
+          creditTerms: "Net 30",
+          street: initialData.addresses?.[0]?.line1 ?? initialData.addresses?.[0]?.street ?? "",
+          city: initialData.addresses?.[0]?.city ?? "",
+          zip: initialData.addresses?.[0]?.zip ?? "",
           notes: initialData.notes,
         }
       : { creditTerms: "Net 30" },
@@ -74,22 +79,46 @@ export function CustomerFormModal({
               contactName: initialData.contactName,
               phone: initialData.phone,
               email: initialData.email,
-              creditTerms: initialData.creditTerms,
-              routes: initialData.assignedRoutes,
-              street: initialData.addresses[0]?.street ?? "",
-              city: initialData.addresses[0]?.city ?? "",
-              zip: initialData.addresses[0]?.zip ?? "",
+              creditTerms: "Net 30",
+              street: initialData.addresses?.[0]?.line1 ?? initialData.addresses?.[0]?.street ?? "",
+              city: initialData.addresses?.[0]?.city ?? "",
+              zip: initialData.addresses?.[0]?.zip ?? "",
               notes: initialData.notes,
             }
-          : { creditTerms: "Net 30", routes: [] },
+          : { creditTerms: "Net 30" },
       );
     }
   }, [isOpen, initialData, reset]);
 
-  const onSubmit = async (_data: CustomerFormValues) => {
-    // Mock save — simulate brief delay then close
-    await new Promise((r) => setTimeout(r, 600));
-    onClose();
+  const onSubmit = async (data: CustomerFormValues) => {
+    setMutError(null);
+    if (mode === "add") {
+      const username = data.email.split("@")[0].replace(/[^a-z0-9]/gi, "") + "_" + Date.now().toString(36);
+      createCustomer.mutate(
+        {
+          email: data.email,
+          username,
+          businessName: data.businessName,
+          contactName: data.contactName,
+          phone: data.phone,
+          notes: data.notes,
+          addresses: [{ line1: data.street, city: data.city, state: "TX", zip: data.zip, lat: 0, lng: 0, isDefault: true, label: "Main" }],
+        },
+        {
+          onSuccess: () => { toast({ title: "Customer added", variant: "success" }); onClose(); },
+          onError: (err) => { setMutError(err.message ?? "Failed to create customer."); },
+        }
+      );
+    } else {
+      if (!initialData?.id) return;
+      updateCustomer.mutate(
+        { id: initialData.id, businessName: data.businessName, contactName: data.contactName, phone: data.phone, notes: data.notes },
+        {
+          onSuccess: () => { toast({ title: "Customer updated", variant: "success" }); onClose(); },
+          onError: (err) => { setMutError(err.message ?? "Failed to update customer."); },
+        }
+      );
+    }
   };
 
   return (
@@ -178,31 +207,6 @@ export function CustomerFormModal({
               register={register("creditTerms")}
               error={errors.creditTerms?.message}
             />
-          </section>
-
-          {/* Routes */}
-          <section className="space-y-2">
-            <p className="text-xs font-semibold uppercase tracking-wider text-navy/40">
-              Assign Routes
-            </p>
-            <div className="rounded border border-surface-border bg-white p-3">
-              <div className="grid grid-cols-2 gap-2">
-                {availableRoutes.map((route) => (
-                  <label
-                    key={route.id}
-                    className="flex cursor-pointer items-center gap-2 text-sm text-navy"
-                  >
-                    <input
-                      type="checkbox"
-                      value={route.id}
-                      {...register("routes")}
-                      className="h-4 w-4 accent-brand-500"
-                    />
-                    {route.name}
-                  </label>
-                ))}
-              </div>
-            </div>
           </section>
 
           {/* Primary delivery address */}
