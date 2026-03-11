@@ -6,7 +6,6 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { Eye, Play, Calendar } from "lucide-react";
 import { PageHeader, Badge, Table, Button, Card, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
-import { CreateRouteModal } from "./_components/CreateRouteModal";
 import { useRoutes, useRouteRuns, type Route, type RouteRun } from "@/lib/api/routes";
 
 // ─── Status helpers ───────────────────────────────────────────────────────────
@@ -103,7 +102,6 @@ function useTemplateColumns(router: ReturnType<typeof useRouter>) {
 export default function RoutesPage() {
   const router = useRouter();
   const { setTitle } = usePageTitle();
-  const [isCreateOpen, setIsCreateOpen] = React.useState(false);
   const templateColumns = useTemplateColumns(router);
 
   React.useEffect(() => { setTitle("Routes"); }, [setTitle]);
@@ -120,7 +118,7 @@ export default function RoutesPage() {
       <PageHeader
         title="Routes"
         action={
-          <Button onClick={() => setIsCreateOpen(true)}>Create Route</Button>
+          <Button onClick={() => router.push("/routes/create")}>Create Route</Button>
         }
       />
 
@@ -203,7 +201,6 @@ export default function RoutesPage() {
         )}
       </section>
 
-      <CreateRouteModal isOpen={isCreateOpen} onClose={() => setIsCreateOpen(false)} />
     </div>
   );
 }

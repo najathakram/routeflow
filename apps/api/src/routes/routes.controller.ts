@@ -44,6 +44,11 @@ export class RoutesController {
     return this.routesService.createRoute(dto);
   }
 
+  @Get("customer-assignments")
+  getCustomerAssignments() {
+    return this.routesService.getCustomerRouteAssignments();
+  }
+
   @Get(":id")
   findOne(@Param("id") id: string) {
     return this.routesService.findOneRoute(id);
