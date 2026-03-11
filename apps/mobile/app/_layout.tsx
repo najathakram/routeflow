@@ -27,10 +27,6 @@ function RootLayoutNav() {
   }, []);
 
   useEffect(() => {
-    initialize();
-  }, []);
-
-  useEffect(() => {
     if (isLoading) return;
 
     if (!user) {

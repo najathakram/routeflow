@@ -1,9 +1,11 @@
+import { useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Alert, ScrollView, StyleSheet, View } from "react-native";
+import { Alert, ScrollView, StyleSheet, Text, View } from "react-native";
 import { router, Stack } from "expo-router";
 import { MobileButton, MobileInput } from "@routeflow/ui/mobile";
+import { changePassword } from "../../lib/auth";
 
 const schema = z
   .object({
@@ -23,6 +25,7 @@ const schema = z
 type ChangePasswordForm = z.infer<typeof schema>;
 
 export default function CustomerChangePasswordScreen() {
+  const [apiError, setApiError] = useState<string | null>(null);
   const {
     control,
     handleSubmit,
@@ -37,12 +40,19 @@ export default function CustomerChangePasswordScreen() {
     },
   });
 
-  const onSubmit = async (_data: ChangePasswordForm) => {
-    // TODO: call change-password API
-    reset();
-    Alert.alert("Password updated", "Your password has been changed.", [
-      { text: "OK", onPress: () => router.back() },
-    ]);
+  const onSubmit = async (data: ChangePasswordForm) => {
+    setApiError(null);
+    try {
+      await changePassword(data.currentPassword, data.newPassword);
+      reset();
+      Alert.alert("Password updated", "Your password has been changed.", [
+        { text: "OK", onPress: () => router.back() },
+      ]);
+    } catch (err: any) {
+      const msg =
+        err?.response?.data?.message ?? "Failed to change password.";
+      setApiError(typeof msg === "string" ? msg : "Failed to change password.");
+    }
   };
 
   return (
@@ -56,6 +66,9 @@ export default function CustomerChangePasswordScreen() {
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.form}>
+          {apiError && (
+            <Text style={styles.apiError}>{apiError}</Text>
+          )}
           <Controller
             control={control}
             name="currentPassword"
@@ -128,5 +141,11 @@ const styles = StyleSheet.create({
   },
   submitButton: {
     marginTop: 8,
+  },
+  apiError: {
+    color: "#DC2626",
+    fontSize: 14,
+    textAlign: "center" as const,
+    marginBottom: 4,
   },
 });
