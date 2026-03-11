@@ -4,7 +4,8 @@
     {
       "name": "api",
       "runtimeExecutable": "node",
-      "runtimeArgs": ["C:/Program Files/nodejs/node_modules/npm/bin/npm-cli.js", "run", "dev", "--prefix", "apps/api"],
+      "runtimeArgs": ["C:/Program Files/nodejs/node_modules/npm/bin/npm-cli.js", "run", "dev"],
+      "cwd": "apps/api",
       "port": 3000,
       "autoPort": false
     },
