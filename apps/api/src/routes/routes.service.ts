@@ -164,11 +164,12 @@ export class RoutesService {
             customers: [],
           };
         }
-        map[li.productId].totalQty += li.qty;
+        const qty = Number(li.qty);
+        map[li.productId].totalQty += qty;
         const cName = order.customer?.businessName ?? "Unknown";
         const existing = map[li.productId].customers.find((c) => c.name === cName);
-        if (existing) existing.qty += li.qty;
-        else map[li.productId].customers.push({ name: cName, qty: li.qty });
+        if (existing) existing.qty += qty;
+        else map[li.productId].customers.push({ name: cName, qty });
       }
     }
 
