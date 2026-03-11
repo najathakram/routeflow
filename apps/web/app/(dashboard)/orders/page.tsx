@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { AlertTriangle, Eye, Loader2 } from "lucide-react";
+import { AlertTriangle, Eye, Loader2, Calendar, X } from "lucide-react";
 import { PageHeader, Badge, Select, Button, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useOrders, type Order } from "@/lib/api/orders";
@@ -31,6 +31,8 @@ export default function OrdersPage() {
   const [statusFilter, setStatusFilter] = React.useState(statusParam);
   const [customerSearch, setCustomerSearch] = React.useState("");
   const [urgentOnly, setUrgentOnly] = React.useState(false);
+  const [dateFrom, setDateFrom] = React.useState("");
+  const [dateTo, setDateTo] = React.useState("");
   const [isCreateOpen, setIsCreateOpen] = React.useState(false);
 
   const { data, isLoading, isError } = useOrders({
@@ -42,8 +44,12 @@ export default function OrdersPage() {
 
   const filtered = React.useMemo(() => {
     const q = customerSearch.toLowerCase();
+    const fromMs = dateFrom ? new Date(dateFrom).setHours(0, 0, 0, 0) : null;
+    const toMs = dateTo ? new Date(dateTo).setHours(23, 59, 59, 999) : null;
     const list = orders.filter((o) => {
       if (q && !o.customer?.businessName?.toLowerCase().includes(q) && !o.orderNumber.toLowerCase().includes(q)) return false;
+      if (fromMs !== null && new Date(o.createdAt).getTime() < fromMs) return false;
+      if (toMs !== null && new Date(o.createdAt).getTime() > toMs) return false;
       return true;
     });
     // Urgent orders float to top
@@ -99,6 +105,36 @@ export default function OrdersPage() {
             </span>
           )}
         </button>
+
+        {/* Date range */}
+        <div className="flex items-center gap-1.5">
+          <Calendar className="h-4 w-4 text-navy/40" />
+          <input
+            type="date"
+            value={dateFrom}
+            onChange={(e) => setDateFrom(e.target.value)}
+            className="h-10 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+            title="From date"
+          />
+          <span className="text-navy/40">–</span>
+          <input
+            type="date"
+            value={dateTo}
+            onChange={(e) => setDateTo(e.target.value)}
+            min={dateFrom || undefined}
+            className="h-10 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+            title="To date"
+          />
+          {(dateFrom || dateTo) && (
+            <button
+              onClick={() => { setDateFrom(""); setDateTo(""); }}
+              className="rounded p-1.5 text-navy/40 hover:text-danger transition-colors"
+              title="Clear dates"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Table — urgent rows get red left border via wrapper trick */}
@@ -135,7 +171,7 @@ export default function OrdersPage() {
                   No orders match your filters.{" "}
                   <button
                     className="text-brand-500 hover:underline"
-                    onClick={() => { setCustomerSearch(""); setStatusFilter(""); setUrgentOnly(false); }}
+                    onClick={() => { setCustomerSearch(""); setStatusFilter(""); setUrgentOnly(false); setDateFrom(""); setDateTo(""); }}
                   >
                     Clear filters
                   </button>

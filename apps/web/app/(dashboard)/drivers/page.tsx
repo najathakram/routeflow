@@ -4,7 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Eye } from "lucide-react";
-import { PageHeader, Table, Badge, Button } from "@routeflow/ui/web";
+import { PageHeader, Table, Badge, Button, Select, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { AddDriverModal } from "./_components/AddDriverModal";
 import { useDrivers, useCreateDriver, type Driver } from "@/lib/api/drivers";
@@ -23,12 +23,22 @@ function vehicleLabel(driver: Driver): string {
   return parts.length > 0 ? parts.join(" · ") : "—";
 }
 
+// ─── Status filter options ────────────────────────────────────────────────────
+
+const STATUS_OPTIONS = [
+  { value: "", label: "All Statuses" },
+  { value: "ACTIVE", label: "Active" },
+  { value: "INACTIVE", label: "Inactive" },
+];
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function DriversPage() {
   const router = useRouter();
   const { setTitle } = usePageTitle();
   const [isAddOpen, setIsAddOpen] = React.useState(false);
+  const [search, setSearch] = React.useState("");
+  const [statusFilter, setStatusFilter] = React.useState("");
 
   React.useEffect(() => { setTitle("Drivers"); }, [setTitle]);
 
@@ -36,6 +46,22 @@ export default function DriversPage() {
   const createDriver = useCreateDriver();
 
   const drivers = data?.data ?? [];
+
+  // Client-side filtering
+  const filtered = React.useMemo(() => {
+    const q = search.toLowerCase();
+    return drivers.filter((d) => {
+      if (statusFilter && d.status !== statusFilter) return false;
+      if (q) {
+        const haystack = [d.contactName, d.phone, d.vehicleMake, d.vehicleModel, d.vehiclePlate, d.user?.username]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        if (!haystack.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [drivers, search, statusFilter]);
 
   const handleCreateDriver = async (formData: {
     contactName: string;
@@ -57,7 +83,10 @@ export default function DriversPage() {
         accessorKey: "contactName",
         header: "Name",
         cell: ({ row }) => (
-          <span className="font-medium text-navy">{row.original.contactName}</span>
+          <div>
+            <p className="font-medium text-navy">{row.original.contactName}</p>
+            <p className="text-xs text-navy/50">{row.original.user?.username}</p>
+          </div>
         ),
       },
       {
@@ -101,6 +130,9 @@ export default function DriversPage() {
     [router],
   );
 
+  const activeCount = drivers.filter((d) => d.status === "ACTIVE").length;
+  const inactiveCount = drivers.filter((d) => d.status === "INACTIVE").length;
+
   return (
     <div className="space-y-5 p-6">
       <PageHeader
@@ -110,11 +142,78 @@ export default function DriversPage() {
         }
       />
 
+      {/* Summary chips */}
+      <div className="flex items-center gap-2 text-sm">
+        <span
+          onClick={() => setStatusFilter("")}
+          className={cn(
+            "cursor-pointer rounded-full px-3 py-1 font-medium transition-colors",
+            !statusFilter
+              ? "bg-brand-100 text-brand-700"
+              : "bg-surface-raised text-navy/60 hover:text-navy",
+          )}
+        >
+          All ({drivers.length})
+        </span>
+        <span
+          onClick={() => setStatusFilter(statusFilter === "ACTIVE" ? "" : "ACTIVE")}
+          className={cn(
+            "cursor-pointer rounded-full px-3 py-1 font-medium transition-colors",
+            statusFilter === "ACTIVE"
+              ? "bg-success-bg text-success"
+              : "bg-surface-raised text-navy/60 hover:text-navy",
+          )}
+        >
+          Active ({activeCount})
+        </span>
+        <span
+          onClick={() => setStatusFilter(statusFilter === "INACTIVE" ? "" : "INACTIVE")}
+          className={cn(
+            "cursor-pointer rounded-full px-3 py-1 font-medium transition-colors",
+            statusFilter === "INACTIVE"
+              ? "bg-surface-border text-navy/60"
+              : "bg-surface-raised text-navy/60 hover:text-navy",
+          )}
+        >
+          Inactive ({inactiveCount})
+        </span>
+      </div>
+
+      {/* Filter bar */}
+      <div className="flex flex-wrap items-center gap-3">
+        <input
+          type="search"
+          placeholder="Search by name, phone, plate…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="h-10 w-64 rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/40 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+        />
+        <div className="w-40">
+          <Select
+            options={STATUS_OPTIONS}
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+          />
+        </div>
+        {(search || statusFilter) && (
+          <button
+            onClick={() => { setSearch(""); setStatusFilter(""); }}
+            className="text-sm text-brand-500 hover:underline"
+          >
+            Clear filters
+          </button>
+        )}
+      </div>
+
       <Table
-        data={drivers}
+        data={filtered}
         columns={columns}
         onRowClick={(row) => router.push(`/drivers/${row.original.id}`)}
-        emptyState={isLoading ? "Loading drivers…" : "No drivers found."}
+        emptyState={
+          isLoading ? "Loading drivers…" :
+          (search || statusFilter) ? "No drivers match your filters." :
+          "No drivers found."
+        }
       />
 
       <AddDriverModal

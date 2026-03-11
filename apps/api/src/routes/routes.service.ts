@@ -97,6 +97,29 @@ export class RoutesService {
     return { success: true };
   }
 
+  // ── Customer Route Assignments ─────────────────────────────────────────
+
+  async getCustomerRouteAssignments(): Promise<Record<string, { routeId: string; routeName: string }[]>> {
+    const stops = await this.prisma.routeStop.findMany({
+      where: { customerId: { not: null } },
+      select: {
+        customerId: true,
+        route: { select: { id: true, name: true } },
+      },
+    });
+
+    const map: Record<string, { routeId: string; routeName: string }[]> = {};
+    for (const stop of stops) {
+      if (!stop.customerId) continue;
+      if (!map[stop.customerId]) map[stop.customerId] = [];
+      // Avoid duplicate route entries for the same customer
+      if (!map[stop.customerId].some((r) => r.routeId === stop.route.id)) {
+        map[stop.customerId].push({ routeId: stop.route.id, routeName: stop.route.name });
+      }
+    }
+    return map;
+  }
+
   // ── Route Runs ─────────────────────────────────────────────────────────
 
   async createRun(dto: CreateRouteRunDto) {

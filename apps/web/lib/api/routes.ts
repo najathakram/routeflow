@@ -69,10 +69,10 @@ export function useRoute(id: string) {
 }
 
 export function useCreateRoute() {
-  const qc = useQueryClient();
   return useMutation<Route, Error, { name: string; driverId?: string }>({
     mutationFn: (dto) => apiClient.post('/routes', dto).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['routes'] }),
+    // NOTE: No auto-invalidation — caller must invalidate after stops are added
+    // to avoid the race condition where the route list refreshes before stops exist.
   });
 }
 
@@ -89,6 +89,14 @@ export function useAddStopToRoute() {
       qc.invalidateQueries({ queryKey: ['routes', vars.routeId] });
       qc.invalidateQueries({ queryKey: ['customers'] });
     },
+  });
+}
+
+// Customer Route Assignments
+export function useCustomerRouteAssignments() {
+  return useQuery<Record<string, { routeId: string; routeName: string }[]>>({
+    queryKey: ['customer-route-assignments'],
+    queryFn: () => apiClient.get('/routes/customer-assignments').then((r) => r.data),
   });
 }
 

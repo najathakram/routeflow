@@ -12,6 +12,8 @@ import {
   Clock,
   CheckCircle2,
   ArrowRight,
+  TrendingUp,
+  Package,
 } from "lucide-react";
 import { StatCard, Badge, Table, Button, Card, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
@@ -170,6 +172,18 @@ export default function DashboardPage() {
     return (allOrdersData?.data ?? []).filter((o) => activeStatuses.includes(o.status)).length;
   }, [allOrdersData]);
 
+  // Order pipeline counts
+  const orderPipeline = React.useMemo(() => {
+    const all = allOrdersData?.data ?? [];
+    return {
+      PENDING: all.filter((o) => o.status === "PENDING").length,
+      CONFIRMED: all.filter((o) => o.status === "CONFIRMED").length,
+      OUT_FOR_DELIVERY: all.filter((o) => o.status === "OUT_FOR_DELIVERY").length,
+      DELIVERED: all.filter((o) => o.status === "DELIVERED").length,
+      CANCELLED: all.filter((o) => o.status === "CANCELLED").length,
+    };
+  }, [allOrdersData]);
+
   const routesToday = routeRunsData?.meta?.total ?? 0;
   const driversOnRoad = React.useMemo(
     () => (driversData?.data ?? []).filter((d: Driver) => d.status === "ACTIVE").length,
@@ -243,6 +257,39 @@ export default function DashboardPage() {
           </>
         )}
       </div>
+
+      {/* ── Order pipeline strip ── */}
+      {!ordersLoading && (
+        <div className="overflow-hidden rounded-lg border border-surface-border bg-white">
+          <div className="flex items-center gap-2 border-b border-surface-border px-4 py-2.5">
+            <TrendingUp className="h-4 w-4 text-navy/40" />
+            <span className="text-xs font-semibold uppercase tracking-wider text-navy/50">Order Pipeline</span>
+            <Link href="/orders" className="ml-auto flex items-center gap-1 text-xs text-brand-500 hover:underline">
+              View all <ArrowRight className="h-3 w-3" />
+            </Link>
+          </div>
+          <div className="grid grid-cols-5 divide-x divide-surface-border">
+            {[
+              { label: "Pending", key: "PENDING" as const, color: "text-warning", bg: "bg-warning-bg" },
+              { label: "Confirmed", key: "CONFIRMED" as const, color: "text-brand-600", bg: "bg-brand-50" },
+              { label: "Out for Delivery", key: "OUT_FOR_DELIVERY" as const, color: "text-blue-600", bg: "bg-blue-50" },
+              { label: "Delivered", key: "DELIVERED" as const, color: "text-success", bg: "bg-success-bg" },
+              { label: "Cancelled", key: "CANCELLED" as const, color: "text-navy/40", bg: "" },
+            ].map(({ label, key, color, bg }) => (
+              <Link
+                key={key}
+                href={`/orders?status=${key}`}
+                className={cn("flex flex-col items-center gap-1 px-3 py-4 text-center transition-colors hover:bg-surface-raised", bg && orderPipeline[key] > 0 && bg)}
+              >
+                <span className={cn("text-2xl font-bold", orderPipeline[key] > 0 ? color : "text-navy/20")}>
+                  {orderPipeline[key]}
+                </span>
+                <span className="text-xs text-navy/50">{label}</span>
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ── Middle row: Urgent Orders + Driver Status ── */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
