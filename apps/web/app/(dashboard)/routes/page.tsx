@@ -78,14 +78,14 @@ function useTemplateColumns(router: ReturnType<typeof useRouter>) {
           <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
             <button
               title="View template"
-              onClick={() => router.push(`/routes/${row.original.id}`)}
+              onClick={() => router.push(`/routes/templates/${row.original.id}`)}
               className="rounded p-1.5 text-navy/40 hover:bg-surface-raised hover:text-navy transition-colors"
             >
               <Eye className="h-4 w-4" />
             </button>
             <button
               title="Dispatch run"
-              onClick={() => router.push(`/routes/${row.original.id}/dispatch`)}
+              onClick={() => router.push(`/routes/templates/${row.original.id}/dispatch`)}
               className="rounded p-1.5 text-navy/40 hover:bg-surface-raised hover:text-success transition-colors"
             >
               <Play className="h-4 w-4" />
@@ -198,7 +198,7 @@ export default function RoutesPage() {
           <Table
             data={routeTemplates}
             columns={templateColumns}
-            onRowClick={(row) => router.push(`/routes/${row.original.id}`)}
+            onRowClick={(row) => router.push(`/routes/templates/${row.original.id}`)}
           />
         )}
       </section>

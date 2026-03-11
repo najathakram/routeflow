@@ -31,6 +31,15 @@ export function useCreateOperator() {
   });
 }
 
+export function useUpdateUser() {
+  const qc = useQueryClient();
+  return useMutation<AppUser, Error, { id: string; email?: string; username?: string }>({
+    mutationFn: ({ id, ...data }) =>
+      apiClient.patch(`/users/${id}`, data).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
+  });
+}
+
 export function useChangeUserStatus() {
   const qc = useQueryClient();
   return useMutation<AppUser, Error, { id: string; status: 'ACTIVE' | 'INACTIVE' | 'SUSPENDED' }>({

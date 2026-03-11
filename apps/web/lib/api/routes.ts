@@ -1,6 +1,15 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../api-client';
 
+export interface RouteTemplateStop {
+  id: string;
+  stopNumber: number;
+  customerId: string;
+  customer?: { id: string; businessName: string };
+  customerAddress?: { id: string; label?: string; line1: string; city: string; state: string; lat?: number; lng?: number };
+  notes?: string;
+}
+
 export interface Route {
   id: string;
   name: string;
@@ -8,6 +17,7 @@ export interface Route {
   createdAt: string;
   _count?: { stops: number };
   runs?: RouteRun[];
+  stops?: RouteTemplateStop[];
 }
 
 export interface RouteRun {
