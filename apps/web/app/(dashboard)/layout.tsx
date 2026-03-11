@@ -16,6 +16,7 @@ import {
   ChevronRight,
   ChevronLeft,
   ChevronDown,
+  ArrowLeft,
   LogOut,
   User as UserIcon,
 } from "lucide-react";
@@ -93,29 +94,28 @@ function NavLink({
 
 // ─── Header ───────────────────────────────────────────────────────────────────
 
-function Header({
-  collapsed,
-  onToggle,
-}: {
-  collapsed: boolean;
-  onToggle: () => void;
-}) {
+function Header() {
   const { title } = usePageTitle();
   const { user, logout } = useAuth();
+  const pathname = usePathname();
+  const router = useRouter();
+
+  // Show a back button only on sub-pages (e.g. /routes/123, /customers/456)
+  const isSubPage = pathname.split("/").filter(Boolean).length > 1;
 
   return (
     <header className="flex h-16 shrink-0 items-center gap-4 border-b border-surface-border bg-white px-4">
-      <button
-        onClick={onToggle}
-        className="rounded-lg p-2 text-navy/60 transition-colors hover:bg-surface-raised hover:text-navy"
-        aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-      >
-        {collapsed ? (
-          <ChevronRight className="h-5 w-5" />
-        ) : (
-          <ChevronLeft className="h-5 w-5" />
-        )}
-      </button>
+      {isSubPage ? (
+        <button
+          onClick={() => router.back()}
+          className="rounded-lg p-2 text-navy/60 transition-colors hover:bg-surface-raised hover:text-navy"
+          aria-label="Go back"
+        >
+          <ArrowLeft className="h-5 w-5" />
+        </button>
+      ) : (
+        <div className="w-9 shrink-0" />
+      )}
 
       <div className="flex-1">
         {title && <h1 className="text-base font-semibold text-navy">{title}</h1>}
@@ -253,7 +253,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
 
       {/* Right column */}
       <div className="flex flex-1 flex-col overflow-hidden">
-        <Header collapsed={collapsed} onToggle={toggle} />
+        <Header />
         <main className="flex-1 overflow-y-auto bg-surface-raised">
           {children}
         </main>

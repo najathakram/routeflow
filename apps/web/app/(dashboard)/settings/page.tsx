@@ -17,6 +17,9 @@ import {
   Copy,
   Check,
   Link as LinkIcon,
+  Building2,
+  Plug,
+  Users as UsersIcon,
 } from "lucide-react";
 import {
   Input,
@@ -30,22 +33,31 @@ import {
 } from "@routeflow/ui/web";
 import { useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
-import { useUsers, useCreateOperator, useChangeUserStatus, AppUser } from "@/lib/api/users";
+import { useUsers, useCreateOperator, useUpdateUser, useChangeUserStatus, AppUser } from "@/lib/api/users";
 import { useZohoStatus, useZohoSync, useUpdateZohoConfig } from "@/lib/api/zoho";
 import { useNotificationsStatus, useSendTestNotification } from "@/lib/api/notifications";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function TabTrigger({ value, children }: { value: string; children: React.ReactNode }) {
+function TabTrigger({
+  value,
+  icon,
+  children,
+}: {
+  value: string;
+  icon?: React.ReactNode;
+  children: React.ReactNode;
+}) {
   return (
     <Tabs.Trigger
       value={value}
       className={cn(
-        "-mb-px border-b-2 px-5 py-3 text-sm font-medium transition-colors",
+        "-mb-px flex items-center gap-2 border-b-2 px-5 py-3 text-sm font-medium transition-colors",
         "border-transparent text-navy/60 hover:text-navy",
         "data-[state=active]:border-brand-500 data-[state=active]:text-navy",
       )}
     >
+      {icon && <span className="shrink-0">{icon}</span>}
       {children}
     </Tabs.Trigger>
   );
@@ -494,10 +506,100 @@ function AddUserModal({ isOpen, onClose, onCreated }: {
   );
 }
 
+// ─── Edit User Modal ──────────────────────────────────────────────────────────
+
+const editUserSchema = z.object({
+  username: z.string().min(3, "At least 3 characters").regex(/^[a-z0-9_.]+$/, "Lowercase letters, numbers, dots, underscores"),
+  email: z.string().email("Enter a valid email"),
+});
+type EditUserFormValues = z.infer<typeof editUserSchema>;
+
+function EditUserModal({
+  isOpen,
+  onClose,
+  user,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  user: AppUser | null;
+}) {
+  const updateUser = useUpdateUser();
+  const { toast } = useToast();
+
+  const { register, handleSubmit, reset, formState: { errors, isSubmitting } } =
+    useForm<EditUserFormValues>({
+      resolver: zodResolver(editUserSchema),
+    });
+
+  React.useEffect(() => {
+    if (isOpen && user) {
+      reset({ username: user.username, email: user.email });
+    }
+  }, [isOpen, user, reset]);
+
+  const onSubmit = async (data: EditUserFormValues) => {
+    if (!user) return;
+    await updateUser.mutateAsync(
+      { id: user.id, username: data.username, email: data.email },
+      {
+        onSuccess: () => {
+          toast({ title: "User updated", variant: "success" });
+          onClose();
+        },
+        onError: (err) =>
+          toast({ title: "Update failed", description: err.message, variant: "error" }),
+      },
+    );
+  };
+
+  return (
+    <Modal
+      open={isOpen}
+      onClose={onClose}
+      title="Edit User"
+      description="Update the user's username or email address."
+      footer={
+        <>
+          <Button variant="secondary" type="button" onClick={onClose}>Cancel</Button>
+          <Button type="submit" form="edit-user-form" loading={isSubmitting || updateUser.isPending}>
+            Save Changes
+          </Button>
+        </>
+      }
+    >
+      <form id="edit-user-form" onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-4">
+        {updateUser.error && (
+          <p className="text-sm text-danger">{updateUser.error.message}</p>
+        )}
+        <div className="rounded-lg border border-surface-border bg-surface-raised px-4 py-3">
+          <p className="text-xs text-navy/50">Role</p>
+          <p className="mt-0.5 text-sm font-medium text-navy capitalize">
+            {user?.role.toLowerCase()}
+          </p>
+        </div>
+        <Input
+          label="Username"
+          placeholder="jsmith"
+          register={register("username")}
+          error={errors.username?.message}
+        />
+        <Input
+          label="Email"
+          type="email"
+          placeholder="jane@example.com"
+          register={register("email")}
+          error={errors.email?.message}
+        />
+      </form>
+    </Modal>
+  );
+}
+
 function UserManagementTab() {
   const { data, isLoading } = useUsers();
   const changeStatus = useChangeUserStatus();
   const [isAddOpen, setIsAddOpen] = React.useState(false);
+  const [editingUser, setEditingUser] = React.useState<AppUser | null>(null);
   const { toast } = useToast();
 
   const users = data?.data ?? [];
@@ -566,7 +668,7 @@ function UserManagementTab() {
                     <div className="flex items-center gap-1 justify-end">
                       <button
                         title="Edit user"
-                        onClick={() => toast({ title: "Edit user — coming soon", variant: "info" })}
+                        onClick={() => setEditingUser(user)}
                         className="rounded p-1.5 text-navy/40 hover:bg-surface-raised hover:text-navy transition-colors"
                       >
                         <Pencil className="h-4 w-4" />
@@ -602,6 +704,12 @@ function UserManagementTab() {
         onClose={() => setIsAddOpen(false)}
         onCreated={handleCreated}
       />
+
+      <EditUserModal
+        isOpen={!!editingUser}
+        onClose={() => setEditingUser(null)}
+        user={editingUser}
+      />
     </div>
   );
 }
@@ -618,9 +726,15 @@ export default function SettingsPage() {
 
       <Tabs.Root defaultValue="profile" className="flex flex-col">
         <Tabs.List className="flex border-b border-surface-border">
-          <TabTrigger value="profile">Business Profile</TabTrigger>
-          <TabTrigger value="integrations">Integrations</TabTrigger>
-          <TabTrigger value="users">User Management</TabTrigger>
+          <TabTrigger value="profile" icon={<Building2 className="h-4 w-4" />}>
+            Business Profile
+          </TabTrigger>
+          <TabTrigger value="integrations" icon={<Plug className="h-4 w-4" />}>
+            Integrations
+          </TabTrigger>
+          <TabTrigger value="users" icon={<UsersIcon className="h-4 w-4" />}>
+            User Management
+          </TabTrigger>
         </Tabs.List>
 
         <Tabs.Content value="profile" className="mt-6 max-w-2xl focus:outline-none">
