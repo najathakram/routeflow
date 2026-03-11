@@ -22,7 +22,7 @@ async function main() {
   // ─── Operator ─────────────────────────────────────────────────────────────────
   await prisma.user.upsert({
     where: { username: 'admin' },
-    update: {},
+    update: { password: adminHash },
     create: {
       email: 'maria.garza@routeflow.dev',
       username: 'admin',
@@ -37,7 +37,7 @@ async function main() {
   const [carlosUser, jamesUser] = await Promise.all([
     prisma.user.upsert({
       where: { username: 'carlos.r' },
-      update: {},
+      update: { password: devHash },
       create: {
         email: 'carlos.reyes@routeflow.dev',
         username: 'carlos.r',
@@ -49,7 +49,7 @@ async function main() {
     }),
     prisma.user.upsert({
       where: { username: 'james.t' },
-      update: {},
+      update: { password: devHash },
       create: {
         email: 'james.tran@routeflow.dev',
         username: 'james.t',
@@ -186,7 +186,7 @@ async function main() {
     customerDefs.map((c) =>
       prisma.user.upsert({
         where: { username: c.username },
-        update: {},
+        update: { password: devHash },
         create: {
           email: c.email,
           username: c.username,
