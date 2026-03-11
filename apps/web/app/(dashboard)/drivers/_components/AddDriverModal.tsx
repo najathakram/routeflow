@@ -73,9 +73,10 @@ export function AddDriverModal({ isOpen, onClose, onCreateDriver }: AddDriverMod
       const password = await onCreateDriver(data);
       setTempPassword(password);
     } catch (err: unknown) {
-      setApiError(
-        (err as { message?: string })?.message ?? "Failed to create driver. Please try again.",
-      );
+      // Prefer the API's error message (Axios: err.response.data.message) over the generic one
+      const apiMsg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
+      const fallbackMsg = (err as { message?: string })?.message;
+      setApiError(apiMsg || fallbackMsg || "Failed to create driver. Please try again.");
     }
   };
 

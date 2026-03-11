@@ -185,7 +185,12 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
     );
   };
 
-  const apiError = createOrder.error as Error | null;
+  // Extract the API's error message from Axios error structure
+  const apiError: string | null = (() => {
+    const err = createOrder.error as { response?: { data?: { message?: string } }; message?: string } | null;
+    if (!err) return null;
+    return err.response?.data?.message || err.message || "Something went wrong. Please try again.";
+  })();
 
   return (
     <Modal
@@ -215,7 +220,7 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
           {/* API error */}
           {apiError && (
             <div className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-red-200">
-              {apiError.message ?? "Something went wrong. Please try again."}
+              {apiError}
             </div>
           )}
 

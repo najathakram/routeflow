@@ -7,33 +7,28 @@ import { z } from "zod";
 import { Modal, Input, Textarea, Select, Button, useToast } from "@routeflow/ui/web";
 import { useCreateCustomer, useUpdateCustomer } from "@/lib/api/customers";
 
-// ─── Schemas ──────────────────────────────────────────────────────────────────
+// ─── Schema ───────────────────────────────────────────────────────────────────
 
-const baseFields = {
+// Single unified schema — phone and address fields are optional in the Zod schema.
+// Add-mode address requirements are enforced in onSubmit to avoid TypeScript
+// resolver type conflicts that arise from using conditional schemas.
+const customerSchema = z.object({
   businessName: z.string().min(1, "Required"),
   contactName: z.string().min(1, "Required"),
-  phone: z.string().min(7, "Enter a valid phone number"),
+  phone: z
+    .string()
+    .min(7, "Enter a valid phone number")
+    .optional()
+    .or(z.literal("")),
   email: z.string().email("Enter a valid email"),
   creditTerms: z.enum(["Net 15", "Net 30", "Net 60", "COD"]),
   notes: z.string().optional(),
-};
-
-// In add mode, address fields are required; in edit mode they are optional
-const addCustomerSchema = z.object({
-  ...baseFields,
-  street: z.string().min(1, "Required"),
-  city: z.string().min(1, "Required"),
-  zip: z.string().regex(/^\d{5}(-\d{4})?$/, "Enter a valid ZIP code"),
-});
-
-const editCustomerSchema = z.object({
-  ...baseFields,
   street: z.string().optional(),
   city: z.string().optional(),
   zip: z.string().optional(),
 });
 
-type CustomerFormValues = z.infer<typeof addCustomerSchema>;
+type CustomerFormValues = z.infer<typeof customerSchema>;
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
@@ -55,18 +50,30 @@ export interface CustomerFormModalProps {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function buildDefaultValues(initialData?: CustomerFormModalProps["initialData"]) {
-  if (!initialData) return { creditTerms: "Net 30" as const };
+function buildDefaultValues(initialData?: CustomerFormModalProps["initialData"]): CustomerFormValues {
+  if (!initialData) {
+    return {
+      businessName: "",
+      contactName: "",
+      phone: "",
+      email: "",
+      creditTerms: "Net 30",
+      notes: "",
+      street: "",
+      city: "",
+      zip: "",
+    };
+  }
   return {
-    businessName: initialData.businessName,
-    contactName: initialData.contactName,
+    businessName: initialData.businessName ?? "",
+    contactName: initialData.contactName ?? "",
     phone: initialData.phone ?? "",
     email: initialData.email ?? initialData.user?.email ?? "",
-    creditTerms: "Net 30" as const,
+    creditTerms: "Net 30",
+    notes: initialData.notes ?? "",
     street: initialData.addresses?.[0]?.line1 ?? initialData.addresses?.[0]?.street ?? "",
     city: initialData.addresses?.[0]?.city ?? "",
     zip: initialData.addresses?.[0]?.zip ?? "",
-    notes: initialData.notes ?? "",
   };
 }
 
@@ -82,7 +89,10 @@ export function CustomerFormModal({
   const createCustomer = useCreateCustomer();
   const updateCustomer = useUpdateCustomer();
 
-  const schema = mode === "add" ? addCustomerSchema : editCustomerSchema;
+  // Manual address-field errors for add mode
+  const [streetError, setStreetError] = React.useState("");
+  const [cityError, setCityError] = React.useState("");
+  const [zipError, setZipError] = React.useState("");
 
   const {
     register,
@@ -90,16 +100,19 @@ export function CustomerFormModal({
     reset,
     formState: { errors },
   } = useForm<CustomerFormValues>({
-    resolver: zodResolver(schema),
+    resolver: zodResolver(customerSchema),
     defaultValues: buildDefaultValues(initialData),
   });
 
-  // Reset form and clear any previous mutation errors when modal opens / customer changes
+  // Reset form and clear mutation state whenever the modal opens or the customer changes
   React.useEffect(() => {
     if (isOpen) {
       createCustomer.reset();
       updateCustomer.reset();
       reset(buildDefaultValues(initialData));
+      setStreetError("");
+      setCityError("");
+      setZipError("");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, initialData]);
@@ -109,6 +122,22 @@ export function CustomerFormModal({
 
   const onSubmit = (data: CustomerFormValues) => {
     if (mode === "add") {
+      // Enforce address fields for new customers
+      let hasAddressError = false;
+      if (!data.street?.trim()) {
+        setStreetError("Required");
+        hasAddressError = true;
+      } else setStreetError("");
+      if (!data.city?.trim()) {
+        setCityError("Required");
+        hasAddressError = true;
+      } else setCityError("");
+      if (!data.zip?.trim() || !/^\d{5}(-\d{4})?$/.test(data.zip.trim())) {
+        setZipError("Enter a valid ZIP code");
+        hasAddressError = true;
+      } else setZipError("");
+      if (hasAddressError) return;
+
       const username =
         data.email.split("@")[0].replace(/[^a-z0-9]/gi, "") +
         "_" +
@@ -120,7 +149,7 @@ export function CustomerFormModal({
           username,
           businessName: data.businessName,
           contactName: data.contactName,
-          phone: data.phone,
+          phone: data.phone || undefined,
           notes: data.notes,
           addresses: [
             {
@@ -148,7 +177,7 @@ export function CustomerFormModal({
           id: initialData.id,
           businessName: data.businessName,
           contactName: data.contactName,
-          phone: data.phone,
+          phone: data.phone || undefined,
           notes: data.notes,
         },
         {
@@ -218,7 +247,7 @@ export function CustomerFormModal({
             </div>
             <div className="grid grid-cols-2 gap-3">
               <Input
-                label="Phone"
+                label="Phone (optional)"
                 type="tel"
                 placeholder="(512) 555-0100"
                 register={register("phone")}
@@ -265,7 +294,7 @@ export function CustomerFormModal({
               label="Street"
               placeholder="123 Main St"
               register={register("street")}
-              error={errors.street?.message}
+              error={errors.street?.message || streetError}
             />
             <div className="grid grid-cols-3 gap-3">
               <div className="col-span-2">
@@ -273,7 +302,7 @@ export function CustomerFormModal({
                   label="City"
                   placeholder="Austin"
                   register={register("city")}
-                  error={errors.city?.message}
+                  error={errors.city?.message || cityError}
                 />
               </div>
               <div>
@@ -287,7 +316,7 @@ export function CustomerFormModal({
               label="ZIP Code"
               placeholder="78701"
               register={register("zip")}
-              error={errors.zip?.message}
+              error={errors.zip?.message || zipError}
             />
           </section>
 
