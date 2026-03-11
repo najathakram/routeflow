@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
   GripVertical,
@@ -13,6 +14,9 @@ import {
   Package,
   ShoppingCart,
   MapPin,
+  ToggleLeft,
+  ToggleRight,
+  Trash2,
 } from "lucide-react";
 import * as Tabs from "@radix-ui/react-tabs";
 import {
@@ -44,6 +48,7 @@ import {
   useAddStopToRoute,
   useCreateRouteRun,
   useRoutePackingList,
+  useDeleteRoute,
   type RouteTemplateStop,
 } from "@/lib/api/routes";
 import { TemplateRouteMap } from "./TemplateRouteMap";
@@ -266,6 +271,7 @@ function DispatchModal({
   open: boolean;
   onClose: () => void;
 }) {
+  const router = useRouter();
   const { toast } = useToast();
   const { data: driversResult } = useDrivers({ status: "ACTIVE", limit: 100 });
   const drivers = driversResult?.data ?? [];
@@ -279,9 +285,10 @@ function DispatchModal({
     createRun.mutate(
       { routeId, scheduledDate: date, driverId: driverId || undefined },
       {
-        onSuccess: () => {
+        onSuccess: (run) => {
           toast({ title: "Route run dispatched", variant: "success" });
           onClose();
+          router.push(`/routes/${run.id}`);
         },
         onError: (err) =>
           toast({ title: "Dispatch failed", description: err.message, variant: "error" }),
@@ -340,6 +347,7 @@ export default function RouteTemplateDetailPage({
 }: {
   params: { id: string };
 }) {
+  const router = useRouter();
   const { setTitle } = usePageTitle();
   const { toast } = useToast();
 
@@ -351,6 +359,9 @@ export default function RouteTemplateDetailPage({
   const updateRoute = useUpdateRoute();
   const removeStop = useRemoveStop();
   const reorderStops = useReorderStops();
+  const deleteRoute = useDeleteRoute();
+
+  const [confirmDelete, setConfirmDelete] = React.useState(false);
 
   const [selectedStopId, setSelectedStopId] = React.useState<string | null>(null);
   const [dispatchOpen, setDispatchOpen] = React.useState(false);
@@ -407,6 +418,26 @@ export default function RouteTemplateDetailPage({
     );
   };
 
+  const handleToggleActive = () => {
+    updateRoute.mutate(
+      { id: params.id, isActive: !route?.isActive },
+      {
+        onSuccess: () => toast({ title: route?.isActive ? "Route deactivated" : "Route activated", variant: "success" }),
+        onError: (err) => toast({ title: "Save failed", description: err.message, variant: "error" }),
+      },
+    );
+  };
+
+  const handleDelete = () => {
+    deleteRoute.mutate(params.id, {
+      onSuccess: () => {
+        toast({ title: "Route deleted", variant: "success" });
+        router.push("/routes");
+      },
+      onError: (err) => toast({ title: "Delete failed", description: err.message, variant: "error" }),
+    });
+  };
+
   const handleRemoveStop = (stopId: string) => {
     setLocalStops((prev) => {
       const filtered = prev.filter((s) => s.id !== stopId);
@@ -452,6 +483,20 @@ export default function RouteTemplateDetailPage({
     });
   };
 
+  const packingList = packingData?.packingList ?? [];
+  const orders = packingData?.orders ?? [];
+
+  // Group orders by customer — must be before early returns (Rules of Hooks)
+  const ordersByCustomer = React.useMemo(() => {
+    const map: Record<string, { name: string; orders: typeof orders }> = {};
+    for (const order of orders) {
+      const cid = order.customer?.id ?? "unknown";
+      if (!map[cid]) map[cid] = { name: order.customer?.businessName ?? "Unknown", orders: [] };
+      map[cid].orders.push(order);
+    }
+    return Object.values(map);
+  }, [orders]);
+
   // ── Render states ─────────────────────────────────────────────────────────
 
   if (isLoading) {
@@ -472,19 +517,6 @@ export default function RouteTemplateDetailPage({
   }
 
   const existingCustomerIds = localStops.map((s) => s.customerId).filter(Boolean) as string[];
-  const packingList = packingData?.packingList ?? [];
-  const orders = packingData?.orders ?? [];
-
-  // Group orders by customer
-  const ordersByCustomer = React.useMemo(() => {
-    const map: Record<string, { name: string; orders: typeof orders }> = {};
-    for (const order of orders) {
-      const cid = order.customer?.id ?? "unknown";
-      if (!map[cid]) map[cid] = { name: order.customer?.businessName ?? "Unknown", orders: [] };
-      map[cid].orders.push(order);
-    }
-    return Object.values(map);
-  }, [orders]);
 
   return (
     <div className="flex h-[calc(100vh-64px)] flex-col overflow-hidden">
@@ -522,10 +554,10 @@ export default function RouteTemplateDetailPage({
 
         <Badge variant={route.isActive ? "success" : "neutral"} label={route.isActive ? "Active" : "Inactive"} />
 
-        {/* Driver selector */}
+        {/* Driver selector + actions */}
         <div className="ml-auto flex items-center gap-2">
           <select
-            defaultValue={route.stops?.[0] ? "" : ""}
+            defaultValue=""
             onChange={(e) => handleDriverChange(e.target.value)}
             className="h-8 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
           >
@@ -534,6 +566,50 @@ export default function RouteTemplateDetailPage({
               <option key={d.id} value={d.id}>{d.contactName}</option>
             ))}
           </select>
+
+          {/* Activate / Deactivate */}
+          <button
+            onClick={handleToggleActive}
+            title={route.isActive ? "Deactivate route" : "Activate route"}
+            className={cn(
+              "flex h-8 items-center gap-1.5 rounded border px-2.5 text-sm font-medium transition-colors",
+              route.isActive
+                ? "border-surface-border bg-white text-navy/60 hover:border-warning hover:text-warning"
+                : "border-surface-border bg-white text-navy/60 hover:border-success hover:text-success",
+            )}
+          >
+            {route.isActive
+              ? <><ToggleRight className="h-4 w-4" />Deactivate</>
+              : <><ToggleLeft className="h-4 w-4" />Activate</>}
+          </button>
+
+          {/* Delete */}
+          {confirmDelete ? (
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-medium text-danger">Delete route?</span>
+              <button
+                onClick={handleDelete}
+                disabled={deleteRoute.isPending}
+                className="rounded px-2 py-1 text-xs font-semibold text-white bg-danger hover:bg-danger/80 transition-colors"
+              >
+                {deleteRoute.isPending ? "Deleting…" : "Yes, delete"}
+              </button>
+              <button
+                onClick={() => setConfirmDelete(false)}
+                className="rounded px-2 py-1 text-xs font-medium text-navy/60 hover:text-navy transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setConfirmDelete(true)}
+              title="Delete route"
+              className="flex h-8 items-center gap-1.5 rounded border border-surface-border bg-white px-2.5 text-sm font-medium text-navy/50 hover:border-danger hover:text-danger transition-colors"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          )}
 
           <Button
             leftIcon={<Play className="h-4 w-4" />}

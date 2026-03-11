@@ -89,6 +89,13 @@ export class RoutesController {
   removeStop(@Param("id") id: string, @Param("stopId") stopId: string) {
     return this.routesService.removeStop(id, stopId);
   }
+
+  @Delete(":id")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR)
+  deleteRoute(@Param("id") id: string) {
+    return this.routesService.deleteRoute(id);
+  }
 }
 
 @ApiTags("route-runs")
@@ -113,6 +120,16 @@ export class RouteRunsController {
   @Get(":id")
   findOne(@Param("id") id: string) {
     return this.routesService.findOneRun(id);
+  }
+
+  @Patch(":id/stops/reorder")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR)
+  reorderRunStops(
+    @Param("id") id: string,
+    @Body() body: { order: { id: string; stopNumber: number }[] },
+  ) {
+    return this.routesService.reorderRunStops(id, body.order);
   }
 
   @Patch(":id/status")

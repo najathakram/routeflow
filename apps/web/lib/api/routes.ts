@@ -126,6 +126,26 @@ export function useReorderStops() {
   });
 }
 
+export function useDeleteRoute() {
+  const qc = useQueryClient();
+  return useMutation<void, Error, string>({
+    mutationFn: (id) => apiClient.delete(`/routes/${id}`).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['routes'] });
+      qc.invalidateQueries({ queryKey: ['customer-route-assignments'] });
+    },
+  });
+}
+
+export function useReorderRunStops() {
+  const qc = useQueryClient();
+  return useMutation<void, Error, { runId: string; order: { id: string; stopNumber: number }[] }>({
+    mutationFn: ({ runId, order }) =>
+      apiClient.patch(`/route-runs/${runId}/stops/reorder`, { order }).then((r) => r.data),
+    onSuccess: (_, { runId }) => qc.invalidateQueries({ queryKey: ['route-runs', runId] }),
+  });
+}
+
 export interface PackingItem {
   productId: string;
   productName: string;
