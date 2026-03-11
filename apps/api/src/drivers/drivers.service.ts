@@ -3,16 +3,16 @@ import {
   Injectable,
   NotFoundException,
   ForbiddenException,
-} from '@nestjs/common';
-import * as crypto from 'crypto';
-import * as bcrypt from 'bcrypt';
-import { PrismaService } from '../prisma/prisma.service';
-import { JwtPayload } from '../auth/jwt-payload.interface';
-import { UserRole } from '@prisma/client';
-import { ListDriversDto } from './dto/list-drivers.dto';
-import { CreateDriverDto } from './dto/create-driver.dto';
-import { UpdateDriverDto } from './dto/update-driver.dto';
-import { ChangeDriverStatusDto } from './dto/change-driver-status.dto';
+} from "@nestjs/common";
+import * as crypto from "crypto";
+import * as bcrypt from "bcrypt";
+import { PrismaService } from "../prisma/prisma.service";
+import { JwtPayload } from "../auth/jwt-payload.interface";
+import { UserRole } from "@prisma/client";
+import { ListDriversDto } from "./dto/list-drivers.dto";
+import { CreateDriverDto } from "./dto/create-driver.dto";
+import { UpdateDriverDto } from "./dto/update-driver.dto";
+import { ChangeDriverStatusDto } from "./dto/change-driver-status.dto";
 
 @Injectable()
 export class DriversService {
@@ -26,19 +26,29 @@ export class DriversService {
     if (status) where.status = status;
     if (search) {
       where.OR = [
-        { contactName: { contains: search, mode: 'insensitive' } },
-        { user: { username: { contains: search, mode: 'insensitive' } } },
-        { phone: { contains: search, mode: 'insensitive' } },
+        { contactName: { contains: search, mode: "insensitive" } },
+        { user: { username: { contains: search, mode: "insensitive" } } },
+        { phone: { contains: search, mode: "insensitive" } },
       ];
     }
 
     const [data, total] = await Promise.all([
       this.prisma.driver.findMany({
         where,
-        include: { user: { select: { id: true, username: true, email: true, status: true, forcePasswordChange: true } } },
+        include: {
+          user: {
+            select: {
+              id: true,
+              username: true,
+              email: true,
+              status: true,
+              forcePasswordChange: true,
+            },
+          },
+        },
         skip,
         take: limit,
-        orderBy: { createdAt: 'desc' },
+        orderBy: { createdAt: "desc" },
       }),
       this.prisma.driver.count({ where }),
     ]);
@@ -49,11 +59,21 @@ export class DriversService {
   async findOne(id: string, user: JwtPayload) {
     const driver = await this.prisma.driver.findUnique({
       where: { id },
-      include: { user: { select: { id: true, username: true, email: true, status: true, forcePasswordChange: true } } },
+      include: {
+        user: {
+          select: {
+            id: true,
+            username: true,
+            email: true,
+            status: true,
+            forcePasswordChange: true,
+          },
+        },
+      },
     });
-    if (!driver) throw new NotFoundException('Driver not found');
+    if (!driver) throw new NotFoundException("Driver not found");
     if (user.role !== UserRole.OPERATOR && driver.userId !== user.sub) {
-      throw new ForbiddenException('Access denied');
+      throw new ForbiddenException("Access denied");
     }
     return driver;
   }
@@ -64,10 +84,10 @@ export class DriversService {
         tx.user.findUnique({ where: { email: dto.email } }),
         tx.user.findUnique({ where: { username: dto.username } }),
       ]);
-      if (existingEmail) throw new BadRequestException('Email already in use');
-      if (existingUsername) throw new BadRequestException('Username already in use');
+      if (existingEmail) throw new BadRequestException("Email already in use");
+      if (existingUsername) throw new BadRequestException("Username already in use");
 
-      const tempPassword = `${crypto.randomBytes(3).toString('hex').toUpperCase()}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
+      const tempPassword = `${crypto.randomBytes(3).toString("hex").toUpperCase()}-${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
       const hashedPassword = await bcrypt.hash(tempPassword, 10);
 
       const user = await tx.user.create({
@@ -118,10 +138,13 @@ export class DriversService {
     const [data, total] = await Promise.all([
       this.prisma.routeRun.findMany({
         where: { driverId: id },
-        include: { route: { select: { id: true, name: true } }, _count: { select: { stops: true } } },
+        include: {
+          route: { select: { id: true, name: true } },
+          _count: { select: { stops: true } },
+        },
         skip,
         take: limit,
-        orderBy: { createdAt: 'desc' },
+        orderBy: { createdAt: "desc" },
       }),
       this.prisma.routeRun.count({ where: { driverId: id } }),
     ]);
@@ -131,7 +154,7 @@ export class DriversService {
   async findMetrics(id: string) {
     await this.findOneOrThrow(id);
     const [completedRuns, totalRuns] = await Promise.all([
-      this.prisma.routeRun.count({ where: { driverId: id, status: 'COMPLETED' } }),
+      this.prisma.routeRun.count({ where: { driverId: id, status: "COMPLETED" } }),
       this.prisma.routeRun.count({ where: { driverId: id } }),
     ]);
     return { completedRuns, totalRuns };
@@ -139,7 +162,7 @@ export class DriversService {
 
   private async findOneOrThrow(id: string) {
     const driver = await this.prisma.driver.findUnique({ where: { id } });
-    if (!driver) throw new NotFoundException('Driver not found');
+    if (!driver) throw new NotFoundException("Driver not found");
     return driver;
   }
 }

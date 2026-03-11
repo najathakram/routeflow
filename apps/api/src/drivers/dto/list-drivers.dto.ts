@@ -1,6 +1,6 @@
-import { IsEnum, IsInt, IsOptional, IsString, Min } from 'class-validator';
-import { Type } from 'class-transformer';
-import { DriverStatus } from '@prisma/client';
+import { IsEnum, IsInt, IsOptional, IsString, Min } from "class-validator";
+import { Type } from "class-transformer";
+import { DriverStatus } from "@prisma/client";
 
 export class ListDriversDto {
   @IsOptional() @IsString() search?: string;

@@ -1,5 +1,5 @@
-import { IsEnum, IsOptional, IsString } from 'class-validator';
-import { FulfillPath } from '@prisma/client';
+import { IsEnum, IsOptional, IsString } from "class-validator";
+import { FulfillPath } from "@prisma/client";
 
 export class UpdateCustomerDto {
   @IsOptional() @IsString() businessName?: string;

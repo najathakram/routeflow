@@ -1,7 +1,7 @@
-import { Module } from '@nestjs/common';
-import { JwtModule } from '@nestjs/jwt';
-import { ConfigModule, ConfigService } from '@nestjs/config';
-import { RouteFlowGateway } from './routeflow.gateway';
+import { Module } from "@nestjs/common";
+import { JwtModule } from "@nestjs/jwt";
+import { ConfigModule, ConfigService } from "@nestjs/config";
+import { RouteFlowGateway } from "./routeflow.gateway";
 
 @Module({
   imports: [
@@ -9,7 +9,7 @@ import { RouteFlowGateway } from './routeflow.gateway';
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
-        secret: config.get<string>('jwt.secret'),
+        secret: config.get<string>("jwt.secret"),
       }),
     }),
   ],

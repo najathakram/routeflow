@@ -116,7 +116,7 @@ function FitBoundsLayer({ stops }: { stops: RouteRunStop[] }) {
     );
     if (coordStops.length === 0) return;
 
-    const bounds = new mapsLib.LatLngBounds();
+    const bounds = new (google.maps as any).LatLngBounds();
     coordStops.forEach((s) =>
       bounds.extend({ lat: s.customerAddress!.lat!, lng: s.customerAddress!.lng! }),
     );

@@ -1,6 +1,6 @@
-import { IsEnum, IsInt, IsOptional, IsString, Min } from 'class-validator';
-import { Type } from 'class-transformer';
-import { TxnStatus } from '@prisma/client';
+import { IsEnum, IsInt, IsOptional, IsString, Min } from "class-validator";
+import { Type } from "class-transformer";
+import { TxnStatus } from "@prisma/client";
 
 export class ListTransactionsDto {
   @IsOptional() @IsEnum(TxnStatus) status?: TxnStatus;

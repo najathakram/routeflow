@@ -1,6 +1,6 @@
-import { IsEnum, IsInt, IsOptional, IsString, Min } from 'class-validator';
-import { Type } from 'class-transformer';
-import { UserStatus } from '@prisma/client';
+import { IsEnum, IsInt, IsOptional, IsString, Min } from "class-validator";
+import { Type } from "class-transformer";
+import { UserStatus } from "@prisma/client";
 
 export class ListUsersDto {
   @IsOptional() @IsString() search?: string;

@@ -184,7 +184,7 @@ export function CreateRouteModal({ isOpen, onClose }: CreateRouteModalProps) {
               <ul className="divide-y divide-surface-border overflow-hidden rounded-lg border border-surface-border bg-white">
                 {stops.map((stop, idx) => (
                   <li key={stop.id} className="flex items-center gap-3 px-3 py-2.5">
-                    <GripVertical className="h-4 w-4 shrink-0 cursor-grab text-navy/20" title="Drag to reorder (Phase 7)" />
+                    <GripVertical className="h-4 w-4 shrink-0 cursor-grab text-navy/20" />
                     <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand-100 text-xs font-bold text-brand-700">
                       {idx + 1}
                     </span>

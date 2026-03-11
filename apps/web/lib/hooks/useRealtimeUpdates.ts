@@ -22,7 +22,7 @@ export function useRealtimeUpdates() {
       toast({
         title: 'Real-time connection failed',
         description: 'Live updates may be unavailable. Retrying…',
-        variant: 'destructive',
+        variant: 'error',
       });
     });
 
@@ -36,7 +36,7 @@ export function useRealtimeUpdates() {
       toast({
         title: 'Urgent order placed',
         description: `${data.customerName} — order ${data.orderNumber}`,
-        variant: 'destructive',
+        variant: 'error',
       });
     });
 
@@ -53,7 +53,7 @@ export function useRealtimeUpdates() {
       toast({
         title: 'Low stock alert',
         description: `${data.productName} — only ${data.stockLevel} units remaining`,
-        variant: 'destructive',
+        variant: 'error',
       });
     });
 

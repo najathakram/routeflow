@@ -1,6 +1,6 @@
-import { Module } from '@nestjs/common';
-import { ZohoSyncController } from './zoho-sync.controller';
-import { ZohoSyncService } from './zoho-sync.service';
+import { Module } from "@nestjs/common";
+import { ZohoSyncController } from "./zoho-sync.controller";
+import { ZohoSyncService } from "./zoho-sync.service";
 
 @Module({
   controllers: [ZohoSyncController],

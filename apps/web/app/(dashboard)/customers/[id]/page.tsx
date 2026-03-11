@@ -22,6 +22,7 @@ import {
   Modal,
   Input,
   cn,
+  type BadgeStatus,
 } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { CustomerFormModal } from "../_components/CustomerFormModal";
@@ -58,7 +59,7 @@ const orderColumns: ColumnDef<ApiOrder, unknown>[] = [
     accessorKey: "status",
     header: "Status",
     enableSorting: false,
-    cell: ({ row }) => <Badge status={row.original.status} />,
+    cell: ({ row }) => <Badge status={row.original.status as BadgeStatus} />,
   },
   {
     accessorKey: "createdAt",

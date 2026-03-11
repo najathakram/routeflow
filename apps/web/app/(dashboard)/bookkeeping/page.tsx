@@ -214,7 +214,7 @@ export default function BookkeepingPage() {
       <Table
         data={filtered}
         columns={columns}
-        loading={txnLoading}
+        isLoading={txnLoading}
         onRowClick={(row) => router.push(`/bookkeeping/${row.original.id}`)}
         emptyState="No transactions match your filters."
       />

@@ -155,7 +155,7 @@ export default function RouteRunDetailPage({ params }: { params: { id: string } 
         toast({
           title: "Optimization failed",
           description: err.message,
-          variant: "destructive",
+          variant: "error",
         });
       },
     });

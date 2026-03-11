@@ -4,7 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Pencil, ToggleLeft, ToggleRight, Eye } from "lucide-react";
-import { PageHeader, Table, Badge, Button, Select, cn } from "@routeflow/ui/web";
+import { PageHeader, Table, Badge, Button, Select, cn, type BadgeStatus } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { CustomerFormModal } from "./_components/CustomerFormModal";
 import { useCustomers, useUpdateCustomerStatus } from "@/lib/api/customers";
@@ -88,7 +88,7 @@ export default function CustomersPage() {
         id: "status",
         header: "Status",
         cell: ({ row }) => (
-          <Badge status={row.original.user?.status ?? "ACTIVE"} />
+          <Badge status={(row.original.user?.status ?? "ACTIVE") as BadgeStatus} />
         ),
       },
       {

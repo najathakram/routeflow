@@ -1,15 +1,20 @@
-import { BadRequestException, Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
-import * as bcrypt from 'bcrypt';
-import * as crypto from 'crypto';
-import { PrismaService } from '../prisma/prisma.service';
-import { CreateCustomerDto } from './dto/create-customer.dto';
-import { UpdateCustomerDto } from './dto/update-customer.dto';
-import { ChangeCustomerStatusDto } from './dto/change-customer-status.dto';
-import { CreateAddressDto } from './dto/create-address.dto';
-import { UpdateAddressDto } from './dto/update-address.dto';
-import { ListCustomersDto } from './dto/list-customers.dto';
-import { JwtPayload } from '../auth/jwt-payload.interface';
-import { UserRole } from '@prisma/client';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+  ForbiddenException,
+} from "@nestjs/common";
+import * as bcrypt from "bcrypt";
+import * as crypto from "crypto";
+import { PrismaService } from "../prisma/prisma.service";
+import { CreateCustomerDto } from "./dto/create-customer.dto";
+import { UpdateCustomerDto } from "./dto/update-customer.dto";
+import { ChangeCustomerStatusDto } from "./dto/change-customer-status.dto";
+import { CreateAddressDto } from "./dto/create-address.dto";
+import { UpdateAddressDto } from "./dto/update-address.dto";
+import { ListCustomersDto } from "./dto/list-customers.dto";
+import { JwtPayload } from "../auth/jwt-payload.interface";
+import { UserRole } from "@prisma/client";
 
 @Injectable()
 export class CustomersService {
@@ -24,9 +29,9 @@ export class CustomersService {
     if (query.search) {
       const q = query.search;
       where.OR = [
-        { businessName: { contains: q, mode: 'insensitive' } },
-        { contactName: { contains: q, mode: 'insensitive' } },
-        { phone: { contains: q, mode: 'insensitive' } },
+        { businessName: { contains: q, mode: "insensitive" } },
+        { contactName: { contains: q, mode: "insensitive" } },
+        { phone: { contains: q, mode: "insensitive" } },
       ];
     }
     if (query.status) {
@@ -36,10 +41,13 @@ export class CustomersService {
     const [data, total] = await Promise.all([
       this.prisma.customer.findMany({
         where,
-        include: { user: { select: { id: true, email: true, username: true, status: true } }, addresses: true },
+        include: {
+          user: { select: { id: true, email: true, username: true, status: true } },
+          addresses: true,
+        },
         skip,
         take: limit,
-        orderBy: { createdAt: 'desc' },
+        orderBy: { createdAt: "desc" },
       }),
       this.prisma.customer.count({ where }),
     ]);
@@ -50,9 +58,12 @@ export class CustomersService {
   async findOne(id: string, user: JwtPayload) {
     const customer = await this.prisma.customer.findUnique({
       where: { id },
-      include: { user: { select: { id: true, email: true, username: true, status: true } }, addresses: true },
+      include: {
+        user: { select: { id: true, email: true, username: true, status: true } },
+        addresses: true,
+      },
     });
-    if (!customer) throw new NotFoundException('Customer not found');
+    if (!customer) throw new NotFoundException("Customer not found");
     if (user.role !== UserRole.OPERATOR && customer.userId !== user.sub) {
       throw new ForbiddenException();
     }
@@ -63,7 +74,7 @@ export class CustomersService {
     const existingUser = await this.prisma.user.findFirst({
       where: { OR: [{ email: dto.email }, { username: dto.username }] },
     });
-    if (existingUser) throw new BadRequestException('Email or username already taken');
+    if (existingUser) throw new BadRequestException("Email or username already taken");
 
     const tempPassword = this.generateTempPassword();
     const hashedPassword = await bcrypt.hash(tempPassword, 10);
@@ -85,7 +96,7 @@ export class CustomersService {
           businessName: dto.businessName,
           contactName: dto.contactName,
           phone: dto.phone,
-          fulfillPath: dto.fulfillPath ?? 'ROUTE',
+          fulfillPath: dto.fulfillPath ?? "ROUTE",
         },
       });
 
@@ -104,7 +115,11 @@ export class CustomersService {
         });
       }
 
-      return { customer, user: { id: user.id, email: user.email, username: user.username }, tempPassword };
+      return {
+        customer,
+        user: { id: user.id, email: user.email, username: user.username },
+        tempPassword,
+      };
     });
   }
 
@@ -138,7 +153,7 @@ export class CustomersService {
     const [data, total] = await Promise.all([
       this.prisma.order.findMany({
         where: { customerId: id },
-        orderBy: { createdAt: 'desc' },
+        orderBy: { createdAt: "desc" },
         take: 50,
       }),
       this.prisma.order.count({ where: { customerId: id } }),
@@ -188,15 +203,15 @@ export class CustomersService {
 
   private async findCustomerOrThrow(id: string) {
     const customer = await this.prisma.customer.findUnique({ where: { id } });
-    if (!customer) throw new NotFoundException('Customer not found');
+    if (!customer) throw new NotFoundException("Customer not found");
     return customer;
   }
 
   private generateTempPassword(): string {
-    const chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+    const chars = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
     const raw = Array.from(crypto.randomBytes(8))
       .map((b) => chars[b % chars.length])
-      .join('');
+      .join("");
     return `${raw.slice(0, 4)}-${raw.slice(4)}`;
   }
 }

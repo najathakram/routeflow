@@ -68,7 +68,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
       <RadixToast.Provider swipeDirection="right">
         {children}
         {toasts.map((t) => {
-          const config = VARIANT_CONFIG[t.variant ?? "info"];
+          const config = VARIANT_CONFIG[t.variant ?? "info"] ?? VARIANT_CONFIG.info;
           return (
             <RadixToast.Root
               key={t.id}

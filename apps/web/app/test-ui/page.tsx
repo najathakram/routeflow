@@ -21,8 +21,8 @@ import {
   ToastProvider,
   useToast,
   type BadgeStatus,
-  type ColumnDef,
 } from "@routeflow/ui";
+import type { ColumnDef } from "@tanstack/react-table";
 import {
   Package,
   Truck,
@@ -54,7 +54,7 @@ const ORDER_COLUMNS: ColumnDef<Order, unknown>[] = [
   {
     accessorKey: "status",
     header: "Status",
-    cell: ({ getValue }) => (
+    cell: ({ getValue }: { getValue: () => unknown }) => (
       <Badge status={getValue() as BadgeStatus} />
     ),
   },

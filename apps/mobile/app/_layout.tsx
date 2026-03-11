@@ -20,7 +20,11 @@ const queryClient = new QueryClient();
 function RootLayoutNav() {
   const { user, isLoading, initialize } = useAuthStore();
   const router = useRouter();
-  const segments = useSegments();
+  const segments: string[] = useSegments();
+
+  useEffect(() => {
+    initialize();
+  }, []);
 
   useEffect(() => {
     initialize();

@@ -1,31 +1,22 @@
-import {
-  Body,
-  Controller,
-  Get,
-  Param,
-  Patch,
-  Post,
-  Query,
-  UseGuards,
-} from '@nestjs/common';
-import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
-import { UserRole } from '@prisma/client';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { RolesGuard } from '../auth/guards/roles.guard';
-import { Roles } from '../auth/decorators/roles.decorator';
-import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import type { JwtPayload } from '../auth/jwt-payload.interface';
-import { CustomersService } from './customers.service';
-import { CreateCustomerDto } from './dto/create-customer.dto';
-import { UpdateCustomerDto } from './dto/update-customer.dto';
-import { ChangeCustomerStatusDto } from './dto/change-customer-status.dto';
-import { CreateAddressDto } from './dto/create-address.dto';
-import { UpdateAddressDto } from './dto/update-address.dto';
-import { ListCustomersDto } from './dto/list-customers.dto';
+import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
+import { ApiTags, ApiBearerAuth } from "@nestjs/swagger";
+import { UserRole } from "@prisma/client";
+import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
+import { RolesGuard } from "../auth/guards/roles.guard";
+import { Roles } from "../auth/decorators/roles.decorator";
+import { CurrentUser } from "../auth/decorators/current-user.decorator";
+import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { CustomersService } from "./customers.service";
+import { CreateCustomerDto } from "./dto/create-customer.dto";
+import { UpdateCustomerDto } from "./dto/update-customer.dto";
+import { ChangeCustomerStatusDto } from "./dto/change-customer-status.dto";
+import { CreateAddressDto } from "./dto/create-address.dto";
+import { UpdateAddressDto } from "./dto/update-address.dto";
+import { ListCustomersDto } from "./dto/list-customers.dto";
 
-@ApiTags('customers')
+@ApiTags("customers")
 @ApiBearerAuth()
-@Controller('customers')
+@Controller("customers")
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class CustomersController {
   constructor(private readonly customersService: CustomersService) {}
@@ -42,39 +33,39 @@ export class CustomersController {
     return this.customersService.create(dto);
   }
 
-  @Get(':id')
-  findOne(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+  @Get(":id")
+  findOne(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
     return this.customersService.findOne(id, user);
   }
 
-  @Patch(':id')
+  @Patch(":id")
   @Roles(UserRole.OPERATOR)
-  update(@Param('id') id: string, @Body() dto: UpdateCustomerDto) {
+  update(@Param("id") id: string, @Body() dto: UpdateCustomerDto) {
     return this.customersService.update(id, dto);
   }
 
-  @Patch(':id/status')
+  @Patch(":id/status")
   @Roles(UserRole.OPERATOR)
-  changeStatus(@Param('id') id: string, @Body() dto: ChangeCustomerStatusDto) {
+  changeStatus(@Param("id") id: string, @Body() dto: ChangeCustomerStatusDto) {
     return this.customersService.changeStatus(id, dto);
   }
 
-  @Get(':id/orders')
-  findOrders(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+  @Get(":id/orders")
+  findOrders(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
     return this.customersService.findOrders(id, user);
   }
 
-  @Post(':id/addresses')
+  @Post(":id/addresses")
   @Roles(UserRole.OPERATOR)
-  addAddress(@Param('id') id: string, @Body() dto: CreateAddressDto) {
+  addAddress(@Param("id") id: string, @Body() dto: CreateAddressDto) {
     return this.customersService.addAddress(id, dto);
   }
 
-  @Patch(':id/addresses/:addrId')
+  @Patch(":id/addresses/:addrId")
   @Roles(UserRole.OPERATOR)
   updateAddress(
-    @Param('id') id: string,
-    @Param('addrId') addrId: string,
+    @Param("id") id: string,
+    @Param("addrId") addrId: string,
     @Body() dto: UpdateAddressDto,
   ) {
     return this.customersService.updateAddress(id, addrId, dto);

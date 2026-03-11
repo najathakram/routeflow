@@ -30,7 +30,12 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
-      - run: npm ci
+      # Next.js has @next/swc-win32-* as optional deps; npm in workspaces
+      # incorrectly fails on platform mismatch. Delete lockfile + --force.
+      - name: Install dependencies
+        run: |
+          rm -f package-lock.json
+          npm install --force
 
       - run: npm run lint
 
@@ -46,7 +51,10 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
-      - run: npm ci
+      - name: Install dependencies
+        run: |
+          rm -f package-lock.json
+          npm install --force
 
       # Prisma client must be generated before tsc can resolve @prisma/client types
       - name: Generate Prisma client
@@ -100,14 +108,17 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
-      - run: npm ci
+      - name: Install dependencies
+        run: |
+          rm -f package-lock.json
+          npm install --force
 
       # Generate Prisma client and push schema to the test database
       - name: Setup database
         working-directory: apps/api
         run: |
           npx prisma generate
-          npx prisma db push --skip-generate
+          npx prisma db push
 
       - name: Run tests
         run: npm run test -- -- --coverage

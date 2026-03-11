@@ -1,28 +1,28 @@
-import { Test, TestingModule } from '@nestjs/testing';
-import { NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
-import { getQueueToken } from '@nestjs/bull';
-import { ConfigService } from '@nestjs/config';
-import { OrdersService } from './orders.service';
-import { PrismaService } from '../prisma/prisma.service';
-import { RouteFlowGateway } from '../gateways/routeflow.gateway';
-import { createMockPrisma } from '../testing/prisma-mock';
+import { Test, TestingModule } from "@nestjs/testing";
+import { NotFoundException, ForbiddenException, BadRequestException } from "@nestjs/common";
+import { getQueueToken } from "@nestjs/bull";
+import { ConfigService } from "@nestjs/config";
+import { OrdersService } from "./orders.service";
+import { PrismaService } from "../prisma/prisma.service";
+import { RouteFlowGateway } from "../gateways/routeflow.gateway";
+import { createMockPrisma } from "../testing/prisma-mock";
 
 const MOCK_PRODUCT = {
-  id: 'prod-1',
-  name: 'Tomatoes',
+  id: "prod-1",
+  name: "Tomatoes",
   pricePerUnit: 4.99,
-  unit: 'punnet',
+  unit: "punnet",
 };
 
 const MOCK_ORDER = {
-  id: 'ord-1',
-  customerId: 'cust-1',
-  orderNumber: 'ORD-123',
-  status: 'PENDING' as const,
-  source: 'APP' as const,
+  id: "ord-1",
+  customerId: "cust-1",
+  orderNumber: "ORD-123",
+  status: "PENDING" as const,
+  source: "APP" as const,
   urgent: false,
   subtotal: 14.97,
-  tax: 1.50,
+  tax: 1.5,
   total: 16.47,
   notes: null,
   driverNote: null,
@@ -34,22 +34,22 @@ const MOCK_ORDER = {
 };
 
 const operatorPayload = {
-  sub: 'user-op',
-  username: 'operator',
-  role: 'OPERATOR' as const,
-  status: 'ACTIVE' as const,
+  sub: "user-op",
+  username: "operator",
+  role: "OPERATOR" as const,
+  status: "ACTIVE" as const,
   forcePasswordChange: false,
 };
 
 const customerPayload = {
-  sub: 'user-cust',
-  username: 'customer1',
-  role: 'CUSTOMER' as const,
-  status: 'ACTIVE' as const,
+  sub: "user-cust",
+  username: "customer1",
+  role: "CUSTOMER" as const,
+  status: "ACTIVE" as const,
   forcePasswordChange: false,
 };
 
-describe('OrdersService', () => {
+describe("OrdersService", () => {
   let service: OrdersService;
   let prisma: ReturnType<typeof createMockPrisma>;
   let mockQueue: { add: jest.Mock };
@@ -64,7 +64,7 @@ describe('OrdersService', () => {
       providers: [
         OrdersService,
         { provide: PrismaService, useValue: prisma },
-        { provide: getQueueToken('invoices'), useValue: mockQueue },
+        { provide: getQueueToken("invoices"), useValue: mockQueue },
         { provide: RouteFlowGateway, useValue: mockGateway },
         {
           provide: ConfigService,
@@ -78,8 +78,8 @@ describe('OrdersService', () => {
 
   // ─── findAll ──────────────────────────────────────────────────────────────
 
-  describe('findAll', () => {
-    it('should return paginated orders for operators', async () => {
+  describe("findAll", () => {
+    it("should return paginated orders for operators", async () => {
       prisma.order.findMany.mockResolvedValue([MOCK_ORDER]);
       prisma.order.count.mockResolvedValue(1);
 
@@ -89,8 +89,8 @@ describe('OrdersService', () => {
       expect(result.meta.total).toBe(1);
     });
 
-    it('should scope to customer when role is CUSTOMER', async () => {
-      prisma.customer.findFirst.mockResolvedValue({ id: 'cust-1' });
+    it("should scope to customer when role is CUSTOMER", async () => {
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
       prisma.order.findMany.mockResolvedValue([]);
       prisma.order.count.mockResolvedValue(0);
 
@@ -98,28 +98,28 @@ describe('OrdersService', () => {
 
       expect(prisma.order.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({ customerId: 'cust-1' }),
+          where: expect.objectContaining({ customerId: "cust-1" }),
         }),
       );
     });
 
-    it('should throw ForbiddenException when customer record not found', async () => {
+    it("should throw ForbiddenException when customer record not found", async () => {
       prisma.customer.findFirst.mockResolvedValue(null);
 
-      await expect(
-        service.findAll({ page: 1, limit: 20 }, customerPayload),
-      ).rejects.toThrow(ForbiddenException);
+      await expect(service.findAll({ page: 1, limit: 20 }, customerPayload)).rejects.toThrow(
+        ForbiddenException,
+      );
     });
 
-    it('should filter by status', async () => {
+    it("should filter by status", async () => {
       prisma.order.findMany.mockResolvedValue([]);
       prisma.order.count.mockResolvedValue(0);
 
-      await service.findAll({ status: 'PENDING' as any, page: 1, limit: 20 }, operatorPayload);
+      await service.findAll({ status: "PENDING" as any, page: 1, limit: 20 }, operatorPayload);
 
       expect(prisma.order.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({ status: 'PENDING' }),
+          where: expect.objectContaining({ status: "PENDING" }),
         }),
       );
     });
@@ -127,45 +127,45 @@ describe('OrdersService', () => {
 
   // ─── findOne ──────────────────────────────────────────────────────────────
 
-  describe('findOne', () => {
-    it('should return an order for operators', async () => {
+  describe("findOne", () => {
+    it("should return an order for operators", async () => {
       prisma.order.findUnique.mockResolvedValue(MOCK_ORDER);
-      const result = await service.findOne('ord-1', operatorPayload);
+      const result = await service.findOne("ord-1", operatorPayload);
       expect(result).toEqual(MOCK_ORDER);
     });
 
-    it('should throw NotFoundException when order does not exist', async () => {
+    it("should throw NotFoundException when order does not exist", async () => {
       prisma.order.findUnique.mockResolvedValue(null);
-      await expect(service.findOne('nonexistent', operatorPayload)).rejects.toThrow(
+      await expect(service.findOne("nonexistent", operatorPayload)).rejects.toThrow(
         NotFoundException,
       );
     });
 
-    it('should throw ForbiddenException when customer does not own the order', async () => {
+    it("should throw ForbiddenException when customer does not own the order", async () => {
       prisma.order.findUnique.mockResolvedValue(MOCK_ORDER);
-      prisma.customer.findFirst.mockResolvedValue({ id: 'cust-other' });
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-other" });
 
-      await expect(service.findOne('ord-1', customerPayload)).rejects.toThrow(ForbiddenException);
+      await expect(service.findOne("ord-1", customerPayload)).rejects.toThrow(ForbiddenException);
     });
   });
 
   // ─── create ───────────────────────────────────────────────────────────────
 
-  describe('create', () => {
-    it('should create an order with correct subtotal, tax, and total', async () => {
-      prisma.customer.findFirst.mockResolvedValue({ id: 'cust-1' });
+  describe("create", () => {
+    it("should create an order with correct subtotal, tax, and total", async () => {
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
       prisma.product.findMany.mockResolvedValue([MOCK_PRODUCT]);
       prisma.order.create.mockResolvedValue(MOCK_ORDER);
 
       const result = await service.create(
-        { items: [{ productId: 'prod-1', qty: 3 }], urgent: false },
+        { items: [{ productId: "prod-1", qty: 3 }], urgent: false },
         customerPayload,
       );
 
       expect(prisma.order.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
-            customerId: 'cust-1',
+            customerId: "cust-1",
             subtotal: 4.99 * 3,
             tax: 4.99 * 3 * 0.1,
             total: 4.99 * 3 * 1.1,
@@ -174,41 +174,35 @@ describe('OrdersService', () => {
       );
     });
 
-    it('should throw ForbiddenException when non-customer tries to create', async () => {
-      await expect(
-        service.create({ items: [] } as any, operatorPayload),
-      ).rejects.toThrow(ForbiddenException);
+    it("should throw ForbiddenException when non-customer tries to create", async () => {
+      await expect(service.create({ items: [] } as any, operatorPayload)).rejects.toThrow(
+        ForbiddenException,
+      );
     });
 
-    it('should throw ForbiddenException when customer record not found', async () => {
+    it("should throw ForbiddenException when customer record not found", async () => {
       prisma.customer.findFirst.mockResolvedValue(null);
 
-      await expect(
-        service.create({ items: [] } as any, customerPayload),
-      ).rejects.toThrow(ForbiddenException);
+      await expect(service.create({ items: [] } as any, customerPayload)).rejects.toThrow(
+        ForbiddenException,
+      );
     });
 
-    it('should throw BadRequestException when product not found', async () => {
-      prisma.customer.findFirst.mockResolvedValue({ id: 'cust-1' });
+    it("should throw BadRequestException when product not found", async () => {
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
       prisma.product.findMany.mockResolvedValue([]); // no matching products
 
       await expect(
-        service.create(
-          { items: [{ productId: 'nonexistent', qty: 1 }] },
-          customerPayload,
-        ),
+        service.create({ items: [{ productId: "nonexistent", qty: 1 }] }, customerPayload),
       ).rejects.toThrow(BadRequestException);
     });
 
-    it('should generate an order number starting with ORD-', async () => {
-      prisma.customer.findFirst.mockResolvedValue({ id: 'cust-1' });
+    it("should generate an order number starting with ORD-", async () => {
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
       prisma.product.findMany.mockResolvedValue([MOCK_PRODUCT]);
       prisma.order.create.mockResolvedValue(MOCK_ORDER);
 
-      await service.create(
-        { items: [{ productId: 'prod-1', qty: 1 }] },
-        customerPayload,
-      );
+      await service.create({ items: [{ productId: "prod-1", qty: 1 }] }, customerPayload);
 
       expect(prisma.order.create).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -222,48 +216,48 @@ describe('OrdersService', () => {
 
   // ─── changeStatus ─────────────────────────────────────────────────────────
 
-  describe('changeStatus', () => {
-    it('should allow operators to change order status', async () => {
+  describe("changeStatus", () => {
+    it("should allow operators to change order status", async () => {
       prisma.order.findUnique.mockResolvedValue(MOCK_ORDER);
-      prisma.order.update.mockResolvedValue({ ...MOCK_ORDER, status: 'CONFIRMED' });
+      prisma.order.update.mockResolvedValue({ ...MOCK_ORDER, status: "CONFIRMED" });
 
       const result = await service.changeStatus(
-        'ord-1',
-        { status: 'CONFIRMED' as any },
+        "ord-1",
+        { status: "CONFIRMED" as any },
         operatorPayload,
       );
 
       expect(prisma.order.update).toHaveBeenCalledWith({
-        where: { id: 'ord-1' },
-        data: { status: 'CONFIRMED' },
+        where: { id: "ord-1" },
+        data: { status: "CONFIRMED" },
       });
     });
 
-    it('should throw ForbiddenException for non-operators', async () => {
+    it("should throw ForbiddenException for non-operators", async () => {
       await expect(
-        service.changeStatus('ord-1', { status: 'CONFIRMED' as any }, customerPayload),
+        service.changeStatus("ord-1", { status: "CONFIRMED" as any }, customerPayload),
       ).rejects.toThrow(ForbiddenException);
     });
   });
 
   // ─── toggleUrgent ─────────────────────────────────────────────────────────
 
-  describe('toggleUrgent', () => {
-    it('should toggle the urgent flag', async () => {
+  describe("toggleUrgent", () => {
+    it("should toggle the urgent flag", async () => {
       prisma.order.findUnique.mockResolvedValue(MOCK_ORDER); // urgent: false
       prisma.order.update.mockResolvedValue({ ...MOCK_ORDER, urgent: true });
 
-      await service.toggleUrgent('ord-1', operatorPayload);
+      await service.toggleUrgent("ord-1", operatorPayload);
 
       expect(prisma.order.update).toHaveBeenCalledWith({
-        where: { id: 'ord-1' },
+        where: { id: "ord-1" },
         data: { urgent: true },
       });
     });
 
-    it('should throw NotFoundException for non-existent order', async () => {
+    it("should throw NotFoundException for non-existent order", async () => {
       prisma.order.findUnique.mockResolvedValue(null);
-      await expect(service.toggleUrgent('nonexistent', operatorPayload)).rejects.toThrow(
+      await expect(service.toggleUrgent("nonexistent", operatorPayload)).rejects.toThrow(
         NotFoundException,
       );
     });

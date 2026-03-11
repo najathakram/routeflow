@@ -1,38 +1,38 @@
-import { Test, TestingModule } from '@nestjs/testing';
-import { NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
-import { CustomersService } from './customers.service';
-import { PrismaService } from '../prisma/prisma.service';
-import { createMockPrisma } from '../testing/prisma-mock';
+import { Test, TestingModule } from "@nestjs/testing";
+import { NotFoundException, ForbiddenException, BadRequestException } from "@nestjs/common";
+import { CustomersService } from "./customers.service";
+import { PrismaService } from "../prisma/prisma.service";
+import { createMockPrisma } from "../testing/prisma-mock";
 
 const MOCK_CUSTOMER = {
-  id: 'cust-1',
-  userId: 'user-1',
-  businessName: 'Acme Corp',
-  contactName: 'John Doe',
-  phone: '555-0100',
+  id: "cust-1",
+  userId: "user-1",
+  businessName: "Acme Corp",
+  contactName: "John Doe",
+  phone: "555-0100",
   zohoContactId: null,
-  fulfillPath: 'ROUTE' as const,
+  fulfillPath: "ROUTE" as const,
   createdAt: new Date(),
   updatedAt: new Date(),
 };
 
 const operatorPayload = {
-  sub: 'user-op',
-  username: 'operator',
-  role: 'OPERATOR' as const,
-  status: 'ACTIVE' as const,
+  sub: "user-op",
+  username: "operator",
+  role: "OPERATOR" as const,
+  status: "ACTIVE" as const,
   forcePasswordChange: false,
 };
 
 const customerPayload = {
-  sub: 'user-1',
-  username: 'customer',
-  role: 'CUSTOMER' as const,
-  status: 'ACTIVE' as const,
+  sub: "user-1",
+  username: "customer",
+  role: "CUSTOMER" as const,
+  status: "ACTIVE" as const,
   forcePasswordChange: false,
 };
 
-describe('CustomersService', () => {
+describe("CustomersService", () => {
   let service: CustomersService;
   let prisma: ReturnType<typeof createMockPrisma>;
 
@@ -40,10 +40,7 @@ describe('CustomersService', () => {
     prisma = createMockPrisma();
 
     const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        CustomersService,
-        { provide: PrismaService, useValue: prisma },
-      ],
+      providers: [CustomersService, { provide: PrismaService, useValue: prisma }],
     }).compile();
 
     service = module.get<CustomersService>(CustomersService);
@@ -51,8 +48,8 @@ describe('CustomersService', () => {
 
   // ─── findAll ──────────────────────────────────────────────────────────────
 
-  describe('findAll', () => {
-    it('should return paginated customers', async () => {
+  describe("findAll", () => {
+    it("should return paginated customers", async () => {
       prisma.customer.findMany.mockResolvedValue([MOCK_CUSTOMER]);
       prisma.customer.count.mockResolvedValue(1);
 
@@ -63,11 +60,11 @@ describe('CustomersService', () => {
       expect(result.meta.totalPages).toBe(1);
     });
 
-    it('should apply search across businessName, contactName, and phone', async () => {
+    it("should apply search across businessName, contactName, and phone", async () => {
       prisma.customer.findMany.mockResolvedValue([]);
       prisma.customer.count.mockResolvedValue(0);
 
-      await service.findAll({ search: 'acme', page: 1, limit: 20 });
+      await service.findAll({ search: "acme", page: 1, limit: 20 });
 
       expect(prisma.customer.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -82,7 +79,7 @@ describe('CustomersService', () => {
       );
     });
 
-    it('should calculate correct totalPages', async () => {
+    it("should calculate correct totalPages", async () => {
       prisma.customer.findMany.mockResolvedValue([]);
       prisma.customer.count.mockResolvedValue(45);
 
@@ -93,29 +90,29 @@ describe('CustomersService', () => {
 
   // ─── findOne ──────────────────────────────────────────────────────────────
 
-  describe('findOne', () => {
-    it('should return customer for operators', async () => {
+  describe("findOne", () => {
+    it("should return customer for operators", async () => {
       prisma.customer.findUnique.mockResolvedValue(MOCK_CUSTOMER);
-      const result = await service.findOne('cust-1', operatorPayload);
+      const result = await service.findOne("cust-1", operatorPayload);
       expect(result).toEqual(MOCK_CUSTOMER);
     });
 
-    it('should return customer when the authenticated customer owns the record', async () => {
+    it("should return customer when the authenticated customer owns the record", async () => {
       prisma.customer.findUnique.mockResolvedValue(MOCK_CUSTOMER);
-      const result = await service.findOne('cust-1', customerPayload);
+      const result = await service.findOne("cust-1", customerPayload);
       expect(result).toEqual(MOCK_CUSTOMER);
     });
 
-    it('should throw ForbiddenException when a different customer tries to access', async () => {
+    it("should throw ForbiddenException when a different customer tries to access", async () => {
       prisma.customer.findUnique.mockResolvedValue(MOCK_CUSTOMER);
 
-      const otherCustomer = { ...customerPayload, sub: 'user-other' };
-      await expect(service.findOne('cust-1', otherCustomer)).rejects.toThrow(ForbiddenException);
+      const otherCustomer = { ...customerPayload, sub: "user-other" };
+      await expect(service.findOne("cust-1", otherCustomer)).rejects.toThrow(ForbiddenException);
     });
 
-    it('should throw NotFoundException when customer does not exist', async () => {
+    it("should throw NotFoundException when customer does not exist", async () => {
       prisma.customer.findUnique.mockResolvedValue(null);
-      await expect(service.findOne('nonexistent', operatorPayload)).rejects.toThrow(
+      await expect(service.findOne("nonexistent", operatorPayload)).rejects.toThrow(
         NotFoundException,
       );
     });
@@ -123,16 +120,16 @@ describe('CustomersService', () => {
 
   // ─── create ───────────────────────────────────────────────────────────────
 
-  describe('create', () => {
-    it('should throw BadRequestException when email or username is taken', async () => {
-      prisma.user.findFirst.mockResolvedValue({ id: 'existing' });
+  describe("create", () => {
+    it("should throw BadRequestException when email or username is taken", async () => {
+      prisma.user.findFirst.mockResolvedValue({ id: "existing" });
 
       await expect(
         service.create({
-          email: 'taken@test.com',
-          username: 'taken',
-          businessName: 'Test',
-          contactName: 'Test',
+          email: "taken@test.com",
+          username: "taken",
+          businessName: "Test",
+          contactName: "Test",
         } as any),
       ).rejects.toThrow(BadRequestException);
     });
@@ -140,39 +137,39 @@ describe('CustomersService', () => {
 
   // ─── update ───────────────────────────────────────────────────────────────
 
-  describe('update', () => {
-    it('should update customer fields', async () => {
+  describe("update", () => {
+    it("should update customer fields", async () => {
       prisma.customer.findUnique.mockResolvedValue(MOCK_CUSTOMER);
-      prisma.customer.update.mockResolvedValue({ ...MOCK_CUSTOMER, businessName: 'New Name' });
+      prisma.customer.update.mockResolvedValue({ ...MOCK_CUSTOMER, businessName: "New Name" });
 
-      const result = await service.update('cust-1', { businessName: 'New Name' } as any);
+      const result = await service.update("cust-1", { businessName: "New Name" } as any);
 
       expect(prisma.customer.update).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: 'cust-1' },
+          where: { id: "cust-1" },
         }),
       );
     });
 
-    it('should throw NotFoundException for non-existent customer', async () => {
+    it("should throw NotFoundException for non-existent customer", async () => {
       prisma.customer.findUnique.mockResolvedValue(null);
-      await expect(service.update('nonexistent', {} as any)).rejects.toThrow(NotFoundException);
+      await expect(service.update("nonexistent", {} as any)).rejects.toThrow(NotFoundException);
     });
   });
 
   // ─── addAddress ───────────────────────────────────────────────────────────
 
-  describe('addAddress', () => {
-    it('should throw NotFoundException for non-existent customer', async () => {
+  describe("addAddress", () => {
+    it("should throw NotFoundException for non-existent customer", async () => {
       prisma.customer.findUnique.mockResolvedValue(null);
 
       await expect(
-        service.addAddress('nonexistent', {
-          label: 'Main',
-          line1: '123 St',
-          city: 'NY',
-          state: 'NY',
-          zip: '10001',
+        service.addAddress("nonexistent", {
+          label: "Main",
+          line1: "123 St",
+          city: "NY",
+          state: "NY",
+          zip: "10001",
         } as any),
       ).rejects.toThrow(NotFoundException);
     });
@@ -180,22 +177,20 @@ describe('CustomersService', () => {
 
   // ─── findOrders ───────────────────────────────────────────────────────────
 
-  describe('findOrders', () => {
-    it('should throw ForbiddenException when non-owner customer tries to view', async () => {
+  describe("findOrders", () => {
+    it("should throw ForbiddenException when non-owner customer tries to view", async () => {
       prisma.customer.findUnique.mockResolvedValue(MOCK_CUSTOMER);
 
-      const otherCustomer = { ...customerPayload, sub: 'user-other' };
-      await expect(service.findOrders('cust-1', otherCustomer)).rejects.toThrow(
-        ForbiddenException,
-      );
+      const otherCustomer = { ...customerPayload, sub: "user-other" };
+      await expect(service.findOrders("cust-1", otherCustomer)).rejects.toThrow(ForbiddenException);
     });
 
-    it('should return orders for operators', async () => {
+    it("should return orders for operators", async () => {
       prisma.customer.findUnique.mockResolvedValue(MOCK_CUSTOMER);
       prisma.order.findMany.mockResolvedValue([]);
       prisma.order.count.mockResolvedValue(0);
 
-      const result = await service.findOrders('cust-1', operatorPayload);
+      const result = await service.findOrders("cust-1", operatorPayload);
       expect(result.data).toEqual([]);
     });
   });

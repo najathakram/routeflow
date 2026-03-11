@@ -1,8 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
-import { CreateProductDto } from './dto/create-product.dto';
-import { UpdateProductDto } from './dto/update-product.dto';
-import { ListProductsDto } from './dto/list-products.dto';
+import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { PrismaService } from "../prisma/prisma.service";
+import { CreateProductDto } from "./dto/create-product.dto";
+import { UpdateProductDto } from "./dto/update-product.dto";
+import { ListProductsDto } from "./dto/list-products.dto";
 
 @Injectable()
 export class ProductsService {
@@ -16,8 +16,8 @@ export class ProductsService {
     const where: any = {};
     if (query.search) {
       where.OR = [
-        { name: { contains: query.search, mode: 'insensitive' } },
-        { sku: { contains: query.search, mode: 'insensitive' } },
+        { name: { contains: query.search, mode: "insensitive" } },
+        { sku: { contains: query.search, mode: "insensitive" } },
       ];
     }
     if (query.category) where.category = query.category;
@@ -25,7 +25,7 @@ export class ProductsService {
     if (query.isActive !== undefined) where.isActive = query.isActive;
 
     const [data, total] = await Promise.all([
-      this.prisma.product.findMany({ where, skip, take: limit, orderBy: { name: 'asc' } }),
+      this.prisma.product.findMany({ where, skip, take: limit, orderBy: { name: "asc" } }),
       this.prisma.product.count({ where }),
     ]);
 
@@ -34,14 +34,14 @@ export class ProductsService {
 
   async findOne(id: string) {
     const product = await this.prisma.product.findUnique({ where: { id } });
-    if (!product) throw new NotFoundException('Product not found');
+    if (!product) throw new NotFoundException("Product not found");
     return product;
   }
 
   async create(dto: CreateProductDto) {
     if (dto.sku) {
       const existing = await this.prisma.product.findUnique({ where: { sku: dto.sku } });
-      if (existing) throw new BadRequestException('SKU already exists');
+      if (existing) throw new BadRequestException("SKU already exists");
     }
     return this.prisma.product.create({
       data: {
@@ -63,7 +63,7 @@ export class ProductsService {
       const existing = await this.prisma.product.findFirst({
         where: { sku: dto.sku, id: { not: id } },
       });
-      if (existing) throw new BadRequestException('SKU already exists');
+      if (existing) throw new BadRequestException("SKU already exists");
     }
     return this.prisma.product.update({
       where: { id },
