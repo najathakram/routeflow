@@ -4,7 +4,7 @@
     {
       "name": "api",
       "runtimeExecutable": "node",
-      "runtimeArgs": ["C:/Program Files/nodejs/node_modules/npm/bin/npm-cli.js", "run", "dev"],
+      "runtimeArgs": ["dist/main.js"],
       "cwd": "apps/api",
       "port": 3000,
       "autoPort": false
@@ -13,7 +13,7 @@
       "name": "web",
       "runtimeExecutable": "node",
       "runtimeArgs": ["C:/ClaudeCode/routeflow/.claude/worktrees/eloquent-cori/apps/web/node_modules/next/dist/bin/next", "dev"],
-      "cwd": "apps/web",
+      "cwd": "C:/ClaudeCode/routeflow/.claude/worktrees/eloquent-cori/apps/web",
       "port": 3001
     },
     {

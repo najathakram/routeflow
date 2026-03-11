@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
   CheckCircle2,
@@ -14,6 +15,10 @@ import {
   ChevronRight,
   Sparkles,
   GripVertical,
+  Pencil,
+  Trash2,
+  X,
+  Save,
 } from "lucide-react";
 import {
   DndContext,
@@ -39,8 +44,12 @@ import {
   useRouteRun,
   useOptimizeRoute,
   useReorderRunStops,
+  useUpdateRouteRun,
+  useDeleteRouteRun,
+  useUpdateRouteRunStatus,
   type RouteRunStop,
 } from "@/lib/api/routes";
+import { useDrivers } from "@/lib/api/drivers";
 import { RouteMap } from "./RouteMap";
 
 // ─── Stop status icon ─────────────────────────────────────────────────────────
@@ -57,15 +66,9 @@ function StopIcon({ status }: { status: StopStatus }) {
   return <Circle className="h-5 w-5 shrink-0 text-navy/25" />;
 }
 
-// ─── Sortable stop list item ───────────────────────────────────────────────────
+// ─── Sortable stop item ────────────────────────────────────────────────────────
 
-function SortableStopItem({
-  stop,
-  draggable,
-}: {
-  stop: RouteRunStop;
-  draggable: boolean;
-}) {
+function SortableStopItem({ stop, draggable }: { stop: RouteRunStop; draggable: boolean }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: stop.id });
 
@@ -82,7 +85,7 @@ function SortableStopItem({
   );
 }
 
-// ─── Stop list item ───────────────────────────────────────────────────────────
+// ─── Stop item ────────────────────────────────────────────────────────────────
 
 function StopItem({
   stop,
@@ -112,7 +115,6 @@ function StopItem({
           : "border-surface-border bg-white opacity-70",
       )}
     >
-      {/* Header row */}
       <div className="flex items-start gap-2 p-3">
         {dragHandleProps && (
           <button
@@ -155,10 +157,8 @@ function StopItem({
         </button>
       </div>
 
-      {/* Expanded detail */}
       {expanded && (
         <div className="border-t border-surface-border px-3 pb-3 pt-2 space-y-2">
-          {/* Orders */}
           {stop.orders && stop.orders.length > 0 && (
             <div>
               <p className="mb-1 flex items-center gap-1 text-xs font-semibold text-navy/50">
@@ -167,15 +167,13 @@ function StopItem({
               <ul className="space-y-0.5">
                 {stop.orders.map((order) => (
                   <li key={order.id} className="flex items-center justify-between text-xs text-navy">
-                    <span>#{order.orderNumber}</span>
+                    <span>{order.orderNumber ? `#${order.orderNumber}` : <span className="text-navy/40 italic">No order #</span>}</span>
                     <span className="text-navy/50">{order.status}</span>
                   </li>
                 ))}
               </ul>
             </div>
           )}
-
-          {/* Driver note */}
           {stop.driverNote && (
             <div className="rounded bg-warning-bg p-2">
               <p className="flex items-center gap-1 text-xs font-semibold text-warning">
@@ -184,8 +182,104 @@ function StopItem({
               <p className="mt-0.5 text-xs text-navy/80">{stop.driverNote}</p>
             </div>
           )}
+          {!stop.orders?.length && !stop.driverNote && (
+            <p className="text-xs text-navy/40 italic">No orders or notes for this stop.</p>
+          )}
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Edit Run Modal ────────────────────────────────────────────────────────────
+
+function EditRunModal({
+  run,
+  onClose,
+}: {
+  run: { id: string; driverId?: string; scheduledDate: string; notes?: string };
+  onClose: () => void;
+}) {
+  const { toast } = useToast();
+  const { data: driversData } = useDrivers({ limit: 100 });
+  const updateRun = useUpdateRouteRun();
+
+  const [driverId, setDriverId] = React.useState(run.driverId ?? "");
+  const [date, setDate] = React.useState(
+    new Date(run.scheduledDate).toISOString().slice(0, 10),
+  );
+  const [notes, setNotes] = React.useState(run.notes ?? "");
+
+  const drivers = driversData?.data ?? [];
+
+  const handleSave = () => {
+    updateRun.mutate(
+      { id: run.id, driverId: driverId || null, scheduledDate: date, notes },
+      {
+        onSuccess: () => {
+          toast({ title: "Run updated", variant: "success" });
+          onClose();
+        },
+        onError: (err) => toast({ title: "Update failed", description: err.message, variant: "error" }),
+      },
+    );
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+        <div className="mb-5 flex items-center justify-between">
+          <h2 className="text-base font-semibold text-navy">Edit Route Run</h2>
+          <button onClick={onClose} className="text-navy/40 hover:text-navy">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="space-y-4">
+          <div>
+            <label className="mb-1 block text-xs font-medium text-navy/60">Driver</label>
+            <select
+              value={driverId}
+              onChange={(e) => setDriverId(e.target.value)}
+              className="h-9 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+            >
+              <option value="">No driver assigned</option>
+              {drivers.map((d) => (
+                <option key={d.id} value={d.id}>{d.contactName}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-xs font-medium text-navy/60">Scheduled Date</label>
+            <input
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              className="h-9 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+            />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-xs font-medium text-navy/60">Notes</label>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={3}
+              placeholder="Optional notes for driver..."
+              className="w-full rounded border border-surface-border bg-white px-3 py-2 text-sm text-navy placeholder:text-navy/30 focus:outline-none focus:ring-2 focus:ring-brand-500 resize-none"
+            />
+          </div>
+        </div>
+
+        <div className="mt-6 flex justify-end gap-2">
+          <Button variant="secondary" size="sm" onClick={onClose}>Cancel</Button>
+          <Button size="sm" onClick={handleSave} disabled={updateRun.isPending}>
+            {updateRun.isPending ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Save className="mr-1.5 h-3.5 w-3.5" />}
+            Save changes
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -193,14 +287,19 @@ function StopItem({
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function RouteRunDetailPage({ params }: { params: { id: string } }) {
+  const router = useRouter();
   const { setTitle } = usePageTitle();
   const { user } = useAuth();
   const { toast } = useToast();
   const { data: run, isLoading, isError } = useRouteRun(params.id);
   const { mutate: optimizeRoute, isPending: isOptimizing } = useOptimizeRoute();
   const { mutate: reorderRunStops } = useReorderRunStops();
+  const { mutate: deleteRun, isPending: isDeleting } = useDeleteRouteRun();
+  const { mutate: updateStatus } = useUpdateRouteRunStatus();
 
   const isOperator = user?.role === "OPERATOR";
+  const [showEditModal, setShowEditModal] = React.useState(false);
+  const [confirmDelete, setConfirmDelete] = React.useState(false);
 
   // Local stops state for optimistic DnD reordering
   const [localStops, setLocalStops] = React.useState<RouteRunStop[]>([]);
@@ -239,30 +338,33 @@ export default function RouteRunDetailPage({ params }: { params: { id: string } 
   const handleOptimize = () => {
     optimizeRoute(params.id, {
       onSuccess: (result) => {
-        if (result.usedFallback) {
-          toast({
-            title: "Route optimized (local fallback)",
-            description: `${result.reorderedCount} stops reordered using nearest-neighbor heuristic. Set ORS_API_KEY for full optimization.`,
-          });
-        } else {
-          toast({
-            title: "Route optimized",
-            description: `${result.reorderedCount} stops reordered for the most efficient sequence.`,
-          });
-        }
-      },
-      onError: (err) => {
         toast({
-          title: "Optimization failed",
-          description: err.message,
-          variant: "error",
+          title: result.usedFallback ? "Route optimized (local fallback)" : "Route optimized",
+          description: `${result.reorderedCount} stops reordered${result.usedFallback ? " using nearest-neighbor heuristic." : " for the most efficient sequence."}`,
         });
       },
+      onError: (err) => toast({ title: "Optimization failed", description: err.message, variant: "error" }),
+    });
+  };
+
+  const handleDelete = () => {
+    deleteRun(params.id, {
+      onSuccess: () => {
+        toast({ title: "Route run deleted", variant: "success" });
+        router.push("/routes");
+      },
+      onError: (err) => toast({ title: "Delete failed", description: err.message, variant: "error" }),
+    });
+  };
+
+  const handleCancel = () => {
+    updateStatus({ id: params.id, status: "CANCELLED" }, {
+      onSuccess: () => toast({ title: "Route run cancelled", variant: "success" }),
+      onError: (err) => toast({ title: "Cancel failed", description: err.message, variant: "error" }),
     });
   };
 
   const name = run?.route?.name ?? "Route";
-
   React.useEffect(() => { setTitle(name); }, [setTitle, name]);
 
   if (isLoading) {
@@ -290,11 +392,17 @@ export default function RouteRunDetailPage({ params }: { params: { id: string } 
     ? new Date(run.startedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
     : null;
 
-  // Only allow reordering when the run is still SCHEDULED
   const canReorder = isOperator && run.status === "SCHEDULED";
+  const canEdit = isOperator && (run.status === "SCHEDULED");
+  const canDelete = isOperator && (run.status === "SCHEDULED");
+  const canCancel = isOperator && (run.status === "IN_PROGRESS" || run.status === "SCHEDULED");
 
   return (
     <div className="flex h-[calc(100vh-64px)] flex-col overflow-hidden">
+      {showEditModal && (
+        <EditRunModal run={run} onClose={() => setShowEditModal(false)} />
+      )}
+
       {/* Top bar */}
       <div className="shrink-0 border-b border-surface-border bg-white px-6 py-4">
         <div className="flex items-center gap-4">
@@ -306,12 +414,9 @@ export default function RouteRunDetailPage({ params }: { params: { id: string } 
             <h1 className="text-lg font-bold text-navy">{run.route?.name ?? "Route"}</h1>
             <Badge
               status={
-                run.status === "IN_PROGRESS"
-                  ? "IN_PROGRESS"
-                  : run.status === "COMPLETED"
-                  ? "COMPLETED"
-                  : run.status === "CANCELLED"
-                  ? "CANCELLED"
+                run.status === "IN_PROGRESS" ? "IN_PROGRESS"
+                  : run.status === "COMPLETED" ? "COMPLETED"
+                  : run.status === "CANCELLED" ? "CANCELLED"
                   : "SCHEDULED"
               }
             />
@@ -325,28 +430,65 @@ export default function RouteRunDetailPage({ params }: { params: { id: string } 
             <span className="text-sm text-navy/40">·</span>
             <span className="text-sm text-navy/60">{stopsDone}/{total} stops</span>
           </div>
-          {isOperator && (
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={handleOptimize}
-              disabled={isOptimizing}
-            >
-              {isOptimizing ? (
-                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+
+          <div className="flex shrink-0 items-center gap-2">
+            {/* Edit — SCHEDULED only */}
+            {canEdit && (
+              <Button variant="secondary" size="sm" onClick={() => setShowEditModal(true)}>
+                <Pencil className="mr-1.5 h-3.5 w-3.5" />Edit
+              </Button>
+            )}
+
+            {/* Cancel — SCHEDULED or IN_PROGRESS */}
+            {canCancel && run.status !== "CANCELLED" && !canDelete && (
+              <Button variant="secondary" size="sm" onClick={handleCancel}>
+                Cancel Run
+              </Button>
+            )}
+
+            {/* Delete — SCHEDULED only, with confirm */}
+            {canDelete && (
+              confirmDelete ? (
+                <div className="flex items-center gap-1">
+                  <span className="text-xs text-danger">Delete?</span>
+                  <button
+                    onClick={handleDelete}
+                    disabled={isDeleting}
+                    className="rounded bg-danger px-2 py-1 text-xs font-semibold text-white hover:bg-danger/90 disabled:opacity-50"
+                  >
+                    {isDeleting ? "…" : "Yes"}
+                  </button>
+                  <button
+                    onClick={() => setConfirmDelete(false)}
+                    className="rounded border border-surface-border px-2 py-1 text-xs font-semibold text-navy hover:bg-surface-raised"
+                  >
+                    No
+                  </button>
+                </div>
               ) : (
-                <Sparkles className="mr-1.5 h-3.5 w-3.5" />
-              )}
-              {isOptimizing ? "Optimizing…" : "Optimize Route"}
+                <button
+                  onClick={() => setConfirmDelete(true)}
+                  className="flex items-center gap-1 rounded border border-surface-border px-2.5 py-1.5 text-xs font-medium text-danger hover:border-danger/40 hover:bg-danger/5 transition-colors"
+                  title="Delete run"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />Delete
+                </button>
+              )
+            )}
+
+            {/* Optimize */}
+            {isOperator && run.status !== "CANCELLED" && run.status !== "COMPLETED" && (
+              <Button variant="secondary" size="sm" onClick={handleOptimize} disabled={isOptimizing}>
+                {isOptimizing ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Sparkles className="mr-1.5 h-3.5 w-3.5" />}
+                {isOptimizing ? "Optimizing…" : "Optimize"}
+              </Button>
+            )}
+
+            {/* Dispatch Panel */}
+            <Button variant="primary" size="sm" href={`/routes/${run.id}/dispatch`}>
+              Dispatch Panel
             </Button>
-          )}
-          <Button
-            variant="secondary"
-            size="sm"
-            href={`/routes/${run.id}/dispatch`}
-          >
-            Dispatch Panel
-          </Button>
+          </div>
         </div>
       </div>
 
@@ -360,11 +502,7 @@ export default function RouteRunDetailPage({ params }: { params: { id: string } 
             </p>
           </div>
           {canReorder ? (
-            <DndContext
-              sensors={sensors}
-              collisionDetection={closestCenter}
-              onDragEnd={handleDragEnd}
-            >
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
               <SortableContext items={stops.map((s) => s.id)} strategy={verticalListSortingStrategy}>
                 <ul className="flex-1 space-y-2 overflow-y-auto p-4">
                   {stops.map((stop) => (
