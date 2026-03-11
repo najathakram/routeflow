@@ -1,7 +1,7 @@
 import { ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtPayload } from "../auth/jwt-payload.interface";
-import { UserRole, RouteRunStatus } from "@prisma/client";
+import { UserRole, RouteRunStatus, OrderStatus } from "@prisma/client";
 import { ListRoutesDto } from "./dto/list-routes.dto";
 import { CreateRouteDto } from "./dto/create-route.dto";
 import { UpdateRouteDto } from "./dto/update-route.dto";
@@ -229,7 +229,7 @@ export class RoutesService {
     });
     if (!route) throw new NotFoundException("Route not found");
 
-    return this.prisma.routeRun.create({
+    const run = await this.prisma.routeRun.create({
       data: {
         routeId: dto.routeId,
         driverId: dto.driverId,
@@ -256,6 +256,24 @@ export class RoutesService {
         },
       },
     });
+
+    // Assign pending/confirmed orders to their respective run stops
+    await Promise.all(
+      run.stops
+        .filter((s) => s.customerId)
+        .map((s) =>
+          this.prisma.order.updateMany({
+            where: {
+              customerId: s.customerId!,
+              status: { notIn: [OrderStatus.DELIVERED, OrderStatus.CANCELLED] },
+              routeRunStopId: null,
+            },
+            data: { routeRunId: run.id, routeRunStopId: s.id },
+          }),
+        ),
+    );
+
+    return run;
   }
 
   async findAllRuns(query: ListRunsDto, user: JwtPayload) {
@@ -311,6 +329,40 @@ export class RoutesService {
       },
     });
     if (!run) throw new NotFoundException("Route run not found");
+
+    // Fallback for runs where orders were not linked at dispatch time (legacy/seeded data):
+    // if no stop has linked orders, fetch active orders per customer and merge them in.
+    const anyLinked = run.stops.some((s) => (s.orders as any[]).length > 0);
+    if (!anyLinked && run.stops.length > 0) {
+      const customerIds = run.stops
+        .map((s) => s.customerId)
+        .filter((cid): cid is string => cid !== null);
+      if (customerIds.length > 0) {
+        const orders = await this.prisma.order.findMany({
+          where: {
+            customerId: { in: customerIds },
+            status: { notIn: [OrderStatus.CANCELLED] },
+          },
+          select: { id: true, orderNumber: true, status: true, customerId: true },
+        });
+        const byCustomer: Record<string, { id: string; orderNumber: string; status: string }[]> = {};
+        for (const o of orders) {
+          (byCustomer[o.customerId] ??= []).push({
+            id: o.id,
+            orderNumber: o.orderNumber!,
+            status: o.status,
+          });
+        }
+        return {
+          ...run,
+          stops: run.stops.map((s) => ({
+            ...s,
+            orders: s.customerId ? (byCustomer[s.customerId] ?? []) : [],
+          })),
+        };
+      }
+    }
+
     return run;
   }
 
