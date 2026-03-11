@@ -17,6 +17,7 @@ import {
 import { Badge, Button, Card, cn, type BadgeStatus } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useOrder, useUpdateOrderStatus } from "@/lib/api/orders";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -91,6 +92,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
   const updateStatus = useUpdateOrderStatus();
 
   const [localStatus, setLocalStatus] = React.useState<LocalOrderStatus>("PENDING");
+  const [showCancelConfirm, setShowCancelConfirm] = React.useState(false);
 
   React.useEffect(() => {
     if (order) {
@@ -139,8 +141,16 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
   };
 
   const handleCancel = () => {
+    // Show confirmation dialog instead of mutating immediately
+    setShowCancelConfirm(true);
+  };
+
+  const confirmCancel = () => {
     updateStatus.mutate({ id: order.id, status: "CANCELLED" }, {
-      onSuccess: () => setLocalStatus("CANCELLED"),
+      onSuccess: () => {
+        setLocalStatus("CANCELLED");
+        setShowCancelConfirm(false);
+      },
     });
   };
 
@@ -304,6 +314,18 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
           </Card>
         </div>
       </div>
+
+      {/* Cancel order confirmation */}
+      <ConfirmDialog
+        open={showCancelConfirm}
+        onClose={() => setShowCancelConfirm(false)}
+        onConfirm={confirmCancel}
+        title="Cancel this order?"
+        description={`Order ${order.orderNumber} will be marked as cancelled. This cannot be undone.`}
+        confirmLabel="Yes, cancel order"
+        variant="danger"
+        loading={updateStatus.isPending}
+      />
     </div>
   );
 }

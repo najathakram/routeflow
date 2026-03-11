@@ -35,6 +35,7 @@ import {
   useAddCustomerAddress,
 } from "@/lib/api/customers";
 import { useRoutes, useAddStopToRoute } from "@/lib/api/routes";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -364,6 +365,7 @@ export default function CustomerDetailPage({
   const [isAddAddressOpen, setIsAddAddressOpen] = React.useState(false);
   const [isAssignRouteOpen, setIsAssignRouteOpen] = React.useState(false);
   const [orderStatusFilter, setOrderStatusFilter] = React.useState("");
+  const [pendingStatus, setPendingStatus] = React.useState<CustomerStatus | null>(null);
 
   if (isLoading) {
     return <div className="p-12 text-center text-navy/40">Loading...</div>;
@@ -385,7 +387,20 @@ export default function CustomerDetailPage({
     : allOrders;
 
   const handleStatusChange = (s: CustomerStatus) => {
-    updateStatus.mutate({ id: params.id, status: s });
+    if (s === "INACTIVE" || s === "SUSPENDED") {
+      // Confirm before deactivating
+      setPendingStatus(s);
+    } else {
+      // Re-activating — no confirmation needed
+      updateStatus.mutate({ id: params.id, status: s });
+    }
+  };
+
+  const confirmStatusChange = () => {
+    if (!pendingStatus) return;
+    updateStatus.mutate({ id: params.id, status: pendingStatus }, {
+      onSuccess: () => setPendingStatus(null),
+    });
   };
 
   const handleSaveAddress = (values: AddAddressFormValues) => {
@@ -642,6 +657,22 @@ export default function CustomerDetailPage({
           line1: a.line1,
           city: a.city,
         }))}
+      />
+
+      {/* Status change confirmation (INACTIVE / SUSPENDED) */}
+      <ConfirmDialog
+        open={pendingStatus !== null}
+        onClose={() => setPendingStatus(null)}
+        onConfirm={confirmStatusChange}
+        title={pendingStatus === "SUSPENDED" ? "Suspend this customer?" : "Deactivate this customer?"}
+        description={
+          pendingStatus === "SUSPENDED"
+            ? `${customer.businessName} will be suspended and will lose access to the platform.`
+            : `${customer.businessName} will be marked as inactive.`
+        }
+        confirmLabel={pendingStatus === "SUSPENDED" ? "Yes, suspend" : "Yes, deactivate"}
+        variant={pendingStatus === "SUSPENDED" ? "danger" : "secondary"}
+        loading={updateStatus.isPending}
       />
     </div>
   );

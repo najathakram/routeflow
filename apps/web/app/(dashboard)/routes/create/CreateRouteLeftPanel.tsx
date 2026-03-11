@@ -187,10 +187,9 @@ export function CreateRouteLeftPanel({
                         {stop.customerName}
                       </p>
                       {!hasCoords && (
-                        <AlertTriangle
-                          className="h-3.5 w-3.5 shrink-0 text-warning"
-                          title="No GPS coordinates"
-                        />
+                        <span title="No GPS coordinates">
+                          <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-warning" />
+                        </span>
                       )}
                     </div>
                     <p className="truncate text-xs text-navy/50">{stop.address}</p>
