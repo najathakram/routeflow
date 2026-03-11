@@ -82,8 +82,8 @@ export class AuthService {
       throw new UnauthorizedException("Refresh token revoked or expired");
     }
 
-    // Rotate — delete old, issue new pair
-    await this.prisma.refreshToken.delete({ where: { tokenHash } });
+    // Rotate — delete old, issue new pair (deleteMany avoids P2025 on race)
+    await this.prisma.refreshToken.deleteMany({ where: { tokenHash } });
 
     const user = await this.prisma.user.findUnique({ where: { id: payload.sub } });
     if (!user || user.status !== "ACTIVE" || user.deletedAt) {

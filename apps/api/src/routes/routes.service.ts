@@ -107,6 +107,23 @@ export class RoutesService {
     return { success: true };
   }
 
+  async deleteRoute(id: string) {
+    await this.findRouteOrThrow(id);
+    await this.prisma.route.delete({ where: { id } });
+    return { success: true };
+  }
+
+  async reorderRunStops(runId: string, order: { id: string; stopNumber: number }[]) {
+    const run = await this.prisma.routeRun.findUnique({ where: { id: runId } });
+    if (!run) throw new NotFoundException('Route run not found');
+    await this.prisma.$transaction(
+      order.map(({ id, stopNumber }) =>
+        this.prisma.routeRunStop.update({ where: { id }, data: { stopNumber } }),
+      ),
+    );
+    return { success: true };
+  }
+
   async getPackingList(routeId: string) {
     const route = await this.prisma.route.findUnique({
       where: { id: routeId },

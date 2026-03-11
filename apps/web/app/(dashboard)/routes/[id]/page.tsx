@@ -13,11 +13,34 @@ import {
   ChevronDown,
   ChevronRight,
   Sparkles,
+  GripVertical,
 } from "lucide-react";
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { Badge, Button, cn, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useAuth } from "@/lib/auth-context";
-import { useRouteRun, useOptimizeRoute, type RouteRunStop } from "@/lib/api/routes";
+import {
+  useRouteRun,
+  useOptimizeRoute,
+  useReorderRunStops,
+  type RouteRunStop,
+} from "@/lib/api/routes";
 import { RouteMap } from "./RouteMap";
 
 // ─── Stop status icon ─────────────────────────────────────────────────────────
@@ -34,9 +57,40 @@ function StopIcon({ status }: { status: StopStatus }) {
   return <Circle className="h-5 w-5 shrink-0 text-navy/25" />;
 }
 
+// ─── Sortable stop list item ───────────────────────────────────────────────────
+
+function SortableStopItem({
+  stop,
+  draggable,
+}: {
+  stop: RouteRunStop;
+  draggable: boolean;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({ id: stop.id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  return (
+    <li ref={setNodeRef} style={style}>
+      <StopItem stop={stop} dragHandleProps={draggable ? { ...attributes, ...listeners } : undefined} />
+    </li>
+  );
+}
+
 // ─── Stop list item ───────────────────────────────────────────────────────────
 
-function StopItem({ stop }: { stop: RouteRunStop }) {
+function StopItem({
+  stop,
+  dragHandleProps,
+}: {
+  stop: RouteRunStop;
+  dragHandleProps?: React.HTMLAttributes<HTMLButtonElement>;
+}) {
   const [expanded, setExpanded] = React.useState(stop.status === "IN_PROGRESS");
 
   const addressLine = stop.customerAddress
@@ -48,7 +102,7 @@ function StopItem({ stop }: { stop: RouteRunStop }) {
     : null;
 
   return (
-    <li
+    <div
       className={cn(
         "rounded-lg border transition-colors",
         stop.status === "IN_PROGRESS"
@@ -59,36 +113,47 @@ function StopItem({ stop }: { stop: RouteRunStop }) {
       )}
     >
       {/* Header row */}
-      <button
-        className="flex w-full items-start gap-3 p-3 text-left"
-        onClick={() => setExpanded((v) => !v)}
-      >
-        <StopIcon status={stop.status} />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs font-bold text-navy/40">#{stop.stopNumber}</span>
-            <span className="font-medium text-navy truncate">
-              {stop.customer?.businessName ?? stop.customerId}
-            </span>
-            {stop.status === "IN_PROGRESS" && (
-              <span className="ml-auto shrink-0 rounded-full bg-brand-500 px-2 py-0.5 text-[10px] font-bold text-white">
-                CURRENT
+      <div className="flex items-start gap-2 p-3">
+        {dragHandleProps && (
+          <button
+            {...dragHandleProps}
+            className="mt-0.5 cursor-grab touch-none text-navy/25 hover:text-navy/50 active:cursor-grabbing"
+            aria-label="Drag to reorder"
+          >
+            <GripVertical className="h-4 w-4" />
+          </button>
+        )}
+        <button
+          className="flex flex-1 items-start gap-3 text-left"
+          onClick={() => setExpanded((v) => !v)}
+        >
+          <StopIcon status={stop.status} />
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-bold text-navy/40">#{stop.stopNumber}</span>
+              <span className="font-medium text-navy truncate">
+                {stop.customer?.businessName ?? stop.customerId}
               </span>
+              {stop.status === "IN_PROGRESS" && (
+                <span className="ml-auto shrink-0 rounded-full bg-brand-500 px-2 py-0.5 text-[10px] font-bold text-white">
+                  CURRENT
+                </span>
+              )}
+            </div>
+            {addressLine && (
+              <p className="mt-0.5 truncate text-xs text-navy/50">{addressLine}</p>
+            )}
+            {completedAt && (
+              <p className="mt-0.5 text-xs text-success/80">Completed {completedAt}</p>
             )}
           </div>
-          {addressLine && (
-            <p className="mt-0.5 truncate text-xs text-navy/50">{addressLine}</p>
+          {expanded ? (
+            <ChevronDown className="h-4 w-4 shrink-0 text-navy/30" />
+          ) : (
+            <ChevronRight className="h-4 w-4 shrink-0 text-navy/30" />
           )}
-          {completedAt && (
-            <p className="mt-0.5 text-xs text-success/80">Completed {completedAt}</p>
-          )}
-        </div>
-        {expanded ? (
-          <ChevronDown className="h-4 w-4 shrink-0 text-navy/30" />
-        ) : (
-          <ChevronRight className="h-4 w-4 shrink-0 text-navy/30" />
-        )}
-      </button>
+        </button>
+      </div>
 
       {/* Expanded detail */}
       {expanded && (
@@ -121,7 +186,7 @@ function StopItem({ stop }: { stop: RouteRunStop }) {
           )}
         </div>
       )}
-    </li>
+    </div>
   );
 }
 
@@ -133,8 +198,43 @@ export default function RouteRunDetailPage({ params }: { params: { id: string } 
   const { toast } = useToast();
   const { data: run, isLoading, isError } = useRouteRun(params.id);
   const { mutate: optimizeRoute, isPending: isOptimizing } = useOptimizeRoute();
+  const { mutate: reorderRunStops } = useReorderRunStops();
 
   const isOperator = user?.role === "OPERATOR";
+
+  // Local stops state for optimistic DnD reordering
+  const [localStops, setLocalStops] = React.useState<RouteRunStop[]>([]);
+  React.useEffect(() => {
+    if (run?.stops) setLocalStops(run.stops);
+  }, [run?.stops]);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+
+    const oldIndex = localStops.findIndex((s) => s.id === active.id);
+    const newIndex = localStops.findIndex((s) => s.id === over.id);
+    const reordered = arrayMove(localStops, oldIndex, newIndex).map((s, i) => ({
+      ...s,
+      stopNumber: i + 1,
+    }));
+    setLocalStops(reordered);
+
+    reorderRunStops(
+      { runId: params.id, order: reordered.map((s) => ({ id: s.id, stopNumber: s.stopNumber })) },
+      {
+        onError: (err) => {
+          setLocalStops(run?.stops ?? []);
+          toast({ title: "Reorder failed", description: err.message, variant: "error" });
+        },
+      },
+    );
+  };
 
   const handleOptimize = () => {
     optimizeRoute(params.id, {
@@ -182,13 +282,16 @@ export default function RouteRunDetailPage({ params }: { params: { id: string } 
     );
   }
 
-  const stops = run.stops ?? [];
+  const stops = localStops.length ? localStops : (run.stops ?? []);
   const stopsDone = stops.filter((s) => s.status === "COMPLETED" || s.status === "SKIPPED").length;
   const total = stops.length;
   const driverName = run.driver?.contactName ?? "Unassigned";
   const startTime = run.startedAt
     ? new Date(run.startedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
     : null;
+
+  // Only allow reordering when the run is still SCHEDULED
+  const canReorder = isOperator && run.status === "SCHEDULED";
 
   return (
     <div className="flex h-[calc(100vh-64px)] flex-col overflow-hidden">
@@ -253,14 +356,32 @@ export default function RouteRunDetailPage({ params }: { params: { id: string } 
         <div className="flex w-[40%] shrink-0 flex-col overflow-hidden border-r border-surface-border">
           <div className="shrink-0 border-b border-surface-border bg-surface-raised px-4 py-2.5">
             <p className="text-xs font-semibold uppercase tracking-wider text-navy/50">
-              Stops ({total})
+              Stops ({total}){canReorder && <span className="ml-1 font-normal normal-case">· drag to reorder</span>}
             </p>
           </div>
-          <ul className="flex-1 space-y-2 overflow-y-auto p-4">
-            {stops.map((stop) => (
-              <StopItem key={stop.id} stop={stop} />
-            ))}
-          </ul>
+          {canReorder ? (
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={handleDragEnd}
+            >
+              <SortableContext items={stops.map((s) => s.id)} strategy={verticalListSortingStrategy}>
+                <ul className="flex-1 space-y-2 overflow-y-auto p-4">
+                  {stops.map((stop) => (
+                    <SortableStopItem key={stop.id} stop={stop} draggable={true} />
+                  ))}
+                </ul>
+              </SortableContext>
+            </DndContext>
+          ) : (
+            <ul className="flex-1 space-y-2 overflow-y-auto p-4">
+              {stops.map((stop) => (
+                <li key={stop.id}>
+                  <StopItem stop={stop} />
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
 
         {/* ── Right: Map (60%) ── */}
