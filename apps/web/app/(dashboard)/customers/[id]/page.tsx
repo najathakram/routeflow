@@ -12,6 +12,7 @@ import {
   Mail,
   Phone,
   FileText,
+  Route,
 } from "lucide-react";
 import {
   Badge,
@@ -29,9 +30,11 @@ import { CustomerFormModal } from "../_components/CustomerFormModal";
 import {
   useCustomer,
   useCustomerOrders,
+  useCustomerRoutes,
   useUpdateCustomerStatus,
   useAddCustomerAddress,
 } from "@/lib/api/customers";
+import { useRoutes, useAddStopToRoute } from "@/lib/api/routes";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -215,6 +218,121 @@ function AddAddressModal({
   );
 }
 
+// ─── Assign Route Modal ───────────────────────────────────────────────────────
+
+function AssignRouteModal({
+  isOpen,
+  onClose,
+  customerId,
+  addresses,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  customerId: string;
+  addresses: { id: string; label: string; line1: string; city: string }[];
+}) {
+  const { data: routesData, isLoading: routesLoading } = useRoutes({ isActive: true, page: 1 });
+  const addStop = useAddStopToRoute();
+  const [routeId, setRouteId] = React.useState("");
+  const [addressId, setAddressId] = React.useState("");
+  const [notes, setNotes] = React.useState("");
+  const [error, setError] = React.useState<string | null>(null);
+
+  // Reset state when modal opens
+  React.useEffect(() => {
+    if (isOpen) {
+      setRouteId("");
+      setAddressId(addresses[0]?.id ?? "");
+      setNotes("");
+      setError(null);
+    }
+  }, [isOpen, addresses]);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!routeId) { setError("Please select a route."); return; }
+    setError(null);
+    addStop.mutate(
+      { routeId, customerId, customerAddressId: addressId || undefined, notes: notes || undefined },
+      {
+        onSuccess: () => onClose(),
+        onError: (err: any) => setError(err?.response?.data?.message ?? err.message ?? "Failed to assign route."),
+      },
+    );
+  };
+
+  const routeOptions = routesData?.data ?? [];
+
+  return (
+    <Modal
+      open={isOpen}
+      onClose={onClose}
+      title="Assign to Route"
+      description="Add this customer as a stop on a route."
+      footer={
+        <>
+          <Button variant="secondary" type="button" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" form="assign-route-form" loading={addStop.isPending}>
+            Assign
+          </Button>
+        </>
+      }
+    >
+      <form id="assign-route-form" onSubmit={handleSubmit} noValidate>
+        <div className="space-y-4">
+          {routesLoading ? (
+            <p className="text-sm text-navy/40">Loading routes…</p>
+          ) : (
+            <div>
+              <label className="mb-1 block text-sm font-medium text-navy">Route</label>
+              <select
+                value={routeId}
+                onChange={(e) => setRouteId(e.target.value)}
+                className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+              >
+                <option value="">Select a route…</option>
+                {routeOptions.map((r) => (
+                  <option key={r.id} value={r.id}>{r.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+          {addresses.length > 0 && (
+            <div>
+              <label className="mb-1 block text-sm font-medium text-navy">Delivery Address</label>
+              <select
+                value={addressId}
+                onChange={(e) => setAddressId(e.target.value)}
+                className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+              >
+                <option value="">No specific address</option>
+                {addresses.map((a) => (
+                  <option key={a.id} value={a.id}>{a.label} — {a.line1}, {a.city}</option>
+                ))}
+              </select>
+            </div>
+          )}
+          <div>
+            <label className="mb-1 block text-sm font-medium text-navy">
+              Stop Notes <span className="text-navy/40 font-normal">(optional)</span>
+            </label>
+            <input
+              type="text"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="e.g. Leave at back door"
+              className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+            />
+          </div>
+          {error && <p className="text-sm text-danger">{error}</p>}
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 const STATUS_CYCLE = ["ACTIVE", "INACTIVE", "SUSPENDED"] as const;
@@ -229,6 +347,7 @@ export default function CustomerDetailPage({
 
   const { data: customer, isLoading } = useCustomer(params.id);
   const { data: ordersResult } = useCustomerOrders(params.id);
+  const { data: customerRoutes } = useCustomerRoutes(params.id);
   const updateStatus = useUpdateCustomerStatus();
   const addAddress = useAddCustomerAddress();
 
@@ -243,6 +362,7 @@ export default function CustomerDetailPage({
 
   const [isEditOpen, setIsEditOpen] = React.useState(false);
   const [isAddAddressOpen, setIsAddAddressOpen] = React.useState(false);
+  const [isAssignRouteOpen, setIsAssignRouteOpen] = React.useState(false);
   const [orderStatusFilter, setOrderStatusFilter] = React.useState("");
 
   if (isLoading) {
@@ -342,9 +462,43 @@ export default function CustomerDetailPage({
                 </div>
               </Card>
 
-              {/* Assigned routes — not available from API yet */}
+              {/* Assigned routes */}
               <Card title="Assigned Routes">
-                <p className="text-sm text-navy/40">No routes data available.</p>
+                <div className="space-y-3">
+                  {(customerRoutes ?? []).length === 0 ? (
+                    <p className="text-sm text-navy/40">Not assigned to any routes yet.</p>
+                  ) : (
+                    <ul className="divide-y divide-surface-border -mx-6">
+                      {(customerRoutes as any[]).map((r) => (
+                        <li key={r.id} className="flex items-center gap-3 px-6 py-3">
+                          <Route className="h-4 w-4 shrink-0 text-navy/40" />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-navy">{r.name}</p>
+                            {r.driverName && (
+                              <p className="text-xs text-navy/50">Driver: {r.driverName}</p>
+                            )}
+                          </div>
+                          <span className={cn(
+                            "shrink-0 rounded-full px-2 py-0.5 text-xs font-medium",
+                            r.isActive
+                              ? "bg-success-bg text-success"
+                              : "bg-surface-raised text-navy/50",
+                          )}>
+                            {r.isActive ? "Active" : "Inactive"}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    leftIcon={<Plus className="h-4 w-4" />}
+                    onClick={() => setIsAssignRouteOpen(true)}
+                  >
+                    Assign to Route
+                  </Button>
+                </div>
               </Card>
             </div>
 
@@ -477,6 +631,17 @@ export default function CustomerDetailPage({
         onClose={() => setIsAddAddressOpen(false)}
         onSave={handleSaveAddress}
         isSaving={addAddress.isPending}
+      />
+      <AssignRouteModal
+        isOpen={isAssignRouteOpen}
+        onClose={() => setIsAssignRouteOpen(false)}
+        customerId={params.id}
+        addresses={addresses.map((a: any) => ({
+          id: a.id,
+          label: a.label ?? "Address",
+          line1: a.line1,
+          city: a.city,
+        }))}
       />
     </div>
   );

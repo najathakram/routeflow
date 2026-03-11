@@ -50,6 +50,12 @@ export class CustomersController {
     return this.customersService.changeStatus(id, dto);
   }
 
+  @Get(":id/routes")
+  @Roles(UserRole.OPERATOR)
+  findRoutes(@Param("id") id: string) {
+    return this.customersService.findRoutes(id);
+  }
+
   @Get(":id/orders")
   findOrders(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
     return this.customersService.findOrders(id, user);

@@ -66,6 +66,22 @@ export function useCreateRoute() {
   });
 }
 
+export function useAddStopToRoute() {
+  const qc = useQueryClient();
+  return useMutation<
+    { id: string },
+    Error,
+    { routeId: string; customerId: string; customerAddressId?: string; notes?: string }
+  >({
+    mutationFn: ({ routeId, ...dto }) =>
+      apiClient.post(`/routes/${routeId}/stops`, dto).then((r) => r.data),
+    onSuccess: (_, vars) => {
+      qc.invalidateQueries({ queryKey: ['routes', vars.routeId] });
+      qc.invalidateQueries({ queryKey: ['customers'] });
+    },
+  });
+}
+
 // Route Runs
 export function useRouteRuns(params?: { status?: string; date?: string; assignedToMe?: boolean; page?: number }) {
   return useQuery<PaginatedResponse<RouteRun>>({

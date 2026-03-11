@@ -145,6 +145,40 @@ export class CustomersService {
     });
   }
 
+  async findRoutes(id: string) {
+    await this.findCustomerOrThrow(id);
+    const stops = await this.prisma.routeStop.findMany({
+      where: { customerId: id },
+      include: {
+        route: {
+          include: {
+            driver: { select: { id: true, contactName: true, user: { select: { username: true } } } },
+          },
+        },
+        customerAddress: { select: { id: true, label: true, line1: true, city: true } },
+      },
+      orderBy: { route: { name: "asc" } },
+    });
+
+    // Deduplicate by routeId — keep the first stop per route
+    const seen = new Set<string>();
+    return stops
+      .filter((s) => {
+        if (seen.has(s.routeId)) return false;
+        seen.add(s.routeId);
+        return true;
+      })
+      .map((s) => ({
+        id: s.route.id,
+        name: s.route.name,
+        isActive: s.route.isActive,
+        stopNumber: s.stopNumber,
+        stopId: s.id,
+        addressLabel: s.customerAddress?.label ?? null,
+        driverName: s.route.driver?.contactName ?? s.route.driver?.user?.username ?? null,
+      }));
+  }
+
   async findOrders(id: string, user: JwtPayload) {
     const customer = await this.findCustomerOrThrow(id);
     if (user.role !== UserRole.OPERATOR && customer.userId !== user.sub) {

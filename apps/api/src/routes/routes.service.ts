@@ -68,12 +68,23 @@ export class RoutesService {
 
   async addStop(routeId: string, dto: AddStopDto) {
     await this.findRouteOrThrow(routeId);
+
+    let stopNumber = dto.stopNumber;
+    if (stopNumber === undefined) {
+      const last = await this.prisma.routeStop.findFirst({
+        where: { routeId },
+        orderBy: { stopNumber: "desc" },
+        select: { stopNumber: true },
+      });
+      stopNumber = (last?.stopNumber ?? 0) + 1;
+    }
+
     return this.prisma.routeStop.create({
       data: {
         routeId,
         customerId: dto.customerId,
         customerAddressId: dto.customerAddressId,
-        stopNumber: dto.stopNumber,
+        stopNumber,
         notes: dto.notes,
       },
     });
