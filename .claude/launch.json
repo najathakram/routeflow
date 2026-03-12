@@ -19,7 +19,8 @@
     {
       "name": "mobile",
       "runtimeExecutable": "node",
-      "runtimeArgs": ["C:/Program Files/nodejs/node_modules/npm/bin/npm-cli.js", "run", "dev", "--prefix", "apps/mobile"],
+      "runtimeArgs": ["C:/ClaudeCode/routeflow/.claude/worktrees/eloquent-cori/node_modules/expo/bin/cli", "start", "--web", "--port", "8081"],
+      "cwd": "C:/ClaudeCode/routeflow/.claude/worktrees/eloquent-cori/apps/mobile",
       "port": 8081
     }
   ]
