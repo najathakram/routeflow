@@ -10,6 +10,7 @@ import { UserRole } from "@prisma/client";
 import { ListOrdersDto } from "./dto/list-orders.dto";
 import { CreateOrderDto } from "./dto/create-order.dto";
 import { ChangeOrderStatusDto } from "./dto/change-order-status.dto";
+import { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
 import { CompleteStopDto } from "./dto/complete-stop.dto";
 
 @ApiTags("orders")
@@ -45,6 +46,13 @@ export class OrdersController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.ordersService.changeStatus(id, dto, user);
+  }
+
+  @Patch(":id/items")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR)
+  updateOrderItems(@Param("id") id: string, @Body() dto: UpdateOrderItemsDto) {
+    return this.ordersService.updateOrderItems(id, dto);
   }
 
   @Patch(":id/urgent")

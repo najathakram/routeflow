@@ -1,6 +1,19 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 
+export interface Customer {
+  id: string;
+  businessName: string;
+  contactName: string;
+  phone?: string;
+  notes?: string;
+  fulfillPath: string;
+  deliveryWindowStart?: string;
+  deliveryWindowEnd?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export function useCustomers(params?: { search?: string; status?: string; page?: number }) {
   return useQuery({
     queryKey: ["customers", params],

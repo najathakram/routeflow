@@ -16,6 +16,7 @@ import {
   X,
   Save,
   MapPin,
+  Clock,
 } from "lucide-react";
 import { Badge, Button, cn, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
@@ -197,7 +198,7 @@ function RequiredStopCard({ stop }: { stop: RunPackingStop }) {
               {stop.customerAddress.state}
             </p>
           )}
-          <div className="mt-1.5 flex items-center gap-2">
+          <div className="mt-1.5 flex flex-wrap items-center gap-2">
             <span className="inline-flex items-center gap-1 rounded-full bg-brand-100 px-2 py-0.5 text-[11px] font-semibold text-brand-700">
               <CheckCircle2 className="h-3 w-3" />
               {stop.orders.length} order{stop.orders.length !== 1 ? "s" : ""}
@@ -205,6 +206,12 @@ function RequiredStopCard({ stop }: { stop: RunPackingStop }) {
             <span className="text-xs text-navy/50">
               {totalItems % 1 === 0 ? totalItems : totalItems.toFixed(2)} items to deliver
             </span>
+            {stop.customer?.deliveryWindowStart && stop.customer?.deliveryWindowEnd && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
+                <Clock className="h-3 w-3" />
+                {stop.customer.deliveryWindowStart}–{stop.customer.deliveryWindowEnd}
+              </span>
+            )}
           </div>
         </div>
         {expanded ? (

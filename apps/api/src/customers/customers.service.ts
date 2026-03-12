@@ -134,6 +134,8 @@ export class CustomersService {
         ...(dto.phone !== undefined && { phone: dto.phone }),
         ...(dto.notes !== undefined && { notes: dto.notes }),
         ...(dto.fulfillPath && { fulfillPath: dto.fulfillPath }),
+        ...(dto.deliveryWindowStart !== undefined && { deliveryWindowStart: dto.deliveryWindowStart || null }),
+        ...(dto.deliveryWindowEnd !== undefined && { deliveryWindowEnd: dto.deliveryWindowEnd || null }),
       },
     });
   }

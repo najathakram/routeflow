@@ -110,6 +110,7 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
       setDebouncedProductSearch("");
       setLineItems([]);
       setLineItemsError("");
+      setRequestedDeliveryDate("");
       createOrder.reset();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -157,6 +158,8 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
 
   // ── Submit ────────────────────────────────────────────────────────────────
 
+  const [requestedDeliveryDate, setRequestedDeliveryDate] = React.useState("");
+
   const onSubmit = (data: FormValues) => {
     let hasErrors = false;
     if (!selectedCustomer) {
@@ -175,6 +178,7 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
         items: lineItems.map((li) => ({ productId: li.productId, qty: li.qty })),
         notes: data.notes,
         urgent: data.urgent,
+        requestedDeliveryDate: requestedDeliveryDate || undefined,
       },
       {
         onSuccess: () => {
@@ -422,6 +426,20 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
           {/* ── Options ── */}
           <section className="space-y-3">
             <p className="text-xs font-semibold uppercase tracking-wider text-navy/40">Options</p>
+
+            {/* Requested Delivery Date */}
+            <div className="space-y-1">
+              <label className="block text-xs font-medium text-navy/60">
+                Requested Delivery Date{" "}
+                <span className="font-normal text-navy/40">(optional)</span>
+              </label>
+              <input
+                type="date"
+                value={requestedDeliveryDate}
+                onChange={(e) => setRequestedDeliveryDate(e.target.value)}
+                className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+              />
+            </div>
 
             <Textarea
               label="Notes"

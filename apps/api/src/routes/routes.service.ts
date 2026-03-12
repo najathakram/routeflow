@@ -436,7 +436,7 @@ export class RoutesService {
       include: {
         stops: {
           include: {
-            customer: { select: { id: true, businessName: true } },
+            customer: { select: { id: true, businessName: true, deliveryWindowStart: true, deliveryWindowEnd: true } },
             customerAddress: true,
             orders: {
               where: { status: { notIn: [OrderStatus.CANCELLED, OrderStatus.DELIVERED] } },

@@ -12,6 +12,8 @@ export interface Order {
   tax: number;
   total: number;
   notes?: string;
+  requestedDeliveryDate?: string;
+  templateId?: string;
   lineItems: OrderItem[];
   createdAt: string;
 }
@@ -31,7 +33,7 @@ interface PaginatedResponse<T> {
   meta: { total: number; page: number; limit: number; totalPages: number };
 }
 
-export function useOrders(params?: { customerId?: string; status?: string; urgent?: boolean; page?: number; limit?: number }) {
+export function useOrders(params?: { customerId?: string; status?: string; urgent?: boolean; page?: number; limit?: number; deliveryDateFrom?: string; deliveryDateTo?: string }) {
   return useQuery<PaginatedResponse<Order>>({
     queryKey: ['orders', params],
     queryFn: () => apiClient.get('/orders', { params }).then((r) => r.data),
@@ -48,7 +50,7 @@ export function useOrder(id: string) {
 
 export function useCreateOrder() {
   const qc = useQueryClient();
-  return useMutation<Order, Error, { customerId: string; items: { productId: string; qty: number; notes?: string }[]; notes?: string; urgent?: boolean }>({
+  return useMutation<Order, Error, { customerId: string; items: { productId: string; qty: number; notes?: string }[]; notes?: string; urgent?: boolean; requestedDeliveryDate?: string }>({
     mutationFn: (dto) => apiClient.post('/orders', dto).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['orders'] }),
   });
@@ -56,12 +58,32 @@ export function useCreateOrder() {
 
 export function useUpdateOrderStatus() {
   const qc = useQueryClient();
-  return useMutation<Order, Error, { id: string; status: string }>({
-    mutationFn: ({ id, status }) =>
-      apiClient.patch(`/orders/${id}/status`, { status }).then((r) => r.data),
+  return useMutation<Order, Error, { id: string; status: string; reason?: string }>({
+    mutationFn: ({ id, status, reason }) =>
+      apiClient.patch(`/orders/${id}/status`, { status, reason }).then((r) => r.data),
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ['orders'] });
       qc.invalidateQueries({ queryKey: ['orders', id] });
+    },
+  });
+}
+
+export interface ItemUpdate {
+  id: string;
+  action?: 'CANCEL' | 'UPDATE';
+  qty?: number;
+  substituteProductId?: string;
+  notes?: string;
+}
+
+export function useUpdateOrderItems() {
+  const qc = useQueryClient();
+  return useMutation<Order, Error, { id: string; items: ItemUpdate[]; orderNotes?: string }>({
+    mutationFn: ({ id, items, orderNotes }) =>
+      apiClient.patch<Order>(`/orders/${id}/items`, { items, orderNotes }).then((r) => r.data),
+    onSuccess: (data) => {
+      qc.setQueryData(['orders', data.id], data);
+      qc.invalidateQueries({ queryKey: ['orders'] });
     },
   });
 }

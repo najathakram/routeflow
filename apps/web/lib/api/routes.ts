@@ -255,7 +255,7 @@ export interface RunPackingStop {
   id: string;
   stopNumber: number;
   customerId: string | null;
-  customer?: { id: string; businessName: string } | null;
+  customer?: { id: string; businessName: string; deliveryWindowStart?: string | null; deliveryWindowEnd?: string | null } | null;
   customerAddress?: { line1: string; city: string; state: string; lat?: number; lng?: number } | null;
   status: 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'SKIPPED';
   driverNote?: string | null;

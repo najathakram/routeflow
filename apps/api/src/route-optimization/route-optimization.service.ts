@@ -10,6 +10,14 @@ interface StopWithCoords {
   customerName: string;
   lat: number;
   lng: number;
+  deliveryWindowStart?: string | null;
+  deliveryWindowEnd?: string | null;
+}
+
+/** Convert "HH:mm" (24h) to seconds from midnight */
+function timeToSec(t: string): number {
+  const [h, m] = t.split(":").map(Number);
+  return h * 3600 + m * 60;
 }
 
 export interface OptimizeResult {
@@ -37,7 +45,7 @@ export class RouteOptimizationService {
           include: {
             routeStop: {
               include: {
-                customer: { select: { id: true, businessName: true } },
+                customer: { select: { id: true, businessName: true, deliveryWindowStart: true, deliveryWindowEnd: true } },
                 customerAddress: true,
               },
             },
@@ -84,6 +92,8 @@ export class RouteOptimizationService {
       customerName: s.routeStop.customer?.businessName ?? s.id,
       lat: s.routeStop.customerAddress!.lat!,
       lng: s.routeStop.customerAddress!.lng!,
+      deliveryWindowStart: s.routeStop.customer?.deliveryWindowStart,
+      deliveryWindowEnd: s.routeStop.customer?.deliveryWindowEnd,
     }));
 
     let optimizedIds: string[];
@@ -145,6 +155,9 @@ export class RouteOptimizationService {
       jobs: stops.map((s, i) => ({
         id: i + 1,
         location: [s.lng, s.lat],
+        ...(s.deliveryWindowStart && s.deliveryWindowEnd
+          ? { time_windows: [[timeToSec(s.deliveryWindowStart), timeToSec(s.deliveryWindowEnd)]] }
+          : {}),
       })),
     };
 

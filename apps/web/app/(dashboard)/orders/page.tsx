@@ -38,18 +38,16 @@ export default function OrdersPage() {
   const { data, isLoading, isError } = useOrders({
     status: statusFilter || undefined,
     urgent: urgentOnly || undefined,
+    deliveryDateFrom: dateFrom || undefined,
+    deliveryDateTo: dateTo || undefined,
   });
 
   const orders = data?.data ?? [];
 
   const filtered = React.useMemo(() => {
     const q = customerSearch.toLowerCase();
-    const fromMs = dateFrom ? new Date(dateFrom).setHours(0, 0, 0, 0) : null;
-    const toMs = dateTo ? new Date(dateTo).setHours(23, 59, 59, 999) : null;
     const list = orders.filter((o) => {
-      if (q && !o.customer?.businessName?.toLowerCase().includes(q) && !o.orderNumber.toLowerCase().includes(q)) return false;
-      if (fromMs !== null && new Date(o.createdAt).getTime() < fromMs) return false;
-      if (toMs !== null && new Date(o.createdAt).getTime() > toMs) return false;
+      if (q && !o.customer?.businessName?.toLowerCase().includes(q) && !o.orderNumber?.toLowerCase().includes(q)) return false;
       return true;
     });
     // Urgent orders float to top
@@ -106,15 +104,16 @@ export default function OrdersPage() {
           )}
         </button>
 
-        {/* Date range */}
+        {/* Delivery date range filter */}
         <div className="flex items-center gap-1.5">
           <Calendar className="h-4 w-4 text-navy/40" />
+          <span className="text-xs text-navy/50 font-medium">Delivery:</span>
           <input
             type="date"
             value={dateFrom}
             onChange={(e) => setDateFrom(e.target.value)}
             className="h-10 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-            title="From date"
+            title="Delivery date from"
           />
           <span className="text-navy/40">–</span>
           <input
@@ -123,7 +122,7 @@ export default function OrdersPage() {
             onChange={(e) => setDateTo(e.target.value)}
             min={dateFrom || undefined}
             className="h-10 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-            title="To date"
+            title="Delivery date to"
           />
           {(dateFrom || dateTo) && (
             <button
@@ -148,6 +147,7 @@ export default function OrdersPage() {
               <th className="px-4 py-3 text-left text-xs font-medium text-navy/60">Items</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-navy/60">Total</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-navy/60">Status</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60">Delivery Date</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-navy/60">Created</th>
               <th className="w-10 px-3 py-3" />
             </tr>
@@ -155,19 +155,19 @@ export default function OrdersPage() {
           <tbody className="divide-y divide-surface-border bg-white">
             {isLoading ? (
               <tr>
-                <td colSpan={8} className="px-4 py-12 text-center">
+                <td colSpan={9} className="px-4 py-12 text-center">
                   <Loader2 className="mx-auto h-6 w-6 animate-spin text-navy/40" />
                 </td>
               </tr>
             ) : isError ? (
               <tr>
-                <td colSpan={8} className="px-4 py-12 text-center text-sm text-danger">
+                <td colSpan={9} className="px-4 py-12 text-center text-sm text-danger">
                   Failed to load orders. Please try again.
                 </td>
               </tr>
             ) : filtered.length === 0 ? (
               <tr>
-                <td colSpan={8} className="px-4 py-12 text-center text-sm text-navy/40">
+                <td colSpan={9} className="px-4 py-12 text-center text-sm text-navy/40">
                   No orders match your filters.{" "}
                   <button
                     className="text-brand-500 hover:underline"
@@ -204,6 +204,15 @@ export default function OrdersPage() {
                   </td>
                   <td className="px-4 py-3">
                     <Badge status={order.status} />
+                  </td>
+                  <td className="px-4 py-3 text-sm">
+                    {order.requestedDeliveryDate ? (
+                      <span className="font-medium text-navy">
+                        {(() => { const [y,m,d] = order.requestedDeliveryDate.split('T')[0].split('-').map(Number); return new Date(y, m-1, d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }); })()}
+                      </span>
+                    ) : (
+                      <span className="text-navy/30">—</span>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-sm text-navy/60">
                     {new Date(order.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}

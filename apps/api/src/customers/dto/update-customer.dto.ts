@@ -7,4 +7,6 @@ export class UpdateCustomerDto {
   @IsOptional() @IsString() phone?: string;
   @IsOptional() @IsString() notes?: string;
   @IsOptional() @IsEnum(FulfillPath) fulfillPath?: FulfillPath;
+  @IsOptional() @IsString() deliveryWindowStart?: string;
+  @IsOptional() @IsString() deliveryWindowEnd?: string;
 }

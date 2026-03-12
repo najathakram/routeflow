@@ -12,6 +12,7 @@ import { OrderStatus, UserRole, ItemStatus, TxnStatus, MutationType } from "@pri
 import { ListOrdersDto } from "./dto/list-orders.dto";
 import { CreateOrderDto } from "./dto/create-order.dto";
 import { ChangeOrderStatusDto } from "./dto/change-order-status.dto";
+import { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
 import { CompleteStopDto } from "./dto/complete-stop.dto";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { ConfigService } from "@nestjs/config";
@@ -30,7 +31,7 @@ export class OrdersService {
   }
 
   async findAll(query: ListOrdersDto, user: JwtPayload) {
-    const { customerId, status, urgent, page = 1, limit = 20 } = query;
+    const { customerId, status, urgent, page = 1, limit = 20, deliveryDateFrom, deliveryDateTo } = query;
     const skip = (page - 1) * limit;
     const where: any = {};
 
@@ -44,6 +45,12 @@ export class OrdersService {
 
     if (status) where.status = status;
     if (urgent !== undefined) where.urgent = urgent;
+    if (deliveryDateFrom || deliveryDateTo) {
+      where.requestedDeliveryDate = {
+        ...(deliveryDateFrom ? { gte: new Date(deliveryDateFrom) } : {}),
+        ...(deliveryDateTo ? { lte: new Date(deliveryDateTo) } : {}),
+      };
+    }
 
     const [data, total] = await Promise.all([
       this.prisma.order.findMany({
@@ -132,6 +139,7 @@ export class OrdersService {
         total,
         notes: dto.notes,
         urgent: dto.urgent ?? false,
+        requestedDeliveryDate: dto.requestedDeliveryDate ? new Date(dto.requestedDeliveryDate) : undefined,
         lineItems: { create: lineItemsData },
       },
       include: {
@@ -143,8 +151,109 @@ export class OrdersService {
   async changeStatus(id: string, dto: ChangeOrderStatusDto, user: JwtPayload) {
     if (user.role !== UserRole.OPERATOR)
       throw new ForbiddenException("Only operators can change order status");
-    await this.findOneOrThrow(id);
-    return this.prisma.order.update({ where: { id }, data: { status: dto.status } });
+
+    const order = await this.findOneOrThrow(id);
+
+    const allowed: Record<string, string[]> = {
+      PENDING:          ["CONFIRMED", "CANCELLED"],
+      CONFIRMED:        ["OUT_FOR_DELIVERY", "PENDING", "CANCELLED"],
+      OUT_FOR_DELIVERY: ["DELIVERED", "CONFIRMED", "CANCELLED"],
+      DELIVERED:        ["CONFIRMED"],
+    };
+    if (!(allowed[order.status] ?? []).includes(dto.status)) {
+      throw new BadRequestException(
+        `Cannot transition from ${order.status} to ${dto.status}`,
+      );
+    }
+
+    const noteAppend = dto.reason
+      ? `\n[${new Date().toLocaleDateString()} – status changed to ${dto.status}: ${dto.reason}]`
+      : undefined;
+
+    return this.prisma.order.update({
+      where: { id },
+      data: {
+        status: dto.status,
+        ...(noteAppend ? { notes: (order.notes ?? "") + noteAppend } : {}),
+      },
+    });
+  }
+
+  async updateOrderItems(orderId: string, dto: UpdateOrderItemsDto) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: { lineItems: true },
+    });
+    if (!order) throw new NotFoundException("Order not found");
+    if (!["PENDING", "CONFIRMED"].includes(order.status)) {
+      throw new BadRequestException(
+        "Items can only be edited on PENDING or CONFIRMED orders",
+      );
+    }
+
+    for (const item of dto.items) {
+      if (item.action === "CANCEL") {
+        await this.prisma.orderItem.update({
+          where: { id: item.id },
+          data: { status: "CANCELLED", qty: 0, subtotal: 0 },
+        });
+      } else if (item.substituteProductId) {
+        const product = await this.prisma.product.findUniqueOrThrow({
+          where: { id: item.substituteProductId },
+        });
+        const existingQty = order.lineItems.find((li) => li.id === item.id)?.qty ?? 1;
+        const qtyVal = item.qty ?? Number(existingQty);
+        const unitPrice = Number(product.pricePerUnit);
+        await this.prisma.orderItem.update({
+          where: { id: item.id },
+          data: {
+            productId: item.substituteProductId,
+            unitPrice,
+            qty: qtyVal,
+            subtotal: qtyVal * unitPrice,
+            status: "PENDING",
+            notes: item.notes,
+          },
+        });
+      } else if (item.qty !== undefined) {
+        const li = order.lineItems.find((li) => li.id === item.id);
+        if (!li) continue;
+        const unitPrice = Number(li.unitPrice);
+        await this.prisma.orderItem.update({
+          where: { id: item.id },
+          data: {
+            qty: item.qty,
+            subtotal: item.qty * unitPrice,
+            ...(item.notes !== undefined ? { notes: item.notes } : {}),
+          },
+        });
+      }
+    }
+
+    // Recalculate order totals from all non-cancelled items
+    const activeItems = await this.prisma.orderItem.findMany({
+      where: { orderId, status: { not: "CANCELLED" } },
+    });
+    const subtotal = activeItems.reduce((s, li) => s + Number(li.subtotal), 0);
+    const tax = subtotal * this.taxRate;
+    await this.prisma.order.update({
+      where: { id: orderId },
+      data: {
+        subtotal,
+        tax,
+        total: subtotal + tax,
+        ...(dto.orderNotes !== undefined ? { notes: dto.orderNotes } : {}),
+      },
+    });
+
+    return this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: {
+        customer: { select: { id: true, businessName: true, contactName: true } },
+        lineItems: { include: { product: { select: { id: true, name: true, unit: true } } } },
+        transaction: true,
+      },
+    });
   }
 
   async toggleUrgent(id: string, user: JwtPayload) {

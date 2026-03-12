@@ -24,7 +24,7 @@ import {
   Trash2,
 } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { cn, Avatar } from "@routeflow/ui/web";
+import { cn, Avatar, ToastProvider } from "@routeflow/ui/web";
 import { useAuth } from "@/lib/auth-context";
 import { PageTitleProvider, usePageTitle } from "@/lib/page-title-context";
 import { useRealtimeUpdates } from "@/lib/hooks/useRealtimeUpdates";
@@ -368,10 +368,12 @@ export default function DashboardLayout({
   children: React.ReactNode;
 }) {
   return (
-    <PageTitleProvider>
-      <AuthGuard>
-        <DashboardShell>{children}</DashboardShell>
-      </AuthGuard>
-    </PageTitleProvider>
+    <ToastProvider>
+      <PageTitleProvider>
+        <AuthGuard>
+          <DashboardShell>{children}</DashboardShell>
+        </AuthGuard>
+      </PageTitleProvider>
+    </ToastProvider>
   );
 }
