@@ -366,6 +366,49 @@ export class RoutesService {
     return run;
   }
 
+  async updateRun(id: string, dto: { driverId?: string | null; scheduledDate?: string; notes?: string }) {
+    const run = await this.prisma.routeRun.findUnique({ where: { id } });
+    if (!run) throw new NotFoundException("Route run not found");
+    const data: any = {};
+    if (dto.driverId !== undefined) data.driverId = dto.driverId;
+    if (dto.scheduledDate) data.scheduledDate = new Date(dto.scheduledDate);
+    if (dto.notes !== undefined) data.notes = dto.notes;
+    return this.prisma.routeRun.update({ where: { id }, data });
+  }
+
+  async deleteRun(id: string) {
+    const run = await this.prisma.routeRun.findUnique({
+      where: { id },
+      include: { stops: { select: { id: true } } },
+    });
+    if (!run) throw new NotFoundException("Route run not found");
+
+    const stopIds = run.stops.map((s) => s.id);
+
+    // 1. Unlink orders from run and stops
+    await this.prisma.order.updateMany({
+      where: { routeRunId: id },
+      data: { routeRunId: null, routeRunStopId: null },
+    });
+
+    if (stopIds.length > 0) {
+      // 2. Unlink delivery mutations referencing these stops
+      await this.prisma.deliveryMutation.updateMany({
+        where: { routeRunStopId: { in: stopIds } },
+        data: { routeRunStopId: null },
+      });
+
+      // 3. Delete the run stops
+      await this.prisma.routeRunStop.deleteMany({
+        where: { routeRunId: id },
+      });
+    }
+
+    // 4. Delete the run itself
+    await this.prisma.routeRun.delete({ where: { id } });
+    return { success: true };
+  }
+
   async updateRunStatus(id: string, dto: UpdateRunStatusDto, user: JwtPayload) {
     const run = await this.prisma.routeRun.findUnique({ where: { id } });
     if (!run) throw new NotFoundException("Route run not found");
@@ -385,6 +428,91 @@ export class RoutesService {
     if (dto.status === RouteRunStatus.COMPLETED) updates.completedAt = new Date();
 
     return this.prisma.routeRun.update({ where: { id }, data: updates });
+  }
+
+  async getRunPackingList(runId: string) {
+    const run = await this.prisma.routeRun.findUnique({
+      where: { id: runId },
+      include: {
+        stops: {
+          include: {
+            customer: { select: { id: true, businessName: true, deliveryWindowStart: true, deliveryWindowEnd: true } },
+            customerAddress: true,
+            orders: {
+              where: { status: { notIn: [OrderStatus.CANCELLED, OrderStatus.DELIVERED] } },
+              include: {
+                lineItems: {
+                  include: { product: { select: { id: true, name: true, sku: true } } },
+                },
+              },
+            },
+          },
+          orderBy: { stopNumber: "asc" },
+        },
+      },
+    });
+    if (!run) throw new NotFoundException("Route run not found");
+
+    // Fallback for unlinked orders (legacy/seeded data — same logic as findOneRun)
+    const anyLinked = run.stops.some((s) => (s.orders as any[]).length > 0);
+    let stops: typeof run.stops = run.stops;
+    if (!anyLinked && stops.length > 0) {
+      const customerIds = stops.map((s) => s.customerId).filter((cid): cid is string => cid !== null);
+      if (customerIds.length > 0) {
+        const orders = await this.prisma.order.findMany({
+          where: {
+            customerId: { in: customerIds },
+            status: { notIn: [OrderStatus.CANCELLED, OrderStatus.DELIVERED] },
+          },
+          include: {
+            lineItems: {
+              include: { product: { select: { id: true, name: true, sku: true } } },
+            },
+          },
+        });
+        const byCustomer: Record<string, typeof orders> = {};
+        for (const o of orders) {
+          (byCustomer[o.customerId] ??= []).push(o);
+        }
+        stops = stops.map((s) => ({
+          ...s,
+          orders: (s.customerId ? (byCustomer[s.customerId] ?? []) : []) as any,
+        }));
+      }
+    }
+
+    // Aggregate packing list by product
+    const map: Record<
+      string,
+      { productId: string; productName: string; sku?: string | null; totalQty: number; customers: { name: string; qty: number }[] }
+    > = {};
+
+    for (const stop of stops) {
+      for (const order of stop.orders as any[]) {
+        for (const li of order.lineItems ?? []) {
+          if (!map[li.productId]) {
+            map[li.productId] = {
+              productId: li.productId,
+              productName: li.product?.name ?? li.productId,
+              sku: li.product?.sku ?? null,
+              totalQty: 0,
+              customers: [],
+            };
+          }
+          const qty = Number(li.qty);
+          map[li.productId].totalQty += qty;
+          const cName = stop.customer?.businessName ?? "Unknown";
+          const existing = map[li.productId].customers.find((c) => c.name === cName);
+          if (existing) existing.qty += qty;
+          else map[li.productId].customers.push({ name: cName, qty });
+        }
+      }
+    }
+
+    return {
+      stops,
+      packingList: Object.values(map).sort((a, b) => a.productName.localeCompare(b.productName)),
+    };
   }
 
   private async findRouteOrThrow(id: string) {

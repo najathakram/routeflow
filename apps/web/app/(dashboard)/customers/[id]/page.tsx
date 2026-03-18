@@ -13,6 +13,10 @@ import {
   Phone,
   FileText,
   Route,
+  Clock,
+  Pencil,
+  Trash2,
+  Zap,
 } from "lucide-react";
 import {
   Badge,
@@ -31,10 +35,19 @@ import {
   useCustomer,
   useCustomerOrders,
   useCustomerRoutes,
+  useUpdateCustomer,
   useUpdateCustomerStatus,
   useAddCustomerAddress,
 } from "@/lib/api/customers";
 import { useRoutes, useAddStopToRoute } from "@/lib/api/routes";
+import {
+  useOrderTemplates,
+  useUpdateOrderTemplate,
+  useDeleteOrderTemplate,
+  useGenerateTemplateOrder,
+  type OrderTemplate,
+} from "@/lib/api/order-templates";
+import { StandingOrderModal } from "./StandingOrderModal";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -349,8 +362,13 @@ export default function CustomerDetailPage({
   const { data: customer, isLoading } = useCustomer(params.id);
   const { data: ordersResult } = useCustomerOrders(params.id);
   const { data: customerRoutes } = useCustomerRoutes(params.id);
+  const { data: orderTemplates } = useOrderTemplates(params.id);
   const updateStatus = useUpdateCustomerStatus();
+  const updateCustomer = useUpdateCustomer();
   const addAddress = useAddCustomerAddress();
+  const updateTemplate = useUpdateOrderTemplate();
+  const deleteTemplate = useDeleteOrderTemplate();
+  const generateOrder = useGenerateTemplateOrder();
 
   const allOrders: ApiOrder[] = ordersResult?.data ?? [];
   const addresses = customer?.addresses ?? [];
@@ -366,6 +384,32 @@ export default function CustomerDetailPage({
   const [isAssignRouteOpen, setIsAssignRouteOpen] = React.useState(false);
   const [orderStatusFilter, setOrderStatusFilter] = React.useState("");
   const [pendingStatus, setPendingStatus] = React.useState<CustomerStatus | null>(null);
+
+  // Delivery time window
+  const [windowStart, setWindowStart] = React.useState(customer?.deliveryWindowStart ?? "");
+  const [windowEnd, setWindowEnd] = React.useState(customer?.deliveryWindowEnd ?? "");
+
+  React.useEffect(() => {
+    if (customer) {
+      setWindowStart(customer.deliveryWindowStart ?? "");
+      setWindowEnd(customer.deliveryWindowEnd ?? "");
+    }
+  }, [customer?.deliveryWindowStart, customer?.deliveryWindowEnd]);
+
+  // Standing orders
+  const [isStandingOrderOpen, setIsStandingOrderOpen] = React.useState(false);
+  const [editingTemplate, setEditingTemplate] = React.useState<OrderTemplate | null>(null);
+  const [deletingTemplateId, setDeletingTemplateId] = React.useState<string | null>(null);
+
+  const templates = orderTemplates ?? [];
+
+  const handleTimeWindowBlur = () => {
+    updateCustomer.mutate({
+      id: params.id,
+      deliveryWindowStart: windowStart || undefined,
+      deliveryWindowEnd: windowEnd || undefined,
+    });
+  };
 
   if (isLoading) {
     return <div className="p-12 text-center text-navy/40">Loading...</div>;
@@ -446,6 +490,9 @@ export default function CustomerDetailPage({
           <TabTrigger value="addresses">
             Delivery Addresses ({addresses.length})
           </TabTrigger>
+          <TabTrigger value="standing-orders">
+            Standing Orders{templates.length > 0 ? ` (${templates.length})` : ""}
+          </TabTrigger>
         </Tabs.List>
 
         {/* ── Profile tab ──────────────────────────────────────────────── */}
@@ -474,6 +521,56 @@ export default function CustomerDetailPage({
                         : "—"
                     }
                   />
+                </div>
+              </Card>
+
+              {/* Delivery time window */}
+              <Card title="Delivery Time Window">
+                <div className="space-y-3">
+                  <p className="text-sm text-navy/60">
+                    Set the customer's accepted delivery hours. The route optimizer will schedule
+                    this stop within the window.
+                  </p>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                      <label className="flex items-center gap-1.5 text-xs font-medium text-navy/60">
+                        <Clock className="h-3.5 w-3.5" />
+                        Window Start
+                      </label>
+                      <input
+                        type="time"
+                        value={windowStart}
+                        onChange={(e) => setWindowStart(e.target.value)}
+                        onBlur={handleTimeWindowBlur}
+                        className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        placeholder="08:00"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="flex items-center gap-1.5 text-xs font-medium text-navy/60">
+                        <Clock className="h-3.5 w-3.5" />
+                        Window End
+                      </label>
+                      <input
+                        type="time"
+                        value={windowEnd}
+                        onChange={(e) => setWindowEnd(e.target.value)}
+                        onBlur={handleTimeWindowBlur}
+                        className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        placeholder="17:00"
+                      />
+                    </div>
+                  </div>
+                  {!windowStart && !windowEnd && (
+                    <p className="text-xs text-navy/40">
+                      No window set — deliveries can be made at any time.
+                    </p>
+                  )}
+                  {windowStart && windowEnd && (
+                    <p className="text-xs text-success font-medium">
+                      Window: {windowStart} – {windowEnd}
+                    </p>
+                  )}
                 </div>
               </Card>
 
@@ -601,6 +698,7 @@ export default function CustomerDetailPage({
                 Add Address
               </Button>
             </div>
+
             {addresses.length === 0 ? (
               <p className="text-sm text-navy/40">No addresses on file.</p>
             ) : (
@@ -626,6 +724,125 @@ export default function CustomerDetailPage({
                         Primary
                       </span>
                     )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Card>
+        </Tabs.Content>
+        {/* ── Standing Orders tab ──────────────────────────────────────── */}
+        <Tabs.Content value="standing-orders" className="mt-5 focus:outline-none">
+          <Card>
+            <div className="mb-4 flex items-center justify-between">
+              <div>
+                <h3 className="text-base font-semibold text-navy">Standing Orders</h3>
+                <p className="text-xs text-navy/50 mt-0.5">
+                  Auto-generated orders based on recurring schedules.
+                </p>
+              </div>
+              <Button
+                size="sm"
+                leftIcon={<Plus className="h-4 w-4" />}
+                onClick={() => { setEditingTemplate(null); setIsStandingOrderOpen(true); }}
+              >
+                Add Standing Order
+              </Button>
+            </div>
+
+            {templates.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-surface-border bg-surface-raised py-10 text-center">
+                <p className="text-sm text-navy/40">No standing orders yet.</p>
+                <button
+                  className="mt-2 text-sm text-brand-500 hover:underline"
+                  onClick={() => { setEditingTemplate(null); setIsStandingOrderOpen(true); }}
+                >
+                  Add the first one →
+                </button>
+              </div>
+            ) : (
+              <ul className="-mx-6 -mb-6 divide-y divide-surface-border">
+                {templates.map((tmpl) => (
+                  <li key={tmpl.id} className="px-6 py-4">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-semibold text-navy">{tmpl.name}</p>
+                          <span
+                            className={cn(
+                              "rounded-full px-2 py-0.5 text-xs font-medium",
+                              tmpl.isActive
+                                ? "bg-success-bg text-success"
+                                : "bg-surface-raised text-navy/40",
+                            )}
+                          >
+                            {tmpl.isActive ? "Active" : "Paused"}
+                          </span>
+                        </div>
+                        {/* Days pills */}
+                        <div className="mt-1.5 flex flex-wrap gap-1">
+                          {[1, 2, 3, 4, 5, 6, 7].map((iso) => {
+                            const labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+                            return tmpl.daysOfWeek.includes(iso) ? (
+                              <span
+                                key={iso}
+                                className="rounded-full bg-brand-50 px-2 py-0.5 text-xs font-medium text-brand-700"
+                              >
+                                {labels[iso - 1]}
+                              </span>
+                            ) : null;
+                          })}
+                        </div>
+                        <p className="mt-1 text-xs text-navy/50">
+                          {tmpl.items.length} item{tmpl.items.length !== 1 ? "s" : ""}
+                          {tmpl.notes && ` · ${tmpl.notes}`}
+                        </p>
+                      </div>
+
+                      {/* Actions */}
+                      <div className="flex items-center gap-1 shrink-0">
+                        {/* Toggle active */}
+                        <button
+                          title={tmpl.isActive ? "Pause template" : "Activate template"}
+                          className="rounded p-1.5 text-navy/40 hover:bg-surface-raised hover:text-navy transition-colors"
+                          onClick={() =>
+                            updateTemplate.mutate({ id: tmpl.id, isActive: !tmpl.isActive })
+                          }
+                        >
+                          <span className={cn("h-4 w-4 block", tmpl.isActive ? "text-success" : "text-navy/30")}>
+                            {tmpl.isActive ? "⏸" : "▶"}
+                          </span>
+                        </button>
+                        {/* Generate now */}
+                        <button
+                          title="Generate order now"
+                          className="rounded p-1.5 text-navy/40 hover:bg-brand-50 hover:text-brand-600 transition-colors"
+                          onClick={() =>
+                            generateOrder.mutate(tmpl.id, {
+                              onSuccess: () =>
+                                window.alert(`Order generated for "${tmpl.name}"!`),
+                            })
+                          }
+                        >
+                          <Zap className="h-4 w-4" />
+                        </button>
+                        {/* Edit */}
+                        <button
+                          title="Edit template"
+                          className="rounded p-1.5 text-navy/40 hover:bg-surface-raised hover:text-navy transition-colors"
+                          onClick={() => { setEditingTemplate(tmpl); setIsStandingOrderOpen(true); }}
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </button>
+                        {/* Delete */}
+                        <button
+                          title="Delete template"
+                          className="rounded p-1.5 text-navy/40 hover:bg-danger-bg hover:text-danger transition-colors"
+                          onClick={() => setDeletingTemplateId(tmpl.id)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </div>
                   </li>
                 ))}
               </ul>
@@ -673,6 +890,32 @@ export default function CustomerDetailPage({
         confirmLabel={pendingStatus === "SUSPENDED" ? "Yes, suspend" : "Yes, deactivate"}
         variant={pendingStatus === "SUSPENDED" ? "danger" : "secondary"}
         loading={updateStatus.isPending}
+      />
+
+      {/* Standing order modal */}
+      <StandingOrderModal
+        isOpen={isStandingOrderOpen}
+        onClose={() => { setIsStandingOrderOpen(false); setEditingTemplate(null); }}
+        customerId={params.id}
+        template={editingTemplate}
+      />
+
+      {/* Delete standing order confirmation */}
+      <ConfirmDialog
+        open={!!deletingTemplateId}
+        onClose={() => setDeletingTemplateId(null)}
+        onConfirm={() => {
+          if (!deletingTemplateId) return;
+          deleteTemplate.mutate(
+            { id: deletingTemplateId, customerId: params.id },
+            { onSuccess: () => setDeletingTemplateId(null) },
+          );
+        }}
+        title="Delete standing order?"
+        description="This template and all its items will be deleted. Existing orders generated from this template will not be affected."
+        confirmLabel="Yes, delete"
+        variant="danger"
+        loading={deleteTemplate.isPending}
       />
     </div>
   );

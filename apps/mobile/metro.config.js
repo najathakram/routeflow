@@ -6,8 +6,9 @@ const workspaceRoot = path.resolve(projectRoot, "../..");
 
 const config = getDefaultConfig(projectRoot);
 
-// Watch all packages in the monorepo
-config.watchFolders = [workspaceRoot];
+// Watch only the shared packages directory (not the entire monorepo root,
+// which would cause Metro to index all node_modules and slow startup to a crawl)
+config.watchFolders = [path.resolve(workspaceRoot, "packages")];
 
 // Resolve modules from workspace root first
 config.resolver.nodeModulesPaths = [

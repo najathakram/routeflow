@@ -4,9 +4,10 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Eye, Play, Calendar } from "lucide-react";
-import { PageHeader, Badge, Table, Button, Card, cn } from "@routeflow/ui/web";
+import { PageHeader, Badge, Table, Button, Modal, useToast, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
-import { useRoutes, useRouteRuns, type Route, type RouteRun } from "@/lib/api/routes";
+import { useRoutes, useRouteRuns, useCreateRouteRun, type Route, type RouteRun } from "@/lib/api/routes";
+import { useDrivers } from "@/lib/api/drivers";
 
 // ─── Status helpers ───────────────────────────────────────────────────────────
 
@@ -39,9 +40,98 @@ function ProgressBar({ done, total }: { done: number; total: number }) {
   );
 }
 
+// ─── Dispatch Modal ───────────────────────────────────────────────────────────
+
+function DispatchModal({
+  routeId,
+  open,
+  onClose,
+}: {
+  routeId: string | null;
+  open: boolean;
+  onClose: () => void;
+}) {
+  const router = useRouter();
+  const { toast } = useToast();
+  const { data: driversResult } = useDrivers({ status: "ACTIVE", limit: 100 });
+  const drivers = driversResult?.data ?? [];
+  const createRun = useCreateRouteRun();
+
+  const today = new Date().toISOString().split("T")[0];
+  const [date, setDate] = React.useState(today);
+  const [driverId, setDriverId] = React.useState("");
+
+  // Reset form when modal opens
+  React.useEffect(() => {
+    if (open) { setDate(today); setDriverId(""); }
+  }, [open, today]);
+
+  const handleDispatch = () => {
+    if (!routeId) return;
+    createRun.mutate(
+      { routeId, scheduledDate: date, driverId: driverId || undefined },
+      {
+        onSuccess: (run) => {
+          toast({ title: "Route run dispatched", variant: "success" });
+          onClose();
+          router.push(`/routes/${run.id}`);
+        },
+        onError: (err) =>
+          toast({ title: "Dispatch failed", description: err.message, variant: "error" }),
+      },
+    );
+  };
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Dispatch Route Run"
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={createRun.isPending}>
+            Cancel
+          </Button>
+          <Button onClick={handleDispatch} loading={createRun.isPending}>
+            Dispatch
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <div>
+          <label className="mb-1 block text-sm font-medium text-navy">Scheduled Date</label>
+          <input
+            type="date"
+            value={date}
+            onChange={(e) => setDate(e.target.value)}
+            className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+          />
+        </div>
+        <div>
+          <label className="mb-1 block text-sm font-medium text-navy">Driver (optional)</label>
+          <select
+            value={driverId}
+            onChange={(e) => setDriverId(e.target.value)}
+            className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+          >
+            <option value="">Unassigned</option>
+            {drivers.map((d: any) => (
+              <option key={d.id} value={d.id}>{d.contactName}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 // ─── Template table columns ───────────────────────────────────────────────────
 
-function useTemplateColumns(router: ReturnType<typeof useRouter>) {
+function useTemplateColumns(
+  router: ReturnType<typeof useRouter>,
+  onDispatch: (id: string) => void,
+) {
   return React.useMemo<ColumnDef<Route, unknown>[]>(
     () => [
       {
@@ -84,7 +174,7 @@ function useTemplateColumns(router: ReturnType<typeof useRouter>) {
             </button>
             <button
               title="Dispatch run"
-              onClick={() => router.push(`/routes/templates/${row.original.id}/dispatch`)}
+              onClick={() => onDispatch(row.original.id)}
               className="rounded p-1.5 text-navy/40 hover:bg-surface-raised hover:text-success transition-colors"
             >
               <Play className="h-4 w-4" />
@@ -93,7 +183,7 @@ function useTemplateColumns(router: ReturnType<typeof useRouter>) {
         ),
       },
     ],
-    [router],
+    [router, onDispatch],
   );
 }
 
@@ -102,7 +192,8 @@ function useTemplateColumns(router: ReturnType<typeof useRouter>) {
 export default function RoutesPage() {
   const router = useRouter();
   const { setTitle } = usePageTitle();
-  const templateColumns = useTemplateColumns(router);
+  const [dispatchRouteId, setDispatchRouteId] = React.useState<string | null>(null);
+  const templateColumns = useTemplateColumns(router, setDispatchRouteId);
 
   React.useEffect(() => { setTitle("Routes"); }, [setTitle]);
 
@@ -201,6 +292,11 @@ export default function RoutesPage() {
         )}
       </section>
 
+      <DispatchModal
+        routeId={dispatchRouteId}
+        open={!!dispatchRouteId}
+        onClose={() => setDispatchRouteId(null)}
+      />
     </div>
   );
 }

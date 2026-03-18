@@ -20,6 +20,7 @@ import { SystemConfigModule } from "./system-config/system-config.module";
 import { NotificationsModule } from "./notifications/notifications.module";
 import { RouteOptimizationModule } from "./route-optimization/route-optimization.module";
 import { GatewaysModule } from "./gateways/gateways.module";
+import { OrderTemplatesModule } from "./order-templates/order-templates.module";
 
 import { AppController } from "./app.controller";
 import { AppService } from "./app.service";
@@ -77,6 +78,7 @@ import { AppService } from "./app.service";
     NotificationsModule,
     RouteOptimizationModule,
     GatewaysModule,
+    OrderTemplatesModule,
   ],
   controllers: [AppController],
   providers: [AppService],

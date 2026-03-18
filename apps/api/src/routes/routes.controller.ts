@@ -117,6 +117,11 @@ export class RouteRunsController {
     return this.routesService.createRun(dto);
   }
 
+  @Get(":id/packing-list")
+  getRunPackingList(@Param("id") id: string) {
+    return this.routesService.getRunPackingList(id);
+  }
+
   @Get(":id")
   findOne(@Param("id") id: string) {
     return this.routesService.findOneRun(id);
@@ -130,6 +135,23 @@ export class RouteRunsController {
     @Body() body: { order: { id: string; stopNumber: number }[] },
   ) {
     return this.routesService.reorderRunStops(id, body.order);
+  }
+
+  @Patch(":id")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR)
+  updateRun(
+    @Param("id") id: string,
+    @Body() body: { driverId?: string | null; scheduledDate?: string; notes?: string },
+  ) {
+    return this.routesService.updateRun(id, body);
+  }
+
+  @Delete(":id")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR)
+  deleteRun(@Param("id") id: string) {
+    return this.routesService.deleteRun(id);
   }
 
   @Patch(":id/status")

@@ -1,6 +1,7 @@
 import {
   IsArray,
   IsBoolean,
+  IsDateString,
   IsInt,
   IsOptional,
   IsString,
@@ -20,4 +21,5 @@ export class CreateOrderDto {
   @IsArray() @ValidateNested({ each: true }) @Type(() => OrderItemDto) items: OrderItemDto[];
   @IsOptional() @IsString() notes?: string;
   @IsOptional() @IsBoolean() urgent?: boolean;
+  @IsOptional() @IsDateString() requestedDeliveryDate?: string;
 }

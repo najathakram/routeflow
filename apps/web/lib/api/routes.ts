@@ -224,10 +224,66 @@ export function useUpdateRouteRunStatus() {
   });
 }
 
+export function useUpdateRouteRun() {
+  const qc = useQueryClient();
+  return useMutation<RouteRun, Error, { id: string; driverId?: string | null; scheduledDate?: string; notes?: string }>({
+    mutationFn: ({ id, ...body }) => apiClient.patch(`/route-runs/${id}`, body).then((r) => r.data),
+    onSuccess: (_, { id }) => {
+      qc.invalidateQueries({ queryKey: ['route-runs', id] });
+      qc.invalidateQueries({ queryKey: ['route-runs'] });
+    },
+  });
+}
+
+export function useDeleteRouteRun() {
+  const qc = useQueryClient();
+  return useMutation<void, Error, string>({
+    mutationFn: (id) => apiClient.delete(`/route-runs/${id}`).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['route-runs'] });
+    },
+  });
+}
+
 export interface OptimizeResult {
   stopOrder: Array<{ stopId: string; stopNumber: number }>;
   reorderedCount: number;
   usedFallback: boolean;
+}
+
+export interface RunPackingStop {
+  id: string;
+  stopNumber: number;
+  customerId: string | null;
+  customer?: { id: string; businessName: string; deliveryWindowStart?: string | null; deliveryWindowEnd?: string | null } | null;
+  customerAddress?: { line1: string; city: string; state: string; lat?: number; lng?: number } | null;
+  status: 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'SKIPPED';
+  driverNote?: string | null;
+  completedAt?: string | null;
+  orders: Array<{
+    id: string;
+    orderNumber: string | null;
+    status: string;
+    lineItems: Array<{
+      id: string;
+      qty: number;
+      unitPrice: number;
+      product?: { id: string; name: string; sku?: string | null } | null;
+    }>;
+  }>;
+}
+
+export interface RunPackingListResponse {
+  stops: RunPackingStop[];
+  packingList: PackingItem[];
+}
+
+export function useRunPackingList(id: string) {
+  return useQuery<RunPackingListResponse>({
+    queryKey: ['run-packing-list', id],
+    queryFn: () => apiClient.get(`/route-runs/${id}/packing-list`).then((r) => r.data),
+    enabled: !!id,
+  });
 }
 
 export function useOptimizeRoute() {
