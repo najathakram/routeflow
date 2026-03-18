@@ -5,7 +5,8 @@
       "Bash(npx prisma db seed)",
       "Bash(DATABASE_URL=\"postgresql://user:pass@localhost:5432/routeflow_dev\" npx tsx ./prisma/seed.ts)",
       "Bash(find \"C:\\\\ClaudeCode\\\\routeflow\\\\.claude\\\\worktrees\\\\eloquent-cori\\\\apps\\\\web\\\\app\\\\\\(dashboard\\)\\\\customers\\\\_components\" -type f)",
-      "mcp__Claude_Preview__preview_start"
+      "mcp__Claude_Preview__preview_start",
+      "Bash(ls c:/ClaudeCode/routeflow/apps/web/.env* c:/ClaudeCode/routeflow/apps/api/.env* c:/ClaudeCode/routeflow/.env*)"
     ]
   }
 }
