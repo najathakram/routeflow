@@ -3,7 +3,7 @@ import { router, Stack } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { EmptyState, StatusBadge } from "@routeflow/ui/mobile";
 import { colors, borderRadius, shadows } from "@routeflow/ui/tokens";
-import { useActiveRouteRun, useUpdateRunStatus, type RouteRunStop } from "../../../lib/api/routes";
+import { useActiveRouteRun, useRouteRun, useUpdateRunStatus, type RouteRunStop } from "../../../lib/api/routes";
 import { NetworkError } from "../../../components/NetworkError";
 
 const STATUS_ICON: Record<string, { name: string; color: string }> = {
@@ -83,9 +83,11 @@ function StopRow({ stop }: { stop: RouteRunStop }) {
 
 export default function RouteScreen() {
   const { data, isLoading, isError, refetch } = useActiveRouteRun();
+  const activeRunId = data?.data?.[0]?.id ?? null;
+  const { data: fullRun, isLoading: isLoadingRun } = useRouteRun(activeRunId ?? "");
   const { mutate: updateStatus, isPending: isUpdating } = useUpdateRunStatus();
 
-  if (isLoading) {
+  if (isLoading || (activeRunId && isLoadingRun)) {
     return (
       <>
         <Stack.Screen options={{ title: "My Route" }} />
@@ -105,7 +107,7 @@ export default function RouteScreen() {
     );
   }
 
-  const run = data?.data?.[0] ?? null;
+  const run = fullRun ?? data?.data?.[0] ?? null;
 
   if (!run) {
     return (

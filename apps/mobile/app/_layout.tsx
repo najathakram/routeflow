@@ -84,7 +84,7 @@ function RootLayoutNav() {
       }
     } else if (user.role === UserRole.DRIVER) {
       if (segments[0] !== "(driver)") {
-        router.replace("/(driver)");
+        router.replace("/(driver)/route");
       }
     }
   }, [user, isLoading, segments]);
