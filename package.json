@@ -29,5 +29,8 @@
   "workspaces": [
     "apps/*",
     "packages/*"
-  ]
+  ],
+  "dependencies": {
+    "react-native-worklets": "^0.7.4"
+  }
 }
