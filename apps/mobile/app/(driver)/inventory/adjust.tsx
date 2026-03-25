@@ -52,9 +52,10 @@ export default function AdjustStockScreen() {
   })();
 
   const newStock = delta !== null ? current + delta : null;
+  const wouldGoNegative = mode === "remove" && isValid && parsedQty > current;
 
   const handleSubmit = () => {
-    if (!productId || delta === null || delta === 0) return;
+    if (!productId || delta === null || delta === 0 || wouldGoNegative) return;
     Keyboard.dismiss();
 
     recordAdjustment(
@@ -162,6 +163,11 @@ export default function AdjustStockScreen() {
                 </Text>
               </View>
             )}
+            {wouldGoNegative && (
+              <Text style={styles.negativeWarning}>
+                Cannot remove more than current stock ({current})
+              </Text>
+            )}
           </View>
 
           {/* Notes */}
@@ -184,10 +190,10 @@ export default function AdjustStockScreen() {
             <Pressable
               style={[
                 styles.submitBtn,
-                (!isValid || delta === 0 || isPending) && styles.submitBtnDisabled,
+                (!isValid || delta === 0 || isPending || wouldGoNegative) && styles.submitBtnDisabled,
               ]}
               onPress={handleSubmit}
-              disabled={!isValid || delta === 0 || isPending}
+              disabled={!isValid || delta === 0 || isPending || wouldGoNegative}
             >
               {isPending ? (
                 <ActivityIndicator size="small" color="#fff" style={{ marginRight: 8 }} />
@@ -316,6 +322,11 @@ const styles = StyleSheet.create({
   deltaValue: {
     fontSize: 14,
     fontFamily: "Inter_700Bold",
+  },
+  negativeWarning: {
+    fontSize: 13,
+    fontFamily: "Inter_500Medium",
+    color: colors.danger.DEFAULT,
   },
   notesInput: {
     borderWidth: 1,

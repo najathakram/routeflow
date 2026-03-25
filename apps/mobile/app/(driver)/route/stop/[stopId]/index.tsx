@@ -133,7 +133,9 @@ function ItemRow({
               setPartialInput(v);
               const n = parseInt(v, 10);
               if (!isNaN(n)) {
-                setItemResolution(stopId, item.id, { status: "PARTIAL", partialQty: n });
+                const capped = Math.min(n, item.qty);
+                setItemResolution(stopId, item.id, { status: "PARTIAL", partialQty: capped });
+                if (n > item.qty) setPartialInput(String(item.qty));
               }
             }}
             placeholder="0"

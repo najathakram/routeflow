@@ -301,6 +301,7 @@ export class RoutesService {
           route: { select: { id: true, name: true } },
           driver: { select: { id: true, contactName: true, user: { select: { username: true } } } },
           _count: { select: { stops: true } },
+          stops: { select: { id: true, status: true } },
         },
         skip,
         take: limit,
