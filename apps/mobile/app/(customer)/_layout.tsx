@@ -1,7 +1,9 @@
 import { Tabs, router } from "expo-router";
-import { Pressable } from "react-native";
+import { Pressable, Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { colors } from "@routeflow/ui/tokens";
+import { useEffect } from "react";
+import * as Notifications from "expo-notifications";
 
 function ProfileButton() {
   return (
@@ -19,7 +21,27 @@ function ProfileButton() {
 
 const headerRight = () => <ProfileButton />;
 
+// Set handler so notifications show as banners when app is in foreground
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+  }),
+});
+
 export default function CustomerLayout() {
+  useEffect(() => {
+    // Handle notification taps — navigate to order detail
+    const sub = Notifications.addNotificationResponseReceivedListener((response) => {
+      const orderId = response.notification.request.content.data?.orderId as string | undefined;
+      if (orderId) {
+        router.push(`/(customer)/history/${orderId}` as any);
+      }
+    });
+    return () => sub.remove();
+  }, []);
+
   return (
     <Tabs
       screenOptions={{

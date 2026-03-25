@@ -12,7 +12,7 @@ import { format, parseISO } from "date-fns";
 import { Ionicons } from "@expo/vector-icons";
 import { StatusBadge } from "@routeflow/ui/mobile";
 import { colors, borderRadius, shadows } from "@routeflow/ui/tokens";
-import { useOrder, useCancelOrder, type OrderItem } from "../../../lib/api/orders";
+import { useOrder, useCancelOrder, useOrderTracking, type OrderItem } from "../../../lib/api/orders";
 import { useOrderStore } from "../../../store/orderStore";
 
 type ItemStatusBadge = "DELIVERED" | "CANCELLED" | "PENDING";
@@ -26,8 +26,11 @@ function itemStatusForBadge(status: string): ItemStatusBadge {
 export default function OrderDetailScreen() {
   const { orderId } = useLocalSearchParams<{ orderId: string }>();
   const { data: order, isLoading, isError } = useOrder(orderId ?? "");
+  const { data: trackingData } = useOrderTracking(orderId ?? "", order?.status);
   const addItem = useOrderStore((s) => s.addItem);
   const items = useOrderStore((s) => s.items);
+  const loadItems = useOrderStore((s) => s.loadItems);
+  const setEditingOrderId = useOrderStore((s) => s.setEditingOrderId);
   const { mutate: cancelOrder, isPending: isCancelling } = useCancelOrder();
 
   const handleCancel = () => {
@@ -79,6 +82,22 @@ export default function OrderDetailScreen() {
     }
   };
 
+  const handleEditOrder = () => {
+    if (!order) return;
+    const mapped = order.lineItems
+      .filter((l) => l.product)
+      .map((l) => ({
+        productId: l.productId,
+        name: l.product!.name,
+        unitPrice: Number(l.unitPrice),
+        unit: l.product!.unit,
+        quantity: l.qty,
+      }));
+    loadItems(mapped);
+    setEditingOrderId(order.id);
+    router.push("/(customer)/order");
+  };
+
   if (isLoading) {
     return (
       <>
@@ -128,6 +147,36 @@ export default function OrderDetailScreen() {
         contentContainerStyle={styles.scroll}
         showsVerticalScrollIndicator={false}
       >
+        {/* Tracking Banner — shown when OUT_FOR_DELIVERY */}
+        {order.status === "OUT_FOR_DELIVERY" && trackingData?.tracking && (
+          <View style={styles.trackingCard}>
+            <View style={styles.trackingHeader}>
+              <Ionicons name="navigate" size={18} color={colors.brand[500]} />
+              <Text style={styles.trackingTitle}>Your delivery is on the way!</Text>
+            </View>
+            {trackingData.tracking.driverName && (
+              <Text style={styles.trackingDriver}>Driver: {trackingData.tracking.driverName}</Text>
+            )}
+            <Text style={styles.trackingStops}>
+              {trackingData.tracking.stopsAhead === 0
+                ? "🎉 Your stop is next!"
+                : `${trackingData.tracking.stopsAhead} stop${trackingData.tracking.stopsAhead !== 1 ? "s" : ""} before yours`}
+            </Text>
+            <View style={styles.trackingProgress}>
+              <View
+                style={[
+                  styles.trackingProgressFill,
+                  {
+                    width: trackingData.tracking.stopsAhead === 0
+                      ? "100%"
+                      : `${Math.max(10, 100 - trackingData.tracking.stopsAhead * 15)}%`,
+                  },
+                ]}
+              />
+            </View>
+          </View>
+        )}
+
         {/* Order summary card */}
         <View style={styles.summaryCard}>
           <View style={styles.summaryRow}>
@@ -235,19 +284,29 @@ export default function OrderDetailScreen() {
           </Pressable>
         )}
 
-        {/* Cancel CTA — only for pending orders */}
+        {/* Edit / Cancel CTAs — only for pending orders */}
         {order.status === "PENDING" && (
-          <Pressable
-            style={[styles.returnBtn, isCancelling && styles.btnDisabled]}
-            onPress={handleCancel}
-            disabled={isCancelling}
-            accessibilityRole="button"
-          >
-            <Ionicons name="close-circle-outline" size={18} color={colors.danger.DEFAULT} />
-            <Text style={styles.returnBtnText}>
-              {isCancelling ? "Cancelling…" : "Cancel Order"}
-            </Text>
-          </Pressable>
+          <>
+            <Pressable
+              style={styles.editOrderBtn}
+              onPress={handleEditOrder}
+              accessibilityRole="button"
+            >
+              <Ionicons name="create-outline" size={18} color={colors.brand[500]} />
+              <Text style={styles.editOrderBtnText}>Edit Order</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.returnBtn, isCancelling && styles.btnDisabled]}
+              onPress={handleCancel}
+              disabled={isCancelling}
+              accessibilityRole="button"
+            >
+              <Ionicons name="close-circle-outline" size={18} color={colors.danger.DEFAULT} />
+              <Text style={styles.returnBtnText}>
+                {isCancelling ? "Cancelling…" : "Cancel Order"}
+              </Text>
+            </Pressable>
+          </>
         )}
       </ScrollView>
     </>
@@ -279,6 +338,46 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontFamily: "Inter_400Regular",
     color: "#94a3b8",
+  },
+  trackingCard: {
+    backgroundColor: colors.brand[50],
+    borderRadius: borderRadius.lg,
+    padding: 16,
+    gap: 8,
+    borderWidth: 1,
+    borderColor: colors.brand[200] ?? colors.brand[500] + "33",
+    ...shadows.card,
+  },
+  trackingHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  trackingTitle: {
+    fontSize: 15,
+    fontFamily: "Inter_700Bold",
+    color: colors.brand[600] ?? colors.brand[500],
+  },
+  trackingDriver: {
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    color: "#64748b",
+  },
+  trackingStops: {
+    fontSize: 14,
+    fontFamily: "Inter_600SemiBold",
+    color: colors.navy.DEFAULT,
+  },
+  trackingProgress: {
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.surface.border,
+    overflow: "hidden",
+  },
+  trackingProgressFill: {
+    height: "100%",
+    backgroundColor: colors.brand[500],
+    borderRadius: 3,
   },
   summaryCard: {
     backgroundColor: "#fff",
@@ -390,6 +489,23 @@ const styles = StyleSheet.create({
   },
   totalSection: {
     ...shadows.card,
+  },
+  editOrderBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: colors.brand[50],
+    borderRadius: borderRadius.lg,
+    padding: 14,
+    borderWidth: 1.5,
+    borderColor: colors.brand[500],
+    ...shadows.card,
+  },
+  editOrderBtnText: {
+    fontSize: 15,
+    fontFamily: "Inter_600SemiBold",
+    color: colors.brand[500],
   },
   returnBtn: {
     flexDirection: "row",

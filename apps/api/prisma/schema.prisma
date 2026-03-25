@@ -179,6 +179,7 @@ model User {
   refreshTokens   RefreshToken[]
   stockMovements  StockMovement[]
   expenses        Expense[]
+  messages        Message[]
 
   @@index([role])
   @@index([status])
@@ -380,6 +381,9 @@ model RouteRunStop {
   arrivedAt         DateTime?
   completedAt       DateTime?
   notes             String?
+  podPhotoUrls      String[]
+  signatureUrl      String?
+  safeDropEnabled   Boolean          @default(false)
   createdAt         DateTime          @default(now())
   updatedAt         DateTime          @updatedAt
 
@@ -903,6 +907,7 @@ model Return {
   reason       ReturnReason
   status       ReturnStatus @default(PENDING)
   notes        String?
+  photoUrls    String[]
   creditNoteId String?
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
@@ -929,4 +934,20 @@ model ReturnItem {
 
   @@index([returnId])
   @@index([productId])
+}
+
+// ─── Driver-to-Dispatcher Messaging ──────────────────────────────────────────
+
+model Message {
+  id         String   @id @default(uuid())
+  runId      String?
+  text       String
+  senderId   String
+  senderRole String   // "DRIVER" | "OPERATOR"
+  createdAt  DateTime @default(now())
+
+  sender User @relation(fields: [senderId], references: [id])
+
+  @@index([runId])
+  @@index([senderId])
 }

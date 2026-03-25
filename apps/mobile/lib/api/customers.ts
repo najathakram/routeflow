@@ -30,6 +30,27 @@ export interface CustomerProfile {
   };
 }
 
+// ─── Account Summary ──────────────────────────────────────────────────────────
+
+export type TransactionType = 'INVOICE' | 'PAYMENT' | 'CREDIT_NOTE' | 'ADJUSTMENT';
+
+export interface AccountTransaction {
+  id: string;
+  type: TransactionType;
+  date: string;
+  description: string;
+  amount: number;
+  /** Positive = charge, negative = credit */
+  runningBalance: number;
+}
+
+export interface AccountSummary {
+  outstandingAmount: number;
+  overdueAmount: number;
+  availableCredit: number;
+  transactions: AccountTransaction[];
+}
+
 // ─── Queries ──────────────────────────────────────────────────────────────────
 
 export function useMyCustomerProfile() {
@@ -37,5 +58,13 @@ export function useMyCustomerProfile() {
     queryKey: ['customers', 'me'],
     queryFn: () => apiClient.get('/customers/me').then((r) => r.data),
     staleTime: 5 * 60_000,
+  });
+}
+
+export function useMyAccountSummary() {
+  return useQuery<AccountSummary>({
+    queryKey: ['customers', 'me', 'statement'],
+    queryFn: () => apiClient.get('/customers/me/statement').then((r) => r.data),
+    staleTime: 60_000,
   });
 }

@@ -16,6 +16,7 @@ export class ReturnsService {
           customerId: order.customerId,
           reason: dto.reason,
           notes: dto.notes,
+          photoUrls: dto.photoUrls ?? [],
           status: "PENDING",
           items: {
             create: dto.items.map((i: any) => ({

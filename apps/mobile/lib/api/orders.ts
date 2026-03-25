@@ -71,3 +71,35 @@ export function useCancelOrder() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['orders'] }),
   });
 }
+
+export function useUpdateOrderItems() {
+  const qc = useQueryClient();
+  return useMutation<Order, Error, { orderId: string; items: Array<{ productId: string; qty: number; unitPrice: number }> }>({
+    mutationFn: ({ orderId, items }) => apiClient.patch(`/orders/${orderId}/items`, { items }).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['orders'] }),
+  });
+}
+
+// ─── Tracking ─────────────────────────────────────────────────────────────────
+
+export interface OrderTracking {
+  runId: string;
+  routeName: string | null;
+  driverName: string | null;
+  runStatus: string;
+  stopNumber: number;
+  stopStatus: string;
+  stopsAhead: number;
+  estimatedArrivalWindow: { start: string | null; end: string | null };
+}
+
+export function useOrderTracking(orderId: string, orderStatus?: string) {
+  return useQuery<{ status: string; tracking: OrderTracking | null }>({
+    queryKey: ['orders', orderId, 'tracking'],
+    queryFn: () => apiClient.get(`/orders/${orderId}/tracking`).then((r) => r.data),
+    enabled: !!orderId && orderStatus === 'OUT_FOR_DELIVERY',
+    refetchInterval: 30_000,
+    staleTime: 20_000,
+  });
+}
+

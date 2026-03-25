@@ -3,6 +3,7 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   View,
@@ -16,6 +17,7 @@ import { useRouteRun, useCompleteStop, useUpdateRunStatus, type CompleteStopItem
 import { useRouteStore, selectStopResolutions } from "../../../../../store/routeStore";
 import { useRecordInvoicePayment } from "../../../../../lib/api/invoices";
 import { apiClient } from "../../../../../lib/api-client";
+import { PhotoCapture } from "../../../../../components/PhotoCapture";
 
 type PaymentMethod = "CASH" | "CHECK" | "ACH" | "OTHER";
 const PAYMENT_METHODS: { key: PaymentMethod; label: string; icon: string }[] = [
@@ -49,6 +51,8 @@ export default function StopCompleteScreen() {
   const [cashAmount, setCashAmount] = useState("");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("CASH");
   const [cashReference, setCashReference] = useState("");
+  const [podPhotos, setPodPhotos] = useState<string[]>([]);
+  const [safeDropEnabled, setSafeDropEnabled] = useState(false);
 
   const stop = run?.stops?.find((s) => s.id === stopId) ?? null;
 
@@ -144,7 +148,7 @@ export default function StopCompleteScreen() {
     };
 
     completeStop(
-      { runId, stopId, driverNote: stopNote || undefined, items },
+      { runId, stopId, driverNote: stopNote || undefined, items, podPhotoUrls: podPhotos, safeDropEnabled },
       {
         onSuccess: async () => {
           // If cash was collected, look up the customer's unpaid invoice and record payment
@@ -260,6 +264,32 @@ export default function StopCompleteScreen() {
               })}
             </View>
           )}
+
+          {/* Proof of Delivery */}
+          <Text style={styles.sectionTitle}>Proof of Delivery</Text>
+          <View style={styles.podCard}>
+            <PhotoCapture
+              photos={podPhotos}
+              onAdd={(uri) => setPodPhotos((prev) => [...prev, uri])}
+              onRemove={(uri) => setPodPhotos((prev) => prev.filter((p) => p !== uri))}
+              maxPhotos={3}
+              label="Add Photo"
+            />
+            <View style={styles.safeDropRow}>
+              <View style={styles.safeDropLeft}>
+                <Ionicons name="home-outline" size={18} color="#64748b" />
+                <View>
+                  <Text style={styles.safeDropTitle}>Safe Drop</Text>
+                  <Text style={styles.safeDropSub}>Left at door — unattended delivery</Text>
+                </View>
+              </View>
+              <Switch
+                value={safeDropEnabled}
+                onValueChange={setSafeDropEnabled}
+                trackColor={{ false: colors.surface.border, true: colors.brand[500] }}
+              />
+            </View>
+          </View>
 
           {/* Cash collection */}
           <Text style={styles.sectionTitle}>Payment Collected</Text>
@@ -506,6 +536,37 @@ const styles = StyleSheet.create({
   },
   methodBtnTextActive: {
     color: colors.brand[500],
+  },
+  podCard: {
+    backgroundColor: "#fff",
+    borderRadius: borderRadius.lg,
+    padding: 16,
+    gap: 14,
+    ...shadows.card,
+  },
+  safeDropRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: colors.surface.border,
+  },
+  safeDropLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    flex: 1,
+  },
+  safeDropTitle: {
+    fontSize: 15,
+    fontFamily: "Inter_600SemiBold",
+    color: colors.navy.DEFAULT,
+  },
+  safeDropSub: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    color: "#94a3b8",
   },
   referenceInput: {
     height: 44,

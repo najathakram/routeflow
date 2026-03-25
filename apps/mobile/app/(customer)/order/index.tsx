@@ -1,6 +1,8 @@
+import { useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -15,7 +17,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { EmptyState } from "@routeflow/ui/mobile";
 import { colors, borderRadius, shadows } from "@routeflow/ui/tokens";
 import { useOrderStore } from "../../../store/orderStore";
-import { useMyOrders, useCreateOrder } from "../../../lib/api/orders";
+import { useMyOrders, useCreateOrder, useUpdateOrderItems, useOrderTracking } from "../../../lib/api/orders";
 
 const DATE_OPTIONS = [
   { label: "Today", offset: 0 },
@@ -77,37 +79,214 @@ const stepperStyles = StyleSheet.create({
   },
 });
 
+function SubstitutionModal({
+  productName,
+  value,
+  onSave,
+  onClose,
+}: {
+  productName: string;
+  value: string;
+  onSave: (text: string) => void;
+  onClose: () => void;
+}) {
+  const [text, setText] = useState(value);
+
+  return (
+    <Modal
+      visible
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+    >
+      <Pressable style={subStyles.overlay} onPress={onClose}>
+        <Pressable style={subStyles.sheet} onPress={(e) => e.stopPropagation()}>
+          <Text style={subStyles.title}>Substitution Preference</Text>
+          <Text style={subStyles.subtitle}>
+            If {productName} is unavailable, replace with:
+          </Text>
+          <TextInput
+            style={subStyles.input}
+            placeholder="e.g. Any similar brand, or skip"
+            placeholderTextColor="#94a3b8"
+            value={text}
+            onChangeText={setText}
+            autoFocus
+            returnKeyType="done"
+            onSubmitEditing={() => { onSave(text); onClose(); }}
+          />
+          <View style={subStyles.actions}>
+            <Pressable style={subStyles.cancelBtn} onPress={onClose}>
+              <Text style={subStyles.cancelBtnText}>Cancel</Text>
+            </Pressable>
+            <Pressable
+              style={subStyles.saveBtn}
+              onPress={() => { onSave(text); onClose(); }}
+            >
+              <Text style={subStyles.saveBtnText}>Save</Text>
+            </Pressable>
+          </View>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
+const subStyles = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.4)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 24,
+  },
+  sheet: {
+    backgroundColor: "#fff",
+    borderRadius: borderRadius.lg,
+    padding: 24,
+    width: "100%",
+    gap: 12,
+    ...shadows.card,
+  },
+  title: {
+    fontSize: 16,
+    fontFamily: "Inter_700Bold",
+    color: colors.navy.DEFAULT,
+  },
+  subtitle: {
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    color: "#64748b",
+    lineHeight: 18,
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: colors.surface.border,
+    borderRadius: borderRadius.DEFAULT,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    color: colors.navy.DEFAULT,
+    backgroundColor: colors.surface.raised,
+  },
+  actions: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 4,
+  },
+  cancelBtn: {
+    flex: 1,
+    height: 44,
+    borderRadius: borderRadius.DEFAULT,
+    borderWidth: 1,
+    borderColor: colors.surface.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  cancelBtnText: {
+    fontSize: 14,
+    fontFamily: "Inter_500Medium",
+    color: "#64748b",
+  },
+  saveBtn: {
+    flex: 1,
+    height: 44,
+    borderRadius: borderRadius.DEFAULT,
+    backgroundColor: colors.brand[500],
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  saveBtnText: {
+    fontSize: 14,
+    fontFamily: "Inter_600SemiBold",
+    color: "#fff",
+  },
+});
+
 export default function OrderScreen() {
-  const { items, isUrgent, notes, requestedDeliveryDate, removeItem, updateQuantity, setUrgent, setNotes, setRequestedDeliveryDate, clearOrder } =
-    useOrderStore();
-  const { mutate: createOrder, isPending: isSubmitting } = useCreateOrder();
+  const {
+    items, isUrgent, notes, requestedDeliveryDate, editingOrderId,
+    itemNotes, substitutions,
+    removeItem, updateQuantity, setUrgent, setNotes, setRequestedDeliveryDate,
+    setItemNote, setSubstitution, clearOrder,
+  } = useOrderStore();
+  const { mutate: createOrder, isPending: isCreating } = useCreateOrder();
+  const { mutate: updateOrderItems, isPending: isUpdating } = useUpdateOrderItems();
+  const isSubmitting = isCreating || isUpdating;
 
   // Fetch pending orders from the API so the server state is always in sync
   const { data: pendingOrdersData, isLoading: pendingLoading } = useMyOrders({ status: "PENDING" });
   const pendingOrders = pendingOrdersData?.data ?? [];
 
+  // Fetch out-for-delivery orders for ETA banner
+  const { data: outForDeliveryData } = useMyOrders({ status: "OUT_FOR_DELIVERY" });
+  const outForDeliveryOrder = outForDeliveryData?.data?.[0] ?? null;
+  const { data: trackingData } = useOrderTracking(
+    outForDeliveryOrder?.id ?? "",
+    outForDeliveryOrder?.status,
+  );
+
+  const [expandedNoteId, setExpandedNoteId] = useState<string | null>(null);
+  const [subModalProductId, setSubModalProductId] = useState<string | null>(null);
+
   const total = items.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
   const itemCount = items.reduce((sum, item) => sum + item.quantity, 0);
 
+  const subModalItem = subModalProductId
+    ? items.find((i) => i.productId === subModalProductId) ?? null
+    : null;
+
   const handlePlaceOrder = () => {
     if (items.length === 0) return;
-    createOrder(
-      {
-        items: items.map((i) => ({ productId: i.productId, qty: i.quantity })),
-        notes: notes || undefined,
-        urgent: isUrgent || undefined,
-        requestedDeliveryDate: requestedDeliveryDate || undefined,
-      },
-      {
-        onSuccess: (order) => {
-          clearOrder();
-          router.replace(`/(customer)/order/confirmation?orderId=${order.id}` as any);
+
+    if (editingOrderId) {
+      updateOrderItems(
+        {
+          orderId: editingOrderId,
+          items: items.map((i) => ({
+            productId: i.productId,
+            qty: i.quantity,
+            unitPrice: i.unitPrice,
+            itemNote: itemNotes[i.productId] || undefined,
+            substitution: substitutions[i.productId] || undefined,
+          })),
         },
-        onError: (err) => {
-          Alert.alert("Error", "Failed to place order. Please try again.\n" + (err.message || ""));
+        {
+          onSuccess: () => {
+            clearOrder();
+            router.replace("/(customer)/history" as any);
+          },
+          onError: (err) => {
+            Alert.alert("Error", "Failed to update order. Please try again.\n" + (err.message || ""));
+          },
         },
-      },
-    );
+      );
+    } else {
+      createOrder(
+        {
+          items: items.map((i) => ({
+            productId: i.productId,
+            qty: i.quantity,
+            itemNote: itemNotes[i.productId] || undefined,
+            substitution: substitutions[i.productId] || undefined,
+          })),
+          notes: notes || undefined,
+          urgent: isUrgent || undefined,
+          requestedDeliveryDate: requestedDeliveryDate || undefined,
+          substitutions: Object.keys(substitutions).length > 0 ? substitutions : undefined,
+        } as any,
+        {
+          onSuccess: (order) => {
+            clearOrder();
+            router.replace(`/(customer)/order/confirmation?orderId=${order.id}` as any);
+          },
+          onError: (err) => {
+            Alert.alert("Error", "Failed to place order. Please try again.\n" + (err.message || ""));
+          },
+        },
+      );
+    }
   };
 
   if (items.length === 0) {
@@ -118,37 +297,66 @@ export default function OrderScreen() {
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color={colors.brand[500]} />
           </View>
-        ) : pendingOrders.length > 0 ? (
-          // Show the first pending order from the server
+        ) : pendingOrders.length > 0 || outForDeliveryOrder ? (
+          // Show the first pending/out-for-delivery order from the server
           <View style={styles.container}>
             <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Pending Order</Text>
-                {pendingOrders[0].lineItems.map((item) => (
-                  <View key={item.id} style={styles.lineItem}>
-                    <View style={styles.lineItemLeft}>
-                      <Text style={styles.lineItemName}>{item.product?.name ?? item.productId}</Text>
-                      <Text style={styles.lineItemUnit}>{item.product?.unit ?? ""}</Text>
-                      <Text style={styles.lineItemPrice}>
-                        ${Number(item.unitPrice).toFixed(2)} each
-                      </Text>
-                    </View>
-                    <View style={styles.lineItemRight}>
-                      <Text style={styles.lineItemSubtotal}>
-                        ${(item.qty * Number(item.unitPrice)).toFixed(2)}
-                      </Text>
-                      <Text style={styles.qtyLabel}>Qty: {item.qty}</Text>
+              {/* ETA Banner — shown when an order is out for delivery */}
+              {outForDeliveryOrder && trackingData?.tracking ? (
+                <View style={styles.etaBanner}>
+                  <View style={styles.etaBannerHeader}>
+                    <Ionicons name="car-outline" size={20} color={colors.brand[500]} />
+                    <Text style={styles.etaBannerTitle}>
+                      {trackingData.tracking.stopsAhead === 0
+                        ? "Your delivery is next!"
+                        : `Your delivery is ${trackingData.tracking.stopsAhead} stop${trackingData.tracking.stopsAhead !== 1 ? "s" : ""} away`}
+                    </Text>
+                  </View>
+                  {trackingData.tracking.driverName ? (
+                    <Text style={styles.etaBannerDriver}>
+                      Driver: {trackingData.tracking.driverName}
+                    </Text>
+                  ) : null}
+                </View>
+              ) : outForDeliveryOrder && !trackingData?.tracking ? (
+                <View style={styles.etaBanner}>
+                  <View style={styles.etaBannerHeader}>
+                    <Ionicons name="car-outline" size={20} color={colors.brand[500]} />
+                    <Text style={styles.etaBannerTitle}>Your order is out for delivery!</Text>
+                  </View>
+                </View>
+              ) : null}
+              {pendingOrders.length > 0 ? (
+                <>
+                  <View style={styles.section}>
+                    <Text style={styles.sectionTitle}>Pending Order</Text>
+                    {pendingOrders[0].lineItems.map((item) => (
+                      <View key={item.id} style={styles.lineItem}>
+                        <View style={styles.lineItemLeft}>
+                          <Text style={styles.lineItemName}>{item.product?.name ?? item.productId}</Text>
+                          <Text style={styles.lineItemUnit}>{item.product?.unit ?? ""}</Text>
+                          <Text style={styles.lineItemPrice}>
+                            ${Number(item.unitPrice).toFixed(2)} each
+                          </Text>
+                        </View>
+                        <View style={styles.lineItemRight}>
+                          <Text style={styles.lineItemSubtotal}>
+                            ${(item.qty * Number(item.unitPrice)).toFixed(2)}
+                          </Text>
+                          <Text style={styles.qtyLabel}>Qty: {item.qty}</Text>
+                        </View>
+                      </View>
+                    ))}
+                  </View>
+                  <View style={[styles.section, styles.totalsSection]}>
+                    <Text style={styles.sectionTitle}>Order Summary</Text>
+                    <View style={styles.totalRow}>
+                      <Text style={styles.totalLabel}>Total</Text>
+                      <Text style={styles.grandValue}>${Number(pendingOrders[0].total).toFixed(2)}</Text>
                     </View>
                   </View>
-                ))}
-              </View>
-              <View style={[styles.section, styles.totalsSection]}>
-                <Text style={styles.sectionTitle}>Order Summary</Text>
-                <View style={styles.totalRow}>
-                  <Text style={styles.totalLabel}>Total</Text>
-                  <Text style={styles.grandValue}>${Number(pendingOrders[0].total).toFixed(2)}</Text>
-                </View>
-              </View>
+                </>
+              ) : null}
             </ScrollView>
           </View>
         ) : (
@@ -217,39 +425,97 @@ export default function OrderScreen() {
               Items ({itemCount})
             </Text>
             {items.map((item) => (
-              <View key={item.productId} style={styles.lineItem}>
-                <View style={styles.lineItemLeft}>
-                  <Text style={styles.lineItemName}>{item.name}</Text>
-                  <Text style={styles.lineItemUnit}>{item.unit}</Text>
-                  <Text style={styles.lineItemPrice}>
-                    ${item.unitPrice.toFixed(2)} each
-                  </Text>
-                </View>
-                <View style={styles.lineItemRight}>
-                  <Pressable
-                    onPress={() => removeItem(item.productId)}
-                    hitSlop={8}
-                    style={styles.removeBtn}
-                  >
-                    <Ionicons
-                      name="trash-outline"
-                      size={16}
-                      color={colors.danger.DEFAULT}
+              <View key={item.productId}>
+                <View style={styles.lineItem}>
+                  <View style={styles.lineItemLeft}>
+                    <Text style={styles.lineItemName}>{item.name}</Text>
+                    <Text style={styles.lineItemUnit}>{item.unit}</Text>
+                    <Text style={styles.lineItemPrice}>
+                      ${item.unitPrice.toFixed(2)} each
+                    </Text>
+                  </View>
+                  <View style={styles.lineItemRight}>
+                    <Pressable
+                      onPress={() => removeItem(item.productId)}
+                      hitSlop={8}
+                      style={styles.removeBtn}
+                    >
+                      <Ionicons
+                        name="trash-outline"
+                        size={16}
+                        color={colors.danger.DEFAULT}
+                      />
+                    </Pressable>
+                    {/* Note button */}
+                    <Pressable
+                      onPress={() =>
+                        setExpandedNoteId(
+                          expandedNoteId === item.productId ? null : item.productId,
+                        )
+                      }
+                      hitSlop={8}
+                      style={styles.noteIconBtn}
+                      accessibilityLabel={`Add note for ${item.name}`}
+                    >
+                      <Ionicons
+                        name="create-outline"
+                        size={16}
+                        color={
+                          itemNotes[item.productId]
+                            ? colors.brand[500]
+                            : "#94a3b8"
+                        }
+                      />
+                    </Pressable>
+                    {/* Sub button */}
+                    <Pressable
+                      onPress={() => setSubModalProductId(item.productId)}
+                      hitSlop={8}
+                      style={styles.noteIconBtn}
+                      accessibilityLabel={`Substitution preference for ${item.name}`}
+                    >
+                      <Text
+                        style={[
+                          styles.subBtnText,
+                          substitutions[item.productId] ? { color: colors.brand[500] } : {},
+                        ]}
+                      >
+                        Sub
+                      </Text>
+                    </Pressable>
+                    <QtyStepper
+                      value={item.quantity}
+                      onDecrease={() =>
+                        updateQuantity(item.productId, item.quantity - 1)
+                      }
+                      onIncrease={() =>
+                        updateQuantity(item.productId, item.quantity + 1)
+                      }
                     />
-                  </Pressable>
-                  <QtyStepper
-                    value={item.quantity}
-                    onDecrease={() =>
-                      updateQuantity(item.productId, item.quantity - 1)
-                    }
-                    onIncrease={() =>
-                      updateQuantity(item.productId, item.quantity + 1)
-                    }
-                  />
-                  <Text style={styles.lineItemSubtotal}>
-                    ${(item.unitPrice * item.quantity).toFixed(2)}
-                  </Text>
+                    <Text style={styles.lineItemSubtotal}>
+                      ${(item.unitPrice * item.quantity).toFixed(2)}
+                    </Text>
+                  </View>
                 </View>
+                {expandedNoteId === item.productId && (
+                  <TextInput
+                    style={styles.itemNoteInput}
+                    placeholder={`Note for ${item.name}…`}
+                    placeholderTextColor="#94a3b8"
+                    value={itemNotes[item.productId] ?? ""}
+                    onChangeText={(v) => setItemNote(item.productId, v)}
+                    autoFocus
+                    returnKeyType="done"
+                  />
+                )}
+                {substitutions[item.productId] ? (
+                  <View style={styles.subNote}>
+                    <Ionicons name="swap-horizontal-outline" size={12} color="#94a3b8" />
+                    <Text style={styles.subNoteText} numberOfLines={1}>
+                      Sub: {substitutions[item.productId]}
+                    </Text>
+                  </View>
+                ) : null}
               </View>
             ))}
           </View>
@@ -333,11 +599,25 @@ export default function OrderScreen() {
               <Ionicons name="checkmark-circle-outline" size={22} color="#fff" style={{ marginRight: 8 }} />
             )}
             <Text style={styles.placeOrderBtnText}>
-              {isSubmitting ? "Placing Order…" : `Place Order · $${total.toFixed(2)}`}
+              {isSubmitting
+                ? editingOrderId ? "Updating Order…" : "Placing Order…"
+                : editingOrderId
+                  ? `Update Order · $${total.toFixed(2)}`
+                  : `Place Order · $${total.toFixed(2)}`}
             </Text>
           </Pressable>
         </View>
       </View>
+
+      {/* Substitution modal */}
+      {subModalItem ? (
+        <SubstitutionModal
+          productName={subModalItem.name}
+          value={substitutions[subModalItem.productId] ?? ""}
+          onSave={(text) => setSubstitution(subModalItem.productId, text)}
+          onClose={() => setSubModalProductId(null)}
+        />
+      ) : null}
     </>
   );
 }
@@ -392,6 +672,33 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_600SemiBold",
     color: colors.danger.DEFAULT,
     flex: 1,
+  },
+  etaBanner: {
+    backgroundColor: colors.brand[50],
+    borderRadius: borderRadius.lg,
+    padding: 16,
+    marginBottom: 8,
+    gap: 6,
+    borderWidth: 1,
+    borderColor: colors.brand[200] ?? colors.brand[500] + "33",
+    ...shadows.card,
+  },
+  etaBannerHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  etaBannerTitle: {
+    fontSize: 15,
+    fontFamily: "Inter_700Bold",
+    color: colors.brand[600] ?? colors.brand[500],
+    flex: 1,
+  },
+  etaBannerDriver: {
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    color: "#64748b",
+    paddingLeft: 28,
   },
   scroll: {
     paddingBottom: 32,
@@ -466,6 +773,41 @@ const styles = StyleSheet.create({
   },
   removeBtn: {
     padding: 4,
+  },
+  noteIconBtn: {
+    padding: 4,
+  },
+  subBtnText: {
+    fontSize: 11,
+    fontFamily: "Inter_600SemiBold",
+    color: "#94a3b8",
+    letterSpacing: 0.3,
+  },
+  itemNoteInput: {
+    borderWidth: 1,
+    borderColor: colors.brand[200] ?? colors.surface.border,
+    borderRadius: borderRadius.DEFAULT,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    color: colors.navy.DEFAULT,
+    backgroundColor: colors.brand[50],
+    marginBottom: 4,
+  },
+  subNote: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 4,
+    paddingBottom: 6,
+  },
+  subNoteText: {
+    fontSize: 11,
+    fontFamily: "Inter_400Regular",
+    color: "#94a3b8",
+    fontStyle: "italic",
+    flex: 1,
   },
   lineItemSubtotal: {
     fontSize: 15,

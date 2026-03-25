@@ -86,13 +86,39 @@ export default function DriverHistoryScreen() {
 
   return (
     <>
-      <Stack.Screen options={{ title: "Delivery History", headerBackTitle: "Route" }} />
+      <Stack.Screen
+        options={{
+          title: "Delivery History",
+          headerBackTitle: "Route",
+          headerRight: () => (
+            <Pressable
+              onPress={() => router.push("/(driver)/history/performance" as any)}
+              style={{ paddingRight: 4, padding: 4 }}
+              accessibilityLabel="View performance stats"
+            >
+              <Ionicons name="stats-chart-outline" size={22} color={colors.brand[500]} />
+            </Pressable>
+          ),
+        }}
+      />
       <FlatList
         data={runs}
         keyExtractor={(item) => item.id}
         style={styles.list}
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
+        ListHeaderComponent={
+          <Pressable
+            style={styles.performanceBtn}
+            onPress={() => router.push("/(driver)/history/performance" as any)}
+            accessibilityRole="button"
+            accessibilityLabel="View performance dashboard"
+          >
+            <Ionicons name="stats-chart-outline" size={20} color={colors.brand[500]} />
+            <Text style={styles.performanceBtnText}>View Performance Dashboard</Text>
+            <Ionicons name="chevron-forward" size={18} color={colors.brand[500]} />
+          </Pressable>
+        }
         ListEmptyComponent={
           <View style={styles.empty}>
             <Ionicons name="archive-outline" size={48} color="#cbd5e1" />
@@ -123,6 +149,23 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontFamily: "Inter_400Regular",
     color: "#94a3b8",
+  },
+  performanceBtn: {
+    backgroundColor: "#fff",
+    borderRadius: borderRadius.lg,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 10,
+    ...shadows.card,
+  },
+  performanceBtnText: {
+    flex: 1,
+    fontSize: 15,
+    fontFamily: "Inter_600SemiBold",
+    color: colors.brand[500],
   },
   card: {
     backgroundColor: "#fff",

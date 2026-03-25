@@ -16,6 +16,7 @@ import { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
 import { CompleteStopDto } from "./dto/complete-stop.dto";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { ConfigService } from "@nestjs/config";
+import { NotificationsService } from "../notifications/notifications.service";
 
 @Injectable()
 export class OrdersService {
@@ -26,6 +27,7 @@ export class OrdersService {
     @InjectQueue("invoices") private readonly invoiceQueue: Queue,
     private readonly gateway: RouteFlowGateway,
     private readonly config: ConfigService,
+    private readonly notifications: NotificationsService,
   ) {
     this.taxRate = this.config.get<number>("taxRate") ?? 0.1;
   }
@@ -172,13 +174,27 @@ export class OrdersService {
       ? `\n[${new Date().toLocaleDateString()} – status changed to ${dto.status}: ${dto.reason}]`
       : undefined;
 
-    return this.prisma.order.update({
+    const updated = await this.prisma.order.update({
       where: { id },
       data: {
         status: dto.status,
         ...(noteAppend ? { notes: (order.notes ?? "") + noteAppend } : {}),
       },
     });
+
+    // Fire-and-forget push notifications for key status transitions
+    const notifMap: Partial<Record<OrderStatus, { title: string; body: string }>> = {
+      [OrderStatus.CONFIRMED]:        { title: "Order Confirmed ✓", body: `Your order #${order.orderNumber} has been confirmed.` },
+      [OrderStatus.OUT_FOR_DELIVERY]: { title: "Out for Delivery 🚚", body: `Your order #${order.orderNumber} is on its way!` },
+      [OrderStatus.DELIVERED]:        { title: "Order Delivered ✓", body: `Your order #${order.orderNumber} has been delivered.` },
+      [OrderStatus.CANCELLED]:        { title: "Order Cancelled", body: `Your order #${order.orderNumber} has been cancelled.` },
+    };
+    const notif = notifMap[dto.status as OrderStatus];
+    if (notif) {
+      this.notifications.sendToCustomer(order.customerId, notif.title, notif.body, { orderId: id }).catch(() => {});
+    }
+
+    return updated;
   }
 
   async updateOrderItems(orderId: string, dto: UpdateOrderItemsDto) {
@@ -366,14 +382,21 @@ export class OrdersService {
 
       await tx.routeRunStop.update({
         where: { id: stopId },
-        data: { status: "COMPLETED", completedAt: new Date(), driverNote: dto.driverNote },
+        data: {
+          status: "COMPLETED",
+          completedAt: new Date(),
+          driverNote: dto.driverNote,
+          podPhotoUrls: dto.podPhotoUrls ?? [],
+          signatureUrl: dto.signatureUrl ?? null,
+          safeDropEnabled: dto.safeDropEnabled ?? false,
+        },
       });
     });
 
-    // Emit real-time updates for each affected order/customer
+    // Emit real-time updates for each affected order/customer + push notifications
     const stop = await this.prisma.routeRunStop.findFirst({
       where: { id: stopId, routeRunId: runId },
-      include: { orders: { select: { id: true, customerId: true } } },
+      include: { orders: { select: { id: true, customerId: true, orderNumber: true, status: true } } },
     });
     if (stop) {
       for (const order of stop.orders) {
@@ -384,6 +407,11 @@ export class OrdersService {
           orderId: order.id,
           completedAt: new Date().toISOString(),
         });
+        if (order.status === OrderStatus.DELIVERED) {
+          this.notifications
+            .sendToCustomer(order.customerId, "Order Delivered ✓", `Your order #${order.orderNumber} has been delivered.`, { orderId: order.id })
+            .catch(() => {});
+        }
       }
     }
 
@@ -398,6 +426,57 @@ export class OrdersService {
     }
 
     return { success: true };
+  }
+
+  async getOrderTracking(orderId: string, user: JwtPayload) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: {
+        routeRunStop: {
+          include: {
+            routeRun: {
+              include: {
+                driver: { select: { id: true, contactName: true } },
+                route: { select: { id: true, name: true } },
+                stops: { orderBy: { stopNumber: "asc" } },
+              },
+            },
+          },
+        },
+      },
+    });
+    if (!order) throw new NotFoundException("Order not found");
+
+    if (!order.routeRunStop) {
+      return { status: order.status, tracking: null };
+    }
+
+    const stop = order.routeRunStop;
+    const run = stop.routeRun;
+    const allStops = run.stops ?? [];
+    const currentStopNumber = stop.stopNumber;
+
+    // Count PENDING stops before this customer's stop
+    const stopsAhead = allStops.filter(
+      (s) => s.stopNumber < currentStopNumber && s.status === "PENDING",
+    ).length;
+
+    return {
+      status: order.status,
+      tracking: {
+        runId: run.id,
+        routeName: run.route?.name ?? null,
+        driverName: run.driver?.contactName ?? null,
+        runStatus: run.status,
+        stopNumber: currentStopNumber,
+        stopStatus: stop.status,
+        stopsAhead,
+        estimatedArrivalWindow: {
+          start: (order as any).customer?.deliveryWindowStart ?? null,
+          end: (order as any).customer?.deliveryWindowEnd ?? null,
+        },
+      },
+    };
   }
 
   private async findOneOrThrow(id: string) {

@@ -10,7 +10,17 @@ import { router, Stack } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, borderRadius, shadows } from "@routeflow/ui/tokens";
 import { useAuthStore } from "../../lib/auth-store";
-import { useMyCustomerProfile } from "../../lib/api/customers";
+import { useMyCustomerProfile, useMyAccountSummary } from "../../lib/api/customers";
+import { apiClient } from "../../lib/api-client";
+import { useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
+
+const DELIVERY_SLOTS = [
+  { label: "7am-10am", start: "07:00", end: "10:00" },
+  { label: "10am-1pm", start: "10:00", end: "13:00" },
+  { label: "1pm-4pm", start: "13:00", end: "16:00" },
+  { label: "4pm-7pm", start: "16:00", end: "19:00" },
+] as const;
 
 function InfoRow({ label, value }: { label: string; value: string }) {
   return (
@@ -52,10 +62,35 @@ function ActionRow({
 export default function ProfileScreen() {
   const logout = useAuthStore((s) => s.logout);
   const { data: profile, isLoading } = useMyCustomerProfile();
+  const { data: accountSummary } = useMyAccountSummary();
+  const queryClient = useQueryClient();
+  const [savingSlot, setSavingSlot] = useState(false);
 
   const initials = profile?.businessName
     ? profile.businessName.split(" ").slice(0, 2).map((w) => w[0]).join("")
     : "?";
+
+  const activeSlot = DELIVERY_SLOTS.find(
+    (s) => s.start === profile?.deliveryWindowStart && s.end === profile?.deliveryWindowEnd,
+  ) ?? null;
+
+  const handleSlotSelect = async (slot: typeof DELIVERY_SLOTS[number]) => {
+    if (savingSlot) return;
+    // Optimistic deselect (toggle off)
+    if (activeSlot?.label === slot.label) return;
+    setSavingSlot(true);
+    try {
+      await apiClient.patch("/customers/me", {
+        deliveryWindowStart: slot.start,
+        deliveryWindowEnd: slot.end,
+      });
+      queryClient.invalidateQueries({ queryKey: ["customers", "me"] });
+    } catch {
+      // silently fail; the profile will reload from cache
+    } finally {
+      setSavingSlot(false);
+    }
+  };
 
   return (
     <>
@@ -90,6 +125,53 @@ export default function ProfileScreen() {
             <Text style={styles.contactName}>{profile?.contactName ?? ""}</Text>
           </View>
 
+          {/* Account Balance card */}
+          {accountSummary ? (
+            <Pressable
+              style={styles.balanceCard}
+              onPress={() => router.push("/(customer)/account-statement" as any)}
+              accessibilityRole="button"
+              accessibilityLabel="View account statement"
+            >
+              <View style={styles.balanceCardHeader}>
+                <Text style={styles.balanceCardTitle}>Account Balance</Text>
+                <Ionicons name="chevron-forward" size={16} color="#94a3b8" />
+              </View>
+              <View style={styles.balanceStats}>
+                <View style={styles.balanceStat}>
+                  <Text style={styles.balanceStatLabel}>Outstanding</Text>
+                  <Text style={styles.balanceStatValue}>
+                    ${Number(accountSummary.outstandingAmount).toFixed(2)}
+                  </Text>
+                </View>
+                <View style={styles.balanceStatDivider} />
+                <View style={styles.balanceStat}>
+                  <Text style={styles.balanceStatLabel}>Overdue</Text>
+                  <Text
+                    style={[
+                      styles.balanceStatValue,
+                      accountSummary.overdueAmount > 0 && { color: colors.danger.DEFAULT },
+                    ]}
+                  >
+                    ${Number(accountSummary.overdueAmount).toFixed(2)}
+                  </Text>
+                </View>
+                <View style={styles.balanceStatDivider} />
+                <View style={styles.balanceStat}>
+                  <Text style={styles.balanceStatLabel}>Credit</Text>
+                  <Text
+                    style={[
+                      styles.balanceStatValue,
+                      accountSummary.availableCredit > 0 && { color: colors.brand[500] },
+                    ]}
+                  >
+                    ${Number(accountSummary.availableCredit).toFixed(2)}
+                  </Text>
+                </View>
+              </View>
+            </Pressable>
+          ) : null}
+
           {/* Business info */}
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Business Info</Text>
@@ -102,6 +184,35 @@ export default function ProfileScreen() {
                 label="Delivery Window"
                 value={`${profile.deliveryWindowStart} – ${profile.deliveryWindowEnd}`}
               />
+            ) : null}
+          </View>
+
+          {/* Delivery Preferences */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Delivery Preferences</Text>
+            <Text style={styles.slotHint}>Preferred delivery time slot</Text>
+            <View style={styles.slotsRow}>
+              {DELIVERY_SLOTS.map((slot) => {
+                const isActive = activeSlot?.label === slot.label;
+                return (
+                  <Pressable
+                    key={slot.label}
+                    style={[styles.slotChip, isActive && styles.slotChipActive]}
+                    onPress={() => handleSlotSelect(slot)}
+                    disabled={savingSlot}
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected: isActive }}
+                    accessibilityLabel={`Delivery window ${slot.label}`}
+                  >
+                    <Text style={[styles.slotChipText, isActive && styles.slotChipTextActive]}>
+                      {slot.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            {savingSlot ? (
+              <ActivityIndicator size="small" color={colors.brand[500]} style={{ marginTop: 8 }} />
             ) : null}
           </View>
 
@@ -134,6 +245,16 @@ export default function ProfileScreen() {
           {/* Quick links */}
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>My Account</Text>
+            <ActionRow
+              icon="wallet-outline"
+              label="Account Statement"
+              onPress={() => router.push("/(customer)/account-statement" as any)}
+            />
+            <ActionRow
+              icon="receipt-outline"
+              label="Credit Notes"
+              onPress={() => router.push("/(customer)/credit-notes" as any)}
+            />
             <ActionRow
               icon="repeat-outline"
               label="Standing Orders"
@@ -208,6 +329,38 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
     paddingVertical: 10,
   },
+  slotHint: {
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    color: "#64748b",
+    marginBottom: 10,
+  },
+  slotsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    paddingBottom: 14,
+  },
+  slotChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: borderRadius.full,
+    borderWidth: 1.5,
+    borderColor: colors.surface.border,
+    backgroundColor: colors.surface.raised,
+  },
+  slotChipActive: {
+    borderColor: colors.brand[500],
+    backgroundColor: colors.brand[50],
+  },
+  slotChipText: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+    color: "#64748b",
+  },
+  slotChipTextActive: {
+    color: colors.brand[500],
+  },
   infoRow: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -248,4 +401,55 @@ const styles = StyleSheet.create({
   actionChevron: { marginLeft: "auto" },
   signOutSection: { marginTop: 4 },
   version: { textAlign: "center", fontSize: 12, fontFamily: "Inter_400Regular", color: "#cbd5e1", marginTop: 8 },
+  balanceCard: {
+    backgroundColor: "#fff",
+    marginHorizontal: 16,
+    marginBottom: 12,
+    borderRadius: borderRadius.lg,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    gap: 12,
+    ...shadows.card,
+  },
+  balanceCardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  balanceCardTitle: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+    color: "#94a3b8",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  balanceStats: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  balanceStat: {
+    flex: 1,
+    alignItems: "center",
+    gap: 4,
+  },
+  balanceStatLabel: {
+    fontSize: 11,
+    fontFamily: "Inter_500Medium",
+    color: "#94a3b8",
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+    textAlign: "center",
+  },
+  balanceStatValue: {
+    fontSize: 16,
+    fontFamily: "Inter_700Bold",
+    color: colors.navy.DEFAULT,
+    textAlign: "center",
+  },
+  balanceStatDivider: {
+    width: StyleSheet.hairlineWidth,
+    height: 32,
+    backgroundColor: colors.surface.border,
+    marginHorizontal: 4,
+  },
 });

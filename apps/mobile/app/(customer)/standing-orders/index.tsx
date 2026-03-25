@@ -79,7 +79,22 @@ export default function StandingOrdersScreen() {
 
   return (
     <>
-      <Stack.Screen options={{ title: "Standing Orders" }} />
+      <Stack.Screen
+        options={{
+          title: "Standing Orders",
+          headerRight: () => (
+            <Pressable
+              onPress={() => router.push("/(customer)/standing-orders/new" as any)}
+              hitSlop={10}
+              style={{ paddingRight: 4 }}
+              accessibilityRole="button"
+              accessibilityLabel="Create standing order"
+            >
+              <Ionicons name="add" size={26} color={colors.brand[500]} />
+            </Pressable>
+          ),
+        }}
+      />
       <FlatList
         data={orders}
         keyExtractor={(item) => item.id}
@@ -96,14 +111,32 @@ export default function StandingOrdersScreen() {
         ListEmptyComponent={
           <View style={styles.empty}>
             <Ionicons name="repeat-outline" size={48} color="#cbd5e1" />
-            <Text style={styles.emptyText}>No standing orders set up.</Text>
+            <Text style={styles.emptyText}>No standing orders yet.</Text>
             <Text style={styles.emptySubtext}>
-              Contact your account manager to set up recurring deliveries.
+              Tap the + button to create your first recurring order.
             </Text>
+            <Pressable
+              style={styles.createBtn}
+              onPress={() => router.push("/(customer)/standing-orders/new" as any)}
+              accessibilityRole="button"
+            >
+              <Ionicons name="add-circle-outline" size={18} color="#fff" />
+              <Text style={styles.createBtnText}>Create Standing Order</Text>
+            </Pressable>
           </View>
         }
         renderItem={({ item }) => <StandingOrderCard order={item} />}
       />
+
+      {/* FAB */}
+      <Pressable
+        style={styles.fab}
+        onPress={() => router.push("/(customer)/standing-orders/new" as any)}
+        accessibilityRole="button"
+        accessibilityLabel="Create standing order"
+      >
+        <Ionicons name="add" size={28} color="#fff" />
+      </Pressable>
     </>
   );
 }
@@ -113,7 +146,7 @@ const styles = StyleSheet.create({
   content: {
     paddingHorizontal: 16,
     paddingTop: 16,
-    paddingBottom: 32,
+    paddingBottom: 100, // room for FAB
     gap: 10,
   },
   centered: { flex: 1, alignItems: "center", justifyContent: "center" },
@@ -142,6 +175,21 @@ const styles = StyleSheet.create({
     color: "#cbd5e1",
     textAlign: "center",
     lineHeight: 18,
+  },
+  createBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: colors.brand[500],
+    borderRadius: borderRadius.DEFAULT,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    marginTop: 8,
+  },
+  createBtnText: {
+    fontSize: 14,
+    fontFamily: "Inter_600SemiBold",
+    color: "#fff",
   },
   card: {
     backgroundColor: "#fff",
@@ -194,5 +242,18 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: "Inter_500Medium",
     color: "#64748b",
+  },
+  fab: {
+    position: "absolute",
+    bottom: 28,
+    right: 20,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: colors.brand[500],
+    alignItems: "center",
+    justifyContent: "center",
+    ...shadows.card,
+    elevation: 6,
   },
 });

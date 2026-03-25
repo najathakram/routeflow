@@ -4,9 +4,10 @@ import { OrdersService } from "./orders.service";
 import { OrdersController, RouteRunDeliveryController } from "./orders.controller";
 import { AuthModule } from "../auth/auth.module";
 import { GatewaysModule } from "../gateways/gateways.module";
+import { NotificationsModule } from "../notifications/notifications.module";
 
 @Module({
-  imports: [AuthModule, BullModule.registerQueue({ name: "invoices" }), GatewaysModule],
+  imports: [AuthModule, BullModule.registerQueue({ name: "invoices" }), GatewaysModule, NotificationsModule],
   controllers: [OrdersController, RouteRunDeliveryController],
   providers: [OrdersService],
   exports: [OrdersService],

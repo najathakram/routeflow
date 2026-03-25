@@ -11,6 +11,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { colors, borderRadius, shadows } from "@routeflow/ui/tokens";
 import { useProduct } from "../../../lib/api/products";
 import { useOrderStore } from "../../../store/orderStore";
+import { useFavouritesStore } from "../../../store/favouritesStore";
+import { ProductImage } from "../../../components/ProductImage";
 
 function QtyStepper({
   value,
@@ -75,6 +77,8 @@ export default function ProductDetailScreen() {
   const { productId } = useLocalSearchParams<{ productId: string }>();
   const { data: product, isLoading } = useProduct(productId);
   const addItem = useOrderStore((s) => s.addItem);
+  const toggle = useFavouritesStore((s) => s.toggle);
+  const isFav = useFavouritesStore((s) => s.isFavourite(productId));
   const [quantity, setQuantity] = useState(1);
 
   if (isLoading) {
@@ -94,6 +98,8 @@ export default function ProductDetailScreen() {
   }
 
   const price = parseFloat(String(product.pricePerUnit));
+  const priceTiers: Array<{ minQty: number; price: number }> | undefined =
+    (product as any).priceTiers;
 
   const handleAddToOrder = () => {
     addItem(
@@ -117,6 +123,20 @@ export default function ProductDetailScreen() {
         options={{
           title: product.name,
           headerBackTitle: "Shop",
+          headerRight: () => (
+            <Pressable
+              onPress={() => toggle(productId)}
+              hitSlop={10}
+              accessibilityLabel={isFav ? "Remove from favourites" : "Add to favourites"}
+              accessibilityRole="button"
+            >
+              <Ionicons
+                name={isFav ? "heart" : "heart-outline"}
+                size={24}
+                color={isFav ? colors.danger.DEFAULT : colors.navy.DEFAULT}
+              />
+            </Pressable>
+          ),
         }}
       />
       <View style={styles.container}>
@@ -124,9 +144,9 @@ export default function ProductDetailScreen() {
           contentContainerStyle={styles.scroll}
           showsVerticalScrollIndicator={false}
         >
-          {/* Large image placeholder */}
-          <View style={styles.imagePlaceholder}>
-            <Ionicons name="image-outline" size={56} color="#cbd5e1" />
+          {/* Product image */}
+          <View style={styles.imageContainer}>
+            <ProductImage uri={(product as any).imageUrl} size="lg" />
             {product.lowStock ? (
               <View style={styles.lowStockBanner}>
                 <Ionicons
@@ -151,6 +171,25 @@ export default function ProductDetailScreen() {
             <Text style={styles.description}>{product.description}</Text>
 
             <View style={styles.divider} />
+
+            {/* Volume Pricing card */}
+            {priceTiers && priceTiers.length > 0 ? (
+              <>
+                <View style={tierStyles.card}>
+                  <View style={tierStyles.header}>
+                    <Ionicons name="pricetag-outline" size={15} color={colors.brand[500]} />
+                    <Text style={tierStyles.title}>Volume Pricing</Text>
+                  </View>
+                  {priceTiers.map((tier) => (
+                    <View key={tier.minQty} style={tierStyles.row}>
+                      <Text style={tierStyles.qty}>{tier.minQty}+ units</Text>
+                      <Text style={tierStyles.tierPrice}>${Number(tier.price).toFixed(2)} each</Text>
+                    </View>
+                  ))}
+                </View>
+                <View style={styles.divider} />
+              </>
+            ) : null}
 
             {/* Quantity stepper */}
             <View style={styles.stepperRow}>
@@ -185,6 +224,46 @@ export default function ProductDetailScreen() {
   );
 }
 
+const tierStyles = StyleSheet.create({
+  card: {
+    backgroundColor: colors.brand[50],
+    borderRadius: borderRadius.DEFAULT,
+    borderWidth: 1,
+    borderColor: colors.brand[200] ?? colors.brand[500] + "33",
+    padding: 14,
+    gap: 8,
+    marginBottom: 4,
+  },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginBottom: 4,
+  },
+  title: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+    color: colors.brand[700],
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+  },
+  row: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  qty: {
+    fontSize: 14,
+    fontFamily: "Inter_500Medium",
+    color: "#64748b",
+  },
+  tierPrice: {
+    fontSize: 14,
+    fontFamily: "Inter_700Bold",
+    color: colors.brand[600] ?? colors.brand[500],
+  },
+});
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -193,11 +272,10 @@ const styles = StyleSheet.create({
   scroll: {
     paddingBottom: 24,
   },
-  imagePlaceholder: {
+  imageContainer: {
     height: 240,
-    backgroundColor: "#f1f5f9",
-    alignItems: "center",
-    justifyContent: "center",
+    position: "relative",
+    overflow: "hidden",
   },
   lowStockBanner: {
     position: "absolute",

@@ -124,6 +124,30 @@ export function useDriverHistory() {
   });
 }
 
+export interface DriverStats {
+  totalStopsCompleted: number;
+  onTimeDeliveryPct: number;
+  avgStopsPerRoute: number;
+  returnsRate: number;
+}
+
+export function useDriverStats() {
+  return useQuery<DriverStats>({
+    queryKey: ['route-runs', 'my-stats'],
+    queryFn: () =>
+      apiClient
+        .get('/route-runs/my-stats')
+        .then((r) => r.data)
+        .catch((err) => {
+          // Gracefully handle 404 — endpoint may not exist yet
+          if (err?.response?.status === 404) return null;
+          throw err;
+        }),
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+}
+
 // ─── Mutations ────────────────────────────────────────────────────────────────
 
 export function useUpdateRunStatus() {
@@ -153,12 +177,15 @@ export interface CompleteStopDto {
   stopId: string;
   driverNote?: string;
   items: CompleteStopItemDto[];
+  podPhotoUrls?: string[];
+  signatureUrl?: string;
+  safeDropEnabled?: boolean;
 }
 
 export function useCompleteStop() {
   const qc = useQueryClient();
   return useMutation<RouteRunStop, Error, CompleteStopDto>({
-    mutationFn: ({ runId, stopId, driverNote, items }) => {
+    mutationFn: ({ runId, stopId, driverNote, items, podPhotoUrls, signatureUrl, safeDropEnabled }) => {
       const deliveries = items
         .filter((i) => i.orderItemId) // API requires orderItemId; skip ADD_ON items without one
         .map((i) => ({
@@ -168,7 +195,7 @@ export function useCompleteStop() {
           note: i.driverNote,
         }));
       return apiClient
-        .post(`/route-runs/${runId}/stops/${stopId}/complete`, { driverNote, deliveries })
+        .post(`/route-runs/${runId}/stops/${stopId}/complete`, { driverNote, deliveries, podPhotoUrls, signatureUrl, safeDropEnabled })
         .then((r) => r.data);
     },
     onSuccess: (_, { runId }) => {

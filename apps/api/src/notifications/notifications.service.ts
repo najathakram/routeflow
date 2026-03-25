@@ -149,4 +149,34 @@ export class NotificationsService implements OnModuleInit {
     const deviceCount = await this.prisma.deviceToken.count();
     return { configured: this.firebaseInitialized, deviceCount };
   }
+
+  /** Send a push notification to a customer by their customerId */
+  async sendToCustomer(
+    customerId: string,
+    title: string,
+    body: string,
+    data?: Record<string, string>,
+  ): Promise<void> {
+    const customer = await this.prisma.customer.findUnique({
+      where: { id: customerId },
+      select: { userId: true },
+    });
+    if (!customer?.userId) return;
+    await this.sendToUser(customer.userId, { title, body, data });
+  }
+
+  /** Send a push notification to a driver by their driverId */
+  async sendToDriver(
+    driverId: string,
+    title: string,
+    body: string,
+    data?: Record<string, string>,
+  ): Promise<void> {
+    const driver = await this.prisma.driver.findUnique({
+      where: { id: driverId },
+      select: { userId: true },
+    });
+    if (!driver?.userId) return;
+    await this.sendToUser(driver.userId, { title, body, data });
+  }
 }

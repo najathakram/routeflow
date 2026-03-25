@@ -1,0 +1,1 @@
+-- Migration placeholder: pod photos and safe drop fields were added directly to DB

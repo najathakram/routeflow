@@ -1,10 +1,44 @@
 import { Tabs } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import { View, Text, StyleSheet } from "react-native";
 import { colors } from "@routeflow/ui/tokens";
+import { useNetworkSync } from "../../hooks/useNetworkSync";
+
+function OfflineBanner() {
+  const { isOnline, queueLength } = useNetworkSync();
+  if (isOnline) return null;
+  return (
+    <View style={styles.offlineBanner}>
+      <Ionicons name="cloud-offline-outline" size={16} color="#fff" />
+      <Text style={styles.offlineText}>
+        Offline{queueLength > 0 ? ` — ${queueLength} action${queueLength !== 1 ? "s" : ""} queued` : ""}
+      </Text>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  offlineBanner: {
+    backgroundColor: "#64748b",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 16,
+  },
+  offlineText: {
+    color: "#fff",
+    fontSize: 13,
+    fontFamily: "Inter_500Medium",
+  },
+});
 
 export default function DriverLayout() {
   return (
-    <Tabs
+    <>
+      <OfflineBanner />
+      <Tabs
       screenOptions={{
         tabBarActiveTintColor: "#2563EB",
         tabBarInactiveTintColor: "#94a3b8",
@@ -60,5 +94,6 @@ export default function DriverLayout() {
       {/* Hidden screens — accessible via router.push but not shown in tab bar */}
       <Tabs.Screen name="change-password" options={{ href: null }} />
     </Tabs>
+    </>
   );
 }

@@ -72,6 +72,7 @@ export interface CreateReturnDto {
   reason: ReturnReason;
   notes?: string;
   items: CreateReturnItemDto[];
+  photoUrls?: string[];
 }
 
 export function useCreateReturn() {

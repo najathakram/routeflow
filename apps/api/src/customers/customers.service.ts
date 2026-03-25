@@ -67,6 +67,61 @@ export class CustomersService {
     return customer;
   }
 
+  async getMyStatement(user: JwtPayload) {
+    const customer = await this.prisma.customer.findFirst({ where: { userId: user.sub } });
+    if (!customer) throw new NotFoundException("Customer profile not found");
+
+    const [invoices, creditNotes] = await Promise.all([
+      this.prisma.invoice.findMany({
+        where: { customerId: customer.id },
+        orderBy: { createdAt: "desc" },
+        take: 50,
+        select: { id: true, invoiceNumber: true, total: true, amountPaid: true, status: true, dueDate: true, createdAt: true },
+      }),
+      this.prisma.creditNote.findMany({
+        where: { customerId: customer.id },
+        orderBy: { createdAt: "desc" },
+        take: 50,
+        select: { id: true, creditNoteNumber: true, amount: true, status: true, createdAt: true },
+      }),
+    ]);
+
+    const outstanding = invoices
+      .filter((i) => i.status !== "PAID" && i.status !== "VOID")
+      .reduce((sum, i) => sum + (Number(i.total) - Number(i.amountPaid ?? 0)), 0);
+
+    const overdue = invoices
+      .filter((i) => i.status !== "PAID" && i.status !== "VOID" && i.dueDate && new Date(i.dueDate) < new Date())
+      .reduce((sum, i) => sum + (Number(i.total) - Number(i.amountPaid ?? 0)), 0);
+
+    const availableCredit = creditNotes
+      .filter((c) => c.status === "ISSUED")
+      .reduce((sum, c) => sum + Number(c.amount), 0);
+
+    const transactions = [
+      ...invoices.map((i) => ({
+        type: "INVOICE" as const,
+        id: i.id,
+        reference: i.invoiceNumber,
+        date: i.createdAt,
+        amount: Number(i.total),
+        balance: -(Number(i.total) - Number(i.amountPaid ?? 0)),
+        status: i.status,
+      })),
+      ...creditNotes.map((c) => ({
+        type: "CREDIT_NOTE" as const,
+        id: c.id,
+        reference: c.creditNoteNumber,
+        date: c.createdAt,
+        amount: Number(c.amount),
+        balance: c.status === "APPLIED" ? 0 : Number(c.amount),
+        status: c.status,
+      })),
+    ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+    return { outstanding, overdue, availableCredit, transactions };
+  }
+
   async findOne(id: string, user: JwtPayload) {
     const customer = await this.prisma.customer.findUnique({
       where: { id },

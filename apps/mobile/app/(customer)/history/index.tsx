@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import {
+  Alert,
   Pressable,
   ScrollView,
   SectionList,
@@ -15,6 +16,7 @@ import { colors, borderRadius, shadows } from "@routeflow/ui/tokens";
 import { HistorySkeleton } from "../../../components/skeletons/HistorySkeleton";
 import { NetworkError } from "../../../components/NetworkError";
 import { useMyOrders, type Order } from "../../../lib/api/orders";
+import { useOrderStore } from "../../../store/orderStore";
 
 type FilterKey = "ALL" | "PENDING" | "ACTIVE" | "DELIVERED" | "CANCELLED";
 const FILTERS: { key: FilterKey; label: string }[] = [
@@ -50,6 +52,39 @@ function OrderRow({ order }: { order: Order }) {
   const date = parseISO(order.createdAt);
   const timeLabel = format(date, "h:mm a");
   const itemCount = order.lineItems.reduce((s, i) => s + i.qty, 0);
+  const loadItems = useOrderStore((s) => s.loadItems);
+  const currentItems = useOrderStore((s) => s.items);
+
+  const handleReorder = (e: { stopPropagation: () => void }) => {
+    e.stopPropagation();
+    const mapped = order.lineItems
+      .filter((l) => l.product)
+      .map((l) => ({
+        productId: l.productId,
+        name: l.product!.name,
+        unitPrice: Number(l.unitPrice),
+        unit: l.product!.unit,
+        quantity: l.qty,
+      }));
+
+    const doReorder = () => {
+      loadItems(mapped);
+      router.push("/(customer)/order");
+    };
+
+    if (currentItems.length > 0) {
+      Alert.alert(
+        "Replace your current cart with this order?",
+        undefined,
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Replace", onPress: doReorder },
+        ],
+      );
+    } else {
+      doReorder();
+    }
+  };
 
   return (
     <Pressable
@@ -65,7 +100,13 @@ function OrderRow({ order }: { order: Order }) {
       </View>
       <View style={styles.rowRight}>
         <Text style={styles.total}>${Number(order.total).toFixed(2)}</Text>
-        <Text style={styles.chevron}>›</Text>
+        {order.status === "DELIVERED" ? (
+          <Pressable style={styles.reorderBtn} onPress={handleReorder} accessibilityRole="button" accessibilityLabel="Reorder">
+            <Text style={styles.reorderBtnText}>Reorder</Text>
+          </Pressable>
+        ) : (
+          <Text style={styles.chevron}>›</Text>
+        )}
       </View>
     </Pressable>
   );
@@ -213,4 +254,17 @@ const styles = StyleSheet.create({
   chevron: { fontSize: 20, color: "#94a3b8", lineHeight: 24 },
   empty: { alignItems: "center", paddingTop: 64 },
   emptyText: { fontSize: 14, fontFamily: "Inter_400Regular", color: "#94a3b8" },
+  reorderBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: borderRadius.full,
+    backgroundColor: colors.brand[50],
+    borderWidth: 1,
+    borderColor: colors.brand[500],
+  },
+  reorderBtnText: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    color: colors.brand[500],
+  },
 });

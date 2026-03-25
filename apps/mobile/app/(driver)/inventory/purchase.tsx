@@ -3,6 +3,7 @@ import {
   Alert,
   Keyboard,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -11,11 +12,13 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { router, Stack } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, borderRadius, shadows } from "@routeflow/ui/tokens";
 import { useStockOverview, useRecordPurchase } from "../../../lib/api/inventory";
+import { useProductByBarcode } from "../../../lib/api/products";
+import { BarcodeScanner } from "../../../components/BarcodeScanner";
 
 export default function RecordPurchaseScreen() {
   const { data: stock } = useStockOverview();
@@ -28,6 +31,33 @@ export default function RecordPurchaseScreen() {
   const [reference, setReference] = useState("");
   const [notes, setNotes] = useState("");
   const [showDropdown, setShowDropdown] = useState(false);
+  const [showScanner, setShowScanner] = useState(false);
+  const [scannedBarcode, setScannedBarcode] = useState<string | null>(null);
+
+  const { data: barcodeProduct, isError: barcodeError } = useProductByBarcode(scannedBarcode);
+
+  // When a barcode resolves to a product, auto-select it
+  useEffect(() => {
+    if (!barcodeProduct) return;
+    const match = (stock ?? []).find((s) => s.productId === barcodeProduct.id);
+    if (match) {
+      setSelectedProductId(match.productId);
+      setProductSearch(match.productName);
+    } else {
+      // Product exists in catalog but not in stock overview — still select by ID
+      setSelectedProductId(barcodeProduct.id);
+      setProductSearch(barcodeProduct.name ?? "");
+    }
+    setShowDropdown(false);
+    setScannedBarcode(null);
+  }, [barcodeProduct]);
+
+  useEffect(() => {
+    if (barcodeError && scannedBarcode) {
+      Alert.alert("Not Found", "No product found for that barcode.");
+      setScannedBarcode(null);
+    }
+  }, [barcodeError, scannedBarcode]);
 
   const selectedProduct = (stock ?? []).find((s) => s.productId === selectedProductId);
 
@@ -108,6 +138,13 @@ export default function RecordPurchaseScreen() {
                     onFocus={() => setShowDropdown(true)}
                     autoFocus
                   />
+                  <Pressable
+                    onPress={() => setShowScanner(true)}
+                    accessibilityLabel="Scan barcode"
+                    style={styles.scanBtn}
+                  >
+                    <Ionicons name="barcode-outline" size={22} color={colors.brand[500]} />
+                  </Pressable>
                 </View>
                 {showDropdown && filtered.length > 0 && (
                   <View style={styles.dropdown}>
@@ -213,6 +250,17 @@ export default function RecordPurchaseScreen() {
           </Pressable>
         </View>
       </KeyboardAvoidingView>
+
+      {/* Barcode scanner modal */}
+      <Modal visible={showScanner} animationType="slide" onRequestClose={() => setShowScanner(false)}>
+        <BarcodeScanner
+          onScanned={(code) => {
+            setShowScanner(false);
+            setScannedBarcode(code);
+          }}
+          onClose={() => setShowScanner(false)}
+        />
+      </Modal>
     </>
   );
 }
@@ -275,6 +323,9 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontFamily: "Inter_400Regular",
     color: colors.navy.DEFAULT,
+  },
+  scanBtn: {
+    padding: 4,
   },
   dropdown: {
     marginTop: 4,

@@ -1,4 +1,4 @@
-import { Pressable, ScrollView, StyleSheet, Text, View, ActivityIndicator } from "react-native";
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View, ActivityIndicator } from "react-native";
 import { router, Stack } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { EmptyState, StatusBadge } from "@routeflow/ui/mobile";
@@ -11,6 +11,7 @@ import {
   type RouteRunStop,
 } from "../../../lib/api/routes";
 import { useRouteStore } from "../../../store/routeStore";
+import { useMileageStore } from "../../../store/mileageStore";
 import { NetworkError } from "../../../components/NetworkError";
 
 const STATUS_ICON: Record<string, { name: string; color: string }> = {
@@ -97,6 +98,7 @@ export default function RouteScreen() {
   const { data, isLoading, isError, refetch } = useActiveRouteRun();
   const { data: scheduledData } = useScheduledRouteRuns();
   const setActiveRunId = useRouteStore((s) => s.setActiveRunId);
+  const { logMileage, updateEnd, getEntry, getMiles } = useMileageStore();
 
   // Prefer in-progress run; fall back to first scheduled run
   const runRef = data?.data?.[0] ?? scheduledData?.data?.[0] ?? null;
@@ -158,6 +160,81 @@ export default function RouteScreen() {
       ? "Start Route"
       : "Next Stop";
 
+  // ─── Mileage logging ──────────────────────────────────────────────────────
+  const mileageEntry = run ? getEntry(run.id) : null;
+  const loggedMiles = run ? getMiles(run.id) : null;
+
+  const handleLogMileage = () => {
+    if (!run) return;
+    const existingEntry = getEntry(run.id);
+
+    if (existingEntry && existingEntry.endOdometer == null) {
+      // End odometer not yet set — prompt for it
+      Alert.prompt(
+        "End Odometer",
+        "Enter your current odometer reading (end of route):",
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Save",
+            onPress: (value) => {
+              const end = parseFloat(value ?? "");
+              if (isNaN(end)) {
+                Alert.alert("Invalid", "Please enter a valid number.");
+                return;
+              }
+              updateEnd(run.id, end);
+            },
+          },
+        ],
+        "plain-text",
+        String(existingEntry.startOdometer),
+        "numeric",
+      );
+      return;
+    }
+
+    // Start odometer prompt
+    Alert.prompt(
+      "Log Mileage",
+      "Enter your starting odometer reading:",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Next",
+          onPress: (startValue) => {
+            const start = parseFloat(startValue ?? "");
+            if (isNaN(start)) {
+              Alert.alert("Invalid", "Please enter a valid number.");
+              return;
+            }
+            // Immediately ask for end odometer too
+            Alert.prompt(
+              "Log Mileage",
+              "Enter your ending odometer reading (leave blank if still driving):",
+              [
+                { text: "Cancel", style: "cancel" },
+                {
+                  text: "Save",
+                  onPress: (endValue) => {
+                    const end = endValue ? parseFloat(endValue) : null;
+                    logMileage(run.id, start, isNaN(end as number) ? null : end);
+                  },
+                },
+              ],
+              "plain-text",
+              "",
+              "numeric",
+            );
+          },
+        },
+      ],
+      "plain-text",
+      "",
+      "numeric",
+    );
+  };
+
   const handlePrimaryAction = () => {
     if (allDone) return;
     if (!hasStarted) {
@@ -176,13 +253,29 @@ export default function RouteScreen() {
           title: "My Route",
           headerRight: () =>
             run && (
-              <Pressable
-                onPress={() => router.push(`/(driver)/route/packing-list?runId=${run.id}`)}
-                style={{ paddingRight: 4 }}
-                accessibilityLabel="Packing list"
-              >
-                <Ionicons name="list-outline" size={24} color={colors.brand[500]} />
-              </Pressable>
+              <View style={{ flexDirection: "row", gap: 4, paddingRight: 4 }}>
+                <Pressable
+                  onPress={() => router.push(`/(driver)/route/map?runId=${run.id}` as any)}
+                  style={{ padding: 4 }}
+                  accessibilityLabel="Map view"
+                >
+                  <Ionicons name="map-outline" size={22} color={colors.brand[500]} />
+                </Pressable>
+                <Pressable
+                  onPress={() => router.push(`/(driver)/route/messages?runId=${run.id}` as any)}
+                  style={{ padding: 4 }}
+                  accessibilityLabel="Messages"
+                >
+                  <Ionicons name="chatbubble-outline" size={22} color={colors.brand[500]} />
+                </Pressable>
+                <Pressable
+                  onPress={() => router.push(`/(driver)/route/packing-list?runId=${run.id}`)}
+                  style={{ padding: 4 }}
+                  accessibilityLabel="Packing list"
+                >
+                  <Ionicons name="list-outline" size={24} color={colors.brand[500]} />
+                </Pressable>
+              </View>
             ),
         }}
       />
@@ -227,6 +320,34 @@ export default function RouteScreen() {
 
         {/* Primary action */}
         <View style={styles.footer}>
+          {/* Mileage row — shown when route is in progress or completed */}
+          {(run.status === "IN_PROGRESS" || allDone) && (
+            <View style={styles.mileageRow}>
+              <Pressable
+                style={styles.mileageBtn}
+                onPress={handleLogMileage}
+                accessibilityRole="button"
+                accessibilityLabel="Log mileage"
+              >
+                <Ionicons name="speedometer-outline" size={18} color={colors.brand[500]} />
+                <Text style={styles.mileageBtnText}>
+                  {mileageEntry ? "Update Mileage" : "Log Mileage"}
+                </Text>
+              </Pressable>
+              {loggedMiles != null && (
+                <View style={styles.mileageSummary}>
+                  <Ionicons name="car-outline" size={16} color="#64748b" />
+                  <Text style={styles.mileageSummaryText}>
+                    {loggedMiles.toFixed(1)} mi logged
+                  </Text>
+                </View>
+              )}
+              {mileageEntry && mileageEntry.endOdometer == null && (
+                <Text style={styles.mileagePending}>Start: {mileageEntry.startOdometer}</Text>
+              )}
+            </View>
+          )}
+
           <Pressable
             style={[styles.primaryBtn, allDone && styles.primaryBtnDone]}
             onPress={handlePrimaryAction}
@@ -401,5 +522,44 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontFamily: "Inter_700Bold",
     color: "#fff",
+  },
+  // 3-N: mileage tracking
+  mileageRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 8,
+    flexWrap: "wrap",
+  },
+  mileageBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: borderRadius.DEFAULT,
+    borderWidth: 1,
+    borderColor: colors.brand[100],
+    backgroundColor: colors.brand[50],
+  },
+  mileageBtnText: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+    color: colors.brand[500],
+  },
+  mileageSummary: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  mileageSummaryText: {
+    fontSize: 13,
+    fontFamily: "Inter_500Medium",
+    color: "#64748b",
+  },
+  mileagePending: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    color: "#94a3b8",
   },
 });

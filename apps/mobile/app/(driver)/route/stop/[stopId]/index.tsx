@@ -13,6 +13,14 @@ import {
   ToastAndroid,
   View,
 } from "react-native";
+
+// ─── expo-av optional import ─────────────────────────────────────────────────
+let ExpoAV: typeof import("expo-av") | null = null;
+try {
+  ExpoAV = require("expo-av");
+} catch {
+  // expo-av not installed — voice notes gracefully disabled
+}
 import * as Linking from "expo-linking";
 import { router, Stack, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -31,6 +39,7 @@ import {
 import { useProductByBarcode } from "../../../../../lib/api/products";
 import { BarcodeScanner } from "../../../../../components/BarcodeScanner";
 import { NetworkError } from "../../../../../components/NetworkError";
+import { apiClient } from "../../../../../lib/api-client";
 
 // ─── Open Maps ────────────────────────────────────────────────────────────────
 
@@ -363,6 +372,14 @@ export default function StopDetailScreen() {
   const [pendingBarcode, setPendingBarcode] = useState<string | null>(null);
   const [highlightedItemId, setHighlightedItemId] = useState<string | null>(null);
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const noteDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ─── Delivery window alert state ──────────────────────────────────────────
+  const [windowStatus, setWindowStatus] = useState<"ok" | "soon" | "late">("ok");
+
+  // ─── Voice recording state ────────────────────────────────────────────────
+  const [isRecording, setIsRecording] = useState(false);
+  const recordingRef = useRef<any>(null);
 
   const { data: barcodeProduct, isError: barcodeError } = useProductByBarcode(pendingBarcode);
 
@@ -411,6 +428,37 @@ export default function StopDetailScreen() {
     }
   }, [barcodeError, pendingBarcode]);
 
+  // ─── Delivery window status — re-evaluated every 30 s ───────────────────
+  useEffect(() => {
+    function checkWindow() {
+      const windowEnd = stop?.customer?.deliveryWindowEnd;
+      if (!windowEnd || stop?.status === "COMPLETED" || stop?.status === "SKIPPED") {
+        setWindowStatus("ok");
+        return;
+      }
+      const [wHour, wMin] = windowEnd.split(":").map(Number);
+      const now = new Date();
+      const windowEndDate = new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate(),
+        wHour,
+        wMin,
+      );
+      const diffMs = windowEndDate.getTime() - now.getTime();
+      if (diffMs < 0) {
+        setWindowStatus("late");
+      } else if (diffMs < 30 * 60 * 1000) {
+        setWindowStatus("soon");
+      } else {
+        setWindowStatus("ok");
+      }
+    }
+    checkWindow();
+    const interval = setInterval(checkWindow, 30_000);
+    return () => clearInterval(interval);
+  }, [stop?.customer?.deliveryWindowEnd, stop?.status]);
+
   if (isLoading) {
     return (
       <>
@@ -447,6 +495,57 @@ export default function StopDetailScreen() {
 
   // Flatten all items across orders at this stop
   const allOrderItems = (stop.orders ?? []).flatMap((o) => o.lineItems ?? []);
+
+  const handleNoteChange = (text: string) => {
+    setStopNote(stopId, text);
+    if (noteDebounceRef.current) clearTimeout(noteDebounceRef.current);
+    noteDebounceRef.current = setTimeout(() => {
+      if (runId) {
+        apiClient
+          .patch(`/route-runs/${runId}/stops/${stopId}`, { driverNote: text })
+          .catch(() => {/* silent — note saved locally */});
+      }
+    }, 800);
+  };
+
+  // ─── Voice note handler ─────────────────────────────────────────────────
+  const handleVoiceNote = async () => {
+    if (!ExpoAV) {
+      Alert.alert(
+        "Voice Notes Unavailable",
+        "Voice notes are available when expo-av is installed. Run: npx expo install expo-av",
+      );
+      return;
+    }
+
+    try {
+      const { Audio } = ExpoAV;
+      if (isRecording) {
+        // Stop recording
+        await recordingRef.current?.stopAndUnloadAsync();
+        const uri = recordingRef.current?.getURI?.();
+        setIsRecording(false);
+        recordingRef.current = null;
+        Alert.alert("Voice Note Saved", uri ? "Recording saved." : "Recording stopped.");
+      } else {
+        // Start recording
+        const { status } = await Audio.requestPermissionsAsync();
+        if (status !== "granted") {
+          Alert.alert("Permission Denied", "Microphone access is required for voice notes.");
+          return;
+        }
+        await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+        const { recording } = await Audio.Recording.createAsync(
+          Audio.RecordingOptionsPresets.HIGH_QUALITY,
+        );
+        recordingRef.current = recording;
+        setIsRecording(true);
+      }
+    } catch (err) {
+      Alert.alert("Voice Note Error", "Could not start recording. Please try again.");
+      setIsRecording(false);
+    }
+  };
 
   const handleMarkArrived = () => {
     if (stop.status === "PENDING" && runId) {
@@ -537,6 +636,22 @@ export default function StopDetailScreen() {
               )}
             </View>
 
+            {/* Delivery window warnings (3-H) */}
+            {windowStatus === "late" && (
+              <View style={styles.bannerLate}>
+                <Ionicons name="warning" size={18} color={colors.danger.DEFAULT} />
+                <Text style={styles.bannerLateText}>
+                  Running late — delivery window has passed
+                </Text>
+              </View>
+            )}
+            {windowStatus === "soon" && (
+              <View style={styles.bannerSoon}>
+                <Ionicons name="time-outline" size={18} color={colors.warning.DEFAULT} />
+                <Text style={styles.bannerSoonText}>Delivery window ends soon</Text>
+              </View>
+            )}
+
             {/* Address + Navigate */}
             {address ? (
               <View style={styles.addressCard}>
@@ -626,13 +741,28 @@ export default function StopDetailScreen() {
             )}
 
             {/* Driver notes */}
-            <Text style={styles.sectionTitle}>Driver Notes</Text>
+            <View style={styles.notesSectionHeader}>
+              <Text style={styles.sectionTitle}>Driver Notes</Text>
+              {/* Voice note button (3-I) */}
+              <Pressable
+                style={[styles.voiceBtn, isRecording && styles.voiceBtnActive]}
+                onPress={handleVoiceNote}
+                accessibilityRole="button"
+                accessibilityLabel={isRecording ? "Stop voice recording" : "Record voice note"}
+              >
+                <Ionicons
+                  name={isRecording ? "stop-circle-outline" : "mic-outline"}
+                  size={22}
+                  color={isRecording ? colors.danger.DEFAULT : colors.brand[500]}
+                />
+              </Pressable>
+            </View>
             <TextInput
               style={styles.notesInput}
               placeholder="Add a note about this stop…"
               placeholderTextColor="#94a3b8"
               value={stopNoteFromStore}
-              onChangeText={(v) => setStopNote(stopId, v)}
+              onChangeText={handleNoteChange}
               multiline
               numberOfLines={3}
               textAlignVertical="top"
@@ -943,5 +1073,61 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontFamily: "Inter_400Regular",
     color: "#94a3b8",
+  },
+  // 3-H: running-late banners
+  bannerLate: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: colors.danger.bg,
+    borderRadius: borderRadius.lg,
+    borderWidth: 1,
+    borderColor: colors.danger.DEFAULT,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  bannerLateText: {
+    flex: 1,
+    fontSize: 14,
+    fontFamily: "Inter_600SemiBold",
+    color: colors.danger.DEFAULT,
+  },
+  bannerSoon: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: colors.warning.bg,
+    borderRadius: borderRadius.lg,
+    borderWidth: 1,
+    borderColor: colors.warning.DEFAULT,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  bannerSoonText: {
+    flex: 1,
+    fontSize: 14,
+    fontFamily: "Inter_600SemiBold",
+    color: colors.warning.DEFAULT,
+  },
+  // 3-I: voice notes
+  notesSectionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: 4,
+  },
+  voiceBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: colors.brand[50],
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: colors.brand[100],
+  },
+  voiceBtnActive: {
+    backgroundColor: colors.danger.bg,
+    borderColor: colors.danger.DEFAULT,
   },
 });

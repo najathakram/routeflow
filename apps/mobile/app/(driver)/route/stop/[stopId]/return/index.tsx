@@ -18,6 +18,7 @@ import {
   type ReturnReason,
   type CreateReturnItemDto,
 } from "../../../../../../lib/api/returns";
+import { PhotoCapture } from "../../../../../../components/PhotoCapture";
 
 const REASONS: { key: ReturnReason; label: string; icon: string }[] = [
   { key: "DAMAGED",          label: "Damaged",        icon: "alert-circle-outline" },
@@ -55,6 +56,7 @@ export default function DriverReturnScreen() {
 
   const [globalReason, setGlobalReason] = useState<ReturnReason>("DAMAGED");
   const [notes, setNotes] = useState("");
+  const [returnPhotos, setReturnPhotos] = useState<string[]>([]);
   const [lines, setLines] = useState<ReturnLineItem[]>([]);
   const linesInitialized = useRef(false);
 
@@ -114,7 +116,7 @@ export default function DriverReturnScreen() {
     }));
 
     createReturn(
-      { orderId, reason: globalReason, notes: notes || undefined, items: returnItems },
+      { orderId, reason: globalReason, notes: notes || undefined, items: returnItems, photoUrls: returnPhotos.length > 0 ? returnPhotos : undefined },
       {
         onSuccess: () => {
           Alert.alert("Return Logged", "The return has been recorded.", [
@@ -245,6 +247,18 @@ export default function DriverReturnScreen() {
                 </View>
               ))
             )}
+          </View>
+
+          {/* Photo Evidence */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Photo Evidence (optional)</Text>
+            <PhotoCapture
+              photos={returnPhotos}
+              onAdd={(uri) => setReturnPhotos((prev) => [...prev, uri])}
+              onRemove={(uri) => setReturnPhotos((prev) => prev.filter((p) => p !== uri))}
+              maxPhotos={3}
+              label="Add Photo"
+            />
           </View>
 
           {/* Notes */}

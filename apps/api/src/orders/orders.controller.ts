@@ -32,6 +32,11 @@ export class OrdersController {
     return this.ordersService.create(dto, user);
   }
 
+  @Get(":id/tracking")
+  getTracking(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
+    return this.ordersService.getOrderTracking(id, user);
+  }
+
   @Get(":id")
   findOne(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
     return this.ordersService.findOne(id, user);

@@ -1,18 +1,22 @@
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
+  Modal,
   Pressable,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { router, Stack } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, borderRadius, shadows } from "@routeflow/ui/tokens";
 import { useStockOverview, type StockItem } from "../../../lib/api/inventory";
 import { NetworkError } from "../../../components/NetworkError";
+import { useProductByBarcode } from "../../../lib/api/products";
+import { BarcodeScanner } from "../../../components/BarcodeScanner";
 
 function StockCard({ item }: { item: StockItem }) {
   const isLow =
@@ -69,6 +73,30 @@ function StockCard({ item }: { item: StockItem }) {
 export default function InventoryScreen() {
   const { data: stock, isLoading, isError, refetch } = useStockOverview();
   const [search, setSearch] = useState("");
+  const [showScanner, setShowScanner] = useState(false);
+  const [scannedBarcode, setScannedBarcode] = useState<string | null>(null);
+
+  const { data: barcodeProduct, isError: barcodeError } = useProductByBarcode(scannedBarcode);
+
+  useEffect(() => {
+    if (!barcodeProduct) return;
+    const match = (stock ?? []).find((s) => s.productId === barcodeProduct.id);
+    if (match) {
+      router.push(
+        `/(driver)/inventory/adjust?productId=${match.productId}&productName=${encodeURIComponent(match.productName)}&unit=${encodeURIComponent(match.unit)}&currentStock=${match.currentStock}` as any,
+      );
+    } else {
+      Alert.alert("Not in Stock", `"${barcodeProduct.name}" was found but has no stock record.`);
+    }
+    setScannedBarcode(null);
+  }, [barcodeProduct]);
+
+  useEffect(() => {
+    if (barcodeError && scannedBarcode) {
+      Alert.alert("Not Found", "No product found for that barcode.");
+      setScannedBarcode(null);
+    }
+  }, [barcodeError, scannedBarcode]);
 
   const filtered = (stock ?? []).filter((s) =>
     s.productName.toLowerCase().includes(search.toLowerCase()),
@@ -114,6 +142,13 @@ export default function InventoryScreen() {
             returnKeyType="search"
             clearButtonMode="while-editing"
           />
+          <Pressable
+            onPress={() => setShowScanner(true)}
+            accessibilityLabel="Scan barcode to find product"
+            style={styles.scanBtn}
+          >
+            <Ionicons name="barcode-outline" size={22} color={colors.brand[500]} />
+          </Pressable>
         </View>
 
         {/* Low stock alert */}
@@ -151,6 +186,17 @@ export default function InventoryScreen() {
           <Ionicons name="add" size={28} color="#fff" />
         </Pressable>
       </View>
+
+      {/* Barcode scanner modal */}
+      <Modal visible={showScanner} animationType="slide" onRequestClose={() => setShowScanner(false)}>
+        <BarcodeScanner
+          onScanned={(code) => {
+            setShowScanner(false);
+            setScannedBarcode(code);
+          }}
+          onClose={() => setShowScanner(false)}
+        />
+      </Modal>
     </>
   );
 }
@@ -175,6 +221,9 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontFamily: "Inter_400Regular",
     color: colors.navy.DEFAULT,
+  },
+  scanBtn: {
+    padding: 4,
   },
   alertBanner: {
     flexDirection: "row",
