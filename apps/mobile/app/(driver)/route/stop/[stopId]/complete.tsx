@@ -109,6 +109,12 @@ export default function StopCompleteScreen() {
   const handleConfirm = () => {
     if (!runId) return;
 
+    // Safe drop requires at least one POD photo
+    if (safeDropEnabled && podPhotos.length === 0) {
+      Alert.alert("Photo Required", "Please capture at least one proof of delivery photo when safe drop is enabled.");
+      return;
+    }
+
     // Build DTO items
     const items: CompleteStopItemDto[] = allItems
       .filter((i) => i.resolution && i.resolution.status !== "UNRESOLVED")

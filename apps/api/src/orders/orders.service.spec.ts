@@ -6,6 +6,7 @@ import { OrdersService } from "./orders.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { NotificationsService } from "../notifications/notifications.service";
 
 const MOCK_PRODUCT = {
   id: "prod-1",
@@ -69,6 +70,13 @@ describe("OrdersService", () => {
         {
           provide: ConfigService,
           useValue: { get: jest.fn().mockReturnValue(0.1) },
+        },
+        {
+          provide: NotificationsService,
+          useValue: {
+            sendToCustomer: jest.fn().mockResolvedValue(undefined),
+            sendToDriver: jest.fn().mockResolvedValue(undefined),
+          },
         },
       ],
     }).compile();
@@ -174,9 +182,10 @@ describe("OrdersService", () => {
       );
     });
 
-    it("should throw ForbiddenException when non-customer tries to create", async () => {
+    it("should throw BadRequestException when operator creates without valid customerId", async () => {
+      prisma.customer.findUnique.mockResolvedValue(null);
       await expect(service.create({ items: [] } as any, operatorPayload)).rejects.toThrow(
-        ForbiddenException,
+        BadRequestException,
       );
     });
 

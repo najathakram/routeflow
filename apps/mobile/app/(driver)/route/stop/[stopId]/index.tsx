@@ -15,7 +15,8 @@ import {
 } from "react-native";
 
 // ─── expo-av optional import ─────────────────────────────────────────────────
-let ExpoAV: typeof import("expo-av") | null = null;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let ExpoAV: any = null;
 try {
   ExpoAV = require("expo-av");
 } catch {

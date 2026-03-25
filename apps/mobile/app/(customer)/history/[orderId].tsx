@@ -43,7 +43,11 @@ export default function OrderDetailScreen() {
         {
           text: "Cancel Order",
           style: "destructive",
-          onPress: () => cancelOrder(order.id),
+          onPress: () =>
+            cancelOrder(order.id, {
+              onError: (err) =>
+                Alert.alert("Could not cancel", err.message || "Please try again."),
+            }),
         },
       ],
     );

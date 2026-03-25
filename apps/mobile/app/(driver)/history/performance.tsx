@@ -42,6 +42,12 @@ function computeLocalStats(runs: RouteRun[]) {
         // No window defined — count as on-time
         onTimeStops += 1;
       }
+
+      // Count stops with at least one REFUSED item as a return proxy
+      const hasRefused = stop.orders?.some((o) =>
+        o.lineItems?.some((li) => li.status === "REFUSED"),
+      );
+      if (hasRefused) totalReturns += 1;
     }
   }
 

@@ -432,6 +432,7 @@ export class OrdersService {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
       include: {
+        customer: { select: { deliveryWindowStart: true, deliveryWindowEnd: true } },
         routeRunStop: {
           include: {
             routeRun: {
@@ -472,8 +473,8 @@ export class OrdersService {
         stopStatus: stop.status,
         stopsAhead,
         estimatedArrivalWindow: {
-          start: (order as any).customer?.deliveryWindowStart ?? null,
-          end: (order as any).customer?.deliveryWindowEnd ?? null,
+          start: order.customer?.deliveryWindowStart ?? null,
+          end: order.customer?.deliveryWindowEnd ?? null,
         },
       },
     };

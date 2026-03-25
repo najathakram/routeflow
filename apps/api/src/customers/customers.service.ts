@@ -76,7 +76,15 @@ export class CustomersService {
         where: { customerId: customer.id },
         orderBy: { createdAt: "desc" },
         take: 50,
-        select: { id: true, invoiceNumber: true, total: true, amountPaid: true, status: true, dueDate: true, createdAt: true },
+        select: {
+          id: true,
+          invoiceNumber: true,
+          total: true,
+          status: true,
+          dueDate: true,
+          createdAt: true,
+          payments: { select: { amount: true } },
+        },
       }),
       this.prisma.creditNote.findMany({
         where: { customerId: customer.id },
@@ -86,40 +94,45 @@ export class CustomersService {
       }),
     ]);
 
-    const outstanding = invoices
-      .filter((i) => i.status !== "PAID" && i.status !== "VOID")
-      .reduce((sum, i) => sum + (Number(i.total) - Number(i.amountPaid ?? 0)), 0);
+    const invoicesWithPaid = invoices.map((i) => ({
+      ...i,
+      amountPaid: i.payments.reduce((sum, p) => sum + Number(p.amount), 0),
+    }));
 
-    const overdue = invoices
+    const outstanding = invoicesWithPaid
+      .filter((i) => i.status !== "PAID" && i.status !== "VOID")
+      .reduce((sum, i) => sum + (Number(i.total) - i.amountPaid), 0);
+
+    const overdue = invoicesWithPaid
       .filter((i) => i.status !== "PAID" && i.status !== "VOID" && i.dueDate && new Date(i.dueDate) < new Date())
-      .reduce((sum, i) => sum + (Number(i.total) - Number(i.amountPaid ?? 0)), 0);
+      .reduce((sum, i) => sum + (Number(i.total) - i.amountPaid), 0);
 
     const availableCredit = creditNotes
-      .filter((c) => c.status === "ISSUED")
+      .filter((c) => c.status === "OPEN")
       .reduce((sum, c) => sum + Number(c.amount), 0);
 
     const transactions = [
-      ...invoices.map((i) => ({
+      ...invoicesWithPaid.map((i) => ({
         type: "INVOICE" as const,
         id: i.id,
-        reference: i.invoiceNumber,
-        date: i.createdAt,
+        description: `Invoice #${i.invoiceNumber}`,
+        date: i.createdAt.toISOString(),
         amount: Number(i.total),
-        balance: -(Number(i.total) - Number(i.amountPaid ?? 0)),
+        runningBalance: -(Number(i.total) - i.amountPaid),
         status: i.status,
       })),
       ...creditNotes.map((c) => ({
         type: "CREDIT_NOTE" as const,
         id: c.id,
-        reference: c.creditNoteNumber,
-        date: c.createdAt,
-        amount: Number(c.amount),
-        balance: c.status === "APPLIED" ? 0 : Number(c.amount),
+        description: `Credit Note #${c.creditNoteNumber}`,
+        date: c.createdAt.toISOString(),
+        amount: -Number(c.amount),
+        runningBalance: c.status === "APPLIED" ? 0 : Number(c.amount),
         status: c.status,
       })),
     ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
-    return { outstanding, overdue, availableCredit, transactions };
+    return { outstandingAmount: outstanding, overdueAmount: overdue, availableCredit, transactions };
   }
 
   async findOne(id: string, user: JwtPayload) {

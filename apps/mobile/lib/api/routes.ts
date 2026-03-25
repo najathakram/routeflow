@@ -66,6 +66,7 @@ export interface PackingListItem {
   productId: string;
   productName: string;
   sku?: string;
+  unit?: string;
   totalQty: number;
   customers: { name: string; qty: number }[];
 }

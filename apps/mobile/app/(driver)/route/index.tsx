@@ -177,7 +177,7 @@ export default function RouteScreen() {
           { text: "Cancel", style: "cancel" },
           {
             text: "Save",
-            onPress: (value) => {
+            onPress: (value: string | undefined) => {
               const end = parseFloat(value ?? "");
               if (isNaN(end)) {
                 Alert.alert("Invalid", "Please enter a valid number.");
@@ -202,7 +202,7 @@ export default function RouteScreen() {
         { text: "Cancel", style: "cancel" },
         {
           text: "Next",
-          onPress: (startValue) => {
+          onPress: (startValue: string | undefined) => {
             const start = parseFloat(startValue ?? "");
             if (isNaN(start)) {
               Alert.alert("Invalid", "Please enter a valid number.");
@@ -216,7 +216,7 @@ export default function RouteScreen() {
                 { text: "Cancel", style: "cancel" },
                 {
                   text: "Save",
-                  onPress: (endValue) => {
+                  onPress: (endValue: string | undefined) => {
                     const end = endValue ? parseFloat(endValue) : null;
                     logMileage(run.id, start, isNaN(end as number) ? null : end);
                   },
