@@ -1,16 +1,19 @@
 import {
   ActivityIndicator,
+  Alert,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from "react-native";
-import { Stack, useLocalSearchParams } from "expo-router";
+import { router, Stack, useLocalSearchParams } from "expo-router";
 import { format, parseISO } from "date-fns";
 import { Ionicons } from "@expo/vector-icons";
 import { StatusBadge } from "@routeflow/ui/mobile";
 import { colors, borderRadius, shadows } from "@routeflow/ui/tokens";
-import { useOrder, type OrderItem } from "../../../lib/api/orders";
+import { useOrder, useCancelOrder, type OrderItem } from "../../../lib/api/orders";
+import { useOrderStore } from "../../../store/orderStore";
 
 type ItemStatusBadge = "DELIVERED" | "CANCELLED" | "PENDING";
 
@@ -23,6 +26,58 @@ function itemStatusForBadge(status: string): ItemStatusBadge {
 export default function OrderDetailScreen() {
   const { orderId } = useLocalSearchParams<{ orderId: string }>();
   const { data: order, isLoading, isError } = useOrder(orderId ?? "");
+  const addItem = useOrderStore((s) => s.addItem);
+  const items = useOrderStore((s) => s.items);
+  const { mutate: cancelOrder, isPending: isCancelling } = useCancelOrder();
+
+  const handleCancel = () => {
+    if (!order) return;
+    Alert.alert(
+      "Cancel Order",
+      "Are you sure you want to cancel this order? This cannot be undone.",
+      [
+        { text: "Keep Order", style: "cancel" },
+        {
+          text: "Cancel Order",
+          style: "destructive",
+          onPress: () => cancelOrder(order.id),
+        },
+      ],
+    );
+  };
+
+  const handleReorder = () => {
+    if (!order) return;
+    const alreadyInCart = items.length > 0;
+    const doReorder = () => {
+      for (const line of order.lineItems) {
+        if (!line.product) continue;
+        addItem(
+          {
+            id: line.productId,
+            name: line.product.name,
+            unit: line.product.unit,
+            pricePerUnit: Number(line.unitPrice),
+          },
+          line.qty,
+        );
+      }
+      router.push("/(customer)/order");
+    };
+
+    if (alreadyInCart) {
+      Alert.alert(
+        "Add to existing order?",
+        "You already have items in your order. These items will be added to it.",
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Add Items", onPress: doReorder },
+        ],
+      );
+    } else {
+      doReorder();
+    }
+  };
 
   if (isLoading) {
     return (
@@ -54,6 +109,18 @@ export default function OrderDetailScreen() {
         options={{
           title: order.orderNumber,
           headerBackTitle: "History",
+          headerRight: () => (
+            <Pressable
+              onPress={handleReorder}
+              style={{ paddingRight: 4 }}
+              accessibilityRole="button"
+              accessibilityLabel="Reorder"
+            >
+              <Text style={{ color: colors.brand[500], fontFamily: "Inter_600SemiBold", fontSize: 15 }}>
+                Reorder
+              </Text>
+            </Pressable>
+          ),
         }}
       />
       <ScrollView
@@ -116,14 +183,30 @@ export default function OrderDetailScreen() {
         {order.notes ? (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Order Notes</Text>
-            <View style={styles.driverNoteBox}>
+            <View style={styles.noteBox}>
               <Ionicons
                 name="chatbox-ellipses-outline"
                 size={18}
                 color={colors.brand[500]}
-                style={styles.driverNoteIcon}
+                style={styles.noteIcon}
               />
-              <Text style={styles.driverNoteText}>{order.notes}</Text>
+              <Text style={styles.noteText}>{order.notes}</Text>
+            </View>
+          </View>
+        ) : null}
+
+        {/* Driver note */}
+        {order.driverNote ? (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Driver Note</Text>
+            <View style={[styles.noteBox, styles.driverNoteBox]}>
+              <Ionicons
+                name="person-outline"
+                size={18}
+                color="#64748b"
+                style={styles.noteIcon}
+              />
+              <Text style={[styles.noteText, styles.driverNoteText]}>{order.driverNote}</Text>
             </View>
           </View>
         ) : null}
@@ -135,6 +218,37 @@ export default function OrderDetailScreen() {
             <Text style={styles.totalValue}>${Number(order.total).toFixed(2)}</Text>
           </View>
         </View>
+
+        {/* Return CTA — only for delivered orders */}
+        {order.status === "DELIVERED" && (
+          <Pressable
+            style={styles.returnBtn}
+            onPress={() =>
+              router.push(
+                `/(customer)/returns/new?orderId=${order.id}` as any,
+              )
+            }
+            accessibilityRole="button"
+          >
+            <Ionicons name="return-down-back-outline" size={18} color={colors.danger.DEFAULT} />
+            <Text style={styles.returnBtnText}>Request a Return</Text>
+          </Pressable>
+        )}
+
+        {/* Cancel CTA — only for pending orders */}
+        {order.status === "PENDING" && (
+          <Pressable
+            style={[styles.returnBtn, isCancelling && styles.btnDisabled]}
+            onPress={handleCancel}
+            disabled={isCancelling}
+            accessibilityRole="button"
+          >
+            <Ionicons name="close-circle-outline" size={18} color={colors.danger.DEFAULT} />
+            <Text style={styles.returnBtnText}>
+              {isCancelling ? "Cancelling…" : "Cancel Order"}
+            </Text>
+          </Pressable>
+        )}
       </ScrollView>
     </>
   );
@@ -247,7 +361,7 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_700Bold",
     color: colors.navy.DEFAULT,
   },
-  driverNoteBox: {
+  noteBox: {
     flexDirection: "row",
     alignItems: "flex-start",
     backgroundColor: colors.brand[50],
@@ -255,18 +369,44 @@ const styles = StyleSheet.create({
     padding: 12,
     gap: 10,
   },
-  driverNoteIcon: {
+  driverNoteBox: {
+    backgroundColor: "#f1f5f9",
+  },
+  noteIcon: {
     marginTop: 1,
   },
-  driverNoteText: {
+  noteText: {
     flex: 1,
     fontSize: 14,
     fontFamily: "Inter_400Regular",
     color: colors.navy.DEFAULT,
     lineHeight: 20,
   },
+  driverNoteText: {
+    color: "#475569",
+  },
+  btnDisabled: {
+    opacity: 0.6,
+  },
   totalSection: {
     ...shadows.card,
+  },
+  returnBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: colors.danger.bg,
+    borderRadius: borderRadius.lg,
+    padding: 14,
+    borderWidth: 1.5,
+    borderColor: colors.danger.DEFAULT,
+    ...shadows.card,
+  },
+  returnBtnText: {
+    fontSize: 15,
+    fontFamily: "Inter_600SemiBold",
+    color: colors.danger.DEFAULT,
   },
   totalRow: {
     flexDirection: "row",

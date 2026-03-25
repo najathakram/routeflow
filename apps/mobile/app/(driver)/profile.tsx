@@ -3,23 +3,12 @@ import { router, Stack } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, borderRadius, shadows } from "@routeflow/ui/tokens";
 import { useAuthStore } from "../../lib/auth-store";
-import { useRouteStore, selectCompletedCount } from "../../store/routeStore";
-import { MOCK_DRIVER } from "../../data/driverMockData";
 
 function InfoRow({ label, value }: { label: string; value: string }) {
   return (
     <View style={styles.infoRow}>
       <Text style={styles.infoLabel}>{label}</Text>
       <Text style={styles.infoValue}>{value}</Text>
-    </View>
-  );
-}
-
-function StatBox({ value, label }: { value: string | number; label: string }) {
-  return (
-    <View style={styles.statBox}>
-      <Text style={styles.statValue}>{value}</Text>
-      <Text style={styles.statLabel}>{label}</Text>
     </View>
   );
 }
@@ -59,24 +48,14 @@ function ActionRow({
 }
 
 export default function DriverProfileScreen() {
-  const logout = useAuthStore((s) => s.logout);
-  const stopsCompleted = useRouteStore(selectCompletedCount);
-  const route = useRouteStore((s) => s.route);
-  const resolutions = useRouteStore((s) => s.itemResolutions);
+  const { user, logout } = useAuthStore();
 
-  // Count total delivered items across completed stops
-  const itemsDelivered = route.stops
-    .filter((s) => s.status === "COMPLETED")
-    .reduce((total, stop) => {
-      const stopRes = resolutions[stop.id] ?? {};
-      const delivered = stop.items.filter(
-        (item) =>
-          stopRes[item.id]?.status === "DELIVERED" ||
-          stopRes[item.id]?.status === "PARTIAL",
-      ).length;
-      // If no resolutions yet (pre-loaded COMPLETED stops), count all items
-      return total + (Object.keys(stopRes).length > 0 ? delivered : stop.items.length);
-    }, 0);
+  const displayName = user?.username ?? "Driver";
+  const initials = displayName
+    .split(/[\s._-]/)
+    .slice(0, 2)
+    .map((w: string) => w[0]?.toUpperCase() ?? "")
+    .join("");
 
   const handleSignOut = async () => {
     await logout();
@@ -94,41 +73,30 @@ export default function DriverProfileScreen() {
         {/* Avatar + name */}
         <View style={styles.avatarSection}>
           <View style={styles.avatar}>
-            <Ionicons name="person" size={34} color={colors.brand[700]} />
+            <Text style={styles.avatarInitials}>{initials || "D"}</Text>
           </View>
-          <Text style={styles.driverName}>{MOCK_DRIVER.name}</Text>
-          <View style={styles.vehicleTag}>
-            <Ionicons name="car-outline" size={15} color="#64748b" />
-            <Text style={styles.vehicleText}>
-              {MOCK_DRIVER.vehicleMake} · {MOCK_DRIVER.vehicleColour} ·{" "}
-              {MOCK_DRIVER.vehiclePlate}
-            </Text>
+          <Text style={styles.driverName}>{displayName}</Text>
+          <View style={styles.roleTag}>
+            <Ionicons name="car-outline" size={14} color="#64748b" />
+            <Text style={styles.roleText}>Driver</Text>
           </View>
         </View>
 
-        {/* Today's stats */}
-        <Text style={styles.sectionTitle}>Today's Stats</Text>
-        <View style={styles.statsRow}>
-          <StatBox value={stopsCompleted} label="Stops Completed" />
-          <StatBox value={itemsDelivered} label="Items Delivered" />
-          <StatBox
-            value={`${route.stops.length - stopsCompleted}`}
-            label="Stops Remaining"
-          />
-        </View>
-
-        {/* Driver info */}
-        <View style={styles.section}>
-          <Text style={styles.sectionInnerTitle}>Driver Info</Text>
-          <InfoRow label="Name" value={MOCK_DRIVER.name} />
-          <InfoRow label="Vehicle" value={MOCK_DRIVER.vehicleMake} />
-          <InfoRow label="Colour" value={MOCK_DRIVER.vehicleColour} />
-          <InfoRow label="Plate" value={MOCK_DRIVER.vehiclePlate} />
-        </View>
-
-        {/* Account */}
+        {/* Account info */}
         <View style={styles.section}>
           <Text style={styles.sectionInnerTitle}>Account</Text>
+          <InfoRow label="Username" value={displayName} />
+          <InfoRow label="Role" value="Driver" />
+        </View>
+
+        {/* Account actions */}
+        <View style={styles.section}>
+          <Text style={styles.sectionInnerTitle}>Settings</Text>
+          <ActionRow
+            icon="time-outline"
+            label="Delivery History"
+            onPress={() => router.push("/(driver)/history")}
+          />
           <ActionRow
             icon="lock-closed-outline"
             label="Change Password"
@@ -177,13 +145,18 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginBottom: 12,
   },
+  avatarInitials: {
+    fontSize: 26,
+    fontFamily: "Inter_700Bold",
+    color: colors.brand[700],
+  },
   driverName: {
     fontSize: 22,
     fontFamily: "Inter_700Bold",
     color: colors.navy.DEFAULT,
     marginBottom: 6,
   },
-  vehicleTag: {
+  roleTag: {
     flexDirection: "row",
     alignItems: "center",
     gap: 5,
@@ -192,45 +165,10 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
     borderRadius: borderRadius.full,
   },
-  vehicleText: {
+  roleText: {
     fontSize: 13,
     fontFamily: "Inter_500Medium",
     color: "#64748b",
-  },
-  sectionTitle: {
-    fontSize: 12,
-    fontFamily: "Inter_600SemiBold",
-    color: "#94a3b8",
-    textTransform: "uppercase",
-    letterSpacing: 0.6,
-    paddingHorizontal: 16,
-    marginBottom: 10,
-  },
-  statsRow: {
-    flexDirection: "row",
-    paddingHorizontal: 16,
-    gap: 10,
-    marginBottom: 20,
-  },
-  statBox: {
-    flex: 1,
-    backgroundColor: "#fff",
-    borderRadius: borderRadius.lg,
-    paddingVertical: 16,
-    alignItems: "center",
-    gap: 4,
-    ...shadows.card,
-  },
-  statValue: {
-    fontSize: 28,
-    fontFamily: "Inter_700Bold",
-    color: colors.navy.DEFAULT,
-  },
-  statLabel: {
-    fontSize: 11,
-    fontFamily: "Inter_500Medium",
-    color: "#94a3b8",
-    textAlign: "center",
   },
   section: {
     backgroundColor: "#fff",

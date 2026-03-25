@@ -8,7 +8,7 @@ import { InjectQueue } from "@nestjs/bull";
 import type { Queue } from "bull";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtPayload } from "../auth/jwt-payload.interface";
-import { OrderStatus, UserRole, ItemStatus, TxnStatus, MutationType } from "@prisma/client";
+import { OrderStatus, UserRole, ItemStatus, TxnStatus, MutationType, MovementType, Prisma } from "@prisma/client";
 import { ListOrdersDto } from "./dto/list-orders.dto";
 import { CreateOrderDto } from "./dto/create-order.dto";
 import { ChangeOrderStatusDto } from "./dto/change-order-status.dto";
@@ -31,7 +31,7 @@ export class OrdersService {
   }
 
   async findAll(query: ListOrdersDto, user: JwtPayload) {
-    const { customerId, status, urgent, page = 1, limit = 20, deliveryDateFrom, deliveryDateTo } = query;
+    const { customerId, search, status, urgent, page = 1, limit = 20, deliveryDateFrom, deliveryDateTo } = query;
     const skip = (page - 1) * limit;
     const where: any = {};
 
@@ -41,6 +41,8 @@ export class OrdersService {
       where.customerId = customer.id;
     } else if (customerId) {
       where.customerId = customerId;
+    } else if (search) {
+      where.customer = { businessName: { contains: search, mode: "insensitive" } };
     }
 
     if (status) where.status = status;
@@ -280,6 +282,11 @@ export class OrdersService {
         const orderItem = await tx.orderItem.findUnique({ where: { id: delivery.orderItemId } });
         if (!orderItem) throw new NotFoundException(`Order item ${delivery.orderItemId} not found`);
 
+        const driverId =
+          user.role === UserRole.DRIVER
+            ? ((await tx.driver.findFirst({ where: { userId: user.sub } }))?.id ?? undefined)
+            : undefined;
+
         await tx.deliveryMutation.create({
           data: {
             orderId: orderItem.orderId,
@@ -289,12 +296,33 @@ export class OrdersService {
             type: delivery.type,
             quantityDelivered: delivery.quantityDelivered,
             note: delivery.note,
-            driverId:
-              user.role === UserRole.DRIVER
-                ? ((await tx.driver.findFirst({ where: { userId: user.sub } }))?.id ?? undefined)
-                : undefined,
+            driverId,
           },
         });
+
+        // Record SALE stock movement (stock can go negative — never blocked)
+        let saleQty: Prisma.Decimal | null = null;
+        if (delivery.type === MutationType.DELIVERED) {
+          saleQty = new Prisma.Decimal(orderItem.qty.toString());
+        } else if (delivery.type === MutationType.PARTIAL && delivery.quantityDelivered != null) {
+          saleQty = new Prisma.Decimal(delivery.quantityDelivered.toString());
+        }
+        if (saleQty !== null && saleQty.gt(0)) {
+          const order = stop.orders.find((o) => o.id === orderItem.orderId);
+          await tx.stockMovement.create({
+            data: {
+              productId: orderItem.productId,
+              type: MovementType.SALE,
+              quantity: saleQty.neg(),
+              reference: order?.orderNumber ?? null,
+              performedById: user.sub,
+            },
+          });
+          await tx.product.update({
+            where: { id: orderItem.productId },
+            data: { currentStock: { decrement: saleQty } },
+          });
+        }
 
         let newItemStatus: ItemStatus = ItemStatus.DELIVERED;
         if (delivery.type === MutationType.PARTIAL) newItemStatus = ItemStatus.PARTIAL;

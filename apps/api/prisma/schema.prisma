@@ -90,13 +90,73 @@ enum Platform {
   ANDROID
 }
 
-enum SyncType {
-  ZOHO_PRODUCTS
-}
-
 enum DriverStatus {
   ACTIVE
   INACTIVE
+}
+
+enum MovementType {
+  PURCHASE
+  SALE
+  ADJUSTMENT
+  RETURN
+  WRITE_OFF
+}
+
+// ─── New Enums (Zoho-parity) ──────────────────────────────────────────────────
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  VIEWED
+  PARTIAL
+  PAID
+  OVERDUE
+  VOID
+}
+
+enum EstimateStatus {
+  DRAFT
+  SENT
+  ACCEPTED
+  DECLINED
+  CONVERTED
+}
+
+enum CreditNoteStatus {
+  OPEN
+  APPLIED
+  VOID
+}
+
+enum PurchaseOrderStatus {
+  DRAFT
+  SENT
+  PARTIAL
+  RECEIVED
+  CLOSED
+}
+
+enum VendorBillStatus {
+  DRAFT
+  RECEIVED
+  PARTIAL
+  PAID
+  OVERDUE
+}
+
+enum ReturnReason {
+  DAMAGED
+  WRONG_ITEM
+  CUSTOMER_REFUSED
+  QUALITY_ISSUE
+  EXCESS_ORDER
+}
+
+enum ReturnStatus {
+  PENDING
+  PROCESSED
+  CANCELLED
 }
 
 // ─── Models ───────────────────────────────────────────────────────────────────
@@ -113,10 +173,12 @@ model User {
   updatedAt           DateTime   @updatedAt
   deletedAt           DateTime?
 
-  customer      Customer?
-  driver        Driver?
-  deviceTokens  DeviceToken[]
-  refreshTokens RefreshToken[]
+  customer        Customer?
+  driver          Driver?
+  deviceTokens    DeviceToken[]
+  refreshTokens   RefreshToken[]
+  stockMovements  StockMovement[]
+  expenses        Expense[]
 
   @@index([role])
   @@index([status])
@@ -145,6 +207,10 @@ model Customer {
   transactions   Transaction[]
   routeRunStops  RouteRunStop[]
   orderTemplates OrderTemplate[]
+  invoices       Invoice[]
+  estimates      Estimate[]
+  creditNotes    CreditNote[]
+  returns        Return[]
 
   @@index([zohoContactId])
   @@index([businessName])
@@ -203,20 +269,26 @@ model Product {
   category         String?
   imageKey         String?
   isActive         Boolean  @default(true)
-  lowStock         Boolean  @default(false)
-  zohoProductId    String?  @unique
-  hasLocalOverride Boolean  @default(false)
-  syncConflict     Boolean  @default(false)
+  barcode          String?  @unique
+  currentStock     Decimal  @default(0) @db.Decimal(10, 3)
+  averageCost      Decimal? @db.Decimal(10, 4)
+  reorderPoint     Int?
+  reorderQty       Int?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
-  orderItems        OrderItem[]
-  deliveryMutations DeliveryMutation[]
-  templateItems     OrderTemplateItem[]
+  orderItems         OrderItem[]
+  deliveryMutations  DeliveryMutation[]
+  templateItems      OrderTemplateItem[]
+  stockMovements     StockMovement[]
+  invoiceItems       InvoiceItem[]
+  estimateItems      EstimateItem[]
+  purchaseOrderItems PurchaseOrderItem[]
+  returnItems        ReturnItem[]
 
   @@index([category])
   @@index([isActive])
-  @@index([zohoProductId])
+  @@index([barcode])
 }
 
 model Route {
@@ -352,6 +424,7 @@ model Order {
   lineItems         OrderItem[]
   deliveryMutations DeliveryMutation[]
   transaction       Transaction?
+  returns           Return[]
 
   @@index([customerId])
   @@index([routeRunId])
@@ -488,21 +561,6 @@ model DeviceToken {
   @@index([userId])
 }
 
-model SyncLog {
-  id          String    @id @default(uuid())
-  type        SyncType
-  status      String
-  recordCount Int       @default(0)
-  errorMsg    String?
-  startedAt   DateTime  @default(now())
-  completedAt DateTime?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-
-  @@index([type])
-  @@index([startedAt])
-}
-
 model SystemConfig {
   key       String   @id
   value     String
@@ -553,4 +611,322 @@ model RefreshToken {
 
   @@index([userId])
   @@index([expiresAt])
+}
+
+model Supplier {
+  id             String          @id @default(uuid())
+  name           String
+  contactName    String?
+  phone          String?
+  email          String?
+  notes          String?
+  isActive       Boolean         @default(true)
+  leadTimeDays   Int?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  stockMovements StockMovement[]
+  purchaseOrders PurchaseOrder[]
+  vendorBills    VendorBill[]
+  expenses       Expense[]
+
+  @@index([isActive])
+}
+
+model StockMovement {
+  id            String       @id @default(uuid())
+  productId     String
+  type          MovementType
+  quantity      Decimal      @db.Decimal(10, 3)
+  unitCost      Decimal?     @db.Decimal(10, 4)
+  supplierId    String?
+  reference     String?
+  notes         String?
+  performedById String?
+  createdAt     DateTime     @default(now())
+
+  product     Product   @relation(fields: [productId], references: [id])
+  supplier    Supplier? @relation(fields: [supplierId], references: [id])
+  performedBy User?     @relation(fields: [performedById], references: [id])
+
+  @@index([productId])
+  @@index([type])
+  @@index([createdAt])
+  @@index([supplierId])
+}
+
+// ─── Sprint 1: Standalone Invoicing ──────────────────────────────────────────
+
+model Invoice {
+  id            String        @id @default(uuid())
+  invoiceNumber String        @unique
+  customerId    String
+  status        InvoiceStatus @default(DRAFT)
+  subtotal      Decimal       @db.Decimal(10, 2)
+  taxAmount     Decimal       @default(0) @db.Decimal(10, 2)
+  discount      Decimal       @default(0) @db.Decimal(10, 2)
+  shippingFee   Decimal       @default(0) @db.Decimal(10, 2)
+  total         Decimal       @db.Decimal(10, 2)
+  dueDate       DateTime?
+  sentAt        DateTime?
+  viewedAt      DateTime?
+  paidAt        DateTime?
+  notes         String?
+  terms         String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  customer    Customer         @relation(fields: [customerId], references: [id])
+  items       InvoiceItem[]
+  payments    InvoicePayment[]
+  creditNotes CreditNote[]
+
+  @@index([customerId])
+  @@index([status])
+  @@index([dueDate])
+  @@index([createdAt])
+}
+
+model InvoiceItem {
+  id          String   @id @default(uuid())
+  invoiceId   String
+  description String
+  productId   String?
+  qty         Decimal  @db.Decimal(10, 3)
+  unitPrice   Decimal  @db.Decimal(10, 2)
+  discount    Decimal  @default(0) @db.Decimal(10, 2)
+  taxRate     Decimal  @default(0) @db.Decimal(5, 4)
+  subtotal    Decimal  @db.Decimal(10, 2)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  invoice Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  product Product? @relation(fields: [productId], references: [id])
+
+  @@index([invoiceId])
+  @@index([productId])
+}
+
+model InvoicePayment {
+  id        String        @id @default(uuid())
+  invoiceId String
+  amount    Decimal       @db.Decimal(10, 2)
+  method    PaymentMethod
+  reference String?
+  notes     String?
+  paidAt    DateTime      @default(now())
+  createdAt DateTime      @default(now())
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id])
+
+  @@index([invoiceId])
+}
+
+// ─── Sprint 2: Expense Tracking ───────────────────────────────────────────────
+
+model ExpenseCategory {
+  id       String    @id @default(uuid())
+  name     String    @unique
+  code     String    @unique
+  isCustom Boolean   @default(false)
+
+  expenses Expense[]
+}
+
+model Expense {
+  id            String   @id @default(uuid())
+  categoryId    String
+  supplierId    String?
+  amount        Decimal  @db.Decimal(10, 2)
+  date          DateTime
+  description   String?
+  paymentMethod String?
+  receiptKey    String?
+  notes         String?
+  performedById String?
+  deletedAt     DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  category    ExpenseCategory @relation(fields: [categoryId], references: [id])
+  supplier    Supplier?       @relation(fields: [supplierId], references: [id])
+  performedBy User?           @relation(fields: [performedById], references: [id])
+
+  @@index([categoryId])
+  @@index([supplierId])
+  @@index([date])
+  @@index([deletedAt])
+}
+
+// ─── Sprint 4: Purchase Orders ────────────────────────────────────────────────
+
+model PurchaseOrder {
+  id           String              @id @default(uuid())
+  poNumber     String              @unique
+  supplierId   String
+  status       PurchaseOrderStatus @default(DRAFT)
+  expectedDate DateTime?
+  notes        String?
+  totalAmount  Decimal             @db.Decimal(10, 2)
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  supplier Supplier            @relation(fields: [supplierId], references: [id])
+  items    PurchaseOrderItem[]
+
+  @@index([supplierId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model PurchaseOrderItem {
+  id          String  @id @default(uuid())
+  poId        String
+  productId   String
+  qtyOrdered  Decimal @db.Decimal(10, 3)
+  qtyReceived Decimal @default(0) @db.Decimal(10, 3)
+  unitCost    Decimal @db.Decimal(10, 4)
+  totalCost   Decimal @db.Decimal(10, 2)
+
+  po      PurchaseOrder @relation(fields: [poId], references: [id], onDelete: Cascade)
+  product Product       @relation(fields: [productId], references: [id])
+
+  @@index([poId])
+  @@index([productId])
+}
+
+// ─── Sprint 6: Credit Notes & Estimates ──────────────────────────────────────
+
+model CreditNote {
+  id               String           @id @default(uuid())
+  creditNoteNumber String           @unique
+  customerId       String
+  invoiceId        String?
+  amount           Decimal          @db.Decimal(10, 2)
+  reason           String?
+  status           CreditNoteStatus @default(OPEN)
+  appliedToInvoiceId String?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  customer        Customer @relation(fields: [customerId], references: [id])
+  invoice         Invoice? @relation(fields: [invoiceId], references: [id])
+
+  @@index([customerId])
+  @@index([status])
+}
+
+model Estimate {
+  id             String         @id @default(uuid())
+  estimateNumber String         @unique
+  customerId     String
+  status         EstimateStatus @default(DRAFT)
+  subtotal       Decimal        @db.Decimal(10, 2)
+  taxAmount      Decimal        @default(0) @db.Decimal(10, 2)
+  discount       Decimal        @default(0) @db.Decimal(10, 2)
+  total          Decimal        @db.Decimal(10, 2)
+  expiresAt      DateTime?
+  notes          String?
+  terms          String?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  customer Customer      @relation(fields: [customerId], references: [id])
+  items    EstimateItem[]
+
+  @@index([customerId])
+  @@index([status])
+}
+
+model EstimateItem {
+  id          String   @id @default(uuid())
+  estimateId  String
+  description String
+  productId   String?
+  qty         Decimal  @db.Decimal(10, 3)
+  unitPrice   Decimal  @db.Decimal(10, 2)
+  subtotal    Decimal  @db.Decimal(10, 2)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  estimate Estimate @relation(fields: [estimateId], references: [id], onDelete: Cascade)
+  product  Product? @relation(fields: [productId], references: [id])
+
+  @@index([estimateId])
+  @@index([productId])
+}
+
+// ─── Sprint 7: Vendor Bills (Accounts Payable) ───────────────────────────────
+
+model VendorBill {
+  id           String           @id @default(uuid())
+  billNumber   String           @unique
+  supplierId   String
+  status       VendorBillStatus @default(RECEIVED)
+  totalOwed    Decimal          @db.Decimal(10, 2)
+  totalPaid    Decimal          @default(0) @db.Decimal(10, 2)
+  dueDate      DateTime?
+  receivedDate DateTime?
+  notes        String?
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  supplier Supplier      @relation(fields: [supplierId], references: [id])
+  payments BillPayment[]
+
+  @@index([supplierId])
+  @@index([status])
+  @@index([dueDate])
+}
+
+model BillPayment {
+  id           String        @id @default(uuid())
+  vendorBillId String
+  amount       Decimal       @db.Decimal(10, 2)
+  method       PaymentMethod
+  reference    String?
+  notes        String?
+  paidAt       DateTime      @default(now())
+  createdAt    DateTime      @default(now())
+
+  vendorBill VendorBill @relation(fields: [vendorBillId], references: [id])
+
+  @@index([vendorBillId])
+}
+
+// ─── Sprint 8: Returns / RMA ──────────────────────────────────────────────────
+
+model Return {
+  id           String       @id @default(uuid())
+  orderId      String
+  customerId   String
+  reason       ReturnReason
+  status       ReturnStatus @default(PENDING)
+  notes        String?
+  creditNoteId String?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  order    Order        @relation(fields: [orderId], references: [id])
+  customer Customer     @relation(fields: [customerId], references: [id])
+  items    ReturnItem[]
+
+  @@index([orderId])
+  @@index([customerId])
+  @@index([status])
+}
+
+model ReturnItem {
+  id        String  @id @default(uuid())
+  returnId  String
+  productId String
+  qty       Decimal @db.Decimal(10, 3)
+  reason    String?
+  restock   Boolean @default(true)
+
+  return  Return  @relation(fields: [returnId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id])
+
+  @@index([returnId])
+  @@index([productId])
 }

@@ -1,5 +1,6 @@
 import { create } from "zustand";
-import { DriverRoute, MOCK_ROUTE } from "../data/driverMockData";
+
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 export type ItemDeliveryStatus = "UNRESOLVED" | "DELIVERED" | "PARTIAL" | "REFUSED";
 
@@ -10,35 +11,41 @@ export interface ItemResolution {
 
 export interface AddedItem {
   id: string;
+  productId: string;
   name: string;
   qty: number;
 }
 
+// ─── State ────────────────────────────────────────────────────────────────────
+
 interface RouteState {
-  route: DriverRoute;
+  // Active run id — set when driver enters a route run
+  activeRunId: string | null;
+
   // stopId -> itemId -> resolution
   itemResolutions: Record<string, Record<string, ItemResolution>>;
+
   // stopId -> driver note
   stopNotes: Record<string, string>;
-  // stopId -> extra items driver added
+
+  // stopId -> extra items driver added (add-ons not on the original order)
   addedItems: Record<string, AddedItem[]>;
 
-  setItemResolution: (
-    stopId: string,
-    itemId: string,
-    resolution: ItemResolution,
-  ) => void;
+  setActiveRunId: (runId: string | null) => void;
+  setItemResolution: (stopId: string, itemId: string, resolution: ItemResolution) => void;
   setStopNote: (stopId: string, note: string) => void;
-  addStopItem: (stopId: string, name: string, qty: number) => void;
-  startRoute: () => void;
-  completeStop: (stopId: string) => void;
+  addStopItem: (stopId: string, productId: string, name: string, qty: number) => void;
+  clearStop: (stopId: string) => void;
+  clearRun: () => void;
 }
 
-export const useRouteStore = create<RouteState>((set, get) => ({
-  route: MOCK_ROUTE,
+export const useRouteStore = create<RouteState>((set) => ({
+  activeRunId: null,
   itemResolutions: {},
   stopNotes: {},
   addedItems: {},
+
+  setActiveRunId: (runId) => set({ activeRunId: runId }),
 
   setItemResolution: (stopId, itemId, resolution) =>
     set((state) => ({
@@ -54,7 +61,7 @@ export const useRouteStore = create<RouteState>((set, get) => ({
   setStopNote: (stopId, note) =>
     set((state) => ({ stopNotes: { ...state.stopNotes, [stopId]: note } })),
 
-  addStopItem: (stopId, name, qty) =>
+  addStopItem: (stopId, productId, name, qty) =>
     set((state) => {
       const existing = state.addedItems[stopId] ?? [];
       return {
@@ -62,77 +69,42 @@ export const useRouteStore = create<RouteState>((set, get) => ({
           ...state.addedItems,
           [stopId]: [
             ...existing,
-            { id: `added-${Date.now()}`, name, qty },
+            { id: `added-${Date.now()}`, productId, name, qty },
           ],
         },
       };
     }),
 
-  startRoute: () =>
+  clearStop: (stopId) =>
     set((state) => {
-      const firstPending = state.route.stops.find((s) => s.status === "PENDING");
-      if (!firstPending) return state;
-      return {
-        route: {
-          ...state.route,
-          stops: state.route.stops.map((s) =>
-            s.id === firstPending.id ? { ...s, status: "IN_PROGRESS" } : s,
-          ),
-        },
-      };
+      const { [stopId]: _res, ...itemResolutions } = state.itemResolutions;
+      const { [stopId]: _note, ...stopNotes } = state.stopNotes;
+      const { [stopId]: _added, ...addedItems } = state.addedItems;
+      return { itemResolutions, stopNotes, addedItems };
     }),
 
-  completeStop: (stopId) =>
-    set((state) => {
-      const stops = state.route.stops.map((s) =>
-        s.id === stopId ? { ...s, status: "COMPLETED" as const } : s,
-      );
-      // Auto-start the next pending stop
-      const nextPending = stops.find((s) => s.status === "PENDING");
-      const finalStops = nextPending
-        ? stops.map((s) =>
-            s.id === nextPending.id ? { ...s, status: "IN_PROGRESS" as const } : s,
-          )
-        : stops;
-      const allDone = finalStops.every(
-        (s) => s.status === "COMPLETED" || s.status === "SKIPPED",
-      );
-      return {
-        route: {
-          ...state.route,
-          status: allDone ? "COMPLETED" : "ACTIVE",
-          stops: finalStops,
-        },
-      };
-    }),
+  clearRun: () =>
+    set({ activeRunId: null, itemResolutions: {}, stopNotes: {}, addedItems: {} }),
 }));
 
-// ─── Selectors ─────────────────────────────────────────────────────────────────
-
-export function selectCompletedCount(state: RouteState) {
-  return state.route.stops.filter((s) => s.status === "COMPLETED").length;
-}
-
-export function selectCurrentStop(state: RouteState) {
-  return state.route.stops.find((s) => s.status === "IN_PROGRESS") ?? null;
-}
+// ─── Selectors ────────────────────────────────────────────────────────────────
 
 export function selectStopResolutions(state: RouteState, stopId: string) {
   return state.itemResolutions[stopId] ?? {};
 }
 
-export function selectAllItemsResolved(state: RouteState, stopId: string) {
-  const stop = state.route.stops.find((s) => s.id === stopId);
-  if (!stop) return false;
+export function selectAllItemsResolved(
+  state: RouteState,
+  stopId: string,
+  orderItemIds: string[],
+): boolean {
   const resolutions = state.itemResolutions[stopId] ?? {};
   const addedItems = state.addedItems[stopId] ?? [];
-  const allOriginalResolved = stop.items.every(
-    (item) =>
-      resolutions[item.id] && resolutions[item.id].status !== "UNRESOLVED",
+  const allOriginalResolved = orderItemIds.every(
+    (id) => resolutions[id] && resolutions[id].status !== "UNRESOLVED",
   );
   const allAddedResolved = addedItems.every(
-    (item) =>
-      resolutions[item.id] && resolutions[item.id].status !== "UNRESOLVED",
+    (item) => resolutions[item.id] && resolutions[item.id].status !== "UNRESOLVED",
   );
   return allOriginalResolved && allAddedResolved;
 }

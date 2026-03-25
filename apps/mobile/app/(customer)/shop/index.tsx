@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import {
   Dimensions,
   FlatList,
@@ -7,14 +7,18 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  ToastAndroid,
+  Platform,
+  Alert,
   View,
 } from "react-native";
 import { router, Stack } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, borderRadius, shadows } from "@routeflow/ui/tokens";
-import { useProducts } from "../../../lib/api/products";
+import { useProducts, useProductByBarcode } from "../../../lib/api/products";
 import { ShopSkeleton } from "../../../components/skeletons/ShopSkeleton";
 import { NetworkError } from "../../../components/NetworkError";
+import { BarcodeScanner } from "../../../components/BarcodeScanner";
 
 const SCREEN_WIDTH = Dimensions.get("window").width;
 const CARD_WIDTH = (SCREEN_WIDTH - 48) / 2; // 16 padding each side + 16 gap
@@ -29,7 +33,7 @@ interface ApiProduct {
   pricePerUnit: string;
   category?: string;
   isActive: boolean;
-  lowStock: boolean;
+  currentStock: number;
   description?: string;
 }
 
@@ -56,6 +60,8 @@ function CategoryPill({
 
 function ProductCard({ product }: { product: ApiProduct }) {
   const price = parseFloat(String(product.pricePerUnit));
+  const stock = Number(product.currentStock ?? 0);
+  const isLowStock = stock > 0 && stock <= 5;
   return (
     <Pressable
       style={[styles.card, { width: CARD_WIDTH }]}
@@ -65,7 +71,7 @@ function ProductCard({ product }: { product: ApiProduct }) {
       {/* Image placeholder */}
       <View style={styles.imagePlaceholder}>
         <Ionicons name="image-outline" size={32} color="#cbd5e1" />
-        {product.lowStock ? (
+        {isLowStock ? (
           <View style={styles.lowStockBadge}>
             <Text style={styles.lowStockText}>Low Stock</Text>
           </View>
@@ -97,10 +103,34 @@ function ProductCard({ product }: { product: ApiProduct }) {
 export default function ShopScreen() {
   const [search, setSearch] = useState("");
   const [selectedCategory, setSelectedCategory] = useState(ALL);
+  const [showScanner, setShowScanner] = useState(false);
+  const [pendingBarcode, setPendingBarcode] = useState<string | null>(null);
 
   const { data: result, isLoading, isError, refetch } = useProducts();
+  const { data: barcodeProduct, isError: barcodeError } = useProductByBarcode(pendingBarcode);
 
   const productList: ApiProduct[] = result?.data ?? [];
+
+  // Navigate to product when barcode lookup succeeds
+  useEffect(() => {
+    if (barcodeProduct) {
+      setPendingBarcode(null);
+      router.push(`/(customer)/shop/${barcodeProduct.id}`);
+    }
+  }, [barcodeProduct]);
+
+  // Show error if barcode not found
+  useEffect(() => {
+    if (barcodeError && pendingBarcode) {
+      setPendingBarcode(null);
+      const msg = "No product found for this barcode.";
+      if (Platform.OS === "android") {
+        ToastAndroid.show(msg, ToastAndroid.SHORT);
+      } else {
+        Alert.alert("Not Found", msg);
+      }
+    }
+  }, [barcodeError, pendingBarcode]);
 
   const categories = useMemo(
     () => [ALL, ...Array.from(new Set(productList.map((p) => p.category).filter(Boolean)))],
@@ -149,6 +179,13 @@ export default function ShopScreen() {
             returnKeyType="search"
             clearButtonMode="while-editing"
           />
+          <Pressable
+            onPress={() => setShowScanner(true)}
+            style={styles.scanButton}
+            accessibilityLabel="Scan barcode"
+          >
+            <Ionicons name="barcode-outline" size={22} color={colors.brand[500]} />
+          </Pressable>
         </View>
 
         {/* Category pills */}
@@ -184,6 +221,17 @@ export default function ShopScreen() {
           }
         />
       </View>
+
+      {/* Barcode scanner overlay */}
+      {showScanner && (
+        <BarcodeScanner
+          onScanned={(code) => {
+            setShowScanner(false);
+            setPendingBarcode(code);
+          }}
+          onClose={() => setShowScanner(false)}
+        />
+      )}
     </>
   );
 }
@@ -214,6 +262,10 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontFamily: "Inter_400Regular",
     color: colors.navy.DEFAULT,
+  },
+  scanButton: {
+    padding: 6,
+    marginLeft: 4,
   },
   pillsScroll: {
     flexGrow: 0,

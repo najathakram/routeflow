@@ -127,6 +127,15 @@ export class RouteRunsController {
     return this.routesService.findOneRun(id);
   }
 
+  @Patch(":id/stops/:stopId")
+  updateStopStatus(
+    @Param("id") id: string,
+    @Param("stopId") stopId: string,
+    @Body() body: { status: 'IN_PROGRESS' | 'SKIPPED'; driverNote?: string },
+  ) {
+    return this.routesService.updateStopStatus(id, stopId, body);
+  }
+
   @Patch(":id/stops/reorder")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)

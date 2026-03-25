@@ -3,12 +3,11 @@
 import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Package, LayoutGrid, LayoutList, RefreshCw } from "lucide-react";
+import { Package, LayoutGrid, LayoutList, Plus } from "lucide-react";
 import { PageHeader, Table, Badge, Button, Select, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useToast } from "@routeflow/ui/web";
-import { useProducts } from "@/lib/api/products";
-import { useZohoSync, useZohoStatus } from "@/lib/api/zoho";
+import { useProducts, useCreateProduct } from "@/lib/api/products";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -18,12 +17,13 @@ interface ApiProduct {
   id: string;
   name: string;
   sku?: string;
+  barcode?: string;
   category?: string;
   unit: string;
   pricePerUnit: string;
   isActive: boolean;
-  lowStock: boolean;
-  hasLocalOverride: boolean;
+  currentStock: number;
+  averageCost?: string;
   description?: string;
 }
 
@@ -31,7 +31,8 @@ interface ApiProduct {
 
 function getStockStatus(p: ApiProduct): StockStatus {
   if (!p.isActive) return "OUT_OF_STOCK";
-  if (p.lowStock) return "LOW";
+  if (p.currentStock <= 0) return "OUT_OF_STOCK";
+  if (p.currentStock <= 5) return "LOW";
   return "IN_STOCK";
 }
 
@@ -132,14 +133,106 @@ const tableColumns: ColumnDef<ApiProduct, unknown>[] = [
     ),
   },
   {
-    accessorKey: "lowStock",
+    accessorKey: "currentStock",
     header: "Stock",
     cell: ({ row }) => {
       const status = getStockStatus(row.original);
-      return <StockBadge status={status} />;
+      return (
+        <div className="flex items-center gap-2">
+          <StockBadge status={status} />
+          <span className="text-xs text-navy/50">
+            {Number(row.original.currentStock).toFixed(0)} {row.original.unit}
+          </span>
+        </div>
+      );
     },
   },
 ];
+
+// ─── Create product modal ──────────────────────────────────────────────────────
+
+function CreateProductModal({
+  onClose,
+  onCreate,
+  isLoading,
+}: {
+  onClose: () => void;
+  onCreate: (data: Record<string, unknown>) => Promise<unknown>;
+  isLoading: boolean;
+}) {
+  const [form, setForm] = React.useState({
+    name: "", sku: "", barcode: "", unit: "", pricePerUnit: "", category: "", description: "",
+  });
+
+  const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await onCreate({
+      name: form.name,
+      sku: form.sku || undefined,
+      barcode: form.barcode || undefined,
+      unit: form.unit,
+      pricePerUnit: form.pricePerUnit,
+      category: form.category || undefined,
+      description: form.description || undefined,
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-lg rounded-xl border border-surface-border bg-white shadow-xl">
+        <div className="flex items-center justify-between border-b border-surface-border px-6 py-4">
+          <h2 className="text-base font-semibold text-navy">New Product</h2>
+          <button onClick={onClose} className="text-navy/40 hover:text-navy transition-colors">✕</button>
+        </div>
+        <form onSubmit={handleSubmit} className="space-y-4 p-6">
+          <div className="grid grid-cols-2 gap-4">
+            <div className="col-span-2">
+              <label className="mb-1 block text-sm font-medium text-navy">Name *</label>
+              <input required value={form.name} onChange={(e) => set("name", e.target.value)}
+                className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500" />
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-navy">SKU</label>
+              <input value={form.sku} onChange={(e) => set("sku", e.target.value)}
+                className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500" />
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-navy">Barcode</label>
+              <input value={form.barcode} onChange={(e) => set("barcode", e.target.value)}
+                className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500" />
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-navy">Unit *</label>
+              <input required placeholder="e.g. case, kg, unit" value={form.unit} onChange={(e) => set("unit", e.target.value)}
+                className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500" />
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-navy">Price per unit *</label>
+              <input required type="number" min="0" step="0.01" value={form.pricePerUnit} onChange={(e) => set("pricePerUnit", e.target.value)}
+                className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500" />
+            </div>
+            <div className="col-span-2">
+              <label className="mb-1 block text-sm font-medium text-navy">Category</label>
+              <input value={form.category} onChange={(e) => set("category", e.target.value)}
+                className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500" />
+            </div>
+            <div className="col-span-2">
+              <label className="mb-1 block text-sm font-medium text-navy">Description</label>
+              <textarea rows={2} value={form.description} onChange={(e) => set("description", e.target.value)}
+                className="w-full resize-y rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500" />
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
+            <Button type="submit" loading={isLoading}>Create Product</Button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
@@ -151,20 +244,16 @@ export default function ProductsPage() {
 
   React.useEffect(() => { setTitle("Products"); }, [setTitle]);
 
-  const isLowStockParam = searchParams.get("lowStock") === "true";
-
   const [search, setSearch] = React.useState("");
   const [categoryFilter, setCategoryFilter] = React.useState("");
-  const [stockFilter, setStockFilter] = React.useState(isLowStockParam ? "LOW" : "");
+  const [stockFilter, setStockFilter] = React.useState("");
   const [viewMode, setViewMode] = React.useState<"grid" | "table">("grid");
-
-  const syncMutation = useZohoSync();
-  const { data: zohoStatus } = useZohoStatus();
+  const [showCreate, setShowCreate] = React.useState(false);
+  const createProduct = useCreateProduct();
 
   const { data: result, isLoading } = useProducts({
     search,
     category: categoryFilter || undefined,
-    lowStock: stockFilter === "LOW" ? true : undefined,
     isActive: stockFilter === "OUT_OF_STOCK" ? false : undefined,
   });
 
@@ -175,51 +264,39 @@ export default function ProductsPage() {
   ) as string[];
 
   const filtered = React.useMemo(() => {
-    if (stockFilter === "IN_STOCK") {
-      return productList.filter((p) => getStockStatus(p) === "IN_STOCK");
-    }
+    if (stockFilter === "IN_STOCK") return productList.filter((p) => getStockStatus(p) === "IN_STOCK");
+    if (stockFilter === "LOW") return productList.filter((p) => getStockStatus(p) === "LOW");
     return productList;
   }, [productList, stockFilter]);
-
-  const handleSync = () => {
-    syncMutation.mutate(undefined, {
-      onSuccess: (result) => {
-        toast({
-          title: "Sync complete",
-          description: `${result.synced ?? 0} products synced from Zoho.`,
-          variant: "success",
-        });
-      },
-      onError: (err: Error) => {
-        toast({
-          title: "Sync failed",
-          description: err.message ?? "Failed to sync from Zoho.",
-          variant: "error",
-        });
-      },
-    });
-  };
-
-  const lastSyncTime = zohoStatus?.lastSync
-    ? new Date(zohoStatus.lastSync).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-    : "Never";
 
   return (
     <div className="space-y-5 p-6">
       <PageHeader
         title="Products"
-        subtitle={`Last synced: ${lastSyncTime}`}
+        subtitle="Manage your product catalog"
         action={
-          <Button
-            leftIcon={<RefreshCw className={cn("h-4 w-4", syncMutation.isPending && "animate-spin")} />}
-            loading={syncMutation.isPending}
-            onClick={handleSync}
-            variant="secondary"
-          >
-            Sync from Zoho
+          <Button leftIcon={<Plus className="h-4 w-4" />} onClick={() => setShowCreate(true)}>
+            New Product
           </Button>
         }
       />
+
+      {/* Create product modal */}
+      {showCreate && (
+        <CreateProductModal
+          onClose={() => setShowCreate(false)}
+          onCreate={(data) =>
+            createProduct.mutateAsync(data, {
+              onSuccess: () => {
+                setShowCreate(false);
+                toast({ title: "Product created", variant: "success" });
+              },
+              onError: (err: Error) => toast({ title: "Failed", description: err.message, variant: "error" }),
+            })
+          }
+          isLoading={createProduct.isPending}
+        />
+      )}
 
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-3">

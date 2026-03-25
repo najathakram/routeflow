@@ -17,3 +17,12 @@ export function useProduct(id: string) {
     enabled: !!id,
   });
 }
+
+export function useProductByBarcode(barcode: string | null) {
+  return useQuery({
+    queryKey: ["products", "barcode", barcode],
+    queryFn: () => apiClient.get(`/products/barcode/${barcode}`).then((r) => r.data),
+    enabled: !!barcode,
+    retry: false,
+  });
+}

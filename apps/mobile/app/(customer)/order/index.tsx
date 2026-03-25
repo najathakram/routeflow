@@ -1,5 +1,6 @@
 import {
   ActivityIndicator,
+  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -9,11 +10,19 @@ import {
   View,
 } from "react-native";
 import { router, Stack } from "expo-router";
+import { format, addDays } from "date-fns";
 import { Ionicons } from "@expo/vector-icons";
 import { EmptyState } from "@routeflow/ui/mobile";
 import { colors, borderRadius, shadows } from "@routeflow/ui/tokens";
 import { useOrderStore } from "../../../store/orderStore";
-import { useMyOrders } from "../../../lib/api/orders";
+import { useMyOrders, useCreateOrder } from "../../../lib/api/orders";
+
+const DATE_OPTIONS = [
+  { label: "Today", offset: 0 },
+  { label: "Tomorrow", offset: 1 },
+  { label: "+2 days", offset: 2 },
+  { label: "+3 days", offset: 3 },
+];
 
 function QtyStepper({
   value,
@@ -69,8 +78,9 @@ const stepperStyles = StyleSheet.create({
 });
 
 export default function OrderScreen() {
-  const { items, isUrgent, notes, removeItem, updateQuantity, setUrgent, setNotes } =
+  const { items, isUrgent, notes, requestedDeliveryDate, removeItem, updateQuantity, setUrgent, setNotes, setRequestedDeliveryDate, clearOrder } =
     useOrderStore();
+  const { mutate: createOrder, isPending: isSubmitting } = useCreateOrder();
 
   // Fetch pending orders from the API so the server state is always in sync
   const { data: pendingOrdersData, isLoading: pendingLoading } = useMyOrders({ status: "PENDING" });
@@ -78,6 +88,27 @@ export default function OrderScreen() {
 
   const total = items.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
   const itemCount = items.reduce((sum, item) => sum + item.quantity, 0);
+
+  const handlePlaceOrder = () => {
+    if (items.length === 0) return;
+    createOrder(
+      {
+        items: items.map((i) => ({ productId: i.productId, qty: i.quantity })),
+        notes: notes || undefined,
+        urgent: isUrgent || undefined,
+        requestedDeliveryDate: requestedDeliveryDate || undefined,
+      },
+      {
+        onSuccess: (order) => {
+          clearOrder();
+          router.replace(`/(customer)/order/confirmation?orderId=${order.id}` as any);
+        },
+        onError: (err) => {
+          Alert.alert("Error", "Failed to place order. Please try again.\n" + (err.message || ""));
+        },
+      },
+    );
+  };
 
   if (items.length === 0) {
     return (
@@ -136,7 +167,8 @@ export default function OrderScreen() {
   return (
     <>
       <Stack.Screen options={{ title: "My Order" }} />
-      <View style={styles.container}>
+      <View style={styles.outerContainer}>
+        <View style={styles.container}>
         {/* Urgent banner */}
         {isUrgent ? (
           <View style={styles.urgentBanner}>
@@ -222,6 +254,33 @@ export default function OrderScreen() {
             ))}
           </View>
 
+          {/* Delivery Date */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Requested Delivery Date</Text>
+            <View style={styles.dateRow}>
+              {DATE_OPTIONS.map(({ label, offset }) => {
+                const dateVal = format(addDays(new Date(), offset), "yyyy-MM-dd");
+                const isSelected = requestedDeliveryDate === dateVal;
+                return (
+                  <Pressable
+                    key={label}
+                    style={[styles.dateChip, isSelected && styles.dateChipActive]}
+                    onPress={() => setRequestedDeliveryDate(isSelected ? null : dateVal)}
+                  >
+                    <Text style={[styles.dateChipText, isSelected && styles.dateChipTextActive]}>
+                      {label}
+                    </Text>
+                    {offset > 0 ? (
+                      <Text style={[styles.dateChipSub, isSelected && styles.dateChipSubActive]}>
+                        {format(addDays(new Date(), offset), "MMM d")}
+                      </Text>
+                    ) : null}
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+
           {/* Order notes */}
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Order Notes</Text>
@@ -258,15 +317,60 @@ export default function OrderScreen() {
             </Text>
           </View>
         </ScrollView>
+        </View>
+
+        {/* Place Order footer */}
+        <View style={styles.footer}>
+          <Pressable
+            style={[styles.placeOrderBtn, isSubmitting && { opacity: 0.7 }]}
+            onPress={handlePlaceOrder}
+            disabled={isSubmitting}
+            accessibilityRole="button"
+          >
+            {isSubmitting ? (
+              <ActivityIndicator size="small" color="#fff" style={{ marginRight: 8 }} />
+            ) : (
+              <Ionicons name="checkmark-circle-outline" size={22} color="#fff" style={{ marginRight: 8 }} />
+            )}
+            <Text style={styles.placeOrderBtnText}>
+              {isSubmitting ? "Placing Order…" : `Place Order · $${total.toFixed(2)}`}
+            </Text>
+          </Pressable>
+        </View>
       </View>
     </>
   );
 }
 
 const styles = StyleSheet.create({
+  outerContainer: {
+    flex: 1,
+    backgroundColor: colors.surface.raised,
+  },
   container: {
     flex: 1,
     backgroundColor: colors.surface.raised,
+  },
+  footer: {
+    paddingHorizontal: 16,
+    paddingBottom: 28,
+    paddingTop: 12,
+    backgroundColor: "#fff",
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.surface.border,
+  },
+  placeOrderBtn: {
+    height: 56,
+    backgroundColor: colors.brand[500],
+    borderRadius: borderRadius.DEFAULT,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  placeOrderBtnText: {
+    fontSize: 17,
+    fontFamily: "Inter_700Bold",
+    color: "#fff",
   },
   loadingContainer: {
     flex: 1,
@@ -372,6 +476,42 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: "Inter_400Regular",
     color: "#64748b",
+  },
+  dateRow: {
+    flexDirection: "row",
+    gap: 8,
+    flexWrap: "wrap",
+  },
+  dateChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: borderRadius.full,
+    borderWidth: 1.5,
+    borderColor: colors.surface.border,
+    backgroundColor: colors.surface.raised,
+    alignItems: "center",
+    minWidth: 72,
+  },
+  dateChipActive: {
+    borderColor: colors.brand[500],
+    backgroundColor: colors.brand[50],
+  },
+  dateChipText: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+    color: "#64748b",
+  },
+  dateChipTextActive: {
+    color: colors.brand[500],
+  },
+  dateChipSub: {
+    fontSize: 11,
+    fontFamily: "Inter_400Regular",
+    color: "#94a3b8",
+    marginTop: 1,
+  },
+  dateChipSubActive: {
+    color: colors.brand[500],
   },
   notesInput: {
     borderWidth: 1,

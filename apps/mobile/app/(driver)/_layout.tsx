@@ -31,6 +31,24 @@ export default function DriverLayout() {
         }}
       />
       <Tabs.Screen
+        name="inventory"
+        options={{
+          title: "Stock",
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="cube-outline" size={size} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="history"
+        options={{
+          title: "History",
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="time-outline" size={size} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
         name="profile"
         options={{
           title: "Profile",
@@ -39,7 +57,7 @@ export default function DriverLayout() {
           ),
         }}
       />
-      {/* Hidden screen — accessible via router.push but not shown in tab bar */}
+      {/* Hidden screens — accessible via router.push but not shown in tab bar */}
       <Tabs.Screen name="change-password" options={{ href: null }} />
     </Tabs>
   );

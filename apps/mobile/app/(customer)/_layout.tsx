@@ -66,9 +66,20 @@ export default function CustomerLayout() {
           ),
         }}
       />
+      <Tabs.Screen
+        name="invoices"
+        options={{
+          title: "Invoices",
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="document-text-outline" size={size} color={color} />
+          ),
+        }}
+      />
       {/* Hidden screens — accessible via router.push but not shown in tab bar */}
       <Tabs.Screen name="profile" options={{ href: null }} />
       <Tabs.Screen name="change-password" options={{ href: null }} />
+      <Tabs.Screen name="standing-orders" options={{ href: null }} />
+      <Tabs.Screen name="returns" options={{ href: null }} />
     </Tabs>
   );
 }

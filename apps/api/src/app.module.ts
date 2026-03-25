@@ -15,12 +15,18 @@ import { ProductsModule } from "./products/products.module";
 import { RoutesModule } from "./routes/routes.module";
 import { OrdersModule } from "./orders/orders.module";
 import { BookkeepingModule } from "./bookkeeping/bookkeeping.module";
-import { ZohoSyncModule } from "./zoho-sync/zoho-sync.module";
 import { SystemConfigModule } from "./system-config/system-config.module";
 import { NotificationsModule } from "./notifications/notifications.module";
 import { RouteOptimizationModule } from "./route-optimization/route-optimization.module";
 import { GatewaysModule } from "./gateways/gateways.module";
 import { OrderTemplatesModule } from "./order-templates/order-templates.module";
+import { InventoryModule } from "./inventory/inventory.module";
+import { InvoicesModule } from "./invoices/invoices.module";
+import { AnalyticsModule } from "./analytics/analytics.module";
+import { CreditNotesModule } from "./credit-notes/credit-notes.module";
+import { EstimatesModule } from "./estimates/estimates.module";
+import { VendorBillsModule } from "./vendor-bills/vendor-bills.module";
+import { ReturnsModule } from "./returns/returns.module";
 
 import { AppController } from "./app.controller";
 import { AppService } from "./app.service";
@@ -73,12 +79,19 @@ import { AppService } from "./app.service";
     RoutesModule,
     OrdersModule,
     BookkeepingModule,
-    ZohoSyncModule,
     SystemConfigModule,
     NotificationsModule,
     RouteOptimizationModule,
     GatewaysModule,
     OrderTemplatesModule,
+    InventoryModule,
+    // ─── Zoho-parity new modules ──────────────────────────────────────────────
+    InvoicesModule,
+    AnalyticsModule,
+    CreditNotesModule,
+    EstimatesModule,
+    VendorBillsModule,
+    ReturnsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

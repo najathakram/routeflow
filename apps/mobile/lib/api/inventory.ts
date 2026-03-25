@@ -1,0 +1,69 @@
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { apiClient } from '../api-client';
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+export interface StockItem {
+  productId: string;
+  productName: string;
+  unit: string;
+  currentStock: number;
+  reorderPoint?: number;
+  reorderQty?: number;
+}
+
+export interface StockAdjustmentDto {
+  productId: string;
+  quantity: number; // positive = add, negative = remove
+  notes?: string;
+  reference?: string;
+}
+
+export interface StockPurchaseDto {
+  productId: string;
+  quantity: number;
+  unitCost: number;
+  supplierId?: string;
+  reference?: string;
+  notes?: string;
+}
+
+// ─── Queries ──────────────────────────────────────────────────────────────────
+
+export function useStockOverview() {
+  return useQuery<StockItem[]>({
+    queryKey: ['inventory', 'overview'],
+    queryFn: () =>
+      apiClient.get('/inventory/overview').then((r) =>
+        (r.data as any[]).map((p) => ({
+          productId: p.id,
+          productName: p.name,
+          unit: p.unit ?? '',
+          currentStock: p.currentStock ?? 0,
+          reorderPoint: p.reorderPoint ?? undefined,
+          reorderQty: p.reorderQty ?? undefined,
+        })),
+      ),
+    staleTime: 30_000,
+  });
+}
+
+// ─── Mutations ────────────────────────────────────────────────────────────────
+
+export function useRecordAdjustment() {
+  const qc = useQueryClient();
+  return useMutation<unknown, Error, StockAdjustmentDto>({
+    mutationFn: (dto) =>
+      apiClient.post('/inventory/movements/adjustment', dto).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['inventory'] }),
+  });
+}
+
+export function useRecordPurchase() {
+  const qc = useQueryClient();
+  return useMutation<unknown, Error, StockPurchaseDto>({
+    mutationFn: (dto) =>
+      apiClient.post('/inventory/movements/purchase', dto).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['inventory'] }),
+  });
+}

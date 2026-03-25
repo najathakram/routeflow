@@ -6,7 +6,26 @@
       "Bash(DATABASE_URL=\"postgresql://user:pass@localhost:5432/routeflow_dev\" npx tsx ./prisma/seed.ts)",
       "Bash(find \"C:\\\\ClaudeCode\\\\routeflow\\\\.claude\\\\worktrees\\\\eloquent-cori\\\\apps\\\\web\\\\app\\\\\\(dashboard\\)\\\\customers\\\\_components\" -type f)",
       "mcp__Claude_Preview__preview_start",
-      "Bash(ls c:/ClaudeCode/routeflow/apps/web/.env* c:/ClaudeCode/routeflow/apps/api/.env* c:/ClaudeCode/routeflow/.env*)"
+      "Bash(ls c:/ClaudeCode/routeflow/apps/web/.env* c:/ClaudeCode/routeflow/apps/api/.env* c:/ClaudeCode/routeflow/.env*)",
+      "Bash(npx prisma:*)",
+      "Bash(node -e \":*)",
+      "Bash(DATABASE_URL=\"postgresql://user:pass@localhost:5432/routeflow_dev\" npx tsx -e \":*)",
+      "Bash(DATABASE_URL=\"postgresql://user:pass@localhost:5432/routeflow_dev\" npx prisma db execute --stdin 2)",
+      "Bash(/dev/null:*)",
+      "Bash(npx nest:*)",
+      "Bash(DATABASE_URL=\"postgresql://user:pass@localhost:5432/routeflow_dev\" npx prisma generate)",
+      "Bash(netstat -ano)",
+      "Bash(findstr :3000)",
+      "Bash(findstr LISTENING)",
+      "Bash(taskkill /PID 28868 /F)",
+      "Bash(cmd /c \"taskkill /PID 28868 /F\")",
+      "Bash(cmd /c \"taskkill /PID 28868 /F 2>&1\")",
+      "Bash(cmd /c taskkill /PID 28868 /F)",
+      "Bash(curl -s http://localhost:3000/api/v1/analytics/revenue)",
+      "Bash(TOKEN=\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxYzk0MTY0NS1iZTcxLTQyOGUtYTY5Mi0yMDVkYjYxYzkzZmQiLCJ1c2VybmFtZSI6ImFkbWluIiwicm9sZSI6Ik9QRVJBVE9SIiwic3RhdHVzIjoiQUNUSVZFIiwiZm9yY2VQYXNzd29yZENoYW5nZSI6ZmFsc2UsImlhdCI6MTc3NDMwMTgwMSwiZXhwIjoxNzc0MzAyNzAxfQ.snu_CJOlUSdGz3NoK2T0KqOXwvJTSz0JRjrL3AWShwo\" curl -s \"http://localhost:3000/api/v1/analytics/revenue\" -H \"Authorization: Bearer $TOKEN\")",
+      "Bash(curl -s http://localhost:3000/api/v1/auth/login -X POST -H 'Content-Type: application/json' -d '{\"\"\"\"username\"\"\"\":\"\"\"\"lone.star\"\"\"\",\"\"\"\"password\"\"\"\":\"\"\"\"Test@1234\"\"\"\"}')",
+      "Bash(npm run:*)",
+      "Bash(powershell -Command \"Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue | Select-Object -First 1 OwningProcess\")"
     ]
   }
 }

@@ -4,6 +4,7 @@ import { OrderStatus } from "@prisma/client";
 
 export class ListOrdersDto {
   @IsOptional() @IsString() customerId?: string;
+  @IsOptional() @IsString() search?: string;
   @IsOptional() @IsEnum(OrderStatus) status?: OrderStatus;
   @IsOptional() @Transform(({ value }) => value === "true") @IsBoolean() urgent?: boolean;
   @IsOptional() @IsInt() @Min(1) @Type(() => Number) page?: number = 1;

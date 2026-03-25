@@ -1,4 +1,5 @@
 import {
+  ActivityIndicator,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -9,15 +10,7 @@ import { router, Stack } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, borderRadius, shadows } from "@routeflow/ui/tokens";
 import { useAuthStore } from "../../lib/auth-store";
-
-// Mock customer profile — in production this would come from an API
-const MOCK_PROFILE = {
-  businessName: "Sunrise Café",
-  contactName: "Jamie Nguyen",
-  email: "jamie@sunrisecafe.com.au",
-  phone: "+61 2 9876 5432",
-  address: "14 Harbour St, Sydney NSW 2000",
-};
+import { useMyCustomerProfile } from "../../lib/api/customers";
 
 function InfoRow({ label, value }: { label: string; value: string }) {
   return (
@@ -40,28 +33,17 @@ function ActionRow({
   danger?: boolean;
 }) {
   return (
-    <Pressable
-      style={styles.actionRow}
-      onPress={onPress}
-      accessibilityRole="button"
-    >
+    <Pressable style={styles.actionRow} onPress={onPress} accessibilityRole="button">
       <Ionicons
         name={icon as any}
         size={20}
         color={danger ? colors.danger.DEFAULT : colors.navy.DEFAULT}
       />
-      <Text
-        style={[styles.actionLabel, danger && { color: colors.danger.DEFAULT }]}
-      >
+      <Text style={[styles.actionLabel, danger && { color: colors.danger.DEFAULT }]}>
         {label}
       </Text>
       {!danger ? (
-        <Ionicons
-          name="chevron-forward"
-          size={16}
-          color="#94a3b8"
-          style={styles.actionChevron}
-        />
+        <Ionicons name="chevron-forward" size={16} color="#94a3b8" style={styles.actionChevron} />
       ) : null}
     </Pressable>
   );
@@ -69,11 +51,11 @@ function ActionRow({
 
 export default function ProfileScreen() {
   const logout = useAuthStore((s) => s.logout);
+  const { data: profile, isLoading } = useMyCustomerProfile();
 
-  const handleSignOut = async () => {
-    await logout();
-    // _layout.tsx handles routing to login
-  };
+  const initials = profile?.businessName
+    ? profile.businessName.split(" ").slice(0, 2).map((w) => w[0]).join("")
+    : "?";
 
   return (
     <>
@@ -93,70 +75,102 @@ export default function ProfileScreen() {
           ),
         }}
       />
-      <ScrollView
-        style={styles.container}
-        contentContainerStyle={styles.scroll}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* Avatar + business name */}
-        <View style={styles.avatarSection}>
-          <View style={styles.avatar}>
-            <Text style={styles.avatarInitials}>
-              {MOCK_PROFILE.businessName
-                .split(" ")
-                .slice(0, 2)
-                .map((w) => w[0])
-                .join("")}
-            </Text>
+      {isLoading ? (
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color={colors.brand[500]} />
+        </View>
+      ) : (
+        <ScrollView style={styles.container} contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+          {/* Avatar + business name */}
+          <View style={styles.avatarSection}>
+            <View style={styles.avatar}>
+              <Text style={styles.avatarInitials}>{initials}</Text>
+            </View>
+            <Text style={styles.businessName}>{profile?.businessName ?? "—"}</Text>
+            <Text style={styles.contactName}>{profile?.contactName ?? ""}</Text>
           </View>
-          <Text style={styles.businessName}>{MOCK_PROFILE.businessName}</Text>
-          <Text style={styles.contactName}>{MOCK_PROFILE.contactName}</Text>
-        </View>
 
-        {/* Business info */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Business Info</Text>
-          <InfoRow label="Business Name" value={MOCK_PROFILE.businessName} />
-          <InfoRow label="Contact Name" value={MOCK_PROFILE.contactName} />
-          <InfoRow label="Email" value={MOCK_PROFILE.email} />
-          <InfoRow label="Phone" value={MOCK_PROFILE.phone} />
-          <InfoRow label="Address" value={MOCK_PROFILE.address} />
-        </View>
+          {/* Business info */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Business Info</Text>
+            <InfoRow label="Business Name" value={profile?.businessName ?? "—"} />
+            <InfoRow label="Contact" value={profile?.contactName ?? "—"} />
+            {profile?.user?.email ? <InfoRow label="Email" value={profile.user.email} /> : null}
+            {profile?.phone ? <InfoRow label="Phone" value={profile.phone} /> : null}
+            {profile?.deliveryWindowStart && profile?.deliveryWindowEnd ? (
+              <InfoRow
+                label="Delivery Window"
+                value={`${profile.deliveryWindowStart} – ${profile.deliveryWindowEnd}`}
+              />
+            ) : null}
+          </View>
 
-        {/* Account actions */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Account</Text>
-          <ActionRow
-            icon="lock-closed-outline"
-            label="Change Password"
-            onPress={() => router.push("/(customer)/change-password")}
-          />
-        </View>
+          {/* Delivery addresses */}
+          {profile?.addresses && profile.addresses.length > 0 ? (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Delivery Addresses</Text>
+              {profile.addresses.map((addr) => (
+                <View key={addr.id} style={styles.addressRow}>
+                  <View style={styles.addressLabelRow}>
+                    <Ionicons name="location-outline" size={14} color="#94a3b8" />
+                    <Text style={styles.addressLabel}>{addr.label ?? "Address"}</Text>
+                    {addr.isDefault && (
+                      <View style={styles.defaultBadge}>
+                        <Text style={styles.defaultBadgeText}>Default</Text>
+                      </View>
+                    )}
+                  </View>
+                  <Text style={styles.addressText}>
+                    {addr.line1}{addr.line2 ? `, ${addr.line2}` : ""}
+                  </Text>
+                  <Text style={styles.addressText}>
+                    {addr.city}, {addr.state} {addr.zip}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
 
-        {/* Sign out */}
-        <View style={[styles.section, styles.signOutSection]}>
-          <ActionRow
-            icon="log-out-outline"
-            label="Sign Out"
-            onPress={handleSignOut}
-            danger
-          />
-        </View>
+          {/* Quick links */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>My Account</Text>
+            <ActionRow
+              icon="repeat-outline"
+              label="Standing Orders"
+              onPress={() => router.push("/(customer)/standing-orders" as any)}
+            />
+            <ActionRow
+              icon="return-down-back-outline"
+              label="Returns"
+              onPress={() => router.push("/(customer)/returns" as any)}
+            />
+          </View>
 
-        <Text style={styles.version}>RouteFlow v1.0.0</Text>
-      </ScrollView>
+          {/* Settings */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Settings</Text>
+            <ActionRow
+              icon="lock-closed-outline"
+              label="Change Password"
+              onPress={() => router.push("/(customer)/change-password")}
+            />
+          </View>
+
+          <View style={[styles.section, styles.signOutSection]}>
+            <ActionRow icon="log-out-outline" label="Sign Out" onPress={() => logout()} danger />
+          </View>
+
+          <Text style={styles.version}>RouteFlow v1.0.0</Text>
+        </ScrollView>
+      )}
     </>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.surface.raised,
-  },
-  scroll: {
-    paddingBottom: 40,
-  },
+  container: { flex: 1, backgroundColor: colors.surface.raised },
+  centered: { flex: 1, alignItems: "center", justifyContent: "center" },
+  scroll: { paddingBottom: 40 },
   avatarSection: {
     alignItems: "center",
     paddingVertical: 32,
@@ -174,22 +188,9 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginBottom: 12,
   },
-  avatarInitials: {
-    fontSize: 26,
-    fontFamily: "Inter_700Bold",
-    color: colors.brand[700],
-  },
-  businessName: {
-    fontSize: 20,
-    fontFamily: "Inter_700Bold",
-    color: colors.navy.DEFAULT,
-    marginBottom: 2,
-  },
-  contactName: {
-    fontSize: 14,
-    fontFamily: "Inter_400Regular",
-    color: "#64748b",
-  },
+  avatarInitials: { fontSize: 26, fontFamily: "Inter_700Bold", color: colors.brand[700] },
+  businessName: { fontSize: 20, fontFamily: "Inter_700Bold", color: colors.navy.DEFAULT, marginBottom: 2 },
+  contactName: { fontSize: 14, fontFamily: "Inter_400Regular", color: "#64748b" },
   section: {
     backgroundColor: "#fff",
     marginHorizontal: 16,
@@ -216,19 +217,25 @@ const styles = StyleSheet.create({
     borderTopColor: colors.surface.border,
     gap: 12,
   },
-  infoLabel: {
-    fontSize: 14,
-    fontFamily: "Inter_400Regular",
+  infoLabel: { fontSize: 14, fontFamily: "Inter_400Regular", color: "#64748b", flex: 1 },
+  infoValue: { fontSize: 14, fontFamily: "Inter_500Medium", color: colors.navy.DEFAULT, flex: 2, textAlign: "right" },
+  addressRow: {
+    paddingVertical: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.surface.border,
+    gap: 3,
+  },
+  addressLabelRow: { flexDirection: "row", alignItems: "center", gap: 4, marginBottom: 4 },
+  addressLabel: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
     color: "#64748b",
-    flex: 1,
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
   },
-  infoValue: {
-    fontSize: 14,
-    fontFamily: "Inter_500Medium",
-    color: colors.navy.DEFAULT,
-    flex: 2,
-    textAlign: "right",
-  },
+  defaultBadge: { backgroundColor: colors.brand[50], borderRadius: 4, paddingHorizontal: 6, paddingVertical: 1, marginLeft: 4 },
+  defaultBadgeText: { fontSize: 11, fontFamily: "Inter_600SemiBold", color: colors.brand[700] },
+  addressText: { fontSize: 14, fontFamily: "Inter_400Regular", color: colors.navy.DEFAULT },
   actionRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -237,23 +244,8 @@ const styles = StyleSheet.create({
     borderTopColor: colors.surface.border,
     gap: 12,
   },
-  actionLabel: {
-    flex: 1,
-    fontSize: 15,
-    fontFamily: "Inter_500Medium",
-    color: colors.navy.DEFAULT,
-  },
-  actionChevron: {
-    marginLeft: "auto",
-  },
-  signOutSection: {
-    marginTop: 4,
-  },
-  version: {
-    textAlign: "center",
-    fontSize: 12,
-    fontFamily: "Inter_400Regular",
-    color: "#cbd5e1",
-    marginTop: 8,
-  },
+  actionLabel: { flex: 1, fontSize: 15, fontFamily: "Inter_500Medium", color: colors.navy.DEFAULT },
+  actionChevron: { marginLeft: "auto" },
+  signOutSection: { marginTop: 4 },
+  version: { textAlign: "center", fontSize: 12, fontFamily: "Inter_400Regular", color: "#cbd5e1", marginTop: 8 },
 });

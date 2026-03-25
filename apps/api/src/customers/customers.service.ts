@@ -55,6 +55,18 @@ export class CustomersService {
     return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
   }
 
+  async findMyProfile(user: JwtPayload) {
+    const customer = await this.prisma.customer.findFirst({
+      where: { userId: user.sub },
+      include: {
+        user: { select: { id: true, email: true, username: true, status: true } },
+        addresses: true,
+      },
+    });
+    if (!customer) throw new NotFoundException("Customer profile not found");
+    return customer;
+  }
+
   async findOne(id: string, user: JwtPayload) {
     const customer = await this.prisma.customer.findUnique({
       where: { id },

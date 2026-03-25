@@ -1,6 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../api-client';
 
+// ─── Types ────────────────────────────────────────────────────────────────────
+
 export interface OrderItem {
   id: string;
   productId: string;
@@ -19,11 +21,23 @@ export interface Order {
   tax: number;
   total: number;
   notes?: string;
+  driverNote?: string;
+  requestedDeliveryDate?: string;
+  deliveredAt?: string;
   lineItems: OrderItem[];
   createdAt: string;
 }
 
-export function useMyOrders(params?: { status?: string }) {
+export interface CreateOrderDto {
+  items: { productId: string; qty: number }[];
+  notes?: string;
+  urgent?: boolean;
+  requestedDeliveryDate?: string;
+}
+
+// ─── Queries ──────────────────────────────────────────────────────────────────
+
+export function useMyOrders(params?: { status?: string; page?: number; limit?: number }) {
   return useQuery<{ data: Order[]; meta: any }>({
     queryKey: ['orders', 'mine', params],
     queryFn: () => apiClient.get('/orders', { params }).then((r) => r.data),
@@ -39,10 +53,21 @@ export function useOrder(id: string) {
   });
 }
 
+// ─── Mutations ────────────────────────────────────────────────────────────────
+
 export function useCreateOrder() {
   const qc = useQueryClient();
-  return useMutation<Order, Error, { customerId: string; items: { productId: string; qty: number }[] }>({
+  return useMutation<Order, Error, CreateOrderDto>({
     mutationFn: (dto) => apiClient.post('/orders', dto).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['orders'] }),
+  });
+}
+
+export function useCancelOrder() {
+  const qc = useQueryClient();
+  return useMutation<Order, Error, string>({
+    mutationFn: (id) =>
+      apiClient.patch(`/orders/${id}/status`, { status: 'CANCELLED' }).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['orders'] }),
   });
 }

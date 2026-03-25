@@ -12,14 +12,14 @@
     {
       "name": "web",
       "runtimeExecutable": "node",
-      "runtimeArgs": ["apps/web/node_modules/next/dist/bin/next", "dev"],
+      "runtimeArgs": ["node_modules/next/dist/bin/next", "dev"],
       "cwd": "apps/web",
       "port": 3001
     },
     {
       "name": "mobile",
       "runtimeExecutable": "node",
-      "runtimeArgs": ["node_modules/expo/bin/cli", "start", "--web", "--port", "8081"],
+      "runtimeArgs": ["../../node_modules/expo/bin/cli", "start", "--web", "--port", "8081"],
       "cwd": "apps/mobile",
       "port": 8081
     }

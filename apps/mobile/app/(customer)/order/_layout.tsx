@@ -5,7 +5,7 @@ export default function OrderLayout() {
   return (
     <Stack
       screenOptions={{
-        headerShown: false,
+        headerShown: true,
         headerStyle: { backgroundColor: "#fff" },
         headerShadowVisible: false,
         headerTitleStyle: {

@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
+  ActivityIndicator,
   Alert,
   Keyboard,
   KeyboardAvoidingView,
@@ -9,19 +10,27 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  ToastAndroid,
   View,
 } from "react-native";
-import * as Linking from 'expo-linking';
+import * as Linking from "expo-linking";
 import { router, Stack, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, borderRadius, shadows } from "@routeflow/ui/tokens";
+import {
+  useRouteRun,
+  useUpdateStopStatus,
+  type RouteRunOrderItem,
+} from "../../../../../lib/api/routes";
 import {
   useRouteStore,
   selectAllItemsResolved,
   selectStopResolutions,
   type ItemDeliveryStatus,
 } from "../../../../../store/routeStore";
-import { StopItem } from "../../../../../data/driverMockData";
+import { useProductByBarcode } from "../../../../../lib/api/products";
+import { BarcodeScanner } from "../../../../../components/BarcodeScanner";
+import { NetworkError } from "../../../../../components/NetworkError";
 
 // ─── Open Maps ────────────────────────────────────────────────────────────────
 
@@ -37,6 +46,12 @@ function openMaps(query: string) {
   );
 }
 
+function callPhone(phone: string) {
+  Linking.openURL(`tel:${phone.replace(/\s/g, "")}`).catch(() =>
+    Alert.alert("Could not open Phone", "Please dial " + phone + " manually."),
+  );
+}
+
 // ─── Item Status Selector ─────────────────────────────────────────────────────
 
 const STATUSES: { key: ItemDeliveryStatus; label: string; color: string; bg: string }[] = [
@@ -48,9 +63,11 @@ const STATUSES: { key: ItemDeliveryStatus; label: string; color: string; bg: str
 function ItemRow({
   item,
   stopId,
+  highlighted,
 }: {
-  item: StopItem & { isAdded?: boolean };
+  item: RouteRunOrderItem & { isAdded?: boolean };
   stopId: string;
+  highlighted?: boolean;
 }) {
   const resolution = useRouteStore((s) => selectStopResolutions(s, stopId)[item.id]);
   const setItemResolution = useRouteStore((s) => s.setItemResolution);
@@ -71,12 +88,12 @@ function ItemRow({
   };
 
   return (
-    <View style={itemStyles.container}>
+    <View style={[itemStyles.container, highlighted && itemStyles.highlighted]}>
       <View style={itemStyles.header}>
-        <Text style={itemStyles.name}>{item.name}</Text>
+        <Text style={itemStyles.name}>{item.product?.name ?? item.productId}</Text>
         <Text style={itemStyles.qty}>
-          Ordered: <Text style={itemStyles.qtyBold}>{item.orderedQty}</Text>
-          {!item.isAdded ? ` × ${item.unit}` : ""}
+          Ordered: <Text style={itemStyles.qtyBold}>{item.qty}</Text>
+          {item.product?.unit ? ` × ${item.product.unit}` : ""}
         </Text>
       </View>
 
@@ -93,15 +110,10 @@ function ItemRow({
               ]}
               onPress={() => handleSelect(key)}
               accessibilityRole="button"
-              accessibilityLabel={`Mark ${item.name} as ${label}`}
+              accessibilityLabel={`Mark ${item.product?.name ?? ""} as ${label}`}
               accessibilityState={{ selected }}
             >
-              <Text
-                style={[
-                  itemStyles.toggleText,
-                  selected && { color },
-                ]}
-              >
+              <Text style={[itemStyles.toggleText, selected && { color }]}>
                 {label}
               </Text>
             </Pressable>
@@ -121,10 +133,7 @@ function ItemRow({
               setPartialInput(v);
               const n = parseInt(v, 10);
               if (!isNaN(n)) {
-                setItemResolution(stopId, item.id, {
-                  status: "PARTIAL",
-                  partialQty: n,
-                });
+                setItemResolution(stopId, item.id, { status: "PARTIAL", partialQty: n });
               }
             }}
             placeholder="0"
@@ -132,7 +141,7 @@ function ItemRow({
             returnKeyType="done"
             onSubmitEditing={Keyboard.dismiss}
           />
-          <Text style={itemStyles.partialMax}>/ {item.orderedQty}</Text>
+          <Text style={itemStyles.partialMax}>/ {item.qty}</Text>
         </View>
       )}
     </View>
@@ -147,9 +156,12 @@ const itemStyles = StyleSheet.create({
     gap: 12,
     ...shadows.card,
   },
-  header: {
-    gap: 2,
+  highlighted: {
+    borderWidth: 2,
+    borderColor: colors.brand[500],
+    backgroundColor: colors.brand[50],
   },
+  header: { gap: 2 },
   name: {
     fontSize: 18,
     fontFamily: "Inter_700Bold",
@@ -164,10 +176,7 @@ const itemStyles = StyleSheet.create({
     fontFamily: "Inter_700Bold",
     color: colors.navy.DEFAULT,
   },
-  toggleRow: {
-    flexDirection: "row",
-    gap: 8,
-  },
+  toggleRow: { flexDirection: "row", gap: 8 },
   toggleBtn: {
     flex: 1,
     height: 56,
@@ -215,21 +224,19 @@ const itemStyles = StyleSheet.create({
 
 // ─── Add Item Inline Form ─────────────────────────────────────────────────────
 
-function AddItemForm({
-  stopId,
-  onDone,
-}: {
-  stopId: string;
-  onDone: () => void;
-}) {
+function AddItemForm({ stopId, onDone }: { stopId: string; onDone: () => void }) {
   const addStopItem = useRouteStore((s) => s.addStopItem);
+  const setItemResolution = useRouteStore((s) => s.setItemResolution);
   const [name, setName] = useState("");
   const [qty, setQty] = useState("1");
 
   const handleAdd = () => {
     const n = parseInt(qty, 10);
     if (!name.trim() || isNaN(n) || n <= 0) return;
-    addStopItem(stopId, name.trim(), n);
+    const id = `added-${Date.now()}`;
+    addStopItem(stopId, "", name.trim(), n);
+    // Auto-mark as delivered
+    setItemResolution(stopId, id, { status: "DELIVERED" });
     setName("");
     setQty("1");
     onDone();
@@ -294,10 +301,7 @@ const addStyles = StyleSheet.create({
     color: colors.navy.DEFAULT,
     backgroundColor: "#fff",
   },
-  row: {
-    flexDirection: "row",
-    gap: 8,
-  },
+  row: { flexDirection: "row", gap: 8 },
   qtyInput: {
     width: 72,
     height: 48,
@@ -343,15 +347,88 @@ const addStyles = StyleSheet.create({
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 
 export default function StopDetailScreen() {
-  const { stopId } = useLocalSearchParams<{ stopId: string }>();
-  const route = useRouteStore((s) => s.route);
-  const stopNote = useRouteStore((s) => s.stopNotes[stopId] ?? "");
+  const { stopId, runId } = useLocalSearchParams<{ stopId: string; runId: string }>();
+
+  const { data: run, isLoading, isError, refetch } = useRouteRun(runId ?? "");
+  const { mutate: updateStopStatus } = useUpdateStopStatus();
+
+  const stopNoteFromStore = useRouteStore((s) => s.stopNotes[stopId]) ?? "";
   const setStopNote = useRouteStore((s) => s.setStopNote);
   const addedItems = useRouteStore((s) => s.addedItems[stopId]) ?? [];
-  const allResolved = useRouteStore((s) => selectAllItemsResolved(s, stopId));
-  const [showAddForm, setShowAddForm] = useState(false);
 
-  const stop = route.stops.find((s) => s.id === stopId);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [showScanner, setShowScanner] = useState(false);
+  const [pendingBarcode, setPendingBarcode] = useState<string | null>(null);
+  const [highlightedItemId, setHighlightedItemId] = useState<string | null>(null);
+  const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const { data: barcodeProduct, isError: barcodeError } = useProductByBarcode(pendingBarcode);
+
+  const stop = run?.stops?.find((s) => s.id === stopId) ?? null;
+
+  // Collect all order item IDs for resolution check
+  const orderItemIds = (stop?.orders ?? []).flatMap((o) =>
+    (o.lineItems ?? []).map((i) => i.id),
+  );
+  const allResolved = useRouteStore((s) =>
+    selectAllItemsResolved(s, stopId, orderItemIds),
+  );
+
+  // When barcode product is found, highlight matching item
+  useEffect(() => {
+    if (!barcodeProduct || !stop) return;
+    setPendingBarcode(null);
+    const allItems = (stop.orders ?? []).flatMap((o) => o.lineItems ?? []);
+    const matched = allItems.find(
+      (item) =>
+        item.product?.name?.toLowerCase() === barcodeProduct.name?.toLowerCase(),
+    );
+    if (matched) {
+      setHighlightedItemId(matched.id);
+      if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+      highlightTimerRef.current = setTimeout(() => setHighlightedItemId(null), 4000);
+    } else {
+      const msg = `"${barcodeProduct.name}" is not in this stop's order.`;
+      if (Platform.OS === "android") {
+        ToastAndroid.show(msg, ToastAndroid.SHORT);
+      } else {
+        Alert.alert("Not in Order", msg);
+      }
+    }
+  }, [barcodeProduct]);
+
+  useEffect(() => {
+    if (barcodeError && pendingBarcode) {
+      setPendingBarcode(null);
+      const msg = "No product found for this barcode.";
+      if (Platform.OS === "android") {
+        ToastAndroid.show(msg, ToastAndroid.SHORT);
+      } else {
+        Alert.alert("Not Found", msg);
+      }
+    }
+  }, [barcodeError, pendingBarcode]);
+
+  if (isLoading) {
+    return (
+      <>
+        <Stack.Screen options={{ title: "Stop" }} />
+        <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
+          <ActivityIndicator size="large" color={colors.brand[500]} />
+        </View>
+      </>
+    );
+  }
+
+  if (isError) {
+    return (
+      <>
+        <Stack.Screen options={{ title: "Stop" }} />
+        <NetworkError onRetry={() => refetch()} />
+      </>
+    );
+  }
+
   if (!stop) {
     return (
       <View style={styles.notFound}>
@@ -360,7 +437,36 @@ export default function StopDetailScreen() {
     );
   }
 
-  const totalStops = route.stops.length;
+  const totalStops = run?.stops?.length ?? 0;
+  const address = stop.customerAddress
+    ? `${stop.customerAddress.line1}, ${stop.customerAddress.city}, ${stop.customerAddress.state} ${stop.customerAddress.zip}`
+    : null;
+  const mapsQuery = address ?? stop.customer?.businessName ?? "";
+
+  // Flatten all items across orders at this stop
+  const allOrderItems = (stop.orders ?? []).flatMap((o) => o.lineItems ?? []);
+
+  const handleMarkArrived = () => {
+    if (stop.status === "PENDING" && runId) {
+      updateStopStatus({ runId, stopId, status: "IN_PROGRESS" });
+    }
+  };
+
+  const handleSkip = () => {
+    Alert.alert("Skip Stop", "Are you sure you want to skip this stop?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Skip",
+        style: "destructive",
+        onPress: () => {
+          if (runId) {
+            updateStopStatus({ runId, stopId, status: "SKIPPED" });
+            router.back();
+          }
+        },
+      },
+    ]);
+  };
 
   return (
     <>
@@ -368,6 +474,17 @@ export default function StopDetailScreen() {
         options={{
           title: `Stop ${stop.stopNumber} of ${totalStops}`,
           headerBackTitle: "Route",
+          headerRight: () => (
+            <Pressable
+              onPress={handleSkip}
+              style={{ paddingRight: 4 }}
+              accessibilityLabel="Skip stop"
+            >
+              <Text style={{ color: colors.danger.DEFAULT, fontFamily: "Inter_600SemiBold", fontSize: 15 }}>
+                Skip
+              </Text>
+            </Pressable>
+          ),
         }}
       />
       <KeyboardAvoidingView
@@ -383,70 +500,128 @@ export default function StopDetailScreen() {
           >
             {/* Business name + stop count */}
             <View style={styles.stopHeader}>
-              <Text style={styles.businessName}>{stop.businessName}</Text>
-              <Text style={styles.stopMeta}>
-                Stop {stop.stopNumber} of {totalStops} ·{" "}
-                {stop.items.length + addedItems.length} item
-                {stop.items.length + addedItems.length !== 1 ? "s" : ""}
-              </Text>
+              <View style={styles.stopHeaderTop}>
+                <View style={styles.stopHeaderLeft}>
+                  <Text style={styles.businessName}>{stop.customer?.businessName ?? "Customer"}</Text>
+                  <Text style={styles.stopMeta}>
+                    Stop {stop.stopNumber} of {totalStops}
+                    {" · "}
+                    {allOrderItems.length + addedItems.length} item
+                    {allOrderItems.length + addedItems.length !== 1 ? "s" : ""}
+                  </Text>
+                </View>
+                {stop.customer?.phone ? (
+                  <Pressable
+                    style={styles.callBtn}
+                    onPress={() => callPhone(stop.customer!.phone!)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Call ${stop.customer?.businessName}`}
+                  >
+                    <Ionicons name="call" size={20} color="#fff" />
+                  </Pressable>
+                ) : null}
+              </View>
+              {stop.customer?.deliveryWindowStart && (
+                <Text style={styles.windowText}>
+                  Delivery window: {stop.customer.deliveryWindowStart}
+                  {stop.customer.deliveryWindowEnd ? ` – ${stop.customer.deliveryWindowEnd}` : ""}
+                </Text>
+              )}
+              {stop.notes && (
+                <View style={styles.notesChip}>
+                  <Ionicons name="information-circle-outline" size={14} color={colors.brand[500]} />
+                  <Text style={styles.notesChipText}>{stop.notes}</Text>
+                </View>
+              )}
             </View>
 
             {/* Address + Navigate */}
-            <View style={styles.addressCard}>
-              <View style={styles.addressLeft}>
-                <Ionicons name="location-outline" size={20} color={colors.brand[500]} />
-                <Text style={styles.addressText}>{stop.address}</Text>
+            {address ? (
+              <View style={styles.addressCard}>
+                <View style={styles.addressLeft}>
+                  <Ionicons name="location-outline" size={20} color={colors.brand[500]} />
+                  <Text style={styles.addressText}>{address}</Text>
+                </View>
+                <Pressable
+                  style={styles.navigateBtn}
+                  onPress={() => openMaps(mapsQuery)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Open in Maps"
+                >
+                  <Ionicons name="navigate" size={18} color="#fff" />
+                  <Text style={styles.navigateBtnText}>Navigate</Text>
+                </Pressable>
               </View>
+            ) : null}
+
+            {/* Mark arrived button (only if PENDING) */}
+            {stop.status === "PENDING" && (
+              <Pressable style={styles.arrivedBtn} onPress={handleMarkArrived}>
+                <Ionicons name="checkmark-circle-outline" size={20} color={colors.brand[500]} />
+                <Text style={styles.arrivedBtnText}>Mark as Arrived</Text>
+              </Pressable>
+            )}
+
+            {/* Items section */}
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Order Items</Text>
               <Pressable
-                style={styles.navigateBtn}
-                onPress={() => openMaps(stop.mapsQuery)}
-                accessibilityRole="button"
-                accessibilityLabel="Open in Maps"
+                onPress={() => setShowScanner(true)}
+                style={styles.scanBtn}
+                accessibilityLabel="Scan barcode to find item"
               >
-                <Ionicons name="navigate" size={18} color="#fff" />
-                <Text style={styles.navigateBtnText}>Navigate</Text>
+                <Ionicons name="barcode-outline" size={18} color={colors.brand[500]} />
+                <Text style={styles.scanBtnText}>Scan</Text>
               </Pressable>
             </View>
 
-            {/* Items section */}
-            <Text style={styles.sectionTitle}>Order Items</Text>
-            <View style={styles.itemsList}>
-              {stop.items.map((item) => (
-                <ItemRow key={item.id} item={item} stopId={stopId} />
-              ))}
+            {allOrderItems.length === 0 && addedItems.length === 0 ? (
+              <View style={styles.noItemsBox}>
+                <Text style={styles.noItemsText}>No items in this order.</Text>
+              </View>
+            ) : (
+              <View style={styles.itemsList}>
+                {allOrderItems.map((item) => (
+                  <ItemRow
+                    key={item.id}
+                    item={item}
+                    stopId={stopId}
+                    highlighted={highlightedItemId === item.id}
+                  />
+                ))}
 
-              {/* Added items */}
-              {addedItems.map((item) => (
-                <ItemRow
-                  key={item.id}
-                  item={{
-                    id: item.id,
-                    name: item.name,
-                    unit: "",
-                    orderedQty: item.qty,
-                    isAdded: true,
-                  }}
-                  stopId={stopId}
-                />
-              ))}
+                {/* Added items */}
+                {addedItems.map((item) => (
+                  <ItemRow
+                    key={item.id}
+                    item={{
+                      id: item.id,
+                      productId: item.productId,
+                      product: { id: item.productId, name: item.name, unit: "" },
+                      qty: item.qty,
+                      unitPrice: 0,
+                      status: "PENDING",
+                      isAdded: true,
+                    }}
+                    stopId={stopId}
+                  />
+                ))}
 
-              {/* Add item button or form */}
-              {showAddForm ? (
-                <AddItemForm
-                  stopId={stopId}
-                  onDone={() => setShowAddForm(false)}
-                />
-              ) : (
-                <Pressable
-                  style={styles.addItemBtn}
-                  onPress={() => setShowAddForm(true)}
-                  accessibilityRole="button"
-                >
-                  <Ionicons name="add-circle-outline" size={22} color={colors.brand[500]} />
-                  <Text style={styles.addItemText}>Add item not on order</Text>
-                </Pressable>
-              )}
-            </View>
+                {/* Add item button or form */}
+                {showAddForm ? (
+                  <AddItemForm stopId={stopId} onDone={() => setShowAddForm(false)} />
+                ) : (
+                  <Pressable
+                    style={styles.addItemBtn}
+                    onPress={() => setShowAddForm(true)}
+                    accessibilityRole="button"
+                  >
+                    <Ionicons name="add-circle-outline" size={22} color={colors.brand[500]} />
+                    <Text style={styles.addItemText}>Add item not on order</Text>
+                  </Pressable>
+                )}
+              </View>
+            )}
 
             {/* Driver notes */}
             <Text style={styles.sectionTitle}>Driver Notes</Text>
@@ -454,7 +629,7 @@ export default function StopDetailScreen() {
               style={styles.notesInput}
               placeholder="Add a note about this stop…"
               placeholderTextColor="#94a3b8"
-              value={stopNote}
+              value={stopNoteFromStore}
               onChangeText={(v) => setStopNote(stopId, v)}
               multiline
               numberOfLines={3}
@@ -464,31 +639,51 @@ export default function StopDetailScreen() {
 
           {/* Complete Stop — primary action */}
           <View style={styles.footer}>
-            {!allResolved && (
+            <Pressable
+              style={styles.returnBtn}
+              onPress={() =>
+                router.push(`/(driver)/route/stop/${stopId}/return?runId=${runId}` as any)
+              }
+              accessibilityRole="button"
+              accessibilityLabel="Log Return"
+            >
+              <Ionicons name="return-down-back-outline" size={18} color={colors.danger.DEFAULT} />
+              <Text style={styles.returnBtnText}>Log Return</Text>
+            </Pressable>
+
+            {!allResolved && allOrderItems.length > 0 && (
               <Text style={styles.resolveHint}>
                 Resolve all items above to continue
               </Text>
             )}
             <Pressable
-              style={[styles.completeBtn, allResolved && styles.completeBtnReady]}
+              style={[
+                styles.completeBtn,
+                (allResolved || allOrderItems.length === 0) && styles.completeBtnReady,
+              ]}
               onPress={() =>
-                allResolved
-                  ? router.push(`/(driver)/route/stop/${stopId}/complete`)
+                (allResolved || allOrderItems.length === 0)
+                  ? router.push(`/(driver)/route/stop/${stopId}/complete?runId=${runId}`)
                   : null
               }
               accessibilityRole="button"
               accessibilityLabel="Complete Stop"
             >
               <Ionicons
-                name={allResolved ? "checkmark-circle" : "ellipse-outline"}
+                name={
+                  allResolved || allOrderItems.length === 0
+                    ? "checkmark-circle"
+                    : "ellipse-outline"
+                }
                 size={22}
-                color={allResolved ? "#fff" : "#94a3b8"}
+                color={allResolved || allOrderItems.length === 0 ? "#fff" : "#94a3b8"}
                 style={{ marginRight: 10 }}
               />
               <Text
                 style={[
                   styles.completeBtnText,
-                  allResolved && styles.completeBtnTextReady,
+                  (allResolved || allOrderItems.length === 0) &&
+                    styles.completeBtnTextReady,
                 ]}
               >
                 Complete Stop
@@ -497,23 +692,44 @@ export default function StopDetailScreen() {
           </View>
         </View>
       </KeyboardAvoidingView>
+
+      {showScanner && (
+        <BarcodeScanner
+          onScanned={(code) => {
+            setShowScanner(false);
+            setPendingBarcode(code);
+          }}
+          onClose={() => setShowScanner(false)}
+        />
+      )}
     </>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.surface.raised,
-  },
+  container: { flex: 1, backgroundColor: colors.surface.raised },
   scroll: {
     paddingHorizontal: 16,
     paddingTop: 16,
     paddingBottom: 24,
     gap: 12,
   },
-  stopHeader: {
-    gap: 4,
+  stopHeader: { gap: 6 },
+  stopHeaderTop: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  stopHeaderLeft: { flex: 1, gap: 2 },
+  callBtn: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: colors.success.DEFAULT,
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
   },
   businessName: {
     fontSize: 24,
@@ -524,6 +740,28 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontFamily: "Inter_400Regular",
     color: "#64748b",
+  },
+  windowText: {
+    fontSize: 13,
+    fontFamily: "Inter_500Medium",
+    color: colors.brand[500],
+    marginTop: 2,
+  },
+  notesChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: colors.brand[50],
+    borderRadius: borderRadius.full,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    alignSelf: "flex-start",
+    marginTop: 4,
+  },
+  notesChipText: {
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    color: colors.navy.DEFAULT,
   },
   addressCard: {
     backgroundColor: "#fff",
@@ -563,17 +801,64 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_700Bold",
     color: "#fff",
   },
+  arrivedBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    borderRadius: borderRadius.lg,
+    borderWidth: 1.5,
+    borderColor: colors.brand[500],
+    backgroundColor: colors.brand[50],
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  arrivedBtnText: {
+    fontSize: 15,
+    fontFamily: "Inter_600SemiBold",
+    color: colors.brand[500],
+  },
+  sectionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: 4,
+  },
   sectionTitle: {
     fontSize: 13,
     fontFamily: "Inter_600SemiBold",
     color: "#94a3b8",
     textTransform: "uppercase",
     letterSpacing: 0.6,
-    marginTop: 4,
   },
-  itemsList: {
-    gap: 10,
+  scanBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: borderRadius.DEFAULT,
+    backgroundColor: colors.brand[50],
+    borderWidth: 1,
+    borderColor: colors.brand[100],
   },
+  scanBtnText: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+    color: colors.brand[500],
+  },
+  noItemsBox: {
+    backgroundColor: "#fff",
+    borderRadius: borderRadius.lg,
+    padding: 24,
+    alignItems: "center",
+    ...shadows.card,
+  },
+  noItemsText: {
+    fontSize: 15,
+    fontFamily: "Inter_400Regular",
+    color: "#94a3b8",
+  },
+  itemsList: { gap: 10 },
   addItemBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -614,6 +899,22 @@ const styles = StyleSheet.create({
     borderTopColor: colors.surface.border,
     gap: 8,
   },
+  returnBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    height: 44,
+    borderRadius: borderRadius.DEFAULT,
+    borderWidth: 1.5,
+    borderColor: colors.danger.DEFAULT,
+    backgroundColor: colors.danger.bg,
+  },
+  returnBtnText: {
+    fontSize: 15,
+    fontFamily: "Inter_600SemiBold",
+    color: colors.danger.DEFAULT,
+  },
   resolveHint: {
     textAlign: "center",
     fontSize: 13,
@@ -628,22 +929,14 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: colors.surface.border,
   },
-  completeBtnReady: {
-    backgroundColor: colors.success.DEFAULT,
-  },
+  completeBtnReady: { backgroundColor: colors.success.DEFAULT },
   completeBtnText: {
     fontSize: 17,
     fontFamily: "Inter_700Bold",
     color: "#94a3b8",
   },
-  completeBtnTextReady: {
-    color: "#fff",
-  },
-  notFound: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-  },
+  completeBtnTextReady: { color: "#fff" },
+  notFound: { flex: 1, alignItems: "center", justifyContent: "center" },
   notFoundText: {
     fontSize: 16,
     fontFamily: "Inter_400Regular",

@@ -4,7 +4,6 @@ import { apiClient } from "../api-client";
 export function useProducts(params?: {
   search?: string;
   category?: string;
-  lowStock?: boolean;
   isActive?: boolean;
   page?: number;
 }) {
@@ -19,6 +18,15 @@ export function useProduct(id: string) {
     queryKey: ["products", id],
     queryFn: () => apiClient.get(`/products/${id}`).then((r) => r.data),
     enabled: !!id,
+  });
+}
+
+export function useProductByBarcode(barcode: string | null) {
+  return useQuery({
+    queryKey: ["products", "barcode", barcode],
+    queryFn: () => apiClient.get(`/products/barcode/${barcode}`).then((r) => r.data),
+    enabled: !!barcode,
+    retry: false,
   });
 }
 
@@ -43,11 +51,10 @@ export function useUpdateProduct() {
   });
 }
 
-export function useClearProductOverride() {
+export function useDeleteProduct() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) =>
-      apiClient.patch(`/products/${id}/override`).then((r) => r.data),
-    onSuccess: (_d, id) => qc.invalidateQueries({ queryKey: ["products", id] }),
+    mutationFn: (id: string) => apiClient.delete(`/products/${id}`).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["products"] }),
   });
 }

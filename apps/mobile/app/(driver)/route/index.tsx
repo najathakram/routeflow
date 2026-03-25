@@ -3,7 +3,14 @@ import { router, Stack } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { EmptyState, StatusBadge } from "@routeflow/ui/mobile";
 import { colors, borderRadius, shadows } from "@routeflow/ui/tokens";
-import { useActiveRouteRun, useRouteRun, useUpdateRunStatus, type RouteRunStop } from "../../../lib/api/routes";
+import {
+  useActiveRouteRun,
+  useScheduledRouteRuns,
+  useRouteRun,
+  useUpdateRunStatus,
+  type RouteRunStop,
+} from "../../../lib/api/routes";
+import { useRouteStore } from "../../../store/routeStore";
 import { NetworkError } from "../../../components/NetworkError";
 
 const STATUS_ICON: Record<string, { name: string; color: string }> = {
@@ -36,7 +43,7 @@ const progressStyles = StyleSheet.create({
   },
 });
 
-function StopRow({ stop }: { stop: RouteRunStop }) {
+function StopRow({ stop, runId }: { stop: RouteRunStop; runId: string }) {
   const icon = STATUS_ICON[stop.status] ?? STATUS_ICON.PENDING;
   const isActive = stop.status === "IN_PROGRESS";
 
@@ -44,12 +51,17 @@ function StopRow({ stop }: { stop: RouteRunStop }) {
   const address = stop.customerAddress
     ? `${stop.customerAddress.line1}, ${stop.customerAddress.city}, ${stop.customerAddress.state}`
     : null;
-  const itemCount = stop.orders?.length ?? 0;
+
+  // Count total items across all orders at this stop
+  const itemCount = (stop.orders ?? []).reduce(
+    (sum, o) => sum + (o.lineItems?.length ?? 0),
+    0,
+  );
 
   return (
     <Pressable
       style={[styles.stopRow, isActive && styles.stopRowActive]}
-      onPress={() => router.push(`/(driver)/route/stop/${stop.id}`)}
+      onPress={() => router.push(`/(driver)/route/stop/${stop.id}?runId=${runId}`)}
       accessibilityRole="button"
       accessibilityLabel={`Stop ${stop.stopNumber}: ${businessName}`}
     >
@@ -70,7 +82,7 @@ function StopRow({ stop }: { stop: RouteRunStop }) {
         ) : null}
         {itemCount > 0 && (
           <Text style={styles.stopItemCount}>
-            {itemCount} order{itemCount !== 1 ? "s" : ""}
+            {itemCount} item{itemCount !== 1 ? "s" : ""}
           </Text>
         )}
       </View>
@@ -83,7 +95,13 @@ function StopRow({ stop }: { stop: RouteRunStop }) {
 
 export default function RouteScreen() {
   const { data, isLoading, isError, refetch } = useActiveRouteRun();
-  const activeRunId = data?.data?.[0]?.id ?? null;
+  const { data: scheduledData } = useScheduledRouteRuns();
+  const setActiveRunId = useRouteStore((s) => s.setActiveRunId);
+
+  // Prefer in-progress run; fall back to first scheduled run
+  const runRef = data?.data?.[0] ?? scheduledData?.data?.[0] ?? null;
+  const activeRunId = runRef?.id ?? null;
+
   const { data: fullRun, isLoading: isLoadingRun } = useRouteRun(activeRunId ?? "");
   const { mutate: updateStatus, isPending: isUpdating } = useUpdateRunStatus();
 
@@ -107,7 +125,7 @@ export default function RouteScreen() {
     );
   }
 
-  const run = fullRun ?? data?.data?.[0] ?? null;
+  const run = fullRun ?? runRef;
 
   if (!run) {
     return (
@@ -115,12 +133,15 @@ export default function RouteScreen() {
         <Stack.Screen options={{ title: "My Route" }} />
         <EmptyState
           icon={<Ionicons name="map-outline" size={56} color="#cbd5e1" />}
-          title="No active run assigned."
+          title="No route assigned today."
           subtitle="Check back later or contact your dispatcher."
         />
       </>
     );
   }
+
+  // Store active runId for stop screens
+  if (activeRunId) setActiveRunId(activeRunId);
 
   const stops = run.stops ?? [];
   const totalStops = stops.length;
@@ -129,7 +150,7 @@ export default function RouteScreen() {
   ).length;
   const currentStop = stops.find((s) => s.status === "IN_PROGRESS") ?? null;
   const allDone = run.status === "COMPLETED";
-  const hasStarted = completedCount > 0 || currentStop !== null;
+  const hasStarted = run.status === "IN_PROGRESS" || completedCount > 0 || currentStop !== null;
 
   const primaryLabel = allDone
     ? "Route Complete"
@@ -144,20 +165,40 @@ export default function RouteScreen() {
     }
     const target = currentStop ?? stops.find((s) => s.status === "PENDING");
     if (target) {
-      router.push(`/(driver)/route/stop/${target.id}`);
+      router.push(`/(driver)/route/stop/${target.id}?runId=${run.id}`);
     }
   };
 
   return (
     <>
-      <Stack.Screen options={{ title: "My Route" }} />
+      <Stack.Screen
+        options={{
+          title: "My Route",
+          headerRight: () =>
+            run && (
+              <Pressable
+                onPress={() => router.push(`/(driver)/route/packing-list?runId=${run.id}`)}
+                style={{ paddingRight: 4 }}
+                accessibilityLabel="Packing list"
+              >
+                <Ionicons name="list-outline" size={24} color={colors.brand[500]} />
+              </Pressable>
+            ),
+        }}
+      />
       <View style={styles.container}>
         {/* Route header card */}
         <View style={styles.headerCard}>
           <View style={styles.headerTop}>
             <Text style={styles.routeName}>{run.route?.name ?? "My Route"}</Text>
             <StatusBadge
-              status={run.status === "IN_PROGRESS" ? "IN_PROGRESS" : "COMPLETED"}
+              status={
+                run.status === "IN_PROGRESS"
+                  ? "IN_PROGRESS"
+                  : run.status === "COMPLETED"
+                    ? "COMPLETED"
+                    : "PENDING"
+              }
             />
           </View>
 
@@ -180,7 +221,7 @@ export default function RouteScreen() {
         >
           <Text style={styles.stopsLabel}>Stops</Text>
           {stops.map((stop) => (
-            <StopRow key={stop.id} stop={stop} />
+            <StopRow key={stop.id} stop={stop} runId={run.id} />
           ))}
         </ScrollView>
 

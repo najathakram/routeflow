@@ -20,7 +20,7 @@ async function main() {
   ]);
 
   // ─── Operator ─────────────────────────────────────────────────────────────────
-  await prisma.user.upsert({
+  const adminUser = await prisma.user.upsert({
     where: { username: 'admin' },
     update: { password: adminHash },
     create: {
@@ -64,10 +64,11 @@ async function main() {
   const [carlos, james] = await Promise.all([
     prisma.driver.upsert({
       where: { userId: carlosUser.id },
-      update: {},
+      update: { contactName: 'Carlos Reyes' },
       create: {
         userId: carlosUser.id,
         status: 'ACTIVE',
+        contactName: 'Carlos Reyes',
         vehicleMake: 'Ford',
         vehicleModel: 'Transit',
         vehicleColour: 'White',
@@ -76,10 +77,11 @@ async function main() {
     }),
     prisma.driver.upsert({
       where: { userId: jamesUser.id },
-      update: {},
+      update: { contactName: 'James Tran' },
       create: {
         userId: jamesUser.id,
         status: 'ACTIVE',
+        contactName: 'James Tran',
         vehicleMake: 'Chevrolet',
         vehicleModel: 'Express',
         vehicleColour: 'Silver',
@@ -269,11 +271,44 @@ async function main() {
           unit: p.unit,
           pricePerUnit: p.price,
           category: p.category,
-          lowStock: p.lowStock,
           isActive: p.isActive,
         },
       }),
     ),
+  );
+
+  // ─── Initial Stock ────────────────────────────────────────────────────────────
+  // Seed realistic stock levels via PURCHASE movements (idempotent: only if no movements exist)
+  const stockSeeds: { productId: string; qty: number; unitCost: number }[] = [
+    { productId: 'seed-prod-01', qty: 48, unitCost: 5.50 },  // Purified Water
+    { productId: 'seed-prod-02', qty: 36, unitCost: 3.00 },  // Orange Juice
+    { productId: 'seed-prod-03', qty: 24, unitCost: 2.50 },  // Iced Tea
+    { productId: 'seed-prod-04', qty: 20, unitCost: 9.00 },  // Sparkling Water
+    { productId: 'seed-prod-05', qty: 5,  unitCost: 4.50 },  // Cold Brew Coffee (low stock)
+    { productId: 'seed-prod-06', qty: 60, unitCost: 1.50 },  // Kettle Chips
+    { productId: 'seed-prod-07', qty: 30, unitCost: 5.20 },  // Mixed Nuts
+    { productId: 'seed-prod-08', qty: 18, unitCost: 5.80 },  // Granola Bars
+    { productId: 'seed-prod-09', qty: 4,  unitCost: 3.20 },  // Beef Jerky (low stock)
+    { productId: 'seed-prod-10', qty: 22, unitCost: 6.50 },  // Trail Mix
+    { productId: 'seed-prod-11', qty: 40, unitCost: 2.20 },  // All-Purpose Cleaner
+    { productId: 'seed-prod-12', qty: 15, unitCost: 10.50 }, // Paper Towels
+    { productId: 'seed-prod-13', qty: 28, unitCost: 2.60 },  // Dish Soap
+    { productId: 'seed-prod-14', qty: 3,  unitCost: 1.80 },  // Hand Sanitizer (low stock)
+    // seed-prod-15 (Trash Bags) is inactive — no stock
+  ];
+  await Promise.all(
+    stockSeeds.map(async ({ productId, qty, unitCost }) => {
+      const existing = await prisma.stockMovement.findFirst({ where: { productId, type: 'PURCHASE' } });
+      if (!existing) {
+        await prisma.stockMovement.create({
+          data: { productId, type: 'PURCHASE', quantity: qty, unitCost, performedById: adminUser.id, reference: 'SEED-INIT' },
+        });
+        await prisma.product.update({
+          where: { id: productId },
+          data: { currentStock: qty, averageCost: unitCost },
+        });
+      }
+    }),
   );
 
   // ─── Routes ───────────────────────────────────────────────────────────────────
@@ -450,12 +485,16 @@ async function main() {
     const subtotal = items.reduce((s, i) => s + i.qty * i.unitPrice, 0);
     const tax = +(subtotal * 0.0825).toFixed(2);
     const total = +(subtotal + tax).toFixed(2);
+    // Derive a stable order number from the seed ID
+    const seedNum = id.replace('seed-order-', '');
+    const orderNumber = `ORD-SEED-${seedNum.padStart(3, '0')}`;
 
     const order = await prisma.order.upsert({
       where: { id },
-      update: {},
+      update: { orderNumber },
       create: {
         id,
+        orderNumber,
         customerId,
         routeRunId,
         status,
@@ -546,7 +585,40 @@ async function main() {
     { productId: 'seed-prod-15', qty: 3, unitPrice: 9.99 },
   ]);
 
-  console.log(`Seeded 7 users, ${productDefs.length} products, 10 orders`);
+  // ─── Seed Transactions ───────────────────────────────────────────────────────
+  // Create transactions for delivered orders (mimics what orders service does on delivery)
+  const deliveredOrderIds = ['seed-order-06', 'seed-order-07'];
+  for (const orderId of deliveredOrderIds) {
+    const order = await prisma.order.findUnique({ where: { id: orderId } });
+    if (!order) continue;
+    const existing = await prisma.transaction.findUnique({ where: { orderId } });
+    if (existing) continue;
+    await prisma.transaction.create({
+      data: {
+        orderId: order.id,
+        customerId: order.customerId,
+        totalOwed: order.total,
+        status: 'UNPAID',
+        dueDate: new Date(Date.now() + 30 * 86400000), // Net 30
+      },
+    });
+  }
+
+  // Create a PARTIAL and a PAID transaction for variety
+  const order06 = await prisma.order.findUnique({ where: { id: 'seed-order-06' } });
+  const txn06 = order06 ? await prisma.transaction.findUnique({ where: { orderId: 'seed-order-06' } }) : null;
+  if (txn06 && txn06.status === 'UNPAID') {
+    const partialAmount = +(Number(txn06.totalOwed) / 2).toFixed(2);
+    await prisma.payment.create({
+      data: { transactionId: txn06.id, amount: partialAmount, method: 'ACH', reference: 'ACH-SEED-001' },
+    });
+    await prisma.transaction.update({
+      where: { id: txn06.id },
+      data: { totalPaid: partialAmount, status: 'PARTIAL' },
+    });
+  }
+
+  console.log(`Seeded 7 users, ${productDefs.length} products, 10 orders, transactions for delivered orders`);
 }
 
 main()

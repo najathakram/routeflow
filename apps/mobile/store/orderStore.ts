@@ -20,11 +20,13 @@ interface OrderState {
   items: OrderItem[];
   isUrgent: boolean;
   notes: string;
+  requestedDeliveryDate: string | null;
   addItem: (product: Product, quantity: number) => void;
   removeItem: (productId: string) => void;
   updateQuantity: (productId: string, quantity: number) => void;
   setUrgent: (urgent: boolean) => void;
   setNotes: (notes: string) => void;
+  setRequestedDeliveryDate: (date: string | null) => void;
   clearOrder: () => void;
 }
 
@@ -32,6 +34,7 @@ export const useOrderStore = create<OrderState>((set) => ({
   items: [],
   isUrgent: false,
   notes: "",
+  requestedDeliveryDate: null,
 
   addItem: (product, quantity) =>
     set((state) => {
@@ -76,5 +79,6 @@ export const useOrderStore = create<OrderState>((set) => ({
 
   setUrgent: (isUrgent) => set({ isUrgent }),
   setNotes: (notes) => set({ notes }),
-  clearOrder: () => set({ items: [], isUrgent: false, notes: "" }),
+  setRequestedDeliveryDate: (requestedDeliveryDate) => set({ requestedDeliveryDate }),
+  clearOrder: () => set({ items: [], isUrgent: false, notes: "", requestedDeliveryDate: null }),
 }));

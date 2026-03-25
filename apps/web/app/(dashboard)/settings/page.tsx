@@ -8,17 +8,13 @@ import { z } from "zod";
 import {
   Upload,
   CheckCircle2,
-  XCircle,
-  RefreshCw,
   Bell,
   Pencil,
   ToggleLeft,
   ToggleRight,
   Copy,
   Check,
-  Link as LinkIcon,
   Building2,
-  Plug,
   Users as UsersIcon,
 } from "lucide-react";
 import {
@@ -34,7 +30,6 @@ import {
 import { useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useUsers, useCreateOperator, useUpdateUser, useChangeUserStatus, AppUser } from "@/lib/api/users";
-import { useZohoStatus, useZohoConfig, useZohoSync, useUpdateZohoConfig } from "@/lib/api/zoho";
 import { useNotificationsStatus, useSendTestNotification } from "@/lib/api/notifications";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -195,55 +190,12 @@ function BusinessProfileTab() {
   );
 }
 
-// ─── TAB 2: Integrations ──────────────────────────────────────────────────────
+// ─── TAB 2: Notifications ─────────────────────────────────────────────────────
 
-function IntegrationsTab() {
+function NotificationsTab() {
   const { toast } = useToast();
-
-  // Zoho state
-  const { data: zohoStatus } = useZohoStatus();
-  const { data: zohoConfig } = useZohoConfig();
-  const zohoSync = useZohoSync();
-  const updateZohoConfig = useUpdateZohoConfig();
-  const [showZohoForm, setShowZohoForm] = React.useState(false);
-  const [zohoForm, setZohoForm] = React.useState({ clientId: "", clientSecret: "", refreshToken: "", region: "com" });
-
-  // Pre-fill non-secret fields when the credential form is opened
-  React.useEffect(() => {
-    if (showZohoForm && zohoConfig) {
-      setZohoForm((prev) => ({
-        ...prev,
-        clientId: prev.clientId || zohoConfig.clientId || "",
-        region: zohoConfig.region || "com",
-      }));
-    }
-  }, [showZohoForm, zohoConfig]);
-
-  // Firebase state
   const { data: notificationsStatus } = useNotificationsStatus();
   const sendTest = useSendTestNotification();
-
-  const zohoConfigured = zohoStatus?.configured ?? false;
-  const lastSync = zohoStatus?.lastSync
-    ? new Date(zohoStatus.lastSync).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })
-    : null;
-
-  const handleSync = () => {
-    zohoSync.mutate(undefined, {
-      onSuccess: (result) => toast({ title: "Sync complete", description: `${result.synced} products synced.`, variant: "success" }),
-      onError: (err) => toast({ title: "Sync failed", description: err.message, variant: "error" }),
-    });
-  };
-
-  const handleSaveZohoConfig = () => {
-    updateZohoConfig.mutate(zohoForm, {
-      onSuccess: () => {
-        toast({ title: "Zoho credentials saved", variant: "success" });
-        setShowZohoForm(false);
-      },
-      onError: (err) => toast({ title: "Save failed", description: err.message, variant: "error" }),
-    });
-  };
 
   const handleTestNotification = () => {
     sendTest.mutate(undefined, {
@@ -258,96 +210,6 @@ function IntegrationsTab() {
 
   return (
     <div className="space-y-5">
-      {/* Zoho CRM */}
-      <Card title="Zoho CRM / Inventory">
-        <div className="space-y-4">
-          {/* Status row */}
-          <div className="flex items-center justify-between rounded-lg border border-surface-border bg-surface-raised p-4">
-            <div className="flex items-center gap-3">
-              <div
-                className={cn(
-                  "flex h-10 w-10 items-center justify-center rounded-lg font-bold text-white text-sm",
-                  zohoConfigured ? "bg-success" : "bg-navy/30",
-                )}
-              >
-                Z
-              </div>
-              <div>
-                <p className="text-sm font-semibold text-navy">Zoho Inventory</p>
-                <p className="text-xs text-navy/50">
-                  {zohoConfigured
-                    ? lastSync ? `Last synced: ${lastSync}` : "Configured — never synced"
-                    : "Not configured"}
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              {zohoConfigured ? (
-                <Badge variant="success" label="Configured" />
-              ) : (
-                <Badge variant="warning" label="Not configured" />
-              )}
-            </div>
-          </div>
-
-          {/* Actions */}
-          <div className="flex flex-wrap gap-2">
-            {zohoConfigured && (
-              <Button
-                variant="secondary"
-                size="sm"
-                leftIcon={<RefreshCw className={cn("h-4 w-4", zohoSync.isPending && "animate-spin")} />}
-                loading={zohoSync.isPending}
-                onClick={handleSync}
-              >
-                Sync Now
-              </Button>
-            )}
-            <Button
-              variant="secondary"
-              size="sm"
-              leftIcon={<LinkIcon className="h-4 w-4" />}
-              onClick={() => setShowZohoForm((v) => !v)}
-            >
-              {zohoConfigured ? "Update Credentials" : "Configure Zoho"}
-            </Button>
-          </div>
-
-          {/* Credentials form */}
-          {showZohoForm && (
-            <div className="space-y-3 rounded-lg border border-surface-border p-4">
-              <p className="text-xs font-semibold uppercase tracking-wider text-navy/40">Zoho OAuth Credentials</p>
-              <div className="grid grid-cols-2 gap-3">
-                <Input label="Client ID" value={zohoForm.clientId} onChange={(e) => setZohoForm({ ...zohoForm, clientId: e.target.value })} placeholder="1000.XXXX..." />
-                <Input label="Client Secret" value={zohoForm.clientSecret} onChange={(e) => setZohoForm({ ...zohoForm, clientSecret: e.target.value })} placeholder="••••••••" type="password" />
-              </div>
-              <Input label="Refresh Token" value={zohoForm.refreshToken} onChange={(e) => setZohoForm({ ...zohoForm, refreshToken: e.target.value })} placeholder="1000.XXXX..." type="password" />
-              <div className="w-40">
-                <Select
-                  label="Region"
-                  options={[
-                    { value: "com", label: "Global (US)" },
-                    { value: "eu", label: "Europe (EU)" },
-                    { value: "in", label: "India (IN)" },
-                    { value: "au", label: "Australia (AU)" },
-                  ]}
-                  value={zohoForm.region}
-                  onChange={(e) => setZohoForm({ ...zohoForm, region: e.target.value })}
-                />
-              </div>
-              <div className="flex gap-2">
-                <Button size="sm" loading={updateZohoConfig.isPending} onClick={handleSaveZohoConfig}>Save Credentials</Button>
-                <Button size="sm" variant="secondary" onClick={() => setShowZohoForm(false)}>Cancel</Button>
-              </div>
-              {updateZohoConfig.error && (
-                <p className="text-sm text-danger">{updateZohoConfig.error.message}</p>
-              )}
-            </div>
-          )}
-        </div>
-      </Card>
-
-      {/* Firebase */}
       <Card title="Firebase (Push Notifications)">
         <div className="space-y-4">
           <div className="flex items-center justify-between rounded-lg border border-surface-border bg-surface-raised p-4">
@@ -741,8 +603,8 @@ export default function SettingsPage() {
           <TabTrigger value="profile" icon={<Building2 className="h-4 w-4" />}>
             Business Profile
           </TabTrigger>
-          <TabTrigger value="integrations" icon={<Plug className="h-4 w-4" />}>
-            Integrations
+          <TabTrigger value="notifications" icon={<Bell className="h-4 w-4" />}>
+            Notifications
           </TabTrigger>
           <TabTrigger value="users" icon={<UsersIcon className="h-4 w-4" />}>
             User Management
@@ -753,8 +615,8 @@ export default function SettingsPage() {
           <BusinessProfileTab />
         </Tabs.Content>
 
-        <Tabs.Content value="integrations" className="mt-6 max-w-2xl focus:outline-none">
-          <IntegrationsTab />
+        <Tabs.Content value="notifications" className="mt-6 max-w-2xl focus:outline-none">
+          <NotificationsTab />
         </Tabs.Content>
 
         <Tabs.Content value="users" className="mt-6 focus:outline-none">

@@ -26,7 +26,7 @@ export function useUsers(params?: { search?: string; status?: string }) {
 export function useCreateOperator() {
   const qc = useQueryClient();
   return useMutation<{ user: AppUser; tempPassword: string }, Error, { name: string; email: string; username: string }>({
-    mutationFn: (dto) => apiClient.post('/users/operator', dto).then((r) => r.data),
+    mutationFn: ({ name: _name, ...dto }) => apiClient.post('/users/operator', dto).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
   });
 }

@@ -39,7 +39,7 @@ export class OrdersController {
 
   @Patch(":id/status")
   @UseGuards(RolesGuard)
-  @Roles(UserRole.OPERATOR)
+  @Roles(UserRole.OPERATOR, UserRole.CUSTOMER)
   changeStatus(
     @Param("id") id: string,
     @Body() dto: ChangeOrderStatusDto,

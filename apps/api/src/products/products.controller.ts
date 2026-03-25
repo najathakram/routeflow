@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import { UserRole } from "@prisma/client";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
@@ -18,6 +18,12 @@ export class ProductsController {
     return this.productsService.findAll(query);
   }
 
+  // Must be declared before :id to avoid route collision
+  @Get("barcode/:barcode")
+  findByBarcode(@Param("barcode") barcode: string) {
+    return this.productsService.findByBarcode(barcode);
+  }
+
   @Get(":id")
   findOne(@Param("id") id: string) {
     return this.productsService.findOne(id);
@@ -35,9 +41,9 @@ export class ProductsController {
     return this.productsService.update(id, dto);
   }
 
-  @Patch(":id/override")
+  @Delete(":id")
   @Roles(UserRole.OPERATOR)
-  clearOverride(@Param("id") id: string) {
-    return this.productsService.clearOverride(id);
+  remove(@Param("id") id: string) {
+    return this.productsService.remove(id);
   }
 }

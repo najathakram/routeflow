@@ -154,6 +154,10 @@ export class AuthService {
     const tokenHash = this.hashToken(token);
     const decoded = this.jwtService.decode(token) as { exp: number };
     const expiresAt = new Date(decoded.exp * 1000);
-    await this.prisma.refreshToken.create({ data: { userId, tokenHash, expiresAt } });
+    await this.prisma.refreshToken.upsert({
+      where: { tokenHash },
+      create: { userId, tokenHash, expiresAt },
+      update: { expiresAt },
+    });
   }
 }

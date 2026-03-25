@@ -164,7 +164,7 @@ export default function DashboardPage() {
   const { data: recentOrdersData, isLoading: recentLoading } = useOrders({ page: 1, limit: 5 });
   const { data: routeRunsData, isLoading: runsLoading } = useRouteRuns({ date: todayISO });
   const { data: driversData, isLoading: driversLoading } = useDrivers({ page: 1, limit: 20 });
-  const { data: lowStockData, isLoading: lowStockLoading } = useProducts({ lowStock: true, page: 1 });
+  const { data: lowStockData, isLoading: lowStockLoading } = useProducts({ isActive: true, page: 1 });
 
   // ── KPI calculations ──
   const activeOrders = React.useMemo(() => {

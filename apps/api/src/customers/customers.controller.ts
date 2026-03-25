@@ -33,6 +33,12 @@ export class CustomersController {
     return this.customersService.create(dto);
   }
 
+  @Get("me")
+  @Roles(UserRole.CUSTOMER)
+  getMyProfile(@CurrentUser() user: JwtPayload) {
+    return this.customersService.findMyProfile(user);
+  }
+
   @Get(":id")
   findOne(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
     return this.customersService.findOne(id, user);

@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
   Body,
   Param,
   Query,
@@ -18,6 +19,7 @@ import { Roles } from "../auth/decorators/roles.decorator";
 import { UserRole } from "@prisma/client";
 import { ListTransactionsDto } from "./dto/list-transactions.dto";
 import { RecordPaymentDto } from "./dto/record-payment.dto";
+import { CurrentUser } from "../auth/decorators/current-user.decorator";
 
 @ApiTags("bookkeeping")
 @ApiBearerAuth()
@@ -60,4 +62,34 @@ export class BookkeepingController {
     }
     return result;
   }
+
+  // ── Expense Categories ──
+  @Get("expense-categories")
+  listExpenseCategories() { return this.bookkeepingService.listExpenseCategories(); }
+
+  @Post("expense-categories")
+  createExpenseCategory(@Body() dto: any) { return this.bookkeepingService.createExpenseCategory(dto); }
+
+  // ── Expenses ──
+  @Get("expenses")
+  listExpenses(@Query() query: any) { return this.bookkeepingService.listExpenses(query); }
+
+  @Post("expenses")
+  createExpense(@Body() dto: any, @CurrentUser() user: any) { return this.bookkeepingService.createExpense(dto, user.sub); }
+
+  @Patch("expenses/:id")
+  updateExpense(@Param("id") id: string, @Body() dto: any) { return this.bookkeepingService.updateExpense(id, dto); }
+
+  @Post("expenses/:id/delete")
+  deleteExpense(@Param("id") id: string) { return this.bookkeepingService.deleteExpense(id); }
+
+  // ── Reports ──
+  @Get("reports/pl")
+  getPL(@Query("from") from?: string, @Query("to") to?: string) { return this.bookkeepingService.getProfitAndLoss(from, to); }
+
+  @Get("reports/aging")
+  getAging() { return this.bookkeepingService.getArAging(); }
+
+  @Get("reports/cashflow")
+  getCashFlow(@Query("from") from?: string, @Query("to") to?: string) { return this.bookkeepingService.getCashFlow(from, to); }
 }

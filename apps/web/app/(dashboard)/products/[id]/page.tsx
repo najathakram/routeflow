@@ -5,7 +5,6 @@ import Link from "next/link";
 import {
   ArrowLeft,
   Package,
-  Flag,
   Pencil,
   Check,
   X,
@@ -21,7 +20,7 @@ import {
 } from "recharts";
 import { Badge, Button, Card, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
-import { useProduct, useUpdateProduct, useClearProductOverride } from "@/lib/api/products";
+import { useProduct, useUpdateProduct, useDeleteProduct } from "@/lib/api/products";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -42,31 +41,11 @@ function generateDemandData(productId: string): { day: string; units: number }[]
 
 type StockStatus = "IN_STOCK" | "LOW" | "OUT_OF_STOCK";
 
-function getStockStatus(lowStock: boolean, isActive: boolean): StockStatus {
+function getStockStatus(currentStock: number, isActive: boolean): StockStatus {
   if (!isActive) return "OUT_OF_STOCK";
-  if (lowStock) return "LOW";
+  if (currentStock <= 0) return "OUT_OF_STOCK";
+  if (currentStock <= 5) return "LOW";
   return "IN_STOCK";
-}
-
-// ─── Local override banner ────────────────────────────────────────────────────
-
-function OverrideBanner({ onReset }: { onReset: () => void }) {
-  return (
-    <div className="flex items-center justify-between gap-4 rounded-lg border border-warning/30 bg-warning-bg px-4 py-3">
-      <div className="flex items-center gap-2">
-        <Flag className="h-4 w-4 shrink-0 text-warning" />
-        <p className="text-sm font-medium text-warning">
-          Zoho sync paused — local overrides are active on this product.
-        </p>
-      </div>
-      <button
-        onClick={onReset}
-        className="shrink-0 text-xs text-warning/70 underline hover:text-warning transition-colors"
-      >
-        Resume sync
-      </button>
-    </div>
-  );
 }
 
 // ─── Info row ─────────────────────────────────────────────────────────────────
@@ -107,7 +86,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
   const { setTitle } = usePageTitle();
   const { data: product, isLoading } = useProduct(params.id);
   const updateProduct = useUpdateProduct();
-  const clearOverride = useClearProductOverride();
+  const deleteProduct = useDeleteProduct();
 
   const [isEditing, setIsEditing] = React.useState(false);
   const [editDraft, setEditDraft] = React.useState<Record<string, unknown>>({});
@@ -134,13 +113,18 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
   }
 
   const priceNumber = parseFloat(String(product.pricePerUnit));
-  const stockStatus = getStockStatus(product.lowStock, product.isActive);
+  const currentStock = Number(product.currentStock ?? 0);
+  const stockStatus = getStockStatus(currentStock, product.isActive);
   const demandData = generateDemandData(product.id);
 
   const startEdit = () => {
     setEditDraft({
       name: product.name,
+      sku: product.sku ?? "",
+      barcode: product.barcode ?? "",
+      unit: product.unit,
       pricePerUnit: String(priceNumber),
+      category: product.category ?? "",
       description: product.description ?? "",
     });
     setIsEditing(true);
@@ -156,10 +140,6 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
     setIsEditing(false);
   };
 
-  const resumeSync = () => {
-    clearOverride.mutate(params.id);
-  };
-
   return (
     <div className="space-y-5 p-6">
       {/* Back */}
@@ -170,9 +150,6 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
         <ArrowLeft className="h-4 w-4" />
         Products
       </Link>
-
-      {/* Override warning */}
-      {product.hasLocalOverride && <OverrideBanner onReset={resumeSync} />}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
 
@@ -209,11 +186,25 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                 )}
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-sm text-navy/60">Low stock flag</span>
+                <span className="text-sm text-navy/60">On hand</span>
                 <span className="font-medium text-navy">
-                  {product.lowStock ? "Yes" : "No"}
+                  {currentStock.toFixed(2)} {product.unit}
                 </span>
               </div>
+              {product.averageCost && (
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-navy/60">Avg cost</span>
+                  <span className="font-medium text-navy">
+                    ${parseFloat(String(product.averageCost)).toFixed(2)}
+                  </span>
+                </div>
+              )}
+              <Link
+                href={`/inventory/movements?product=${product.id}`}
+                className="block text-xs text-brand-500 hover:underline"
+              >
+                View stock movements →
+              </Link>
             </div>
           </Card>
         </div>
@@ -234,7 +225,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                 ) : (
                   <h1 className="text-xl font-bold text-navy">{product.name}</h1>
                 )}
-                <p className="mt-1 font-mono text-xs text-navy/40">{product.sku}</p>
+                {!isEditing && <p className="mt-1 font-mono text-xs text-navy/40">{product.sku}</p>}
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 {isEditing ? (
@@ -256,20 +247,56 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                     </Button>
                   </>
                 ) : (
-                  <button
-                    onClick={startEdit}
-                    title="Edit product"
-                    className="rounded p-1.5 text-navy/40 hover:bg-surface-raised hover:text-navy transition-colors"
-                  >
-                    <Pencil className="h-4 w-4" />
-                  </button>
+                  <>
+                    <button
+                      onClick={startEdit}
+                      title="Edit product"
+                      className="rounded p-1.5 text-navy/40 hover:bg-surface-raised hover:text-navy transition-colors"
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </button>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => updateProduct.mutate({ id: params.id, isActive: !product.isActive })}
+                      loading={updateProduct.isPending}
+                    >
+                      {product.isActive ? "Deactivate" : "Activate"}
+                    </Button>
+                  </>
                 )}
               </div>
             </div>
 
             <div className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3">
-              <InfoRow label="Category" value={product.category} />
-              <InfoRow label="Unit of Measure" value={product.unit} />
+              <InfoRow
+                label="SKU"
+                value={isEditing ? (
+                  <input value={(editDraft.sku as string) ?? ""} onChange={(e) => setEditDraft((d) => ({ ...d, sku: e.target.value }))}
+                    className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500" />
+                ) : product.sku}
+              />
+              <InfoRow
+                label="Barcode"
+                value={isEditing ? (
+                  <input value={(editDraft.barcode as string) ?? ""} onChange={(e) => setEditDraft((d) => ({ ...d, barcode: e.target.value }))}
+                    className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500" />
+                ) : product.barcode ?? <span className="text-navy/30">—</span>}
+              />
+              <InfoRow
+                label="Category"
+                value={isEditing ? (
+                  <input value={(editDraft.category as string) ?? ""} onChange={(e) => setEditDraft((d) => ({ ...d, category: e.target.value }))}
+                    className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500" />
+                ) : product.category}
+              />
+              <InfoRow
+                label="Unit of Measure"
+                value={isEditing ? (
+                  <input value={(editDraft.unit as string) ?? ""} onChange={(e) => setEditDraft((d) => ({ ...d, unit: e.target.value }))}
+                    className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500" />
+                ) : product.unit}
+              />
               <InfoRow
                 label="Price"
                 value={
@@ -299,12 +326,6 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
               )}
             </div>
 
-            {product.hasLocalOverride && (
-              <p className="mt-3 flex items-center gap-1.5 text-xs text-warning">
-                <Flag className="h-3.5 w-3.5" />
-                Local overrides active — Zoho sync paused
-              </p>
-            )}
           </Card>
 
           {/* 30-day demand chart */}

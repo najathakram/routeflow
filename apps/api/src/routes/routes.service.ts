@@ -320,9 +320,33 @@ export class RoutesService {
         driver: { select: { id: true, contactName: true, user: { select: { username: true } } } },
         stops: {
           include: {
-            customer: { select: { id: true, businessName: true, contactName: true } },
+            customer: { select: { id: true, businessName: true, contactName: true, phone: true, deliveryWindowStart: true, deliveryWindowEnd: true } },
             customerAddress: true,
-            orders: { select: { id: true, orderNumber: true, status: true } },
+            orders: {
+              select: {
+                id: true,
+                orderNumber: true,
+                status: true,
+                urgent: true,
+                notes: true,
+                lineItems: {
+                  select: {
+                    id: true,
+                    productId: true,
+                    product: { select: { id: true, name: true, unit: true } },
+                    qty: true,
+                    unitPrice: true,
+                    status: true,
+                  },
+                },
+              },
+            },
+            routeStop: {
+              include: {
+                customer: { select: { id: true, businessName: true, contactName: true, phone: true, deliveryWindowStart: true, deliveryWindowEnd: true } },
+                customerAddress: true,
+              },
+            },
           },
           orderBy: { stopNumber: "asc" },
         },
@@ -330,40 +354,64 @@ export class RoutesService {
     });
     if (!run) throw new NotFoundException("Route run not found");
 
+    // Normalise stops: if the run stop lacks direct customer/address links, fall back to the
+    // template RouteStop's data (happens with seeded or legacy runs created before dispatch logic
+    // copied customer refs onto the run stop).
+    const normalisedStops = run.stops.map((s: any) => ({
+      ...s,
+      customer: s.customer ?? s.routeStop?.customer ?? null,
+      customerAddress: s.customerAddress ?? s.routeStop?.customerAddress ?? null,
+      // Resolve customerId for later order lookup
+      _resolvedCustomerId: s.customerId ?? s.routeStop?.customerId ?? null,
+    }));
+
     // Fallback for runs where orders were not linked at dispatch time (legacy/seeded data):
     // if no stop has linked orders, fetch active orders per customer and merge them in.
-    const anyLinked = run.stops.some((s) => (s.orders as any[]).length > 0);
-    if (!anyLinked && run.stops.length > 0) {
-      const customerIds = run.stops
-        .map((s) => s.customerId)
-        .filter((cid): cid is string => cid !== null);
+    const anyLinked = normalisedStops.some((s: any) => (s.orders as any[]).length > 0);
+    if (!anyLinked && normalisedStops.length > 0) {
+      const customerIds = normalisedStops
+        .map((s: any) => s._resolvedCustomerId)
+        .filter((cid: string | null): cid is string => cid !== null);
       if (customerIds.length > 0) {
         const orders = await this.prisma.order.findMany({
           where: {
             customerId: { in: customerIds },
             status: { notIn: [OrderStatus.CANCELLED] },
           },
-          select: { id: true, orderNumber: true, status: true, customerId: true },
+          select: {
+            id: true,
+            orderNumber: true,
+            status: true,
+            urgent: true,
+            notes: true,
+            customerId: true,
+            lineItems: {
+              select: {
+                id: true,
+                productId: true,
+                product: { select: { id: true, name: true, unit: true } },
+                qty: true,
+                unitPrice: true,
+                status: true,
+              },
+            },
+          },
         });
-        const byCustomer: Record<string, { id: string; orderNumber: string; status: string }[]> = {};
+        const byCustomer: Record<string, any[]> = {};
         for (const o of orders) {
-          (byCustomer[o.customerId] ??= []).push({
-            id: o.id,
-            orderNumber: o.orderNumber!,
-            status: o.status,
-          });
+          (byCustomer[o.customerId] ??= []).push(o);
         }
         return {
           ...run,
-          stops: run.stops.map((s) => ({
+          stops: normalisedStops.map((s: any) => ({
             ...s,
-            orders: s.customerId ? (byCustomer[s.customerId] ?? []) : [],
+            orders: s._resolvedCustomerId ? (byCustomer[s._resolvedCustomerId] ?? []) : [],
           })),
         };
       }
     }
 
-    return run;
+    return { ...run, stops: normalisedStops };
   }
 
   async updateRun(id: string, dto: { driverId?: string | null; scheduledDate?: string; notes?: string }) {
@@ -430,6 +478,23 @@ export class RoutesService {
     return this.prisma.routeRun.update({ where: { id }, data: updates });
   }
 
+  async updateStopStatus(
+    runId: string,
+    stopId: string,
+    dto: { status: 'IN_PROGRESS' | 'SKIPPED'; driverNote?: string },
+  ) {
+    const stop = await this.prisma.routeRunStop.findFirst({
+      where: { id: stopId, routeRunId: runId },
+    });
+    if (!stop) throw new NotFoundException('Stop not found');
+
+    const updates: any = { status: dto.status };
+    if (dto.driverNote !== undefined) updates.driverNote = dto.driverNote;
+    if (dto.status === 'IN_PROGRESS' && !stop.arrivedAt) updates.arrivedAt = new Date();
+
+    return this.prisma.routeRunStop.update({ where: { id: stopId }, data: updates });
+  }
+
   async getRunPackingList(runId: string) {
     const run = await this.prisma.routeRun.findUnique({
       where: { id: runId },
@@ -446,6 +511,12 @@ export class RoutesService {
                 },
               },
             },
+            routeStop: {
+              include: {
+                customer: { select: { id: true, businessName: true, deliveryWindowStart: true, deliveryWindowEnd: true } },
+                customerAddress: true,
+              },
+            },
           },
           orderBy: { stopNumber: "asc" },
         },
@@ -453,11 +524,18 @@ export class RoutesService {
     });
     if (!run) throw new NotFoundException("Route run not found");
 
+    // Normalise stops: fall back to routeStop customer/address for legacy/seeded runs
+    let stops: any[] = run.stops.map((s: any) => ({
+      ...s,
+      customer: s.customer ?? s.routeStop?.customer ?? null,
+      customerAddress: s.customerAddress ?? s.routeStop?.customerAddress ?? null,
+      _resolvedCustomerId: s.customerId ?? s.routeStop?.customerId ?? null,
+    }));
+
     // Fallback for unlinked orders (legacy/seeded data — same logic as findOneRun)
-    const anyLinked = run.stops.some((s) => (s.orders as any[]).length > 0);
-    let stops: typeof run.stops = run.stops;
+    const anyLinked = stops.some((s: any) => (s.orders as any[]).length > 0);
     if (!anyLinked && stops.length > 0) {
-      const customerIds = stops.map((s) => s.customerId).filter((cid): cid is string => cid !== null);
+      const customerIds = stops.map((s: any) => s._resolvedCustomerId).filter((cid: string | null): cid is string => cid !== null);
       if (customerIds.length > 0) {
         const orders = await this.prisma.order.findMany({
           where: {
@@ -474,9 +552,9 @@ export class RoutesService {
         for (const o of orders) {
           (byCustomer[o.customerId] ??= []).push(o);
         }
-        stops = stops.map((s) => ({
+        stops = stops.map((s: any) => ({
           ...s,
-          orders: (s.customerId ? (byCustomer[s.customerId] ?? []) : []) as any,
+          orders: (s._resolvedCustomerId ? (byCustomer[s._resolvedCustomerId] ?? []) : []) as any,
         }));
       }
     }

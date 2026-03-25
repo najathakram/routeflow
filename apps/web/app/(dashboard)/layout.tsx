@@ -10,6 +10,7 @@ import {
   Truck,
   Users,
   Package,
+  Layers,
   BookOpen,
   Settings,
   Bell,
@@ -22,6 +23,14 @@ import {
   AlertTriangle,
   CheckCircle2,
   Trash2,
+  FileText,
+  BarChart2,
+  Receipt,
+  ClipboardList,
+  RotateCcw,
+  FileCheck,
+  Wallet,
+  type LucideIcon,
 } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { cn, Avatar, ToastProvider } from "@routeflow/ui/web";
@@ -30,18 +39,44 @@ import { PageTitleProvider, usePageTitle } from "@/lib/page-title-context";
 import { useRealtimeUpdates } from "@/lib/hooks/useRealtimeUpdates";
 import { useNotifications, type AppNotification } from "@/lib/hooks/useNotifications";
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+// ─── Nav types & structure ────────────────────────────────────────────────────
 
-const NAV_ITEMS = [
-  { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
-  { label: "Orders", href: "/orders", icon: ShoppingCart },
-  { label: "Routes", href: "/routes", icon: MapPin },
-  { label: "Drivers", href: "/drivers", icon: Truck },
-  { label: "Customers", href: "/customers", icon: Users },
-  { label: "Products", href: "/products", icon: Package },
-  { label: "Bookkeeping", href: "/bookkeeping", icon: BookOpen },
-  { label: "Settings", href: "/settings", icon: Settings },
-] as const;
+type NavLeaf  = { kind: "leaf";  label: string; href: string; icon: LucideIcon };
+type NavGroup = { kind: "group"; label: string; icon: LucideIcon; children: NavLeaf[] };
+type NavEntry = NavLeaf | NavGroup;
+
+const NAV_STRUCTURE: NavEntry[] = [
+  { kind: "leaf", label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+  {
+    kind: "group", label: "Operations", icon: Truck,
+    children: [
+      { kind: "leaf", label: "Orders",  href: "/orders",  icon: ShoppingCart },
+      { kind: "leaf", label: "Routes",  href: "/routes",  icon: MapPin },
+      { kind: "leaf", label: "Drivers", href: "/drivers", icon: Truck },
+      { kind: "leaf", label: "Returns", href: "/returns", icon: RotateCcw },
+    ],
+  },
+  {
+    kind: "group", label: "Catalog", icon: Package,
+    children: [
+      { kind: "leaf", label: "Customers",  href: "/customers",  icon: Users },
+      { kind: "leaf", label: "Products",   href: "/products",   icon: Package },
+      { kind: "leaf", label: "Inventory",  href: "/inventory",  icon: Layers },
+    ],
+  },
+  {
+    kind: "group", label: "Finance", icon: Wallet,
+    children: [
+      { kind: "leaf", label: "Invoices",     href: "/invoices",     icon: FileText },
+      { kind: "leaf", label: "Estimates",    href: "/estimates",    icon: FileCheck },
+      { kind: "leaf", label: "Credit Notes", href: "/credit-notes", icon: Receipt },
+      { kind: "leaf", label: "Vendor Bills", href: "/vendor-bills", icon: ClipboardList },
+      { kind: "leaf", label: "Bookkeeping",  href: "/bookkeeping",  icon: BookOpen },
+    ],
+  },
+  { kind: "leaf", label: "Analytics", href: "/analytics", icon: BarChart2 },
+  { kind: "leaf", label: "Settings",  href: "/settings",  icon: Settings },
+];
 
 // ─── Auth guard ───────────────────────────────────────────────────────────────
 
@@ -71,7 +106,7 @@ function NavLink({
   collapsed,
   active,
 }: {
-  item: (typeof NAV_ITEMS)[number];
+  item: NavLeaf;
   collapsed: boolean;
   active: boolean;
 }) {
@@ -91,6 +126,81 @@ function NavLink({
       <Icon className="h-5 w-5 shrink-0" />
       {!collapsed && <span className="truncate">{item.label}</span>}
     </Link>
+  );
+}
+
+// ─── Nav group section ────────────────────────────────────────────────────────
+
+function NavGroupSection({
+  group,
+  collapsed,
+  pathname,
+}: {
+  group: NavGroup;
+  collapsed: boolean;
+  pathname: string;
+}) {
+  const isAnyChildActive = group.children.some((c) => pathname.startsWith(c.href));
+  const [open, setOpen] = React.useState(isAnyChildActive);
+
+  React.useEffect(() => {
+    if (isAnyChildActive) setOpen(true);
+  }, [isAnyChildActive]);
+
+  const Icon = group.icon;
+
+  // Collapsed: render each child as a flat icon-only link
+  if (collapsed) {
+    return (
+      <>
+        {group.children.map((child) => (
+          <li key={child.href}>
+            <NavLink
+              item={child}
+              collapsed={true}
+              active={pathname.startsWith(child.href)}
+            />
+          </li>
+        ))}
+      </>
+    );
+  }
+
+  // Expanded: collapsible group header + indented children
+  return (
+    <li>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className={cn(
+          "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-xs font-semibold uppercase tracking-wider transition-colors",
+          isAnyChildActive
+            ? "text-white/90"
+            : "text-white/40 hover:text-white/70",
+        )}
+      >
+        <Icon className="h-4 w-4 shrink-0" />
+        <span className="flex-1 text-left">{group.label}</span>
+        <ChevronRight
+          className={cn(
+            "h-3.5 w-3.5 shrink-0 transition-transform duration-150",
+            open && "rotate-90",
+          )}
+        />
+      </button>
+      {open && (
+        <ul className="mt-0.5 flex flex-col gap-0.5 pl-3">
+          {group.children.map((child) => (
+            <li key={child.href}>
+              <NavLink
+                item={child}
+                collapsed={false}
+                active={pathname.startsWith(child.href)}
+              />
+            </li>
+          ))}
+        </ul>
+      )}
+    </li>
   );
 }
 
@@ -311,19 +421,28 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         {/* Nav */}
         <nav className="flex-1 overflow-y-auto px-2 py-3">
           <ul className="flex flex-col gap-0.5">
-            {NAV_ITEMS.map((item) => (
-              <li key={item.href}>
-                <NavLink
-                  item={item}
+            {NAV_STRUCTURE.map((entry) =>
+              entry.kind === "leaf" ? (
+                <li key={entry.href}>
+                  <NavLink
+                    item={entry}
+                    collapsed={collapsed}
+                    active={
+                      entry.href === "/dashboard"
+                        ? pathname === "/dashboard"
+                        : pathname.startsWith(entry.href)
+                    }
+                  />
+                </li>
+              ) : (
+                <NavGroupSection
+                  key={entry.label}
+                  group={entry}
                   collapsed={collapsed}
-                  active={
-                    item.href === "/dashboard"
-                      ? pathname === "/dashboard"
-                      : pathname.startsWith(item.href)
-                  }
+                  pathname={pathname}
                 />
-              </li>
-            ))}
+              )
+            )}
           </ul>
         </nav>
 

@@ -18,10 +18,10 @@ export class ProductsService {
       where.OR = [
         { name: { contains: query.search, mode: "insensitive" } },
         { sku: { contains: query.search, mode: "insensitive" } },
+        { barcode: { contains: query.search, mode: "insensitive" } },
       ];
     }
     if (query.category) where.category = query.category;
-    if (query.lowStock !== undefined) where.lowStock = query.lowStock;
     if (query.isActive !== undefined) where.isActive = query.isActive;
 
     const [data, total] = await Promise.all([
@@ -38,21 +38,31 @@ export class ProductsService {
     return product;
   }
 
+  async findByBarcode(barcode: string) {
+    const product = await this.prisma.product.findUnique({ where: { barcode } });
+    if (!product) throw new NotFoundException("Product not found");
+    return product;
+  }
+
   async create(dto: CreateProductDto) {
     if (dto.sku) {
       const existing = await this.prisma.product.findUnique({ where: { sku: dto.sku } });
       if (existing) throw new BadRequestException("SKU already exists");
     }
+    if (dto.barcode) {
+      const existing = await this.prisma.product.findUnique({ where: { barcode: dto.barcode } });
+      if (existing) throw new BadRequestException("Barcode already exists");
+    }
     return this.prisma.product.create({
       data: {
         name: dto.name,
         sku: dto.sku,
+        barcode: dto.barcode,
         unit: dto.unit,
         pricePerUnit: dto.pricePerUnit,
         category: dto.category,
         description: dto.description,
         isActive: dto.isActive,
-        lowStock: dto.lowStock,
       },
     });
   }
@@ -65,17 +75,26 @@ export class ProductsService {
       });
       if (existing) throw new BadRequestException("SKU already exists");
     }
+    if (dto.barcode) {
+      const existing = await this.prisma.product.findFirst({
+        where: { barcode: dto.barcode, id: { not: id } },
+      });
+      if (existing) throw new BadRequestException("Barcode already exists");
+    }
     return this.prisma.product.update({
       where: { id },
-      data: { ...dto, hasLocalOverride: true },
+      data: { ...dto },
     });
   }
 
-  async clearOverride(id: string) {
+  async remove(id: string) {
     await this.findOne(id);
-    return this.prisma.product.update({
-      where: { id },
-      data: { hasLocalOverride: false, syncConflict: false },
+    const activeItems = await this.prisma.orderItem.count({
+      where: { productId: id, status: { notIn: ["DELIVERED", "CANCELLED"] } },
     });
+    if (activeItems > 0) {
+      throw new BadRequestException("Cannot delete product with active order items");
+    }
+    return this.prisma.product.update({ where: { id }, data: { isActive: false } });
   }
 }
