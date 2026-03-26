@@ -134,7 +134,7 @@ export default function RequestReturnScreen() {
             <View>
               <Text style={styles.orderNumber}>Order {order.orderNumber}</Text>
               <Text style={styles.orderMeta}>
-                {order.lineItems.reduce((s, i) => s + i.qty, 0)} items ·{" "}
+                {order.lineItems.reduce((s, i) => s + Number(i.qty), 0)} items ·{" "}
                 ${Number(order.total).toFixed(2)}
               </Text>
             </View>

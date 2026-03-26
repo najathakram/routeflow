@@ -31,6 +31,8 @@ import { useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useUsers, useCreateOperator, useUpdateUser, useChangeUserStatus, AppUser } from "@/lib/api/users";
 import { useNotificationsStatus, useSendTestNotification } from "@/lib/api/notifications";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { apiClient } from "@/lib/api-client";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -74,22 +76,52 @@ type ProfileFormValues = z.infer<typeof profileSchema>;
 
 function BusinessProfileTab() {
   const { toast } = useToast();
+  const qc = useQueryClient();
   const [logoPreview, setLogoPreview] = React.useState<string | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
-  const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm<ProfileFormValues>({
+  const { data: savedSettings } = useQuery({
+    queryKey: ["settings"],
+    queryFn: () => apiClient.get("/settings").then((r) => r.data),
+  });
+
+  const saveSettings = useMutation({
+    mutationFn: (data: ProfileFormValues) => apiClient.patch("/settings", data).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["settings"] });
+      toast({ title: "Profile saved", description: "Your business profile has been updated.", variant: "success" });
+    },
+    onError: () => toast({ title: "Failed to save settings", variant: "error" }),
+  });
+
+  const { register, handleSubmit, reset, formState: { errors, isSubmitting } } = useForm<ProfileFormValues>({
     resolver: zodResolver(profileSchema),
     defaultValues: {
-      businessName: "RouteFlow Operations LLC",
-      ownerName: "Maria Operator",
-      phone: "(512) 555-0101",
-      email: "ops@routeflow.io",
-      street: "1500 S MoPac Expy",
-      city: "Austin",
-      zip: "78746",
-      taxRate: 8.25,
+      businessName: "",
+      ownerName: "",
+      phone: "",
+      email: "",
+      street: "",
+      city: "",
+      zip: "",
+      taxRate: 10,
     },
   });
+
+  React.useEffect(() => {
+    if (savedSettings) {
+      reset({
+        businessName: savedSettings.businessName ?? "",
+        ownerName: savedSettings.ownerName ?? "",
+        phone: savedSettings.phone ?? "",
+        email: savedSettings.email ?? "",
+        street: savedSettings.street ?? "",
+        city: savedSettings.city ?? "",
+        zip: savedSettings.zip ?? "",
+        taxRate: savedSettings.taxRate ?? 10,
+      });
+    }
+  }, [savedSettings, reset]);
 
   const handleLogoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -98,9 +130,8 @@ function BusinessProfileTab() {
     setLogoPreview(url);
   };
 
-  const onSubmit = async (_data: ProfileFormValues) => {
-    await new Promise((r) => setTimeout(r, 700));
-    toast({ title: "Profile saved", description: "Your business profile has been updated.", variant: "success" });
+  const onSubmit = async (data: ProfileFormValues) => {
+    await saveSettings.mutateAsync(data);
   };
 
   return (

@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsNumber, IsDateString } from "class-validator";
+import { IsString, IsOptional, IsNumber, IsDateString, NotEquals } from "class-validator";
 import { Type } from "class-transformer";
 
 export class RecordAdjustmentDto {
@@ -7,6 +7,7 @@ export class RecordAdjustmentDto {
 
   @IsNumber()
   @Type(() => Number)
+  @NotEquals(0, { message: "Adjustment quantity cannot be zero" })
   quantity: number; // can be negative
 
   @IsOptional()

@@ -51,7 +51,7 @@ function matchesFilter(order: Order, filter: FilterKey): boolean {
 function OrderRow({ order }: { order: Order }) {
   const date = parseISO(order.createdAt);
   const timeLabel = format(date, "h:mm a");
-  const itemCount = order.lineItems.reduce((s, i) => s + i.qty, 0);
+  const itemCount = order.lineItems.reduce((s, i) => s + Number(i.qty), 0);
   const loadItems = useOrderStore((s) => s.loadItems);
   const currentItems = useOrderStore((s) => s.items);
 

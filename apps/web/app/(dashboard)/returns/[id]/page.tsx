@@ -552,7 +552,7 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
                         {item.orderedQty}
                       </td>
                       <td className="px-4 py-3 text-center font-semibold text-navy">
-                        {item.returnQty}
+                        {item.qty}
                       </td>
                       <td className="px-4 py-3 text-navy/60">
                         {item.condition && (
@@ -592,7 +592,7 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
               <div className="flex justify-between">
                 <dt className="text-navy/60">Total Return Qty</dt>
                 <dd className="font-medium text-navy">
-                  {ret.items.reduce((sum, i) => sum + Number(i.returnQty), 0)}
+                  {ret.items.reduce((sum, i) => sum + Number(i.qty), 0)}
                 </dd>
               </div>
               <div className="flex justify-between border-t border-surface-border pt-2">

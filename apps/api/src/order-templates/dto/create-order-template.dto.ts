@@ -17,7 +17,7 @@ class OrderTemplateItemDto {
 }
 
 export class CreateOrderTemplateDto {
-  @IsString() customerId: string;
+  @IsOptional() @IsString() customerId?: string;
   @IsString() name: string;
   @IsArray()
   @IsInt({ each: true })

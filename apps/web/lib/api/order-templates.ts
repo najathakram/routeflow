@@ -28,7 +28,7 @@ export function useOrderTemplates(customerId?: string) {
     queryFn: () =>
       apiClient
         .get('/order-templates', { params: customerId ? { customerId } : undefined })
-        .then((r) => r.data),
+        .then((r) => Array.isArray(r.data) ? r.data : (r.data.data ?? [])),
     enabled: customerId !== undefined ? !!customerId : true,
   });
 }

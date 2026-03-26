@@ -1,9 +1,11 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
 } from "@nestjs/common";
+import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { Cron } from "@nestjs/schedule";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
@@ -44,6 +46,17 @@ export class OrderTemplatesService {
     });
   }
 
+  async findAllForUser(user: JwtPayload, customerId?: string) {
+    if (user.role === "CUSTOMER") {
+      const customer = await this.prisma.customer.findFirst({ where: { userId: user.sub } });
+      if (!customer) return { data: [], meta: { total: 0 } };
+      const data = await this.findAll(customer.id);
+      return { data, meta: { total: data.length } };
+    }
+    const data = await this.findAll(customerId);
+    return { data, meta: { total: data.length } };
+  }
+
   async findOne(id: string) {
     const template = await this.prisma.orderTemplate.findUnique({
       where: { id },
@@ -58,7 +71,44 @@ export class OrderTemplatesService {
     return template;
   }
 
+  async findOneForUser(id: string, user: JwtPayload) {
+    const template = await this.findOne(id);
+    if (user.role === "CUSTOMER") {
+      const customer = await this.prisma.customer.findFirst({ where: { userId: user.sub } });
+      if (!customer || template.customerId !== customer.id) throw new ForbiddenException();
+    }
+    return template;
+  }
+
+  async createForUser(dto: CreateOrderTemplateDto, user: JwtPayload) {
+    if (user.role === "CUSTOMER") {
+      const customer = await this.prisma.customer.findFirst({ where: { userId: user.sub } });
+      if (!customer) throw new ForbiddenException();
+      dto.customerId = customer.id;
+    }
+    return this.create(dto);
+  }
+
+  async updateForUser(id: string, dto: UpdateOrderTemplateDto, user: JwtPayload) {
+    if (user.role === "CUSTOMER") {
+      const template = await this.findOne(id);
+      const customer = await this.prisma.customer.findFirst({ where: { userId: user.sub } });
+      if (!customer || template.customerId !== customer.id) throw new ForbiddenException();
+    }
+    return this.update(id, dto);
+  }
+
+  async removeForUser(id: string, user: JwtPayload) {
+    if (user.role === "CUSTOMER") {
+      const template = await this.findOne(id);
+      const customer = await this.prisma.customer.findFirst({ where: { userId: user.sub } });
+      if (!customer || template.customerId !== customer.id) throw new ForbiddenException();
+    }
+    return this.remove(id);
+  }
+
   async create(dto: CreateOrderTemplateDto) {
+    if (!dto.customerId) throw new BadRequestException("customerId is required");
     const customer = await this.prisma.customer.findUnique({ where: { id: dto.customerId } });
     if (!customer) throw new BadRequestException("Customer not found");
 
@@ -70,7 +120,7 @@ export class OrderTemplatesService {
 
     return this.prisma.orderTemplate.create({
       data: {
-        customerId: dto.customerId,
+        customerId: dto.customerId!,
         name: dto.name,
         daysOfWeek: dto.daysOfWeek,
         notes: dto.notes,

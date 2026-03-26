@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import { UserRole, RouteRunStatus, OrderStatus } from "@prisma/client";
@@ -9,10 +9,14 @@ import { AddStopDto } from "./dto/add-stop.dto";
 import { CreateRouteRunDto } from "./dto/create-route-run.dto";
 import { UpdateRunStatusDto } from "./dto/update-run-status.dto";
 import { ListRunsDto } from "./dto/list-runs.dto";
+import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 
 @Injectable()
 export class RoutesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly gateway: RouteFlowGateway,
+  ) {}
 
   // ── Route Templates ────────────────────────────────────────────────────
 
@@ -116,6 +120,9 @@ export class RoutesService {
   async reorderRunStops(runId: string, order: { id: string; stopNumber: number }[]) {
     const run = await this.prisma.routeRun.findUnique({ where: { id: runId } });
     if (!run) throw new NotFoundException('Route run not found');
+    if (run.status === 'IN_PROGRESS' || run.status === 'COMPLETED') {
+      throw new BadRequestException('Cannot reorder stops on an active or completed route run');
+    }
     await this.prisma.$transaction(
       order.map(({ id, stopNumber }) =>
         this.prisma.routeRunStop.update({ where: { id }, data: { stopNumber } }),
@@ -241,6 +248,7 @@ export class RoutesService {
             stopNumber: s.stopNumber,
             customerId: s.customerId,
             customerAddressId: s.customerAddressId,
+            podPhotoUrls: [],
           })),
         },
       },
@@ -313,7 +321,7 @@ export class RoutesService {
     return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
   }
 
-  async findOneRun(id: string) {
+  async findOneRun(id: string, user?: any) {
     const run = await this.prisma.routeRun.findUnique({
       where: { id },
       include: {
@@ -354,6 +362,12 @@ export class RoutesService {
       },
     });
     if (!run) throw new NotFoundException("Route run not found");
+
+    // Drivers can only access their own assigned run
+    if (user?.role === "DRIVER") {
+      const driver = await this.prisma.driver.findFirst({ where: { userId: user.sub } });
+      if (!driver || run.driverId !== driver.id) throw new ForbiddenException("You do not have access to this route run");
+    }
 
     // Normalise stops: if the run stop lacks direct customer/address links, fall back to the
     // template RouteStop's data (happens with seeded or legacy runs created before dispatch logic
@@ -476,7 +490,22 @@ export class RoutesService {
     if (dto.status === RouteRunStatus.IN_PROGRESS && !run.startedAt) updates.startedAt = new Date();
     if (dto.status === RouteRunStatus.COMPLETED) updates.completedAt = new Date();
 
-    return this.prisma.routeRun.update({ where: { id }, data: updates });
+    const updated = await this.prisma.routeRun.update({
+      where: { id },
+      data: updates,
+      include: { driver: { select: { id: true, contactName: true, user: { select: { username: true } } } } },
+    });
+
+    if (updated.driver) {
+      this.gateway.emitDriverStatusUpdated({
+        driverId: updated.driver.id,
+        driverName: updated.driver.contactName ?? updated.driver.user?.username ?? "Driver",
+        status: dto.status,
+        updatedAt: new Date().toISOString(),
+      });
+    }
+
+    return updated;
   }
 
   async updateStopStatus(
@@ -592,6 +621,29 @@ export class RoutesService {
       stops,
       packingList: Object.values(map).sort((a, b) => a.productName.localeCompare(b.productName)),
     };
+  }
+
+  async getMyStats(user: JwtPayload) {
+    const driver = await this.prisma.driver.findFirst({ where: { userId: user.sub } });
+    if (!driver) return { totalStopsCompleted: 0, onTimeDeliveryPct: 100, avgStopsPerRoute: 0, returnsRate: 0 };
+
+    const runs = await this.prisma.routeRun.findMany({
+      where: { driverId: driver.id, status: "COMPLETED" },
+      include: {
+        stops: { select: { id: true, status: true, completedAt: true } },
+      },
+    });
+
+    let totalStops = 0;
+    let stopsPerRunSum = 0;
+    for (const run of runs) {
+      const completed = run.stops.filter((s) => s.status === "COMPLETED");
+      totalStops += completed.length;
+      stopsPerRunSum += completed.length;
+    }
+
+    const avgStopsPerRoute = runs.length === 0 ? 0 : Math.round(stopsPerRunSum / runs.length);
+    return { totalStopsCompleted: totalStops, onTimeDeliveryPct: 100, avgStopsPerRoute, returnsRate: 0 };
   }
 
   private async findRouteOrThrow(id: string) {

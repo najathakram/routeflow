@@ -14,6 +14,8 @@ import { OrderTemplatesService } from "./order-templates.service";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
+import { CurrentUser } from "../auth/decorators/current-user.decorator";
+import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { UserRole } from "@prisma/client";
 import { CreateOrderTemplateDto } from "./dto/create-order-template.dto";
 import { UpdateOrderTemplateDto } from "./dto/update-order-template.dto";
@@ -21,38 +23,45 @@ import { AddTemplateItemDto } from "./dto/add-template-item.dto";
 
 @ApiTags("order-templates")
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(UserRole.OPERATOR)
+@UseGuards(JwtAuthGuard)
 @Controller("order-templates")
 export class OrderTemplatesController {
   constructor(private readonly service: OrderTemplatesService) {}
 
   @Get()
-  findAll(@Query("customerId") customerId?: string) {
-    return this.service.findAll(customerId);
+  findAll(@CurrentUser() user: JwtPayload, @Query("customerId") customerId?: string) {
+    return this.service.findAllForUser(user, customerId);
   }
 
   @Get(":id")
-  findOne(@Param("id") id: string) {
-    return this.service.findOne(id);
+  findOne(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
+    return this.service.findOneForUser(id, user);
   }
 
   @Post()
-  create(@Body() dto: CreateOrderTemplateDto) {
-    return this.service.create(dto);
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR, UserRole.CUSTOMER)
+  create(@Body() dto: CreateOrderTemplateDto, @CurrentUser() user: JwtPayload) {
+    return this.service.createForUser(dto, user);
   }
 
   @Patch(":id")
-  update(@Param("id") id: string, @Body() dto: UpdateOrderTemplateDto) {
-    return this.service.update(id, dto);
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR, UserRole.CUSTOMER)
+  update(@Param("id") id: string, @Body() dto: UpdateOrderTemplateDto, @CurrentUser() user: JwtPayload) {
+    return this.service.updateForUser(id, dto, user);
   }
 
   @Delete(":id")
-  remove(@Param("id") id: string) {
-    return this.service.remove(id);
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR, UserRole.CUSTOMER)
+  remove(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
+    return this.service.removeForUser(id, user);
   }
 
   @Post(":id/items")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR)
   addItem(@Param("id") templateId: string, @Body() dto: AddTemplateItemDto) {
     return this.service.addItem(templateId, dto);
   }

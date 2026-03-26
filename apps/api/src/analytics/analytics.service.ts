@@ -13,11 +13,17 @@ export class AnalyticsService {
 
   async getRevenueTrend(from?: string, to?: string, groupBy = "month") {
     const { fromDate, toDate } = this.dateRange(from, to);
-    const payments = await this.prisma.payment.findMany({ where: { paidAt: { gte: fromDate, lte: toDate } }, orderBy: { paidAt: "asc" } });
+    // Use Transaction records (created when orders are delivered) as earned revenue
+    const transactions = await this.prisma.transaction.findMany({
+      where: { createdAt: { gte: fromDate, lte: toDate } },
+      orderBy: { createdAt: "asc" },
+    });
     const grouped: Record<string, number> = {};
-    for (const p of payments) {
-      const key = groupBy === "month" ? `${p.paidAt.getFullYear()}-${String(p.paidAt.getMonth()+1).padStart(2,'0')}` : p.paidAt.toISOString().split("T")[0];
-      grouped[key] = (grouped[key] ?? 0) + Number(p.amount);
+    for (const t of transactions) {
+      const key = groupBy === "month"
+        ? `${t.createdAt.getFullYear()}-${String(t.createdAt.getMonth() + 1).padStart(2, "0")}`
+        : t.createdAt.toISOString().split("T")[0];
+      grouped[key] = (grouped[key] ?? 0) + Number(t.totalOwed);
     }
     return Object.entries(grouped).map(([period, revenue]) => ({ period, revenue })).sort((a, b) => a.period.localeCompare(b.period));
   }

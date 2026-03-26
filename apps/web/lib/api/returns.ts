@@ -24,7 +24,7 @@ export interface ReturnItem {
   orderItemId: string;
   product?: { id: string; name: string; unit?: string };
   orderedQty: number;
-  returnQty: number;
+  qty: number;
   condition?: string;
   notes?: string;
 }

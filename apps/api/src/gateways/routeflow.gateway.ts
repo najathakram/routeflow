@@ -53,6 +53,47 @@ export interface DriverLocationPayload {
   speed?: number;
 }
 
+export interface OrderCreatedPayload {
+  orderId: string;
+  orderNumber: string;
+  customerId: string;
+  customerName: string;
+  total: number;
+  urgent: boolean;
+  createdAt: string;
+}
+
+export interface OrderStatusChangedPayload {
+  orderId: string;
+  orderNumber: string;
+  customerId: string;
+  status: string;
+  previousStatus: string;
+}
+
+export interface ReturnCreatedPayload {
+  returnId: string;
+  customerId: string;
+  customerName: string;
+  orderId: string;
+  reason: string;
+}
+
+export interface InvoiceUpdatedPayload {
+  invoiceId: string;
+  invoiceNumber: string;
+  customerId: string;
+  status: string;
+  total: number;
+}
+
+export interface CreditNoteCreatedPayload {
+  creditNoteId: string;
+  creditNoteNumber: string;
+  customerId: string;
+  amount: number;
+}
+
 // ─── Gateway ──────────────────────────────────────────────────────────────────
 
 @WebSocketGateway({
@@ -137,5 +178,28 @@ export class RouteFlowGateway implements OnGatewayConnection, OnGatewayDisconnec
 
   emitLowStock(payload: LowStockPayload) {
     this.server.to("operators").emit("inventory.low.stock", payload);
+  }
+
+  emitOrderCreated(payload: OrderCreatedPayload) {
+    this.server.to("operators").emit("order.created", payload);
+  }
+
+  emitOrderStatusChanged(payload: OrderStatusChangedPayload) {
+    this.server.to("operators").emit("order.statusChanged", payload);
+    this.server.to(`customer:${payload.customerId}`).emit("order.statusChanged", payload);
+  }
+
+  emitReturnCreated(payload: ReturnCreatedPayload) {
+    this.server.to("operators").emit("return.created", payload);
+  }
+
+  emitInvoiceUpdated(payload: InvoiceUpdatedPayload) {
+    this.server.to("operators").emit("invoice.updated", payload);
+    this.server.to(`customer:${payload.customerId}`).emit("invoice.updated", payload);
+  }
+
+  emitCreditNoteCreated(payload: CreditNoteCreatedPayload) {
+    this.server.to("operators").emit("creditNote.created", payload);
+    this.server.to(`customer:${payload.customerId}`).emit("creditNote.created", payload);
   }
 }

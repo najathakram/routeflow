@@ -33,6 +33,16 @@ export class DriversController {
     return this.driversService.create(dto);
   }
 
+  @Get("me")
+  getMe(@CurrentUser() user: JwtPayload) {
+    return this.driversService.findByUserId(user.sub);
+  }
+
+  @Patch("me")
+  updateMe(@CurrentUser() user: JwtPayload, @Body() dto: UpdateDriverDto) {
+    return this.driversService.updateByUserId(user.sub, dto);
+  }
+
   @Get(":id")
   findOne(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
     return this.driversService.findOne(id, user);

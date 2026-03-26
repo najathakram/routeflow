@@ -23,5 +23,5 @@
     "noFallthroughCasesInSwitch": false,
     "jsx": "react"
   },
-  "exclude": ["**/*.spec.ts", "**/*.test.ts", "prisma.config.ts"]
+  "exclude": ["**/*.spec.ts", "**/*.test.ts", "prisma.config.ts", "scripts/**"]
 }

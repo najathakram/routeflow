@@ -56,6 +56,21 @@ export class DriversService {
     return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
   }
 
+  async findByUserId(userId: string) {
+    const driver = await this.prisma.driver.findFirst({
+      where: { userId },
+      include: { user: { select: { id: true, username: true, email: true, status: true, forcePasswordChange: true } } },
+    });
+    if (!driver) throw new NotFoundException("Driver profile not found");
+    return driver;
+  }
+
+  async updateByUserId(userId: string, dto: UpdateDriverDto) {
+    const driver = await this.prisma.driver.findFirst({ where: { userId } });
+    if (!driver) throw new NotFoundException("Driver profile not found");
+    return this.update(driver.id, dto);
+  }
+
   async findOne(id: string, user: JwtPayload) {
     const driver = await this.prisma.driver.findUnique({
       where: { id },

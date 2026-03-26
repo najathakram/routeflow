@@ -67,6 +67,12 @@ export class CustomersService {
     return customer;
   }
 
+  async updateMyProfile(user: JwtPayload, dto: UpdateCustomerDto) {
+    const customer = await this.prisma.customer.findFirst({ where: { userId: user.sub } });
+    if (!customer) throw new NotFoundException("Customer profile not found");
+    return this.update(customer.id, dto);
+  }
+
   async getMyStatement(user: JwtPayload) {
     const customer = await this.prisma.customer.findFirst({ where: { userId: user.sub } });
     if (!customer) throw new NotFoundException("Customer profile not found");
@@ -108,7 +114,7 @@ export class CustomersService {
       .reduce((sum, i) => sum + (Number(i.total) - i.amountPaid), 0);
 
     const availableCredit = creditNotes
-      .filter((c) => c.status === "OPEN")
+      .filter((c) => c.status === "ISSUED")
       .reduce((sum, c) => sum + Number(c.amount), 0);
 
     const transactions = [

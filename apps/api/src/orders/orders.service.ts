@@ -98,8 +98,10 @@ export class OrdersService {
 
     if (user.role === UserRole.OPERATOR) {
       // Operator creates on behalf of a customer — customerId comes from the DTO
-      const customer = await this.prisma.customer.findUnique({ where: { id: dto.customerId } });
+      if (!dto.customerId) throw new BadRequestException("customerId is required");
+      const customer = await this.prisma.customer.findUnique({ where: { id: dto.customerId }, include: { user: { select: { status: true } } } });
       if (!customer) throw new BadRequestException("Customer not found");
+      if (customer.user.status === "SUSPENDED") throw new BadRequestException("Cannot create orders for a suspended customer");
       customerId = customer.id;
     } else {
       // Customer creates their own order
@@ -127,14 +129,14 @@ export class OrdersService {
         qty: item.qty,
         unitPrice,
         subtotal: itemSubtotal,
-        notes: item.notes,
+        notes: (item as any).itemNote || item.notes,
       };
     });
 
     const tax = subtotal * this.taxRate;
     const total = subtotal + tax;
 
-    return this.prisma.order.create({
+    const order = await this.prisma.order.create({
       data: {
         customerId,
         orderNumber,
@@ -147,16 +149,47 @@ export class OrdersService {
         lineItems: { create: lineItemsData },
       },
       include: {
+        customer: { select: { id: true, businessName: true } },
         lineItems: { include: { product: { select: { id: true, name: true, unit: true } } } },
       },
     });
+
+    this.gateway.emitOrderCreated({
+      orderId: order.id,
+      orderNumber: order.orderNumber ?? "",
+      customerId: order.customerId,
+      customerName: order.customer.businessName,
+      total: Number(order.total),
+      urgent: order.urgent,
+      createdAt: order.createdAt.toISOString(),
+    });
+
+    if (order.urgent) {
+      this.gateway.emitUrgentOrder({
+        orderId: order.id,
+        orderNumber: order.orderNumber ?? "",
+        customerId: order.customerId,
+        customerName: order.customer.businessName,
+        placedAt: order.createdAt.toISOString(),
+      });
+    }
+
+    return order;
   }
 
   async changeStatus(id: string, dto: ChangeOrderStatusDto, user: JwtPayload) {
-    if (user.role !== UserRole.OPERATOR)
-      throw new ForbiddenException("Only operators can change order status");
-
     const order = await this.findOneOrThrow(id);
+
+    if (user.role === UserRole.CUSTOMER) {
+      const customer = await this.prisma.customer.findFirst({ where: { userId: user.sub } });
+      if (!customer || order.customerId !== customer.id) throw new ForbiddenException();
+      // Customers may only cancel their own PENDING orders
+      if (dto.status !== OrderStatus.CANCELLED || order.status !== OrderStatus.PENDING) {
+        throw new ForbiddenException("Customers can only cancel their own pending orders");
+      }
+    } else if (user.role !== UserRole.OPERATOR) {
+      throw new ForbiddenException("Only operators can change order status");
+    }
 
     const allowed: Record<string, string[]> = {
       PENDING:          ["CONFIRMED", "CANCELLED"],
@@ -170,6 +203,14 @@ export class OrdersService {
       );
     }
 
+    // Demotions require a reason
+    const isDemotion =
+      (order.status === "CONFIRMED" && dto.status === "PENDING") ||
+      (order.status === "OUT_FOR_DELIVERY" && (dto.status === "PENDING" || dto.status === "CONFIRMED"));
+    if (isDemotion && !dto.reason?.trim()) {
+      throw new BadRequestException("A reason is required when demoting an order");
+    }
+
     const noteAppend = dto.reason
       ? `\n[${new Date().toLocaleDateString()} – status changed to ${dto.status}: ${dto.reason}]`
       : undefined;
@@ -180,6 +221,14 @@ export class OrdersService {
         status: dto.status,
         ...(noteAppend ? { notes: (order.notes ?? "") + noteAppend } : {}),
       },
+    });
+
+    this.gateway.emitOrderStatusChanged({
+      orderId: id,
+      orderNumber: order.orderNumber ?? "",
+      customerId: order.customerId,
+      status: dto.status,
+      previousStatus: order.status,
     });
 
     // Fire-and-forget push notifications for key status transitions
@@ -197,7 +246,7 @@ export class OrdersService {
     return updated;
   }
 
-  async updateOrderItems(orderId: string, dto: UpdateOrderItemsDto) {
+  async updateOrderItems(orderId: string, dto: UpdateOrderItemsDto, user?: JwtPayload) {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
       include: { lineItems: true },
@@ -209,42 +258,73 @@ export class OrdersService {
       );
     }
 
-    for (const item of dto.items) {
-      if (item.action === "CANCEL") {
-        await this.prisma.orderItem.update({
-          where: { id: item.id },
-          data: { status: "CANCELLED", qty: 0, subtotal: 0 },
-        });
-      } else if (item.substituteProductId) {
-        const product = await this.prisma.product.findUniqueOrThrow({
-          where: { id: item.substituteProductId },
-        });
-        const existingQty = order.lineItems.find((li) => li.id === item.id)?.qty ?? 1;
-        const qtyVal = item.qty ?? Number(existingQty);
+    // Customer path: verify ownership, then replace items by productId
+    if (user?.role === UserRole.CUSTOMER) {
+      const customer = await this.prisma.customer.findFirst({ where: { userId: user.sub } });
+      if (!customer || order.customerId !== customer.id) throw new ForbiddenException();
+
+      // Customers send items as { productId, qty } — replace all line items
+      const productIds = dto.items.map((i) => i.productId).filter(Boolean) as string[];
+      const products = await this.prisma.product.findMany({ where: { id: { in: productIds } } });
+      const productMap = new Map(products.map((p) => [p.id, p]));
+
+      await this.prisma.orderItem.deleteMany({ where: { orderId } });
+      for (const item of dto.items) {
+        if (!item.productId || !item.qty) continue;
+        const product = productMap.get(item.productId);
+        if (!product) throw new BadRequestException(`Product ${item.productId} not found`);
         const unitPrice = Number(product.pricePerUnit);
-        await this.prisma.orderItem.update({
-          where: { id: item.id },
+        await this.prisma.orderItem.create({
           data: {
-            productId: item.substituteProductId,
+            orderId,
+            productId: item.productId,
+            qty: item.qty,
             unitPrice,
-            qty: qtyVal,
-            subtotal: qtyVal * unitPrice,
+            subtotal: item.qty * unitPrice,
             status: "PENDING",
             notes: item.notes,
           },
         });
-      } else if (item.qty !== undefined) {
-        const li = order.lineItems.find((li) => li.id === item.id);
-        if (!li) continue;
-        const unitPrice = Number(li.unitPrice);
-        await this.prisma.orderItem.update({
-          where: { id: item.id },
-          data: {
-            qty: item.qty,
-            subtotal: item.qty * unitPrice,
-            ...(item.notes !== undefined ? { notes: item.notes } : {}),
-          },
-        });
+      }
+    } else {
+      // Operator path: update by line item id
+      for (const item of dto.items) {
+        if (item.action === "CANCEL") {
+          await this.prisma.orderItem.update({
+            where: { id: item.id },
+            data: { status: "CANCELLED", qty: 0, subtotal: 0 },
+          });
+        } else if (item.substituteProductId) {
+          const product = await this.prisma.product.findUniqueOrThrow({
+            where: { id: item.substituteProductId },
+          });
+          const existingQty = order.lineItems.find((li) => li.id === item.id)?.qty ?? 1;
+          const qtyVal = item.qty ?? Number(existingQty);
+          const unitPrice = Number(product.pricePerUnit);
+          await this.prisma.orderItem.update({
+            where: { id: item.id },
+            data: {
+              productId: item.substituteProductId,
+              unitPrice,
+              qty: qtyVal,
+              subtotal: qtyVal * unitPrice,
+              status: "PENDING",
+              notes: item.notes,
+            },
+          });
+        } else if (item.qty !== undefined) {
+          const li = order.lineItems.find((li) => li.id === item.id);
+          if (!li) continue;
+          const unitPrice = Number(li.unitPrice);
+          await this.prisma.orderItem.update({
+            where: { id: item.id },
+            data: {
+              qty: item.qty,
+              subtotal: item.qty * unitPrice,
+              ...(item.notes !== undefined ? { notes: item.notes } : {}),
+            },
+          });
+        }
       }
     }
 
@@ -411,6 +491,31 @@ export class OrdersService {
           this.notifications
             .sendToCustomer(order.customerId, "Order Delivered ✓", `Your order #${order.orderNumber} has been delivered.`, { orderId: order.id })
             .catch(() => {});
+        }
+      }
+    }
+
+    // Check for low stock on products that were just delivered
+    const deliveredProductIds: string[] = [];
+    for (const delivery of dto.deliveries) {
+      if (delivery.type === MutationType.DELIVERED || delivery.type === MutationType.PARTIAL) {
+        const item = await this.prisma.orderItem.findUnique({ where: { id: delivery.orderItemId }, select: { productId: true } });
+        if (item) deliveredProductIds.push(item.productId);
+      }
+    }
+    if (deliveredProductIds.length > 0) {
+      const products = await this.prisma.product.findMany({
+        where: { id: { in: deliveredProductIds }, reorderPoint: { not: null } },
+        select: { id: true, name: true, sku: true, currentStock: true, reorderPoint: true },
+      });
+      for (const p of products) {
+        if (p.reorderPoint !== null && Number(p.currentStock) <= Number(p.reorderPoint)) {
+          this.gateway.emitLowStock({
+            productId: p.id,
+            productName: p.name,
+            sku: p.sku ?? "",
+            stockLevel: Number(p.currentStock),
+          });
         }
       }
     }

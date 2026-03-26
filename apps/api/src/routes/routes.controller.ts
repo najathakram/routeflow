@@ -117,14 +117,19 @@ export class RouteRunsController {
     return this.routesService.createRun(dto);
   }
 
+  @Get("my-stats")
+  getMyStats(@CurrentUser() user: JwtPayload) {
+    return this.routesService.getMyStats(user);
+  }
+
   @Get(":id/packing-list")
   getRunPackingList(@Param("id") id: string) {
     return this.routesService.getRunPackingList(id);
   }
 
   @Get(":id")
-  findOne(@Param("id") id: string) {
-    return this.routesService.findOneRun(id);
+  findOne(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
+    return this.routesService.findOneRun(id, user);
   }
 
   @Patch(":id/stops/:stopId")

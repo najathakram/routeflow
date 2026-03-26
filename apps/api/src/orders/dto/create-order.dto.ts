@@ -1,4 +1,5 @@
 import {
+  ArrayMinSize,
   IsArray,
   IsBoolean,
   IsDateString,
@@ -14,11 +15,13 @@ class OrderItemDto {
   @IsString() productId: string;
   @IsInt() @Min(1) qty: number;
   @IsOptional() @IsString() notes?: string;
+  @IsOptional() @IsString() itemNote?: string;
+  @IsOptional() @IsString() substitution?: string;
 }
 
 export class CreateOrderDto {
-  @IsString() customerId: string;
-  @IsArray() @ValidateNested({ each: true }) @Type(() => OrderItemDto) items: OrderItemDto[];
+  @IsOptional() @IsString() customerId?: string;
+  @IsArray() @ArrayMinSize(1) @ValidateNested({ each: true }) @Type(() => OrderItemDto) items: OrderItemDto[];
   @IsOptional() @IsString() notes?: string;
   @IsOptional() @IsBoolean() urgent?: boolean;
   @IsOptional() @IsDateString() requestedDeliveryDate?: string;

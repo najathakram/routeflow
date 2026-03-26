@@ -1,7 +1,7 @@
 import {
   IsArray,
   IsIn,
-  IsInt,
+  IsNumber,
   IsOptional,
   IsString,
   Min,
@@ -10,17 +10,26 @@ import {
 import { Type } from "class-transformer";
 
 class UpdateOrderItemDto {
+  @IsOptional()
   @IsString()
-  id: string;
+  id?: string;
+
+  @IsOptional()
+  @IsString()
+  productId?: string;
 
   @IsOptional()
   @IsIn(["CANCEL", "UPDATE"])
   action?: "CANCEL" | "UPDATE";
 
   @IsOptional()
-  @IsInt()
+  @IsNumber()
   @Min(1)
   qty?: number;
+
+  @IsOptional()
+  @IsNumber()
+  unitPrice?: number;
 
   @IsOptional()
   @IsString()
@@ -29,6 +38,14 @@ class UpdateOrderItemDto {
   @IsOptional()
   @IsString()
   notes?: string;
+
+  @IsOptional()
+  @IsString()
+  itemNote?: string;
+
+  @IsOptional()
+  @IsString()
+  substitution?: string;
 }
 
 export class UpdateOrderItemsDto {

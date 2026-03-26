@@ -4,10 +4,14 @@ import { InvoiceStatus, UserRole } from "@prisma/client";
 import { CreateInvoiceDto, RecordInvoicePaymentDto } from "./dto/create-invoice.dto";
 import { ListInvoicesDto } from "./dto/list-invoices.dto";
 import { JwtPayload } from "../auth/jwt-payload.interface";
+import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 
 @Injectable()
 export class InvoicesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly gateway: RouteFlowGateway,
+  ) {}
 
   private async nextInvoiceNumber(): Promise<string> {
     const year = new Date().getFullYear();
@@ -154,7 +158,15 @@ export class InvoicesService {
   async send(id: string) {
     const inv = await this.findOneOrThrow(id);
     if (inv.status === InvoiceStatus.VOID) throw new BadRequestException("Cannot send a voided invoice");
-    return this.prisma.invoice.update({ where: { id }, data: { status: InvoiceStatus.SENT, sentAt: new Date() } });
+    const updated = await this.prisma.invoice.update({ where: { id }, data: { status: InvoiceStatus.SENT, sentAt: new Date() } });
+    this.gateway.emitInvoiceUpdated({
+      invoiceId: updated.id,
+      invoiceNumber: updated.invoiceNumber,
+      customerId: updated.customerId,
+      status: InvoiceStatus.SENT,
+      total: Number(updated.total),
+    });
+    return updated;
   }
 
   async voidInvoice(id: string) {
@@ -202,11 +214,19 @@ export class InvoicesService {
 
       const newPaid = alreadyPaid + dto.amount;
       const newStatus = newPaid >= total - 0.001 ? InvoiceStatus.PAID : InvoiceStatus.PARTIAL;
-      return tx.invoice.update({
+      const paid = await tx.invoice.update({
         where: { id },
         data: { status: newStatus, paidAt: newStatus === InvoiceStatus.PAID ? new Date() : null },
         include: { customer: { select: { id: true, businessName: true } }, items: true, payments: { orderBy: { createdAt: "desc" } } },
       });
+      this.gateway.emitInvoiceUpdated({
+        invoiceId: paid.id,
+        invoiceNumber: paid.invoiceNumber,
+        customerId: paid.customerId,
+        status: newStatus,
+        total: Number(paid.total),
+      });
+      return paid;
     });
   }
 

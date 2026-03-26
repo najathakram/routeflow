@@ -76,7 +76,7 @@ export default function OrderConfirmationScreen() {
             {/* Items */}
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>
-                Items ({order.lineItems.reduce((s, i) => s + i.qty, 0)})
+                Items ({order.lineItems.reduce((s, i) => s + Number(i.qty), 0)})
               </Text>
               {order.lineItems.map((item, idx) => (
                 <View

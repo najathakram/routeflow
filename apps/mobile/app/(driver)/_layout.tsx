@@ -92,7 +92,7 @@ export default function DriverLayout() {
         }}
       />
       {/* Hidden screens - accessible via router.push but not shown in tab bar */}
-      <Tabs.Screen name="change-password" options={{ href: null }} />
+      <Tabs.Screen name="change-password" options={{ href: null, title: "Change Password" }} />
     </Tabs>
     </>
   );

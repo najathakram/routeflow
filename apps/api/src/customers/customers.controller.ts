@@ -45,6 +45,12 @@ export class CustomersController {
     return this.customersService.getMyStatement(user);
   }
 
+  @Patch("me")
+  @Roles(UserRole.CUSTOMER)
+  updateMyProfile(@CurrentUser() user: JwtPayload, @Body() dto: UpdateCustomerDto) {
+    return this.customersService.updateMyProfile(user, dto);
+  }
+
   @Get(":id")
   findOne(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
     return this.customersService.findOne(id, user);

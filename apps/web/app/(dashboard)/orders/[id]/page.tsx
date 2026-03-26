@@ -459,6 +459,13 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
     );
   };
 
+  const handleDeliver = () => {
+    updateStatus.mutate(
+      { id: order.id, status: "DELIVERED" },
+      { onSuccess: () => setLocalStatus("DELIVERED") },
+    );
+  };
+
   const handleDemote = (reason: string) => {
     if (!demoteTarget) return;
     updateStatus.mutate(
@@ -598,6 +605,14 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
           {/* OUT_FOR_DELIVERY actions */}
           {localStatus === "OUT_FOR_DELIVERY" && (
             <>
+              <Button
+                size="sm"
+                leftIcon={<CheckCircle2 className="h-4 w-4" />}
+                onClick={handleDeliver}
+                loading={updateStatus.isPending}
+              >
+                Mark as Delivered
+              </Button>
               <Button
                 size="sm"
                 variant="secondary"

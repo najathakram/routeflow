@@ -66,7 +66,7 @@ export default function OrderDetailScreen() {
             unit: line.product.unit,
             pricePerUnit: Number(line.unitPrice),
           },
-          line.qty,
+          Number(line.qty),
         );
       }
       router.push("/(customer)/order");
@@ -95,7 +95,7 @@ export default function OrderDetailScreen() {
         name: l.product!.name,
         unitPrice: Number(l.unitPrice),
         unit: l.product!.unit,
-        quantity: l.qty,
+        quantity: Number(l.qty),
       }));
     loadItems(mapped);
     setEditingOrderId(order.id);
@@ -124,7 +124,7 @@ export default function OrderDetailScreen() {
   const date = parseISO(order.createdAt);
   const deliveryDate = format(date, "EEEE, MMMM d, yyyy");
   const deliveryTime = format(date, "h:mm a");
-  const itemCount = order.lineItems.reduce((s, i) => s + i.qty, 0);
+  const itemCount = order.lineItems.reduce((s, i) => s + Number(i.qty), 0);
 
   return (
     <>
@@ -219,12 +219,12 @@ export default function OrderDetailScreen() {
               <View style={styles.lineLeft}>
                 <Text style={styles.itemName}>{item.product?.name ?? item.productId}</Text>
                 <Text style={styles.itemQty}>
-                  {item.qty} × ${Number(item.unitPrice).toFixed(2)}
+                  {Number(item.qty)} × ${Number(item.unitPrice).toFixed(2)}
                 </Text>
               </View>
               <View style={styles.lineRight}>
                 <Text style={styles.itemTotal}>
-                  ${(item.qty * Number(item.unitPrice)).toFixed(2)}
+                  ${(Number(item.qty) * Number(item.unitPrice)).toFixed(2)}
                 </Text>
                 <StatusBadge status={itemStatusForBadge(item.status)} />
               </View>

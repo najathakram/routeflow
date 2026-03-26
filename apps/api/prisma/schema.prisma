@@ -124,7 +124,7 @@ enum EstimateStatus {
 }
 
 enum CreditNoteStatus {
-  OPEN
+  ISSUED
   APPLIED
   VOID
 }
@@ -808,7 +808,7 @@ model CreditNote {
   invoiceId        String?
   amount           Decimal          @db.Decimal(10, 2)
   reason           String?
-  status           CreditNoteStatus @default(OPEN)
+  status           CreditNoteStatus @default(ISSUED)
   appliedToInvoiceId String?
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
@@ -902,6 +902,7 @@ model BillPayment {
 
 model Return {
   id           String       @id @default(uuid())
+  returnNumber String?      @unique
   orderId      String
   customerId   String
   reason       ReturnReason

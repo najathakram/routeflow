@@ -135,6 +135,9 @@ export class AuthService {
     const valid = await bcrypt.compare(currentPassword, user.password);
     if (!valid) throw new BadRequestException("Current password is incorrect");
 
+    const sameAsOld = await bcrypt.compare(newPassword, user.password);
+    if (sameAsOld) throw new BadRequestException("New password must differ from current password");
+
     const newHash = await bcrypt.hash(newPassword, 10);
     await this.prisma.user.update({
       where: { id: userId },

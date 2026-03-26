@@ -291,8 +291,8 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
   const total = Number(invoice.total);
   const payments: InvoicePayment[] = invoice.payments ?? [];
   const amountPaid = payments.reduce((s, p) => s + Number(p.amount), 0);
-  const balanceDue = Math.max(0, total - amountPaid);
   const status = invoice.status;
+  const balanceDue = status === "VOID" ? 0 : Math.max(0, total - amountPaid);
 
   // ── Action handlers ─────────────────────────────────────────────────────────
 

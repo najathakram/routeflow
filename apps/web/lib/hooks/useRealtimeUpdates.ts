@@ -31,6 +31,16 @@ export function useRealtimeUpdates() {
       void qc.invalidateQueries({ queryKey: ['orders'] });
     });
 
+    socket.on('order.created', (data: { orderNumber: string; customerName: string; urgent: boolean }) => {
+      void qc.invalidateQueries({ queryKey: ['orders'] });
+      void qc.invalidateQueries({ queryKey: ['dashboard'] });
+      toast({
+        title: data.urgent ? '🚨 Urgent order placed' : 'New order placed',
+        description: `${data.customerName} — order ${data.orderNumber}`,
+        variant: data.urgent ? 'error' : 'default',
+      });
+    });
+
     socket.on('order.urgent.placed', (data: { orderNumber: string; customerName: string }) => {
       void qc.invalidateQueries({ queryKey: ['orders'] });
       toast({
@@ -40,8 +50,14 @@ export function useRealtimeUpdates() {
       });
     });
 
+    socket.on('order.statusChanged', (data: { orderId: string; orderNumber: string; status: string }) => {
+      void qc.invalidateQueries({ queryKey: ['orders'] });
+      void qc.invalidateQueries({ queryKey: ['orders', data.orderId] });
+    });
+
     socket.on('driver.status.updated', (data: { driverName: string; status: string }) => {
       void qc.invalidateQueries({ queryKey: ['drivers'] });
+      void qc.invalidateQueries({ queryKey: ['routes'] });
       toast({
         title: 'Driver status changed',
         description: `${data.driverName} is now ${data.status.toLowerCase()}`,
@@ -50,6 +66,7 @@ export function useRealtimeUpdates() {
 
     socket.on('inventory.low.stock', (data: { productName: string; stockLevel: number }) => {
       void qc.invalidateQueries({ queryKey: ['products'] });
+      void qc.invalidateQueries({ queryKey: ['inventory'] });
       toast({
         title: 'Low stock alert',
         description: `${data.productName} — only ${data.stockLevel} units remaining`,
@@ -57,12 +74,35 @@ export function useRealtimeUpdates() {
       });
     });
 
+    socket.on('return.created', (data: { customerName: string; reason: string }) => {
+      void qc.invalidateQueries({ queryKey: ['returns'] });
+      toast({
+        title: 'New return submitted',
+        description: `${data.customerName} — reason: ${data.reason}`,
+      });
+    });
+
+    socket.on('invoice.updated', (data: { invoiceNumber: string; invoiceId: string; status: string }) => {
+      void qc.invalidateQueries({ queryKey: ['invoices'] });
+      void qc.invalidateQueries({ queryKey: ['invoices', data.invoiceId] });
+    });
+
+    socket.on('creditNote.created', (data: { creditNoteNumber: string; creditNoteId: string }) => {
+      void qc.invalidateQueries({ queryKey: ['credit-notes'] });
+      void qc.invalidateQueries({ queryKey: ['credit-notes', data.creditNoteId] });
+    });
+
     return () => {
       socket.off('connect_error');
       socket.off('route.stop.completed');
+      socket.off('order.created');
       socket.off('order.urgent.placed');
+      socket.off('order.statusChanged');
       socket.off('driver.status.updated');
       socket.off('inventory.low.stock');
+      socket.off('return.created');
+      socket.off('invoice.updated');
+      socket.off('creditNote.created');
       disconnectSocket();
     };
   }, [qc, toast]);

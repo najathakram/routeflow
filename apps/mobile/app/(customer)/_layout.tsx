@@ -100,10 +100,12 @@ export default function CustomerLayout() {
         }}
       />
       {/* Hidden screens — accessible via router.push but not shown in tab bar */}
-      <Tabs.Screen name="profile" options={{ href: null }} />
-      <Tabs.Screen name="change-password" options={{ href: null }} />
-      <Tabs.Screen name="standing-orders" options={{ href: null }} />
-      <Tabs.Screen name="returns" options={{ href: null }} />
+      <Tabs.Screen name="profile" options={{ href: null, title: "Profile" }} />
+      <Tabs.Screen name="change-password" options={{ href: null, title: "Change Password" }} />
+      <Tabs.Screen name="standing-orders" options={{ href: null, title: "Standing Orders" }} />
+      <Tabs.Screen name="returns" options={{ href: null, title: "Returns" }} />
+      <Tabs.Screen name="account-statement" options={{ href: null, title: "Account Statement" }} />
+      <Tabs.Screen name="credit-notes" options={{ href: null, title: "Credit Notes" }} />
     </Tabs>
   );
 }

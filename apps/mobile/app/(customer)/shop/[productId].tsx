@@ -107,11 +107,8 @@ export default function ProductDetailScreen() {
         id: product.id,
         name: product.name,
         unit: product.unit,
-        price,
-        lowStock: product.lowStock,
-        category: product.category,
-        description: product.description,
-      } as any,
+        pricePerUnit: price,
+      },
       quantity,
     );
     router.push("/(customer)/order");

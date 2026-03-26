@@ -215,17 +215,22 @@ export class InventoryService {
   }
 
   async createPurchaseOrder(dto: any, userId: string) {
+    if (!dto.supplierId) throw new BadRequestException('supplierId is required');
+    if (!dto.items || dto.items.length === 0) throw new BadRequestException('At least one item is required');
     const supplier = await this.prisma.supplier.findUnique({ where: { id: dto.supplierId } });
-    if (!supplier) throw new Error('Supplier not found');
+    if (!supplier) throw new NotFoundException('Supplier not found');
     const products = await this.prisma.product.findMany({ where: { id: { in: dto.items.map((i: any) => i.productId) } } });
     const productMap = new Map(products.map((p) => [p.id, p]));
     let totalAmount = 0;
     const itemsData = dto.items.map((item: any) => {
       const prod = productMap.get(item.productId);
-      if (!prod) throw new Error(`Product ${item.productId} not found`);
-      const totalCost = item.qtyOrdered * item.unitCost;
+      if (!prod) throw new NotFoundException(`Product ${item.productId} not found`);
+      // Accept both 'qty' (from web UI) and 'qtyOrdered' (legacy)
+      const qtyOrdered = item.qty ?? item.qtyOrdered;
+      if (!qtyOrdered || qtyOrdered <= 0) throw new BadRequestException('Item quantity must be positive');
+      const totalCost = qtyOrdered * item.unitCost;
       totalAmount += totalCost;
-      return { productId: item.productId, qtyOrdered: item.qtyOrdered, qtyReceived: 0, unitCost: item.unitCost, totalCost };
+      return { productId: item.productId, qtyOrdered, qtyReceived: 0, unitCost: item.unitCost, totalCost };
     });
     return this.prisma.purchaseOrder.create({
       data: { poNumber: await this.nextPoNumber(), supplierId: dto.supplierId, status: 'DRAFT', expectedDate: dto.expectedDate ? new Date(dto.expectedDate) : null, notes: dto.notes, totalAmount, items: { create: itemsData } },
@@ -248,39 +253,47 @@ export class InventoryService {
 
   async getPurchaseOrder(id: string) {
     const po = await this.prisma.purchaseOrder.findUnique({ where: { id }, include: { supplier: true, items: { include: { product: { select: { id: true, name: true, unit: true } } } } } });
-    if (!po) throw new Error('Purchase order not found');
+    if (!po) throw new NotFoundException('Purchase order not found');
     return po;
   }
 
   async sendPurchaseOrder(id: string) {
     const po = await this.prisma.purchaseOrder.findUnique({ where: { id } });
-    if (!po) throw new Error('PO not found');
-    if (po.status !== 'DRAFT') throw new Error('Only DRAFT POs can be sent');
+    if (!po) throw new NotFoundException('PO not found');
+    if (po.status !== 'DRAFT') throw new BadRequestException('Only DRAFT purchase orders can be sent');
     return this.prisma.purchaseOrder.update({ where: { id }, data: { status: 'SENT' } });
   }
 
   async receivePurchaseOrder(id: string, dto: any, userId: string) {
     return this.prisma.$transaction(async (tx) => {
       const po = await tx.purchaseOrder.findUnique({ where: { id }, include: { items: true } });
-      if (!po) throw new Error('PO not found');
-      if (po.status === 'CLOSED') throw new Error('PO is already closed');
+      if (!po) throw new NotFoundException('PO not found');
+      if (po.status === 'CLOSED') throw new BadRequestException('Cannot receive against a closed PO');
+      if (po.status === 'RECEIVED') throw new BadRequestException('PO is already fully received');
 
       for (const recv of dto.items) {
-        const item = po.items.find((i) => i.id === recv.itemId);
+        // Accept both 'id' (from web UI) and 'itemId' (legacy)
+        const itemId = recv.id ?? recv.itemId;
+        // Accept both 'receivedQty' (from web UI) and 'qtyReceived' (legacy)
+        const receivedQty = recv.receivedQty ?? recv.qtyReceived ?? 0;
+        const item = po.items.find((i) => i.id === itemId);
         if (!item) continue;
-        const newQtyReceived = Number(item.qtyReceived) + recv.qtyReceived;
+        const maxReceivable = Number(item.qtyOrdered) - Number(item.qtyReceived);
+        const actualQty = Math.min(receivedQty, maxReceivable);
+        if (actualQty <= 0) continue;
+        const newQtyReceived = Number(item.qtyReceived) + actualQty;
         await tx.purchaseOrderItem.update({ where: { id: item.id }, data: { qtyReceived: newQtyReceived } });
 
         // Create stock movement
-        await tx.stockMovement.create({ data: { productId: item.productId, type: 'PURCHASE', quantity: recv.qtyReceived, unitCost: item.unitCost, supplierId: po.supplierId, reference: po.poNumber, performedById: userId } });
+        await tx.stockMovement.create({ data: { productId: item.productId, type: 'PURCHASE', quantity: actualQty, unitCost: item.unitCost, supplierId: po.supplierId, reference: po.poNumber, performedById: userId } });
 
         // Update product stock with WAC
         const prod = await tx.product.findUnique({ where: { id: item.productId } });
         if (prod) {
           const curStock = Number(prod.currentStock);
           const curCost = Number(prod.averageCost ?? item.unitCost);
-          const newStock = curStock + recv.qtyReceived;
-          const newCost = newStock > 0 ? (curStock * curCost + recv.qtyReceived * Number(item.unitCost)) / newStock : Number(item.unitCost);
+          const newStock = curStock + actualQty;
+          const newCost = newStock > 0 ? (curStock * curCost + actualQty * Number(item.unitCost)) / newStock : Number(item.unitCost);
           await tx.product.update({ where: { id: item.productId }, data: { currentStock: newStock, averageCost: newCost } });
         }
       }

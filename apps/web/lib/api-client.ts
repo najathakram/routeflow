@@ -45,7 +45,14 @@ apiClient.interceptors.response.use(
       _retry?: boolean;
     };
 
-    if (error.response?.status !== 401 || original._retry) {
+    // Never attempt refresh for auth endpoints — let the caller handle the error
+    if (
+      error.response?.status !== 401 ||
+      original._retry ||
+      original.url?.includes("/auth/login") ||
+      original.url?.includes("/auth/refresh") ||
+      original.url?.includes("/auth/logout")
+    ) {
       return Promise.reject(error);
     }
 

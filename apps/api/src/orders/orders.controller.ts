@@ -55,9 +55,13 @@ export class OrdersController {
 
   @Patch(":id/items")
   @UseGuards(RolesGuard)
-  @Roles(UserRole.OPERATOR)
-  updateOrderItems(@Param("id") id: string, @Body() dto: UpdateOrderItemsDto) {
-    return this.ordersService.updateOrderItems(id, dto);
+  @Roles(UserRole.OPERATOR, UserRole.CUSTOMER)
+  updateOrderItems(
+    @Param("id") id: string,
+    @Body() dto: UpdateOrderItemsDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.ordersService.updateOrderItems(id, dto, user);
   }
 
   @Patch(":id/urgent")

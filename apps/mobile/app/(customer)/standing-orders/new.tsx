@@ -14,42 +14,60 @@ import { Ionicons } from "@expo/vector-icons";
 import { colors, borderRadius, shadows } from "@routeflow/ui/tokens";
 import { apiClient } from "../../../lib/api-client";
 import { useOrderStore } from "../../../store/orderStore";
-import { useMyCustomerProfile } from "../../../lib/api/customers";
 
-const FREQUENCIES = [
-  { label: "Weekly", value: "WEEKLY" },
-  { label: "Bi-weekly", value: "BIWEEKLY" },
-  { label: "Monthly", value: "MONTHLY" },
+const DAYS = [
+  { label: "Mon", value: 1 },
+  { label: "Tue", value: 2 },
+  { label: "Wed", value: 3 },
+  { label: "Thu", value: 4 },
+  { label: "Fri", value: 5 },
+  { label: "Sat", value: 6 },
+  { label: "Sun", value: 0 },
+];
+
+const PRESETS = [
+  { label: "Weekdays", days: [1, 2, 3, 4, 5] },
+  { label: "Daily",    days: [0, 1, 2, 3, 4, 5, 6] },
+  { label: "Custom",   days: null },
 ] as const;
 
-type Frequency = typeof FREQUENCIES[number]["value"];
-
 export default function NewStandingOrderScreen() {
-  const [frequency, setFrequency] = useState<Frequency>("WEEKLY");
-  const [nextDeliveryDate, setNextDeliveryDate] = useState("");
+  const [name, setName] = useState("");
+  const [selectedDays, setSelectedDays] = useState<number[]>([1, 2, 3, 4, 5]);
   const [notes, setNotes] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const { data: profile } = useMyCustomerProfile();
   const items = useOrderStore((s) => s.items);
 
+  const toggleDay = (day: number) => {
+    setSelectedDays((prev) =>
+      prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day],
+    );
+  };
+
+  const applyPreset = (days: number[] | null) => {
+    if (days) setSelectedDays(days);
+  };
+
   const handleSubmit = async () => {
-    if (!nextDeliveryDate.trim()) {
-      Alert.alert("Validation", "Please enter a next delivery date (YYYY-MM-DD).");
+    if (!name.trim()) {
+      Alert.alert("Validation", "Please enter a name for this standing order.");
       return;
     }
-    // Basic date format check
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(nextDeliveryDate.trim())) {
-      Alert.alert("Validation", "Date must be in YYYY-MM-DD format.");
+    if (selectedDays.length === 0) {
+      Alert.alert("Validation", "Please select at least one delivery day.");
+      return;
+    }
+    if (items.length === 0) {
+      Alert.alert("Validation", "Your cart is empty. Add items before creating a standing order.");
       return;
     }
 
     setIsSubmitting(true);
     try {
-      await apiClient.post("/standing-orders", {
-        customerId: profile?.id,
-        frequency,
-        nextDeliveryDate: nextDeliveryDate.trim(),
+      await apiClient.post("/order-templates", {
+        name: name.trim(),
+        daysOfWeek: selectedDays,
         notes: notes.trim() || undefined,
         items: items.map((i) => ({
           productId: i.productId,
@@ -59,12 +77,7 @@ export default function NewStandingOrderScreen() {
       Alert.alert(
         "Standing Order Created",
         "Your standing order has been set up successfully.",
-        [
-          {
-            text: "OK",
-            onPress: () => router.replace("/(customer)/standing-orders" as any),
-          },
-        ],
+        [{ text: "OK", onPress: () => router.replace("/(customer)/standing-orders" as any) }],
       );
     } catch (err: any) {
       Alert.alert(
@@ -75,6 +88,13 @@ export default function NewStandingOrderScreen() {
       setIsSubmitting(false);
     }
   };
+
+  const activePreset = PRESETS.find(
+    (p) =>
+      p.days &&
+      p.days.length === selectedDays.length &&
+      p.days.every((d) => selectedDays.includes(d)),
+  )?.label ?? "Custom";
 
   return (
     <>
@@ -100,30 +120,36 @@ export default function NewStandingOrderScreen() {
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-          {/* Cart notice */}
-          <View style={styles.noticeBanner}>
-            <Ionicons name="information-circle-outline" size={18} color={colors.brand[500]} />
-            <Text style={styles.noticeText}>
-              Your current cart items ({items.length} product{items.length !== 1 ? "s" : ""}) will be used for this standing order.
-            </Text>
+          {/* Name */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Name</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="e.g. Weekly Supplies"
+              placeholderTextColor="#94a3b8"
+              value={name}
+              onChangeText={setName}
+              returnKeyType="next"
+              accessibilityLabel="Standing order name"
+            />
           </View>
 
-          {/* Frequency */}
+          {/* Frequency presets */}
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Frequency</Text>
             <View style={styles.chipsRow}>
-              {FREQUENCIES.map((f) => {
-                const isActive = frequency === f.value;
+              {PRESETS.map((p) => {
+                const isActive = activePreset === p.label;
                 return (
                   <Pressable
-                    key={f.value}
+                    key={p.label}
                     style={[styles.chip, isActive && styles.chipActive]}
-                    onPress={() => setFrequency(f.value)}
+                    onPress={() => applyPreset(p.days ?? null)}
                     accessibilityRole="radio"
                     accessibilityState={{ selected: isActive }}
                   >
                     <Text style={[styles.chipText, isActive && styles.chipTextActive]}>
-                      {f.label}
+                      {p.label}
                     </Text>
                   </Pressable>
                 );
@@ -131,20 +157,28 @@ export default function NewStandingOrderScreen() {
             </View>
           </View>
 
-          {/* Next Delivery Date */}
+          {/* Day picker */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Next Delivery Date</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="YYYY-MM-DD"
-              placeholderTextColor="#94a3b8"
-              value={nextDeliveryDate}
-              onChangeText={setNextDeliveryDate}
-              keyboardType="numeric"
-              maxLength={10}
-              returnKeyType="next"
-              accessibilityLabel="Next delivery date"
-            />
+            <Text style={styles.sectionTitle}>Delivery Days</Text>
+            <View style={styles.daysRow}>
+              {DAYS.map((d) => {
+                const isSelected = selectedDays.includes(d.value);
+                return (
+                  <Pressable
+                    key={d.value}
+                    style={[styles.dayChip, isSelected && styles.dayChipActive]}
+                    onPress={() => toggleDay(d.value)}
+                    accessibilityRole="checkbox"
+                    accessibilityState={{ checked: isSelected }}
+                    accessibilityLabel={d.label}
+                  >
+                    <Text style={[styles.dayChipText, isSelected && styles.dayChipTextActive]}>
+                      {d.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
           </View>
 
           {/* Notes */}
@@ -162,14 +196,16 @@ export default function NewStandingOrderScreen() {
             />
           </View>
 
-          {/* Cart items preview */}
+          {/* Cart items */}
           {items.length > 0 ? (
             <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Order Items</Text>
+              <Text style={styles.sectionTitle}>
+                Order Items ({items.length} product{items.length !== 1 ? "s" : ""})
+              </Text>
               {items.map((item) => (
                 <View key={item.productId} style={styles.itemRow}>
                   <Text style={styles.itemName} numberOfLines={1}>{item.name}</Text>
-                  <Text style={styles.itemQty}>x{item.quantity}</Text>
+                  <Text style={styles.itemQty}>×{item.quantity}</Text>
                 </View>
               ))}
             </View>
@@ -183,7 +219,6 @@ export default function NewStandingOrderScreen() {
           )}
         </ScrollView>
 
-        {/* Submit footer */}
         <View style={styles.footer}>
           <Pressable
             style={[styles.submitBtn, (isSubmitting || items.length === 0) && { opacity: 0.6 }]}
@@ -207,32 +242,8 @@ export default function NewStandingOrderScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.surface.raised,
-  },
-  scroll: {
-    padding: 16,
-    gap: 12,
-    paddingBottom: 24,
-  },
-  noticeBanner: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 10,
-    backgroundColor: colors.brand[50],
-    borderRadius: borderRadius.DEFAULT,
-    borderWidth: 1,
-    borderColor: colors.brand[200] ?? colors.brand[500] + "33",
-    padding: 14,
-  },
-  noticeText: {
-    flex: 1,
-    fontSize: 13,
-    fontFamily: "Inter_400Regular",
-    color: colors.brand[700],
-    lineHeight: 18,
-  },
+  container: { flex: 1, backgroundColor: colors.surface.raised },
+  scroll: { padding: 16, gap: 12, paddingBottom: 24 },
   section: {
     backgroundColor: "#fff",
     borderRadius: borderRadius.lg,
@@ -247,11 +258,7 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
     letterSpacing: 0.5,
   },
-  chipsRow: {
-    flexDirection: "row",
-    gap: 10,
-    flexWrap: "wrap",
-  },
+  chipsRow: { flexDirection: "row", gap: 10, flexWrap: "wrap" },
   chip: {
     paddingHorizontal: 18,
     paddingVertical: 9,
@@ -260,18 +267,23 @@ const styles = StyleSheet.create({
     borderColor: colors.surface.border,
     backgroundColor: colors.surface.raised,
   },
-  chipActive: {
-    borderColor: colors.brand[500],
-    backgroundColor: colors.brand[50],
+  chipActive: { borderColor: colors.brand[500], backgroundColor: colors.brand[50] },
+  chipText: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: "#64748b" },
+  chipTextActive: { color: colors.brand[500] },
+  daysRow: { flexDirection: "row", gap: 8, flexWrap: "wrap" },
+  dayChip: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: 1.5,
+    borderColor: colors.surface.border,
+    backgroundColor: colors.surface.raised,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  chipText: {
-    fontSize: 14,
-    fontFamily: "Inter_600SemiBold",
-    color: "#64748b",
-  },
-  chipTextActive: {
-    color: colors.brand[500],
-  },
+  dayChipActive: { borderColor: colors.brand[500], backgroundColor: colors.brand[500] },
+  dayChipText: { fontSize: 12, fontFamily: "Inter_600SemiBold", color: "#64748b" },
+  dayChipTextActive: { color: "#fff" },
   input: {
     borderWidth: 1,
     borderColor: colors.surface.border,
@@ -283,10 +295,7 @@ const styles = StyleSheet.create({
     color: colors.navy.DEFAULT,
     backgroundColor: colors.surface.raised,
   },
-  textArea: {
-    minHeight: 80,
-    textAlignVertical: "top",
-  },
+  textArea: { minHeight: 80, textAlignVertical: "top" },
   itemRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -302,11 +311,7 @@ const styles = StyleSheet.create({
     color: colors.navy.DEFAULT,
     paddingRight: 12,
   },
-  itemQty: {
-    fontSize: 13,
-    fontFamily: "Inter_600SemiBold",
-    color: "#64748b",
-  },
+  itemQty: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: "#64748b" },
   emptyCartBanner: {
     flexDirection: "row",
     alignItems: "flex-start",
@@ -338,9 +343,5 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  submitBtnText: {
-    fontSize: 16,
-    fontFamily: "Inter_700Bold",
-    color: "#fff",
-  },
+  submitBtnText: { fontSize: 16, fontFamily: "Inter_700Bold", color: "#fff" },
 });

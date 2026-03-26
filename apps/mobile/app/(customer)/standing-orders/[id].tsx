@@ -46,7 +46,7 @@ export default function StandingOrderDetailScreen() {
   }
 
   const sortedDays = [...(order.daysOfWeek ?? [])].sort((a, b) => a - b);
-  const totalItems = (order.items ?? []).reduce((s, i) => s + i.qty, 0);
+  const totalItems = (order.items ?? []).reduce((s, i) => s + Number(i.qty), 0);
 
   const handleToggle = (value: boolean) => {
     const action = value ? "activate" : "pause";
