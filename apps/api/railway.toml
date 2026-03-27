@@ -6,7 +6,7 @@ watchPatterns = ["apps/api/**", "packages/**"]
 
 [deploy]
 # Sync schema to DB (handles incomplete migrations on fresh DBs) then start
-startCommand = "npx prisma db push --accept-data-loss && node dist/main.js"
+startCommand = "npx prisma db push --accept-data-loss; node dist/main.js"
 healthcheckPath = "/api/v1/health"
 healthcheckTimeout = 300
 restartPolicyType = "ON_FAILURE"
