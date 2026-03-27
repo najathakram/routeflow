@@ -47,6 +47,7 @@ export interface Invoice {
   terms?: string;
   items?: InvoiceItem[];
   payments?: InvoicePayment[];
+  balanceDue?: number;
   createdAt: string;
   updatedAt: string;
   sentAt?: string;

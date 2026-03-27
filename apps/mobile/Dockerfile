@@ -41,18 +41,28 @@ RUN npx expo export --platform web
 # ─── Stage 2: Runner ──────────────────────────────────────────────────────────
 FROM nginx:alpine AS runner
 
+# gettext provides envsubst — used to inject Railway's $PORT into nginx config
+RUN apk add --no-cache gettext
+
 # Copy the static SPA output produced by expo export
 COPY --from=builder /app/apps/mobile/dist /usr/share/nginx/html
 
-# SPA routing: unknown paths fall through to index.html so Expo Router
-# handles them client-side.
+# Store the config template. At start-up we substitute PORT and reload nginx.
+# Railway injects PORT at runtime; default is 80 for local dev.
 RUN printf 'server {\n\
-  listen 80;\n\
+  listen NGINX_PORT;\n\
   root /usr/share/nginx/html;\n\
   index index.html;\n\
   location / {\n\
     try_files $uri $uri/ /index.html;\n\
   }\n\
-}\n' > /etc/nginx/conf.d/default.conf
+}\n' > /etc/nginx/conf.d/default.conf.template
 
 EXPOSE 80
+
+# At runtime: resolve $PORT (default 80), write config, start nginx.
+CMD ["/bin/sh", "-c", \
+  "NGINX_PORT=${PORT:-80} && \
+   sed s/NGINX_PORT/$NGINX_PORT/ /etc/nginx/conf.d/default.conf.template \
+     > /etc/nginx/conf.d/default.conf && \
+   nginx -g 'daemon off;'"]
