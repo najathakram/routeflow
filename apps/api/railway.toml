@@ -6,7 +6,7 @@ watchPatterns = ["apps/api/**", "packages/**"]
 
 [deploy]
 # Run DB migrations then start the server
-startCommand = "npx prisma migrate deploy && node dist/main.js"
+startCommand = "npx prisma migrate resolve --rolled-back 20260325100000_add_returns_photos_messages 2>/dev/null; npx prisma migrate deploy && node dist/main.js"
 healthcheckPath = "/api/v1"
 healthcheckTimeout = 120
 restartPolicyType = "ON_FAILURE"
