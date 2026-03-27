@@ -1,11 +1,10 @@
 import { Stack } from "expo-router";
 import { colors } from "@routeflow/ui/tokens";
 
-export default function DriverHistoryLayout() {
+export default function CustomersLayout() {
   return (
     <Stack
       screenOptions={{
-        headerShown: true,
         headerStyle: { backgroundColor: "#fff" },
         headerShadowVisible: false,
         headerTitleStyle: {
@@ -13,6 +12,7 @@ export default function DriverHistoryLayout() {
           fontSize: 17,
           color: colors.navy.DEFAULT,
         },
+        headerBackTitle: "Customers",
       }}
     />
   );

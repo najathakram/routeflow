@@ -2,8 +2,9 @@ import { useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Alert, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { router, Stack } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
 import { MobileButton, MobileInput } from "@routeflow/ui/mobile";
 import { changePassword } from "../../lib/auth";
 
@@ -26,6 +27,7 @@ type ChangePasswordForm = z.infer<typeof schema>;
 
 export default function DriverChangePasswordScreen() {
   const [apiError, setApiError] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
   const {
     control,
     handleSubmit,
@@ -42,12 +44,13 @@ export default function DriverChangePasswordScreen() {
 
   const onSubmit = async (data: ChangePasswordForm) => {
     setApiError(null);
+    setSuccess(false);
     try {
       await changePassword(data.currentPassword, data.newPassword);
       reset();
-      Alert.alert("Password updated", "Your password has been changed.", [
-        { text: "OK", onPress: () => router.back() },
-      ]);
+      setSuccess(true);
+      // Navigate back after a short delay so the user sees the confirmation
+      setTimeout(() => router.back(), 1800);
     } catch (err: any) {
       const msg =
         err?.response?.data?.message ?? "Failed to change password.";
@@ -66,6 +69,12 @@ export default function DriverChangePasswordScreen() {
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.form}>
+          {success && (
+            <View style={styles.successBanner}>
+              <Ionicons name="checkmark-circle" size={20} color="#065f46" />
+              <Text style={styles.successText}>Password updated successfully!</Text>
+            </View>
+          )}
           {apiError && (
             <Text style={styles.apiError}>{apiError}</Text>
           )}
@@ -147,5 +156,19 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlign: "center" as const,
     marginBottom: 4,
+  },
+  successBanner: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    gap: 8,
+    backgroundColor: "#d1fae5",
+    borderRadius: 10,
+    padding: 14,
+  },
+  successText: {
+    fontSize: 15,
+    fontFamily: "Inter_600SemiBold",
+    color: "#065f46",
+    flex: 1,
   },
 });

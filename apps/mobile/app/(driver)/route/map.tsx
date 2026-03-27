@@ -1,4 +1,4 @@
-import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { router, Stack, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, borderRadius, shadows } from "@routeflow/ui/tokens";
@@ -16,6 +16,31 @@ try {
   PROVIDER_DEFAULT = RNMaps.PROVIDER_DEFAULT;
 } catch {
   // react-native-maps not available — fallback UI will be used
+}
+
+// ─── Google Maps URL builder ──────────────────────────────────────────────────
+
+function buildGoogleMapsUrl(stops: RouteRunStop[]): string {
+  const withCoords = stops.filter(
+    (s) => s.customerAddress?.lat != null && s.customerAddress?.lng != null,
+  );
+
+  if (withCoords.length > 0) {
+    // Multi-waypoint directions URL
+    const waypoints = withCoords
+      .map((s) => `${s.customerAddress!.lat},${s.customerAddress!.lng}`)
+      .join("/");
+    return `https://maps.google.com/maps/dir/${waypoints}`;
+  }
+
+  // Fallback: search by first stop address
+  const first = stops[0];
+  if (first?.customerAddress) {
+    const addr = `${first.customerAddress.line1}, ${first.customerAddress.city}, ${first.customerAddress.state}`;
+    return `https://maps.google.com/maps/search/?api=1&query=${encodeURIComponent(addr)}`;
+  }
+
+  return "https://maps.google.com";
 }
 
 // ─── Stop colour by status ────────────────────────────────────────────────────
@@ -189,15 +214,42 @@ export default function RouteMapScreen() {
     );
   }
 
+  const mapsUrl = buildGoogleMapsUrl(stops);
+
   return (
     <>
       <Stack.Screen
         options={{
           title: `Map — ${stops.length} stops`,
           headerBackTitle: "Route",
+          headerRight: () => (
+            <Pressable
+              onPress={() => Linking.openURL(mapsUrl)}
+              style={{ flexDirection: "row", alignItems: "center", gap: 6, paddingRight: 4, paddingLeft: 12, paddingVertical: 6 }}
+              accessibilityRole="button"
+              accessibilityLabel="Open in Google Maps"
+            >
+              <Ionicons name="navigate-outline" size={18} color={colors.brand[500]} />
+              <Text style={{ fontSize: 14, fontFamily: "Inter_600SemiBold", color: colors.brand[500] }}>
+                Google Maps
+              </Text>
+            </Pressable>
+          ),
         }}
       />
-      <StopsMap stops={stops} runId={runId} />
+      <View style={{ flex: 1 }}>
+        <StopsMap stops={stops} runId={runId} />
+        {/* Floating Google Maps button at bottom */}
+        <Pressable
+          style={styles.gmapsBtn}
+          onPress={() => Linking.openURL(mapsUrl)}
+          accessibilityRole="button"
+          accessibilityLabel="Open route in Google Maps"
+        >
+          <Ionicons name="navigate" size={18} color="#fff" />
+          <Text style={styles.gmapsBtnText}>Open in Google Maps</Text>
+        </Pressable>
+      </View>
     </>
   );
 }
@@ -296,5 +348,27 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontFamily: "Inter_500Medium",
     color: colors.navy.DEFAULT,
+  },
+  gmapsBtn: {
+    position: "absolute",
+    bottom: 24,
+    alignSelf: "center",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "#1a73e8",
+    borderRadius: 24,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    elevation: 6,
+  },
+  gmapsBtnText: {
+    fontSize: 15,
+    fontFamily: "Inter_700Bold",
+    color: "#fff",
   },
 });

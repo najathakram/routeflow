@@ -96,18 +96,7 @@ export default function ProfileScreen() {
     <>
       <Stack.Screen
         options={{
-          title: "Profile",
-          headerLeft: () => (
-            <Pressable
-              onPress={() => router.back()}
-              hitSlop={10}
-              style={{ paddingLeft: 4 }}
-              accessibilityLabel="Close"
-              accessibilityRole="button"
-            >
-              <Ionicons name="arrow-back" size={24} color={colors.navy.DEFAULT} />
-            </Pressable>
-          ),
+          title: "Account",
         }}
       />
       {isLoading ? (

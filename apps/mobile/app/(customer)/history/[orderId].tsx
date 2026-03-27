@@ -288,29 +288,31 @@ export default function OrderDetailScreen() {
           </Pressable>
         )}
 
-        {/* Edit / Cancel CTAs — only for pending orders */}
+        {/* Edit CTA — for pending and confirmed orders */}
+        {(order.status === "PENDING" || order.status === "CONFIRMED") && (
+          <Pressable
+            style={styles.editOrderBtn}
+            onPress={handleEditOrder}
+            accessibilityRole="button"
+          >
+            <Ionicons name="create-outline" size={18} color={colors.brand[500]} />
+            <Text style={styles.editOrderBtnText}>Edit Order</Text>
+          </Pressable>
+        )}
+
+        {/* Cancel CTA — only for pending orders */}
         {order.status === "PENDING" && (
-          <>
-            <Pressable
-              style={styles.editOrderBtn}
-              onPress={handleEditOrder}
-              accessibilityRole="button"
-            >
-              <Ionicons name="create-outline" size={18} color={colors.brand[500]} />
-              <Text style={styles.editOrderBtnText}>Edit Order</Text>
-            </Pressable>
-            <Pressable
-              style={[styles.returnBtn, isCancelling && styles.btnDisabled]}
-              onPress={handleCancel}
-              disabled={isCancelling}
-              accessibilityRole="button"
-            >
-              <Ionicons name="close-circle-outline" size={18} color={colors.danger.DEFAULT} />
-              <Text style={styles.returnBtnText}>
-                {isCancelling ? "Cancelling…" : "Cancel Order"}
-              </Text>
-            </Pressable>
-          </>
+          <Pressable
+            style={[styles.returnBtn, isCancelling && styles.btnDisabled]}
+            onPress={handleCancel}
+            disabled={isCancelling}
+            accessibilityRole="button"
+          >
+            <Ionicons name="close-circle-outline" size={18} color={colors.danger.DEFAULT} />
+            <Text style={styles.returnBtnText}>
+              {isCancelling ? "Cancelling…" : "Cancel Order"}
+            </Text>
+          </Pressable>
         )}
       </ScrollView>
     </>

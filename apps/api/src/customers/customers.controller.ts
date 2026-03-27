@@ -22,7 +22,7 @@ export class CustomersController {
   constructor(private readonly customersService: CustomersService) {}
 
   @Get()
-  @Roles(UserRole.OPERATOR)
+  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   findAll(@Query() query: ListCustomersDto) {
     return this.customersService.findAll(query);
   }

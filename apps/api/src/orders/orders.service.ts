@@ -103,6 +103,12 @@ export class OrdersService {
       if (!customer) throw new BadRequestException("Customer not found");
       if (customer.user.status === "SUSPENDED") throw new BadRequestException("Cannot create orders for a suspended customer");
       customerId = customer.id;
+    } else if (user.role === UserRole.DRIVER) {
+      // Driver creates on behalf of a customer (e.g. at a stop) — customerId must be supplied
+      if (!dto.customerId) throw new BadRequestException("customerId is required");
+      const customer = await this.prisma.customer.findUnique({ where: { id: dto.customerId } });
+      if (!customer) throw new BadRequestException("Customer not found");
+      customerId = customer.id;
     } else {
       // Customer creates their own order
       const customer = await this.prisma.customer.findFirst({ where: { userId: user.sub } });
@@ -154,6 +160,21 @@ export class OrdersService {
       },
     });
 
+    // If driver is creating at a stop, link order to route run and optionally confirm it
+    if (dto.routeRunId || dto.routeRunStopId) {
+      await this.prisma.order.update({
+        where: { id: order.id },
+        data: {
+          routeRunId: dto.routeRunId ?? null,
+          routeRunStopId: dto.routeRunStopId ?? null,
+          status: dto.immediateDelivery ? OrderStatus.CONFIRMED : order.status,
+        },
+      });
+      if (dto.immediateDelivery) {
+        (order as any).status = OrderStatus.CONFIRMED;
+      }
+    }
+
     this.gateway.emitOrderCreated({
       orderId: order.id,
       orderNumber: order.orderNumber ?? "",
@@ -186,6 +207,11 @@ export class OrdersService {
       // Customers may only cancel their own PENDING orders
       if (dto.status !== OrderStatus.CANCELLED || order.status !== OrderStatus.PENDING) {
         throw new ForbiddenException("Customers can only cancel their own pending orders");
+      }
+    } else if (user.role === UserRole.DRIVER) {
+      // Drivers may only confirm PENDING orders (PENDING → CONFIRMED)
+      if (dto.status !== OrderStatus.CONFIRMED || order.status !== OrderStatus.PENDING) {
+        throw new ForbiddenException("Drivers can only confirm pending orders");
       }
     } else if (user.role !== UserRole.OPERATOR) {
       throw new ForbiddenException("Only operators can change order status");
@@ -258,10 +284,12 @@ export class OrdersService {
       );
     }
 
-    // Customer path: verify ownership, then replace items by productId
-    if (user?.role === UserRole.CUSTOMER) {
-      const customer = await this.prisma.customer.findFirst({ where: { userId: user.sub } });
-      if (!customer || order.customerId !== customer.id) throw new ForbiddenException();
+    // Customer/Driver path: replace items by productId
+    if (user?.role === UserRole.CUSTOMER || user?.role === UserRole.DRIVER) {
+      if (user.role === UserRole.CUSTOMER) {
+        const customer = await this.prisma.customer.findFirst({ where: { userId: user.sub } });
+        if (!customer || order.customerId !== customer.id) throw new ForbiddenException();
+      }
 
       // Customers send items as { productId, qty } — replace all line items
       const productIds = dto.items.map((i) => i.productId).filter(Boolean) as string[];
@@ -471,6 +499,20 @@ export class OrdersService {
           safeDropEnabled: dto.safeDropEnabled ?? false,
         },
       });
+
+      // Auto-complete the run when all stops are COMPLETED or SKIPPED
+      const allStops = await tx.routeRunStop.findMany({
+        where: { routeRunId: runId },
+        select: { status: true },
+      });
+      const allDone = allStops.length > 0 &&
+        allStops.every((s) => s.status === "COMPLETED" || s.status === "SKIPPED");
+      if (allDone) {
+        await tx.routeRun.update({
+          where: { id: runId },
+          data: { status: "COMPLETED", completedAt: new Date() },
+        });
+      }
     });
 
     // Emit real-time updates for each affected order/customer + push notifications

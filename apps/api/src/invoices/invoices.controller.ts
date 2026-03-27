@@ -18,13 +18,13 @@ export class InvoicesController {
   @Post() create(@Body() dto: CreateInvoiceDto) { return this.invoicesService.create(dto); }
 
   @Get()
-  @Roles(UserRole.OPERATOR, UserRole.CUSTOMER)
+  @Roles(UserRole.OPERATOR, UserRole.CUSTOMER, UserRole.DRIVER)
   findAll(@Query() query: ListInvoicesDto, @CurrentUser() user: JwtPayload) {
     return this.invoicesService.findAll(query, user);
   }
 
   @Get(":id")
-  @Roles(UserRole.OPERATOR, UserRole.CUSTOMER)
+  @Roles(UserRole.OPERATOR, UserRole.CUSTOMER, UserRole.DRIVER)
   findOne(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
     return this.invoicesService.findOne(id, user);
   }

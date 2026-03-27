@@ -112,9 +112,9 @@ export class RouteRunsController {
 
   @Post()
   @UseGuards(RolesGuard)
-  @Roles(UserRole.OPERATOR)
-  create(@Body() dto: CreateRouteRunDto) {
-    return this.routesService.createRun(dto);
+  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
+  create(@Body() dto: CreateRouteRunDto, @CurrentUser() user: JwtPayload) {
+    return this.routesService.createRun(dto, user);
   }
 
   @Get("my-stats")
@@ -153,12 +153,13 @@ export class RouteRunsController {
 
   @Patch(":id")
   @UseGuards(RolesGuard)
-  @Roles(UserRole.OPERATOR)
+  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   updateRun(
     @Param("id") id: string,
     @Body() body: { driverId?: string | null; scheduledDate?: string; notes?: string },
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.routesService.updateRun(id, body);
+    return this.routesService.updateRun(id, body, user);
   }
 
   @Delete(":id")
@@ -175,5 +176,14 @@ export class RouteRunsController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.routesService.updateRunStatus(id, dto, user);
+  }
+
+  @Post(":id/stops/:stopId/reopen")
+  reopenStop(
+    @Param("id") runId: string,
+    @Param("stopId") stopId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.routesService.reopenStop(runId, stopId, user);
   }
 }

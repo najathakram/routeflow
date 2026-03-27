@@ -29,8 +29,10 @@ import { colors, borderRadius, shadows } from "@routeflow/ui/tokens";
 import {
   useRouteRun,
   useUpdateStopStatus,
+  useReopenStop,
   type RouteRunOrderItem,
 } from "../../../../../lib/api/routes";
+import { useConfirmOrder } from "../../../../../lib/api/orders";
 import {
   useRouteStore,
   selectAllItemsResolved,
@@ -39,6 +41,7 @@ import {
 } from "../../../../../store/routeStore";
 import { useProductByBarcode } from "../../../../../lib/api/products";
 import { BarcodeScanner } from "../../../../../components/BarcodeScanner";
+import { ProductPickerModal, type PickedProduct } from "../../../../../components/ProductPickerModal";
 import { NetworkError } from "../../../../../components/NetworkError";
 import { apiClient } from "../../../../../lib/api-client";
 
@@ -234,127 +237,6 @@ const itemStyles = StyleSheet.create({
   },
 });
 
-// ─── Add Item Inline Form ─────────────────────────────────────────────────────
-
-function AddItemForm({ stopId, onDone }: { stopId: string; onDone: () => void }) {
-  const addStopItem = useRouteStore((s) => s.addStopItem);
-  const setItemResolution = useRouteStore((s) => s.setItemResolution);
-  const [name, setName] = useState("");
-  const [qty, setQty] = useState("1");
-
-  const handleAdd = () => {
-    const n = parseInt(qty, 10);
-    if (!name.trim() || isNaN(n) || n <= 0) return;
-    const id = `added-${Date.now()}`;
-    addStopItem(stopId, "", name.trim(), n);
-    // Auto-mark as delivered
-    setItemResolution(stopId, id, { status: "DELIVERED" });
-    setName("");
-    setQty("1");
-    onDone();
-    Keyboard.dismiss();
-  };
-
-  return (
-    <View style={addStyles.container}>
-      <Text style={addStyles.title}>Add Item</Text>
-      <TextInput
-        style={addStyles.nameInput}
-        placeholder="Item name"
-        placeholderTextColor="#94a3b8"
-        value={name}
-        onChangeText={setName}
-        autoFocus
-        returnKeyType="next"
-      />
-      <View style={addStyles.row}>
-        <TextInput
-          style={addStyles.qtyInput}
-          placeholder="Qty"
-          placeholderTextColor="#94a3b8"
-          value={qty}
-          onChangeText={setQty}
-          keyboardType="number-pad"
-          returnKeyType="done"
-        />
-        <Pressable style={addStyles.addBtn} onPress={handleAdd}>
-          <Text style={addStyles.addBtnText}>Add</Text>
-        </Pressable>
-        <Pressable style={addStyles.cancelBtn} onPress={onDone}>
-          <Text style={addStyles.cancelBtnText}>Cancel</Text>
-        </Pressable>
-      </View>
-    </View>
-  );
-}
-
-const addStyles = StyleSheet.create({
-  container: {
-    backgroundColor: colors.brand[50],
-    borderRadius: borderRadius.lg,
-    padding: 16,
-    gap: 10,
-    borderWidth: 1,
-    borderColor: colors.brand[100],
-  },
-  title: {
-    fontSize: 15,
-    fontFamily: "Inter_600SemiBold",
-    color: colors.navy.DEFAULT,
-  },
-  nameInput: {
-    height: 48,
-    borderWidth: 1,
-    borderColor: colors.surface.border,
-    borderRadius: borderRadius.DEFAULT,
-    paddingHorizontal: 12,
-    fontSize: 16,
-    fontFamily: "Inter_400Regular",
-    color: colors.navy.DEFAULT,
-    backgroundColor: "#fff",
-  },
-  row: { flexDirection: "row", gap: 8 },
-  qtyInput: {
-    width: 72,
-    height: 48,
-    borderWidth: 1,
-    borderColor: colors.surface.border,
-    borderRadius: borderRadius.DEFAULT,
-    textAlign: "center",
-    fontSize: 17,
-    fontFamily: "Inter_600SemiBold",
-    color: colors.navy.DEFAULT,
-    backgroundColor: "#fff",
-  },
-  addBtn: {
-    flex: 1,
-    height: 48,
-    backgroundColor: colors.brand[500],
-    borderRadius: borderRadius.DEFAULT,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  addBtnText: {
-    fontSize: 15,
-    fontFamily: "Inter_700Bold",
-    color: "#fff",
-  },
-  cancelBtn: {
-    flex: 1,
-    height: 48,
-    backgroundColor: "#fff",
-    borderRadius: borderRadius.DEFAULT,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1,
-    borderColor: colors.surface.border,
-  },
-  cancelBtnText: {
-    fontSize: 15,
-    fontFamily: "Inter_600SemiBold",
-    color: "#64748b",
-  },
-});
 
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 
@@ -363,12 +245,15 @@ export default function StopDetailScreen() {
 
   const { data: run, isLoading, isError, refetch } = useRouteRun(runId ?? "");
   const { mutate: updateStopStatus } = useUpdateStopStatus();
+  const { mutate: reopenStop, isPending: isReopening } = useReopenStop();
+  const { mutate: confirmOrder, isPending: isConfirming } = useConfirmOrder();
 
   const stopNoteFromStore = useRouteStore((s) => s.stopNotes[stopId]) ?? "";
   const setStopNote = useRouteStore((s) => s.setStopNote);
   const addedItems = useRouteStore((s) => s.addedItems[stopId]) ?? [];
+  const addStopItemStore = useRouteStore((s) => s.addStopItem);
 
-  const [showAddForm, setShowAddForm] = useState(false);
+  const [showProductPicker, setShowProductPicker] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
   const [pendingBarcode, setPendingBarcode] = useState<string | null>(null);
   const [highlightedItemId, setHighlightedItemId] = useState<string | null>(null);
@@ -612,16 +497,32 @@ export default function StopDetailScreen() {
                     {allOrderItems.length + addedItems.length !== 1 ? "s" : ""}
                   </Text>
                 </View>
-                {stop.customer?.phone ? (
-                  <Pressable
-                    style={styles.callBtn}
-                    onPress={() => callPhone(stop.customer!.phone!)}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Call ${stop.customer?.businessName}`}
-                  >
-                    <Ionicons name="call" size={20} color="#fff" />
-                  </Pressable>
-                ) : null}
+                <View style={styles.headerActions}>
+                  {stop.customer?.id ? (
+                    <Pressable
+                      style={styles.profileBtn}
+                      onPress={() =>
+                        router.push(
+                          `/(driver)/route/customer/${stop.customer!.id}` as any,
+                        )
+                      }
+                      accessibilityRole="button"
+                      accessibilityLabel="View customer profile"
+                    >
+                      <Ionicons name="person-outline" size={18} color={colors.brand[500]} />
+                    </Pressable>
+                  ) : null}
+                  {stop.customer?.phone ? (
+                    <Pressable
+                      style={styles.callBtn}
+                      onPress={() => callPhone(stop.customer!.phone!)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Call ${stop.customer?.businessName}`}
+                    >
+                      <Ionicons name="call" size={20} color="#fff" />
+                    </Pressable>
+                  ) : null}
+                </View>
               </View>
               {stop.customer?.deliveryWindowStart && (
                 <Text style={styles.windowText}>
@@ -680,9 +581,9 @@ export default function StopDetailScreen() {
               </Pressable>
             )}
 
-            {/* Items section */}
+            {/* Items grouped by order */}
             <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>Order Items</Text>
+              <Text style={styles.sectionTitle}>Orders at This Stop</Text>
               <Pressable
                 onPress={() => setShowScanner(true)}
                 style={styles.scanBtn}
@@ -693,51 +594,118 @@ export default function StopDetailScreen() {
               </Pressable>
             </View>
 
-            {allOrderItems.length === 0 && addedItems.length === 0 ? (
+            {(stop.orders ?? []).length === 0 && addedItems.length === 0 ? (
               <View style={styles.noItemsBox}>
-                <Text style={styles.noItemsText}>No items in this order.</Text>
+                <Text style={styles.noItemsText}>No orders at this stop.</Text>
               </View>
             ) : (
               <View style={styles.itemsList}>
-                {allOrderItems.map((item) => (
-                  <ItemRow
-                    key={item.id}
-                    item={item}
-                    stopId={stopId}
-                    highlighted={highlightedItemId === item.id}
-                  />
+                {(stop.orders ?? []).map((order) => (
+                  <View key={order.id} style={styles.orderGroup}>
+                    {/* Order header */}
+                    <View style={styles.orderGroupHeader}>
+                      <View style={styles.orderGroupLeft}>
+                        <Text style={styles.orderGroupNum}>{order.orderNumber}</Text>
+                        <View style={[
+                          styles.orderStatusBadge,
+                          order.status === "PENDING" && { backgroundColor: "#fef3c7" },
+                          order.status === "CONFIRMED" && { backgroundColor: colors.brand[50] },
+                          order.status === "OUT_FOR_DELIVERY" && { backgroundColor: colors.brand[50] },
+                          order.status === "DELIVERED" && { backgroundColor: colors.success.bg },
+                        ]}>
+                          <Text style={[
+                            styles.orderStatusText,
+                            order.status === "PENDING" && { color: colors.warning.DEFAULT },
+                            order.status === "CONFIRMED" && { color: colors.brand[500] },
+                            order.status === "OUT_FOR_DELIVERY" && { color: colors.brand[500] },
+                            order.status === "DELIVERED" && { color: colors.success.DEFAULT },
+                          ]}>
+                            {order.status.replace(/_/g, " ")}
+                          </Text>
+                        </View>
+                        <Text style={styles.orderItemCount}>
+                          {(order.lineItems ?? []).length} item{(order.lineItems ?? []).length !== 1 ? "s" : ""}
+                        </Text>
+                      </View>
+                      {order.status === "PENDING" && (
+                        <View style={styles.orderActions}>
+                          <Pressable
+                            style={styles.editOrderBtn}
+                            onPress={() => router.push(`/(driver)/orders/${order.id}` as any)}
+                            accessibilityRole="button"
+                            accessibilityLabel="Edit order"
+                          >
+                            <Ionicons name="create-outline" size={16} color={colors.navy.DEFAULT} />
+                            <Text style={styles.editOrderBtnText}>Edit</Text>
+                          </Pressable>
+                          <Pressable
+                            style={[styles.confirmOrderBtn, isConfirming && { opacity: 0.6 }]}
+                            disabled={isConfirming}
+                            onPress={() => confirmOrder(order.id, {
+                              onError: (err: any) => Alert.alert("Error", err?.response?.data?.message ?? "Failed to confirm."),
+                            })}
+                            accessibilityRole="button"
+                          >
+                            <Ionicons name="checkmark-circle-outline" size={16} color={colors.success.DEFAULT} />
+                            <Text style={styles.confirmOrderBtnText}>Confirm</Text>
+                          </Pressable>
+                        </View>
+                      )}
+                    </View>
+                    {/* Items within this order */}
+                    <View style={styles.orderItemsContainer}>
+                      {(order.lineItems ?? []).map((item) => (
+                        <ItemRow
+                          key={item.id}
+                          item={item}
+                          stopId={stopId}
+                          highlighted={highlightedItemId === item.id}
+                        />
+                      ))}
+                    </View>
+                  </View>
                 ))}
 
-                {/* Added items */}
-                {addedItems.map((item) => (
-                  <ItemRow
-                    key={item.id}
-                    item={{
-                      id: item.id,
-                      productId: item.productId,
-                      product: { id: item.productId, name: item.name, unit: "" },
-                      qty: item.qty,
-                      unitPrice: 0,
-                      status: "PENDING",
-                      isAdded: true,
-                    }}
-                    stopId={stopId}
-                  />
-                ))}
+                {/* Added items (not tied to an order) */}
+                {addedItems.length > 0 && (
+                  <View style={styles.orderGroup}>
+                    <View style={styles.orderGroupHeader}>
+                      <View style={styles.orderGroupLeft}>
+                        <Text style={styles.orderGroupNum}>Added Items</Text>
+                        <View style={[styles.orderStatusBadge, { backgroundColor: colors.brand[50] }]}>
+                          <Text style={[styles.orderStatusText, { color: colors.brand[500] }]}>ON SPOT</Text>
+                        </View>
+                      </View>
+                    </View>
+                    <View style={styles.orderItemsContainer}>
+                      {addedItems.map((item) => (
+                        <ItemRow
+                          key={item.id}
+                          item={{
+                            id: item.id,
+                            productId: item.productId,
+                            product: { id: item.productId, name: item.name, unit: "" },
+                            qty: item.qty,
+                            unitPrice: 0,
+                            status: "PENDING",
+                            isAdded: true,
+                          }}
+                          stopId={stopId}
+                        />
+                      ))}
+                    </View>
+                  </View>
+                )}
 
                 {/* Add item button or form */}
-                {showAddForm ? (
-                  <AddItemForm stopId={stopId} onDone={() => setShowAddForm(false)} />
-                ) : (
-                  <Pressable
-                    style={styles.addItemBtn}
-                    onPress={() => setShowAddForm(true)}
-                    accessibilityRole="button"
-                  >
-                    <Ionicons name="add-circle-outline" size={22} color={colors.brand[500]} />
-                    <Text style={styles.addItemText}>Add item not on order</Text>
-                  </Pressable>
-                )}
+                <Pressable
+                  style={styles.addItemBtn}
+                  onPress={() => setShowProductPicker(true)}
+                  accessibilityRole="button"
+                >
+                  <Ionicons name="add-circle-outline" size={22} color={colors.brand[500]} />
+                  <Text style={styles.addItemText}>Add item not on order</Text>
+                </Pressable>
               </View>
             )}
 
@@ -770,19 +738,63 @@ export default function StopDetailScreen() {
             />
           </ScrollView>
 
+          {/* Reopen Stop — for completed/skipped stops */}
+          {(stop.status === "COMPLETED" || stop.status === "SKIPPED") && runId && (
+            <View style={styles.footer}>
+              <Pressable
+                style={[styles.reopenBtn, isReopening && { opacity: 0.6 }]}
+                disabled={isReopening}
+                onPress={() =>
+                  reopenStop(
+                    { runId, stopId },
+                    {
+                      onSuccess: () => refetch(),
+                      onError: (err: any) =>
+                        Alert.alert("Error", err?.response?.data?.message ?? "Failed to reopen stop."),
+                    },
+                  )
+                }
+                accessibilityRole="button"
+                accessibilityLabel="Reopen stop for editing"
+              >
+                {isReopening
+                  ? <ActivityIndicator size="small" color={colors.brand[500]} />
+                  : <Ionicons name="refresh-outline" size={20} color={colors.brand[500]} />
+                }
+                <Text style={styles.reopenBtnText}>{isReopening ? "Reopening…" : "Reopen Stop"}</Text>
+              </Pressable>
+            </View>
+          )}
+
           {/* Complete Stop — primary action */}
+          {stop.status !== "COMPLETED" && stop.status !== "SKIPPED" && (
           <View style={styles.footer}>
-            <Pressable
-              style={styles.returnBtn}
-              onPress={() =>
-                router.push(`/(driver)/route/stop/${stopId}/return?runId=${runId}` as any)
-              }
-              accessibilityRole="button"
-              accessibilityLabel="Log Return"
-            >
-              <Ionicons name="return-down-back-outline" size={18} color={colors.danger.DEFAULT} />
-              <Text style={styles.returnBtnText}>Log Return</Text>
-            </Pressable>
+            <View style={styles.footerActions}>
+              <Pressable
+                style={styles.returnBtn}
+                onPress={() =>
+                  router.push(`/(driver)/route/stop/${stopId}/return?runId=${runId}` as any)
+                }
+                accessibilityRole="button"
+                accessibilityLabel="Log Return"
+              >
+                <Ionicons name="return-down-back-outline" size={18} color={colors.danger.DEFAULT} />
+                <Text style={styles.returnBtnText}>Log Return</Text>
+              </Pressable>
+              <Pressable
+                style={styles.addOrderBtn}
+                onPress={() =>
+                  router.push(
+                    `/(driver)/route/stop/${stopId}/new-order?runId=${runId}` as any,
+                  )
+                }
+                accessibilityRole="button"
+                accessibilityLabel="Add order for this stop"
+              >
+                <Ionicons name="add-circle-outline" size={18} color={colors.brand[500]} />
+                <Text style={styles.addOrderBtnText}>Add Order</Text>
+              </Pressable>
+            </View>
 
             {!allResolved && allOrderItems.length > 0 && (
               <Text style={styles.resolveHint}>
@@ -823,6 +835,7 @@ export default function StopDetailScreen() {
               </Text>
             </Pressable>
           </View>
+          )}
         </View>
       </KeyboardAvoidingView>
 
@@ -835,6 +848,16 @@ export default function StopDetailScreen() {
           onClose={() => setShowScanner(false)}
         />
       )}
+
+      <ProductPickerModal
+        visible={showProductPicker}
+        onClose={() => setShowProductPicker(false)}
+        title="Add Item to Stop"
+        onSelect={(product: PickedProduct, qty: number) => {
+          addStopItemStore(stopId, product.id, product.name, qty);
+          setShowProductPicker(false);
+        }}
+      />
     </>
   );
 }
@@ -992,6 +1015,14 @@ const styles = StyleSheet.create({
     color: "#94a3b8",
   },
   itemsList: { gap: 10 },
+  orderGroup: { gap: 8, marginBottom: 4 },
+  orderGroupHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 4 },
+  orderGroupLeft: { flexDirection: "row", alignItems: "center", gap: 8, flex: 1 },
+  orderGroupNum: { fontSize: 14, fontFamily: "Inter_700Bold", color: colors.navy.DEFAULT },
+  orderStatusBadge: { borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 },
+  orderStatusText: { fontSize: 11, fontFamily: "Inter_600SemiBold", color: "#64748b", textTransform: "uppercase" },
+  orderItemCount: { fontSize: 12, fontFamily: "Inter_400Regular", color: "#94a3b8" },
+  orderItemsContainer: { gap: 8 },
   addItemBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -1033,6 +1064,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   returnBtn: {
+    flex: 1,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
@@ -1047,6 +1079,22 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontFamily: "Inter_600SemiBold",
     color: colors.danger.DEFAULT,
+  },
+  reopenBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    height: 52,
+    borderRadius: borderRadius.lg,
+    borderWidth: 1.5,
+    borderColor: colors.brand[500],
+    backgroundColor: colors.brand[50] ?? "#eff6ff",
+  },
+  reopenBtnText: {
+    fontSize: 16,
+    fontFamily: "Inter_600SemiBold",
+    color: colors.brand[500],
   },
   resolveHint: {
     textAlign: "center",
@@ -1069,11 +1117,78 @@ const styles = StyleSheet.create({
     color: "#94a3b8",
   },
   completeBtnTextReady: { color: "#fff" },
+  headerActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  profileBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: colors.brand[50],
+    borderWidth: 1,
+    borderColor: colors.brand[200] ?? colors.brand[500] + "33",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  footerActions: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  addOrderBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    height: 44,
+    borderRadius: borderRadius.DEFAULT,
+    borderWidth: 1.5,
+    borderColor: colors.brand[500],
+    backgroundColor: colors.brand[50],
+  },
+  addOrderBtnText: {
+    fontSize: 15,
+    fontFamily: "Inter_600SemiBold",
+    color: colors.brand[500],
+  },
   notFound: { flex: 1, alignItems: "center", justifyContent: "center" },
   notFoundText: {
     fontSize: 16,
     fontFamily: "Inter_400Regular",
     color: "#94a3b8",
+  },
+  orderActions: { flexDirection: "row", alignItems: "center", gap: 6 },
+  editOrderBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    borderWidth: 1,
+    borderColor: colors.navy.DEFAULT,
+    borderRadius: borderRadius.DEFAULT,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: "#fff",
+  },
+  editOrderBtnText: {
+    fontSize: 13,
+    fontFamily: "Inter_700Bold",
+    color: colors.navy.DEFAULT,
+  },
+  confirmOrderBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    backgroundColor: colors.success.DEFAULT,
+    borderRadius: borderRadius.DEFAULT,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  confirmOrderBtnText: {
+    fontSize: 13,
+    fontFamily: "Inter_700Bold",
+    color: "#fff",
   },
   // 3-H: running-late banners
   bannerLate: {

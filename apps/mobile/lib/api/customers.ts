@@ -1,70 +1,50 @@
 import { useQuery } from '@tanstack/react-query';
 import { apiClient } from '../api-client';
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-export interface CustomerAddress {
+export interface CustomerSummary {
   id: string;
-  label?: string;
-  line1: string;
-  line2?: string;
-  city: string;
-  state: string;
-  zip: string;
-  isDefault: boolean;
+  businessName: string;
+  contactName?: string;
+  phone?: string;
+  email?: string;
+  status: string;
 }
 
-export interface CustomerProfile {
+export function useCustomers(search?: string) {
+  return useQuery<{ data: CustomerSummary[]; total: number }>({
+    queryKey: ['customers', 'list', search ?? ''],
+    queryFn: () =>
+      apiClient
+        .get('/customers', { params: { search: search || undefined, limit: 100 } })
+        .then((r) => r.data),
+    staleTime: 60_000,
+  });
+}
+
+export interface CustomerDetail {
   id: string;
   businessName: string;
   contactName: string;
   phone?: string;
-  notes?: string;
+  email?: string;
   deliveryWindowStart?: string;
   deliveryWindowEnd?: string;
-  addresses: CustomerAddress[];
-  user?: {
+  addresses: Array<{
     id: string;
-    email: string;
-    username: string;
-  };
+    line1: string;
+    line2?: string;
+    city: string;
+    state: string;
+    zip: string;
+    isDefault?: boolean;
+  }>;
 }
 
-// ─── Account Summary ──────────────────────────────────────────────────────────
-
-export type TransactionType = 'INVOICE' | 'PAYMENT' | 'CREDIT_NOTE' | 'ADJUSTMENT';
-
-export interface AccountTransaction {
-  id: string;
-  type: TransactionType;
-  date: string;
-  description: string;
-  amount: number;
-  /** Positive = charge, negative = credit */
-  runningBalance: number;
-}
-
-export interface AccountSummary {
-  outstandingAmount: number;
-  overdueAmount: number;
-  availableCredit: number;
-  transactions: AccountTransaction[];
-}
-
-// ─── Queries ──────────────────────────────────────────────────────────────────
-
-export function useMyCustomerProfile() {
-  return useQuery<CustomerProfile>({
-    queryKey: ['customers', 'me'],
-    queryFn: () => apiClient.get('/customers/me').then((r) => r.data),
-    staleTime: 5 * 60_000,
-  });
-}
-
-export function useMyAccountSummary() {
-  return useQuery<AccountSummary>({
-    queryKey: ['customers', 'me', 'statement'],
-    queryFn: () => apiClient.get('/customers/me/statement').then((r) => r.data),
-    staleTime: 60_000,
+export function useCustomer(id: string) {
+  return useQuery<CustomerDetail>({
+    queryKey: ['customers', id],
+    queryFn: () => apiClient.get(`/customers/${id}`).then((r) => r.data),
+    enabled: !!id,
+    staleTime: 2 * 60_000,
   });
 }

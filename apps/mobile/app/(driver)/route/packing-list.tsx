@@ -8,12 +8,13 @@ import {
 import { Stack, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, borderRadius, shadows } from "@routeflow/ui/tokens";
-import { usePackingList } from "../../../lib/api/routes";
+import { usePackingList, useRouteRun } from "../../../lib/api/routes";
 import { NetworkError } from "../../../components/NetworkError";
 
 export default function PackingListScreen() {
   const { runId } = useLocalSearchParams<{ runId: string }>();
   const { data: items, isLoading, isError, refetch } = usePackingList(runId ?? "");
+  const { data: run } = useRouteRun(runId ?? "");
 
   if (isLoading) {
     return (
@@ -36,6 +37,7 @@ export default function PackingListScreen() {
   }
 
   const list = items ?? [];
+  const isRunComplete = run?.status === "COMPLETED";
 
   return (
     <>
@@ -46,14 +48,24 @@ export default function PackingListScreen() {
         style={styles.list}
         contentContainerStyle={styles.content}
         ListHeaderComponent={
-          <Text style={styles.subtitle}>
-            {list.length} product{list.length !== 1 ? "s" : ""} to pack
-          </Text>
+          <>
+            {isRunComplete && (
+              <View style={styles.completeBanner}>
+                <Ionicons name="checkmark-done-circle" size={22} color="#065f46" />
+                <Text style={styles.completeBannerText}>All items delivered — run complete</Text>
+              </View>
+            )}
+            <Text style={styles.subtitle}>
+              {isRunComplete
+                ? `${list.length} product${list.length !== 1 ? "s" : ""} delivered`
+                : `${list.length} product${list.length !== 1 ? "s" : ""} to pack`}
+            </Text>
+          </>
         }
         ListEmptyComponent={
           <View style={styles.empty}>
             <Ionicons name="checkmark-done-circle-outline" size={48} color="#cbd5e1" />
-            <Text style={styles.emptyText}>No items in this run.</Text>
+            <Text style={styles.emptyText}>No items to pack for this run.</Text>
           </View>
         }
         renderItem={({ item }) => (
@@ -104,6 +116,21 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   centered: { flex: 1, alignItems: "center", justifyContent: "center" },
+  completeBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "#d1fae5",
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 10,
+  },
+  completeBannerText: {
+    fontSize: 14,
+    fontFamily: "Inter_600SemiBold",
+    color: "#065f46",
+    flex: 1,
+  },
   subtitle: {
     fontSize: 13,
     fontFamily: "Inter_500Medium",

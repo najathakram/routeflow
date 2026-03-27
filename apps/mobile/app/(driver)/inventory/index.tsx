@@ -18,19 +18,22 @@ import { NetworkError } from "../../../components/NetworkError";
 import { useProductByBarcode } from "../../../lib/api/products";
 import { BarcodeScanner } from "../../../components/BarcodeScanner";
 
-function StockCard({ item }: { item: StockItem }) {
+function StockCard({
+  item,
+  onPress,
+}: {
+  item: StockItem;
+  onPress: (item: StockItem) => void;
+}) {
   const isLow =
     item.reorderPoint != null && item.currentStock <= item.reorderPoint;
 
   return (
     <Pressable
       style={styles.card}
-      onPress={() =>
-        router.push(
-          `/(driver)/inventory/adjust?productId=${item.productId}&productName=${encodeURIComponent(item.productName)}&unit=${encodeURIComponent(item.unit)}&currentStock=${item.currentStock}` as any,
-        )
-      }
+      onPress={() => onPress(item)}
       accessibilityRole="button"
+      accessibilityLabel={`${item.productName}, ${item.currentStock} in stock — tap for options`}
     >
       <View style={styles.cardLeft}>
         <Text style={styles.productName} numberOfLines={1}>
@@ -64,7 +67,7 @@ function StockCard({ item }: { item: StockItem }) {
             />
           )}
         </View>
-        <Ionicons name="chevron-forward" size={16} color="#cbd5e1" />
+        <Ionicons name="ellipsis-horizontal" size={18} color="#94a3b8" />
       </View>
     </Pressable>
   );
@@ -75,6 +78,7 @@ export default function InventoryScreen() {
   const [search, setSearch] = useState("");
   const [showScanner, setShowScanner] = useState(false);
   const [scannedBarcode, setScannedBarcode] = useState<string | null>(null);
+  const [actionItem, setActionItem] = useState<StockItem | null>(null);
 
   const { data: barcodeProduct, isError: barcodeError } = useProductByBarcode(scannedBarcode);
 
@@ -173,7 +177,9 @@ export default function InventoryScreen() {
               </Text>
             </View>
           }
-          renderItem={({ item }) => <StockCard item={item} />}
+          renderItem={({ item }) => (
+            <StockCard item={item} onPress={(i) => setActionItem(i)} />
+          )}
         />
 
         {/* Quick purchase FAB */}
@@ -186,6 +192,82 @@ export default function InventoryScreen() {
           <Ionicons name="add" size={28} color="#fff" />
         </Pressable>
       </View>
+
+      {/* Stock item action sheet */}
+      <Modal
+        visible={!!actionItem}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setActionItem(null)}
+      >
+        <Pressable
+          style={styles.actionOverlay}
+          onPress={() => setActionItem(null)}
+        >
+          <View style={styles.actionSheet}>
+            <View style={styles.actionSheetHandle} />
+            <Text style={styles.actionSheetTitle} numberOfLines={1}>
+              {actionItem?.productName}
+            </Text>
+            <Text style={styles.actionSheetStock}>
+              Current stock: {actionItem?.currentStock} {actionItem?.unit}
+            </Text>
+
+            <Pressable
+              style={styles.actionSheetBtn}
+              onPress={() => {
+                const i = actionItem;
+                setActionItem(null);
+                if (i) {
+                  router.push(
+                    `/(driver)/inventory/adjust?productId=${i.productId}&productName=${encodeURIComponent(i.productName)}&unit=${encodeURIComponent(i.unit)}&currentStock=${i.currentStock}` as any,
+                  );
+                }
+              }}
+            >
+              <View style={[styles.actionSheetIconWrap, { backgroundColor: colors.brand[50] }]}>
+                <Ionicons name="clipboard-outline" size={22} color={colors.brand[500]} />
+              </View>
+              <View style={styles.actionSheetBtnText}>
+                <Text style={styles.actionSheetBtnLabel}>Adjust Stock</Text>
+                <Text style={styles.actionSheetBtnSub}>Correct count, add or remove stock</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color="#cbd5e1" />
+            </Pressable>
+
+            <View style={styles.actionSheetDivider} />
+
+            <Pressable
+              style={styles.actionSheetBtn}
+              onPress={() => {
+                const i = actionItem;
+                setActionItem(null);
+                if (i) {
+                  router.push(
+                    `/(driver)/inventory/purchase?productId=${i.productId}&productName=${encodeURIComponent(i.productName)}` as any,
+                  );
+                }
+              }}
+            >
+              <View style={[styles.actionSheetIconWrap, { backgroundColor: "#f0fdf4" }]}>
+                <Ionicons name="bag-add-outline" size={22} color={colors.success.DEFAULT} />
+              </View>
+              <View style={styles.actionSheetBtnText}>
+                <Text style={styles.actionSheetBtnLabel}>Record Purchase</Text>
+                <Text style={styles.actionSheetBtnSub}>Log a delivery or stock receipt</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color="#cbd5e1" />
+            </Pressable>
+
+            <Pressable
+              style={[styles.actionSheetBtn, { marginTop: 8, justifyContent: "center" }]}
+              onPress={() => setActionItem(null)}
+            >
+              <Text style={styles.actionSheetCancelText}>Cancel</Text>
+            </Pressable>
+          </View>
+        </Pressable>
+      </Modal>
 
       {/* Barcode scanner modal */}
       <Modal visible={showScanner} animationType="slide" onRequestClose={() => setShowScanner(false)}>
@@ -304,5 +386,77 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.2,
     shadowRadius: 8,
     elevation: 8,
+  },
+  actionOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.4)",
+    justifyContent: "flex-end",
+  },
+  actionSheet: {
+    backgroundColor: "#fff",
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    paddingBottom: 36,
+    gap: 4,
+  },
+  actionSheetHandle: {
+    width: 36,
+    height: 4,
+    backgroundColor: colors.surface.border,
+    borderRadius: 2,
+    alignSelf: "center",
+    marginBottom: 12,
+  },
+  actionSheetTitle: {
+    fontSize: 17,
+    fontFamily: "Inter_700Bold",
+    color: colors.navy.DEFAULT,
+    marginBottom: 2,
+  },
+  actionSheetStock: {
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    color: "#64748b",
+    marginBottom: 12,
+  },
+  actionSheetBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 4,
+  },
+  actionSheetIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  actionSheetBtnText: {
+    flex: 1,
+    gap: 2,
+  },
+  actionSheetBtnLabel: {
+    fontSize: 15,
+    fontFamily: "Inter_600SemiBold",
+    color: colors.navy.DEFAULT,
+  },
+  actionSheetBtnSub: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    color: "#64748b",
+  },
+  actionSheetDivider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: colors.surface.border,
+    marginHorizontal: 4,
+  },
+  actionSheetCancelText: {
+    fontSize: 16,
+    fontFamily: "Inter_600SemiBold",
+    color: "#64748b",
+    textAlign: "center",
   },
 });

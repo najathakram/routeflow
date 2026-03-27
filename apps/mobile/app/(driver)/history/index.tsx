@@ -27,7 +27,7 @@ function RunCard({ run }: { run: RouteRun & { _count?: { stops: number } } }) {
   return (
     <Pressable
       style={styles.card}
-      onPress={() => router.push(`/(driver)/route?runId=${run.id}` as any)}
+      onPress={() => router.push(`/(driver)/history/${run.id}` as any)}
       accessibilityRole="button"
       accessibilityLabel={`Route run on ${scheduledDate}`}
     >

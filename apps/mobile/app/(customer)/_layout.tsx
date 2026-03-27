@@ -1,25 +1,8 @@
 import { Tabs, router } from "expo-router";
-import { Pressable, Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { colors } from "@routeflow/ui/tokens";
 import { useEffect } from "react";
 import * as Notifications from "expo-notifications";
-
-function ProfileButton() {
-  return (
-    <Pressable
-      onPress={() => router.push("/(customer)/profile")}
-      hitSlop={10}
-      style={{ paddingRight: 8 }}
-      accessibilityLabel="Profile"
-      accessibilityRole="button"
-    >
-      <Ionicons name="person-circle-outline" size={28} color={colors.navy.DEFAULT} />
-    </Pressable>
-  );
-}
-
-const headerRight = () => <ProfileButton />;
 
 // Set handler so notifications show as banners when app is in foreground
 Notifications.setNotificationHandler({
@@ -60,7 +43,6 @@ export default function CustomerLayout() {
           fontSize: 17,
           color: colors.navy.DEFAULT,
         },
-        headerRight,
       }}
     >
       <Tabs.Screen
@@ -99,8 +81,16 @@ export default function CustomerLayout() {
           ),
         }}
       />
+      <Tabs.Screen
+        name="profile"
+        options={{
+          title: "Account",
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="person-circle-outline" size={size} color={color} />
+          ),
+        }}
+      />
       {/* Hidden screens — accessible via router.push but not shown in tab bar */}
-      <Tabs.Screen name="profile" options={{ href: null, title: "Profile" }} />
       <Tabs.Screen name="change-password" options={{ href: null, title: "Change Password" }} />
       <Tabs.Screen name="standing-orders" options={{ href: null, title: "Standing Orders" }} />
       <Tabs.Screen name="returns" options={{ href: null, title: "Returns" }} />

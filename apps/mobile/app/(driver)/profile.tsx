@@ -93,11 +93,6 @@ export default function DriverProfileScreen() {
         <View style={styles.section}>
           <Text style={styles.sectionInnerTitle}>Settings</Text>
           <ActionRow
-            icon="time-outline"
-            label="Delivery History"
-            onPress={() => router.push("/(driver)/history")}
-          />
-          <ActionRow
             icon="lock-closed-outline"
             label="Change Password"
             onPress={() => router.push("/(driver)/change-password")}

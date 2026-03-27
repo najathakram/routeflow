@@ -27,7 +27,7 @@ export class OrdersController {
 
   @Post()
   @UseGuards(RolesGuard)
-  @Roles(UserRole.OPERATOR, UserRole.CUSTOMER)
+  @Roles(UserRole.OPERATOR, UserRole.CUSTOMER, UserRole.DRIVER)
   create(@Body() dto: CreateOrderDto, @CurrentUser() user: JwtPayload) {
     return this.ordersService.create(dto, user);
   }
@@ -44,7 +44,7 @@ export class OrdersController {
 
   @Patch(":id/status")
   @UseGuards(RolesGuard)
-  @Roles(UserRole.OPERATOR, UserRole.CUSTOMER)
+  @Roles(UserRole.OPERATOR, UserRole.CUSTOMER, UserRole.DRIVER)
   changeStatus(
     @Param("id") id: string,
     @Body() dto: ChangeOrderStatusDto,
@@ -55,7 +55,7 @@ export class OrdersController {
 
   @Patch(":id/items")
   @UseGuards(RolesGuard)
-  @Roles(UserRole.OPERATOR, UserRole.CUSTOMER)
+  @Roles(UserRole.OPERATOR, UserRole.CUSTOMER, UserRole.DRIVER)
   updateOrderItems(
     @Param("id") id: string,
     @Body() dto: UpdateOrderItemsDto,

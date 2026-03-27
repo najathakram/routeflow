@@ -25,4 +25,7 @@ export class CreateOrderDto {
   @IsOptional() @IsString() notes?: string;
   @IsOptional() @IsBoolean() urgent?: boolean;
   @IsOptional() @IsDateString() requestedDeliveryDate?: string;
+  @IsOptional() @IsString() routeRunId?: string;
+  @IsOptional() @IsString() routeRunStopId?: string;
+  @IsOptional() @IsBoolean() immediateDelivery?: boolean;
 }

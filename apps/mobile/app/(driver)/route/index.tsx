@@ -1,8 +1,10 @@
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View, ActivityIndicator } from "react-native";
+import { useState } from "react";
+import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View, ActivityIndicator, KeyboardAvoidingView, Platform } from "react-native";
 import { router, Stack } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { EmptyState, StatusBadge } from "@routeflow/ui/mobile";
+import { StatusBadge } from "@routeflow/ui/mobile";
 import { colors, borderRadius, shadows } from "@routeflow/ui/tokens";
+import { format } from "date-fns";
 import {
   useActiveRouteRun,
   useScheduledRouteRuns,
@@ -10,9 +12,11 @@ import {
   useUpdateRunStatus,
   type RouteRunStop,
 } from "../../../lib/api/routes";
+import { useConfirmOrder } from "../../../lib/api/orders";
 import { useRouteStore } from "../../../store/routeStore";
 import { useMileageStore } from "../../../store/mileageStore";
 import { NetworkError } from "../../../components/NetworkError";
+
 
 const STATUS_ICON: Record<string, { name: string; color: string }> = {
   COMPLETED: { name: "checkmark-circle", color: colors.success.DEFAULT },
@@ -47,6 +51,7 @@ const progressStyles = StyleSheet.create({
 function StopRow({ stop, runId }: { stop: RouteRunStop; runId: string }) {
   const icon = STATUS_ICON[stop.status] ?? STATUS_ICON.PENDING;
   const isActive = stop.status === "IN_PROGRESS";
+  const isDone = stop.status === "COMPLETED" || stop.status === "SKIPPED";
 
   const businessName = stop.customer?.businessName ?? stop.customerId;
   const address = stop.customerAddress
@@ -59,10 +64,14 @@ function StopRow({ stop, runId }: { stop: RouteRunStop; runId: string }) {
     0,
   );
 
+  const handlePress = () => {
+    router.push(`/(driver)/route/stop/${stop.id}?runId=${runId}`);
+  };
+
   return (
     <Pressable
       style={[styles.stopRow, isActive && styles.stopRowActive]}
-      onPress={() => router.push(`/(driver)/route/stop/${stop.id}?runId=${runId}`)}
+      onPress={handlePress}
       accessibilityRole="button"
       accessibilityLabel={`Stop ${stop.stopNumber}: ${businessName}`}
     >
@@ -100,12 +109,21 @@ export default function RouteScreen() {
   const setActiveRunId = useRouteStore((s) => s.setActiveRunId);
   const { logMileage, updateEnd, getEntry, getMiles } = useMileageStore();
 
+  // Mileage modal state
+  const [mileageModalVisible, setMileageModalVisible] = useState(false);
+  const [mileageMode, setMileageMode] = useState<"start" | "end">("start");
+  const [startOdoInput, setStartOdoInput] = useState("");
+  const [endOdoInput, setEndOdoInput] = useState("");
+
   // Prefer in-progress run; fall back to first scheduled run
   const runRef = data?.data?.[0] ?? scheduledData?.data?.[0] ?? null;
   const activeRunId = runRef?.id ?? null;
 
   const { data: fullRun, isLoading: isLoadingRun } = useRouteRun(activeRunId ?? "");
   const { mutate: updateStatus, isPending: isUpdating } = useUpdateRunStatus();
+
+  // Pending confirmation from active run stops — used in the active run widget
+  const { mutate: confirmOrder, isPending: isConfirming } = useConfirmOrder();
 
   if (isLoading || (activeRunId && isLoadingRun)) {
     return (
@@ -129,15 +147,43 @@ export default function RouteScreen() {
 
   const run = fullRun ?? runRef;
 
+  // todayLabel must be computed before early returns
+  const todayLabel = format(new Date(), "EEEE, MMM d");
+
   if (!run) {
     return (
       <>
-        <Stack.Screen options={{ title: "My Route" }} />
-        <EmptyState
-          icon={<Ionicons name="map-outline" size={56} color="#cbd5e1" />}
-          title="No route assigned today."
-          subtitle="Check back later or contact your dispatcher."
+        <Stack.Screen
+          options={{
+            title: "My Route",
+            headerRight: () => (
+              <Pressable
+                onPress={() => router.push("/(driver)/route/new-run" as any)}
+                style={{ padding: 4, paddingRight: 8 }}
+                accessibilityLabel="Schedule a run"
+              >
+                <Ionicons name="add-circle-outline" size={26} color={colors.brand[500]} />
+              </Pressable>
+            ),
+          }}
         />
+        <View style={{ flex: 1, backgroundColor: colors.surface.raised, alignItems: "center", justifyContent: "center", padding: 32 }}>
+          <Ionicons name="map-outline" size={56} color="#cbd5e1" />
+          <Text style={{ fontSize: 20, fontFamily: "Inter_700Bold", color: colors.navy.DEFAULT, marginTop: 16, textAlign: "center" }}>
+            No Active Route
+          </Text>
+          <Text style={{ fontSize: 15, fontFamily: "Inter_400Regular", color: "#64748b", marginTop: 8, textAlign: "center", lineHeight: 22 }}>
+            You have no route running today. Schedule a run or manage your day from the Home tab.
+          </Text>
+          <Pressable
+            style={{ marginTop: 24, backgroundColor: colors.brand[500], borderRadius: 12, paddingHorizontal: 28, paddingVertical: 14, flexDirection: "row", alignItems: "center", gap: 8 }}
+            onPress={() => router.push("/(driver)/route/new-run" as any)}
+            accessibilityRole="button"
+          >
+            <Ionicons name="calendar-outline" size={18} color="#fff" />
+            <Text style={{ fontSize: 16, fontFamily: "Inter_700Bold", color: "#fff" }}>Schedule a Run</Text>
+          </Pressable>
+        </View>
       </>
     );
   }
@@ -154,6 +200,16 @@ export default function RouteScreen() {
   const allDone = run.status === "COMPLETED";
   const hasStarted = run.status === "IN_PROGRESS" || completedCount > 0 || currentStop !== null;
 
+  // Dashboard stats
+  const pendingOrderCount = stops.reduce(
+    (n, s) => n + (s.orders ?? []).filter((o: any) => o.status === "PENDING").length,
+    0,
+  );
+  const totalItemCount = stops.reduce(
+    (n, s) => n + (s.orders ?? []).reduce((sum: number, o: any) => sum + (o.lineItems?.length ?? 0), 0),
+    0,
+  );
+
   const primaryLabel = allDone
     ? "Route Complete"
     : !hasStarted
@@ -167,72 +223,37 @@ export default function RouteScreen() {
   const handleLogMileage = () => {
     if (!run) return;
     const existingEntry = getEntry(run.id);
-
     if (existingEntry && existingEntry.endOdometer == null) {
-      // End odometer not yet set — prompt for it
-      Alert.prompt(
-        "End Odometer",
-        "Enter your current odometer reading (end of route):",
-        [
-          { text: "Cancel", style: "cancel" },
-          {
-            text: "Save",
-            onPress: (value: string | undefined) => {
-              const end = parseFloat(value ?? "");
-              if (isNaN(end)) {
-                Alert.alert("Invalid", "Please enter a valid number.");
-                return;
-              }
-              updateEnd(run.id, end);
-            },
-          },
-        ],
-        "plain-text",
-        String(existingEntry.startOdometer),
-        "numeric",
-      );
-      return;
+      setMileageMode("end");
+      setStartOdoInput(String(existingEntry.startOdometer));
+      setEndOdoInput("");
+    } else {
+      setMileageMode("start");
+      setStartOdoInput("");
+      setEndOdoInput("");
     }
+    setMileageModalVisible(true);
+  };
 
-    // Start odometer prompt
-    Alert.prompt(
-      "Log Mileage",
-      "Enter your starting odometer reading:",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Next",
-          onPress: (startValue: string | undefined) => {
-            const start = parseFloat(startValue ?? "");
-            if (isNaN(start)) {
-              Alert.alert("Invalid", "Please enter a valid number.");
-              return;
-            }
-            // Immediately ask for end odometer too
-            Alert.prompt(
-              "Log Mileage",
-              "Enter your ending odometer reading (leave blank if still driving):",
-              [
-                { text: "Cancel", style: "cancel" },
-                {
-                  text: "Save",
-                  onPress: (endValue: string | undefined) => {
-                    const end = endValue ? parseFloat(endValue) : null;
-                    logMileage(run.id, start, isNaN(end as number) ? null : end);
-                  },
-                },
-              ],
-              "plain-text",
-              "",
-              "numeric",
-            );
-          },
-        },
-      ],
-      "plain-text",
-      "",
-      "numeric",
-    );
+  const handleMileageSave = () => {
+    if (!run) return;
+    if (mileageMode === "end") {
+      const end = parseFloat(endOdoInput);
+      if (isNaN(end)) {
+        Alert.alert("Invalid", "Please enter a valid number for the end odometer.");
+        return;
+      }
+      updateEnd(run.id, end);
+    } else {
+      const start = parseFloat(startOdoInput);
+      if (isNaN(start)) {
+        Alert.alert("Invalid", "Please enter a valid number for the start odometer.");
+        return;
+      }
+      const end = endOdoInput.trim() ? parseFloat(endOdoInput) : null;
+      logMileage(run.id, start, end != null && !isNaN(end) ? end : null);
+    }
+    setMileageModalVisible(false);
   };
 
   const handlePrimaryAction = () => {
@@ -251,37 +272,125 @@ export default function RouteScreen() {
       <Stack.Screen
         options={{
           title: "My Route",
-          headerRight: () =>
-            run && (
-              <View style={{ flexDirection: "row", gap: 4, paddingRight: 4 }}>
-                <Pressable
-                  onPress={() => router.push(`/(driver)/route/map?runId=${run.id}` as any)}
-                  style={{ padding: 4 }}
-                  accessibilityLabel="Map view"
-                >
-                  <Ionicons name="map-outline" size={22} color={colors.brand[500]} />
-                </Pressable>
-                <Pressable
-                  onPress={() => router.push(`/(driver)/route/messages?runId=${run.id}` as any)}
-                  style={{ padding: 4 }}
-                  accessibilityLabel="Messages"
-                >
-                  <Ionicons name="chatbubble-outline" size={22} color={colors.brand[500]} />
-                </Pressable>
-                <Pressable
-                  onPress={() => router.push(`/(driver)/route/packing-list?runId=${run.id}`)}
-                  style={{ padding: 4 }}
-                  accessibilityLabel="Packing list"
-                >
-                  <Ionicons name="list-outline" size={24} color={colors.brand[500]} />
-                </Pressable>
-              </View>
-            ),
+          headerRight: () => (
+            <View style={{ flexDirection: "row", gap: 4, paddingRight: 4 }}>
+              {run && (
+                <>
+                  <Pressable
+                    onPress={() => router.push(`/(driver)/route/map?runId=${run.id}` as any)}
+                    style={{ padding: 4 }}
+                    accessibilityLabel="Map view"
+                  >
+                    <Ionicons name="map-outline" size={22} color={colors.brand[500]} />
+                  </Pressable>
+                  <Pressable
+                    onPress={() => router.push(`/(driver)/route/messages?runId=${run.id}` as any)}
+                    style={{ padding: 4 }}
+                    accessibilityLabel="Messages"
+                  >
+                    <Ionicons name="chatbubble-outline" size={22} color={colors.brand[500]} />
+                  </Pressable>
+                  <Pressable
+                    onPress={() => router.push(`/(driver)/route/packing-list?runId=${run.id}`)}
+                    style={{ padding: 4 }}
+                    accessibilityLabel="Packing list"
+                  >
+                    <Ionicons name="list-outline" size={24} color={colors.brand[500]} />
+                  </Pressable>
+                </>
+              )}
+              <Pressable
+                onPress={() => router.push("/(driver)/route/new-run" as any)}
+                style={{ padding: 4 }}
+                accessibilityLabel="Schedule a run"
+              >
+                <Ionicons name="add-circle-outline" size={26} color={colors.brand[500]} />
+              </Pressable>
+            </View>
+          ),
         }}
       />
+      {/* ─── Mileage Modal ─────────────────────────────────────────────── */}
+      <Modal
+        visible={mileageModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setMileageModalVisible(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          style={mileageStyles.overlay}
+        >
+          <View style={mileageStyles.sheet}>
+            <Text style={mileageStyles.title}>
+              {mileageMode === "end" ? "Update Mileage" : "Log Mileage"}
+            </Text>
+
+            {mileageMode === "start" && (
+              <View style={mileageStyles.field}>
+                <Text style={mileageStyles.fieldLabel}>Start Odometer (mi)</Text>
+                <TextInput
+                  style={mileageStyles.input}
+                  value={startOdoInput}
+                  onChangeText={setStartOdoInput}
+                  keyboardType="numeric"
+                  placeholder="e.g. 45200"
+                  placeholderTextColor="#94a3b8"
+                  autoFocus
+                  returnKeyType="next"
+                />
+              </View>
+            )}
+
+            {mileageMode === "end" && (
+              <View style={mileageStyles.field}>
+                <Text style={mileageStyles.fieldLabel}>Start Odometer (mi)</Text>
+                <TextInput
+                  style={[mileageStyles.input, mileageStyles.inputDisabled]}
+                  value={startOdoInput}
+                  editable={false}
+                  keyboardType="numeric"
+                  placeholderTextColor="#94a3b8"
+                />
+              </View>
+            )}
+
+            <View style={mileageStyles.field}>
+              <Text style={mileageStyles.fieldLabel}>
+                End Odometer (mi){mileageMode === "start" ? " — optional if still driving" : ""}
+              </Text>
+              <TextInput
+                style={mileageStyles.input}
+                value={endOdoInput}
+                onChangeText={setEndOdoInput}
+                keyboardType="numeric"
+                placeholder="e.g. 45348"
+                placeholderTextColor="#94a3b8"
+                autoFocus={mileageMode === "end"}
+                returnKeyType="done"
+                onSubmitEditing={handleMileageSave}
+              />
+            </View>
+
+            <View style={mileageStyles.actions}>
+              <Pressable
+                style={mileageStyles.cancelBtn}
+                onPress={() => setMileageModalVisible(false)}
+              >
+                <Text style={mileageStyles.cancelBtnText}>Cancel</Text>
+              </Pressable>
+              <Pressable style={mileageStyles.saveBtn} onPress={handleMileageSave}>
+                <Text style={mileageStyles.saveBtnText}>Save</Text>
+              </Pressable>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
       <View style={styles.container}>
         {/* Route header card */}
         <View style={styles.headerCard}>
+          <Text style={styles.todayLabel}>{todayLabel}</Text>
           <View style={styles.headerTop}>
             <Text style={styles.routeName}>{run.route?.name ?? "My Route"}</Text>
             <StatusBadge
@@ -293,6 +402,26 @@ export default function RouteScreen() {
                     : "PENDING"
               }
             />
+          </View>
+
+          {/* Stats row */}
+          <View style={styles.statsRow}>
+            <View style={styles.statPill}>
+              <Ionicons name="location-outline" size={14} color={colors.brand[500]} />
+              <Text style={styles.statText}>{totalStops} stops</Text>
+            </View>
+            <View style={styles.statPill}>
+              <Ionicons name="cube-outline" size={14} color="#64748b" />
+              <Text style={styles.statText}>{totalItemCount} items</Text>
+            </View>
+            {pendingOrderCount > 0 && (
+              <View style={[styles.statPill, styles.statPillWarning]}>
+                <Ionicons name="alert-circle-outline" size={14} color={colors.warning.DEFAULT} />
+                <Text style={[styles.statText, { color: colors.warning.DEFAULT }]}>
+                  {pendingOrderCount} to confirm
+                </Text>
+              </View>
+            )}
           </View>
 
           <View style={styles.progressSection}>
@@ -312,6 +441,92 @@ export default function RouteScreen() {
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
         >
+          {/* Before You Leave — shown for scheduled (not yet started) runs */}
+          {!hasStarted && !allDone && (
+            <View style={{ backgroundColor: colors.brand[50], borderRadius: 12, padding: 16, borderWidth: 1, borderColor: colors.brand[100] ?? colors.brand[500] + "33", gap: 12, marginBottom: 4 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <Ionicons name="clipboard-outline" size={18} color={colors.brand[500]} />
+                <Text style={{ fontSize: 14, fontFamily: "Inter_700Bold", color: colors.brand[500] }}>Before You Leave</Text>
+              </View>
+              <View style={{ flexDirection: "row", gap: 10 }}>
+                <Pressable
+                  style={{ flex: 1, backgroundColor: "#fff", borderRadius: 10, padding: 14, alignItems: "center", gap: 6, borderWidth: 1, borderColor: colors.brand[100] ?? "#dbeafe" }}
+                  onPress={() => router.push(`/(driver)/route/packing-list?runId=${run.id}` as any)}
+                  accessibilityRole="button"
+                  accessibilityLabel="View packing list"
+                >
+                  <Ionicons name="list-outline" size={24} color={colors.brand[500]} />
+                  <Text style={{ fontSize: 13, fontFamily: "Inter_600SemiBold", color: colors.navy.DEFAULT, textAlign: "center" }}>Packing List</Text>
+                  <Text style={{ fontSize: 11, fontFamily: "Inter_400Regular", color: "#64748b", textAlign: "center" }}>{totalItemCount} items</Text>
+                </Pressable>
+                <Pressable
+                  style={{ flex: 1, backgroundColor: "#fff", borderRadius: 10, padding: 14, alignItems: "center", gap: 6, borderWidth: 1, borderColor: colors.brand[100] ?? "#dbeafe" }}
+                  onPress={() => router.push(`/(driver)/route/map?runId=${run.id}` as any)}
+                  accessibilityRole="button"
+                  accessibilityLabel="View route map"
+                >
+                  <Ionicons name="map-outline" size={24} color={colors.brand[500]} />
+                  <Text style={{ fontSize: 13, fontFamily: "Inter_600SemiBold", color: colors.navy.DEFAULT, textAlign: "center" }}>Route Map</Text>
+                  <Text style={{ fontSize: 11, fontFamily: "Inter_400Regular", color: "#64748b", textAlign: "center" }}>{totalStops} stops</Text>
+                </Pressable>
+              </View>
+            </View>
+          )}
+
+          {/* Pending confirmation widget — derived from run stops, zero extra API calls */}
+          {(() => {
+            const pendingRunOrders = (run?.stops ?? [])
+              .filter((s: any) => s.status !== "COMPLETED" && s.status !== "SKIPPED")
+              .flatMap((s: any) =>
+                (s.orders ?? [])
+                  .filter((o: any) => o.status === "PENDING")
+                  .map((o: any) => ({ ...o, customerName: s.customer?.businessName ?? "Customer" }))
+              );
+            if (pendingRunOrders.length === 0) return null;
+            return (
+              <View style={dashStyles.runPendingCard}>
+                <View style={dashStyles.sectionLabelRow}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                    <Ionicons name="alert-circle-outline" size={15} color={colors.warning.DEFAULT} />
+                    <Text style={[dashStyles.runPendingTitle]}>Pending Confirmation</Text>
+                  </View>
+                  <View style={dashStyles.pendingBadge}>
+                    <Text style={dashStyles.pendingBadgeText}>{pendingRunOrders.length}</Text>
+                  </View>
+                </View>
+                {pendingRunOrders.map((order: any, idx: number) => (
+                  <View key={order.id}>
+                    {idx > 0 && <View style={dashStyles.pendingDivider} />}
+                    <View style={dashStyles.pendingRow}>
+                      <Pressable
+                        style={{ flex: 1 }}
+                        onPress={() => router.push(`/(driver)/orders/${order.id}` as any)}
+                        accessibilityRole="button"
+                        accessibilityLabel={`View order for ${order.customerName}`}
+                      >
+                        <Text style={dashStyles.pendingOrderNum}>{order.customerName}</Text>
+                        <Text style={dashStyles.pendingItemCount}>
+                          {order.orderNumber ?? `ORD-${order.id.slice(-5).toUpperCase()}`} · {order.lineItems?.length ?? 0} item{(order.lineItems?.length ?? 0) !== 1 ? "s" : ""}
+                        </Text>
+                        <Text style={dashStyles.pendingTapHint}>Tap to view →</Text>
+                      </Pressable>
+                      <Pressable
+                        style={[dashStyles.confirmBtn, isConfirming && { opacity: 0.6 }]}
+                        onPress={() => confirmOrder(order.id)}
+                        disabled={isConfirming}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Confirm order for ${order.customerName}`}
+                      >
+                        <Ionicons name="checkmark" size={14} color="#fff" />
+                        <Text style={dashStyles.confirmBtnText}>Confirm</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                ))}
+              </View>
+            );
+          })()}
+
           <Text style={styles.stopsLabel}>Stops</Text>
           {stops.map((stop) => (
             <StopRow key={stop.id} stop={stop} runId={run.id} />
@@ -386,6 +601,7 @@ export default function RouteScreen() {
   );
 }
 
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -397,7 +613,14 @@ const styles = StyleSheet.create({
     paddingVertical: 18,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.surface.border,
-    gap: 16,
+    gap: 12,
+  },
+  todayLabel: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    color: "#94a3b8",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
   },
   headerTop: {
     flexDirection: "row",
@@ -408,6 +631,31 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontFamily: "Inter_700Bold",
     color: colors.navy.DEFAULT,
+  },
+  statsRow: {
+    flexDirection: "row",
+    gap: 8,
+    flexWrap: "wrap",
+  },
+  statPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: colors.surface.raised,
+    borderRadius: 20,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderWidth: 1,
+    borderColor: colors.surface.border,
+  },
+  statPillWarning: {
+    backgroundColor: colors.warning.bg ?? "#fef3c7",
+    borderColor: colors.warning.DEFAULT + "40",
+  },
+  statText: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    color: "#64748b",
   },
   progressSection: {
     gap: 8,
@@ -561,5 +809,164 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontFamily: "Inter_400Regular",
     color: "#94a3b8",
+  },
+});
+
+// ─── Mileage modal styles ─────────────────────────────────────────────────────
+const mileageStyles = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "flex-end",
+  },
+  sheet: {
+    backgroundColor: "#fff",
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 24,
+    gap: 16,
+    paddingBottom: 40,
+  },
+  title: {
+    fontSize: 18,
+    fontFamily: "Inter_700Bold",
+    color: colors.navy.DEFAULT,
+  },
+  field: {
+    gap: 6,
+  },
+  fieldLabel: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+    color: "#64748b",
+  },
+  input: {
+    height: 48,
+    borderWidth: 1,
+    borderColor: colors.surface.border,
+    borderRadius: borderRadius.lg,
+    paddingHorizontal: 14,
+    fontSize: 16,
+    fontFamily: "Inter_400Regular",
+    color: colors.navy.DEFAULT,
+    backgroundColor: colors.surface.raised,
+  },
+  inputDisabled: {
+    backgroundColor: "#f8fafc",
+    color: "#94a3b8",
+  },
+  actions: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 4,
+  },
+  cancelBtn: {
+    flex: 1,
+    height: 50,
+    borderRadius: borderRadius.DEFAULT,
+    borderWidth: 1,
+    borderColor: colors.surface.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  cancelBtnText: {
+    fontSize: 16,
+    fontFamily: "Inter_600SemiBold",
+    color: "#64748b",
+  },
+  saveBtn: {
+    flex: 2,
+    height: 50,
+    backgroundColor: colors.brand[500],
+    borderRadius: borderRadius.DEFAULT,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  saveBtnText: {
+    fontSize: 16,
+    fontFamily: "Inter_700Bold",
+    color: "#fff",
+  },
+});
+
+// ─── Active-run pending confirmation widget styles ────────────────────────────
+const dashStyles = StyleSheet.create({
+  sectionLabelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  pendingBadge: {
+    backgroundColor: colors.warning.DEFAULT,
+    borderRadius: 10,
+    minWidth: 22,
+    height: 22,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 6,
+  },
+  pendingBadgeText: {
+    fontSize: 12,
+    fontFamily: "Inter_700Bold",
+    color: "#fff",
+  },
+  pendingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 13,
+    gap: 12,
+  },
+  pendingDivider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: colors.surface.border,
+    marginHorizontal: 16,
+  },
+  pendingOrderNum: {
+    fontSize: 15,
+    fontFamily: "Inter_700Bold",
+    color: colors.navy.DEFAULT,
+  },
+  pendingItemCount: {
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    color: "#64748b",
+    marginTop: 2,
+  },
+  pendingTapHint: {
+    fontSize: 11,
+    fontFamily: "Inter_500Medium",
+    color: colors.brand[500],
+    marginTop: 3,
+  },
+  confirmBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    backgroundColor: colors.success.DEFAULT,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  confirmBtnText: {
+    fontSize: 13,
+    fontFamily: "Inter_700Bold",
+    color: "#fff",
+  },
+  runPendingCard: {
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    padding: 14,
+    gap: 10,
+    borderWidth: 1,
+    borderColor: colors.warning.DEFAULT + "40",
+    marginBottom: 4,
+  },
+  runPendingTitle: {
+    fontSize: 13,
+    fontFamily: "Inter_700Bold",
+    color: colors.warning.DEFAULT,
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
   },
 });

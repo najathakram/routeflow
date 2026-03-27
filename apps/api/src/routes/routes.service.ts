@@ -1,7 +1,7 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtPayload } from "../auth/jwt-payload.interface";
-import { UserRole, RouteRunStatus, OrderStatus } from "@prisma/client";
+import { UserRole, RouteRunStatus, OrderStatus, Prisma } from "@prisma/client";
 import { ListRoutesDto } from "./dto/list-routes.dto";
 import { CreateRouteDto } from "./dto/create-route.dto";
 import { UpdateRouteDto } from "./dto/update-route.dto";
@@ -229,17 +229,24 @@ export class RoutesService {
 
   // ── Route Runs ─────────────────────────────────────────────────────────
 
-  async createRun(dto: CreateRouteRunDto) {
+  async createRun(dto: CreateRouteRunDto, user?: JwtPayload) {
     const route = await this.prisma.route.findUnique({
       where: { id: dto.routeId },
       include: { stops: { orderBy: { stopNumber: "asc" } } },
     });
     if (!route) throw new NotFoundException("Route not found");
 
+    // Drivers can only create runs for themselves
+    let resolvedDriverId = dto.driverId;
+    if (user?.role === UserRole.DRIVER) {
+      const driver = await this.prisma.driver.findFirst({ where: { userId: user.sub } });
+      resolvedDriverId = driver?.id ?? undefined;
+    }
+
     const run = await this.prisma.routeRun.create({
       data: {
         routeId: dto.routeId,
-        driverId: dto.driverId,
+        driverId: resolvedDriverId,
         scheduledDate: new Date(dto.scheduledDate),
         notes: dto.notes,
         stops: {
@@ -356,6 +363,18 @@ export class RoutesService {
                 customerAddress: true,
               },
             },
+            deliveryMutations: {
+              select: {
+                id: true,
+                orderItemId: true,
+                productId: true,
+                type: true,
+                quantityDelivered: true,
+                note: true,
+                createdAt: true,
+                product: { select: { id: true, name: true, unit: true } },
+              },
+            },
           },
           orderBy: { stopNumber: "asc" },
         },
@@ -429,9 +448,20 @@ export class RoutesService {
     return { ...run, stops: normalisedStops };
   }
 
-  async updateRun(id: string, dto: { driverId?: string | null; scheduledDate?: string; notes?: string }) {
+  async updateRun(id: string, dto: { driverId?: string | null; scheduledDate?: string; notes?: string }, user?: JwtPayload) {
     const run = await this.prisma.routeRun.findUnique({ where: { id } });
     if (!run) throw new NotFoundException("Route run not found");
+
+    if (user?.role === UserRole.DRIVER) {
+      const driver = await this.prisma.driver.findFirst({ where: { userId: user.sub } });
+      if (!driver || run.driverId !== driver.id) {
+        throw new ForbiddenException("You can only manage your own route runs");
+      }
+      if (dto.driverId !== undefined) {
+        throw new ForbiddenException("Drivers cannot reassign route runs");
+      }
+    }
+
     const data: any = {};
     if (dto.driverId !== undefined) data.driverId = dto.driverId;
     if (dto.scheduledDate) data.scheduledDate = new Date(dto.scheduledDate);
@@ -644,6 +674,100 @@ export class RoutesService {
 
     const avgStopsPerRoute = runs.length === 0 ? 0 : Math.round(stopsPerRunSum / runs.length);
     return { totalStopsCompleted: totalStops, onTimeDeliveryPct: 100, avgStopsPerRoute, returnsRate: 0 };
+  }
+
+  async reopenStop(runId: string, stopId: string, user: JwtPayload) {
+    const run = await this.prisma.routeRun.findUnique({
+      where: { id: runId },
+      include: { stops: { where: { id: stopId }, include: { orders: { include: { lineItems: true } } } } },
+    });
+    if (!run) throw new NotFoundException("Route run not found");
+
+    const stop = run.stops[0];
+    if (!stop) throw new NotFoundException("Stop not found");
+
+    if (run.status === "CANCELLED") throw new BadRequestException("Cannot reopen a stop on a cancelled run");
+    if (stop.status !== "COMPLETED") throw new BadRequestException("Only completed stops can be reopened");
+
+    // Driver isolation
+    if (user.role === UserRole.DRIVER) {
+      const driver = await this.prisma.driver.findFirst({ where: { userId: user.sub } });
+      if (!driver || run.driverId !== driver.id) throw new ForbiddenException("You do not have access to this route run");
+    }
+
+    // Load delivery mutations for this stop
+    const mutations = await this.prisma.deliveryMutation.findMany({ where: { routeRunStopId: stopId } });
+    const orderIds = [...new Set(stop.orders.map((o) => o.id))];
+
+    // Check for recorded payments on any transaction — block reopen if payment exists
+    if (orderIds.length > 0) {
+      const transactions = await this.prisma.transaction.findMany({
+        where: { orderId: { in: orderIds } },
+        include: { payments: { take: 1 } },
+      });
+      for (const txn of transactions) {
+        if (txn.payments.length > 0 || txn.status === "PAID" || txn.status === "PARTIAL") {
+          throw new BadRequestException("Payment already recorded against this delivery — contact your operator to correct");
+        }
+      }
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      // 1. Reverse stock movements for each SALE created by this stop's mutations
+      for (const mutation of mutations) {
+        const qty = Number(mutation.quantityDelivered ?? 0);
+        if (qty > 0 && mutation.productId && (mutation.type === "DELIVERED" || mutation.type === "PARTIAL")) {
+          await tx.stockMovement.create({
+            data: {
+              productId: mutation.productId,
+              type: "ADJUSTMENT",
+              quantity: new Prisma.Decimal(qty),
+              reference: `Reopen stop ${stopId}`,
+              performedById: user.sub,
+            },
+          });
+          await tx.product.update({
+            where: { id: mutation.productId },
+            data: { currentStock: { increment: qty } },
+          });
+        }
+      }
+
+      // 2. Delete delivery mutations for this stop
+      await tx.deliveryMutation.deleteMany({ where: { routeRunStopId: stopId } });
+
+      // 3. Reset order items → PENDING
+      for (const order of stop.orders) {
+        await tx.orderItem.updateMany({ where: { orderId: order.id }, data: { status: "PENDING" } });
+        // 4. Reset order status → CONFIRMED (safe fallback — it was at least CONFIRMED before going OUT_FOR_DELIVERY)
+        if (order.status === "DELIVERED" || order.status === "OUT_FOR_DELIVERY") {
+          await tx.order.update({ where: { id: order.id }, data: { status: "CONFIRMED" } });
+        }
+        // 5. Delete UNPAID transactions
+        await tx.transaction.deleteMany({ where: { orderId: order.id, status: "UNPAID" } });
+      }
+
+      // 6. Reset stop
+      await tx.routeRunStop.update({
+        where: { id: stopId },
+        data: {
+          status: "PENDING",
+          completedAt: null,
+          arrivedAt: null,
+          driverNote: null,
+          podPhotoUrls: [],
+          safeDropEnabled: false,
+          signatureUrl: null,
+        },
+      });
+
+      // 7. If run was COMPLETED, reopen it too
+      if (run.status === "COMPLETED") {
+        await tx.routeRun.update({ where: { id: runId }, data: { status: "IN_PROGRESS", completedAt: null } });
+      }
+    });
+
+    return { success: true, message: "Stop reopened — you can now re-submit the delivery." };
   }
 
   private async findRouteOrThrow(id: string) {

@@ -28,11 +28,13 @@ export default function RecordPurchaseScreen() {
   const [productSearch, setProductSearch] = useState("");
   const [qty, setQty] = useState("");
   const [unitCost, setUnitCost] = useState("");
+  const [supplierName, setSupplierName] = useState("");
   const [reference, setReference] = useState("");
   const [notes, setNotes] = useState("");
   const [showDropdown, setShowDropdown] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
   const [scannedBarcode, setScannedBarcode] = useState<string | null>(null);
+  const [successBanner, setSuccessBanner] = useState<string | null>(null);
 
   const { data: barcodeProduct, isError: barcodeError } = useProductByBarcode(scannedBarcode);
 
@@ -72,9 +74,25 @@ export default function RecordPurchaseScreen() {
     !isNaN(parseFloat(unitCost)) &&
     parseFloat(unitCost) >= 0;
 
+  const resetForm = () => {
+    setSelectedProductId(null);
+    setProductSearch("");
+    setQty("");
+    setUnitCost("");
+    setSupplierName("");
+    setReference("");
+    setNotes("");
+    setShowDropdown(false);
+  };
+
   const handleSubmit = () => {
     if (!isValid || !selectedProductId) return;
     Keyboard.dismiss();
+
+    const noteParts: string[] = [];
+    if (supplierName.trim()) noteParts.push(`Supplier: ${supplierName.trim()}`);
+    if (notes.trim()) noteParts.push(notes.trim());
+    const finalNotes = noteParts.length > 0 ? noteParts.join(". ") : "Purchase recorded via driver app";
 
     recordPurchase(
       {
@@ -82,13 +100,14 @@ export default function RecordPurchaseScreen() {
         quantity: parseInt(qty, 10),
         unitCost: parseFloat(unitCost),
         reference: reference || undefined,
-        notes: notes || "Purchase recorded via driver app",
+        notes: finalNotes,
       },
       {
         onSuccess: () => {
-          Alert.alert("Done", "Purchase recorded successfully.", [
-            { text: "OK", onPress: () => router.back() },
-          ]);
+          const savedProduct = (stock ?? []).find((s) => s.productId === selectedProductId);
+          setSuccessBanner(`Purchase saved — ${savedProduct?.productName ?? "product"} × ${qty}`);
+          setTimeout(() => setSuccessBanner(null), 3500);
+          resetForm();
         },
         onError: (err) => {
           Alert.alert("Error", "Failed to record purchase.\n" + (err.message || ""));
@@ -99,7 +118,28 @@ export default function RecordPurchaseScreen() {
 
   return (
     <>
-      <Stack.Screen options={{ title: "Record Purchase", headerBackTitle: "Stock" }} />
+      <Stack.Screen
+        options={{
+          title: "Record Purchase",
+          headerLeft: () => (
+            <Pressable
+              onPress={() => router.back()}
+              style={{ paddingLeft: 4, paddingRight: 12, paddingVertical: 8 }}
+              accessibilityRole="button"
+              accessibilityLabel="Go back"
+            >
+              <Ionicons name="arrow-back" size={24} color={colors.navy.DEFAULT} />
+            </Pressable>
+          ),
+        }}
+      />
+      {successBanner && (
+        <View style={styles.successBanner}>
+          <Ionicons name="checkmark-circle" size={18} color="#fff" />
+          <Text style={styles.successBannerText}>{successBanner}</Text>
+        </View>
+      )}
+
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
@@ -207,9 +247,18 @@ export default function RecordPurchaseScreen() {
             )}
           </View>
 
-          {/* Reference + notes */}
+          {/* Supplier + Reference + notes */}
           <View style={styles.section}>
-            <Text style={styles.label}>Reference (optional)</Text>
+            <Text style={styles.label}>Supplier (optional)</Text>
+            <TextInput
+              style={styles.textInput}
+              placeholder="Supplier or vendor name…"
+              placeholderTextColor="#94a3b8"
+              value={supplierName}
+              onChangeText={setSupplierName}
+              returnKeyType="next"
+            />
+            <Text style={[styles.label, { marginTop: 12 }]}>Reference (optional)</Text>
             <TextInput
               style={styles.textInput}
               placeholder="Invoice / delivery docket number…"
@@ -426,6 +475,20 @@ const styles = StyleSheet.create({
   submitBtnText: {
     fontSize: 17,
     fontFamily: "Inter_700Bold",
+    color: "#fff",
+  },
+  successBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: colors.success.DEFAULT,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  successBannerText: {
+    flex: 1,
+    fontSize: 14,
+    fontFamily: "Inter_600SemiBold",
     color: "#fff",
   },
 });

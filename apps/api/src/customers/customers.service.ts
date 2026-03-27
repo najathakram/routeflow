@@ -150,7 +150,7 @@ export class CustomersService {
       },
     });
     if (!customer) throw new NotFoundException("Customer not found");
-    if (user.role !== UserRole.OPERATOR && customer.userId !== user.sub) {
+    if (user.role !== UserRole.OPERATOR && user.role !== UserRole.DRIVER && customer.userId !== user.sub) {
       throw new ForbiddenException();
     }
     return customer;

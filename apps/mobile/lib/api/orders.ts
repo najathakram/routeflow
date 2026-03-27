@@ -35,6 +35,15 @@ export interface CreateOrderDto {
   requestedDeliveryDate?: string;
 }
 
+export interface CreateOrderAsDriverDto {
+  customerId: string;
+  items: { productId: string; qty: number }[];
+  notes?: string;
+  routeRunId?: string;
+  routeRunStopId?: string;
+  immediateDelivery?: boolean;
+}
+
 // ─── Queries ──────────────────────────────────────────────────────────────────
 
 export function useMyOrders(params?: { status?: string; page?: number; limit?: number }) {
@@ -60,6 +69,30 @@ export function useCreateOrder() {
   return useMutation<Order, Error, CreateOrderDto>({
     mutationFn: (dto) => apiClient.post('/orders', dto).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['orders'] }),
+  });
+}
+
+export function useCreateOrderAsDriver() {
+  const qc = useQueryClient();
+  return useMutation<Order, Error, CreateOrderAsDriverDto>({
+    mutationFn: (dto) => apiClient.post('/orders', dto).then((r) => r.data),
+    onSuccess: (_, vars) => {
+      if (vars.routeRunId) qc.invalidateQueries({ queryKey: ['route-runs', vars.routeRunId] });
+      qc.invalidateQueries({ queryKey: ['orders'] });
+    },
+  });
+}
+
+export function useConfirmOrder() {
+  const qc = useQueryClient();
+  return useMutation<Order, Error, string>({
+    mutationFn: (orderId) =>
+      apiClient.patch(`/orders/${orderId}/status`, { status: 'CONFIRMED' }).then((r) => r.data),
+    onSuccess: () => {
+      // Invalidate orders list AND route-runs so the "N to confirm" pill updates immediately
+      qc.invalidateQueries({ queryKey: ['orders'] });
+      qc.invalidateQueries({ queryKey: ['route-runs'] });
+    },
   });
 }
 
