@@ -60,7 +60,7 @@ function KpiCard({ label, value, sub }: { label: string; value: string; sub?: st
 
 function AnalyticsPanel({ orders }: { orders: Order[] }) {
   const stats = useMemo(() => computeAnalytics(orders), [orders]);
-  if (orders.length < 2) return null;
+  if (orders.length === 0) return null;
 
   return (
     <View style={aStyles.panel}>
