@@ -18,9 +18,9 @@ COPY packages/ui/package.json               packages/ui/
 COPY apps/api/package.json apps/api/
 
 # Install all workspace dependencies.
-# The API's postinstall script runs `prisma generate` (native target only at
-# this point — the linux-musl targets are generated explicitly below).
-RUN npm ci
+# --ignore-scripts skips the postinstall `prisma generate` which would fail
+# here because prisma/schema.prisma hasn't been copied yet.
+RUN npm ci --ignore-scripts
 
 # ── Copy full source ──
 COPY packages/ packages/
