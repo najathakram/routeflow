@@ -8,6 +8,8 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "dev": "expo start",
+    "dev:device": "expo start --dev-client",
+    "dev:tunnel": "expo start --dev-client --tunnel",
     "build": "tsc --noEmit && expo export --platform android --platform ios",
     "lint": "eslint . --ext .ts,.tsx",
     "check-types": "tsc --noEmit"
@@ -28,6 +30,7 @@
     "expo": "~55.0.5",
     "expo-camera": "~55.0.10",
     "expo-constants": "^55.0.7",
+    "expo-dev-client": "~55.0.18",
     "expo-font": "^55.0.4",
     "expo-image": "^55.0.6",
     "expo-image-picker": "^55.0.11",
