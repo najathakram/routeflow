@@ -1,6 +1,6 @@
 import { Stack } from "expo-router";
 import { colors } from "@routeflow/ui/tokens";
-import { HeaderBackButton } from "../../../../../../components/HeaderBackButton";
+import { HeaderBackButton } from "../../../../../components/HeaderBackButton";
 
 export default function StopLayout() {
   return (
