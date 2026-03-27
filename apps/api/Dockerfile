@@ -38,9 +38,11 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
-# Root node_modules contains all workspace-hoisted runtime deps,
-# including the Prisma query-engine binaries generated above.
+# Root node_modules contains workspace-hoisted runtime deps.
 COPY --from=builder /app/node_modules  ./node_modules
+
+# Workspace-level node_modules (packages like rxjs that npm doesn't hoist to root)
+COPY --from=builder /app/apps/api/node_modules ./apps/api/node_modules
 
 # Workspace package sources — required so that workspace symlinks inside
 # node_modules (e.g. node_modules/@routeflow/types -> ../../packages/types)
