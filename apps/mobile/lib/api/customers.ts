@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../api-client';
 
 export interface CustomerSummary {
@@ -46,5 +46,48 @@ export function useCustomer(id: string) {
     queryFn: () => apiClient.get(`/customers/${id}`).then((r) => r.data),
     enabled: !!id,
     staleTime: 2 * 60_000,
+  });
+}
+
+// ─── My profile (CUSTOMER role) ───────────────────────────────────────────────
+
+export interface MyCustomerProfile extends CustomerDetail {
+  user?: { email?: string };
+}
+
+export function useMyCustomerProfile() {
+  return useQuery<MyCustomerProfile>({
+    queryKey: ['customers', 'me'],
+    queryFn: () => apiClient.get('/customers/me').then((r) => r.data),
+    staleTime: 2 * 60_000,
+  });
+}
+
+// ─── Account statement (CUSTOMER role) ───────────────────────────────────────
+
+export type TransactionType = 'INVOICE' | 'PAYMENT' | 'CREDIT_NOTE' | 'ADJUSTMENT';
+
+export interface AccountTransaction {
+  id: string;
+  type: TransactionType;
+  description: string;
+  date: string;
+  amount: number;
+  runningBalance: number;
+  status?: string;
+}
+
+export interface AccountSummary {
+  outstandingAmount: number;
+  overdueAmount: number;
+  availableCredit: number;
+  transactions: AccountTransaction[];
+}
+
+export function useMyAccountSummary() {
+  return useQuery<AccountSummary>({
+    queryKey: ['customers', 'me', 'statement'],
+    queryFn: () => apiClient.get('/customers/me/statement').then((r) => r.data),
+    staleTime: 60_000,
   });
 }
