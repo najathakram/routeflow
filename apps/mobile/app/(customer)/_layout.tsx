@@ -3,6 +3,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { colors } from "@routeflow/ui/tokens";
 import { useEffect } from "react";
 import * as Notifications from "expo-notifications";
+import { HeaderBackButton } from "../../components/HeaderBackButton";
 
 // Set handler so notifications show as banners when app is in foreground
 Notifications.setNotificationHandler({
@@ -45,10 +46,12 @@ export default function CustomerLayout() {
         },
       }}
     >
+      {/* Main tabs — headerShown: false so sub-layout Stack owns the header */}
       <Tabs.Screen
         name="shop"
         options={{
           title: "Shop",
+          headerShown: false,
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="bag-outline" size={size} color={color} />
           ),
@@ -58,6 +61,7 @@ export default function CustomerLayout() {
         name="order"
         options={{
           title: "My Order",
+          headerShown: false,
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="clipboard-outline" size={size} color={color} />
           ),
@@ -67,6 +71,7 @@ export default function CustomerLayout() {
         name="history"
         options={{
           title: "History",
+          headerShown: false,
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="time-outline" size={size} color={color} />
           ),
@@ -76,6 +81,7 @@ export default function CustomerLayout() {
         name="invoices"
         options={{
           title: "Invoices",
+          headerShown: false,
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="document-text-outline" size={size} color={color} />
           ),
@@ -90,12 +96,13 @@ export default function CustomerLayout() {
           ),
         }}
       />
-      {/* Hidden screens — accessible via router.push but not shown in tab bar */}
-      <Tabs.Screen name="change-password" options={{ href: null, title: "Change Password" }} />
-      <Tabs.Screen name="standing-orders" options={{ href: null, title: "Standing Orders" }} />
-      <Tabs.Screen name="returns" options={{ href: null, title: "Returns" }} />
-      <Tabs.Screen name="account-statement" options={{ href: null, title: "Account Statement" }} />
-      <Tabs.Screen name="credit-notes" options={{ href: null, title: "Credit Notes" }} />
+      {/* Hidden sub-stack screens — Stack owns the header */}
+      <Tabs.Screen name="standing-orders" options={{ href: null, title: "Standing Orders", headerShown: false }} />
+      <Tabs.Screen name="returns"         options={{ href: null, title: "Returns",          headerShown: false }} />
+      <Tabs.Screen name="credit-notes"    options={{ href: null, title: "Credit Notes",     headerShown: false }} />
+      {/* Hidden direct screens — Tabs owns the header, add back button */}
+      <Tabs.Screen name="change-password"  options={{ href: null, title: "Change Password",  headerLeft: () => <HeaderBackButton /> }} />
+      <Tabs.Screen name="account-statement" options={{ href: null, title: "Account Statement", headerLeft: () => <HeaderBackButton /> }} />
     </Tabs>
   );
 }

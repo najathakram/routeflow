@@ -5,6 +5,7 @@ import { Pressable, View, Text, StyleSheet } from "react-native";
 import { colors } from "@routeflow/ui/tokens";
 import { useNetworkSync } from "../../hooks/useNetworkSync";
 import { DrawerMenu } from "../../components/DrawerMenu";
+import { HeaderBackButton } from "../../components/HeaderBackButton";
 
 function OfflineBanner() {
   const { isOnline, queueLength } = useNetworkSync();
@@ -84,6 +85,7 @@ export default function DriverLayout() {
           name="route"
           options={{
             title: "My Route",
+            headerShown: false,
             tabBarIcon: ({ color, size }) => (
               <Ionicons name="map-outline" size={size} color={color} />
             ),
@@ -98,12 +100,13 @@ export default function DriverLayout() {
             ),
           }}
         />
-        {/* ── Hidden — navigable via router.push ───────────── */}
-        <Tabs.Screen name="customers"      options={{ href: null, title: "Customers" }} />
-        <Tabs.Screen name="inventory"      options={{ href: null, title: "Stock" }} />
-        <Tabs.Screen name="history"        options={{ href: null, title: "History" }} />
-        <Tabs.Screen name="change-password" options={{ href: null, title: "Change Password" }} />
-        <Tabs.Screen name="orders"         options={{ href: null, title: "Create Order" }} />
+        {/* ── Hidden sub-stack screens — Stack owns the header ─ */}
+        <Tabs.Screen name="customers" options={{ href: null, title: "Customers",     headerShown: false }} />
+        <Tabs.Screen name="inventory" options={{ href: null, title: "Stock",          headerShown: false }} />
+        <Tabs.Screen name="history"   options={{ href: null, title: "History",        headerShown: false }} />
+        <Tabs.Screen name="orders"    options={{ href: null, title: "Create Order",   headerShown: false }} />
+        {/* ── Hidden direct screen — Tabs owns the header ────── */}
+        <Tabs.Screen name="change-password" options={{ href: null, title: "Change Password", headerLeft: () => <HeaderBackButton /> }} />
       </Tabs>
       <DrawerMenu visible={drawerOpen} onClose={() => setDrawerOpen(false)} />
     </View>

@@ -1,11 +1,12 @@
 import { Stack } from "expo-router";
 import { colors } from "@routeflow/ui/tokens";
+import { HeaderBackButton } from "../../../components/HeaderBackButton";
 
 export default function HistoryLayout() {
   return (
     <Stack
       screenOptions={{
-        headerShown: false,
+        headerShown: true,
         headerStyle: { backgroundColor: "#fff" },
         headerShadowVisible: false,
         headerTitleStyle: {
@@ -13,7 +14,11 @@ export default function HistoryLayout() {
           fontSize: 17,
           color: colors.navy.DEFAULT,
         },
+        headerLeft: () => <HeaderBackButton />,
       }}
-    />
+    >
+      {/* Tab root — Tabs navigator owns the header; suppress Stack header here */}
+      <Stack.Screen name="index" options={{ headerShown: false }} />
+    </Stack>
   );
 }

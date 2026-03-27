@@ -1,5 +1,6 @@
 import { Stack } from "expo-router";
 import { colors } from "@routeflow/ui/tokens";
+import { HeaderBackButton } from "../../../components/HeaderBackButton";
 
 export default function DriverHistoryLayout() {
   return (
@@ -13,6 +14,7 @@ export default function DriverHistoryLayout() {
           fontSize: 17,
           color: colors.navy.DEFAULT,
         },
+        headerLeft: () => <HeaderBackButton />,
       }}
     />
   );

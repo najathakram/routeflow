@@ -1,11 +1,12 @@
 import { Stack } from "expo-router";
 import { colors } from "@routeflow/ui/tokens";
+import { HeaderBackButton } from "../../../components/HeaderBackButton";
 
-export default function ShopLayout() {
+export default function Layout() {
   return (
     <Stack
       screenOptions={{
-        headerShown: false,
+        headerShown: true,
         headerStyle: { backgroundColor: "#fff" },
         headerShadowVisible: false,
         headerTitleStyle: {
@@ -13,7 +14,10 @@ export default function ShopLayout() {
           fontSize: 17,
           color: colors.navy.DEFAULT,
         },
+        headerLeft: () => <HeaderBackButton />,
       }}
-    />
+    >
+      <Stack.Screen name="index" options={{ headerShown: false }} />
+    </Stack>
   );
 }
