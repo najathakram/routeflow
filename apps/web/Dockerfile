@@ -52,10 +52,10 @@ COPY --from=builder /app/apps/web/.next/static ./apps/web/.next/static
 
 # Note: apps/web/public is intentionally absent — no static public assets.
 
-EXPOSE 3001
-
-ENV PORT=3001
 ENV HOSTNAME="0.0.0.0"
+# PORT is injected by Railway at runtime; Next.js standalone server reads it
+# automatically. Do NOT hardcode PORT here — it would conflict with Railway's
+# dynamic port assignment, causing the healthcheck to target the wrong port.
 
 # The standalone entry point mirrors the monorepo path (apps/web/server.js)
 CMD ["node", "apps/web/server.js"]
