@@ -53,9 +53,10 @@ COPY --from=builder /app/apps/api/dist     ./apps/api/dist
 # Prisma schema — needed for `prisma migrate deploy` in init containers
 COPY --from=builder /app/apps/api/prisma   ./apps/api/prisma
 
-# Package manifests needed for Node.js module resolution
-COPY --from=builder /app/apps/api/package.json ./apps/api/
-COPY --from=builder /app/package.json          ./
+# Package manifests and Prisma v7 config needed for Node.js module resolution
+COPY --from=builder /app/apps/api/package.json    ./apps/api/
+COPY --from=builder /app/apps/api/prisma.config.ts ./apps/api/
+COPY --from=builder /app/package.json              ./
 
 WORKDIR /app/apps/api
 
