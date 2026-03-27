@@ -14,13 +14,13 @@ COPY packages/types/package.json             packages/types/
 COPY packages/typescript-config/package.json packages/typescript-config/
 COPY packages/ui/package.json               packages/ui/
 
-# API workspace manifest
+# API workspace manifest + prisma schema (needed by postinstall `prisma generate`)
 COPY apps/api/package.json apps/api/
+COPY apps/api/prisma/schema.prisma apps/api/prisma/
+COPY apps/api/prisma.config.ts apps/api/
 
-# Install all workspace dependencies.
-# --ignore-scripts skips the postinstall `prisma generate` which would fail
-# here because prisma/schema.prisma hasn't been copied yet.
-RUN npm ci --ignore-scripts
+# Install all workspace dependencies (with scripts so @nestjs/core postinstall runs).
+RUN npm ci
 
 # ── Copy full source ──
 COPY packages/ packages/
