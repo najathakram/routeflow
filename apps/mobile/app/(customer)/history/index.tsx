@@ -7,7 +7,6 @@ import {
   StyleSheet,
   Text,
   View,
-  ActivityIndicator,
 } from "react-native";
 import { router, Stack } from "expo-router";
 import { format, parseISO } from "date-fns";
@@ -17,6 +16,199 @@ import { HistorySkeleton } from "../../../components/skeletons/HistorySkeleton";
 import { NetworkError } from "../../../components/NetworkError";
 import { useMyOrders, type Order } from "../../../lib/api/orders";
 import { useOrderStore } from "../../../store/orderStore";
+
+// ─── Analytics ───────────────────────────────────────────────────────────────
+
+interface Analytics {
+  totalSpent: number;
+  deliveredCount: number;
+  totalCount: number;
+  avgOrderValue: number;
+  topProducts: { name: string; qty: number; pct: number }[];
+}
+
+function computeAnalytics(orders: Order[]): Analytics {
+  const delivered = orders.filter((o) => o.status === "DELIVERED");
+  const totalSpent = delivered.reduce((s, o) => s + Number(o.total), 0);
+  const avgOrderValue = delivered.length ? totalSpent / delivered.length : 0;
+
+  // Aggregate qty per product across all orders (not just delivered)
+  const qtyMap = new Map<string, { name: string; qty: number }>();
+  for (const order of orders) {
+    for (const item of order.lineItems) {
+      const name = item.product?.name ?? "Unknown";
+      const prev = qtyMap.get(item.productId) ?? { name, qty: 0 };
+      qtyMap.set(item.productId, { name, qty: prev.qty + Number(item.qty) });
+    }
+  }
+  const sorted = Array.from(qtyMap.values()).sort((a, b) => b.qty - a.qty).slice(0, 5);
+  const maxQty = sorted[0]?.qty ?? 1;
+  const topProducts = sorted.map((p) => ({ ...p, pct: p.qty / maxQty }));
+
+  return { totalSpent, deliveredCount: delivered.length, totalCount: orders.length, avgOrderValue, topProducts };
+}
+
+function KpiCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
+  return (
+    <View style={aStyles.kpiCard}>
+      <Text style={aStyles.kpiValue}>{value}</Text>
+      <Text style={aStyles.kpiLabel}>{label}</Text>
+      {sub ? <Text style={aStyles.kpiSub}>{sub}</Text> : null}
+    </View>
+  );
+}
+
+function AnalyticsPanel({ orders }: { orders: Order[] }) {
+  const stats = useMemo(() => computeAnalytics(orders), [orders]);
+  if (orders.length < 2) return null;
+
+  return (
+    <View style={aStyles.panel}>
+      {/* KPI row */}
+      <Text style={aStyles.panelTitle}>Your Insights</Text>
+      <View style={aStyles.kpiRow}>
+        <KpiCard label="Total Spent" value={`$${stats.totalSpent.toFixed(2)}`} />
+        <View style={aStyles.kpiDivider} />
+        <KpiCard
+          label="Avg Order"
+          value={`$${stats.avgOrderValue.toFixed(2)}`}
+          sub={`${stats.deliveredCount} delivered`}
+        />
+        <View style={aStyles.kpiDivider} />
+        <KpiCard label="Orders" value={String(stats.totalCount)} sub="all time" />
+      </View>
+
+      {/* Top products */}
+      {stats.topProducts.length > 0 && (
+        <>
+          <View style={aStyles.divider} />
+          <Text style={aStyles.subTitle}>Top Products</Text>
+          {stats.topProducts.map((p, i) => (
+            <View key={p.name} style={aStyles.productRow}>
+              <Text style={aStyles.productRank}>#{i + 1}</Text>
+              <View style={aStyles.productCenter}>
+                <Text style={aStyles.productName} numberOfLines={1}>{p.name}</Text>
+                <View style={aStyles.barTrack}>
+                  <View style={[aStyles.barFill, { width: `${Math.round(p.pct * 100)}%` }]} />
+                </View>
+              </View>
+              <Text style={aStyles.productQty}>{p.qty} units</Text>
+            </View>
+          ))}
+        </>
+      )}
+    </View>
+  );
+}
+
+const aStyles = StyleSheet.create({
+  panel: {
+    backgroundColor: "#fff",
+    marginHorizontal: 16,
+    marginTop: 16,
+    marginBottom: 4,
+    borderRadius: borderRadius.lg,
+    padding: 16,
+    ...shadows.card,
+  },
+  panelTitle: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    color: "#94a3b8",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginBottom: 14,
+  },
+  kpiRow: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  kpiCard: {
+    flex: 1,
+    alignItems: "center",
+    gap: 3,
+  },
+  kpiValue: {
+    fontSize: 18,
+    fontFamily: "Inter_700Bold",
+    color: colors.navy.DEFAULT,
+  },
+  kpiLabel: {
+    fontSize: 11,
+    fontFamily: "Inter_500Medium",
+    color: "#94a3b8",
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+    textAlign: "center",
+  },
+  kpiSub: {
+    fontSize: 11,
+    fontFamily: "Inter_400Regular",
+    color: "#cbd5e1",
+    textAlign: "center",
+  },
+  kpiDivider: {
+    width: StyleSheet.hairlineWidth,
+    height: 36,
+    backgroundColor: colors.surface.border,
+    marginHorizontal: 4,
+  },
+  divider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: colors.surface.border,
+    marginVertical: 14,
+  },
+  subTitle: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    color: "#94a3b8",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginBottom: 12,
+  },
+  productRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 10,
+  },
+  productRank: {
+    fontSize: 12,
+    fontFamily: "Inter_700Bold",
+    color: colors.brand[400],
+    width: 20,
+    textAlign: "center",
+  },
+  productCenter: {
+    flex: 1,
+    gap: 5,
+  },
+  productName: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+    color: colors.navy.DEFAULT,
+  },
+  barTrack: {
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: colors.brand[50],
+    overflow: "hidden",
+  },
+  barFill: {
+    height: "100%",
+    borderRadius: 2,
+    backgroundColor: colors.brand[400],
+  },
+  productQty: {
+    fontSize: 12,
+    fontFamily: "Inter_500Medium",
+    color: "#94a3b8",
+    minWidth: 52,
+    textAlign: "right",
+  },
+});
+
+// ─── Main screen ─────────────────────────────────────────────────────────────
 
 type FilterKey = "ALL" | "PENDING" | "ACTIVE" | "DELIVERED" | "CANCELLED";
 const FILTERS: { key: FilterKey; label: string }[] = [
@@ -173,6 +365,9 @@ export default function HistoryScreen() {
           style={styles.list}
           contentContainerStyle={styles.content}
           stickySectionHeadersEnabled={false}
+          ListHeaderComponent={
+            activeFilter === "ALL" ? <AnalyticsPanel orders={allOrders} /> : null
+          }
           renderSectionHeader={({ section: { title } }) => (
             <Text style={styles.sectionHeader}>{title}</Text>
           )}
