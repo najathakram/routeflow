@@ -5,6 +5,8 @@ dockerfilePath = "apps/api/Dockerfile"
 watchPatterns = ["apps/api/**", "packages/**"]
 
 [deploy]
+# Run DB migrations then start the server
+startCommand = "npx prisma migrate deploy && node dist/main.js"
 healthcheckPath = "/api/v1"
 healthcheckTimeout = 120
 restartPolicyType = "ON_FAILURE"

@@ -11,6 +11,9 @@ const DEFAULT_CORS_ORIGINS = [
   "http://localhost:19006", // Expo web (legacy)
 ];
 
+// In production CORS_ORIGINS env var overrides defaults:
+//   CORS_ORIGINS=https://routeflow.up.railway.app,https://your-custom-domain.com
+
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
