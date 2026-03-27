@@ -54,6 +54,9 @@ async function bootstrap() {
     SwaggerModule.setup("api/docs", app, document);
   }
 
+  // ─── Health check (Railway / load balancers) ────────────────────────────────
+  app.getHttpAdapter().get("/health", (_req: unknown, res: { send: (s: string) => void }) => res.send("ok"));
+
   // ─── Graceful shutdown ──────────────────────────────────────────────────────
   app.enableShutdownHooks();
 
