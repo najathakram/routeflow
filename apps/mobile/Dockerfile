@@ -20,9 +20,9 @@ COPY packages/ui/package.json               packages/ui/
 COPY apps/mobile/package.json apps/mobile/
 
 # Install all workspace dependencies.
-# npm install is used instead of npm ci to handle platform-specific optional
-# packages that may be in a lockfile generated on a different OS.
-RUN npm install
+# --force bypasses the EBADPLATFORM error for @next/swc-win32-x64-msvc which
+# ends up in the lockfile when generated on Windows.
+RUN npm install --force
 
 # ── Copy full source ──
 COPY packages/ packages/

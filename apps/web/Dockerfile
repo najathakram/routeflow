@@ -20,10 +20,10 @@ COPY packages/ui/package.json               packages/ui/
 COPY apps/web/package.json apps/web/
 
 # Install all workspace dependencies.
-# Note: npm install is used instead of npm ci because the lockfile was generated
-# on Windows and contains @next/swc-win32-x64-msvc which npm ci rejects on Linux.
-# npm install respects the lockfile but skips platform-incompatible optional packages.
-RUN npm install
+# --force bypasses the EBADPLATFORM error for @next/swc-win32-x64-msvc which
+# ends up in the lockfile when generated on Windows. The Linux SWC binary is
+# installed automatically by Next.js; the Windows artifact is simply skipped.
+RUN npm install --force
 
 # ── Copy full source ──
 COPY packages/ packages/
