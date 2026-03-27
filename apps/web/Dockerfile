@@ -19,8 +19,11 @@ COPY packages/ui/package.json               packages/ui/
 # Web workspace manifest
 COPY apps/web/package.json apps/web/
 
-# Install all workspace dependencies
-RUN npm ci
+# Install all workspace dependencies.
+# Note: npm install is used instead of npm ci because the lockfile was generated
+# on Windows and contains @next/swc-win32-x64-msvc which npm ci rejects on Linux.
+# npm install respects the lockfile but skips platform-incompatible optional packages.
+RUN npm install
 
 # ── Copy full source ──
 COPY packages/ packages/
