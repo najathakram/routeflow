@@ -236,16 +236,79 @@ function CreateProductModal({
 
 // ─── Zoho CSV parser ──────────────────────────────────────────────────────────
 
+/**
+ * Splits CSV text into rows, correctly handling quoted fields that contain
+ * embedded newlines (e.g. Zoho's "Items - Updated" export format).
+ */
+function splitCsvRows(text: string): string[] {
+  const rows: string[] = [];
+  let current = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '"') {
+      if (inQuotes && text[i + 1] === '"') {
+        // Escaped double-quote inside a quoted field
+        current += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+        current += ch;
+      }
+    } else if ((ch === "\r" || ch === "\n") && !inQuotes) {
+      // Skip \n that follows a \r
+      if (ch === "\r" && text[i + 1] === "\n") i++;
+      if (current.trim()) rows.push(current);
+      current = "";
+    } else {
+      current += ch;
+    }
+  }
+  if (current.trim()) rows.push(current);
+  return rows;
+}
+
+/** Parses one CSV row into fields, handling quoted fields with embedded commas. */
+function parseCSVLine(line: string): string[] {
+  const result: string[] = [];
+  let current = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        current += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (ch === "," && !inQuotes) {
+      result.push(current);
+      current = "";
+    } else {
+      current += ch;
+    }
+  }
+  result.push(current);
+  return result;
+}
+
 function parseZohoCsv(text: string): ZohoImportItem[] {
-  const lines = text.split(/\r?\n/).filter((l) => l.trim() !== "");
-  if (lines.length < 2) return [];
+  const rows = splitCsvRows(text);
+  if (rows.length < 2) return [];
 
-  // Parse header
-  const headers = parseCSVLine(lines[0]);
+  // Parse header — strip BOM if present
+  const headers = parseCSVLine(rows[0].replace(/^\uFEFF/, ""));
 
-  const col = (row: string[], key: string): string => {
-    const idx = headers.indexOf(key);
-    return idx >= 0 ? (row[idx] ?? "").trim() : "";
+  // Look up a column by trying multiple possible header names (Zoho changes them between export types)
+  const colAlt = (row: string[], ...keys: string[]): string => {
+    for (const key of keys) {
+      const idx = headers.indexOf(key);
+      if (idx >= 0) return (row[idx] ?? "").trim();
+    }
+    return "";
   };
 
   const parsePrice = (raw: string): string | undefined => {
@@ -256,47 +319,52 @@ function parseZohoCsv(text: string): ZohoImportItem[] {
 
   const items: ZohoImportItem[] = [];
 
-  for (let i = 1; i < lines.length; i++) {
-    const row = parseCSVLine(lines[i]);
+  for (let i = 1; i < rows.length; i++) {
+    const row = parseCSVLine(rows[i]);
     if (row.every((c) => c === "")) continue;
 
-    const name = col(row, "Item Name");
+    const name = colAlt(row, "Item Name");
     if (!name) continue;
 
-    const rawPrice = col(row, "Selling Price");
+    // Price: "Selling Price" (full export) or "Rate" (simplified export)
+    const rawPrice = colAlt(row, "Selling Price", "Rate");
     const pricePerUnit = parsePrice(rawPrice);
     if (!pricePerUnit) continue;
 
-    // Unit: prefer "Unit Name", fall back to "Unit", then "pcs"
-    const unitName = col(row, "Unit Name");
-    const unitCode = col(row, "Unit");
-    const unit = unitName || unitCode || "pcs";
+    // Unit: full export uses "Unit Name" / "Unit"; simplified export uses "Usage unit"
+    const unit = colAlt(row, "Unit Name", "Unit", "Usage unit") || "pcs";
 
-    const rawSku = col(row, "SKU");
+    // SKU
+    const rawSku = colAlt(row, "SKU");
     const sku = rawSku || undefined;
 
-    // Barcode: prefer UPC, then EAN
-    const upc = col(row, "UPC");
-    const ean = col(row, "EAN");
-    const barcode = upc || ean || undefined;
+    // Barcode: full export has UPC/EAN columns; simplified export puts barcode in SKU
+    const upc = colAlt(row, "UPC");
+    const ean = colAlt(row, "EAN");
+    // If no UPC/EAN columns exist and SKU looks like a numeric barcode, use it as barcode
+    const skuLooksLikeBarcode = !!rawSku && /^\d{8,14}$/.test(rawSku);
+    const barcode = upc || ean || (skuLooksLikeBarcode ? rawSku : undefined) || undefined;
 
-    const category = col(row, "Category Name") || undefined;
-    const description = col(row, "Sales Description") || undefined;
-    const statusRaw = col(row, "Status");
+    // Description: "Sales Description" (full) or "Description" (simplified)
+    const description = colAlt(row, "Sales Description", "Description") || undefined;
+
+    // Category
+    const category = colAlt(row, "Category Name") || undefined;
+
+    // Status
+    const statusRaw = colAlt(row, "Status");
     const isActive = statusRaw === "" ? true : statusRaw.toLowerCase() === "active";
 
-    // Stock on hand
-    const stockRaw = col(row, "Stock On Hand");
+    // Stock on hand (full export only)
+    const stockRaw = colAlt(row, "Stock On Hand", "Opening Stock");
     const stockNum = parseFloat(stockRaw.replace(/,/g, ""));
     const currentStock = !isNaN(stockNum) ? stockNum.toFixed(3) : undefined;
 
-    // Average cost / purchase price
-    const purchasePriceRaw = col(row, "Purchase Price");
-    const averageCost = parsePrice(purchasePriceRaw);
+    // Average cost / purchase price (full export only)
+    const averageCost = parsePrice(colAlt(row, "Purchase Price"));
 
-    // Reorder level
-    const reorderRaw = col(row, "Reorder Level");
-    const reorderNum = parseInt(reorderRaw, 10);
+    // Reorder level (full export only)
+    const reorderNum = parseInt(colAlt(row, "Reorder Level"), 10);
     const reorderPoint = !isNaN(reorderNum) ? reorderNum : undefined;
 
     items.push({
@@ -315,33 +383,6 @@ function parseZohoCsv(text: string): ZohoImportItem[] {
   }
 
   return items;
-}
-
-/** Handles quoted fields with embedded commas. */
-function parseCSVLine(line: string): string[] {
-  const result: string[] = [];
-  let current = "";
-  let inQuotes = false;
-
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    if (ch === '"') {
-      // Handle escaped double-quotes ("")
-      if (inQuotes && line[i + 1] === '"') {
-        current += '"';
-        i++;
-      } else {
-        inQuotes = !inQuotes;
-      }
-    } else if (ch === "," && !inQuotes) {
-      result.push(current);
-      current = "";
-    } else {
-      current += ch;
-    }
-  }
-  result.push(current);
-  return result;
 }
 
 // ─── Zoho import modal ────────────────────────────────────────────────────────
