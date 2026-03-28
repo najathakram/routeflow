@@ -1,6 +1,7 @@
 import { NestFactory } from "@nestjs/core";
 import { ValidationPipe } from "@nestjs/common";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
+import { json } from "express";
 import { AppModule } from "./app.module";
 import { RedisIoAdapter } from "./gateways/redis-io.adapter";
 
@@ -16,6 +17,9 @@ const DEFAULT_CORS_ORIGINS = [
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+
+  // ─── Body size limit (default 100kb is too small for bulk imports) ───────────
+  app.use(json({ limit: "10mb" }));
 
   // ─── WebSocket adapter (Redis pub/sub) ──────────────────────────────────────
   app.useWebSocketAdapter(new RedisIoAdapter(app));
