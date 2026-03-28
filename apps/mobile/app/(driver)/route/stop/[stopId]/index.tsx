@@ -376,6 +376,17 @@ export default function StopDetailScreen() {
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const noteDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // ─── Derive stop from run data — must come before any useEffect that uses it
+  const stop = run?.stops?.find((s) => s.id === stopId) ?? null;
+
+  // Collect all order item IDs for resolution check
+  const orderItemIds = (stop?.orders ?? []).flatMap((o) =>
+    (o.lineItems ?? []).map((i) => i.id),
+  );
+  const allResolved = useRouteStore((s) =>
+    selectAllItemsResolved(s, stopId, orderItemIds),
+  );
+
   // ─── Seed per-order edit state when a PENDING order first loads ───────────
   useEffect(() => {
     if (!stop?.orders) return;
@@ -404,16 +415,6 @@ export default function StopDetailScreen() {
   const recordingRef = useRef<any>(null);
 
   const { data: barcodeProduct, isError: barcodeError } = useProductByBarcode(pendingBarcode);
-
-  const stop = run?.stops?.find((s) => s.id === stopId) ?? null;
-
-  // Collect all order item IDs for resolution check
-  const orderItemIds = (stop?.orders ?? []).flatMap((o) =>
-    (o.lineItems ?? []).map((i) => i.id),
-  );
-  const allResolved = useRouteStore((s) =>
-    selectAllItemsResolved(s, stopId, orderItemIds),
-  );
 
   // When barcode product is found, highlight matching item
   useEffect(() => {
