@@ -21,6 +21,7 @@ import {
 } from "../../../lib/api/orders";
 import { format } from "date-fns";
 import { ProductPickerModal, type PickedProduct } from "../../../components/ProductPickerModal";
+import { ProductImage } from "../../../components/ProductImage";
 
 // ─── Status badge ─────────────────────────────────────────────────────────────
 
@@ -61,8 +62,16 @@ function LineItemRow({
   const qty = Number(item._localQty ?? item.qty);
   const lineTotal = qty * parseFloat(String(item.unitPrice));
 
+  const thumbUri = (item.product as any)?.thumbnailUrl ?? null;
+
   return (
     <View style={[styles.lineItem, isRemoved && styles.lineItemRemoved]}>
+      {thumbUri ? (
+        <View style={{ width: 44, height: 44, borderRadius: 8, overflow: "hidden", marginRight: 10, flexShrink: 0 }}>
+          {/* eslint-disable-next-line @typescript-eslint/no-var-requires */}
+          <ProductImage uri={thumbUri} size="sm" style={{ width: 44, height: 44 }} />
+        </View>
+      ) : null}
       <View style={styles.lineItemLeft}>
         <Text style={[styles.lineItemName, isRemoved && styles.lineItemNameStruck]}>
           {item.product?.name ?? "Product"}

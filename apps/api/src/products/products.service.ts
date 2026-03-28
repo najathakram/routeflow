@@ -53,9 +53,18 @@ export class ProductsService {
       this.prisma.product.count({ where }),
     ]);
 
-    const effectiveLimit = fetchAll ? total : limit;
+    // Attach thumbnailUrl (first image only) for list/grid display without loading all images
+    const enriched = await Promise.all(
+      data.map(async (p) => {
+        const thumbnailUrl = p.imageKeys.length > 0
+          ? await this.storage.presignedUrl(p.imageKeys[0])
+          : null;
+        return { ...p, thumbnailUrl };
+      }),
+    );
+
     return {
-      data,
+      data: enriched,
       meta: {
         total,
         page: fetchAll ? 1 : page,

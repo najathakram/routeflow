@@ -40,7 +40,7 @@ interface ApiProduct {
   isActive: boolean;
   currentStock: number;
   description?: string;
-  imageUrl?: string;
+  thumbnailUrl?: string | null;
 }
 
 // ─── Category pill ────────────────────────────────────────────────────────────
@@ -117,7 +117,7 @@ function ProductCard({ product }: { product: ApiProduct }) {
         accessibilityLabel={`View ${product.name} details`}
       >
         <View style={styles.imageContainer}>
-          <ProductImage uri={product.imageUrl} size="md" />
+          <ProductImage uri={product.thumbnailUrl} size="md" />
           {isLowStock && (
             <View style={styles.lowStockBadge}>
               <Text style={styles.lowStockText}>Low Stock</Text>

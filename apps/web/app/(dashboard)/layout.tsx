@@ -30,6 +30,7 @@ import {
   RotateCcw,
   FileCheck,
   Wallet,
+  Building2,
   type LucideIcon,
 } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
@@ -61,6 +62,7 @@ const NAV_STRUCTURE: NavEntry[] = [
     children: [
       { kind: "leaf", label: "Customers",  href: "/customers",  icon: Users },
       { kind: "leaf", label: "Products",   href: "/products",   icon: Package },
+      { kind: "leaf", label: "Suppliers",  href: "/suppliers",  icon: Building2 },
       { kind: "leaf", label: "Inventory",  href: "/inventory",  icon: Layers },
     ],
   },

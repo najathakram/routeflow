@@ -141,9 +141,9 @@ export default function ProductDetailScreen() {
           contentContainerStyle={styles.scroll}
           showsVerticalScrollIndicator={false}
         >
-          {/* Product image */}
+          {/* Product image(s) */}
           <View style={styles.imageContainer}>
-            <ProductImage uri={(product as any).imageUrl} size="lg" />
+            <ProductImage uri={(product as any).imageUrls?.[0] ?? (product as any).thumbnailUrl} size="lg" />
             {product.lowStock ? (
               <View style={styles.lowStockBanner}>
                 <Ionicons

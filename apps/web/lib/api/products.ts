@@ -114,9 +114,9 @@ export function useUploadProductImages(id: string) {
     mutationFn: (files: File[]): Promise<{ uploaded: { key: string; url: string }[] }> => {
       const form = new FormData();
       files.forEach((f) => form.append("files", f));
-      return apiClient.post(`/products/${id}/images`, form, {
-        headers: { "Content-Type": "multipart/form-data" },
-      }).then((r) => r.data);
+      // Do NOT set Content-Type manually — Axios auto-sets multipart/form-data
+      // WITH the correct boundary when it detects a FormData body.
+      return apiClient.post(`/products/${id}/images`, form).then((r) => r.data);
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["products", id] }),
   });
@@ -138,7 +138,7 @@ export async function uploadProductImages(
 ): Promise<void> {
   const form = new FormData();
   files.forEach((f) => form.append("files", f));
-  await apiClient.post(`/products/${id}/images`, form, {
-    headers: { "Content-Type": "multipart/form-data" },
-  });
+  // Do NOT set Content-Type manually — Axios auto-sets multipart/form-data
+  // WITH the correct boundary when it detects a FormData body.
+  await apiClient.post(`/products/${id}/images`, form);
 }

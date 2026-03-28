@@ -25,7 +25,12 @@ import {
 import { Badge, Button, Card, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useToast } from "@routeflow/ui/web";
-import { useProduct, useUpdateProduct, useDeleteProduct, useUploadProductImages, useDeleteProductImage } from "@/lib/api/products";
+import { useProduct, useProducts, useUpdateProduct, useDeleteProduct, useUploadProductImages, useDeleteProductImage } from "@/lib/api/products";
+
+const COMMON_UNITS = [
+  "unit", "each", "case", "box", "bag", "pack", "dozen", "pallet",
+  "kg", "g", "lb", "oz", "L", "ml", "tray", "bottle", "can", "roll", "sheet",
+];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -91,6 +96,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
   const { setTitle } = usePageTitle();
   const { toast } = useToast();
   const { data: product, isLoading } = useProduct(params.id);
+  const { data: allProductsResult } = useProducts({ limit: 0 });
   const updateProduct = useUpdateProduct();
   const deleteProduct = useDeleteProduct();
   const uploadImages = useUploadProductImages(params.id);
@@ -101,7 +107,14 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
   const [isMounted, setIsMounted] = React.useState(false);
   const [activeImageIdx, setActiveImageIdx] = React.useState(0);
   const [isDragging, setIsDragging] = React.useState(false);
+  const [selectedImages, setSelectedImages] = React.useState<Set<number>>(new Set());
+  const [selectMode, setSelectMode] = React.useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
+
+  // Derived: all known categories and units from the catalog
+  const allProducts: any[] = allProductsResult?.data ?? [];
+  const catalogCategories = Array.from(new Set(allProducts.map((p: any) => p.category).filter(Boolean))) as string[];
+  const catalogUnits = Array.from(new Set([...COMMON_UNITS, ...allProducts.map((p: any) => p.unit).filter(Boolean)])).sort() as string[];
 
   // Reset active image index if images change
   React.useEffect(() => {
@@ -187,6 +200,28 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
               }
             };
 
+            const toggleSelectImage = (i: number) => {
+              setSelectedImages((prev) => {
+                const next = new Set(prev);
+                next.has(i) ? next.delete(i) : next.add(i);
+                return next;
+              });
+            };
+
+            const deleteSelected = async () => {
+              const keys = (product as any).imageKeys ?? [];
+              const toDelete = Array.from(selectedImages).map((i) => keys[i]).filter(Boolean);
+              try {
+                await Promise.all(toDelete.map((k: string) => deleteImage.mutateAsync(k)));
+                setSelectedImages(new Set());
+                setSelectMode(false);
+                setActiveImageIdx(0);
+                toast({ title: `${toDelete.length} image${toDelete.length !== 1 ? "s" : ""} deleted`, variant: "success" });
+              } catch {
+                toast({ title: "Delete failed", variant: "error" });
+              }
+            };
+
             return (
               <div className="space-y-2">
                 {/* Main image / drop zone */}
@@ -213,27 +248,29 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                         alt={`${product.name} — image ${safeIdx + 1}`}
                         className="h-full w-full object-contain"
                       />
-                      {/* Delete current image */}
-                      <button
-                        onClick={async (e) => {
-                          e.stopPropagation();
-                          const key = (product as any).imageKeys?.[safeIdx];
-                          if (!key) return;
-                          try {
-                            await deleteImage.mutateAsync(key);
-                            setActiveImageIdx(0);
-                            toast({ title: "Image deleted", variant: "success" });
-                          } catch {
-                            toast({ title: "Delete failed", variant: "error" });
-                          }
-                        }}
-                        className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-black/50 text-white hover:bg-danger transition-colors"
-                        title="Delete image"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
+                      {/* Delete current image (single) */}
+                      {!selectMode && (
+                        <button
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            const key = (product as any).imageKeys?.[safeIdx];
+                            if (!key) return;
+                            try {
+                              await deleteImage.mutateAsync(key);
+                              setActiveImageIdx(0);
+                              toast({ title: "Image deleted", variant: "success" });
+                            } catch {
+                              toast({ title: "Delete failed", variant: "error" });
+                            }
+                          }}
+                          className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-black/50 text-white hover:bg-danger transition-colors"
+                          title="Delete this image"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      )}
                       {/* Prev / next arrows */}
-                      {images.length > 1 && (
+                      {images.length > 1 && !selectMode && (
                         <>
                           <button
                             onClick={(e) => { e.stopPropagation(); setActiveImageIdx((i) => (i - 1 + images.length) % images.length); }}
@@ -250,7 +287,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                         </>
                       )}
                       {/* Page indicator */}
-                      {images.length > 1 && (
+                      {images.length > 1 && !selectMode && (
                         <div className="absolute bottom-2 left-1/2 -translate-x-1/2 rounded-full bg-black/40 px-2 py-0.5 text-xs text-white">
                           {safeIdx + 1} / {images.length}
                         </div>
@@ -264,34 +301,74 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                   )}
                 </div>
 
-                {/* Thumbnail strip */}
-                {images.length > 1 && (
+                {/* Thumbnail strip with checkboxes in select mode */}
+                {images.length > 0 && (
                   <div className="flex gap-1.5 overflow-x-auto pb-1">
                     {images.map((url, i) => (
-                      <button
-                        key={i}
-                        onClick={() => setActiveImageIdx(i)}
-                        className={cn(
-                          "h-14 w-14 shrink-0 overflow-hidden rounded-lg border-2 transition-all",
-                          i === safeIdx ? "border-brand-500" : "border-transparent opacity-60 hover:opacity-100",
+                      <div key={i} className="relative shrink-0">
+                        <button
+                          onClick={() => selectMode ? toggleSelectImage(i) : setActiveImageIdx(i)}
+                          className={cn(
+                            "h-14 w-14 overflow-hidden rounded-lg border-2 transition-all",
+                            selectMode && selectedImages.has(i) && "border-danger",
+                            !selectMode && i === safeIdx ? "border-brand-500" : (!selectMode ? "border-transparent opacity-60 hover:opacity-100" : "border-surface-border"),
+                          )}
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={url} alt={`thumb ${i + 1}`} className="h-full w-full object-cover" />
+                        </button>
+                        {selectMode && (
+                          <input
+                            type="checkbox"
+                            checked={selectedImages.has(i)}
+                            onChange={() => toggleSelectImage(i)}
+                            className="absolute left-0.5 top-0.5 h-3.5 w-3.5 cursor-pointer accent-danger"
+                          />
                         )}
-                      >
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={url} alt={`thumb ${i + 1}`} className="h-full w-full object-cover" />
-                      </button>
+                      </div>
                     ))}
                   </div>
                 )}
 
-                {/* Upload button */}
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={uploadImages.isPending}
-                  className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-surface-border bg-white py-2 text-sm text-navy/50 hover:border-brand-500/50 hover:text-brand-500 transition-colors disabled:opacity-50"
-                >
-                  <Upload className="h-4 w-4" />
-                  {uploadImages.isPending ? "Uploading…" : "Upload images"}
-                </button>
+                {/* Action row: select-mode toggle + bulk delete + upload */}
+                <div className="flex items-center gap-2">
+                  {hasImages && (
+                    selectMode ? (
+                      <>
+                        <button
+                          onClick={deleteSelected}
+                          disabled={selectedImages.size === 0 || deleteImage.isPending}
+                          className="flex items-center gap-1.5 rounded-lg bg-danger px-3 py-1.5 text-xs font-medium text-white hover:bg-danger/90 disabled:opacity-40 transition-colors"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                          Delete {selectedImages.size > 0 ? `${selectedImages.size} ` : ""}selected
+                        </button>
+                        <button
+                          onClick={() => { setSelectMode(false); setSelectedImages(new Set()); }}
+                          className="rounded-lg border border-surface-border px-3 py-1.5 text-xs text-navy/60 hover:text-navy transition-colors"
+                        >
+                          Cancel
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        onClick={() => setSelectMode(true)}
+                        className="flex items-center gap-1.5 rounded-lg border border-surface-border px-3 py-1.5 text-xs text-navy/50 hover:text-navy transition-colors"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        Select to delete
+                      </button>
+                    )
+                  )}
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={uploadImages.isPending}
+                    className="flex flex-1 items-center justify-center gap-2 rounded-lg border border-dashed border-surface-border bg-white py-1.5 text-xs text-navy/50 hover:border-brand-500/50 hover:text-brand-500 transition-colors disabled:opacity-50"
+                  >
+                    <Upload className="h-3.5 w-3.5" />
+                    {uploadImages.isPending ? "Uploading…" : "Upload images"}
+                  </button>
+                </div>
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -417,15 +494,35 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
               <InfoRow
                 label="Category"
                 value={isEditing ? (
-                  <input value={(editDraft.category as string) ?? ""} onChange={(e) => setEditDraft((d) => ({ ...d, category: e.target.value }))}
-                    className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500" />
+                  <>
+                    <input
+                      list="edit-category-options"
+                      value={(editDraft.category as string) ?? ""}
+                      onChange={(e) => setEditDraft((d) => ({ ...d, category: e.target.value }))}
+                      placeholder="Select or type a category"
+                      className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    />
+                    <datalist id="edit-category-options">
+                      {catalogCategories.map((c) => <option key={c} value={c} />)}
+                    </datalist>
+                  </>
                 ) : product.category}
               />
               <InfoRow
                 label="Unit of Measure"
                 value={isEditing ? (
-                  <input value={(editDraft.unit as string) ?? ""} onChange={(e) => setEditDraft((d) => ({ ...d, unit: e.target.value }))}
-                    className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500" />
+                  <>
+                    <input
+                      list="edit-unit-options"
+                      value={(editDraft.unit as string) ?? ""}
+                      onChange={(e) => setEditDraft((d) => ({ ...d, unit: e.target.value }))}
+                      placeholder="Select or type a unit"
+                      className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    />
+                    <datalist id="edit-unit-options">
+                      {catalogUnits.map((u) => <option key={u} value={u} />)}
+                    </datalist>
+                  </>
                 ) : product.unit}
               />
               <InfoRow
