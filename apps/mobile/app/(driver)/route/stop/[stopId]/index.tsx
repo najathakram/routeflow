@@ -115,6 +115,9 @@ function ItemRow({
   const resolution = useRouteStore((s) => selectStopResolutions(s, stopId)[item.id]);
   const setItemResolution = useRouteStore((s) => s.setItemResolution);
 
+  // Local text state for direct qty input in delivery mode (must be before early return)
+  const [deliveryInput, setDeliveryInput] = useState<string | null>(null);
+
   const displayQty = editMode ? (editQty ?? item.qty) : item.qty;
 
   // ── Edit mode: qty stepper (used before the order is confirmed) ───────────
@@ -165,24 +168,32 @@ function ItemRow({
     setItemResolution(stopId, item.id, qtyToResolution(newQty, item.qty));
   };
 
+  const commitDeliveryInput = () => {
+    if (deliveryInput !== null) {
+      const n = parseInt(deliveryInput, 10);
+      handleDeliveryQtyChange(isNaN(n) || n < 0 ? deliveryQty : n);
+      setDeliveryInput(null);
+    }
+  };
+
   const chipLabel =
     deliveryQty <= 0
       ? "Not delivering"
-      : deliveryQty === item.qty
+      : deliveryQty === Number(item.qty)
         ? "Delivering all"
-        : deliveryQty > item.qty
-          ? `+${deliveryQty - item.qty} extra`
+        : deliveryQty > Number(item.qty)
+          ? `+${deliveryQty - Number(item.qty)} extra`
           : `${deliveryQty} of ${item.qty}`;
   const chipColor =
     deliveryQty <= 0
       ? colors.danger.DEFAULT
-      : deliveryQty >= item.qty
+      : deliveryQty >= Number(item.qty)
         ? colors.success.DEFAULT
         : colors.warning.DEFAULT;
   const chipBg =
     deliveryQty <= 0
       ? (colors.danger.bg ?? "#fee2e2")
-      : deliveryQty >= item.qty
+      : deliveryQty >= Number(item.qty)
         ? colors.success.bg
         : (colors.warning.bg ?? "#fef3c7");
 
@@ -200,27 +211,43 @@ function ItemRow({
           <View style={[itemStyles.deliveryStatusChip, { backgroundColor: chipBg }]}>
             <Text style={[itemStyles.deliveryStatusText, { color: chipColor }]}>{chipLabel}</Text>
           </View>
-          <View style={itemStyles.deliveryStepper}>
-            <Pressable
-              onPress={() => handleDeliveryQtyChange(Math.max(0, Number(deliveryQty) - 1))}
-              style={[itemStyles.stepBtn, deliveryQty <= 0 && itemStyles.stepBtnRemove]}
-              hitSlop={8}
-              accessibilityLabel="Decrease delivery quantity"
-            >
-              <Ionicons
-                name={deliveryQty <= 1 ? "close-outline" : "remove-outline"}
-                size={18}
-                color={deliveryQty <= 1 ? colors.danger.DEFAULT : colors.navy.DEFAULT}
+          <View style={itemStyles.deliveryControls}>
+            <View style={itemStyles.deliveryStepper}>
+              <Pressable
+                onPress={() => handleDeliveryQtyChange(Math.max(0, Number(deliveryQty) - 1))}
+                style={itemStyles.stepBtn}
+                hitSlop={8}
+                accessibilityLabel="Decrease delivery quantity"
+              >
+                <Ionicons name="remove-outline" size={18} color={colors.navy.DEFAULT} />
+              </Pressable>
+              <TextInput
+                style={itemStyles.deliveryQtyInput}
+                value={deliveryInput ?? String(deliveryQty)}
+                onChangeText={(v) => setDeliveryInput(v.replace(/[^0-9]/g, ""))}
+                onBlur={commitDeliveryInput}
+                onSubmitEditing={commitDeliveryInput}
+                keyboardType="number-pad"
+                selectTextOnFocus
+                returnKeyType="done"
+                accessibilityLabel="Delivery quantity"
               />
-            </Pressable>
-            <Text style={itemStyles.deliveryQty}>{deliveryQty}</Text>
+              <Pressable
+                onPress={() => handleDeliveryQtyChange(Number(deliveryQty) + 1)}
+                style={itemStyles.stepBtn}
+                hitSlop={8}
+                accessibilityLabel="Increase delivery quantity"
+              >
+                <Ionicons name="add-outline" size={18} color={colors.navy.DEFAULT} />
+              </Pressable>
+            </View>
             <Pressable
-              onPress={() => handleDeliveryQtyChange(Number(deliveryQty) + 1)}
-              style={itemStyles.stepBtn}
+              onPress={() => handleDeliveryQtyChange(0)}
+              style={itemStyles.deliveryRemoveBtn}
               hitSlop={8}
-              accessibilityLabel="Increase delivery quantity"
+              accessibilityLabel="Remove item from delivery"
             >
-              <Ionicons name="add-outline" size={18} color={colors.navy.DEFAULT} />
+              <Ionicons name="close-circle-outline" size={24} color={colors.danger.DEFAULT} />
             </Pressable>
           </View>
         </View>
@@ -372,6 +399,11 @@ const itemStyles = StyleSheet.create({
     fontSize: 12,
     fontFamily: "Inter_600SemiBold",
   },
+  deliveryControls: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
   deliveryStepper: {
     flexDirection: "row",
     alignItems: "center",
@@ -383,12 +415,19 @@ const itemStyles = StyleSheet.create({
     paddingHorizontal: 4,
     paddingVertical: 4,
   },
-  deliveryQty: {
+  deliveryQtyInput: {
     fontSize: 16,
     fontFamily: "Inter_700Bold",
     color: colors.navy.DEFAULT,
-    minWidth: 28,
+    minWidth: 36,
     textAlign: "center",
+    paddingVertical: 0,
+  },
+  deliveryRemoveBtn: {
+    width: 32,
+    height: 32,
+    alignItems: "center",
+    justifyContent: "center",
   },
 });
 
