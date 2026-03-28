@@ -241,6 +241,7 @@ export default function OrderScreen() {
     if (items.length === 0) return;
 
     if (editingOrderId) {
+      // Replacing all items on an order we explicitly loaded for editing
       updateOrderItems(
         {
           orderId: editingOrderId,
@@ -262,7 +263,45 @@ export default function OrderScreen() {
           },
         },
       );
+    } else if (pendingOrders.length > 0) {
+      // Already have a pending order — merge cart items into it
+      const pendingOrder = pendingOrders[0];
+      const merged: Array<{ productId: string; qty: number; unitPrice: number; itemNote?: string; substitution?: string }> =
+        pendingOrder.lineItems.map((li) => ({
+          productId: li.productId,
+          qty: li.qty,
+          unitPrice: Number(li.unitPrice),
+        }));
+
+      for (const cartItem of items) {
+        const existingIdx = merged.findIndex((m) => m.productId === cartItem.productId);
+        if (existingIdx >= 0) {
+          merged[existingIdx].qty += cartItem.quantity;
+        } else {
+          merged.push({
+            productId: cartItem.productId,
+            qty: cartItem.quantity,
+            unitPrice: cartItem.unitPrice,
+            itemNote: itemNotes[cartItem.productId] || undefined,
+            substitution: substitutions[cartItem.productId] || undefined,
+          });
+        }
+      }
+
+      updateOrderItems(
+        { orderId: pendingOrder.id, items: merged },
+        {
+          onSuccess: () => {
+            clearOrder();
+            router.replace(`/(customer)/order/confirmation?orderId=${pendingOrder.id}` as any);
+          },
+          onError: (err) => {
+            Alert.alert("Error", "Failed to update order. Please try again.\n" + (err.message || ""));
+          },
+        },
+      );
     } else {
+      // No pending order — create a brand new one
       createOrder(
         {
           items: items.map((i) => ({
@@ -418,6 +457,18 @@ export default function OrderScreen() {
               thumbColor="#fff"
             />
           </View>
+
+          {/* Merge-into-existing-order banner */}
+          {pendingOrders.length > 0 && !editingOrderId && (
+            <View style={styles.mergeBanner}>
+              <Ionicons name="information-circle-outline" size={16} color={colors.brand[500]} />
+              <Text style={styles.mergeBannerText}>
+                Adding to your existing pending order
+                {pendingOrders[0].orderNumber ? ` (${pendingOrders[0].orderNumber})` : ""}.
+                Duplicate products will have their quantities combined.
+              </Text>
+            </View>
+          )}
 
           {/* Line items */}
           <View style={styles.section}>
@@ -600,10 +651,12 @@ export default function OrderScreen() {
             )}
             <Text style={styles.placeOrderBtnText}>
               {isSubmitting
-                ? editingOrderId ? "Updating Order…" : "Placing Order…"
+                ? "Saving Order…"
                 : editingOrderId
                   ? `Update Order · $${total.toFixed(2)}`
-                  : `Place Order · $${total.toFixed(2)}`}
+                  : pendingOrders.length > 0
+                    ? `Add to Order · $${total.toFixed(2)}`
+                    : `Place Order · $${total.toFixed(2)}`}
             </Text>
           </Pressable>
         </View>
@@ -906,5 +959,24 @@ const styles = StyleSheet.create({
     color: "#94a3b8",
     marginTop: 12,
     fontStyle: "italic",
+  },
+  mergeBanner: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    backgroundColor: colors.brand[50],
+    borderRadius: borderRadius.DEFAULT,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    marginBottom: 4,
+    borderWidth: 1,
+    borderColor: colors.brand[200] ?? colors.brand[500] + "33",
+  },
+  mergeBannerText: {
+    flex: 1,
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    color: colors.brand[600] ?? colors.brand[500],
+    lineHeight: 18,
   },
 });

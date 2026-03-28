@@ -32,7 +32,17 @@ import {
   useReopenStop,
   type RouteRunOrderItem,
 } from "../../../../../lib/api/routes";
-import { useConfirmOrder } from "../../../../../lib/api/orders";
+import { useConfirmOrder, useUpdateOrderItems } from "../../../../../lib/api/orders";
+
+// ─── Types for inline order editing ──────────────────────────────────────────
+
+interface EditableOrderItem {
+  id: string;
+  productId: string;
+  name: string;
+  qty: number;
+  unitPrice: number;
+}
 import {
   useRouteStore,
   selectAllItemsResolved,
@@ -77,10 +87,19 @@ function ItemRow({
   item,
   stopId,
   highlighted,
+  // Edit-mode props (used for PENDING orders so driver can adjust before confirming)
+  editMode = false,
+  editQty,
+  onQtyIncrease,
+  onQtyDecrease,
 }: {
   item: RouteRunOrderItem & { isAdded?: boolean };
   stopId: string;
   highlighted?: boolean;
+  editMode?: boolean;
+  editQty?: number;
+  onQtyIncrease?: () => void;
+  onQtyDecrease?: () => void;
 }) {
   const resolution = useRouteStore((s) => selectStopResolutions(s, stopId)[item.id]);
   const setItemResolution = useRouteStore((s) => s.setItemResolution);
@@ -100,6 +119,50 @@ function ItemRow({
     }
   };
 
+  const displayQty = editMode ? (editQty ?? item.qty) : item.qty;
+
+  // ── Edit mode: qty stepper (used before the order is confirmed) ───────────
+  if (editMode) {
+    return (
+      <View style={[itemStyles.container, highlighted && itemStyles.highlighted]}>
+        <View style={itemStyles.editRow}>
+          <View style={itemStyles.editInfo}>
+            <Text style={itemStyles.name}>{item.product?.name ?? item.productId}</Text>
+            {Number(item.unitPrice) > 0 && (
+              <Text style={itemStyles.editPrice}>
+                ${Number(item.unitPrice).toFixed(2)} / {item.product?.unit ?? "unit"}
+              </Text>
+            )}
+          </View>
+          <View style={itemStyles.editStepper}>
+            <Pressable
+              onPress={onQtyDecrease}
+              style={[itemStyles.stepBtn, displayQty <= 1 && itemStyles.stepBtnRemove]}
+              hitSlop={8}
+              accessibilityLabel={displayQty <= 1 ? "Remove item" : "Decrease quantity"}
+            >
+              <Ionicons
+                name={displayQty <= 1 ? "trash-outline" : "remove-outline"}
+                size={18}
+                color={displayQty <= 1 ? colors.danger.DEFAULT : colors.navy.DEFAULT}
+              />
+            </Pressable>
+            <Text style={itemStyles.editQtyText}>{displayQty}</Text>
+            <Pressable
+              onPress={onQtyIncrease}
+              style={itemStyles.stepBtn}
+              hitSlop={8}
+              accessibilityLabel="Increase quantity"
+            >
+              <Ionicons name="add-outline" size={18} color={colors.navy.DEFAULT} />
+            </Pressable>
+          </View>
+        </View>
+      </View>
+    );
+  }
+
+  // ── Delivery resolution mode: Delivered / Partial / Refused ──────────────
   return (
     <View style={[itemStyles.container, highlighted && itemStyles.highlighted]}>
       <View style={itemStyles.header}>
@@ -235,6 +298,51 @@ const itemStyles = StyleSheet.create({
     fontFamily: "Inter_400Regular",
     color: "#64748b",
   },
+  // ── Edit mode styles ────────────────────────────────────────────────────
+  editRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  editInfo: { flex: 1, gap: 2 },
+  editPrice: {
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    color: "#64748b",
+  },
+  editStepper: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: colors.surface.raised,
+    borderRadius: borderRadius.full,
+    borderWidth: 1,
+    borderColor: colors.surface.border,
+    paddingHorizontal: 4,
+    paddingVertical: 4,
+  },
+  stepBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: colors.surface.border,
+  },
+  stepBtnRemove: {
+    borderColor: colors.danger.DEFAULT + "60",
+    backgroundColor: colors.danger.bg,
+  },
+  editQtyText: {
+    fontSize: 16,
+    fontFamily: "Inter_700Bold",
+    color: colors.navy.DEFAULT,
+    minWidth: 28,
+    textAlign: "center",
+  },
 });
 
 
@@ -253,12 +361,40 @@ export default function StopDetailScreen() {
   const addedItems = useRouteStore((s) => s.addedItems[stopId]) ?? [];
   const addStopItemStore = useRouteStore((s) => s.addStopItem);
 
+  const { mutate: updateOrderItems, isPending: isUpdatingItems } = useUpdateOrderItems();
+
+  // ── Inline order-editing state (keyed by orderId, only for PENDING orders) ─
+  const [orderEdits, setOrderEdits] = useState<Record<string, EditableOrderItem[]>>({});
+  const [editsDirty, setEditsDirty] = useState<Record<string, boolean>>({});
+  const initializedOrdersRef = useRef<Set<string>>(new Set());
+
   const [showProductPicker, setShowProductPicker] = useState(false);
+  const [targetOrderId, setTargetOrderId] = useState<string | null>(null);
   const [showScanner, setShowScanner] = useState(false);
   const [pendingBarcode, setPendingBarcode] = useState<string | null>(null);
   const [highlightedItemId, setHighlightedItemId] = useState<string | null>(null);
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const noteDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ─── Seed per-order edit state when a PENDING order first loads ───────────
+  useEffect(() => {
+    if (!stop?.orders) return;
+    for (const order of stop.orders) {
+      if (order.status === "PENDING" && !initializedOrdersRef.current.has(order.id)) {
+        initializedOrdersRef.current.add(order.id);
+        setOrderEdits((prev) => ({
+          ...prev,
+          [order.id]: (order.lineItems ?? []).map((li) => ({
+            id: li.id,
+            productId: li.productId,
+            name: li.product?.name ?? li.productId,
+            qty: li.qty,
+            unitPrice: Number(li.unitPrice),
+          })),
+        }));
+      }
+    }
+  }, [stop?.orders]);
 
   // ─── Delivery window alert state ──────────────────────────────────────────
   const [windowStatus, setWindowStatus] = useState<"ok" | "soon" | "late">("ok");
@@ -433,6 +569,73 @@ export default function StopDetailScreen() {
     }
   };
 
+  // ─── Inline order edit helpers ────────────────────────────────────────────
+
+  const handleEditItemQty = (orderId: string, itemId: string, delta: number) => {
+    setOrderEdits((prev) => {
+      const items = prev[orderId] ?? [];
+      const updated = items
+        .map((item) => item.id === itemId ? { ...item, qty: Math.max(0, item.qty + delta) } : item)
+        .filter((item) => item.qty > 0);
+      return { ...prev, [orderId]: updated };
+    });
+    setEditsDirty((prev) => ({ ...prev, [orderId]: true }));
+  };
+
+  const handleAddItemToOrder = (orderId: string, product: PickedProduct, qty: number) => {
+    const unitPrice = parseFloat(product.pricePerUnit) || 0;
+    setOrderEdits((prev) => {
+      const items = prev[orderId] ?? [];
+      const existingIdx = items.findIndex((i) => i.productId === product.id);
+      if (existingIdx >= 0) {
+        return {
+          ...prev,
+          [orderId]: items.map((item, idx) =>
+            idx === existingIdx ? { ...item, qty: item.qty + qty } : item,
+          ),
+        };
+      }
+      return {
+        ...prev,
+        [orderId]: [
+          ...items,
+          { id: `temp-${product.id}-${Date.now()}`, productId: product.id, name: product.name, qty, unitPrice },
+        ],
+      };
+    });
+    setEditsDirty((prev) => ({ ...prev, [orderId]: true }));
+  };
+
+  const handleConfirmOrder = (orderId: string) => {
+    const dirty = editsDirty[orderId];
+    const edits = orderEdits[orderId];
+
+    if (dirty && edits && edits.length > 0) {
+      updateOrderItems(
+        {
+          orderId,
+          items: edits.map((i) => ({ productId: i.productId, qty: i.qty, unitPrice: i.unitPrice })),
+        },
+        {
+          onSuccess: () => {
+            setEditsDirty((prev) => ({ ...prev, [orderId]: false }));
+            confirmOrder(orderId, {
+              onError: (err: any) =>
+                Alert.alert("Error", err?.response?.data?.message ?? "Failed to confirm order."),
+            });
+          },
+          onError: (err: any) =>
+            Alert.alert("Error", err?.response?.data?.message ?? "Failed to save order changes."),
+        },
+      );
+    } else {
+      confirmOrder(orderId, {
+        onError: (err: any) =>
+          Alert.alert("Error", err?.response?.data?.message ?? "Failed to confirm order."),
+      });
+    }
+  };
+
   const handleMarkArrived = () => {
     if (stop.status === "PENDING" && runId) {
       updateStopStatus({ runId, stopId, status: "IN_PROGRESS" });
@@ -600,71 +803,113 @@ export default function StopDetailScreen() {
               </View>
             ) : (
               <View style={styles.itemsList}>
-                {(stop.orders ?? []).map((order) => (
-                  <View key={order.id} style={styles.orderGroup}>
-                    {/* Order header */}
-                    <View style={styles.orderGroupHeader}>
-                      <View style={styles.orderGroupLeft}>
-                        <Text style={styles.orderGroupNum}>{order.orderNumber}</Text>
-                        <View style={[
-                          styles.orderStatusBadge,
-                          order.status === "PENDING" && { backgroundColor: "#fef3c7" },
-                          order.status === "CONFIRMED" && { backgroundColor: colors.brand[50] },
-                          order.status === "OUT_FOR_DELIVERY" && { backgroundColor: colors.brand[50] },
-                          order.status === "DELIVERED" && { backgroundColor: colors.success.bg },
-                        ]}>
-                          <Text style={[
-                            styles.orderStatusText,
-                            order.status === "PENDING" && { color: colors.warning.DEFAULT },
-                            order.status === "CONFIRMED" && { color: colors.brand[500] },
-                            order.status === "OUT_FOR_DELIVERY" && { color: colors.brand[500] },
-                            order.status === "DELIVERED" && { color: colors.success.DEFAULT },
+                {(stop.orders ?? []).map((order) => {
+                  const isPending = order.status === "PENDING";
+                  // Use local edit state for PENDING orders, fall back to server data
+                  const displayItems: EditableOrderItem[] = isPending
+                    ? (orderEdits[order.id] ?? (order.lineItems ?? []).map((li) => ({
+                        id: li.id,
+                        productId: li.productId,
+                        name: li.product?.name ?? li.productId,
+                        qty: li.qty,
+                        unitPrice: Number(li.unitPrice),
+                      })))
+                    : (order.lineItems ?? []).map((li) => ({
+                        id: li.id,
+                        productId: li.productId,
+                        name: li.product?.name ?? li.productId,
+                        qty: li.qty,
+                        unitPrice: Number(li.unitPrice),
+                      }));
+                  const isBusy = isConfirming || isUpdatingItems;
+
+                  return (
+                    <View key={order.id} style={styles.orderGroup}>
+                      {/* Order header */}
+                      <View style={styles.orderGroupHeader}>
+                        <View style={styles.orderGroupLeft}>
+                          <Text style={styles.orderGroupNum}>{order.orderNumber}</Text>
+                          <View style={[
+                            styles.orderStatusBadge,
+                            order.status === "PENDING" && { backgroundColor: "#fef3c7" },
+                            order.status === "CONFIRMED" && { backgroundColor: colors.brand[50] },
+                            order.status === "OUT_FOR_DELIVERY" && { backgroundColor: colors.brand[50] },
+                            order.status === "DELIVERED" && { backgroundColor: colors.success.bg },
                           ]}>
-                            {order.status.replace(/_/g, " ")}
+                            <Text style={[
+                              styles.orderStatusText,
+                              order.status === "PENDING" && { color: colors.warning.DEFAULT },
+                              order.status === "CONFIRMED" && { color: colors.brand[500] },
+                              order.status === "OUT_FOR_DELIVERY" && { color: colors.brand[500] },
+                              order.status === "DELIVERED" && { color: colors.success.DEFAULT },
+                            ]}>
+                              {order.status.replace(/_/g, " ")}
+                            </Text>
+                          </View>
+                          <Text style={styles.orderItemCount}>
+                            {displayItems.length} item{displayItems.length !== 1 ? "s" : ""}
+                            {editsDirty[order.id] ? " · edited" : ""}
                           </Text>
                         </View>
-                        <Text style={styles.orderItemCount}>
-                          {(order.lineItems ?? []).length} item{(order.lineItems ?? []).length !== 1 ? "s" : ""}
-                        </Text>
+                        {isPending && (
+                          <View style={styles.orderActions}>
+                            <Pressable
+                              style={styles.addToOrderBtn}
+                              onPress={() => {
+                                setTargetOrderId(order.id);
+                                setShowProductPicker(true);
+                              }}
+                              accessibilityRole="button"
+                              accessibilityLabel="Add item to order"
+                            >
+                              <Ionicons name="add-outline" size={16} color={colors.brand[500]} />
+                              <Text style={styles.addToOrderBtnText}>Add</Text>
+                            </Pressable>
+                            <Pressable
+                              style={[styles.confirmOrderBtn, isBusy && { opacity: 0.6 }]}
+                              disabled={isBusy}
+                              onPress={() => handleConfirmOrder(order.id)}
+                              accessibilityRole="button"
+                            >
+                              <Ionicons name="checkmark-circle-outline" size={16} color={colors.success.DEFAULT} />
+                              <Text style={styles.confirmOrderBtnText}>
+                                {isUpdatingItems && editsDirty[order.id] ? "Saving…" : "Confirm"}
+                              </Text>
+                            </Pressable>
+                          </View>
+                        )}
                       </View>
-                      {order.status === "PENDING" && (
-                        <View style={styles.orderActions}>
-                          <Pressable
-                            style={styles.editOrderBtn}
-                            onPress={() => router.push(`/(driver)/orders/${order.id}` as any)}
-                            accessibilityRole="button"
-                            accessibilityLabel="Edit order"
-                          >
-                            <Ionicons name="create-outline" size={16} color={colors.navy.DEFAULT} />
-                            <Text style={styles.editOrderBtnText}>Edit</Text>
-                          </Pressable>
-                          <Pressable
-                            style={[styles.confirmOrderBtn, isConfirming && { opacity: 0.6 }]}
-                            disabled={isConfirming}
-                            onPress={() => confirmOrder(order.id, {
-                              onError: (err: any) => Alert.alert("Error", err?.response?.data?.message ?? "Failed to confirm."),
-                            })}
-                            accessibilityRole="button"
-                          >
-                            <Ionicons name="checkmark-circle-outline" size={16} color={colors.success.DEFAULT} />
-                            <Text style={styles.confirmOrderBtnText}>Confirm</Text>
-                          </Pressable>
-                        </View>
-                      )}
+                      {/* Items */}
+                      <View style={styles.orderItemsContainer}>
+                        {displayItems.map((editItem) => {
+                          const serverItem = (order.lineItems ?? []).find((li) => li.id === editItem.id);
+                          const rowItem = serverItem
+                            ? serverItem
+                            : {
+                                id: editItem.id,
+                                productId: editItem.productId,
+                                product: { id: editItem.productId, name: editItem.name, unit: "" },
+                                qty: editItem.qty,
+                                unitPrice: editItem.unitPrice,
+                                status: "PENDING" as const,
+                              };
+                          return (
+                            <ItemRow
+                              key={editItem.id}
+                              item={rowItem as any}
+                              stopId={stopId}
+                              highlighted={highlightedItemId === editItem.id}
+                              editMode={isPending}
+                              editQty={editItem.qty}
+                              onQtyIncrease={() => handleEditItemQty(order.id, editItem.id, 1)}
+                              onQtyDecrease={() => handleEditItemQty(order.id, editItem.id, -1)}
+                            />
+                          );
+                        })}
+                      </View>
                     </View>
-                    {/* Items within this order */}
-                    <View style={styles.orderItemsContainer}>
-                      {(order.lineItems ?? []).map((item) => (
-                        <ItemRow
-                          key={item.id}
-                          item={item}
-                          stopId={stopId}
-                          highlighted={highlightedItemId === item.id}
-                        />
-                      ))}
-                    </View>
-                  </View>
-                ))}
+                  );
+                })}
 
                 {/* Added items (not tied to an order) */}
                 {addedItems.length > 0 && (
@@ -697,15 +942,20 @@ export default function StopDetailScreen() {
                   </View>
                 )}
 
-                {/* Add item button or form */}
-                <Pressable
-                  style={styles.addItemBtn}
-                  onPress={() => setShowProductPicker(true)}
-                  accessibilityRole="button"
-                >
-                  <Ionicons name="add-circle-outline" size={22} color={colors.brand[500]} />
-                  <Text style={styles.addItemText}>Add item not on order</Text>
-                </Pressable>
+                {/* Add item button — routes to a specific order if one is PENDING, otherwise adds locally */}
+                {!(stop.orders ?? []).some((o) => o.status === "PENDING") && (
+                  <Pressable
+                    style={styles.addItemBtn}
+                    onPress={() => {
+                      setTargetOrderId(null);
+                      setShowProductPicker(true);
+                    }}
+                    accessibilityRole="button"
+                  >
+                    <Ionicons name="add-circle-outline" size={22} color={colors.brand[500]} />
+                    <Text style={styles.addItemText}>Add item not on order</Text>
+                  </Pressable>
+                )}
               </View>
             )}
 
@@ -851,11 +1101,19 @@ export default function StopDetailScreen() {
 
       <ProductPickerModal
         visible={showProductPicker}
-        onClose={() => setShowProductPicker(false)}
-        title="Add Item to Stop"
-        onSelect={(product: PickedProduct, qty: number) => {
-          addStopItemStore(stopId, product.id, product.name, qty);
+        onClose={() => {
           setShowProductPicker(false);
+          setTargetOrderId(null);
+        }}
+        title={targetOrderId ? "Add Item to Order" : "Add Item to Stop"}
+        onSelect={(product: PickedProduct, qty: number) => {
+          if (targetOrderId) {
+            handleAddItemToOrder(targetOrderId, product, qty);
+          } else {
+            addStopItemStore(stopId, product.id, product.name, qty);
+          }
+          setShowProductPicker(false);
+          setTargetOrderId(null);
         }}
       />
     </>
@@ -1175,6 +1433,22 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: "Inter_700Bold",
     color: colors.navy.DEFAULT,
+  },
+  addToOrderBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: borderRadius.DEFAULT,
+    borderWidth: 1,
+    borderColor: colors.brand[200] ?? colors.brand[500] + "40",
+    backgroundColor: colors.brand[50],
+  },
+  addToOrderBtnText: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+    color: colors.brand[500],
   },
   confirmOrderBtn: {
     flexDirection: "row",
