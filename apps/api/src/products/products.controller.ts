@@ -50,6 +50,13 @@ export class ProductsController {
     return this.productsService.clearAll();
   }
 
+  // Must be declared before :id to avoid route collision
+  @Delete("bulk")
+  @Roles(UserRole.OPERATOR)
+  bulkDelete(@Body() dto: { ids: string[] }) {
+    return this.productsService.bulkDelete(dto.ids);
+  }
+
   @Patch(":id")
   @Roles(UserRole.OPERATOR)
   update(@Param("id") id: string, @Body() dto: UpdateProductDto) {

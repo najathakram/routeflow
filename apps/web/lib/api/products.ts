@@ -96,3 +96,12 @@ export function useClearAllProducts() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["products"] }),
   });
 }
+
+export function useBulkDeleteProducts() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: string[]): Promise<{ deleted: number }> =>
+      apiClient.delete("/products/bulk", { data: { ids } }).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["products"] }),
+  });
+}

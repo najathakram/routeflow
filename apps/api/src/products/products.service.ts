@@ -107,6 +107,23 @@ export class ProductsService {
     return { deleted: count };
   }
 
+  async bulkDelete(ids: string[]): Promise<{ deleted: number }> {
+    if (ids.length === 0) return { deleted: 0 };
+    // Delete dependent records first, then the products themselves
+    await this.prisma.$transaction([
+      this.prisma.stockMovement.deleteMany({ where: { productId: { in: ids } } }),
+      this.prisma.orderItem.deleteMany({ where: { productId: { in: ids } } }),
+      this.prisma.deliveryMutation.deleteMany({ where: { productId: { in: ids } } }),
+      this.prisma.orderTemplateItem.deleteMany({ where: { productId: { in: ids } } }),
+      this.prisma.invoiceItem.deleteMany({ where: { productId: { in: ids } } }),
+      this.prisma.purchaseOrderItem.deleteMany({ where: { productId: { in: ids } } }),
+      this.prisma.estimateItem.deleteMany({ where: { productId: { in: ids } } }),
+      this.prisma.returnItem.deleteMany({ where: { productId: { in: ids } } }),
+      this.prisma.product.deleteMany({ where: { id: { in: ids } } }),
+    ]);
+    return { deleted: ids.length };
+  }
+
   async importFromZoho(dto: ImportProductsDto): Promise<{
     created: number;
     skipped: number;

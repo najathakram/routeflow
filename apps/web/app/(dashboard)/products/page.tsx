@@ -7,7 +7,7 @@ import { Package, LayoutGrid, LayoutList, Plus, Upload, CheckCircle, AlertCircle
 import { PageHeader, Table, Badge, Button, Select, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useToast } from "@routeflow/ui/web";
-import { useProducts, useCreateProduct, useImportProducts, useClearAllProducts, type ZohoImportItem, type ImportResult } from "@/lib/api/products";
+import { useProducts, useCreateProduct, useImportProducts, useBulkDeleteProducts, type ZohoImportItem, type ImportResult } from "@/lib/api/products";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -46,18 +46,44 @@ function StockBadge({ status }: { status: StockStatus }) {
 
 // ─── Product grid card ────────────────────────────────────────────────────────
 
-function ProductCard({ product, onClick }: { product: ApiProduct; onClick: () => void }) {
+function ProductCard({
+  product,
+  onClick,
+  selected,
+  onSelect,
+  selectionMode,
+}: {
+  product: ApiProduct;
+  onClick: () => void;
+  selected: boolean;
+  onSelect: (e: React.MouseEvent) => void;
+  selectionMode: boolean;
+}) {
   const status = getStockStatus(product);
   return (
-    <button
-      onClick={onClick}
+    <div
       className={cn(
-        "flex flex-col overflow-hidden rounded-lg border bg-white text-left shadow-card transition-shadow hover:shadow-dropdown",
+        "relative flex flex-col overflow-hidden rounded-lg border bg-white text-left shadow-card transition-shadow hover:shadow-dropdown cursor-pointer",
         status === "LOW" && "border-warning/40",
         status === "OUT_OF_STOCK" && "border-danger/40",
         status === "IN_STOCK" && "border-surface-border",
+        selected && "ring-2 ring-brand-500 border-brand-500",
       )}
+      onClick={selectionMode ? onSelect : onClick}
     >
+      {/* Checkbox */}
+      <div
+        className="absolute left-2 top-2 z-10"
+        onClick={(e) => { e.stopPropagation(); onSelect(e); }}
+      >
+        <input
+          type="checkbox"
+          checked={selected}
+          onChange={() => {}}
+          className="h-4 w-4 cursor-pointer rounded border-navy/30 accent-brand-500"
+        />
+      </div>
+
       {/* Image placeholder */}
       <div
         className={cn(
@@ -66,6 +92,7 @@ function ProductCard({ product, onClick }: { product: ApiProduct; onClick: () =>
           status === "OUT_OF_STOCK" && "bg-danger-bg",
           status === "IN_STOCK" && "bg-surface-raised",
         )}
+        onClick={selectionMode ? undefined : onClick}
       >
         <Package
           className={cn(
@@ -78,7 +105,10 @@ function ProductCard({ product, onClick }: { product: ApiProduct; onClick: () =>
       </div>
 
       {/* Info */}
-      <div className="flex flex-1 flex-col gap-2 p-3">
+      <div
+        className="flex flex-1 flex-col gap-2 p-3"
+        onClick={selectionMode ? undefined : onClick}
+      >
         <div>
           <p className="text-xs text-navy/40">{product.sku}</p>
           <p className="mt-0.5 text-sm font-semibold leading-snug text-navy line-clamp-2">
@@ -95,59 +125,92 @@ function ProductCard({ product, onClick }: { product: ApiProduct; onClick: () =>
         </div>
         <StockBadge status={status} />
       </div>
-    </button>
+    </div>
   );
 }
 
 // ─── Table column defs ────────────────────────────────────────────────────────
 
-const tableColumns: ColumnDef<ApiProduct, unknown>[] = [
-  {
-    accessorKey: "name",
-    header: "Product",
-    cell: ({ row }) => (
-      <div>
-        <p className="font-medium text-navy">{row.original.name}</p>
-        <p className="text-xs text-navy/40">{row.original.sku}</p>
-      </div>
-    ),
-  },
-  {
-    accessorKey: "category",
-    header: "Category",
-    cell: ({ row }) => <span className="text-navy/70">{row.original.category}</span>,
-  },
-  {
-    accessorKey: "unit",
-    header: "Unit",
-    enableSorting: false,
-    cell: ({ row }) => <span className="text-navy/60">{row.original.unit}</span>,
-  },
-  {
-    accessorKey: "pricePerUnit",
-    header: "Price",
-    cell: ({ row }) => (
-      <span className="font-medium text-navy">
-        ${parseFloat(String(row.original.pricePerUnit)).toFixed(2)}
-      </span>
-    ),
-  },
-  {
-    accessorKey: "currentStock",
-    header: "Stock",
-    cell: ({ row }) => {
-      const status = getStockStatus(row.original);
-      return (
-        <div className="flex items-center gap-2">
-          <StockBadge status={status} />
-          <span className="text-xs text-navy/50">
-            {Number(row.original.currentStock).toFixed(0)} {row.original.unit}
-          </span>
-        </div>
-      );
+function makeTableColumns(
+  selected: Set<string>,
+  onToggle: (id: string) => void,
+  allIds: string[],
+  onToggleAll: () => void,
+): ColumnDef<ApiProduct, unknown>[] {
+  const allSelected = allIds.length > 0 && allIds.every((id) => selected.has(id));
+  const someSelected = !allSelected && allIds.some((id) => selected.has(id));
+
+  return [
+    {
+      id: "select",
+      header: () => (
+        <input
+          type="checkbox"
+          checked={allSelected}
+          ref={(el) => { if (el) el.indeterminate = someSelected; }}
+          onChange={onToggleAll}
+          className="h-4 w-4 cursor-pointer rounded border-navy/30 accent-brand-500"
+        />
+      ),
+      cell: ({ row }) => (
+        <input
+          type="checkbox"
+          checked={selected.has(row.original.id)}
+          onChange={() => onToggle(row.original.id)}
+          onClick={(e) => e.stopPropagation()}
+          className="h-4 w-4 cursor-pointer rounded border-navy/30 accent-brand-500"
+        />
+      ),
+      enableSorting: false,
+      size: 40,
     },
-  },
-];
+    {
+      accessorKey: "name",
+      header: "Product",
+      cell: ({ row }) => (
+        <div>
+          <p className="font-medium text-navy">{row.original.name}</p>
+          <p className="text-xs text-navy/40">{row.original.sku}</p>
+        </div>
+      ),
+    },
+    {
+      accessorKey: "category",
+      header: "Category",
+      cell: ({ row }) => <span className="text-navy/70">{row.original.category}</span>,
+    },
+    {
+      accessorKey: "unit",
+      header: "Unit",
+      enableSorting: false,
+      cell: ({ row }) => <span className="text-navy/60">{row.original.unit}</span>,
+    },
+    {
+      accessorKey: "pricePerUnit",
+      header: "Price",
+      cell: ({ row }) => (
+        <span className="font-medium text-navy">
+          ${parseFloat(String(row.original.pricePerUnit)).toFixed(2)}
+        </span>
+      ),
+    },
+    {
+      accessorKey: "currentStock",
+      header: "Stock",
+      cell: ({ row }) => {
+        const status = getStockStatus(row.original);
+        return (
+          <div className="flex items-center gap-2">
+            <StockBadge status={status} />
+            <span className="text-xs text-navy/50">
+              {Number(row.original.currentStock).toFixed(0)} {row.original.unit}
+            </span>
+          </div>
+        );
+      },
+    },
+  ];
+}
 
 // ─── Create product modal ──────────────────────────────────────────────────────
 
@@ -631,10 +694,10 @@ export default function ProductsPage() {
   const [viewMode, setViewMode] = React.useState<"grid" | "table">("grid");
   const [showCreate, setShowCreate] = React.useState(false);
   const [showImport, setShowImport] = React.useState(false);
-  const [showClearConfirm, setShowClearConfirm] = React.useState(false);
+  const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const createProduct = useCreateProduct();
   const importProducts = useImportProducts();
-  const clearAllProducts = useClearAllProducts();
+  const bulkDelete = useBulkDeleteProducts();
 
   const { data: result, isLoading } = useProducts({
     search,
@@ -654,6 +717,43 @@ export default function ProductsPage() {
     return productList;
   }, [productList, stockFilter]);
 
+  const filteredIds = filtered.map((p) => p.id);
+  const allFilteredSelected = filteredIds.length > 0 && filteredIds.every((id) => selected.has(id));
+
+  const toggleOne = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+
+  const toggleAll = () =>
+    setSelected((prev) => {
+      if (allFilteredSelected) {
+        const next = new Set(prev);
+        filteredIds.forEach((id) => next.delete(id));
+        return next;
+      }
+      return new Set([...prev, ...filteredIds]);
+    });
+
+  const handleBulkDelete = async () => {
+    const ids = Array.from(selected);
+    try {
+      const res = await bulkDelete.mutateAsync(ids);
+      setSelected(new Set());
+      toast({ title: `${res.deleted} product${res.deleted !== 1 ? "s" : ""} deleted`, variant: "success" });
+    } catch {
+      toast({ title: "Failed to delete products", variant: "error" });
+    }
+  };
+
+  const tableColumns = React.useMemo(
+    () => makeTableColumns(selected, toggleOne, filteredIds, toggleAll),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selected, filteredIds.join(","), allFilteredSelected],
+  );
+
   return (
     <div className="space-y-5 p-6">
       <PageHeader
@@ -661,13 +761,6 @@ export default function ProductsPage() {
         subtitle="Manage your product catalog"
         action={
           <div className="flex items-center gap-2">
-            <Button
-              variant="danger"
-              leftIcon={<Trash2 className="h-4 w-4" />}
-              onClick={() => setShowClearConfirm(true)}
-            >
-              Clear All
-            </Button>
             <Button
               variant="secondary"
               leftIcon={<Upload className="h-4 w-4" />}
@@ -708,47 +801,22 @@ export default function ProductsPage() {
         />
       )}
 
-      {/* Clear all confirmation modal */}
-      {showClearConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-md rounded-xl border border-surface-border bg-white shadow-xl">
-            <div className="flex items-start gap-4 p-6">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-danger-bg">
-                <Trash2 className="h-5 w-5 text-danger" />
-              </div>
-              <div>
-                <h2 className="text-base font-semibold text-navy">Clear entire product catalog?</h2>
-                <p className="mt-1 text-sm text-navy/60">
-                  This will permanently delete <strong>all {result?.total ?? productList.length} products</strong> and any associated order items, invoice lines, and stock records. This cannot be undone.
-                </p>
-              </div>
-            </div>
-            <div className="flex justify-end gap-2 border-t border-surface-border px-6 py-4">
-              <Button variant="secondary" onClick={() => setShowClearConfirm(false)}>
-                Cancel
-              </Button>
-              <Button
-                variant="danger"
-                loading={clearAllProducts.isPending}
-                onClick={async () => {
-                  try {
-                    const res = await clearAllProducts.mutateAsync();
-                    setShowClearConfirm(false);
-                    toast({ title: `Catalog cleared — ${res.deleted} products removed`, variant: "success" });
-                  } catch {
-                    toast({ title: "Failed to clear catalog", variant: "error" });
-                  }
-                }}
-              >
-                Yes, delete all
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-3">
+        {/* Select all checkbox */}
+        <label className="flex items-center gap-2 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={allFilteredSelected}
+            ref={(el) => {
+              if (el) el.indeterminate = !allFilteredSelected && filteredIds.some((id) => selected.has(id));
+            }}
+            onChange={toggleAll}
+            className="h-4 w-4 cursor-pointer rounded border-navy/30 accent-brand-500"
+          />
+          <span className="text-sm text-navy/60">Select all</span>
+        </label>
+
         <input
           type="search"
           placeholder="Search by name or SKU…"
@@ -785,9 +853,7 @@ export default function ProductsPage() {
             onClick={() => setViewMode("grid")}
             className={cn(
               "rounded p-1.5 transition-colors",
-              viewMode === "grid"
-                ? "bg-navy text-white"
-                : "text-navy/40 hover:text-navy",
+              viewMode === "grid" ? "bg-navy text-white" : "text-navy/40 hover:text-navy",
             )}
             title="Grid view"
           >
@@ -797,9 +863,7 @@ export default function ProductsPage() {
             onClick={() => setViewMode("table")}
             className={cn(
               "rounded p-1.5 transition-colors",
-              viewMode === "table"
-                ? "bg-navy text-white"
-                : "text-navy/40 hover:text-navy",
+              viewMode === "table" ? "bg-navy text-white" : "text-navy/40 hover:text-navy",
             )}
             title="Table view"
           >
@@ -807,6 +871,31 @@ export default function ProductsPage() {
           </button>
         </div>
       </div>
+
+      {/* Selection action bar */}
+      {selected.size > 0 && (
+        <div className="flex items-center justify-between rounded-lg border border-danger/30 bg-danger-bg px-4 py-3">
+          <span className="text-sm font-medium text-navy">
+            {selected.size} item{selected.size !== 1 ? "s" : ""} selected
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setSelected(new Set())}
+              className="text-sm text-navy/50 hover:text-navy transition-colors"
+            >
+              Deselect all
+            </button>
+            <Button
+              variant="danger"
+              leftIcon={<Trash2 className="h-4 w-4" />}
+              loading={bulkDelete.isPending}
+              onClick={handleBulkDelete}
+            >
+              Delete {selected.size} item{selected.size !== 1 ? "s" : ""}
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* Content */}
       {isLoading ? (
@@ -828,6 +917,9 @@ export default function ProductsPage() {
             <ProductCard
               key={p.id}
               product={p}
+              selected={selected.has(p.id)}
+              selectionMode={selected.size > 0}
+              onSelect={(e) => { e.stopPropagation(); toggleOne(p.id); }}
               onClick={() => router.push(`/products/${p.id}`)}
             />
           ))}
@@ -836,7 +928,10 @@ export default function ProductsPage() {
         <Table
           data={filtered}
           columns={tableColumns}
-          onRowClick={(row) => router.push(`/products/${row.original.id}`)}
+          onRowClick={(row) => {
+            if (selected.size > 0) toggleOne(row.original.id);
+            else router.push(`/products/${row.original.id}`);
+          }}
         />
       )}
     </div>
