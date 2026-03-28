@@ -5,7 +5,6 @@ import { CreateProductDto } from "./dto/create-product.dto";
 import { UpdateProductDto } from "./dto/update-product.dto";
 import { ListProductsDto, StockStatusFilter } from "./dto/list-products.dto";
 import { ImportProductsDto } from "./dto/import-products.dto";
-import { v4 as uuidv4 } from "uuid";
 
 @Injectable()
 export class ProductsService {
@@ -94,7 +93,7 @@ export class ProductsService {
     if (!product) throw new NotFoundException("Product not found");
 
     const ext = originalName.split(".").pop() ?? "jpg";
-    const key = `products/${id}/${uuidv4()}.${ext}`;
+    const key = `products/${id}/${crypto.randomUUID()}.${ext}`;
     await this.storage.upload(key, buffer, mimetype);
 
     // Append key to the product's imageKeys array
