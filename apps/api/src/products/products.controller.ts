@@ -1,4 +1,6 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UploadedFiles, UseGuards, UseInterceptors } from "@nestjs/common";
+import { FilesInterceptor } from "@nestjs/platform-express";
+import { memoryStorage } from "multer";
 import { UserRole } from "@prisma/client";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
@@ -67,5 +69,36 @@ export class ProductsController {
   @Roles(UserRole.OPERATOR)
   remove(@Param("id") id: string) {
     return this.productsService.remove(id);
+  }
+
+  // ─── Image endpoints (declared after :id to avoid prefix collision) ──────────
+
+  @Post(":id/images")
+  @Roles(UserRole.OPERATOR)
+  @UseInterceptors(
+    FilesInterceptor("files", 10, {
+      storage: memoryStorage(),
+      limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB per file
+      fileFilter: (_req, file, cb) => {
+        cb(null, file.mimetype.startsWith("image/"));
+      },
+    }),
+  )
+  async uploadImages(
+    @Param("id") id: string,
+    @UploadedFiles() files: Express.Multer.File[],
+  ) {
+    const results = await Promise.all(
+      files.map((f) =>
+        this.productsService.uploadImage(id, f.buffer, f.originalname, f.mimetype),
+      ),
+    );
+    return { uploaded: results };
+  }
+
+  @Delete(":id/images")
+  @Roles(UserRole.OPERATOR)
+  deleteImage(@Param("id") id: string, @Body() dto: { key: string }) {
+    return this.productsService.deleteImage(id, dto.key);
   }
 }

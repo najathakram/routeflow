@@ -107,3 +107,26 @@ export function useBulkDeleteProducts() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["products"] }),
   });
 }
+
+export function useUploadProductImages(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (files: File[]): Promise<{ uploaded: { key: string; url: string }[] }> => {
+      const form = new FormData();
+      files.forEach((f) => form.append("files", f));
+      return apiClient.post(`/products/${id}/images`, form, {
+        headers: { "Content-Type": "multipart/form-data" },
+      }).then((r) => r.data);
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["products", id] }),
+  });
+}
+
+export function useDeleteProductImage(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (key: string): Promise<void> =>
+      apiClient.delete(`/products/${id}/images`, { data: { key } }).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["products", id] }),
+  });
+}

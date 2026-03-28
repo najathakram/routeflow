@@ -1,13 +1,18 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { StorageService } from "../storage/storage.service";
 import { CreateProductDto } from "./dto/create-product.dto";
 import { UpdateProductDto } from "./dto/update-product.dto";
 import { ListProductsDto, StockStatusFilter } from "./dto/list-products.dto";
 import { ImportProductsDto } from "./dto/import-products.dto";
+import { v4 as uuidv4 } from "uuid";
 
 @Injectable()
 export class ProductsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storage: StorageService,
+  ) {}
 
   async findAll(query: ListProductsDto) {
     const page = Number(query.page ?? 1);
@@ -63,7 +68,51 @@ export class ProductsService {
   async findOne(id: string) {
     const product = await this.prisma.product.findUnique({ where: { id } });
     if (!product) throw new NotFoundException("Product not found");
-    return product;
+    // Attach presigned image URLs so the frontend can render them directly
+    const imageUrls = product.imageKeys.length > 0
+      ? await this.storage.presignedUrls(product.imageKeys)
+      : [];
+    return { ...product, imageUrls };
+  }
+
+  async uploadImage(
+    id: string,
+    buffer: Buffer,
+    originalName: string,
+    mimetype: string,
+  ): Promise<{ key: string; url: string }> {
+    const product = await this.prisma.product.findUnique({ where: { id } });
+    if (!product) throw new NotFoundException("Product not found");
+
+    const ext = originalName.split(".").pop() ?? "jpg";
+    const key = `products/${id}/${uuidv4()}.${ext}`;
+    await this.storage.upload(key, buffer, mimetype);
+
+    // Append key to the product's imageKeys array
+    await this.prisma.product.update({
+      where: { id },
+      data: { imageKeys: { push: key } },
+    });
+
+    const url = await this.storage.presignedUrl(key);
+    return { key, url };
+  }
+
+  async deleteImage(id: string, key: string): Promise<void> {
+    const product = await this.prisma.product.findUnique({ where: { id } });
+    if (!product) throw new NotFoundException("Product not found");
+    if (!product.imageKeys.includes(key)) {
+      throw new NotFoundException("Image not found on this product");
+    }
+
+    // Remove from R2
+    await this.storage.delete(key);
+
+    // Remove key from array
+    await this.prisma.product.update({
+      where: { id },
+      data: { imageKeys: product.imageKeys.filter((k) => k !== key) },
+    });
   }
 
   async findByBarcode(barcode: string) {

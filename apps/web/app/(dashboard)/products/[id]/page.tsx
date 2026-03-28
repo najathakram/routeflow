@@ -8,6 +8,10 @@ import {
   Pencil,
   Check,
   X,
+  Upload,
+  Trash2,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import {
   BarChart,
@@ -20,7 +24,8 @@ import {
 } from "recharts";
 import { Badge, Button, Card, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
-import { useProduct, useUpdateProduct, useDeleteProduct } from "@/lib/api/products";
+import { useToast } from "@routeflow/ui/web";
+import { useProduct, useUpdateProduct, useDeleteProduct, useUploadProductImages, useDeleteProductImage } from "@/lib/api/products";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -84,13 +89,24 @@ function EditableNumber({
 
 export default function ProductDetailPage({ params }: { params: { id: string } }) {
   const { setTitle } = usePageTitle();
+  const { toast } = useToast();
   const { data: product, isLoading } = useProduct(params.id);
   const updateProduct = useUpdateProduct();
   const deleteProduct = useDeleteProduct();
+  const uploadImages = useUploadProductImages(params.id);
+  const deleteImage = useDeleteProductImage(params.id);
 
   const [isEditing, setIsEditing] = React.useState(false);
   const [editDraft, setEditDraft] = React.useState<Record<string, unknown>>({});
   const [isMounted, setIsMounted] = React.useState(false);
+  const [activeImageIdx, setActiveImageIdx] = React.useState(0);
+  const [isDragging, setIsDragging] = React.useState(false);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+
+  // Reset active image index if images change
+  React.useEffect(() => {
+    setActiveImageIdx(0);
+  }, [product?.id]);
 
   React.useEffect(() => { setIsMounted(true); }, []);
   React.useEffect(() => {
@@ -153,25 +169,140 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
 
-        {/* ── Left: image + stock card ── */}
+        {/* ── Left: image gallery + stock card ── */}
         <div className="space-y-4">
-          <div
-            className={cn(
-              "flex h-52 w-full items-center justify-center rounded-xl border",
-              stockStatus === "LOW" && "border-warning/30 bg-warning-bg",
-              stockStatus === "OUT_OF_STOCK" && "border-danger/30 bg-danger-bg",
-              stockStatus === "IN_STOCK" && "border-surface-border bg-surface-raised",
-            )}
-          >
-            <Package
-              className={cn(
-                "h-16 w-16",
-                stockStatus === "LOW" && "text-warning/30",
-                stockStatus === "OUT_OF_STOCK" && "text-danger/30",
-                stockStatus === "IN_STOCK" && "text-navy/15",
-              )}
-            />
-          </div>
+          {/* ── Image gallery ── */}
+          {(() => {
+            const images: string[] = (product as any).imageUrls ?? [];
+            const hasImages = images.length > 0;
+            const safeIdx = Math.min(activeImageIdx, images.length - 1);
+
+            const handleUpload = async (files: FileList | null) => {
+              if (!files || files.length === 0) return;
+              try {
+                await uploadImages.mutateAsync(Array.from(files));
+                toast({ title: `${files.length} image${files.length > 1 ? "s" : ""} uploaded`, variant: "success" });
+              } catch {
+                toast({ title: "Upload failed", variant: "error" });
+              }
+            };
+
+            return (
+              <div className="space-y-2">
+                {/* Main image / drop zone */}
+                <div
+                  onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+                  onDragLeave={() => setIsDragging(false)}
+                  onDrop={(e) => { e.preventDefault(); setIsDragging(false); handleUpload(e.dataTransfer.files); }}
+                  className={cn(
+                    "relative overflow-hidden rounded-xl border",
+                    isDragging && "ring-2 ring-brand-500",
+                    !hasImages && "cursor-pointer",
+                    stockStatus === "LOW" && "border-warning/30 bg-warning-bg",
+                    stockStatus === "OUT_OF_STOCK" && "border-danger/30 bg-danger-bg",
+                    stockStatus === "IN_STOCK" && "border-surface-border bg-surface-raised",
+                  )}
+                  style={{ height: "13rem" }}
+                  onClick={!hasImages ? () => fileInputRef.current?.click() : undefined}
+                >
+                  {hasImages ? (
+                    <>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={images[safeIdx]}
+                        alt={`${product.name} — image ${safeIdx + 1}`}
+                        className="h-full w-full object-contain"
+                      />
+                      {/* Delete current image */}
+                      <button
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          const key = (product as any).imageKeys?.[safeIdx];
+                          if (!key) return;
+                          try {
+                            await deleteImage.mutateAsync(key);
+                            setActiveImageIdx(0);
+                            toast({ title: "Image deleted", variant: "success" });
+                          } catch {
+                            toast({ title: "Delete failed", variant: "error" });
+                          }
+                        }}
+                        className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-black/50 text-white hover:bg-danger transition-colors"
+                        title="Delete image"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                      {/* Prev / next arrows */}
+                      {images.length > 1 && (
+                        <>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setActiveImageIdx((i) => (i - 1 + images.length) % images.length); }}
+                            className="absolute left-1 top-1/2 -translate-y-1/2 flex h-7 w-7 items-center justify-center rounded-full bg-black/40 text-white hover:bg-black/60 transition-colors"
+                          >
+                            <ChevronLeft className="h-4 w-4" />
+                          </button>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setActiveImageIdx((i) => (i + 1) % images.length); }}
+                            className="absolute right-8 top-1/2 -translate-y-1/2 flex h-7 w-7 items-center justify-center rounded-full bg-black/40 text-white hover:bg-black/60 transition-colors"
+                          >
+                            <ChevronRight className="h-4 w-4" />
+                          </button>
+                        </>
+                      )}
+                      {/* Page indicator */}
+                      {images.length > 1 && (
+                        <div className="absolute bottom-2 left-1/2 -translate-x-1/2 rounded-full bg-black/40 px-2 py-0.5 text-xs text-white">
+                          {safeIdx + 1} / {images.length}
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div className="flex h-full flex-col items-center justify-center gap-2">
+                      <Package className={cn("h-14 w-14", stockStatus === "LOW" && "text-warning/30", stockStatus === "OUT_OF_STOCK" && "text-danger/30", stockStatus === "IN_STOCK" && "text-navy/15")} />
+                      <p className="text-xs text-navy/40">Drop images here or click to upload</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Thumbnail strip */}
+                {images.length > 1 && (
+                  <div className="flex gap-1.5 overflow-x-auto pb-1">
+                    {images.map((url, i) => (
+                      <button
+                        key={i}
+                        onClick={() => setActiveImageIdx(i)}
+                        className={cn(
+                          "h-14 w-14 shrink-0 overflow-hidden rounded-lg border-2 transition-all",
+                          i === safeIdx ? "border-brand-500" : "border-transparent opacity-60 hover:opacity-100",
+                        )}
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={url} alt={`thumb ${i + 1}`} className="h-full w-full object-cover" />
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* Upload button */}
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploadImages.isPending}
+                  className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-surface-border bg-white py-2 text-sm text-navy/50 hover:border-brand-500/50 hover:text-brand-500 transition-colors disabled:opacity-50"
+                >
+                  <Upload className="h-4 w-4" />
+                  {uploadImages.isPending ? "Uploading…" : "Upload images"}
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => handleUpload(e.target.files)}
+                />
+              </div>
+            );
+          })()}
 
           <Card>
             <div className="space-y-3">
