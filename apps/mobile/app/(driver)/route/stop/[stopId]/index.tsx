@@ -103,6 +103,7 @@ function ItemRow({
   editQty,
   onQtyIncrease,
   onQtyDecrease,
+  onRemove,
 }: {
   item: RouteRunOrderItem & { isAdded?: boolean };
   stopId: string;
