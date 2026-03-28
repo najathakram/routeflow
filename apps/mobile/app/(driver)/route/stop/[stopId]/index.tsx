@@ -33,16 +33,6 @@ import {
   type RouteRunOrderItem,
 } from "../../../../../lib/api/routes";
 import { useConfirmOrder, useUpdateOrderItems } from "../../../../../lib/api/orders";
-
-// ─── Types for inline order editing ──────────────────────────────────────────
-
-interface EditableOrderItem {
-  id: string;
-  productId: string;
-  name: string;
-  qty: number;
-  unitPrice: number;
-}
 import {
   useRouteStore,
   selectAllItemsResolved,
@@ -54,6 +44,16 @@ import { BarcodeScanner } from "../../../../../components/BarcodeScanner";
 import { ProductPickerModal, type PickedProduct } from "../../../../../components/ProductPickerModal";
 import { NetworkError } from "../../../../../components/NetworkError";
 import { apiClient } from "../../../../../lib/api-client";
+
+// ─── Types for inline order editing ──────────────────────────────────────────
+
+interface EditableOrderItem {
+  id: string;
+  productId: string;
+  name: string;
+  qty: number;
+  unitPrice: number;
+}
 
 // ─── Open Maps ────────────────────────────────────────────────────────────────
 
