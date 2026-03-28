@@ -3,11 +3,11 @@
 import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Package, LayoutGrid, LayoutList, Plus, Upload, CheckCircle, AlertCircle, Info, Trash2 } from "lucide-react";
+import { Package, LayoutGrid, LayoutList, Plus, Upload, CheckCircle, AlertCircle, Info, Trash2, ImagePlus, X as XIcon } from "lucide-react";
 import { PageHeader, Table, Badge, Button, Select, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useToast } from "@routeflow/ui/web";
-import { useProducts, useCreateProduct, useImportProducts, useBulkDeleteProducts, type ZohoImportItem, type ImportResult } from "@/lib/api/products";
+import { useProducts, useCreateProduct, useImportProducts, useBulkDeleteProducts, uploadProductImages, type ZohoImportItem, type ImportResult } from "@/lib/api/products";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -212,26 +212,59 @@ function makeTableColumns(
   ];
 }
 
+// ─── Common units & helpers ────────────────────────────────────────────────────
+
+const COMMON_UNITS = [
+  "unit", "each", "case", "box", "bag", "pack", "dozen", "pallet",
+  "kg", "g", "lb", "oz", "L", "ml", "tray", "bottle", "can", "roll", "sheet",
+];
+
 // ─── Create product modal ──────────────────────────────────────────────────────
 
 function CreateProductModal({
   onClose,
   onCreate,
   isLoading,
+  categories,
+  units,
 }: {
   onClose: () => void;
-  onCreate: (data: Record<string, unknown>) => Promise<unknown>;
+  /** Returns the created product (with .id) so we can upload images. */
+  onCreate: (data: Record<string, unknown>) => Promise<{ id: string }>;
   isLoading: boolean;
+  categories: string[];
+  units: string[];
 }) {
   const [form, setForm] = React.useState({
     name: "", sku: "", barcode: "", unit: "", pricePerUnit: "", category: "", description: "",
   });
+  const [pendingImages, setPendingImages] = React.useState<File[]>([]);
+  const [previews, setPreviews] = React.useState<string[]>([]);
+  const [isUploading, setIsUploading] = React.useState(false);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
 
+  const addImages = (files: FileList | null) => {
+    if (!files) return;
+    const arr = Array.from(files);
+    setPendingImages((prev) => [...prev, ...arr]);
+    arr.forEach((file) => {
+      const reader = new FileReader();
+      reader.onload = (e) =>
+        setPreviews((prev) => [...prev, e.target?.result as string]);
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const removeImage = (idx: number) => {
+    setPendingImages((prev) => prev.filter((_, i) => i !== idx));
+    setPreviews((prev) => prev.filter((_, i) => i !== idx));
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    await onCreate({
+    const product = await onCreate({
       name: form.name,
       sku: form.sku || undefined,
       barcode: form.barcode || undefined,
@@ -240,7 +273,22 @@ function CreateProductModal({
       category: form.category || undefined,
       description: form.description || undefined,
     });
+    // Upload images if any were queued
+    if (pendingImages.length > 0 && product?.id) {
+      setIsUploading(true);
+      try {
+        await uploadProductImages(product.id, pendingImages);
+      } finally {
+        setIsUploading(false);
+      }
+    }
+    onClose();
   };
+
+  // All known units: common defaults + whatever exists in the catalog already
+  const allUnits = Array.from(new Set([...COMMON_UNITS, ...units])).sort();
+
+  const busy = isLoading || isUploading;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
@@ -249,47 +297,141 @@ function CreateProductModal({
           <h2 className="text-base font-semibold text-navy">New Product</h2>
           <button onClick={onClose} className="text-navy/40 hover:text-navy transition-colors">✕</button>
         </div>
-        <form onSubmit={handleSubmit} className="space-y-4 p-6">
-          <div className="grid grid-cols-2 gap-4">
-            <div className="col-span-2">
-              <label className="mb-1 block text-sm font-medium text-navy">Name *</label>
-              <input required value={form.name} onChange={(e) => set("name", e.target.value)}
-                className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500" />
-            </div>
+
+        <form onSubmit={handleSubmit} className="max-h-[80vh] overflow-y-auto">
+          <div className="space-y-4 p-6">
+            {/* ── Photos ── */}
             <div>
-              <label className="mb-1 block text-sm font-medium text-navy">SKU</label>
-              <input value={form.sku} onChange={(e) => set("sku", e.target.value)}
-                className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500" />
+              <label className="mb-1.5 block text-sm font-medium text-navy">Photos</label>
+
+              {/* Previews */}
+              {previews.length > 0 && (
+                <div className="mb-2 flex flex-wrap gap-2">
+                  {previews.map((src, i) => (
+                    <div key={i} className="relative h-16 w-16 overflow-hidden rounded-lg border border-surface-border">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={src} alt={`preview ${i + 1}`} className="h-full w-full object-cover" />
+                      <button
+                        type="button"
+                        onClick={() => removeImage(i)}
+                        className="absolute right-0.5 top-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white hover:bg-danger transition-colors"
+                      >
+                        <XIcon className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Drop zone / add button */}
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-surface-border bg-surface-raised py-3 text-sm text-navy/50 hover:border-brand-500/50 hover:text-brand-500 transition-colors"
+              >
+                <ImagePlus className="h-4 w-4" />
+                {previews.length === 0 ? "Add photos" : "Add more photos"}
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                onChange={(e) => addImages(e.target.files)}
+              />
             </div>
-            <div>
-              <label className="mb-1 block text-sm font-medium text-navy">Barcode</label>
-              <input value={form.barcode} onChange={(e) => set("barcode", e.target.value)}
-                className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500" />
-            </div>
-            <div>
-              <label className="mb-1 block text-sm font-medium text-navy">Unit *</label>
-              <input required placeholder="e.g. case, kg, unit" value={form.unit} onChange={(e) => set("unit", e.target.value)}
-                className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500" />
-            </div>
-            <div>
-              <label className="mb-1 block text-sm font-medium text-navy">Price per unit *</label>
-              <input required type="number" min="0" step="0.01" value={form.pricePerUnit} onChange={(e) => set("pricePerUnit", e.target.value)}
-                className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500" />
-            </div>
-            <div className="col-span-2">
-              <label className="mb-1 block text-sm font-medium text-navy">Category</label>
-              <input value={form.category} onChange={(e) => set("category", e.target.value)}
-                className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500" />
-            </div>
-            <div className="col-span-2">
-              <label className="mb-1 block text-sm font-medium text-navy">Description</label>
-              <textarea rows={2} value={form.description} onChange={(e) => set("description", e.target.value)}
-                className="w-full resize-y rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500" />
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="col-span-2">
+                <label className="mb-1 block text-sm font-medium text-navy">Name *</label>
+                <input
+                  required
+                  value={form.name}
+                  onChange={(e) => set("name", e.target.value)}
+                  className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-navy">SKU</label>
+                <input
+                  value={form.sku}
+                  onChange={(e) => set("sku", e.target.value)}
+                  className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-navy">Barcode</label>
+                <input
+                  value={form.barcode}
+                  onChange={(e) => set("barcode", e.target.value)}
+                  className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                />
+              </div>
+
+              {/* Unit — datalist (pick from list OR type a custom value) */}
+              <div>
+                <label className="mb-1 block text-sm font-medium text-navy">Unit *</label>
+                <input
+                  required
+                  list="create-unit-options"
+                  placeholder="e.g. case, kg, unit"
+                  value={form.unit}
+                  onChange={(e) => set("unit", e.target.value)}
+                  className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                />
+                <datalist id="create-unit-options">
+                  {allUnits.map((u) => <option key={u} value={u} />)}
+                </datalist>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-navy">Price per unit *</label>
+                <input
+                  required
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={form.pricePerUnit}
+                  onChange={(e) => set("pricePerUnit", e.target.value)}
+                  className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                />
+              </div>
+
+              {/* Category — datalist (pick from list OR type a new one) */}
+              <div className="col-span-2">
+                <label className="mb-1 block text-sm font-medium text-navy">Category</label>
+                <input
+                  list="create-category-options"
+                  placeholder="Select or type a new category"
+                  value={form.category}
+                  onChange={(e) => set("category", e.target.value)}
+                  className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                />
+                <datalist id="create-category-options">
+                  {categories.map((c) => <option key={c} value={c} />)}
+                </datalist>
+              </div>
+
+              <div className="col-span-2">
+                <label className="mb-1 block text-sm font-medium text-navy">Description</label>
+                <textarea
+                  rows={2}
+                  value={form.description}
+                  onChange={(e) => set("description", e.target.value)}
+                  className="w-full resize-y rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                />
+              </div>
             </div>
           </div>
-          <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
-            <Button type="submit" loading={isLoading}>Create Product</Button>
+
+          <div className="flex justify-end gap-2 border-t border-surface-border px-6 py-4">
+            <Button type="button" variant="secondary" onClick={onClose} disabled={busy}>
+              Cancel
+            </Button>
+            <Button type="submit" loading={busy}>
+              {isUploading ? "Uploading photos…" : "Create Product"}
+            </Button>
           </div>
         </form>
       </div>
@@ -721,6 +863,10 @@ export default function ProductsPage() {
     new Set(productList.map((p) => p.category).filter(Boolean))
   ) as string[];
 
+  const existingUnits = Array.from(
+    new Set(productList.map((p) => p.unit).filter(Boolean))
+  ) as string[];
+
   // Items are now fully server-filtered — no client-side filtering needed
   const filtered = productList;
 
@@ -786,16 +932,19 @@ export default function ProductsPage() {
       {showCreate && (
         <CreateProductModal
           onClose={() => setShowCreate(false)}
-          onCreate={(data) =>
-            createProduct.mutateAsync(data, {
-              onSuccess: () => {
-                setShowCreate(false);
-                toast({ title: "Product created", variant: "success" });
-              },
-              onError: (err: Error) => toast({ title: "Failed", description: err.message, variant: "error" }),
-            })
-          }
+          onCreate={async (data) => {
+            try {
+              const product = await createProduct.mutateAsync(data as any);
+              toast({ title: "Product created", variant: "success" });
+              return product as { id: string };
+            } catch (err: any) {
+              toast({ title: "Failed to create product", description: err?.message, variant: "error" });
+              throw err;
+            }
+          }}
           isLoading={createProduct.isPending}
+          categories={categories}
+          units={existingUnits}
         />
       )}
 

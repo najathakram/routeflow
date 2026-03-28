@@ -130,3 +130,15 @@ export function useDeleteProductImage(id: string) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["products", id] }),
   });
 }
+
+/** Plain async helper — upload images to a product (use after creation to get the ID first). */
+export async function uploadProductImages(
+  id: string,
+  files: File[],
+): Promise<void> {
+  const form = new FormData();
+  files.forEach((f) => form.append("files", f));
+  await apiClient.post(`/products/${id}/images`, form, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+}
