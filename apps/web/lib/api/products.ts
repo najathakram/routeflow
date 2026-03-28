@@ -87,3 +87,12 @@ export function useImportProducts() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["products"] }),
   });
 }
+
+export function useClearAllProducts() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (): Promise<{ deleted: number }> =>
+      apiClient.delete("/products/clear-all").then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["products"] }),
+  });
+}

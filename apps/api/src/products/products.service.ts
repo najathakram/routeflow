@@ -99,6 +99,14 @@ export class ProductsService {
     return this.prisma.product.update({ where: { id }, data: { isActive: false } });
   }
 
+  async clearAll(): Promise<{ deleted: number }> {
+    // Count before clearing so we can report back
+    const count = await this.prisma.product.count();
+    // CASCADE removes all rows in dependent tables (OrderItem, InvoiceItem, etc.)
+    await this.prisma.$executeRaw`TRUNCATE TABLE "Product" CASCADE`;
+    return { deleted: count };
+  }
+
   async importFromZoho(dto: ImportProductsDto): Promise<{
     created: number;
     skipped: number;

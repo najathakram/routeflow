@@ -43,6 +43,13 @@ export class ProductsController {
     return this.productsService.importFromZoho(dto);
   }
 
+  // Must be declared before :id to avoid route collision
+  @Delete("clear-all")
+  @Roles(UserRole.OPERATOR)
+  clearAll() {
+    return this.productsService.clearAll();
+  }
+
   @Patch(":id")
   @Roles(UserRole.OPERATOR)
   update(@Param("id") id: string, @Body() dto: UpdateProductDto) {

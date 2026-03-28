@@ -3,11 +3,11 @@
 import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Package, LayoutGrid, LayoutList, Plus, Upload, CheckCircle, AlertCircle, Info } from "lucide-react";
+import { Package, LayoutGrid, LayoutList, Plus, Upload, CheckCircle, AlertCircle, Info, Trash2 } from "lucide-react";
 import { PageHeader, Table, Badge, Button, Select, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useToast } from "@routeflow/ui/web";
-import { useProducts, useCreateProduct, useImportProducts, type ZohoImportItem, type ImportResult } from "@/lib/api/products";
+import { useProducts, useCreateProduct, useImportProducts, useClearAllProducts, type ZohoImportItem, type ImportResult } from "@/lib/api/products";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -631,8 +631,10 @@ export default function ProductsPage() {
   const [viewMode, setViewMode] = React.useState<"grid" | "table">("grid");
   const [showCreate, setShowCreate] = React.useState(false);
   const [showImport, setShowImport] = React.useState(false);
+  const [showClearConfirm, setShowClearConfirm] = React.useState(false);
   const createProduct = useCreateProduct();
   const importProducts = useImportProducts();
+  const clearAllProducts = useClearAllProducts();
 
   const { data: result, isLoading } = useProducts({
     search,
@@ -659,6 +661,13 @@ export default function ProductsPage() {
         subtitle="Manage your product catalog"
         action={
           <div className="flex items-center gap-2">
+            <Button
+              variant="danger"
+              leftIcon={<Trash2 className="h-4 w-4" />}
+              onClick={() => setShowClearConfirm(true)}
+            >
+              Clear All
+            </Button>
             <Button
               variant="secondary"
               leftIcon={<Upload className="h-4 w-4" />}
@@ -697,6 +706,45 @@ export default function ProductsPage() {
           onImport={(items) => importProducts.mutateAsync(items)}
           isImporting={importProducts.isPending}
         />
+      )}
+
+      {/* Clear all confirmation modal */}
+      {showClearConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-xl border border-surface-border bg-white shadow-xl">
+            <div className="flex items-start gap-4 p-6">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-danger-bg">
+                <Trash2 className="h-5 w-5 text-danger" />
+              </div>
+              <div>
+                <h2 className="text-base font-semibold text-navy">Clear entire product catalog?</h2>
+                <p className="mt-1 text-sm text-navy/60">
+                  This will permanently delete <strong>all {result?.total ?? productList.length} products</strong> and any associated order items, invoice lines, and stock records. This cannot be undone.
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 border-t border-surface-border px-6 py-4">
+              <Button variant="secondary" onClick={() => setShowClearConfirm(false)}>
+                Cancel
+              </Button>
+              <Button
+                variant="danger"
+                loading={clearAllProducts.isPending}
+                onClick={async () => {
+                  try {
+                    const res = await clearAllProducts.mutateAsync();
+                    setShowClearConfirm(false);
+                    toast({ title: `Catalog cleared — ${res.deleted} products removed`, variant: "success" });
+                  } catch {
+                    toast({ title: "Failed to clear catalog", variant: "error" });
+                  }
+                }}
+              >
+                Yes, delete all
+              </Button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Toolbar */}
