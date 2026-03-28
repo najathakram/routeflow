@@ -26,6 +26,7 @@ import { Badge, Button, Card, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useToast } from "@routeflow/ui/web";
 import { useProduct, useProducts, useUpdateProduct, useDeleteProduct, useUploadProductImages, useDeleteProductImage } from "@/lib/api/products";
+import { CropModal } from "./CropModal";
 
 const COMMON_UNITS = [
   "unit", "each", "case", "box", "bag", "pack", "dozen", "pallet",
@@ -111,6 +112,14 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
   const [selectMode, setSelectMode] = React.useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
+  // ── Crop-before-upload state ──────────────────────────────────────────────
+  // When the user picks files we queue them here; CropModal works through them
+  // one-by-one. Once the queue is empty the cropped blobs are uploaded.
+  const [cropState, setCropState] = React.useState<{
+    queue: File[];
+    accumulated: Blob[];
+  } | null>(null);
+
   // Derived: all known categories and units from the catalog
   const allProducts: any[] = allProductsResult?.data ?? [];
   const catalogCategories = Array.from(new Set(allProducts.map((p: any) => p.category).filter(Boolean))) as string[];
@@ -169,7 +178,57 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
     setIsEditing(false);
   };
 
+  // ── Crop helpers ──────────────────────────────────────────────────────────
+
+  /** Called by the drop zone / file input — opens the crop modal queue. */
+  const queueForCrop = (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    // Reset the input value so the same file(s) can be re-selected if cancelled.
+    if (fileInputRef.current) fileInputRef.current.value = "";
+    setCropState({ queue: Array.from(files), accumulated: [] });
+  };
+
+  /** Called by CropModal each time the user confirms one crop. */
+  const handleCropConfirm = async (blob: Blob) => {
+    if (!cropState) return;
+    const accumulated = [...cropState.accumulated, blob];
+    const queue = cropState.queue.slice(1);
+
+    if (queue.length === 0) {
+      // All images cropped — upload the lot.
+      setCropState(null);
+      try {
+        const files = accumulated.map((b, i) =>
+          new File([b], `product-image-${Date.now()}-${i}.jpg`, { type: "image/jpeg" }),
+        );
+        await uploadImages.mutateAsync(files);
+        toast({
+          title: `${files.length} image${files.length !== 1 ? "s" : ""} uploaded`,
+          variant: "success",
+        });
+      } catch {
+        toast({ title: "Upload failed", variant: "error" });
+      }
+    } else {
+      setCropState({ queue, accumulated });
+    }
+  };
+
+  /** Called if the user cancels the entire crop session. */
+  const handleCropCancel = () => setCropState(null);
+
   return (
+    <>
+    {/* Crop-before-upload modal — intercepts every file selection */}
+    {cropState && (
+      <CropModal
+        file={cropState.queue[0]}
+        fileIndex={cropState.accumulated.length}
+        fileTotal={cropState.accumulated.length + cropState.queue.length}
+        onConfirm={handleCropConfirm}
+        onCancel={handleCropCancel}
+      />
+    )}
     <div className="space-y-5 p-6">
       {/* Back */}
       <Link
@@ -190,15 +249,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
             const hasImages = images.length > 0;
             const safeIdx = Math.min(activeImageIdx, images.length - 1);
 
-            const handleUpload = async (files: FileList | null) => {
-              if (!files || files.length === 0) return;
-              try {
-                await uploadImages.mutateAsync(Array.from(files));
-                toast({ title: `${files.length} image${files.length > 1 ? "s" : ""} uploaded`, variant: "success" });
-              } catch {
-                toast({ title: "Upload failed", variant: "error" });
-              }
-            };
+            const handleUpload = (files: FileList | null) => queueForCrop(files);
 
             const toggleSelectImage = (i: number) => {
               setSelectedImages((prev) => {
@@ -212,7 +263,11 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
               const keys = (product as any).imageKeys ?? [];
               const toDelete = Array.from(selectedImages).map((i) => keys[i]).filter(Boolean);
               try {
-                await Promise.all(toDelete.map((k: string) => deleteImage.mutateAsync(k)));
+                // Delete sequentially — concurrent Prisma array-pull calls race
+                // against each other and only some keys end up removed.
+                for (const k of toDelete) {
+                  await deleteImage.mutateAsync(k);
+                }
                 setSelectedImages(new Set());
                 setSelectMode(false);
                 setActiveImageIdx(0);
@@ -362,7 +417,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                   )}
                   <button
                     onClick={() => fileInputRef.current?.click()}
-                    disabled={uploadImages.isPending}
+                    disabled={uploadImages.isPending || !!cropState}
                     className="flex flex-1 items-center justify-center gap-2 rounded-lg border border-dashed border-surface-border bg-white py-1.5 text-xs text-navy/50 hover:border-brand-500/50 hover:text-brand-500 transition-colors disabled:opacity-50"
                   >
                     <Upload className="h-3.5 w-3.5" />
@@ -601,5 +656,6 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
         </div>
       </div>
     </div>
+    </>
   );
 }
