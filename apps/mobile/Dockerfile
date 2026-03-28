@@ -28,10 +28,15 @@ RUN npm install --force
 COPY packages/ packages/
 COPY apps/mobile/ apps/mobile/
 
-# Bake the API URL into the static web export at build time.
-# Railway injects this as a build env var from the service variables.
+# Bake env vars into the static web export at build time.
+# Railway injects these as build env vars from the service variables.
 ARG EXPO_PUBLIC_API_URL
 ENV EXPO_PUBLIC_API_URL=$EXPO_PUBLIC_API_URL
+
+# Google Maps API key — only needed for native EAS builds; included here so
+# the web export picks it up via app.config.js if it is ever needed.
+ARG EXPO_PUBLIC_GOOGLE_MAPS_API_KEY
+ENV EXPO_PUBLIC_GOOGLE_MAPS_API_KEY=$EXPO_PUBLIC_GOOGLE_MAPS_API_KEY
 
 WORKDIR /app/apps/mobile
 

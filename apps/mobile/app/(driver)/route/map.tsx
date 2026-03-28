@@ -18,6 +18,11 @@ try {
   // react-native-maps not available — fallback UI will be used
 }
 
+// On native builds, check the API key is configured so we don't render a
+// blank / watermarked map (set EXPO_PUBLIC_GOOGLE_MAPS_API_KEY in .env).
+const MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ?? "";
+const MAPS_AVAILABLE = !!MapView && !!MAPS_API_KEY;
+
 // ─── Google Maps URL builder ──────────────────────────────────────────────────
 
 function buildGoogleMapsUrl(stops: RouteRunStop[]): string {
@@ -99,12 +104,39 @@ function AddressFallback({ stops }: { stops: RouteRunStop[] }) {
 
 // ─── Map View ─────────────────────────────────────────────────────────────────
 
+function NoApiKeyBanner() {
+  return (
+    <View style={styles.apiKeyBanner}>
+      <Ionicons name="warning-outline" size={22} color={colors.warning.DEFAULT} />
+      <Text style={styles.apiKeyBannerTitle}>Map unavailable</Text>
+      <Text style={styles.apiKeyBannerBody}>
+        Google Maps API key is not configured.{"\n"}
+        Add{" "}
+        <Text style={{ fontFamily: "Inter_700Bold" }}>EXPO_PUBLIC_GOOGLE_MAPS_API_KEY</Text>
+        {" "}to your{" "}
+        <Text style={{ fontFamily: "Inter_700Bold" }}>.env</Text>
+        {" "}file and rebuild the app.
+      </Text>
+    </View>
+  );
+}
+
 function StopsMap({ stops, runId }: { stops: RouteRunStop[]; runId: string }) {
   const stopsWithCoords = stops.filter(
     (s) => s.customerAddress?.lat != null && s.customerAddress?.lng != null,
   );
 
-  if (!MapView || stopsWithCoords.length === 0) {
+  // Show a helpful message instead of a blank/watermarked map
+  if (!MAPS_AVAILABLE) {
+    return (
+      <>
+        <NoApiKeyBanner />
+        <AddressFallback stops={stops} />
+      </>
+    );
+  }
+
+  if (stopsWithCoords.length === 0) {
     return <AddressFallback stops={stops} />;
   }
 
@@ -370,5 +402,29 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontFamily: "Inter_700Bold",
     color: "#fff",
+  },
+  apiKeyBanner: {
+    margin: 16,
+    marginBottom: 0,
+    backgroundColor: colors.warning.bg ?? "#fef3c7",
+    borderRadius: borderRadius.lg,
+    borderWidth: 1,
+    borderColor: colors.warning.DEFAULT + "40",
+    padding: 16,
+    gap: 6,
+    alignItems: "center",
+  },
+  apiKeyBannerTitle: {
+    fontSize: 15,
+    fontFamily: "Inter_700Bold",
+    color: colors.warning.DEFAULT,
+    textAlign: "center",
+  },
+  apiKeyBannerBody: {
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    color: "#78350f",
+    textAlign: "center",
+    lineHeight: 20,
   },
 });
