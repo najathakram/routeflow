@@ -9,6 +9,9 @@ import * as mime from "mime-types";
 /**
  * Serves locally-stored upload files when Cloudflare R2 is not configured.
  * Route: GET /uploads/<key>  (key may contain slashes, e.g. products/id/uuid.jpg)
+ *
+ * NOTE: Express 5 + path-to-regexp v8 returns wildcard params as string[], not string.
+ * We join them here and also fall back to extracting the key from req.path.
  */
 @Controller("uploads")
 export class UploadsController {
@@ -36,33 +39,23 @@ export class UploadsController {
   }
 
   @Get("*path")
-  serveFile(@Param() params: Record<string, string>, @Req() req: Request, @Res() res: Response) {
+  serveFile(@Param() params: Record<string, string | string[]>, @Req() req: Request, @Res() res: Response) {
     const dir = this.uploadDir;
 
-    // Extract the key using multiple strategies for Express 4/5 + path-to-regexp v6/v8 compatibility.
-    // Strategy 1: named wildcard param (Express 5 / path-to-regexp v8 "named" wildcard)
-    const namedKey = params["path"];
-    // Strategy 2: unnamed wildcard (Express 4 captures to params["0"])
-    const unnamedKey = params["0"];
-    // Strategy 3: derive from the raw URL path — most reliable regardless of Express version
-    // req.path inside a NestJS controller is the path AFTER the global prefix is stripped,
-    // e.g.  /uploads/products/abc/uuid.png  → strip "/uploads/" → products/abc/uuid.png
-    const uploadsPrefix = "/uploads/";
-    const urlKey = req.path.startsWith(uploadsPrefix)
-      ? req.path.slice(uploadsPrefix.length)
-      : req.path.replace(/^\//, "");
+    // Express 5 + path-to-regexp v8 captures wildcard params as string[].
+    // Express 4 returns a plain string. Handle both.
+    const rawNamed = params["path"];
+    const namedKey = Array.isArray(rawNamed)
+      ? rawNamed.join("/")
+      : (rawNamed ?? "");
 
-    const key = namedKey || unnamedKey || urlKey;
+    // Fallback: derive from the raw URL path — works regardless of Express version.
+    // req.path in NestJS includes the global prefix (e.g. /api/v1/uploads/products/foo.png).
+    // Extract everything after the last /uploads/ segment.
+    const urlMatch = (req.path as string).match(/\/uploads\/(.+)$/);
+    const urlKey = urlMatch ? urlMatch[1] : "";
 
-    // Log for diagnostics — visible in Railway Deploy Logs
-    console.log("[UploadsController] serveFile", {
-      uploadDir: dir,
-      namedKey,
-      unnamedKey,
-      urlKey,
-      chosenKey: key,
-      reqPath: req.path,
-    });
+    const key = namedKey || urlKey;
 
     if (!key) {
       throw new NotFoundException("Missing file key");
@@ -74,11 +67,8 @@ export class UploadsController {
     const resolved = path.resolve(filePath);
     const base = path.resolve(dir);
     if (!resolved.startsWith(base + path.sep) && resolved !== base) {
-      console.warn("[UploadsController] Path traversal attempt", { resolved, base });
       throw new NotFoundException();
     }
-
-    console.log("[UploadsController] checking file", { resolved, exists: fs.existsSync(resolved) });
 
     if (!fs.existsSync(resolved)) {
       throw new NotFoundException("File not found");
