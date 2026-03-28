@@ -13,5 +13,5 @@ export class ListProductsDto {
   @IsOptional() @Transform(({ value }) => value === "true") @IsBoolean() isActive?: boolean;
   @IsOptional() @IsEnum(StockStatusFilter) stockStatus?: StockStatusFilter;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) page?: number;
-  @IsOptional() @Type(() => Number) @IsInt() @Min(1) limit?: number;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) limit?: number;
 }
