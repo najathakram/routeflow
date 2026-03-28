@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -61,31 +62,37 @@ function StopCard({ stop, runId, canReopen }: { stop: RouteRunStop; runId: strin
   const photosCount = stop.podPhotoUrls?.length ?? 0;
 
   const handleReopen = () => {
-    Alert.alert(
-      "Reopen Stop?",
-      `This will undo the delivery record for ${stop.customer?.businessName ?? "this customer"} so you can re-submit it.\n\nNote: If a payment has already been recorded, reopening is blocked.`,
-      [
-        { text: "Cancel", style: "cancel" },
+    const doReopen = () => {
+      reopenStop(
+        { runId, stopId: stop.id },
         {
-          text: "Reopen",
-          style: "destructive",
-          onPress: () => {
-            reopenStop(
-              { runId, stopId: stop.id },
-              {
-                onSuccess: () => {
-                  Alert.alert("Stop Reopened", "Navigate to your active route to re-deliver this stop.");
-                  router.replace("/(driver)/route" as any);
-                },
-                onError: (err: any) => {
-                  Alert.alert("Cannot Reopen", err?.response?.data?.message ?? err.message ?? "An error occurred.");
-                },
-              },
-            );
+          onSuccess: () => {
+            if (Platform.OS === "web") {
+              (globalThis as any).alert?.("Stop reopened. Navigate to your active route to re-deliver.");
+            } else {
+              Alert.alert("Stop Reopened", "Navigate to your active route to re-deliver this stop.");
+            }
+            router.replace("/(driver)/route" as any);
+          },
+          onError: (err: any) => {
+            Alert.alert("Cannot Reopen", err?.response?.data?.message ?? err.message ?? "An error occurred.");
           },
         },
-      ],
-    );
+      );
+    };
+
+    if (Platform.OS === "web") {
+      if ((globalThis as any).confirm?.(`Reopen this stop for ${stop.customer?.businessName ?? "this customer"}? This will undo the delivery record.`)) doReopen();
+    } else {
+      Alert.alert(
+        "Reopen Stop?",
+        `This will undo the delivery record for ${stop.customer?.businessName ?? "this customer"} so you can re-submit it.\n\nNote: If a payment has already been recorded, reopening is blocked.`,
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Reopen", style: "destructive", onPress: doReopen },
+        ],
+      );
+    }
   };
 
   return (

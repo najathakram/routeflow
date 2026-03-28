@@ -687,7 +687,7 @@ export class RoutesService {
     if (!stop) throw new NotFoundException("Stop not found");
 
     if (run.status === "CANCELLED") throw new BadRequestException("Cannot reopen a stop on a cancelled run");
-    if (stop.status !== "COMPLETED") throw new BadRequestException("Only completed stops can be reopened");
+    if (stop.status !== "COMPLETED" && stop.status !== "SKIPPED") throw new BadRequestException("Only completed or skipped stops can be reopened");
 
     // Driver isolation
     if (user.role === UserRole.DRIVER) {

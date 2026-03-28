@@ -103,7 +103,7 @@ export default function StopCompleteScreen() {
   // Find the next pending stop for navigation
   const stops = run?.stops ?? [];
   const nextStop = stops.find(
-    (s) => s.stopNumber > stop.stopNumber && s.status === "PENDING",
+    (s) => s.stopNumber > stop.stopNumber && (s.status === "PENDING" || s.status === "IN_PROGRESS"),
   );
 
   const handleConfirm = () => {

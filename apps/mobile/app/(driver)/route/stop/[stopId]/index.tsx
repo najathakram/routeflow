@@ -458,6 +458,7 @@ export default function StopDetailScreen() {
   const removeAddedItemStore = useRouteStore((s) => s.removeAddedItem);
   const setItemResolutionFn = useRouteStore((s) => s.setItemResolution);
   const stopResolutions = useRouteStore((s) => selectStopResolutions(s, stopId));
+  const clearStop = useRouteStore((s) => s.clearStop);
   const initializedDeliveryRef = useRef<Set<string>>(new Set());
 
   const { mutate: updateOrderItems, isPending: isUpdatingItems } = useUpdateOrderItems();
@@ -1196,7 +1197,13 @@ export default function StopDetailScreen() {
                   reopenStop(
                     { runId, stopId },
                     {
-                      onSuccess: () => refetch(),
+                      onSuccess: () => {
+                        // Clear old delivery resolutions and edit state so the stop starts fresh
+                        clearStop(stopId);
+                        initializedDeliveryRef.current.clear();
+                        initializedOrdersRef.current.clear();
+                        refetch();
+                      },
                       onError: (err: any) =>
                         Alert.alert("Error", err?.response?.data?.message ?? "Failed to reopen stop."),
                     },
