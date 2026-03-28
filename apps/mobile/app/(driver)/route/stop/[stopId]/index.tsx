@@ -111,6 +111,7 @@ function ItemRow({
   editQty?: number;
   onQtyIncrease?: () => void;
   onQtyDecrease?: () => void;
+  onRemove?: () => void;
 }) {
   const resolution = useRouteStore((s) => selectStopResolutions(s, stopId)[item.id]);
   const setItemResolution = useRouteStore((s) => s.setItemResolution);
@@ -214,7 +215,11 @@ function ItemRow({
           <View style={itemStyles.deliveryControls}>
             <View style={itemStyles.deliveryStepper}>
               <Pressable
-                onPress={() => handleDeliveryQtyChange(Math.max(0, Number(deliveryQty) - 1))}
+                onPress={() => {
+                  const newQty = Math.max(0, Number(deliveryQty) - 1);
+                  if (newQty === 0 && onRemove) onRemove();
+                  else handleDeliveryQtyChange(newQty);
+                }}
                 style={itemStyles.stepBtn}
                 hitSlop={8}
                 accessibilityLabel="Decrease delivery quantity"
@@ -242,7 +247,10 @@ function ItemRow({
               </Pressable>
             </View>
             <Pressable
-              onPress={() => handleDeliveryQtyChange(0)}
+              onPress={() => {
+                if (onRemove) onRemove();
+                else handleDeliveryQtyChange(0);
+              }}
               style={itemStyles.deliveryRemoveBtn}
               hitSlop={8}
               accessibilityLabel="Remove item from delivery"
@@ -446,6 +454,7 @@ export default function StopDetailScreen() {
   const setStopNote = useRouteStore((s) => s.setStopNote);
   const addedItems = useRouteStore((s) => s.addedItems[stopId]) ?? [];
   const addStopItemStore = useRouteStore((s) => s.addStopItem);
+  const removeAddedItemStore = useRouteStore((s) => s.removeAddedItem);
   const setItemResolutionFn = useRouteStore((s) => s.setItemResolution);
   const stopResolutions = useRouteStore((s) => selectStopResolutions(s, stopId));
   const initializedDeliveryRef = useRef<Set<string>>(new Set());
@@ -1042,6 +1051,7 @@ export default function StopDetailScreen() {
                             isAdded: true,
                           }}
                           stopId={stopId}
+                          onRemove={() => removeAddedItemStore(stopId, item.id)}
                         />
                       ))}
                     </View>

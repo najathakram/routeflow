@@ -35,6 +35,7 @@ interface RouteState {
   setItemResolution: (stopId: string, itemId: string, resolution: ItemResolution) => void;
   setStopNote: (stopId: string, note: string) => void;
   addStopItem: (stopId: string, productId: string, name: string, qty: number) => void;
+  removeAddedItem: (stopId: string, itemId: string) => void;
   clearStop: (stopId: string) => void;
   clearRun: () => void;
 }
@@ -64,16 +65,30 @@ export const useRouteStore = create<RouteState>((set) => ({
   addStopItem: (stopId, productId, name, qty) =>
     set((state) => {
       const existing = state.addedItems[stopId] ?? [];
+      const id = `added-${Date.now()}`;
       return {
         addedItems: {
           ...state.addedItems,
-          [stopId]: [
-            ...existing,
-            { id: `added-${Date.now()}`, productId, name, qty },
-          ],
+          [stopId]: [...existing, { id, productId, name, qty }],
+        },
+        // Auto-initialise as DELIVERED so Complete Stop stays enabled
+        itemResolutions: {
+          ...state.itemResolutions,
+          [stopId]: {
+            ...state.itemResolutions[stopId],
+            [id]: { status: "DELIVERED" as const },
+          },
         },
       };
     }),
+
+  removeAddedItem: (stopId, itemId) =>
+    set((state) => ({
+      addedItems: {
+        ...state.addedItems,
+        [stopId]: (state.addedItems[stopId] ?? []).filter((i) => i.id !== itemId),
+      },
+    })),
 
   clearStop: (stopId) =>
     set((state) => {
