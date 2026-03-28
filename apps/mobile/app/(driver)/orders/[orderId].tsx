@@ -58,7 +58,7 @@ function LineItemRow({
   onRemove: (productId: string) => void;
   onRestore: (productId: string) => void;
 }) {
-  const qty = item._localQty ?? item.qty;
+  const qty = Number(item._localQty ?? item.qty);
   const lineTotal = qty * parseFloat(String(item.unitPrice));
 
   return (

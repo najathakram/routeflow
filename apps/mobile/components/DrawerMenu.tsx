@@ -82,9 +82,7 @@ export function DrawerMenu({ visible, onClose }: DrawerMenuProps) {
 
   const handleSignOut = async () => {
     onClose();
-    setTimeout(async () => {
-      await logout();
-    }, 120);
+    await logout();
   };
 
   return (

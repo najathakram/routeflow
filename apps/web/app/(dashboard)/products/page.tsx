@@ -3,11 +3,11 @@
 import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Package, LayoutGrid, LayoutList, Plus } from "lucide-react";
+import { Package, LayoutGrid, LayoutList, Plus, Upload, CheckCircle, AlertCircle, Info } from "lucide-react";
 import { PageHeader, Table, Badge, Button, Select, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useToast } from "@routeflow/ui/web";
-import { useProducts, useCreateProduct } from "@/lib/api/products";
+import { useProducts, useCreateProduct, useImportProducts, type ZohoImportItem, type ImportResult } from "@/lib/api/products";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -234,6 +234,346 @@ function CreateProductModal({
   );
 }
 
+// ─── Zoho CSV parser ──────────────────────────────────────────────────────────
+
+function parseZohoCsv(text: string): ZohoImportItem[] {
+  const lines = text.split(/\r?\n/).filter((l) => l.trim() !== "");
+  if (lines.length < 2) return [];
+
+  // Parse header
+  const headers = parseCSVLine(lines[0]);
+
+  const col = (row: string[], key: string): string => {
+    const idx = headers.indexOf(key);
+    return idx >= 0 ? (row[idx] ?? "").trim() : "";
+  };
+
+  const parsePrice = (raw: string): string | undefined => {
+    const cleaned = raw.replace(/^USD\s*/i, "").replace(/,/g, "").trim();
+    const num = parseFloat(cleaned);
+    return isNaN(num) ? undefined : num.toFixed(2);
+  };
+
+  const items: ZohoImportItem[] = [];
+
+  for (let i = 1; i < lines.length; i++) {
+    const row = parseCSVLine(lines[i]);
+    if (row.every((c) => c === "")) continue;
+
+    const name = col(row, "Item Name");
+    if (!name) continue;
+
+    const rawPrice = col(row, "Selling Price");
+    const pricePerUnit = parsePrice(rawPrice);
+    if (!pricePerUnit) continue;
+
+    // Unit: prefer "Unit Name", fall back to "Unit", then "pcs"
+    const unitName = col(row, "Unit Name");
+    const unitCode = col(row, "Unit");
+    const unit = unitName || unitCode || "pcs";
+
+    const rawSku = col(row, "SKU");
+    const sku = rawSku || undefined;
+
+    // Barcode: prefer UPC, then EAN
+    const upc = col(row, "UPC");
+    const ean = col(row, "EAN");
+    const barcode = upc || ean || undefined;
+
+    const category = col(row, "Category Name") || undefined;
+    const description = col(row, "Sales Description") || undefined;
+    const statusRaw = col(row, "Status");
+    const isActive = statusRaw === "" ? true : statusRaw.toLowerCase() === "active";
+
+    // Stock on hand
+    const stockRaw = col(row, "Stock On Hand");
+    const stockNum = parseFloat(stockRaw.replace(/,/g, ""));
+    const currentStock = !isNaN(stockNum) ? stockNum.toFixed(3) : undefined;
+
+    // Average cost / purchase price
+    const purchasePriceRaw = col(row, "Purchase Price");
+    const averageCost = parsePrice(purchasePriceRaw);
+
+    // Reorder level
+    const reorderRaw = col(row, "Reorder Level");
+    const reorderNum = parseInt(reorderRaw, 10);
+    const reorderPoint = !isNaN(reorderNum) ? reorderNum : undefined;
+
+    items.push({
+      name,
+      sku,
+      barcode,
+      unit,
+      pricePerUnit,
+      category,
+      description,
+      isActive,
+      currentStock,
+      averageCost,
+      reorderPoint,
+    });
+  }
+
+  return items;
+}
+
+/** Handles quoted fields with embedded commas. */
+function parseCSVLine(line: string): string[] {
+  const result: string[] = [];
+  let current = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      // Handle escaped double-quotes ("")
+      if (inQuotes && line[i + 1] === '"') {
+        current += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (ch === "," && !inQuotes) {
+      result.push(current);
+      current = "";
+    } else {
+      current += ch;
+    }
+  }
+  result.push(current);
+  return result;
+}
+
+// ─── Zoho import modal ────────────────────────────────────────────────────────
+
+type ImportStep = "upload" | "preview" | "result";
+
+function ZohoImportModal({
+  onClose,
+  onImport,
+  isImporting,
+}: {
+  onClose: () => void;
+  onImport: (items: ZohoImportItem[]) => Promise<ImportResult>;
+  isImporting: boolean;
+}) {
+  const [step, setStep] = React.useState<ImportStep>("upload");
+  const [parsedItems, setParsedItems] = React.useState<ZohoImportItem[]>([]);
+  const [parseError, setParseError] = React.useState<string | null>(null);
+  const [result, setResult] = React.useState<ImportResult | null>(null);
+  const [fileName, setFileName] = React.useState<string>("");
+  const fileRef = React.useRef<HTMLInputElement>(null);
+  const [isDragging, setIsDragging] = React.useState(false);
+
+  const handleFile = (file: File) => {
+    if (!file.name.endsWith(".csv")) {
+      setParseError("Please upload a .csv file exported from Zoho.");
+      return;
+    }
+    setParseError(null);
+    setFileName(file.name);
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const text = e.target?.result as string;
+      try {
+        const items = parseZohoCsv(text);
+        if (items.length === 0) {
+          setParseError("No valid items found in the CSV. Make sure you exported Items from Zoho Inventory.");
+          return;
+        }
+        setParsedItems(items);
+        setStep("preview");
+      } catch (err) {
+        setParseError("Failed to parse CSV file. Please check the file format.");
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const file = e.dataTransfer.files[0];
+    if (file) handleFile(file);
+  };
+
+  const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) handleFile(file);
+  };
+
+  const handleImport = async () => {
+    const res = await onImport(parsedItems);
+    setResult(res);
+    setStep("result");
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-2xl rounded-xl border border-surface-border bg-white shadow-xl">
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-surface-border px-6 py-4">
+          <div className="flex items-center gap-3">
+            <Upload className="h-5 w-5 text-brand-500" />
+            <h2 className="text-base font-semibold text-navy">Import Items from Zoho</h2>
+          </div>
+          <button onClick={onClose} className="text-navy/40 hover:text-navy transition-colors text-lg leading-none">✕</button>
+        </div>
+
+        {/* Step: upload */}
+        {step === "upload" && (
+          <div className="space-y-5 p-6">
+            {/* Instructions */}
+            <div className="rounded-lg border border-brand-500/20 bg-brand-500/5 p-4">
+              <div className="flex gap-2">
+                <Info className="mt-0.5 h-4 w-4 shrink-0 text-brand-500" />
+                <div className="text-sm text-navy/70 space-y-1">
+                  <p className="font-medium text-navy">How to export your items from Zoho Inventory:</p>
+                  <ol className="list-decimal list-inside space-y-0.5 text-xs">
+                    <li>Open <strong>Zoho Inventory</strong> and go to <strong>Items</strong> (left sidebar)</li>
+                    <li>Click the <strong>Hamburger menu</strong> (☰) or <strong>Export</strong> button at the top right</li>
+                    <li>Select <strong>Export Items</strong></li>
+                    <li>Choose <strong>CSV</strong> format and click <strong>Export</strong></li>
+                    <li>Save the downloaded <code className="bg-navy/10 px-1 rounded text-xs">Item.csv</code> file</li>
+                    <li>Upload it here</li>
+                  </ol>
+                </div>
+              </div>
+            </div>
+
+            {/* Drop zone */}
+            <div
+              onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+              onDragLeave={() => setIsDragging(false)}
+              onDrop={handleDrop}
+              onClick={() => fileRef.current?.click()}
+              className={cn(
+                "flex cursor-pointer flex-col items-center justify-center gap-3 rounded-lg border-2 border-dashed p-10 transition-colors",
+                isDragging
+                  ? "border-brand-500 bg-brand-500/5"
+                  : "border-surface-border bg-surface-raised hover:border-brand-500/50 hover:bg-brand-500/5",
+              )}
+            >
+              <Upload className="h-8 w-8 text-navy/30" />
+              <div className="text-center">
+                <p className="text-sm font-medium text-navy">Drop your Zoho CSV here</p>
+                <p className="text-xs text-navy/40">or click to browse — accepts <code>.csv</code> files only</p>
+              </div>
+              {fileName && (
+                <p className="text-xs font-medium text-brand-500">Selected: {fileName}</p>
+              )}
+            </div>
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".csv"
+              className="hidden"
+              onChange={handleFileInput}
+            />
+
+            {parseError && (
+              <div className="flex items-start gap-2 rounded-lg border border-danger/30 bg-danger-bg p-3 text-sm text-danger">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                {parseError}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2">
+              <Button variant="secondary" onClick={onClose}>Cancel</Button>
+            </div>
+          </div>
+        )}
+
+        {/* Step: preview */}
+        {step === "preview" && (
+          <div className="flex flex-col" style={{ maxHeight: "70vh" }}>
+            <div className="border-b border-surface-border px-6 py-3">
+              <p className="text-sm text-navy/70">
+                <span className="font-semibold text-navy">{parsedItems.length}</span> items found in{" "}
+                <span className="font-medium text-brand-500">{fileName}</span>. Review and click Import.
+              </p>
+            </div>
+            <div className="overflow-auto flex-1">
+              <table className="min-w-full text-xs">
+                <thead className="sticky top-0 bg-surface-raised border-b border-surface-border">
+                  <tr>
+                    {["Name", "SKU", "Barcode", "Unit", "Price", "Category", "Stock"].map((h) => (
+                      <th key={h} className="px-3 py-2 text-left font-semibold text-navy/60 whitespace-nowrap">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {parsedItems.map((item, i) => (
+                    <tr key={i} className="border-b border-surface-border hover:bg-surface-raised">
+                      <td className="px-3 py-2 font-medium text-navy max-w-[200px] truncate" title={item.name}>{item.name}</td>
+                      <td className="px-3 py-2 text-navy/60">{item.sku ?? "—"}</td>
+                      <td className="px-3 py-2 text-navy/60">{item.barcode ?? "—"}</td>
+                      <td className="px-3 py-2 text-navy/60">{item.unit}</td>
+                      <td className="px-3 py-2 text-navy">${item.pricePerUnit}</td>
+                      <td className="px-3 py-2 text-navy/60">{item.category ?? "—"}</td>
+                      <td className="px-3 py-2 text-navy/60">{item.currentStock ?? "0"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="flex items-center justify-between border-t border-surface-border px-6 py-4">
+              <button
+                onClick={() => { setStep("upload"); setParsedItems([]); setFileName(""); }}
+                className="text-sm text-navy/50 hover:text-navy transition-colors"
+              >
+                ← Choose different file
+              </button>
+              <div className="flex gap-2">
+                <Button variant="secondary" onClick={onClose}>Cancel</Button>
+                <Button leftIcon={<Upload className="h-4 w-4" />} onClick={handleImport} loading={isImporting}>
+                  Import {parsedItems.length} Items
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Step: result */}
+        {step === "result" && result && (
+          <div className="space-y-4 p-6">
+            <div className="flex items-start gap-3">
+              <CheckCircle className="mt-0.5 h-5 w-5 shrink-0 text-success" />
+              <div>
+                <p className="font-semibold text-navy">Import complete</p>
+                <p className="text-sm text-navy/60">
+                  <span className="font-medium text-success">{result.created}</span> items created
+                  {result.skipped > 0 && (
+                    <>, <span className="font-medium text-warning">{result.skipped}</span> skipped (SKU or barcode already exists)</>
+                  )}
+                  {result.errors.length > 0 && (
+                    <>, <span className="font-medium text-danger">{result.errors.length}</span> failed</>
+                  )}
+                </p>
+              </div>
+            </div>
+
+            {result.errors.length > 0 && (
+              <div className="rounded-lg border border-danger/30 bg-danger-bg p-3">
+                <p className="mb-2 text-xs font-semibold text-danger">Failed rows:</p>
+                <ul className="space-y-1 text-xs text-danger">
+                  {result.errors.map((e, i) => (
+                    <li key={i}>Row {e.row}: <strong>{e.name}</strong> — {e.reason}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            <div className="flex justify-end">
+              <Button onClick={onClose}>Done</Button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function ProductsPage() {
@@ -249,7 +589,9 @@ export default function ProductsPage() {
   const [stockFilter, setStockFilter] = React.useState("");
   const [viewMode, setViewMode] = React.useState<"grid" | "table">("grid");
   const [showCreate, setShowCreate] = React.useState(false);
+  const [showImport, setShowImport] = React.useState(false);
   const createProduct = useCreateProduct();
+  const importProducts = useImportProducts();
 
   const { data: result, isLoading } = useProducts({
     search,
@@ -275,9 +617,18 @@ export default function ProductsPage() {
         title="Products"
         subtitle="Manage your product catalog"
         action={
-          <Button leftIcon={<Plus className="h-4 w-4" />} onClick={() => setShowCreate(true)}>
-            New Product
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="secondary"
+              leftIcon={<Upload className="h-4 w-4" />}
+              onClick={() => setShowImport(true)}
+            >
+              Import from Zoho
+            </Button>
+            <Button leftIcon={<Plus className="h-4 w-4" />} onClick={() => setShowCreate(true)}>
+              New Product
+            </Button>
+          </div>
         }
       />
 
@@ -295,6 +646,15 @@ export default function ProductsPage() {
             })
           }
           isLoading={createProduct.isPending}
+        />
+      )}
+
+      {/* Zoho import modal */}
+      {showImport && (
+        <ZohoImportModal
+          onClose={() => setShowImport(false)}
+          onImport={(items) => importProducts.mutateAsync(items)}
+          isImporting={importProducts.isPending}
         />
       )}
 

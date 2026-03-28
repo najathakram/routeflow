@@ -7,6 +7,7 @@ import { ProductsService } from "./products.service";
 import { CreateProductDto } from "./dto/create-product.dto";
 import { UpdateProductDto } from "./dto/update-product.dto";
 import { ListProductsDto } from "./dto/list-products.dto";
+import { ImportProductsDto } from "./dto/import-products.dto";
 
 @Controller("products")
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -33,6 +34,13 @@ export class ProductsController {
   @Roles(UserRole.OPERATOR)
   create(@Body() dto: CreateProductDto) {
     return this.productsService.create(dto);
+  }
+
+  // Must be declared before :id to avoid route collision
+  @Post("import")
+  @Roles(UserRole.OPERATOR)
+  importFromZoho(@Body() dto: ImportProductsDto) {
+    return this.productsService.importFromZoho(dto);
   }
 
   @Patch(":id")

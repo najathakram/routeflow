@@ -104,8 +104,14 @@ export const useRouteStore = create<RouteState>((set) => ({
 
 // ─── Selectors ────────────────────────────────────────────────────────────────
 
+/** Stable empty object returned when a stop has no resolutions yet.
+ *  Using a module-level constant avoids creating a new `{}` on every call,
+ *  which would break Zustand's `useSyncExternalStore` tearing check and cause
+ *  "Maximum update depth exceeded" for stops with no resolutions (e.g. PENDING). */
+const EMPTY_RESOLUTIONS: Record<string, ItemResolution> = {};
+
 export function selectStopResolutions(state: RouteState, stopId: string) {
-  return state.itemResolutions[stopId] ?? {};
+  return state.itemResolutions[stopId] ?? EMPTY_RESOLUTIONS;
 }
 
 export function selectAllItemsResolved(

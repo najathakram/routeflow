@@ -58,3 +58,32 @@ export function useDeleteProduct() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["products"] }),
   });
 }
+
+export interface ZohoImportItem {
+  name: string;
+  sku?: string;
+  barcode?: string;
+  unit: string;
+  pricePerUnit: string;
+  category?: string;
+  description?: string;
+  isActive?: boolean;
+  currentStock?: string;
+  averageCost?: string;
+  reorderPoint?: number;
+}
+
+export interface ImportResult {
+  created: number;
+  skipped: number;
+  errors: Array<{ row: number; name: string; reason: string }>;
+}
+
+export function useImportProducts() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (items: ZohoImportItem[]): Promise<ImportResult> =>
+      apiClient.post("/products/import", { items }).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["products"] }),
+  });
+}

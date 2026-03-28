@@ -3,6 +3,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { CreateProductDto } from "./dto/create-product.dto";
 import { UpdateProductDto } from "./dto/update-product.dto";
 import { ListProductsDto } from "./dto/list-products.dto";
+import { ImportProductsDto } from "./dto/import-products.dto";
 
 @Injectable()
 export class ProductsService {
@@ -96,5 +97,63 @@ export class ProductsService {
       throw new BadRequestException("Cannot delete product with active order items");
     }
     return this.prisma.product.update({ where: { id }, data: { isActive: false } });
+  }
+
+  async importFromZoho(dto: ImportProductsDto): Promise<{
+    created: number;
+    skipped: number;
+    errors: Array<{ row: number; name: string; reason: string }>;
+  }> {
+    let created = 0;
+    let skipped = 0;
+    const errors: Array<{ row: number; name: string; reason: string }> = [];
+
+    for (let i = 0; i < dto.items.length; i++) {
+      const item = dto.items[i];
+      const rowNum = i + 1;
+
+      try {
+        // Check for duplicate SKU
+        if (item.sku) {
+          const existing = await this.prisma.product.findUnique({ where: { sku: item.sku } });
+          if (existing) {
+            skipped++;
+            continue;
+          }
+        }
+
+        // Check for duplicate barcode
+        if (item.barcode) {
+          const existing = await this.prisma.product.findUnique({ where: { barcode: item.barcode } });
+          if (existing) {
+            // If no SKU collision but barcode exists, skip
+            skipped++;
+            continue;
+          }
+        }
+
+        await this.prisma.product.create({
+          data: {
+            name: item.name,
+            sku: item.sku ?? null,
+            barcode: item.barcode ?? null,
+            unit: item.unit,
+            pricePerUnit: item.pricePerUnit,
+            category: item.category ?? null,
+            description: item.description ?? null,
+            isActive: item.isActive ?? true,
+            currentStock: item.currentStock ?? "0",
+            averageCost: item.averageCost ?? null,
+            reorderPoint: item.reorderPoint ?? null,
+          },
+        });
+
+        created++;
+      } catch (err: any) {
+        errors.push({ row: rowNum, name: item.name, reason: err?.message ?? "Unknown error" });
+      }
+    }
+
+    return { created, skipped, errors };
   }
 }
