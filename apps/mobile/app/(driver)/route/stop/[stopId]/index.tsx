@@ -78,17 +78,20 @@ function callPhone(phone: string) {
 
 /** Derive the number of units the driver is delivering from the routeStore resolution. */
 function getDeliveryQty(resolution: { status: string; partialQty?: number } | undefined, orderedQty: number): number {
-  if (!resolution || resolution.status === "UNRESOLVED" || resolution.status === "DELIVERED") return orderedQty;
-  if (resolution.status === "PARTIAL") return resolution.partialQty ?? 0;
+  const ordered = Number(orderedQty);
+  if (!resolution || resolution.status === "UNRESOLVED" || resolution.status === "DELIVERED") return ordered;
+  if (resolution.status === "PARTIAL") return Number(resolution.partialQty ?? 0);
   return 0; // REFUSED
 }
 
 /** Map a driver-set delivery qty back to a DELIVERED / PARTIAL / REFUSED resolution. */
 function qtyToResolution(qty: number, orderedQty: number): { status: "DELIVERED" | "PARTIAL" | "REFUSED"; partialQty?: number } {
-  if (qty <= 0) return { status: "REFUSED" };
-  if (qty === orderedQty) return { status: "DELIVERED" };
-  // qty < orderedQty → partial; qty > orderedQty → over-delivery, stored as PARTIAL with actual qty
-  return { status: "PARTIAL", partialQty: qty };
+  const n = Number(qty);
+  const ordered = Number(orderedQty);
+  if (n <= 0) return { status: "REFUSED" };
+  if (n === ordered) return { status: "DELIVERED" };
+  // n < ordered → partial; n > ordered → over-delivery, stored as PARTIAL with actual qty
+  return { status: "PARTIAL", partialQty: n };
 }
 
 function ItemRow({
@@ -199,7 +202,7 @@ function ItemRow({
           </View>
           <View style={itemStyles.deliveryStepper}>
             <Pressable
-              onPress={() => handleDeliveryQtyChange(Math.max(0, deliveryQty - 1))}
+              onPress={() => handleDeliveryQtyChange(Math.max(0, Number(deliveryQty) - 1))}
               style={[itemStyles.stepBtn, deliveryQty <= 0 && itemStyles.stepBtnRemove]}
               hitSlop={8}
               accessibilityLabel="Decrease delivery quantity"
@@ -212,7 +215,7 @@ function ItemRow({
             </Pressable>
             <Text style={itemStyles.deliveryQty}>{deliveryQty}</Text>
             <Pressable
-              onPress={() => handleDeliveryQtyChange(deliveryQty + 1)}
+              onPress={() => handleDeliveryQtyChange(Number(deliveryQty) + 1)}
               style={itemStyles.stepBtn}
               hitSlop={8}
               accessibilityLabel="Increase delivery quantity"
