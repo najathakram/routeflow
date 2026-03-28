@@ -722,6 +722,40 @@ export default function StopDetailScreen() {
     setEditsDirty((prev) => ({ ...prev, [orderId]: true }));
   };
 
+  const handleSaveOrderEdits = (orderId: string) => {
+    const edits = orderEdits[orderId];
+    if (!edits || edits.length === 0) return;
+    updateOrderItems(
+      {
+        orderId,
+        items: edits.map((i) => ({ productId: i.productId, qty: i.qty, unitPrice: i.unitPrice })),
+      },
+      {
+        onSuccess: () => setEditsDirty((prev) => ({ ...prev, [orderId]: false })),
+        onError: (err: any) =>
+          Alert.alert("Error", err?.response?.data?.message ?? "Failed to save order changes."),
+      },
+    );
+  };
+
+  const handleDiscardOrderEdits = (orderId: string) => {
+    const order = (stop?.orders ?? []).find((o) => o.id === orderId);
+    if (!order) return;
+    setOrderEdits((prev) => ({
+      ...prev,
+      [orderId]: (order.lineItems ?? []).map((li) => ({
+        id: li.id,
+        productId: li.productId,
+        name: li.product?.name ?? li.productId,
+        qty: li.qty,
+        unitPrice: Number(li.unitPrice),
+      })),
+    }));
+    setEditsDirty((prev) => ({ ...prev, [orderId]: false }));
+    // Allow the effect to re-seed from server data if it refetches
+    initializedOrdersRef.current.delete(orderId);
+  };
+
   const handleConfirmOrder = (orderId: string) => {
     const dirty = editsDirty[orderId];
     const edits = orderEdits[orderId];
@@ -983,17 +1017,17 @@ export default function StopDetailScreen() {
                               <Ionicons name="add-outline" size={16} color={colors.brand[500]} />
                               <Text style={styles.addToOrderBtnText}>Add</Text>
                             </Pressable>
-                            <Pressable
-                              style={[styles.confirmOrderBtn, isBusy && { opacity: 0.6 }]}
-                              disabled={isBusy}
-                              onPress={() => handleConfirmOrder(order.id)}
-                              accessibilityRole="button"
-                            >
-                              <Ionicons name="checkmark-circle-outline" size={16} color={colors.success.DEFAULT} />
-                              <Text style={styles.confirmOrderBtnText}>
-                                {isUpdatingItems && editsDirty[order.id] ? "Saving…" : "Confirm"}
-                              </Text>
-                            </Pressable>
+                            {!editsDirty[order.id] && (
+                              <Pressable
+                                style={[styles.confirmOrderBtn, isBusy && { opacity: 0.6 }]}
+                                disabled={isBusy}
+                                onPress={() => handleConfirmOrder(order.id)}
+                                accessibilityRole="button"
+                              >
+                                <Ionicons name="checkmark-circle-outline" size={16} color={colors.success.DEFAULT} />
+                                <Text style={styles.confirmOrderBtnText}>Confirm</Text>
+                              </Pressable>
+                            )}
                           </View>
                         )}
                       </View>
@@ -1031,6 +1065,45 @@ export default function StopDetailScreen() {
                           );
                         })}
                       </View>
+
+                      {/* Save / Discard bar — shown when PENDING order has unsaved edits */}
+                      {isPending && editsDirty[order.id] && (
+                        <View style={styles.editActionsBar}>
+                          <Pressable
+                            style={styles.discardChangesBtn}
+                            onPress={() => handleDiscardOrderEdits(order.id)}
+                            accessibilityRole="button"
+                            accessibilityLabel="Discard changes"
+                          >
+                            <Ionicons name="close-outline" size={16} color={colors.danger.DEFAULT} />
+                            <Text style={styles.discardChangesBtnText}>Discard</Text>
+                          </Pressable>
+                          <Pressable
+                            style={[styles.saveChangesBtn, isBusy && { opacity: 0.6 }]}
+                            disabled={isBusy}
+                            onPress={() => handleSaveOrderEdits(order.id)}
+                            accessibilityRole="button"
+                            accessibilityLabel="Save changes"
+                          >
+                            <Ionicons name="save-outline" size={16} color="#fff" />
+                            <Text style={styles.saveChangesBtnText}>
+                              {isUpdatingItems ? "Saving…" : "Save changes"}
+                            </Text>
+                          </Pressable>
+                          <Pressable
+                            style={[styles.confirmOrderBtn, isBusy && { opacity: 0.6 }]}
+                            disabled={isBusy}
+                            onPress={() => handleConfirmOrder(order.id)}
+                            accessibilityRole="button"
+                            accessibilityLabel="Save and confirm order"
+                          >
+                            <Ionicons name="checkmark-circle-outline" size={16} color={colors.success.DEFAULT} />
+                            <Text style={styles.confirmOrderBtnText}>
+                              {isUpdatingItems ? "Saving…" : "Confirm"}
+                            </Text>
+                          </Pressable>
+                        </View>
+                      )}
                     </View>
                   );
                 })}
@@ -1598,6 +1671,48 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
   },
   confirmOrderBtnText: {
+    fontSize: 13,
+    fontFamily: "Inter_700Bold",
+    color: "#fff",
+  },
+  editActionsBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingTop: 10,
+    paddingHorizontal: 4,
+    borderTopWidth: 1,
+    borderTopColor: colors.surface.border,
+    marginTop: 4,
+  },
+  discardChangesBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: borderRadius.DEFAULT,
+    borderWidth: 1,
+    borderColor: colors.danger.DEFAULT + "50",
+    backgroundColor: colors.danger.bg ?? "#fee2e2",
+  },
+  discardChangesBtnText: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+    color: colors.danger.DEFAULT,
+  },
+  saveChangesBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: borderRadius.DEFAULT,
+    backgroundColor: colors.brand[500],
+  },
+  saveChangesBtnText: {
     fontSize: 13,
     fontFamily: "Inter_700Bold",
     color: "#fff",
