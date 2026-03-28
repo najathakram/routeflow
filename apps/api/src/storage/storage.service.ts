@@ -1,4 +1,5 @@
 import * as fs from "fs/promises";
+import * as os from "os";
 import * as path from "path";
 import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
@@ -43,9 +44,12 @@ export class StorageService {
     return this.s3 === null;
   }
 
-  /** Root directory for local uploads (overridable via UPLOAD_DIR env var). */
+  /** Root directory for local uploads (overridable via UPLOAD_DIR env var).
+   *  Defaults to os.tmpdir()/routeflow-uploads — always writable on every platform
+   *  including Railway, where the /app directory is read-only. */
   private get uploadDir(): string {
-    return this.config.get<string>("uploadDir") ?? path.join(process.cwd(), "uploads");
+    const configured = this.config.get<string>("uploadDir");
+    return configured || path.join(os.tmpdir(), "routeflow-uploads");
   }
 
   /**

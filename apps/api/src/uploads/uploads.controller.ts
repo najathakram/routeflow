@@ -1,3 +1,4 @@
+import * as os from "os";
 import * as path from "path";
 import { Controller, Get, Param, Res, NotFoundException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
@@ -14,7 +15,8 @@ export class UploadsController {
   constructor(private readonly config: ConfigService) {}
 
   private get uploadDir(): string {
-    return this.config.get<string>("uploadDir") ?? path.join(process.cwd(), "uploads");
+    const configured = this.config.get<string>("uploadDir");
+    return configured || path.join(os.tmpdir(), "routeflow-uploads");
   }
 
   @Get("*path")
