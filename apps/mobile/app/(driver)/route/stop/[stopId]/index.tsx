@@ -759,19 +759,21 @@ export default function StopDetailScreen() {
   };
 
   const handleSkip = () => {
-    Alert.alert("Skip Stop", "Are you sure you want to skip this stop?", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Skip",
-        style: "destructive",
-        onPress: () => {
-          if (runId) {
-            updateStopStatus({ runId, stopId, status: "SKIPPED" });
-            router.back();
-          }
-        },
-      },
-    ]);
+    const doSkip = () => {
+      if (runId) {
+        updateStopStatus({ runId, stopId, status: "SKIPPED" });
+        router.back();
+      }
+    };
+    // Alert.alert multi-button dialogs don't work on web — use window.confirm instead
+    if (Platform.OS === "web") {
+      if ((globalThis as any).confirm?.("Skip this stop?")) doSkip();
+    } else {
+      Alert.alert("Skip Stop", "Are you sure you want to skip this stop?", [
+        { text: "Cancel", style: "cancel" },
+        { text: "Skip", style: "destructive", onPress: doSkip },
+      ]);
+    }
   };
 
   return (
@@ -995,9 +997,15 @@ export default function StopDetailScreen() {
                           </View>
                         )}
                       </View>
-                      {/* Items */}
+                      {/* Items — hide REFUSED rows (driver pressed ×) */}
                       <View style={styles.orderItemsContainer}>
-                        {displayItems.map((editItem) => {
+                        {displayItems
+                          .filter((editItem) => {
+                            if (isPending) return true; // edit mode — never hide
+                            const res = stopResolutions[editItem.id];
+                            return !res || res.status !== "REFUSED";
+                          })
+                          .map((editItem) => {
                           const serverItem = (order.lineItems ?? []).find((li) => li.id === editItem.id);
                           const rowItem = serverItem
                             ? serverItem
