@@ -5,7 +5,9 @@ export function useProducts(params?: {
   search?: string;
   category?: string;
   isActive?: boolean;
+  stockStatus?: "IN_STOCK" | "LOW" | "OUT_OF_STOCK";
   page?: number;
+  limit?: number;
 }) {
   return useQuery({
     queryKey: ["products", params],

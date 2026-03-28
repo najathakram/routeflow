@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from "@nestjs/comm
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateProductDto } from "./dto/create-product.dto";
 import { UpdateProductDto } from "./dto/update-product.dto";
-import { ListProductsDto } from "./dto/list-products.dto";
+import { ListProductsDto, StockStatusFilter } from "./dto/list-products.dto";
 import { ImportProductsDto } from "./dto/import-products.dto";
 
 @Injectable()
@@ -11,7 +11,10 @@ export class ProductsService {
 
   async findAll(query: ListProductsDto) {
     const page = Number(query.page ?? 1);
-    const limit = Number(query.limit ?? 20);
+    // limit=0 means "all" — use a high ceiling internally
+    const limitRaw = Number(query.limit ?? 20);
+    const fetchAll = limitRaw === 0;
+    const limit = fetchAll ? 100_000 : limitRaw;
     const skip = (page - 1) * limit;
 
     const where: any = {};
@@ -25,12 +28,36 @@ export class ProductsService {
     if (query.category) where.category = query.category;
     if (query.isActive !== undefined) where.isActive = query.isActive;
 
+    // Server-side stock-status filtering so pagination counts are accurate
+    if (query.stockStatus === StockStatusFilter.OUT_OF_STOCK) {
+      where.OR = [
+        ...(where.OR ?? []),
+        { isActive: false },
+        { currentStock: { lte: 0 } },
+      ];
+    } else if (query.stockStatus === StockStatusFilter.LOW) {
+      where.isActive = true;
+      where.currentStock = { gt: 0, lte: 5 };
+    } else if (query.stockStatus === StockStatusFilter.IN_STOCK) {
+      where.isActive = true;
+      where.currentStock = { gt: 5 };
+    }
+
     const [data, total] = await Promise.all([
       this.prisma.product.findMany({ where, skip, take: limit, orderBy: { name: "asc" } }),
       this.prisma.product.count({ where }),
     ]);
 
-    return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
+    const effectiveLimit = fetchAll ? total : limit;
+    return {
+      data,
+      meta: {
+        total,
+        page: fetchAll ? 1 : page,
+        limit: fetchAll ? total : limit,
+        totalPages: fetchAll ? 1 : Math.ceil(total / limit),
+      },
+    };
   }
 
   async findOne(id: string) {

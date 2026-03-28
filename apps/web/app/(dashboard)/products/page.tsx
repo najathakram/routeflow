@@ -695,27 +695,34 @@ export default function ProductsPage() {
   const [showCreate, setShowCreate] = React.useState(false);
   const [showImport, setShowImport] = React.useState(false);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
+  const [page, setPage] = React.useState(1);
+  const [pageSize, setPageSize] = React.useState(50);
   const createProduct = useCreateProduct();
   const importProducts = useImportProducts();
   const bulkDelete = useBulkDeleteProducts();
 
+  // Reset to page 1 whenever filters change
+  React.useEffect(() => { setPage(1); }, [search, categoryFilter, stockFilter, pageSize]);
+
   const { data: result, isLoading } = useProducts({
     search,
     category: categoryFilter || undefined,
-    isActive: stockFilter === "OUT_OF_STOCK" ? false : undefined,
+    stockStatus: (stockFilter || undefined) as any,
+    page,
+    limit: pageSize, // 0 = all
   });
 
   const productList: ApiProduct[] = result?.data ?? [];
+  const meta = result?.meta;
+  const totalPages = meta?.totalPages ?? 1;
+  const totalItems = meta?.total ?? 0;
 
   const categories = Array.from(
     new Set(productList.map((p) => p.category).filter(Boolean))
   ) as string[];
 
-  const filtered = React.useMemo(() => {
-    if (stockFilter === "IN_STOCK") return productList.filter((p) => getStockStatus(p) === "IN_STOCK");
-    if (stockFilter === "LOW") return productList.filter((p) => getStockStatus(p) === "LOW");
-    return productList;
-  }, [productList, stockFilter]);
+  // Items are now fully server-filtered — no client-side filtering needed
+  const filtered = productList;
 
   const filteredIds = filtered.map((p) => p.id);
   const allFilteredSelected = filteredIds.length > 0 && filteredIds.every((id) => selected.has(id));
@@ -847,6 +854,21 @@ export default function ProductsPage() {
           />
         </div>
 
+        {/* Per-page selector */}
+        <div className="w-36">
+          <Select
+            options={[
+              { value: "20", label: "20 per page" },
+              { value: "50", label: "50 per page" },
+              { value: "100", label: "100 per page" },
+              { value: "200", label: "200 per page" },
+              { value: "0", label: "Show all" },
+            ]}
+            value={String(pageSize)}
+            onChange={(e) => setPageSize(Number(e.target.value))}
+          />
+        </div>
+
         {/* View toggle */}
         <div className="ml-auto flex items-center rounded-lg border border-surface-border bg-white p-1">
           <button
@@ -933,6 +955,84 @@ export default function ProductsPage() {
             else router.push(`/products/${row.original.id}`);
           }}
         />
+      )}
+
+      {/* Pagination bar */}
+      {!isLoading && totalItems > 0 && pageSize !== 0 && totalPages > 1 && (
+        <div className="flex items-center justify-between rounded-lg border border-surface-border bg-white px-4 py-3">
+          <p className="text-sm text-navy/60">
+            Showing{" "}
+            <span className="font-medium text-navy">
+              {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, totalItems)}
+            </span>{" "}
+            of <span className="font-medium text-navy">{totalItems}</span> products
+          </p>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setPage(1)}
+              disabled={page === 1}
+              className="rounded px-2 py-1.5 text-xs font-medium text-navy/50 hover:bg-surface-raised hover:text-navy disabled:cursor-not-allowed disabled:opacity-30 transition-colors"
+            >
+              «
+            </button>
+            <button
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={page === 1}
+              className="rounded px-2 py-1.5 text-xs font-medium text-navy/50 hover:bg-surface-raised hover:text-navy disabled:cursor-not-allowed disabled:opacity-30 transition-colors"
+            >
+              ‹ Prev
+            </button>
+
+            {/* Page number buttons */}
+            {Array.from({ length: totalPages }, (_, i) => i + 1)
+              .filter((p) => p === 1 || p === totalPages || Math.abs(p - page) <= 2)
+              .reduce<(number | "…")[]>((acc, p, idx, arr) => {
+                if (idx > 0 && p - (arr[idx - 1] as number) > 1) acc.push("…");
+                acc.push(p);
+                return acc;
+              }, [])
+              .map((item, idx) =>
+                item === "…" ? (
+                  <span key={`ellipsis-${idx}`} className="px-1 text-xs text-navy/30">…</span>
+                ) : (
+                  <button
+                    key={item}
+                    onClick={() => setPage(item as number)}
+                    className={cn(
+                      "min-w-[30px] rounded px-2 py-1.5 text-xs font-medium transition-colors",
+                      page === item
+                        ? "bg-navy text-white"
+                        : "text-navy/60 hover:bg-surface-raised hover:text-navy",
+                    )}
+                  >
+                    {item}
+                  </button>
+                ),
+              )}
+
+            <button
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              disabled={page === totalPages}
+              className="rounded px-2 py-1.5 text-xs font-medium text-navy/50 hover:bg-surface-raised hover:text-navy disabled:cursor-not-allowed disabled:opacity-30 transition-colors"
+            >
+              Next ›
+            </button>
+            <button
+              onClick={() => setPage(totalPages)}
+              disabled={page === totalPages}
+              className="rounded px-2 py-1.5 text-xs font-medium text-navy/50 hover:bg-surface-raised hover:text-navy disabled:cursor-not-allowed disabled:opacity-30 transition-colors"
+            >
+              »
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Total count when showing all */}
+      {!isLoading && totalItems > 0 && pageSize === 0 && (
+        <p className="text-center text-sm text-navy/40">
+          Showing all <span className="font-medium text-navy">{totalItems}</span> products
+        </p>
       )}
     </div>
   );
