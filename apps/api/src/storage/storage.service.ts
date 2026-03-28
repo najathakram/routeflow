@@ -1,3 +1,5 @@
+import * as fs from "fs/promises";
+import * as path from "path";
 import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import {
@@ -13,29 +15,62 @@ const GET_EXPIRY_SECONDS = 3600;
 
 @Injectable()
 export class StorageService {
-  private readonly s3: S3Client;
+  private readonly s3: S3Client | null;
   private readonly bucket: string;
 
   constructor(private readonly config: ConfigService) {
     const accountId = config.get<string>("r2.accountId") ?? "";
+    const accessKeyId = config.get<string>("r2.accessKeyId") ?? "";
+    const secretAccessKey = config.get<string>("r2.secretAccessKey") ?? "";
     this.bucket = config.get<string>("r2.bucketName") ?? "routeflow-assets";
-    this.s3 = new S3Client({
-      region: "auto",
-      endpoint: `https://${accountId}.r2.cloudflarestorage.com`,
-      credentials: {
-        accessKeyId: config.get<string>("r2.accessKeyId") ?? "",
-        secretAccessKey: config.get<string>("r2.secretAccessKey") ?? "",
-      },
-    });
+
+    if (accountId && accessKeyId && secretAccessKey) {
+      this.s3 = new S3Client({
+        region: "auto",
+        endpoint: `https://${accountId}.r2.cloudflarestorage.com`,
+        credentials: { accessKeyId, secretAccessKey },
+      });
+    } else {
+      this.s3 = null;
+      console.warn(
+        "⚠️  R2 credentials not configured — falling back to local disk storage. " +
+          "Set R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY to use Cloudflare R2.",
+      );
+    }
   }
 
-  /** Upload a file buffer to R2. Returns the stored object key. */
-  async upload(
-    key: string,
-    buffer: Buffer,
-    contentType: string,
-  ): Promise<string> {
-    await this.s3.send(
+  private get useLocal(): boolean {
+    return this.s3 === null;
+  }
+
+  /** Root directory for local uploads (overridable via UPLOAD_DIR env var). */
+  private get uploadDir(): string {
+    return this.config.get<string>("uploadDir") ?? path.join(process.cwd(), "uploads");
+  }
+
+  /**
+   * Public base URL used to construct local-file URLs.
+   * Railway sets RAILWAY_PUBLIC_DOMAIN automatically; fall back to localhost.
+   */
+  private get publicBaseUrl(): string {
+    const railwayDomain = process.env.RAILWAY_PUBLIC_DOMAIN;
+    if (railwayDomain) return `https://${railwayDomain}`;
+    const port = this.config.get<number>("port") ?? 3000;
+    return `http://localhost:${port}`;
+  }
+
+  // ─── Public API ─────────────────────────────────────────────────────────────
+
+  /** Upload a file buffer. Returns the stored object key. */
+  async upload(key: string, buffer: Buffer, contentType: string): Promise<string> {
+    if (this.useLocal) {
+      const dest = path.join(this.uploadDir, key);
+      await fs.mkdir(path.dirname(dest), { recursive: true });
+      await fs.writeFile(dest, buffer);
+      return key;
+    }
+
+    await this.s3!.send(
       new PutObjectCommand({
         Bucket: this.bucket,
         Key: key,
@@ -46,23 +81,31 @@ export class StorageService {
     return key;
   }
 
-  /** Delete an object from R2 by key. */
+  /** Delete an object by key. */
   async delete(key: string): Promise<void> {
-    await this.s3.send(
-      new DeleteObjectCommand({ Bucket: this.bucket, Key: key }),
-    );
+    if (this.useLocal) {
+      const dest = path.join(this.uploadDir, key);
+      await fs.unlink(dest).catch(() => {}); // ignore if already gone
+      return;
+    }
+
+    await this.s3!.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
   }
 
-  /** Generate a presigned GET URL valid for 1 hour. */
+  /** Return a URL to retrieve the file (presigned R2 URL or local API URL). */
   async presignedUrl(key: string): Promise<string> {
+    if (this.useLocal) {
+      return `${this.publicBaseUrl}/api/v1/uploads/${key}`;
+    }
+
     return getSignedUrl(
-      this.s3,
+      this.s3!,
       new GetObjectCommand({ Bucket: this.bucket, Key: key }),
       { expiresIn: GET_EXPIRY_SECONDS },
     );
   }
 
-  /** Generate presigned GET URLs for an array of keys. */
+  /** Return URLs for an array of keys. */
   async presignedUrls(keys: string[]): Promise<string[]> {
     return Promise.all(keys.map((k) => this.presignedUrl(k)));
   }

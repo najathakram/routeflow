@@ -26,6 +26,7 @@ export interface AppConfig {
     secretAccessKey: string;
     bucketName: string;
   };
+  uploadDir: string;
   ors: {
     apiKey: string;
   };
@@ -65,6 +66,7 @@ export const configuration = (): AppConfig => ({
     secretAccessKey: process.env.R2_SECRET_ACCESS_KEY ?? "",
     bucketName: process.env.R2_BUCKET_NAME ?? "routeflow-assets",
   },
+  uploadDir: process.env.UPLOAD_DIR ?? "",
   ors: {
     apiKey: process.env.ORS_API_KEY ?? "",
   },
