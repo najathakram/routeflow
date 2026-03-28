@@ -37,7 +37,6 @@ import {
   useRouteStore,
   selectAllItemsResolved,
   selectStopResolutions,
-  type ItemDeliveryStatus,
 } from "../../../../../store/routeStore";
 import { useProductByBarcode } from "../../../../../lib/api/products";
 import { BarcodeScanner } from "../../../../../components/BarcodeScanner";
@@ -75,13 +74,21 @@ function callPhone(phone: string) {
   );
 }
 
-// ─── Item Status Selector ─────────────────────────────────────────────────────
+// ─── Delivery qty helpers ─────────────────────────────────────────────────────
 
-const STATUSES: { key: ItemDeliveryStatus; label: string; color: string; bg: string }[] = [
-  { key: "DELIVERED", label: "Delivered", color: colors.success.DEFAULT, bg: colors.success.bg },
-  { key: "PARTIAL", label: "Partial", color: colors.warning.DEFAULT, bg: colors.warning.bg },
-  { key: "REFUSED", label: "Refused", color: colors.danger.DEFAULT, bg: colors.danger.bg },
-];
+/** Derive the number of units the driver is delivering from the routeStore resolution. */
+function getDeliveryQty(resolution: { status: string; partialQty?: number } | undefined, orderedQty: number): number {
+  if (!resolution || resolution.status === "UNRESOLVED" || resolution.status === "DELIVERED") return orderedQty;
+  if (resolution.status === "PARTIAL") return resolution.partialQty ?? 0;
+  return 0; // REFUSED
+}
+
+/** Map a driver-set delivery qty back to a DELIVERED / PARTIAL / REFUSED resolution. */
+function qtyToResolution(qty: number, orderedQty: number): { status: "DELIVERED" | "PARTIAL" | "REFUSED"; partialQty?: number } {
+  if (qty <= 0) return { status: "REFUSED" };
+  if (qty >= orderedQty) return { status: "DELIVERED" };
+  return { status: "PARTIAL", partialQty: qty };
+}
 
 function ItemRow({
   item,
@@ -103,21 +110,6 @@ function ItemRow({
 }) {
   const resolution = useRouteStore((s) => selectStopResolutions(s, stopId)[item.id]);
   const setItemResolution = useRouteStore((s) => s.setItemResolution);
-  const current = resolution?.status ?? "UNRESOLVED";
-  const [partialInput, setPartialInput] = useState(
-    resolution?.partialQty?.toString() ?? "",
-  );
-
-  const handleSelect = (key: ItemDeliveryStatus) => {
-    if (key === "PARTIAL") {
-      setItemResolution(stopId, item.id, {
-        status: "PARTIAL",
-        partialQty: parseInt(partialInput || "0", 10) || 0,
-      });
-    } else {
-      setItemResolution(stopId, item.id, { status: key });
-    }
-  };
 
   const displayQty = editMode ? (editQty ?? item.qty) : item.qty;
 
@@ -162,66 +154,86 @@ function ItemRow({
     );
   }
 
-  // ── Delivery resolution mode: Delivered / Partial / Refused ──────────────
+  // ── Delivery resolution mode: qty-based stepper ───────────────────────────
+  const deliveryQty = getDeliveryQty(resolution, item.qty);
+
+  const handleDeliveryQtyChange = (newQty: number) => {
+    if (newQty > item.qty) {
+      Alert.alert(
+        "More than ordered",
+        `Deliver ${newQty} ${item.product?.unit ?? "unit"}(s)? Only ${item.qty} were ordered.`,
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Confirm",
+            onPress: () =>
+              setItemResolution(stopId, item.id, qtyToResolution(newQty, item.qty)),
+          },
+        ],
+      );
+    } else {
+      setItemResolution(stopId, item.id, qtyToResolution(newQty, item.qty));
+    }
+  };
+
+  const chipLabel =
+    deliveryQty <= 0
+      ? "Not delivering"
+      : deliveryQty >= item.qty
+        ? "Delivering all"
+        : `${deliveryQty} of ${item.qty}`;
+  const chipColor =
+    deliveryQty <= 0
+      ? colors.danger.DEFAULT
+      : deliveryQty >= item.qty
+        ? colors.success.DEFAULT
+        : colors.warning.DEFAULT;
+  const chipBg =
+    deliveryQty <= 0
+      ? (colors.danger.bg ?? "#fee2e2")
+      : deliveryQty >= item.qty
+        ? colors.success.bg
+        : (colors.warning.bg ?? "#fef3c7");
+
   return (
     <View style={[itemStyles.container, highlighted && itemStyles.highlighted]}>
-      <View style={itemStyles.header}>
-        <Text style={itemStyles.name}>{item.product?.name ?? item.productId}</Text>
-        <Text style={itemStyles.qty}>
-          Ordered: <Text style={itemStyles.qtyBold}>{item.qty}</Text>
-          {item.product?.unit ? ` × ${item.product.unit}` : ""}
-        </Text>
-      </View>
-
-      {/* Three large toggle buttons */}
-      <View style={itemStyles.toggleRow}>
-        {STATUSES.map(({ key, label, color, bg }) => {
-          const selected = current === key;
-          return (
-            <Pressable
-              key={key}
-              style={[
-                itemStyles.toggleBtn,
-                selected && { backgroundColor: bg, borderColor: color },
-              ]}
-              onPress={() => handleSelect(key)}
-              accessibilityRole="button"
-              accessibilityLabel={`Mark ${item.product?.name ?? ""} as ${label}`}
-              accessibilityState={{ selected }}
-            >
-              <Text style={[itemStyles.toggleText, selected && { color }]}>
-                {label}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </View>
-
-      {/* Partial qty input */}
-      {current === "PARTIAL" && (
-        <View style={itemStyles.partialRow}>
-          <Text style={itemStyles.partialLabel}>Qty delivered:</Text>
-          <TextInput
-            style={itemStyles.partialInput}
-            keyboardType="number-pad"
-            value={partialInput}
-            onChangeText={(v) => {
-              setPartialInput(v);
-              const n = parseInt(v, 10);
-              if (!isNaN(n)) {
-                const capped = Math.min(n, item.qty);
-                setItemResolution(stopId, item.id, { status: "PARTIAL", partialQty: capped });
-                if (n > item.qty) setPartialInput(String(item.qty));
-              }
-            }}
-            placeholder="0"
-            maxLength={3}
-            returnKeyType="done"
-            onSubmitEditing={Keyboard.dismiss}
-          />
-          <Text style={itemStyles.partialMax}>/ {item.qty}</Text>
+      <View style={itemStyles.deliveryRow}>
+        <View style={itemStyles.deliveryLeft}>
+          <Text style={itemStyles.name}>{item.product?.name ?? item.productId}</Text>
+          <Text style={itemStyles.deliveryUnit}>
+            Ordered: <Text style={itemStyles.qtyBold}>{item.qty}</Text>
+            {item.product?.unit ? ` × ${item.product.unit}` : ""}
+          </Text>
         </View>
-      )}
+        <View style={itemStyles.deliveryRight}>
+          <View style={[itemStyles.deliveryStatusChip, { backgroundColor: chipBg }]}>
+            <Text style={[itemStyles.deliveryStatusText, { color: chipColor }]}>{chipLabel}</Text>
+          </View>
+          <View style={itemStyles.deliveryStepper}>
+            <Pressable
+              onPress={() => handleDeliveryQtyChange(Math.max(0, deliveryQty - 1))}
+              style={[itemStyles.stepBtn, deliveryQty <= 0 && itemStyles.stepBtnRemove]}
+              hitSlop={8}
+              accessibilityLabel="Decrease delivery quantity"
+            >
+              <Ionicons
+                name={deliveryQty <= 1 ? "close-outline" : "remove-outline"}
+                size={18}
+                color={deliveryQty <= 1 ? colors.danger.DEFAULT : colors.navy.DEFAULT}
+              />
+            </Pressable>
+            <Text style={itemStyles.deliveryQty}>{deliveryQty}</Text>
+            <Pressable
+              onPress={() => handleDeliveryQtyChange(deliveryQty + 1)}
+              style={itemStyles.stepBtn}
+              hitSlop={8}
+              accessibilityLabel="Increase delivery quantity"
+            >
+              <Ionicons name="add-outline" size={18} color={colors.navy.DEFAULT} />
+            </Pressable>
+          </View>
+        </View>
+      </View>
     </View>
   );
 }
@@ -343,6 +355,50 @@ const itemStyles = StyleSheet.create({
     minWidth: 28,
     textAlign: "center",
   },
+  // ── Delivery stepper styles ──────────────────────────────────────────────
+  deliveryRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  deliveryLeft: { flex: 1, gap: 2 },
+  deliveryUnit: {
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    color: "#64748b",
+  },
+  deliveryRight: {
+    alignItems: "flex-end",
+    gap: 6,
+  },
+  deliveryStatusChip: {
+    borderRadius: borderRadius.full,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+  },
+  deliveryStatusText: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+  },
+  deliveryStepper: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: colors.surface.raised,
+    borderRadius: borderRadius.full,
+    borderWidth: 1,
+    borderColor: colors.surface.border,
+    paddingHorizontal: 4,
+    paddingVertical: 4,
+  },
+  deliveryQty: {
+    fontSize: 16,
+    fontFamily: "Inter_700Bold",
+    color: colors.navy.DEFAULT,
+    minWidth: 28,
+    textAlign: "center",
+  },
 });
 
 
@@ -360,6 +416,9 @@ export default function StopDetailScreen() {
   const setStopNote = useRouteStore((s) => s.setStopNote);
   const addedItems = useRouteStore((s) => s.addedItems[stopId]) ?? [];
   const addStopItemStore = useRouteStore((s) => s.addStopItem);
+  const setItemResolutionFn = useRouteStore((s) => s.setItemResolution);
+  const stopResolutions = useRouteStore((s) => selectStopResolutions(s, stopId));
+  const initializedDeliveryRef = useRef<Set<string>>(new Set());
 
   const { mutate: updateOrderItems, isPending: isUpdatingItems } = useUpdateOrderItems();
 
@@ -405,6 +464,22 @@ export default function StopDetailScreen() {
         }));
       }
     }
+  }, [stop?.orders]);
+
+  // ─── Initialize delivery resolutions to DELIVERED for confirmed items ─────
+  useEffect(() => {
+    if (!stop?.orders) return;
+    for (const order of stop.orders) {
+      if (order.status === "CONFIRMED" || order.status === "OUT_FOR_DELIVERY") {
+        for (const item of order.lineItems ?? []) {
+          if (!initializedDeliveryRef.current.has(item.id)) {
+            initializedDeliveryRef.current.add(item.id);
+            setItemResolutionFn(stopId, item.id, { status: "DELIVERED" });
+          }
+        }
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stop?.orders]);
 
   // ─── Delivery window alert state ──────────────────────────────────────────
@@ -1111,7 +1186,30 @@ export default function StopDetailScreen() {
           if (targetOrderId) {
             handleAddItemToOrder(targetOrderId, product, qty);
           } else {
-            addStopItemStore(stopId, product.id, product.name, qty);
+            // If the product is already in a CONFIRMED/OUT_FOR_DELIVERY order at this stop,
+            // prompt the driver to change the delivery qty instead of adding a duplicate item
+            const confirmedItem = (stop.orders ?? [])
+              .filter((o) => o.status === "CONFIRMED" || o.status === "OUT_FOR_DELIVERY")
+              .flatMap((o) => o.lineItems ?? [])
+              .find((li) => li.productId === product.id);
+            if (confirmedItem) {
+              const curQty = getDeliveryQty(stopResolutions[confirmedItem.id], confirmedItem.qty);
+              const newQty = curQty + qty;
+              Alert.alert(
+                "Already in order",
+                `${product.name} is already in this stop's order (ordered: ${confirmedItem.qty}). Change delivery qty to ${newQty}?`,
+                [
+                  { text: "Cancel", style: "cancel" },
+                  {
+                    text: "Update",
+                    onPress: () =>
+                      setItemResolutionFn(stopId, confirmedItem.id, qtyToResolution(newQty, confirmedItem.qty)),
+                  },
+                ],
+              );
+            } else {
+              addStopItemStore(stopId, product.id, product.name, qty);
+            }
           }
           setShowProductPicker(false);
           setTargetOrderId(null);
