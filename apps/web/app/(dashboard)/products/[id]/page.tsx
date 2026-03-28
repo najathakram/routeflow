@@ -12,6 +12,8 @@ import {
   Trash2,
   ChevronLeft,
   ChevronRight,
+  Star,
+  Scissors,
 } from "lucide-react";
 import {
   BarChart,
@@ -26,7 +28,9 @@ import { Badge, Button, Card, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useToast } from "@routeflow/ui/web";
 import { useProduct, useProducts, useUpdateProduct, useDeleteProduct, useUploadProductImages, useDeleteProductImage } from "@/lib/api/products";
+import { useAuth } from "@/lib/auth-context";
 import { CropModal } from "./CropModal";
+import { ImageLightbox } from "./ImageLightbox";
 
 const COMMON_UNITS = [
   "unit", "each", "case", "box", "bag", "pack", "dozen", "pallet",
@@ -112,6 +116,18 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
   const [selectMode, setSelectMode] = React.useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
+  // ── Auth ──────────────────────────────────────────────────────────────────
+  const { user } = useAuth();
+  const isOperator = user?.role === "OPERATOR";
+
+  // ── Lightbox state ────────────────────────────────────────────────────────
+  const [lightboxOpen, setLightboxOpen] = React.useState(false);
+  const [lightboxIdx, setLightboxIdx] = React.useState(0);
+
+  // ── Crop-existing state ───────────────────────────────────────────────────
+  // When set, the next crop completion replaces this key instead of adding a new image
+  const [cropExistingKey, setCropExistingKey] = React.useState<string | null>(null);
+
   // ── Crop-before-upload state ──────────────────────────────────────────────
   // When the user picks files we queue them here; CropModal works through them
   // one-by-one. Once the queue is empty the cropped blobs are uploaded.
@@ -195,17 +211,30 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
     const queue = cropState.queue.slice(1);
 
     if (queue.length === 0) {
-      // All images cropped — upload the lot.
       setCropState(null);
       try {
-        const files = accumulated.map((b, i) =>
-          new File([b], `product-image-${Date.now()}-${i}.jpg`, { type: "image/jpeg" }),
-        );
-        await uploadImages.mutateAsync(files);
-        toast({
-          title: `${files.length} image${files.length !== 1 ? "s" : ""} uploaded`,
-          variant: "success",
-        });
+        if (cropExistingKey) {
+          // Replacing an existing image: upload cropped version first, then remove original
+          const file = new File(
+            [accumulated[0]],
+            `product-image-${Date.now()}.jpg`,
+            { type: "image/jpeg" },
+          );
+          await uploadImages.mutateAsync([file]);
+          await deleteImage.mutateAsync(cropExistingKey);
+          setCropExistingKey(null);
+          toast({ title: "Image cropped and replaced", variant: "success" });
+        } else {
+          // Normal upload flow
+          const files = accumulated.map((b, i) =>
+            new File([b], `product-image-${Date.now()}-${i}.jpg`, { type: "image/jpeg" }),
+          );
+          await uploadImages.mutateAsync(files);
+          toast({
+            title: `${files.length} image${files.length !== 1 ? "s" : ""} uploaded`,
+            variant: "success",
+          });
+        }
       } catch {
         toast({ title: "Upload failed", variant: "error" });
       }
@@ -215,7 +244,44 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
   };
 
   /** Called if the user cancels the entire crop session. */
-  const handleCropCancel = () => setCropState(null);
+  const handleCropCancel = () => {
+    setCropExistingKey(null);
+    setCropState(null);
+  };
+
+  // ── Operator-only image management ────────────────────────────────────────
+
+  /** Move image at fromIdx to toIdx, updating imageKeys order via PATCH. */
+  const handleMoveImage = async (fromIdx: number, toIdx: number) => {
+    const keys: string[] = [...((product as any).imageKeys ?? [])];
+    if (toIdx < 0 || toIdx >= keys.length) return;
+    const [moved] = keys.splice(fromIdx, 1);
+    keys.splice(toIdx, 0, moved);
+    try {
+      await updateProduct.mutateAsync({ id: params.id, imageKeys: keys });
+      setActiveImageIdx(toIdx);
+    } catch {
+      toast({ title: "Reorder failed", variant: "error" });
+    }
+  };
+
+  /** Move the image at index i to position 0 (making it the default/first). */
+  const handleSetDefault = (i: number) => handleMoveImage(i, 0);
+
+  /** Fetch an existing image by URL, open it in the crop modal, and replace the original on confirm. */
+  const handleCropExisting = async (imageUrl: string, key: string | undefined) => {
+    if (!imageUrl || !key) return;
+    try {
+      const resp = await fetch(imageUrl);
+      const blob = await resp.blob();
+      const file = new File([blob], "existing-image.jpg", { type: blob.type || "image/jpeg" });
+      setCropExistingKey(key);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      setCropState({ queue: [file], accumulated: [] });
+    } catch {
+      toast({ title: "Failed to load image for cropping", variant: "error" });
+    }
+  };
 
   return (
     <>
@@ -227,6 +293,14 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
         fileTotal={cropState.accumulated.length + cropState.queue.length}
         onConfirm={handleCropConfirm}
         onCancel={handleCropCancel}
+      />
+    )}
+    {/* Full-screen image lightbox — any user can open this */}
+    {lightboxOpen && ((product as any).imageUrls?.length ?? 0) > 0 && (
+      <ImageLightbox
+        images={(product as any).imageUrls}
+        startIndex={lightboxIdx}
+        onClose={() => setLightboxOpen(false)}
       />
     )}
     <div className="space-y-5 p-6">
@@ -301,7 +375,12 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                       <img
                         src={images[safeIdx]}
                         alt={`${product.name} — image ${safeIdx + 1}`}
-                        className="h-full w-full object-contain"
+                        className="h-full w-full object-contain cursor-zoom-in"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setLightboxIdx(safeIdx);
+                          setLightboxOpen(true);
+                        }}
                       />
                       {/* Delete current image (single) */}
                       {!selectMode && (
@@ -382,6 +461,58 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                         )}
                       </div>
                     ))}
+                  </div>
+                )}
+
+                {/* Operator-only controls for the active image */}
+                {isOperator && !selectMode && hasImages && (
+                  <div className="flex flex-wrap items-center gap-1.5 border-t border-surface-border pt-2">
+                    {/* Move left / right */}
+                    <button
+                      onClick={() => handleMoveImage(safeIdx, safeIdx - 1)}
+                      disabled={safeIdx === 0 || updateProduct.isPending}
+                      title="Move left"
+                      className="flex h-7 w-7 items-center justify-center rounded-lg border border-surface-border text-navy/50 hover:text-navy disabled:opacity-30 transition-colors"
+                    >
+                      <ChevronLeft className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      onClick={() => handleMoveImage(safeIdx, safeIdx + 1)}
+                      disabled={safeIdx === images.length - 1 || updateProduct.isPending}
+                      title="Move right"
+                      className="flex h-7 w-7 items-center justify-center rounded-lg border border-surface-border text-navy/50 hover:text-navy disabled:opacity-30 transition-colors"
+                    >
+                      <ChevronRight className="h-3.5 w-3.5" />
+                    </button>
+
+                    {/* Default / Set default */}
+                    {safeIdx === 0 ? (
+                      <span className="flex items-center gap-1 rounded-lg border border-brand-200 bg-brand-50 px-2.5 py-1 text-xs font-medium text-brand-600 select-none">
+                        <Star className="h-3 w-3 fill-brand-500 text-brand-500" />
+                        Default
+                      </span>
+                    ) : (
+                      <button
+                        onClick={() => handleSetDefault(safeIdx)}
+                        disabled={updateProduct.isPending}
+                        title="Set as default image (move to first position)"
+                        className="flex items-center gap-1 rounded-lg border border-surface-border px-2.5 py-1 text-xs text-navy/50 hover:border-brand-200 hover:text-brand-500 disabled:opacity-30 transition-colors"
+                      >
+                        <Star className="h-3 w-3" />
+                        Set default
+                      </button>
+                    )}
+
+                    {/* Crop this image */}
+                    <button
+                      onClick={() => handleCropExisting(images[safeIdx], (product as any).imageKeys?.[safeIdx])}
+                      disabled={!!cropState || uploadImages.isPending}
+                      title="Crop this image (replaces original)"
+                      className="flex items-center gap-1 rounded-lg border border-surface-border px-2.5 py-1 text-xs text-navy/50 hover:text-navy disabled:opacity-30 transition-colors"
+                    >
+                      <Scissors className="h-3 w-3" />
+                      Crop
+                    </button>
                   </div>
                 )}
 

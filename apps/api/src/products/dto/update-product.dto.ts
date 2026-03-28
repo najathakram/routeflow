@@ -1,4 +1,4 @@
-import { IsBoolean, IsDecimal, IsOptional, IsString } from "class-validator";
+import { IsArray, IsBoolean, IsDecimal, IsOptional, IsString } from "class-validator";
 
 export class UpdateProductDto {
   @IsOptional() @IsString() name?: string;
@@ -9,4 +9,6 @@ export class UpdateProductDto {
   @IsOptional() @IsString() category?: string;
   @IsOptional() @IsString() description?: string;
   @IsOptional() @IsBoolean() isActive?: boolean;
+  /** Full replacement of the imageKeys array — used to reorder or set the default image. */
+  @IsOptional() @IsArray() @IsString({ each: true }) imageKeys?: string[];
 }

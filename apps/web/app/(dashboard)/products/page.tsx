@@ -25,6 +25,7 @@ interface ApiProduct {
   currentStock: number;
   averageCost?: string;
   description?: string;
+  thumbnailUrl?: string | null;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -84,24 +85,34 @@ function ProductCard({
         />
       </div>
 
-      {/* Image placeholder */}
+      {/* Thumbnail / image placeholder */}
       <div
         className={cn(
-          "flex h-28 w-full items-center justify-center",
+          "relative flex h-28 w-full items-center justify-center overflow-hidden",
           status === "LOW" && "bg-warning-bg",
           status === "OUT_OF_STOCK" && "bg-danger-bg",
           status === "IN_STOCK" && "bg-surface-raised",
         )}
         onClick={selectionMode ? undefined : onClick}
       >
-        <Package
-          className={cn(
-            "h-10 w-10",
-            status === "LOW" && "text-warning/40",
-            status === "OUT_OF_STOCK" && "text-danger/40",
-            status === "IN_STOCK" && "text-navy/20",
-          )}
-        />
+        {product.thumbnailUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={product.thumbnailUrl}
+            alt={product.name}
+            className="h-full w-full object-cover"
+            draggable={false}
+          />
+        ) : (
+          <Package
+            className={cn(
+              "h-10 w-10",
+              status === "LOW" && "text-warning/40",
+              status === "OUT_OF_STOCK" && "text-danger/40",
+              status === "IN_STOCK" && "text-navy/20",
+            )}
+          />
+        )}
       </div>
 
       {/* Info */}
