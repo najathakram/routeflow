@@ -86,7 +86,8 @@ function getDeliveryQty(resolution: { status: string; partialQty?: number } | un
 /** Map a driver-set delivery qty back to a DELIVERED / PARTIAL / REFUSED resolution. */
 function qtyToResolution(qty: number, orderedQty: number): { status: "DELIVERED" | "PARTIAL" | "REFUSED"; partialQty?: number } {
   if (qty <= 0) return { status: "REFUSED" };
-  if (qty >= orderedQty) return { status: "DELIVERED" };
+  if (qty === orderedQty) return { status: "DELIVERED" };
+  // qty < orderedQty → partial; qty > orderedQty → over-delivery, stored as PARTIAL with actual qty
   return { status: "PARTIAL", partialQty: qty };
 }
 
@@ -158,30 +159,17 @@ function ItemRow({
   const deliveryQty = getDeliveryQty(resolution, item.qty);
 
   const handleDeliveryQtyChange = (newQty: number) => {
-    if (newQty > item.qty) {
-      Alert.alert(
-        "More than ordered",
-        `Deliver ${newQty} ${item.product?.unit ?? "unit"}(s)? Only ${item.qty} were ordered.`,
-        [
-          { text: "Cancel", style: "cancel" },
-          {
-            text: "Confirm",
-            onPress: () =>
-              setItemResolution(stopId, item.id, qtyToResolution(newQty, item.qty)),
-          },
-        ],
-      );
-    } else {
-      setItemResolution(stopId, item.id, qtyToResolution(newQty, item.qty));
-    }
+    setItemResolution(stopId, item.id, qtyToResolution(newQty, item.qty));
   };
 
   const chipLabel =
     deliveryQty <= 0
       ? "Not delivering"
-      : deliveryQty >= item.qty
+      : deliveryQty === item.qty
         ? "Delivering all"
-        : `${deliveryQty} of ${item.qty}`;
+        : deliveryQty > item.qty
+          ? `+${deliveryQty - item.qty} extra`
+          : `${deliveryQty} of ${item.qty}`;
   const chipColor =
     deliveryQty <= 0
       ? colors.danger.DEFAULT
@@ -1193,20 +1181,10 @@ export default function StopDetailScreen() {
               .flatMap((o) => o.lineItems ?? [])
               .find((li) => li.productId === product.id);
             if (confirmedItem) {
+              // Product already in order — add the picked qty to the delivery qty
               const curQty = getDeliveryQty(stopResolutions[confirmedItem.id], confirmedItem.qty);
               const newQty = curQty + qty;
-              Alert.alert(
-                "Already in order",
-                `${product.name} is already in this stop's order (ordered: ${confirmedItem.qty}). Change delivery qty to ${newQty}?`,
-                [
-                  { text: "Cancel", style: "cancel" },
-                  {
-                    text: "Update",
-                    onPress: () =>
-                      setItemResolutionFn(stopId, confirmedItem.id, qtyToResolution(newQty, confirmedItem.qty)),
-                  },
-                ],
-              );
+              setItemResolutionFn(stopId, confirmedItem.id, qtyToResolution(newQty, confirmedItem.qty));
             } else {
               addStopItemStore(stopId, product.id, product.name, qty);
             }
