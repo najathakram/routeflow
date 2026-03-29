@@ -175,6 +175,32 @@ export class DriversService {
     return { completedRuns, totalRuns };
   }
 
+  async remove(id: string) {
+    const driver = await this.findOneOrThrow(id);
+
+    // Block deletion if the driver has any active or scheduled runs
+    const activeRuns = await this.prisma.routeRun.count({
+      where: { driverId: id, status: { in: ["SCHEDULED", "IN_PROGRESS"] } },
+    });
+    if (activeRuns > 0) {
+      throw new BadRequestException(
+        "Cannot delete a driver with scheduled or in-progress route runs. Deactivate them instead.",
+      );
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      // Nullify driver foreign keys so historical records are preserved
+      await tx.route.updateMany({ where: { driverId: id }, data: { driverId: null } });
+      await tx.routeRun.updateMany({ where: { driverId: id }, data: { driverId: null } });
+      await tx.deliveryMutation.updateMany({ where: { driverId: id }, data: { driverId: null } });
+      // Delete driver profile then the linked user account
+      await tx.driver.delete({ where: { id } });
+      await tx.user.delete({ where: { id: driver.userId } });
+    });
+
+    return { success: true };
+  }
+
   private async findOneOrThrow(id: string) {
     const driver = await this.prisma.driver.findUnique({ where: { id } });
     if (!driver) throw new NotFoundException("Driver not found");

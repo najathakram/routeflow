@@ -3,11 +3,13 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Eye } from "lucide-react";
+import { Eye, Pencil, Trash2 } from "lucide-react";
 import { PageHeader, Table, Badge, Button, Select, cn } from "@routeflow/ui/web";
+import { useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { AddDriverModal } from "./_components/AddDriverModal";
-import { useDrivers, useCreateDriver, type Driver } from "@/lib/api/drivers";
+import { EditDriverModal } from "./_components/EditDriverModal";
+import { useDrivers, useCreateDriver, useUpdateDriver, useDeleteDriver, type Driver } from "@/lib/api/drivers";
 
 // ─── Status badge ─────────────────────────────────────────────────────────────
 
@@ -36,7 +38,10 @@ const STATUS_OPTIONS = [
 export default function DriversPage() {
   const router = useRouter();
   const { setTitle } = usePageTitle();
+  const { toast } = useToast();
   const [isAddOpen, setIsAddOpen] = React.useState(false);
+  const [editTarget, setEditTarget] = React.useState<Driver | null>(null);
+  const [deleteTarget, setDeleteTarget] = React.useState<Driver | null>(null);
   const [search, setSearch] = React.useState("");
   const [statusFilter, setStatusFilter] = React.useState("");
 
@@ -44,6 +49,8 @@ export default function DriversPage() {
 
   const { data, isLoading } = useDrivers();
   const createDriver = useCreateDriver();
+  const updateDriver = useUpdateDriver();
+  const deleteDriver = useDeleteDriver();
 
   const drivers = data?.data ?? [];
 
@@ -75,6 +82,24 @@ export default function DriversPage() {
   }) => {
     const result = await createDriver.mutateAsync(formData);
     return result.tempPassword;
+  };
+
+  const handleSaveDriver = async (id: string, data: Partial<Driver>) => {
+    await updateDriver.mutateAsync({ id, data });
+    toast({ title: "Driver updated", variant: "success" });
+  };
+
+  const handleDeleteDriver = async (driver: Driver) => {
+    try {
+      await deleteDriver.mutateAsync(driver.id);
+      setDeleteTarget(null);
+      toast({ title: `${driver.contactName} deleted`, variant: "success" });
+      // If currently on their detail page, go back to list (handled by list-page context only)
+    } catch (err: unknown) {
+      const apiMsg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
+      toast({ title: apiMsg || "Failed to delete driver", variant: "error" });
+      setDeleteTarget(null);
+    }
   };
 
   const columns = React.useMemo<ColumnDef<Driver, unknown>[]>(
@@ -115,13 +140,27 @@ export default function DriversPage() {
         header: "",
         enableSorting: false,
         cell: ({ row }) => (
-          <div className="flex items-center" onClick={(e) => e.stopPropagation()}>
+          <div className="flex items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
             <button
               title="View driver"
               onClick={() => router.push(`/drivers/${row.original.id}`)}
               className="rounded p-1.5 text-navy/40 hover:bg-surface-raised hover:text-navy transition-colors"
             >
               <Eye className="h-4 w-4" />
+            </button>
+            <button
+              title="Edit driver"
+              onClick={() => setEditTarget(row.original)}
+              className="rounded p-1.5 text-navy/40 hover:bg-surface-raised hover:text-navy transition-colors"
+            >
+              <Pencil className="h-4 w-4" />
+            </button>
+            <button
+              title="Delete driver"
+              onClick={() => setDeleteTarget(row.original)}
+              className="rounded p-1.5 text-navy/40 hover:bg-red-50 hover:text-danger transition-colors"
+            >
+              <Trash2 className="h-4 w-4" />
             </button>
           </div>
         ),
@@ -216,11 +255,49 @@ export default function DriversPage() {
         }
       />
 
+      {/* Add modal */}
       <AddDriverModal
         isOpen={isAddOpen}
         onClose={() => setIsAddOpen(false)}
         onCreateDriver={handleCreateDriver}
       />
+
+      {/* Edit modal */}
+      {editTarget && (
+        <EditDriverModal
+          driver={editTarget}
+          isOpen={!!editTarget}
+          onClose={() => setEditTarget(null)}
+          onSave={(data) => handleSaveDriver(editTarget.id, data)}
+        />
+      )}
+
+      {/* Delete confirmation */}
+      {deleteTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl">
+            <h2 className="text-base font-semibold text-navy">Delete Driver</h2>
+            <p className="mt-2 text-sm text-navy/70">
+              Are you sure you want to delete{" "}
+              <span className="font-medium text-navy">{deleteTarget.contactName}</span>? This will
+              permanently remove their account. Drivers with active route runs cannot be deleted.
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <Button variant="secondary" size="sm" onClick={() => setDeleteTarget(null)}>
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                variant="danger"
+                loading={deleteDriver.isPending}
+                onClick={() => handleDeleteDriver(deleteTarget)}
+              >
+                Delete
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

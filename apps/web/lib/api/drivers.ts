@@ -86,6 +86,14 @@ export function useChangeDriverStatus() {
   });
 }
 
+export function useDeleteDriver() {
+  const qc = useQueryClient();
+  return useMutation<{ success: boolean }, Error, string>({
+    mutationFn: (id) => apiClient.delete(`/drivers/${id}`).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['drivers'] }),
+  });
+}
+
 export function useDriverHistory(id: string) {
   return useQuery({
     queryKey: ['drivers', id, 'history'],

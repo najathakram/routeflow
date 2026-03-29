@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import * as Tabs from "@radix-ui/react-tabs";
 import type { ColumnDef } from "@tanstack/react-table";
 import {
@@ -12,10 +13,14 @@ import {
   CheckCircle2,
   MapPin,
   AlertTriangle,
+  Pencil,
+  Trash2,
 } from "lucide-react";
 import { Badge, Button, Card, StatCard, Table, cn } from "@routeflow/ui/web";
+import { useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
-import { useDriver, useDriverHistory, useDriverMetrics } from "@/lib/api/drivers";
+import { useDriver, useDriverHistory, useDriverMetrics, useUpdateDriver, useDeleteDriver } from "@/lib/api/drivers";
+import { EditDriverModal } from "../_components/EditDriverModal";
 
 // ─── Route run table columns ──────────────────────────────────────────────────
 
@@ -97,11 +102,18 @@ function InfoRow({ icon: Icon, label, value }: { icon: React.ElementType; label:
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function DriverDetailPage({ params }: { params: { id: string } }) {
+  const router = useRouter();
   const { setTitle } = usePageTitle();
+  const { toast } = useToast();
 
   const { data: driver, isLoading: driverLoading } = useDriver(params.id);
   const { data: historyData } = useDriverHistory(params.id);
   const { data: metrics } = useDriverMetrics(params.id);
+  const updateDriver = useUpdateDriver();
+  const deleteDriver = useDeleteDriver();
+
+  const [isEditOpen, setIsEditOpen] = React.useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = React.useState(false);
 
   const runs: RouteRunRow[] = historyData?.data ?? [];
   const completedRuns: number = metrics?.completedRuns ?? 0;
@@ -143,6 +155,23 @@ export default function DriverDetailPage({ params }: { params: { id: string } })
 
   const completionRate = totalRuns > 0 ? Math.round((completedRuns / totalRuns) * 100) : 0;
 
+  const handleSaveDriver = async (data: Partial<typeof driver>) => {
+    await updateDriver.mutateAsync({ id: params.id, data });
+    toast({ title: "Driver updated", variant: "success" });
+  };
+
+  const handleDeleteDriver = async () => {
+    try {
+      await deleteDriver.mutateAsync(params.id);
+      toast({ title: "Driver deleted", variant: "success" });
+      router.push("/drivers");
+    } catch (err: unknown) {
+      const apiMsg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
+      toast({ title: apiMsg || "Failed to delete driver", variant: "error" });
+      setShowDeleteConfirm(false);
+    }
+  };
+
   return (
     <div className="space-y-5 p-6">
       {/* Back */}
@@ -160,7 +189,25 @@ export default function DriverDetailPage({ params }: { params: { id: string } })
           <h1 className="text-2xl font-bold text-navy">{driver.contactName}</h1>
           <p className="mt-1 text-sm text-navy/60">@{driver.user.username}</p>
         </div>
-        <div className="flex items-center gap-3">{statusBadge()}</div>
+        <div className="flex items-center gap-2">
+          {statusBadge()}
+          <Button
+            variant="secondary"
+            size="sm"
+            leftIcon={<Pencil className="h-4 w-4" />}
+            onClick={() => setIsEditOpen(true)}
+          >
+            Edit
+          </Button>
+          <Button
+            variant="danger"
+            size="sm"
+            leftIcon={<Trash2 className="h-4 w-4" />}
+            onClick={() => setShowDeleteConfirm(true)}
+          >
+            Delete
+          </Button>
+        </div>
       </div>
 
       {/* Tabs */}
@@ -241,6 +288,43 @@ export default function DriverDetailPage({ params }: { params: { id: string } })
           </div>
         </Tabs.Content>
       </Tabs.Root>
+
+      {/* Edit modal */}
+      {isEditOpen && (
+        <EditDriverModal
+          driver={driver}
+          isOpen={isEditOpen}
+          onClose={() => setIsEditOpen(false)}
+          onSave={handleSaveDriver}
+        />
+      )}
+
+      {/* Delete confirmation */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl">
+            <h2 className="text-base font-semibold text-navy">Delete Driver</h2>
+            <p className="mt-2 text-sm text-navy/70">
+              Are you sure you want to delete{" "}
+              <span className="font-medium text-navy">{driver.contactName}</span>? This will
+              permanently remove their account. Drivers with active route runs cannot be deleted.
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <Button variant="secondary" size="sm" onClick={() => setShowDeleteConfirm(false)}>
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                variant="danger"
+                loading={deleteDriver.isPending}
+                onClick={handleDeleteDriver}
+              >
+                Delete
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

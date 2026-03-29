@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Body, Param, Query, UseGuards } from "@nestjs/common";
+import { Controller, Get, Post, Patch, Delete, Body, Param, Query, UseGuards } from "@nestjs/common";
 import { ApiTags, ApiBearerAuth } from "@nestjs/swagger";
 import { DriversService } from "./drivers.service";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
@@ -60,6 +60,13 @@ export class DriversController {
   @Roles(UserRole.OPERATOR)
   changeStatus(@Param("id") id: string, @Body() dto: ChangeDriverStatusDto) {
     return this.driversService.changeStatus(id, dto);
+  }
+
+  @Delete(":id")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR)
+  remove(@Param("id") id: string) {
+    return this.driversService.remove(id);
   }
 
   @Get(":id/history")
