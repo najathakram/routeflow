@@ -108,14 +108,24 @@ export class RouteOptimizationService {
       stopNumber: idx + 1,
     }));
 
-    await this.prisma.$transaction(
-      stopOrder.map(({ stopId, stopNumber }) =>
+    // Two-phase update to avoid @@unique([routeId, stopNumber]) violations:
+    // Phase 1 shifts every stop to a temporary position (n + offset) so positions
+    // 1..n are free, then Phase 2 writes the real optimized order.
+    const offset = stops.length + 1;
+    await this.prisma.$transaction([
+      ...stops.map((s) =>
+        this.prisma.routeStop.update({
+          where: { id: s.id },
+          data: { stopNumber: s.stopNumber + offset },
+        }),
+      ),
+      ...stopOrder.map(({ stopId, stopNumber }) =>
         this.prisma.routeStop.update({
           where: { id: stopId },
           data: { stopNumber },
         }),
       ),
-    );
+    ]);
 
     const originalOrder = new Map(stops.map((s) => [s.id, s.stopNumber]));
     const reorderedCount = stopOrder.filter(
@@ -203,14 +213,22 @@ export class RouteOptimizationService {
       stopNumber: idx + 1,
     }));
 
-    await this.prisma.$transaction(
-      stopOrder.map(({ stopId, stopNumber }) =>
+    // Two-phase update to avoid @@unique([routeRunId, stopNumber]) violations.
+    const offset = stops.length + 1;
+    await this.prisma.$transaction([
+      ...stops.map((s) =>
+        this.prisma.routeRunStop.update({
+          where: { id: s.id },
+          data: { stopNumber: s.stopNumber + offset },
+        }),
+      ),
+      ...stopOrder.map(({ stopId, stopNumber }) =>
         this.prisma.routeRunStop.update({
           where: { id: stopId },
           data: { stopNumber },
         }),
       ),
-    );
+    ]);
 
     await this.prisma.routeRun.update({
       where: { id: routeRunId },
