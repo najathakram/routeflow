@@ -136,15 +136,26 @@ export function CropModal({ file, fileIndex, fileTotal, onConfirm, onCancel }: C
     const srcW = Math.round(box.size * scaleX);
     const srcH = Math.round(box.size * scaleY);
 
-    // Use the smaller of the two to produce a true square in pixel space.
-    const outSize = Math.min(srcW, srcH);
+    // Use the smaller of the two to produce a true square in pixel space,
+    // then cap at 2048px to avoid browser canvas memory limits on large photos.
+    const MAX_OUT = 2048;
+    const outSize = Math.min(srcW, srcH, MAX_OUT);
 
     const canvas = document.createElement("canvas");
     canvas.width = outSize;
     canvas.height = outSize;
-    const ctx = canvas.getContext("2d")!;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      // Shouldn't happen in a modern browser, but guard just in case
+      console.error("CropModal: could not get 2d context");
+      return;
+    }
     ctx.drawImage(img, srcX, srcY, srcW, srcH, 0, 0, outSize, outSize);
-    canvas.toBlob((blob) => { if (blob) onConfirm(blob); }, "image/jpeg", 0.92);
+    canvas.toBlob(
+      (blob) => { if (blob) onConfirm(blob); },
+      "image/jpeg",
+      0.92,
+    );
   }, [box, dispW, dispH, natW, natH, onConfirm]);
 
   const isLast = fileIndex === fileTotal - 1;
