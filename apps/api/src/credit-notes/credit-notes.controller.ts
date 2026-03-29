@@ -40,8 +40,8 @@ export class CreditNotesController {
   @Post(":id/apply")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)
-  apply(@Param("id") id: string, @Body("invoiceId") invoiceId: string) {
-    return this.creditNotesService.applyToInvoice(id, invoiceId);
+  apply(@Param("id") id: string, @Body() body: { invoiceId: string; amount?: number }) {
+    return this.creditNotesService.applyToInvoice(id, body.invoiceId, body.amount);
   }
 
   @Post(":id/void")

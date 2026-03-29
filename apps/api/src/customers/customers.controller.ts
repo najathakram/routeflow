@@ -85,6 +85,30 @@ export class CustomersController {
     return this.customersService.geocodeAllAddresses();
   }
 
+  @Get(":id/statement")
+  @Roles(UserRole.OPERATOR)
+  getStatement(@Param("id") id: string) {
+    return this.customersService.getStatementForOperator(id);
+  }
+
+  @Post(":id/advance-payments")
+  @Roles(UserRole.OPERATOR)
+  createAdvancePayment(@Param("id") id: string, @Body() dto: any) {
+    return this.customersService.createAdvancePayment(id, dto);
+  }
+
+  @Get(":id/advance-payments")
+  @Roles(UserRole.OPERATOR)
+  getAdvancePayments(@Param("id") id: string) {
+    return this.customersService.getAdvancePayments(id);
+  }
+
+  @Post(":id/advance-payments/:apId/apply")
+  @Roles(UserRole.OPERATOR)
+  applyAdvancePayment(@Param("apId") apId: string, @Body() dto: any) {
+    return this.customersService.applyAdvancePaymentToInvoice(apId, dto);
+  }
+
   @Post(":id/addresses")
   @Roles(UserRole.OPERATOR)
   addAddress(@Param("id") id: string, @Body() dto: CreateAddressDto) {

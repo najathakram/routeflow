@@ -39,6 +39,7 @@ const STATUS_COLORS: Record<InvoiceStatus, string> = {
   PAID: "bg-green-100 text-green-700",
   VOID: "bg-red-100 text-red-600",
   OVERDUE: "bg-red-100 text-red-600",
+  WRITTEN_OFF: "bg-stone-100 text-stone-600",
 };
 
 function InvoiceStatusBadge({ status }: { status: InvoiceStatus }) {
@@ -46,10 +47,12 @@ function InvoiceStatusBadge({ status }: { status: InvoiceStatus }) {
     <span
       className={cn(
         "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold",
-        STATUS_COLORS[status],
+        STATUS_COLORS[status] ?? "bg-gray-100 text-gray-600",
       )}
     >
-      {status.charAt(0) + status.slice(1).toLowerCase()}
+      {status === "WRITTEN_OFF"
+        ? "Written Off"
+        : status.charAt(0) + status.slice(1).toLowerCase()}
     </span>
   );
 }
@@ -109,6 +112,7 @@ const STATUS_OPTIONS = [
   { value: "PAID", label: "Paid" },
   { value: "VOID", label: "Void" },
   { value: "OVERDUE", label: "Overdue" },
+  { value: "WRITTEN_OFF", label: "Written Off" },
 ];
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -159,12 +163,17 @@ export default function InvoicesPage() {
       <PageHeader
         title="Invoices"
         action={
-          <Button
-            leftIcon={<Plus className="h-4 w-4" />}
-            onClick={() => router.push("/invoices/new")}
-          >
-            New Invoice
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="secondary" onClick={() => router.push("/invoices/recurring")}>
+              Recurring
+            </Button>
+            <Button
+              leftIcon={<Plus className="h-4 w-4" />}
+              onClick={() => router.push("/invoices/new")}
+            >
+              New Invoice
+            </Button>
+          </div>
         }
       />
 

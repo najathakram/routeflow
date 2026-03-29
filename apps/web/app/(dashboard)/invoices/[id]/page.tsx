@@ -12,6 +12,9 @@ import {
   Loader2,
   CheckCircle2,
   Pencil,
+  Trash2,
+  AlertTriangle,
+  XCircle,
 } from "lucide-react";
 import { Button, Card, Modal, cn, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
@@ -21,6 +24,10 @@ import {
   useVoidInvoice,
   useRecordInvoicePayment,
   useCreateInvoice,
+  useWriteOffInvoice,
+  useUpdateInvoicePayment,
+  useDeleteInvoicePayment,
+  useDownloadInvoicePdf,
   type Invoice,
   type InvoiceStatus,
   type InvoicePayment,
@@ -42,6 +49,17 @@ function fmtDate(d?: string | null) {
   });
 }
 
+function methodLabel(method: string) {
+  switch (method) {
+    case "CASH": return "Cash";
+    case "CHECK": return "Check";
+    case "ACH": return "ACH / Bank Transfer";
+    case "CREDIT_NOTE": return "Credit Note";
+    case "ADVANCE": return "Advance Payment";
+    default: return method;
+  }
+}
+
 // ─── Status badge ─────────────────────────────────────────────────────────────
 
 const STATUS_COLORS: Record<InvoiceStatus, string> = {
@@ -52,6 +70,7 @@ const STATUS_COLORS: Record<InvoiceStatus, string> = {
   PAID: "bg-green-100 text-green-700",
   VOID: "bg-red-100 text-red-600",
   OVERDUE: "bg-red-100 text-red-600",
+  WRITTEN_OFF: "bg-stone-100 text-stone-600",
 };
 
 function InvoiceStatusBadge({ status }: { status: InvoiceStatus }) {
@@ -62,7 +81,9 @@ function InvoiceStatusBadge({ status }: { status: InvoiceStatus }) {
         STATUS_COLORS[status],
       )}
     >
-      {status.charAt(0) + status.slice(1).toLowerCase()}
+      {status === "WRITTEN_OFF"
+        ? "Written Off"
+        : status.charAt(0) + status.slice(1).toLowerCase()}
     </span>
   );
 }
@@ -210,6 +231,128 @@ function RecordPaymentModal({
   );
 }
 
+// ─── Edit payment modal ───────────────────────────────────────────────────────
+
+function EditPaymentModal({
+  isOpen,
+  onClose,
+  onSave,
+  payment,
+  maxAmount,
+  isPending,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  onSave: (data: PaymentFormState) => void;
+  payment: InvoicePayment | null;
+  maxAmount: number;
+  isPending: boolean;
+}) {
+  const [form, setForm] = React.useState<PaymentFormState>({
+    method: "ACH",
+    amount: "",
+    reference: "",
+    notes: "",
+  });
+  const [amountError, setAmountError] = React.useState("");
+
+  React.useEffect(() => {
+    if (isOpen && payment) {
+      setForm({
+        method: (payment.method === "CREDIT_NOTE" || payment.method === "ADVANCE"
+          ? "ACH"
+          : payment.method) as PaymentFormState["method"],
+        amount: Number(payment.amount).toFixed(2),
+        reference: payment.reference ?? "",
+        notes: payment.notes ?? "",
+      });
+      setAmountError("");
+    }
+  }, [isOpen, payment]);
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const amt = parseFloat(form.amount);
+    if (!form.amount || isNaN(amt) || amt <= 0) {
+      setAmountError("Enter an amount greater than 0.");
+      return;
+    }
+    if (amt > maxAmount + 0.001) {
+      setAmountError(`Amount cannot exceed remaining balance of ${fmt.format(maxAmount)}.`);
+      return;
+    }
+    setAmountError("");
+    onSave(form);
+  }
+
+  return (
+    <Modal
+      open={isOpen}
+      onClose={onClose}
+      title="Edit Payment"
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={isPending}>
+            Cancel
+          </Button>
+          <Button type="submit" form="edit-payment-form" loading={isPending}>
+            Save Changes
+          </Button>
+        </>
+      }
+    >
+      <form id="edit-payment-form" onSubmit={handleSubmit} noValidate className="space-y-4">
+        <div>
+          <label className="mb-1.5 block text-sm font-medium text-navy/80">Payment Method</label>
+          <select
+            value={form.method}
+            onChange={(e) => setForm((f) => ({ ...f, method: e.target.value as PaymentFormState["method"] }))}
+            className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+          >
+            <option value="CASH">Cash</option>
+            <option value="CHECK">Check</option>
+            <option value="ACH">ACH / Bank Transfer</option>
+            <option value="OTHER">Other</option>
+          </select>
+        </div>
+        <div>
+          <label className="mb-1.5 block text-sm font-medium text-navy/80">Amount ($)</label>
+          <input
+            type="number"
+            step="0.01"
+            min="0.01"
+            value={form.amount}
+            onChange={(e) => setForm((f) => ({ ...f, amount: e.target.value }))}
+            className={cn(
+              "h-10 w-full rounded-lg border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500",
+              amountError ? "border-danger" : "border-surface-border",
+            )}
+          />
+          {amountError && <p className="mt-1 text-xs text-danger">{amountError}</p>}
+        </div>
+        <div>
+          <label className="mb-1.5 block text-sm font-medium text-navy/80">Reference # (optional)</label>
+          <input
+            type="text"
+            value={form.reference}
+            onChange={(e) => setForm((f) => ({ ...f, reference: e.target.value }))}
+            className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+          />
+        </div>
+        <div>
+          <label className="mb-1.5 block text-sm font-medium text-navy/80">Notes (optional)</label>
+          <textarea
+            rows={2}
+            value={form.notes}
+            onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
+            className="w-full resize-none rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+          />
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 // ─── Void confirm modal ───────────────────────────────────────────────────────
 
 function VoidConfirmModal({
@@ -249,6 +392,111 @@ function VoidConfirmModal({
   );
 }
 
+// ─── Write-off modal ──────────────────────────────────────────────────────────
+
+function WriteOffModal({
+  isOpen,
+  onClose,
+  onConfirm,
+  invoiceNumber,
+  isPending,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  onConfirm: (reason: string) => void;
+  invoiceNumber: string;
+  isPending: boolean;
+}) {
+  const [reason, setReason] = React.useState("");
+  const [error, setError] = React.useState("");
+
+  React.useEffect(() => {
+    if (isOpen) { setReason(""); setError(""); }
+  }, [isOpen]);
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!reason.trim()) { setError("Please provide a reason for writing off this invoice."); return; }
+    setError("");
+    onConfirm(reason.trim());
+  }
+
+  return (
+    <Modal
+      open={isOpen}
+      onClose={onClose}
+      title="Write Off Invoice"
+      description={`Mark invoice ${invoiceNumber} as uncollectible (bad debt).`}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={isPending}>Cancel</Button>
+          <Button variant="danger" type="submit" form="write-off-form" loading={isPending}>
+            Write Off
+          </Button>
+        </>
+      }
+    >
+      <form id="write-off-form" onSubmit={handleSubmit} className="space-y-3">
+        <div className="flex items-start gap-2 rounded-lg bg-yellow-50 p-3">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-yellow-600" />
+          <p className="text-sm text-yellow-800">
+            Writing off an invoice marks the remaining balance as uncollectible. This action cannot be undone.
+          </p>
+        </div>
+        <div>
+          <label className="mb-1.5 block text-sm font-medium text-navy/80">Reason *</label>
+          <textarea
+            rows={3}
+            placeholder="e.g. Customer declared bankruptcy, debt too old to collect…"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            className={cn(
+              "w-full resize-none rounded-lg border bg-white px-3 py-2 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500",
+              error ? "border-danger" : "border-surface-border",
+            )}
+          />
+          {error && <p className="mt-1 text-xs text-danger">{error}</p>}
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+// ─── Delete payment confirm modal ─────────────────────────────────────────────
+
+function DeletePaymentModal({
+  isOpen,
+  onClose,
+  onConfirm,
+  amount,
+  isPending,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+  amount: number;
+  isPending: boolean;
+}) {
+  return (
+    <Modal
+      open={isOpen}
+      onClose={onClose}
+      title="Delete Payment?"
+      description={`Remove payment of ${fmt.format(amount)} from this invoice?`}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={isPending}>Cancel</Button>
+          <Button variant="danger" onClick={onConfirm} loading={isPending}>Delete Payment</Button>
+        </>
+      }
+    >
+      <p className="text-sm text-navy/70">
+        The invoice balance will be updated automatically. This action cannot be undone.
+      </p>
+    </Modal>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function InvoiceDetailPage({ params }: { params: { id: string } }) {
@@ -261,9 +509,16 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
   const voidInvoice = useVoidInvoice();
   const recordPayment = useRecordInvoicePayment();
   const createInvoice = useCreateInvoice();
+  const writeOffInvoice = useWriteOffInvoice();
+  const updatePayment = useUpdateInvoicePayment();
+  const deletePayment = useDeleteInvoicePayment();
+  const downloadPdf = useDownloadInvoicePdf();
 
   const [isPaymentOpen, setIsPaymentOpen] = React.useState(false);
   const [isVoidOpen, setIsVoidOpen] = React.useState(false);
+  const [isWriteOffOpen, setIsWriteOffOpen] = React.useState(false);
+  const [editingPayment, setEditingPayment] = React.useState<InvoicePayment | null>(null);
+  const [deletingPayment, setDeletingPayment] = React.useState<InvoicePayment | null>(null);
 
   React.useEffect(() => {
     if (invoice) setTitle(invoice.invoiceNumber);
@@ -292,25 +547,24 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
   const payments: InvoicePayment[] = invoice.payments ?? [];
   const amountPaid = payments.reduce((s, p) => s + Number(p.amount), 0);
   const status = invoice.status;
-  const balanceDue = status === "VOID" ? 0 : Math.max(0, total - amountPaid);
+  const balanceDue = status === "VOID" || status === "WRITTEN_OFF" ? 0 : Math.max(0, total - amountPaid);
+  const discount = Number(invoice.discount ?? 0);
+  const shippingFee = Number(invoice.shippingFee ?? 0);
+
+  const canRecordPayment = status === "SENT" || status === "VIEWED" || status === "PARTIAL" || status === "OVERDUE";
+  const canWriteOff = status === "SENT" || status === "VIEWED" || status === "PARTIAL" || status === "OVERDUE";
+  const canVoid = status !== "PAID" && status !== "VOID" && status !== "WRITTEN_OFF";
+  const canDownloadPdf = status !== "DRAFT";
 
   // ── Action handlers ─────────────────────────────────────────────────────────
 
   const handleSend = () => {
     sendInvoice.mutate(invoice.id, {
       onSuccess: () => {
-        toast({
-          title: "Invoice sent",
-          description: `Invoice ${invoice.invoiceNumber} has been sent to the customer.`,
-          variant: "success",
-        });
+        toast({ title: "Invoice sent", description: `Invoice ${invoice.invoiceNumber} has been sent.`, variant: "success" });
       },
       onError: () => {
-        toast({
-          title: "Failed to send invoice",
-          description: "Please try again.",
-          variant: "error",
-        });
+        toast({ title: "Failed to send invoice", description: "Please try again.", variant: "error" });
       },
     });
   };
@@ -319,46 +573,68 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
     voidInvoice.mutate(invoice.id, {
       onSuccess: () => {
         setIsVoidOpen(false);
-        toast({
-          title: "Invoice voided",
-          description: `Invoice ${invoice.invoiceNumber} has been voided.`,
-          variant: "info",
-        });
+        toast({ title: "Invoice voided", description: `Invoice ${invoice.invoiceNumber} has been voided.`, variant: "info" });
       },
       onError: () => {
-        toast({
-          title: "Failed to void invoice",
-          description: "Please try again.",
-          variant: "error",
-        });
+        toast({ title: "Failed to void invoice", description: "Please try again.", variant: "error" });
+      },
+    });
+  };
+
+  const handleWriteOff = (reason: string) => {
+    writeOffInvoice.mutate({ id: invoice.id, reason }, {
+      onSuccess: () => {
+        setIsWriteOffOpen(false);
+        toast({ title: "Invoice written off", description: `Invoice ${invoice.invoiceNumber} marked as written off.`, variant: "info" });
+      },
+      onError: (err: any) => {
+        toast({ title: "Failed to write off invoice", description: err?.response?.data?.message ?? "Please try again.", variant: "error" });
       },
     });
   };
 
   const handleRecordPayment = (data: PaymentFormState) => {
     recordPayment.mutate(
-      {
-        id: invoice.id,
-        method: data.method,
-        amount: parseFloat(data.amount),
-        reference: data.reference.trim() || undefined,
-        notes: data.notes.trim() || undefined,
-      },
+      { id: invoice.id, method: data.method, amount: parseFloat(data.amount), reference: data.reference.trim() || undefined, notes: data.notes.trim() || undefined },
       {
         onSuccess: () => {
           setIsPaymentOpen(false);
-          toast({
-            title: "Payment recorded",
-            description: `Payment of ${fmt.format(parseFloat(data.amount))} recorded.`,
-            variant: "success",
-          });
+          toast({ title: "Payment recorded", description: `Payment of ${fmt.format(parseFloat(data.amount))} recorded.`, variant: "success" });
+        },
+        onError: (err: any) => {
+          toast({ title: "Failed to record payment", description: err?.response?.data?.message ?? "Please try again.", variant: "error" });
+        },
+      },
+    );
+  };
+
+  const handleSavePayment = (data: PaymentFormState) => {
+    if (!editingPayment) return;
+    updatePayment.mutate(
+      { invoiceId: invoice.id, paymentId: editingPayment.id, method: data.method, amount: parseFloat(data.amount), reference: data.reference.trim() || undefined, notes: data.notes.trim() || undefined },
+      {
+        onSuccess: () => {
+          setEditingPayment(null);
+          toast({ title: "Payment updated", variant: "success" });
+        },
+        onError: (err: any) => {
+          toast({ title: "Failed to update payment", description: err?.response?.data?.message ?? "Please try again.", variant: "error" });
+        },
+      },
+    );
+  };
+
+  const handleDeletePayment = () => {
+    if (!deletingPayment) return;
+    deletePayment.mutate(
+      { invoiceId: invoice.id, paymentId: deletingPayment.id },
+      {
+        onSuccess: () => {
+          setDeletingPayment(null);
+          toast({ title: "Payment deleted", variant: "info" });
         },
         onError: () => {
-          toast({
-            title: "Failed to record payment",
-            description: "Please try again.",
-            variant: "error",
-          });
+          toast({ title: "Failed to delete payment", variant: "error" });
         },
       },
     );
@@ -367,11 +643,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
   const handleDuplicate = () => {
     const dto = {
       customerId: invoice.customerId,
-      dueDate: (() => {
-        const d = new Date();
-        d.setDate(d.getDate() + 30);
-        return d.toISOString().slice(0, 10);
-      })(),
+      dueDate: (() => { const d = new Date(); d.setDate(d.getDate() + 30); return d.toISOString().slice(0, 10); })(),
       items: (invoice.items ?? []).map((it) => ({
         productId: it.productId,
         description: it.description,
@@ -382,11 +654,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
     };
     createInvoice.mutate(dto, {
       onSuccess: (newInv) => {
-        toast({
-          title: "Invoice duplicated",
-          description: `New invoice ${newInv.invoiceNumber} created as a draft.`,
-          variant: "success",
-        });
+        toast({ title: "Invoice duplicated", description: `New invoice ${newInv.invoiceNumber} created as a draft.`, variant: "success" });
         router.push(`/invoices/${newInv.id}`);
       },
       onError: () => {
@@ -396,12 +664,20 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
   };
 
   const handleDownloadPdf = () => {
-    toast({
-      title: "PDF download",
-      description: "Invoice PDF download is not yet available.",
-      variant: "info",
+    downloadPdf.mutate(invoice.id, {
+      onSuccess: ({ url }) => {
+        window.open(url, "_blank", "noopener,noreferrer");
+      },
+      onError: () => {
+        toast({ title: "Failed to generate PDF", description: "Please try again.", variant: "error" });
+      },
     });
   };
+
+  // For edit payment: max amount = total - (all other payments)
+  const editPaymentMax = editingPayment
+    ? total - payments.filter((p) => p.id !== editingPayment.id).reduce((s, p) => s + Number(p.amount), 0)
+    : 0;
 
   return (
     <div className="space-y-5 p-6">
@@ -426,79 +702,38 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
           {/* DRAFT actions */}
           {status === "DRAFT" && (
             <>
-              <Button
-                size="sm"
-                leftIcon={<Send className="h-4 w-4" />}
-                onClick={handleSend}
-                loading={sendInvoice.isPending}
-              >
+              <Button size="sm" leftIcon={<Send className="h-4 w-4" />} onClick={handleSend} loading={sendInvoice.isPending}>
                 Send Invoice
               </Button>
-              <Button
-                size="sm"
-                variant="secondary"
-                leftIcon={<Pencil className="h-4 w-4" />}
-                href={`/invoices/${invoice.id}/edit`}
-              >
+              <Button size="sm" variant="secondary" leftIcon={<Pencil className="h-4 w-4" />} href={`/invoices/${invoice.id}/edit`}>
                 Edit
               </Button>
-              <Button
-                size="sm"
-                variant="danger"
-                leftIcon={<Ban className="h-4 w-4" />}
-                onClick={() => setIsVoidOpen(true)}
-              >
+              <Button size="sm" variant="danger" leftIcon={<Ban className="h-4 w-4" />} onClick={() => setIsVoidOpen(true)}>
                 Void
               </Button>
             </>
           )}
 
-          {/* SENT / VIEWED actions */}
-          {(status === "SENT" || status === "VIEWED") && (
+          {/* Active (SENT / VIEWED / PARTIAL / OVERDUE) actions */}
+          {canRecordPayment && (
             <>
-              <Button
-                size="sm"
-                leftIcon={<CreditCard className="h-4 w-4" />}
-                onClick={() => setIsPaymentOpen(true)}
-              >
+              <Button size="sm" leftIcon={<CreditCard className="h-4 w-4" />} onClick={() => setIsPaymentOpen(true)}>
                 Record Payment
               </Button>
-              <Button
-                size="sm"
-                variant="secondary"
-                leftIcon={<Send className="h-4 w-4" />}
-                onClick={handleSend}
-                loading={sendInvoice.isPending}
-              >
-                Send Reminder
+              {(status === "SENT" || status === "VIEWED") && (
+                <Button size="sm" variant="secondary" leftIcon={<Send className="h-4 w-4" />} onClick={handleSend} loading={sendInvoice.isPending}>
+                  Send Reminder
+                </Button>
+              )}
+              <Button size="sm" variant="secondary" leftIcon={<AlertTriangle className="h-4 w-4" />} onClick={() => setIsWriteOffOpen(true)}>
+                Write Off
               </Button>
-              <Button
-                size="sm"
-                variant="danger"
-                leftIcon={<Ban className="h-4 w-4" />}
-                onClick={() => setIsVoidOpen(true)}
-              >
-                Void
-              </Button>
-            </>
-          )}
-
-          {/* PARTIAL / OVERDUE actions */}
-          {(status === "PARTIAL" || status === "OVERDUE") && (
-            <>
-              <Button
-                size="sm"
-                leftIcon={<CreditCard className="h-4 w-4" />}
-                onClick={() => setIsPaymentOpen(true)}
-              >
-                Record Payment
-              </Button>
-              <Button
-                size="sm"
-                variant="danger"
-                leftIcon={<Ban className="h-4 w-4" />}
-                onClick={() => setIsVoidOpen(true)}
-              >
+              {canDownloadPdf && (
+                <Button size="sm" variant="secondary" leftIcon={<Download className="h-4 w-4" />} onClick={handleDownloadPdf} loading={downloadPdf.isPending}>
+                  PDF
+                </Button>
+              )}
+              <Button size="sm" variant="danger" leftIcon={<Ban className="h-4 w-4" />} onClick={() => setIsVoidOpen(true)}>
                 Void
               </Button>
             </>
@@ -507,32 +742,35 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
           {/* PAID actions */}
           {status === "PAID" && (
             <>
-              <Button
-                size="sm"
-                variant="secondary"
-                leftIcon={<Download className="h-4 w-4" />}
-                onClick={handleDownloadPdf}
-              >
+              <Button size="sm" variant="secondary" leftIcon={<Download className="h-4 w-4" />} onClick={handleDownloadPdf} loading={downloadPdf.isPending}>
                 Download PDF
               </Button>
-              <Button
-                size="sm"
-                variant="secondary"
-                leftIcon={<Copy className="h-4 w-4" />}
-                onClick={handleDuplicate}
-                loading={createInvoice.isPending}
-              >
+              <Button size="sm" variant="secondary" leftIcon={<Copy className="h-4 w-4" />} onClick={handleDuplicate} loading={createInvoice.isPending}>
                 Duplicate
               </Button>
             </>
           )}
 
-          {/* VOID — read-only indicator */}
+          {/* VOID / WRITTEN_OFF — read-only indicator */}
           {status === "VOID" && (
             <span className="text-sm italic text-navy/40">This invoice is void.</span>
           )}
+          {status === "WRITTEN_OFF" && (
+            <span className="text-sm italic text-stone-500">Written off — bad debt.</span>
+          )}
         </div>
       </div>
+
+      {/* Write-off reason banner */}
+      {status === "WRITTEN_OFF" && invoice.writeOffReason && (
+        <div className="flex items-start gap-2 rounded-lg border border-stone-200 bg-stone-50 px-4 py-3">
+          <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-stone-500" />
+          <div className="text-sm text-stone-700">
+            <span className="font-medium">Written off {fmtDate(invoice.writtenOffAt)}:</span>{" "}
+            {invoice.writeOffReason}
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
         {/* ── Invoice preview (2/3) ── */}
@@ -558,28 +796,20 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
             {/* Billing + dates */}
             <div className="mb-6 grid grid-cols-2 gap-6 border-t border-surface-border pt-4">
               <div>
-                <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/40">
-                  Bill To
-                </p>
-                <p className="text-sm font-semibold text-navy">
-                  {invoice.customer?.businessName ?? "—"}
-                </p>
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/40">Bill To</p>
+                <p className="text-sm font-semibold text-navy">{invoice.customer?.businessName ?? "—"}</p>
                 {invoice.customer?.contactName && (
                   <p className="text-sm text-navy/60">{invoice.customer.contactName}</p>
                 )}
                 {invoice.customer?.address && (
-                  <p className="mt-1 text-xs text-navy/50 whitespace-pre-line">
-                    {invoice.customer.address}
-                  </p>
+                  <p className="mt-1 text-xs text-navy/50 whitespace-pre-line">{invoice.customer.address}</p>
                 )}
               </div>
               <div className="text-right">
-                <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/40">
-                  Invoice Details
-                </p>
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/40">Invoice Details</p>
                 <p className="text-sm text-navy/60">
                   <span className="font-medium text-navy">Issue Date:</span>{" "}
-                  {fmtDate((invoice as any).issueDate ?? invoice.createdAt)}
+                  {fmtDate(invoice.issueDate ?? invoice.createdAt)}
                 </p>
                 <p className="text-sm text-navy/60">
                   <span className="font-medium text-navy">Due Date:</span>{" "}
@@ -593,30 +823,18 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
               <table className="w-full text-sm">
                 <thead className="border-b border-surface-border bg-surface-raised">
                   <tr>
-                    <th className="px-6 py-2.5 text-left text-xs font-medium text-navy/60">
-                      Description
-                    </th>
-                    <th className="px-4 py-2.5 text-right text-xs font-medium text-navy/60">
-                      Qty
-                    </th>
-                    <th className="px-4 py-2.5 text-right text-xs font-medium text-navy/60">
-                      Unit Price
-                    </th>
-                    <th className="px-6 py-2.5 text-right text-xs font-medium text-navy/60">
-                      Amount
-                    </th>
+                    <th className="px-6 py-2.5 text-left text-xs font-medium text-navy/60">Description</th>
+                    <th className="px-4 py-2.5 text-right text-xs font-medium text-navy/60">Qty</th>
+                    <th className="px-4 py-2.5 text-right text-xs font-medium text-navy/60">Unit Price</th>
+                    <th className="px-6 py-2.5 text-right text-xs font-medium text-navy/60">Amount</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-surface-border">
-                  {invoice.items.map((item) => (
+                  {(invoice.items ?? []).map((item) => (
                     <tr key={item.id} className="hover:bg-surface-raised">
-                      <td className="px-6 py-3 text-navy">
-                        {item.description}
-                      </td>
+                      <td className="px-6 py-3 text-navy">{item.description}</td>
                       <td className="px-4 py-3 text-right text-navy/70">{item.qty}</td>
-                      <td className="px-4 py-3 text-right text-navy/70">
-                        {fmt.format(Number(item.unitPrice))}
-                      </td>
+                      <td className="px-4 py-3 text-right text-navy/70">{fmt.format(Number(item.unitPrice))}</td>
                       <td className="px-6 py-3 text-right font-medium text-navy">
                         {fmt.format(Number(item.qty) * Number(item.unitPrice))}
                       </td>
@@ -628,15 +846,29 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
 
             {/* Totals footer */}
             <div className="mt-4 border-t border-surface-border pt-4">
-              <div className="ml-auto w-56 space-y-2 text-sm">
+              <div className="ml-auto w-64 space-y-2 text-sm">
                 <div className="flex justify-between text-navy/70">
                   <span>Subtotal</span>
                   <span>{fmt.format(Number(invoice.subtotal))}</span>
                 </div>
-                <div className="flex justify-between text-navy/70">
-                  <span>Tax</span>
-                  <span>{fmt.format(Number(invoice.taxAmount ?? 0))}</span>
-                </div>
+                {discount > 0 && (
+                  <div className="flex justify-between text-success">
+                    <span>Discount</span>
+                    <span>-{fmt.format(discount)}</span>
+                  </div>
+                )}
+                {Number(invoice.taxAmount ?? 0) > 0 && (
+                  <div className="flex justify-between text-navy/70">
+                    <span>Tax</span>
+                    <span>{fmt.format(Number(invoice.taxAmount))}</span>
+                  </div>
+                )}
+                {shippingFee > 0 && (
+                  <div className="flex justify-between text-navy/70">
+                    <span>Shipping</span>
+                    <span>{fmt.format(shippingFee)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between border-t border-surface-border pt-2 text-base font-bold text-navy">
                   <span>Total</span>
                   <span>{fmt.format(total)}</span>
@@ -662,9 +894,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
             {/* Notes */}
             {invoice.notes && (
               <div className="mt-4 border-t border-surface-border pt-4">
-                <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/40">
-                  Notes
-                </p>
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/40">Notes</p>
                 <p className="text-sm text-navy/70 whitespace-pre-line">{invoice.notes}</p>
               </div>
             )}
@@ -679,36 +909,50 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
               <p className="text-sm text-navy/40">No payments recorded.</p>
             ) : (
               <ul className="-mx-6 -mb-6 divide-y divide-surface-border">
-                {payments.map((pmt) => (
-                  <li key={pmt.id} className="flex items-start gap-3 px-6 py-4">
-                    <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-success-bg">
-                      <CheckCircle2 className="h-4 w-4 text-success" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-sm font-semibold text-navy">
-                          {fmt.format(Number(pmt.amount))}
-                        </span>
-                        <span className="text-xs text-navy/50">
-                          {fmtDate(pmt.createdAt)}
-                        </span>
+                {payments.map((pmt) => {
+                  const isEditable = pmt.method !== "CREDIT_NOTE" && pmt.method !== "ADVANCE" && status !== "VOID" && status !== "WRITTEN_OFF" && status !== "PAID";
+                  return (
+                    <li key={pmt.id} className="flex items-start gap-3 px-6 py-4">
+                      <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-success-bg">
+                        <CheckCircle2 className="h-4 w-4 text-success" />
                       </div>
-                      <p className="mt-0.5 text-xs text-navy/60">
-                        {pmt.method}
-                        {pmt.reference && ` · ${pmt.reference}`}
-                      </p>
-                      {pmt.notes && (
-                        <p className="mt-0.5 text-xs text-navy/40">{pmt.notes}</p>
-                      )}
-                    </div>
-                  </li>
-                ))}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-sm font-semibold text-navy">{fmt.format(Number(pmt.amount))}</span>
+                          <div className="flex items-center gap-1">
+                            <span className="text-xs text-navy/50">{fmtDate(pmt.createdAt)}</span>
+                            {isEditable && (
+                              <>
+                                <button
+                                  onClick={() => setEditingPayment(pmt)}
+                                  className="rounded p-1 text-navy/30 hover:text-brand-500 transition-colors"
+                                  title="Edit payment"
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </button>
+                                <button
+                                  onClick={() => setDeletingPayment(pmt)}
+                                  className="rounded p-1 text-navy/30 hover:text-danger transition-colors"
+                                  title="Delete payment"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                        <p className="mt-0.5 text-xs text-navy/60">
+                          {methodLabel(pmt.method)}
+                          {pmt.reference && ` · ${pmt.reference}`}
+                        </p>
+                        {pmt.notes && <p className="mt-0.5 text-xs text-navy/40">{pmt.notes}</p>}
+                      </div>
+                    </li>
+                  );
+                })}
               </ul>
             )}
-            {(status === "SENT" ||
-              status === "VIEWED" ||
-              status === "PARTIAL" ||
-              status === "OVERDUE") && (
+            {canRecordPayment && (
               <div className="mt-4">
                 <Button
                   variant="secondary"
@@ -757,12 +1001,37 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
         isPending={recordPayment.isPending}
       />
 
+      <EditPaymentModal
+        isOpen={!!editingPayment}
+        onClose={() => setEditingPayment(null)}
+        onSave={handleSavePayment}
+        payment={editingPayment}
+        maxAmount={editPaymentMax}
+        isPending={updatePayment.isPending}
+      />
+
+      <DeletePaymentModal
+        isOpen={!!deletingPayment}
+        onClose={() => setDeletingPayment(null)}
+        onConfirm={handleDeletePayment}
+        amount={Number(deletingPayment?.amount ?? 0)}
+        isPending={deletePayment.isPending}
+      />
+
       <VoidConfirmModal
         isOpen={isVoidOpen}
         onClose={() => setIsVoidOpen(false)}
         onConfirm={handleVoid}
         invoiceNumber={invoice.invoiceNumber}
         isPending={voidInvoice.isPending}
+      />
+
+      <WriteOffModal
+        isOpen={isWriteOffOpen}
+        onClose={() => setIsWriteOffOpen(false)}
+        onConfirm={handleWriteOff}
+        invoiceNumber={invoice.invoiceNumber}
+        isPending={writeOffInvoice.isPending}
       />
     </div>
   );

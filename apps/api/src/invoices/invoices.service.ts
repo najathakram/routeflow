@@ -1,7 +1,7 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { InvoiceStatus, UserRole } from "@prisma/client";
-import { CreateInvoiceDto, RecordInvoicePaymentDto } from "./dto/create-invoice.dto";
+import { CreateInvoiceDto, RecordInvoicePaymentDto, UpdatePaymentDto, WriteOffDto } from "./dto/create-invoice.dto";
 import { ListInvoicesDto } from "./dto/list-invoices.dto";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
@@ -13,6 +13,8 @@ export class InvoicesService {
     private readonly gateway: RouteFlowGateway,
   ) {}
 
+  // ─── Helpers ──────────────────────────────────────────────────────────────
+
   private async nextInvoiceNumber(): Promise<string> {
     const year = new Date().getFullYear();
     const prefix = `INV-${year}-`;
@@ -23,6 +25,21 @@ export class InvoicesService {
     const seq = last ? parseInt(last.invoiceNumber.split("-")[2], 10) + 1 : 1;
     return `${prefix}${String(seq).padStart(4, "0")}`;
   }
+
+  private recomputeStatus(totalPaid: number, total: number, dueDate: Date | null): InvoiceStatus {
+    if (totalPaid >= total - 0.001) return InvoiceStatus.PAID;
+    if (totalPaid > 0) return InvoiceStatus.PARTIAL;
+    if (dueDate && new Date(dueDate) < new Date()) return InvoiceStatus.OVERDUE;
+    return InvoiceStatus.SENT;
+  }
+
+  private async findOneOrThrow(id: string) {
+    const inv = await this.prisma.invoice.findUnique({ where: { id } });
+    if (!inv) throw new NotFoundException("Invoice not found");
+    return inv;
+  }
+
+  // ─── CRUD ─────────────────────────────────────────────────────────────────
 
   async create(dto: CreateInvoiceDto) {
     const customer = await this.prisma.customer.findUnique({ where: { id: dto.customerId } });
@@ -62,6 +79,7 @@ export class InvoicesService {
         shippingFee: shipping,
         total,
         dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
+        issueDate: dto.issueDate ? new Date(dto.issueDate) : new Date(),
         notes: dto.notes,
         terms: dto.terms,
         items: { create: itemsData },
@@ -80,7 +98,6 @@ export class InvoicesService {
     const where: any = {};
     if (status) where.status = status;
     if (user?.role === UserRole.CUSTOMER) {
-      // Scope to this customer's invoices only
       const customer = await this.prisma.customer.findFirst({ where: { userId: user.sub } });
       if (!customer) return { data: [], meta: { total: 0, page, limit, totalPages: 0 } };
       where.customerId = customer.id;
@@ -124,7 +141,6 @@ export class InvoicesService {
     const inv = await this.findOneOrThrow(id);
     if (inv.status !== InvoiceStatus.DRAFT) throw new BadRequestException("Only DRAFT invoices can be edited");
 
-    // Recalculate if items provided
     if (dto.items) {
       await this.prisma.invoiceItem.deleteMany({ where: { invoiceId: id } });
       let subtotal = 0;
@@ -139,7 +155,14 @@ export class InvoicesService {
       const total = subtotal - invDiscount + shipping + taxTotal;
       return this.prisma.invoice.update({
         where: { id },
-        data: { subtotal, taxAmount: taxTotal, discount: invDiscount, shippingFee: shipping, total, dueDate: dto.dueDate ? new Date(dto.dueDate) : undefined, notes: dto.notes, terms: dto.terms, items: { create: itemsData } },
+        data: {
+          subtotal, taxAmount: taxTotal, discount: invDiscount, shippingFee: shipping, total,
+          dueDate: dto.dueDate ? new Date(dto.dueDate) : undefined,
+          issueDate: dto.issueDate ? new Date(dto.issueDate) : undefined,
+          notes: dto.notes,
+          terms: dto.terms,
+          items: { create: itemsData },
+        },
         include: { customer: { select: { id: true, businessName: true } }, items: true, payments: true },
       });
     }
@@ -148,8 +171,11 @@ export class InvoicesService {
       where: { id },
       data: {
         ...(dto.dueDate && { dueDate: new Date(dto.dueDate) }),
+        ...(dto.issueDate && { issueDate: new Date(dto.issueDate) }),
         ...(dto.notes !== undefined && { notes: dto.notes }),
         ...(dto.terms !== undefined && { terms: dto.terms }),
+        ...(dto.discount !== undefined && { discount: dto.discount }),
+        ...(dto.shippingFee !== undefined && { shippingFee: dto.shippingFee }),
       },
       include: { customer: { select: { id: true, businessName: true } }, items: true, payments: true },
     });
@@ -159,13 +185,7 @@ export class InvoicesService {
     const inv = await this.findOneOrThrow(id);
     if (inv.status === InvoiceStatus.VOID) throw new BadRequestException("Cannot send a voided invoice");
     const updated = await this.prisma.invoice.update({ where: { id }, data: { status: InvoiceStatus.SENT, sentAt: new Date() } });
-    this.gateway.emitInvoiceUpdated({
-      invoiceId: updated.id,
-      invoiceNumber: updated.invoiceNumber,
-      customerId: updated.customerId,
-      status: InvoiceStatus.SENT,
-      total: Number(updated.total),
-    });
+    this.gateway.emitInvoiceUpdated({ invoiceId: updated.id, invoiceNumber: updated.invoiceNumber, customerId: updated.customerId, status: InvoiceStatus.SENT, total: Number(updated.total) });
     return updated;
   }
 
@@ -198,6 +218,8 @@ export class InvoicesService {
     });
   }
 
+  // ─── Payment recording ────────────────────────────────────────────────────
+
   async recordPayment(id: string, dto: RecordInvoicePaymentDto) {
     return this.prisma.$transaction(async (tx) => {
       const inv = await tx.invoice.findUnique({ where: { id }, include: { payments: true } });
@@ -213,34 +235,96 @@ export class InvoicesService {
       await tx.invoicePayment.create({ data: { invoiceId: id, amount: dto.amount, method: dto.method, reference: dto.reference, notes: dto.notes } });
 
       const newPaid = alreadyPaid + dto.amount;
-      const newStatus = newPaid >= total - 0.001 ? InvoiceStatus.PAID : InvoiceStatus.PARTIAL;
+      const newStatus = this.recomputeStatus(newPaid, total, inv.dueDate);
       const paid = await tx.invoice.update({
         where: { id },
         data: { status: newStatus, paidAt: newStatus === InvoiceStatus.PAID ? new Date() : null },
         include: { customer: { select: { id: true, businessName: true } }, items: true, payments: { orderBy: { createdAt: "desc" } } },
       });
-      this.gateway.emitInvoiceUpdated({
-        invoiceId: paid.id,
-        invoiceNumber: paid.invoiceNumber,
-        customerId: paid.customerId,
-        status: newStatus,
-        total: Number(paid.total),
-      });
+      this.gateway.emitInvoiceUpdated({ invoiceId: paid.id, invoiceNumber: paid.invoiceNumber, customerId: paid.customerId, status: newStatus, total: Number(paid.total) });
       return paid;
     });
   }
 
-  async markOverdue() {
-    const now = new Date();
-    await this.prisma.invoice.updateMany({
-      where: { status: { in: [InvoiceStatus.SENT, InvoiceStatus.VIEWED, InvoiceStatus.PARTIAL] }, dueDate: { lt: now } },
-      data: { status: InvoiceStatus.OVERDUE },
+  async updatePayment(invoiceId: string, paymentId: string, dto: UpdatePaymentDto) {
+    return this.prisma.$transaction(async (tx) => {
+      const inv = await tx.invoice.findUnique({ where: { id: invoiceId }, include: { payments: true } });
+      if (!inv) throw new NotFoundException("Invoice not found");
+      if (inv.status === InvoiceStatus.VOID) throw new BadRequestException("Cannot edit payment on voided invoice");
+
+      const payment = inv.payments.find((p) => p.id === paymentId);
+      if (!payment) throw new NotFoundException("Payment not found");
+
+      // Sum all other payments plus new amount
+      const othersTotal = inv.payments.filter((p) => p.id !== paymentId).reduce((s, p) => s + Number(p.amount), 0);
+      const total = Number(inv.total);
+      if (dto.amount > total - othersTotal + 0.001) {
+        throw new BadRequestException(`Payment amount exceeds remaining balance`);
+      }
+
+      await tx.invoicePayment.update({ where: { id: paymentId }, data: { amount: dto.amount, method: dto.method, reference: dto.reference, notes: dto.notes } });
+
+      const newPaid = othersTotal + dto.amount;
+      const newStatus = this.recomputeStatus(newPaid, total, inv.dueDate);
+      const updated = await tx.invoice.update({
+        where: { id: invoiceId },
+        data: { status: newStatus, paidAt: newStatus === InvoiceStatus.PAID ? new Date() : null },
+        include: { customer: { select: { id: true, businessName: true } }, items: true, payments: { orderBy: { createdAt: "desc" } } },
+      });
+      this.gateway.emitInvoiceUpdated({ invoiceId: updated.id, invoiceNumber: updated.invoiceNumber, customerId: updated.customerId, status: newStatus, total: Number(updated.total) });
+      return updated;
     });
   }
 
-  private async findOneOrThrow(id: string) {
-    const inv = await this.prisma.invoice.findUnique({ where: { id } });
-    if (!inv) throw new NotFoundException("Invoice not found");
-    return inv;
+  async deletePayment(invoiceId: string, paymentId: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const inv = await tx.invoice.findUnique({ where: { id: invoiceId }, include: { payments: true } });
+      if (!inv) throw new NotFoundException("Invoice not found");
+      if (inv.status === InvoiceStatus.VOID) throw new BadRequestException("Cannot delete payment on voided invoice");
+
+      const payment = inv.payments.find((p) => p.id === paymentId);
+      if (!payment) throw new NotFoundException("Payment not found");
+
+      await tx.invoicePayment.delete({ where: { id: paymentId } });
+
+      const remaining = inv.payments.filter((p) => p.id !== paymentId).reduce((s, p) => s + Number(p.amount), 0);
+      const total = Number(inv.total);
+      const newStatus = this.recomputeStatus(remaining, total, inv.dueDate);
+      const updated = await tx.invoice.update({
+        where: { id: invoiceId },
+        data: { status: newStatus, paidAt: newStatus === InvoiceStatus.PAID ? new Date() : null },
+        include: { customer: { select: { id: true, businessName: true } }, items: true, payments: { orderBy: { createdAt: "desc" } } },
+      });
+      this.gateway.emitInvoiceUpdated({ invoiceId: updated.id, invoiceNumber: updated.invoiceNumber, customerId: updated.customerId, status: newStatus, total: Number(updated.total) });
+      return updated;
+    });
+  }
+
+  // ─── Write-off ────────────────────────────────────────────────────────────
+
+  async writeOff(id: string, dto: WriteOffDto) {
+    const inv = await this.findOneOrThrow(id);
+    const allowedStatuses: InvoiceStatus[] = [InvoiceStatus.SENT, InvoiceStatus.VIEWED, InvoiceStatus.PARTIAL, InvoiceStatus.OVERDUE];
+    if (!allowedStatuses.includes(inv.status)) {
+      throw new BadRequestException(`Cannot write off an invoice with status ${inv.status}`);
+    }
+    return this.prisma.invoice.update({
+      where: { id },
+      data: { status: InvoiceStatus.WRITTEN_OFF, writeOffReason: dto.reason, writtenOffAt: new Date() },
+      include: { customer: { select: { id: true, businessName: true } }, items: true, payments: { orderBy: { createdAt: "desc" } } },
+    });
+  }
+
+  // ─── Cron ─────────────────────────────────────────────────────────────────
+
+  async markOverdue() {
+    const now = new Date();
+    await this.prisma.invoice.updateMany({
+      where: {
+        status: { in: [InvoiceStatus.SENT, InvoiceStatus.VIEWED, InvoiceStatus.PARTIAL] },
+        dueDate: { lt: now },
+      },
+      data: { status: InvoiceStatus.OVERDUE },
+    });
   }
 }

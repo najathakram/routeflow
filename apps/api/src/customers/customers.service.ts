@@ -405,4 +405,156 @@ export class CustomersService {
       .join("");
     return `${raw.slice(0, 4)}-${raw.slice(4)}`;
   }
+
+  // ─── Operator statement ────────────────────────────────────────────────────
+
+  async getStatementForOperator(customerId: string) {
+    await this.findCustomerOrThrow(customerId);
+
+    const [invoices, creditNotes, advancePayments] = await Promise.all([
+      this.prisma.invoice.findMany({
+        where: { customerId },
+        orderBy: { createdAt: "desc" },
+        take: 100,
+        select: { id: true, invoiceNumber: true, total: true, status: true, dueDate: true, createdAt: true, payments: { select: { amount: true } } },
+      }),
+      this.prisma.creditNote.findMany({
+        where: { customerId },
+        orderBy: { createdAt: "desc" },
+        take: 50,
+        select: { id: true, creditNoteNumber: true, amount: true, status: true, createdAt: true },
+      }),
+      this.prisma.advancePayment.findMany({
+        where: { customerId },
+        orderBy: { receivedAt: "desc" },
+        take: 50,
+        select: { id: true, amount: true, balance: true, method: true, reference: true, receivedAt: true },
+      }),
+    ]);
+
+    const invoicesWithPaid = invoices.map((i) => ({
+      ...i,
+      amountPaid: i.payments.reduce((sum, p) => sum + Number(p.amount), 0),
+    }));
+
+    const outstanding = invoicesWithPaid
+      .filter((i) => !["PAID", "VOID", "WRITTEN_OFF"].includes(i.status))
+      .reduce((sum, i) => sum + (Number(i.total) - i.amountPaid), 0);
+
+    const overdue = invoicesWithPaid
+      .filter((i) => !["PAID", "VOID", "WRITTEN_OFF"].includes(i.status) && i.dueDate && new Date(i.dueDate) < new Date())
+      .reduce((sum, i) => sum + (Number(i.total) - i.amountPaid), 0);
+
+    const availableCredit = creditNotes
+      .filter((c) => c.status === "ISSUED")
+      .reduce((sum, c) => sum + Number(c.amount), 0);
+
+    const advanceBalance = advancePayments.reduce((sum, a) => sum + Number(a.balance), 0);
+
+    const transactions = [
+      ...invoicesWithPaid.map((i) => ({
+        type: "INVOICE" as const,
+        id: i.id,
+        description: `Invoice #${i.invoiceNumber}`,
+        date: i.createdAt.toISOString(),
+        amount: Number(i.total),
+        runningBalance: -(Number(i.total) - i.amountPaid),
+        status: i.status,
+      })),
+      ...creditNotes.map((c) => ({
+        type: "CREDIT_NOTE" as const,
+        id: c.id,
+        description: `Credit Note #${c.creditNoteNumber}`,
+        date: c.createdAt.toISOString(),
+        amount: -Number(c.amount),
+        runningBalance: c.status === "APPLIED" ? 0 : Number(c.amount),
+        status: c.status,
+      })),
+      ...advancePayments.map((a) => ({
+        type: "ADVANCE_PAYMENT" as const,
+        id: a.id,
+        description: `Advance Payment${a.reference ? ` (${a.reference})` : ""}`,
+        date: a.receivedAt.toISOString(),
+        amount: Number(a.amount),
+        runningBalance: Number(a.balance),
+        status: Number(a.balance) > 0 ? "AVAILABLE" : "USED",
+      })),
+    ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+    return { outstandingAmount: outstanding, overdueAmount: overdue, availableCredit, advanceBalance, transactions };
+  }
+
+  // ─── Advance payments ──────────────────────────────────────────────────────
+
+  async createAdvancePayment(customerId: string, dto: { amount: number; method: string; reference?: string; notes?: string; receivedAt?: string }) {
+    await this.findCustomerOrThrow(customerId);
+    if (dto.amount <= 0) throw new BadRequestException("Amount must be greater than 0");
+    return this.prisma.advancePayment.create({
+      data: {
+        customerId,
+        amount: dto.amount,
+        balance: dto.amount, // initial balance equals amount
+        method: dto.method as any,
+        reference: dto.reference,
+        notes: dto.notes,
+        receivedAt: dto.receivedAt ? new Date(dto.receivedAt) : new Date(),
+      },
+    });
+  }
+
+  async getAdvancePayments(customerId: string) {
+    await this.findCustomerOrThrow(customerId);
+    return this.prisma.advancePayment.findMany({
+      where: { customerId },
+      orderBy: { receivedAt: "desc" },
+    });
+  }
+
+  async applyAdvancePaymentToInvoice(advancePaymentId: string, dto: { invoiceId: string; amount?: number }) {
+    return this.prisma.$transaction(async (tx) => {
+      const ap = await tx.advancePayment.findUnique({ where: { id: advancePaymentId } });
+      if (!ap) throw new NotFoundException("Advance payment not found");
+      if (Number(ap.balance) <= 0) throw new BadRequestException("Advance payment has no remaining balance");
+
+      const inv = await tx.invoice.findUnique({ where: { id: dto.invoiceId }, include: { payments: true } });
+      if (!inv) throw new NotFoundException("Invoice not found");
+      if (["PAID", "VOID", "WRITTEN_OFF"].includes(inv.status)) {
+        throw new BadRequestException(`Cannot apply advance payment to invoice with status ${inv.status}`);
+      }
+
+      const alreadyPaid = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
+      const invoiceBalance = Number(inv.total) - alreadyPaid;
+      const applyAmount = Math.min(Number(ap.balance), invoiceBalance, dto.amount ?? Infinity);
+
+      if (applyAmount <= 0) throw new BadRequestException("Invoice has no outstanding balance");
+
+      await tx.invoicePayment.create({
+        data: {
+          invoiceId: dto.invoiceId,
+          amount: applyAmount,
+          method: "ADVANCE" as any,
+          advancePaymentId: ap.id,
+          reference: `AP-${ap.id.slice(0, 8)}`,
+        },
+      });
+
+      await tx.advancePayment.update({
+        where: { id: ap.id },
+        data: { balance: { decrement: applyAmount } },
+      });
+
+      const newPaid = alreadyPaid + applyAmount;
+      const total = Number(inv.total);
+      let newStatus: any = "SENT";
+      if (newPaid >= total - 0.001) newStatus = "PAID";
+      else if (newPaid > 0) newStatus = "PARTIAL";
+      else if (inv.dueDate && new Date(inv.dueDate) < new Date()) newStatus = "OVERDUE";
+
+      return tx.invoice.update({
+        where: { id: dto.invoiceId },
+        data: { status: newStatus, paidAt: newStatus === "PAID" ? new Date() : null },
+        include: { customer: { select: { id: true, businessName: true } }, items: true, payments: { orderBy: { createdAt: "desc" } } },
+      });
+    });
+  }
 }

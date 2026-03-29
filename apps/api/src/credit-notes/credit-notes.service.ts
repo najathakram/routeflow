@@ -2,6 +2,7 @@ import { BadRequestException, ForbiddenException, Injectable, NotFoundException 
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { PrismaService } from "../prisma/prisma.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
+import { InvoiceStatus, PaymentMethod } from "@prisma/client";
 
 @Injectable()
 export class CreditNotesService {
@@ -19,6 +20,13 @@ export class CreditNotesService {
     });
     const seq = last ? parseInt(last.creditNoteNumber.split("-")[2], 10) + 1 : 1;
     return `${prefix}${String(seq).padStart(4, "0")}`;
+  }
+
+  private recomputeStatus(totalPaid: number, total: number, dueDate: Date | null): InvoiceStatus {
+    if (totalPaid >= total - 0.001) return InvoiceStatus.PAID;
+    if (totalPaid > 0) return InvoiceStatus.PARTIAL;
+    if (dueDate && new Date(dueDate) < new Date()) return InvoiceStatus.OVERDUE;
+    return InvoiceStatus.SENT;
   }
 
   async create(dto: { customerId: string; invoiceId?: string; amount: number; reason?: string }) {
@@ -92,13 +100,58 @@ export class CreditNotesService {
     return this.findOne(id);
   }
 
-  async applyToInvoice(creditNoteId: string, invoiceId: string) {
-    const cn = await this.prisma.creditNote.findUnique({ where: { id: creditNoteId } });
-    if (!cn || cn.status !== "ISSUED") throw new BadRequestException("Credit note not available");
-    const inv = await this.prisma.invoice.findUnique({ where: { id: invoiceId } });
-    if (!inv) throw new NotFoundException("Invoice not found");
-    await this.prisma.creditNote.update({ where: { id: creditNoteId }, data: { status: "APPLIED", appliedToInvoiceId: invoiceId } });
-    return { applied: true };
+  async applyToInvoice(creditNoteId: string, invoiceId: string, amount?: number) {
+    return this.prisma.$transaction(async (tx) => {
+      const cn = await tx.creditNote.findUnique({ where: { id: creditNoteId } });
+      if (!cn || cn.status !== "ISSUED") throw new BadRequestException("Credit note is not available for application");
+
+      const inv = await tx.invoice.findUnique({ where: { id: invoiceId }, include: { payments: true } });
+      if (!inv) throw new NotFoundException("Invoice not found");
+
+      const notApplicableStatuses: InvoiceStatus[] = [InvoiceStatus.PAID, InvoiceStatus.VOID, InvoiceStatus.WRITTEN_OFF];
+      if (notApplicableStatuses.includes(inv.status)) {
+        throw new BadRequestException(`Cannot apply credit note to invoice with status ${inv.status}`);
+      }
+
+      if (cn.customerId !== inv.customerId) {
+        throw new BadRequestException("Credit note and invoice belong to different customers");
+      }
+
+      const alreadyPaid = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
+      const invoiceBalance = Number(inv.total) - alreadyPaid;
+      const cnAmount = Number(cn.amount);
+      const applyAmount = Math.min(cnAmount, invoiceBalance, amount ?? Infinity);
+
+      if (applyAmount <= 0) throw new BadRequestException("Invoice has no outstanding balance");
+
+      // Create invoice payment record for the credit note
+      await tx.invoicePayment.create({
+        data: {
+          invoiceId,
+          amount: applyAmount,
+          method: PaymentMethod.CREDIT_NOTE,
+          creditNoteId: cn.id,
+          reference: cn.creditNoteNumber,
+        },
+      });
+
+      // Recompute invoice status
+      const newPaid = alreadyPaid + applyAmount;
+      const newStatus = this.recomputeStatus(newPaid, Number(inv.total), inv.dueDate);
+      const updatedInv = await tx.invoice.update({
+        where: { id: invoiceId },
+        data: { status: newStatus, paidAt: newStatus === InvoiceStatus.PAID ? new Date() : null },
+        include: { customer: { select: { id: true, businessName: true } }, items: true, payments: { orderBy: { createdAt: "desc" } } },
+      });
+
+      // Mark credit note as APPLIED
+      await tx.creditNote.update({
+        where: { id: creditNoteId },
+        data: { status: "APPLIED", appliedToInvoiceId: invoiceId },
+      });
+
+      return updatedInv;
+    });
   }
 
   async voidCreditNote(id: string) {

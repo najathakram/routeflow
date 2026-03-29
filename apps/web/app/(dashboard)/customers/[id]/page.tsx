@@ -17,6 +17,9 @@ import {
   Pencil,
   Trash2,
   Zap,
+  TrendingDown,
+  CheckCircle2,
+  DollarSign,
 } from "lucide-react";
 import {
   Badge,
@@ -38,6 +41,10 @@ import {
   useUpdateCustomer,
   useUpdateCustomerStatus,
   useAddCustomerAddress,
+  useCustomerStatement,
+  useCustomerAdvancePayments,
+  useCreateAdvancePayment,
+  type AdvancePayment,
 } from "@/lib/api/customers";
 import { useRoutes, useAddStopToRoute } from "@/lib/api/routes";
 import {
@@ -370,6 +377,10 @@ export default function CustomerDetailPage({
   const deleteTemplate = useDeleteOrderTemplate();
   const generateOrder = useGenerateTemplateOrder();
 
+  const { data: statement } = useCustomerStatement(params.id);
+  const { data: advancePayments } = useCustomerAdvancePayments(params.id);
+  const createAdvance = useCreateAdvancePayment();
+
   const allOrders: ApiOrder[] = ordersResult?.data ?? [];
   const addresses = customer?.addresses ?? [];
   const currentStatus: CustomerStatus =
@@ -395,6 +406,10 @@ export default function CustomerDetailPage({
       setWindowEnd(customer.deliveryWindowEnd ?? "");
     }
   }, [customer?.deliveryWindowStart, customer?.deliveryWindowEnd]);
+
+  // Advance payment
+  const [isAdvanceOpen, setIsAdvanceOpen] = React.useState(false);
+  const [advanceForm, setAdvanceForm] = React.useState({ method: "ACH", amount: "", reference: "", notes: "" });
 
   // Standing orders
   const [isStandingOrderOpen, setIsStandingOrderOpen] = React.useState(false);
@@ -493,6 +508,7 @@ export default function CustomerDetailPage({
           <TabTrigger value="standing-orders">
             Standing Orders{templates.length > 0 ? ` (${templates.length})` : ""}
           </TabTrigger>
+          <TabTrigger value="billing">Billing</TabTrigger>
         </Tabs.List>
 
         {/* ── Profile tab ──────────────────────────────────────────────── */}
@@ -848,6 +864,176 @@ export default function CustomerDetailPage({
               </ul>
             )}
           </Card>
+        </Tabs.Content>
+
+        {/* ── Billing tab ──────────────────────────────────────────────── */}
+        <Tabs.Content value="billing" className="mt-5 focus:outline-none">
+          <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+            {/* Balance cards */}
+            <div className="lg:col-span-1 space-y-4">
+              <Card>
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-navy/40">Open Balance</p>
+                    <TrendingDown className="h-4 w-4 text-danger" />
+                  </div>
+                  <p className={`text-2xl font-bold ${(statement?.outstandingAmount ?? 0) > 0 ? "text-danger" : "text-success"}`}>
+                    {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(statement?.outstandingAmount ?? 0)}
+                  </p>
+                  <p className="text-xs text-navy/50">Amount currently owed on invoices</p>
+                </div>
+              </Card>
+              <Card>
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-navy/40">Advance Balance</p>
+                    <DollarSign className="h-4 w-4 text-success" />
+                  </div>
+                  <p className="text-2xl font-bold text-success">
+                    {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(statement?.advanceBalance ?? 0)}
+                  </p>
+                  <p className="text-xs text-navy/50">Pre-paid credit available to apply</p>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    className="w-full"
+                    leftIcon={<Plus className="h-4 w-4" />}
+                    onClick={() => { setAdvanceForm({ method: "ACH", amount: "", reference: "", notes: "" }); setIsAdvanceOpen(true); }}
+                  >
+                    Record Advance Payment
+                  </Button>
+                </div>
+              </Card>
+
+              {/* Advance payments list */}
+              {(advancePayments ?? []).length > 0 && (
+                <Card title="Advance Payments">
+                  <ul className="-mx-6 -mb-6 divide-y divide-surface-border">
+                    {(advancePayments ?? []).map((ap: AdvancePayment) => (
+                      <li key={ap.id} className="px-6 py-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-semibold text-navy">
+                            {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(Number(ap.amount))}
+                          </span>
+                          <span className={`text-xs font-medium ${Number(ap.balance) > 0 ? "text-success" : "text-navy/40"}`}>
+                            {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(Number(ap.balance))} left
+                          </span>
+                        </div>
+                        <p className="mt-0.5 text-xs text-navy/50">
+                          {ap.method}{ap.reference ? ` · ${ap.reference}` : ""} · {new Date(ap.createdAt).toLocaleDateString()}
+                        </p>
+                      </li>
+                    ))}
+                  </ul>
+                </Card>
+              )}
+            </div>
+
+            {/* Statement */}
+            <div className="lg:col-span-2">
+              <Card title="Account Statement">
+                {!statement || statement.transactions.length === 0 ? (
+                  <p className="text-sm text-navy/40">No transactions on record.</p>
+                ) : (
+                  <ul className="-mx-6 -mb-6 divide-y divide-surface-border">
+                    {statement.transactions.map((tx, i) => (
+                      <li key={i} className="flex items-start gap-3 px-6 py-3">
+                        <div className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${tx.amount > 0 ? "bg-danger/10" : "bg-success-bg"}`}>
+                          {tx.amount > 0
+                            ? <FileText className="h-3.5 w-3.5 text-danger" />
+                            : <CheckCircle2 className="h-3.5 w-3.5 text-success" />}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-sm font-medium text-navy truncate">{tx.description}</span>
+                            <span className={`shrink-0 text-sm font-semibold ${tx.amount > 0 ? "text-danger" : "text-success"}`}>
+                              {tx.amount > 0 ? "+" : ""}
+                              {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(tx.amount)}
+                            </span>
+                          </div>
+                          <div className="mt-0.5 flex items-center justify-between">
+                            <span className="text-xs text-navy/50">{new Date(tx.date).toLocaleDateString()}</span>
+                            <span className="text-xs text-navy/50">
+                              Balance: {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(tx.balance)}
+                            </span>
+                          </div>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </Card>
+            </div>
+          </div>
+
+          {/* Record Advance Payment Modal */}
+          <Modal
+            open={isAdvanceOpen}
+            onClose={() => setIsAdvanceOpen(false)}
+            title="Record Advance Payment"
+            description="Record a pre-payment that can be applied to future invoices."
+            footer={
+              <>
+                <Button variant="secondary" onClick={() => setIsAdvanceOpen(false)} disabled={createAdvance.isPending}>Cancel</Button>
+                <Button
+                  loading={createAdvance.isPending}
+                  onClick={() => {
+                    const amt = parseFloat(advanceForm.amount);
+                    if (!amt || amt <= 0) return;
+                    createAdvance.mutate(
+                      { customerId: params.id, method: advanceForm.method, amount: amt, reference: advanceForm.reference || undefined, notes: advanceForm.notes || undefined },
+                      { onSuccess: () => setIsAdvanceOpen(false) },
+                    );
+                  }}
+                >
+                  Record
+                </Button>
+              </>
+            }
+          >
+            <div className="space-y-4">
+              <div>
+                <label className="mb-1.5 block text-sm font-medium text-navy/80">Payment Method</label>
+                <select
+                  value={advanceForm.method}
+                  onChange={(e) => setAdvanceForm((f) => ({ ...f, method: e.target.value }))}
+                  className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+                >
+                  <option value="CASH">Cash</option>
+                  <option value="CHECK">Check</option>
+                  <option value="ACH">ACH / Bank Transfer</option>
+                  <option value="OTHER">Other</option>
+                </select>
+              </div>
+              <div>
+                <label className="mb-1.5 block text-sm font-medium text-navy/80">Amount ($)</label>
+                <input
+                  type="number" step="0.01" min="0.01" placeholder="0.00"
+                  value={advanceForm.amount}
+                  onChange={(e) => setAdvanceForm((f) => ({ ...f, amount: e.target.value }))}
+                  className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-sm font-medium text-navy/80">Reference # (optional)</label>
+                <input
+                  type="text"
+                  value={advanceForm.reference}
+                  onChange={(e) => setAdvanceForm((f) => ({ ...f, reference: e.target.value }))}
+                  className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-sm font-medium text-navy/80">Notes (optional)</label>
+                <textarea
+                  rows={2}
+                  value={advanceForm.notes}
+                  onChange={(e) => setAdvanceForm((f) => ({ ...f, notes: e.target.value }))}
+                  className="w-full resize-none rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+                />
+              </div>
+            </div>
+          </Modal>
         </Tabs.Content>
       </Tabs.Root>
 

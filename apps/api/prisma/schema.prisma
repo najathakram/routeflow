@@ -72,6 +72,8 @@ enum PaymentMethod {
   CHECK
   ACH
   OTHER
+  CREDIT_NOTE
+  ADVANCE
 }
 
 enum FulfillPath {
@@ -113,6 +115,7 @@ enum InvoiceStatus {
   PAID
   OVERDUE
   VOID
+  WRITTEN_OFF
 }
 
 enum EstimateStatus {
@@ -212,6 +215,8 @@ model Customer {
   estimates      Estimate[]
   creditNotes    CreditNote[]
   returns        Return[]
+  advancePayments   AdvancePayment[]
+  recurringInvoices RecurringInvoice[]
 
   @@index([zohoContactId])
   @@index([businessName])
@@ -278,14 +283,15 @@ model Product {
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
-  orderItems         OrderItem[]
-  deliveryMutations  DeliveryMutation[]
-  templateItems      OrderTemplateItem[]
-  stockMovements     StockMovement[]
-  invoiceItems       InvoiceItem[]
-  estimateItems      EstimateItem[]
-  purchaseOrderItems PurchaseOrderItem[]
-  returnItems        ReturnItem[]
+  orderItems              OrderItem[]
+  deliveryMutations       DeliveryMutation[]
+  templateItems           OrderTemplateItem[]
+  stockMovements          StockMovement[]
+  invoiceItems            InvoiceItem[]
+  estimateItems           EstimateItem[]
+  purchaseOrderItems      PurchaseOrderItem[]
+  returnItems             ReturnItem[]
+  recurringInvoiceItems   RecurringInvoiceItem[]
 
   @@index([category])
   @@index([isActive])
@@ -675,15 +681,21 @@ model Invoice {
   sentAt        DateTime?
   viewedAt      DateTime?
   paidAt        DateTime?
-  notes         String?
-  terms         String?
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+  notes              String?
+  terms              String?
+  issueDate          DateTime  @default(now())
+  pdfUrl             String?
+  writeOffReason     String?
+  writtenOffAt       DateTime?
+  recurringInvoiceId String?
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
 
-  customer    Customer         @relation(fields: [customerId], references: [id])
-  items       InvoiceItem[]
-  payments    InvoicePayment[]
-  creditNotes CreditNote[]
+  customer         Customer         @relation(fields: [customerId], references: [id])
+  items            InvoiceItem[]
+  payments         InvoicePayment[]
+  creditNotes      CreditNote[]
+  recurringInvoice RecurringInvoice? @relation(fields: [recurringInvoiceId], references: [id])
 
   @@index([customerId])
   @@index([status])
@@ -712,16 +724,20 @@ model InvoiceItem {
 }
 
 model InvoicePayment {
-  id        String        @id @default(uuid())
-  invoiceId String
-  amount    Decimal       @db.Decimal(10, 2)
-  method    PaymentMethod
-  reference String?
-  notes     String?
-  paidAt    DateTime      @default(now())
-  createdAt DateTime      @default(now())
+  id               String        @id @default(uuid())
+  invoiceId        String
+  amount           Decimal       @db.Decimal(10, 2)
+  method           PaymentMethod
+  reference        String?
+  notes            String?
+  paidAt           DateTime      @default(now())
+  createdAt        DateTime      @default(now())
+  creditNoteId     String?
+  advancePaymentId String?
 
-  invoice Invoice @relation(fields: [invoiceId], references: [id])
+  invoice       Invoice        @relation(fields: [invoiceId], references: [id])
+  creditNote    CreditNote?    @relation(fields: [creditNoteId], references: [id])
+  advancePayment AdvancePayment? @relation(fields: [advancePaymentId], references: [id])
 
   @@index([invoiceId])
 }
@@ -813,8 +829,9 @@ model CreditNote {
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
 
-  customer        Customer @relation(fields: [customerId], references: [id])
-  invoice         Invoice? @relation(fields: [invoiceId], references: [id])
+  customer        Customer         @relation(fields: [customerId], references: [id])
+  invoice         Invoice?         @relation(fields: [invoiceId], references: [id])
+  invoicePayments InvoicePayment[]
 
   @@index([customerId])
   @@index([status])
@@ -935,6 +952,73 @@ model ReturnItem {
 
   @@index([returnId])
   @@index([productId])
+}
+
+// ─── Advance Payments ─────────────────────────────────────────────────────────
+
+model AdvancePayment {
+  id           String        @id @default(uuid())
+  customerId   String
+  amount       Decimal       @db.Decimal(10, 2)
+  balance      Decimal       @db.Decimal(10, 2)
+  method       PaymentMethod
+  reference    String?
+  notes        String?
+  receivedAt   DateTime      @default(now())
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  customer      Customer         @relation(fields: [customerId], references: [id])
+  applications  InvoicePayment[]
+
+  @@index([customerId])
+}
+
+// ─── Recurring Invoices ───────────────────────────────────────────────────────
+
+enum RecurringFrequency {
+  WEEKLY
+  BIWEEKLY
+  MONTHLY
+}
+
+model RecurringInvoice {
+  id          String             @id @default(uuid())
+  customerId  String
+  frequency   RecurringFrequency
+  dayOfWeek   Int?
+  dayOfMonth  Int?
+  isActive    Boolean            @default(true)
+  autoSend    Boolean            @default(false)
+  notes       String?
+  terms       String?
+  discount    Decimal            @db.Decimal(10, 2) @default(0)
+  shippingFee Decimal            @db.Decimal(10, 2) @default(0)
+  nextRunAt   DateTime
+  lastRunAt   DateTime?
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  customer    Customer              @relation(fields: [customerId], references: [id])
+  items       RecurringInvoiceItem[]
+  invoices    Invoice[]
+
+  @@index([customerId])
+  @@index([isActive, nextRunAt])
+}
+
+model RecurringInvoiceItem {
+  id                 String           @id @default(uuid())
+  recurringInvoiceId String
+  productId          String?
+  description        String
+  qty                Decimal          @db.Decimal(10, 3)
+  unitPrice          Decimal          @db.Decimal(10, 2)
+  discount           Decimal          @db.Decimal(10, 2) @default(0)
+  taxRate            Decimal          @db.Decimal(5, 4)  @default(0)
+
+  recurringInvoice   RecurringInvoice @relation(fields: [recurringInvoiceId], references: [id], onDelete: Cascade)
+  product            Product?         @relation(fields: [productId], references: [id])
 }
 
 // ─── Driver-to-Dispatcher Messaging ──────────────────────────────────────────

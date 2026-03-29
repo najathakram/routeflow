@@ -86,3 +86,77 @@ export function useAddCustomerAddress() {
     onSuccess: (_d, vars) => qc.invalidateQueries({ queryKey: ["customers", vars.id] }),
   });
 }
+
+// ─── Statement ────────────────────────────────────────────────────────────────
+
+export interface StatementTransaction {
+  date: string;
+  type: "invoice" | "payment" | "credit_note" | "advance";
+  description: string;
+  amount: number;
+  balance: number;
+  invoiceId?: string;
+  invoiceNumber?: string;
+}
+
+export interface CustomerStatement {
+  outstandingAmount: number;
+  overdueAmount: number;
+  availableCredit: number;
+  advanceBalance: number;
+  transactions: StatementTransaction[];
+}
+
+export function useCustomerStatement(id: string) {
+  return useQuery<CustomerStatement>({
+    queryKey: ["customers", id, "statement"],
+    queryFn: () => apiClient.get(`/customers/${id}/statement`).then((r) => r.data),
+    enabled: !!id,
+  });
+}
+
+// ─── Advance payments ─────────────────────────────────────────────────────────
+
+export interface AdvancePayment {
+  id: string;
+  customerId: string;
+  amount: number;
+  balance: number;
+  method: "CASH" | "CHECK" | "ACH" | "OTHER";
+  reference?: string;
+  notes?: string;
+  createdAt: string;
+}
+
+export function useCustomerAdvancePayments(customerId: string) {
+  return useQuery<AdvancePayment[]>({
+    queryKey: ["customers", customerId, "advance-payments"],
+    queryFn: () => apiClient.get(`/customers/${customerId}/advance-payments`).then((r) => r.data),
+    enabled: !!customerId,
+  });
+}
+
+export function useCreateAdvancePayment() {
+  const qc = useQueryClient();
+  return useMutation<AdvancePayment, Error, { customerId: string; amount: number; method: string; reference?: string; notes?: string }>({
+    mutationFn: ({ customerId, ...data }) =>
+      apiClient.post(`/customers/${customerId}/advance-payments`, data).then((r) => r.data),
+    onSuccess: (_d, vars) => {
+      qc.invalidateQueries({ queryKey: ["customers", vars.customerId, "advance-payments"] });
+      qc.invalidateQueries({ queryKey: ["customers", vars.customerId, "statement"] });
+    },
+  });
+}
+
+export function useApplyAdvancePayment() {
+  const qc = useQueryClient();
+  return useMutation<unknown, Error, { customerId: string; advancePaymentId: string; invoiceId: string; amount?: number }>({
+    mutationFn: ({ customerId, advancePaymentId, ...data }) =>
+      apiClient.post(`/customers/${customerId}/advance-payments/${advancePaymentId}/apply`, data).then((r) => r.data),
+    onSuccess: (_d, vars) => {
+      qc.invalidateQueries({ queryKey: ["customers", vars.customerId, "advance-payments"] });
+      qc.invalidateQueries({ queryKey: ["customers", vars.customerId, "statement"] });
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+    },
+  });
+}
