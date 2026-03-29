@@ -22,6 +22,28 @@ const fmt = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" 
 
 const TAX_RATE = 0.1; // 10% – adjust as needed
 
+// ─── Terms options ─────────────────────────────────────────────────────────────
+
+const TERMS_OPTIONS = [
+  { value: "", label: "Select terms…" },
+  { value: "Due on Receipt", label: "Due on Receipt" },
+  { value: "Net 15", label: "Net 15" },
+  { value: "Net 30", label: "Net 30" },
+  { value: "Net 45", label: "Net 45" },
+  { value: "Net 60", label: "Net 60" },
+];
+
+function getDaysForTerms(terms: string): number | null {
+  switch (terms) {
+    case "Due on Receipt": return 0;
+    case "Net 15": return 15;
+    case "Net 30": return 30;
+    case "Net 45": return 45;
+    case "Net 60": return 60;
+    default: return null;
+  }
+}
+
 // ─── Customer search dropdown ─────────────────────────────────────────────────
 
 function CustomerSearch({
@@ -208,6 +230,7 @@ interface LineItemState {
   description: string;
   qty: number;
   unitPrice: number;
+  discount: number;
   taxable: boolean;
 }
 
@@ -218,8 +241,13 @@ function createEmptyItem(): LineItemState {
     description: "",
     qty: 1,
     unitPrice: 0,
+    discount: 0,
     taxable: false,
   };
+}
+
+function lineTotal(item: LineItemState): number {
+  return Math.max(0, Number(item.qty) * Number(item.unitPrice) - Number(item.discount));
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -233,6 +261,9 @@ export default function NewInvoicePage() {
   React.useEffect(() => { setTitle("New Invoice"); }, [setTitle]);
 
   const [customer, setCustomer] = React.useState<Customer | null>(null);
+  const [orderNumber, setOrderNumber] = React.useState("");
+  const [subject, setSubject] = React.useState("");
+  const [terms, setTerms] = React.useState("");
   const [issueDate, setIssueDate] = React.useState(
     () => new Date().toISOString().slice(0, 10),
   );
@@ -245,15 +276,42 @@ export default function NewInvoicePage() {
   );
   const [items, setItems] = React.useState<LineItemState[]>([createEmptyItem()]);
   const [notes, setNotes] = React.useState("");
+  const [termsText, setTermsText] = React.useState("");
+  const [adjustment, setAdjustment] = React.useState(0);
   const [errors, setErrors] = React.useState<Record<string, string>>({});
+
+  // ── Auto-update due date when terms change ────────────────────────────────
+
+  function handleTermsChange(t: string) {
+    setTerms(t);
+    const days = getDaysForTerms(t);
+    if (days !== null && issueDate) {
+      const d = new Date(issueDate);
+      d.setDate(d.getDate() + days);
+      setDueDate(d.toISOString().slice(0, 10));
+    }
+  }
+
+  function handleIssueDateChange(d: string) {
+    setIssueDate(d);
+    if (terms) {
+      const days = getDaysForTerms(terms);
+      if (days !== null && d) {
+        const due = new Date(d);
+        due.setDate(due.getDate() + days);
+        setDueDate(due.toISOString().slice(0, 10));
+      }
+    }
+  }
 
   // ── Calculations ────────────────────────────────────────────────────────────
 
-  const subtotal = items.reduce((s, it) => s + Number(it.qty) * Number(it.unitPrice), 0);
+  const subtotal = items.reduce((s, it) => s + lineTotal(it), 0);
   const tax = items
     .filter((it) => it.taxable)
-    .reduce((s, it) => s + Number(it.qty) * Number(it.unitPrice) * TAX_RATE, 0);
-  const total = subtotal + tax;
+    .reduce((s, it) => s + lineTotal(it) * TAX_RATE, 0);
+  const total = subtotal + tax + adjustment;
+  const totalQty = items.reduce((s, it) => s + Number(it.qty), 0);
 
   // ── Item helpers ────────────────────────────────────────────────────────────
 
@@ -299,11 +357,14 @@ export default function NewInvoicePage() {
     const dto = {
       customerId: customer!.id,
       dueDate: dueDate || undefined,
+      issueDate: issueDate || undefined,
+      terms: terms || undefined,
       items: items.map((it): CreateInvoiceItem => ({
         productId: it.productId,
         description: it.description,
         qty: Number(it.qty),
         unitPrice: Number(it.unitPrice),
+        discount: Number(it.discount) || undefined,
       })),
       notes: notes.trim() || undefined,
       ...(sendNow ? { send: true } : {}),
@@ -331,220 +392,352 @@ export default function NewInvoicePage() {
   }
 
   return (
-    <div className="space-y-5 p-6">
-      {/* Back */}
-      <Link
-        href="/invoices"
-        className="flex items-center gap-1.5 text-sm text-navy/60 hover:text-navy transition-colors"
-      >
-        <ArrowLeft className="h-4 w-4" />
-        Invoices
-      </Link>
+    <div className="pb-24">
+      <div className="space-y-5 p-6">
+        {/* Back */}
+        <Link
+          href="/invoices"
+          className="flex items-center gap-1.5 text-sm text-navy/60 hover:text-navy transition-colors"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Invoices
+        </Link>
 
-      <h1 className="text-2xl font-bold text-navy">New Invoice</h1>
+        <h1 className="text-2xl font-bold text-navy">New Invoice</h1>
 
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-5">
-        {/* ── Left column (3/5) ── */}
-        <div className="space-y-5 lg:col-span-3">
+        <div className="grid grid-cols-1 gap-5 lg:grid-cols-5">
+          {/* ── Left column (3/5) ── */}
+          <div className="space-y-5 lg:col-span-3">
 
-          {/* Customer */}
-          <Card title="Customer">
-            <CustomerSearch
-              value={customer}
-              onSelect={setCustomer}
-              error={errors.customer}
-            />
-          </Card>
+            {/* Customer */}
+            <Card title="Customer *">
+              <CustomerSearch
+                value={customer}
+                onSelect={setCustomer}
+                error={errors.customer}
+              />
+            </Card>
 
-          {/* Dates */}
-          <Card title="Invoice Dates">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="mb-1.5 block text-sm font-medium text-navy/80">
-                  Issue Date
-                </label>
-                <input
-                  type="date"
-                  value={issueDate}
-                  onChange={(e) => setIssueDate(e.target.value)}
-                  className={cn(
-                    "h-10 w-full rounded-lg border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500",
-                    errors.issueDate ? "border-danger" : "border-surface-border",
-                  )}
-                />
-                {errors.issueDate && (
-                  <p className="mt-1 text-xs text-danger">{errors.issueDate}</p>
-                )}
-              </div>
-              <div>
-                <label className="mb-1.5 block text-sm font-medium text-navy/80">
-                  Due Date
-                </label>
-                <input
-                  type="date"
-                  value={dueDate}
-                  min={issueDate || undefined}
-                  onChange={(e) => setDueDate(e.target.value)}
-                  className={cn(
-                    "h-10 w-full rounded-lg border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500",
-                    errors.dueDate ? "border-danger" : "border-surface-border",
-                  )}
-                />
-                {errors.dueDate && (
-                  <p className="mt-1 text-xs text-danger">{errors.dueDate}</p>
-                )}
-              </div>
-            </div>
-          </Card>
-
-          {/* Line items */}
-          <Card title="Line Items">
-            <div className="space-y-2">
-              {errors.items && (
-                <p className="text-xs text-danger">{errors.items}</p>
-              )}
-              {/* Table header */}
-              <div className="grid grid-cols-[1fr_80px_100px_44px_32px] gap-2 px-1">
-                <span className="text-xs font-medium text-navy/50">Description</span>
-                <span className="text-xs font-medium text-navy/50 text-right">Qty</span>
-                <span className="text-xs font-medium text-navy/50 text-right">Unit Price</span>
-                <span className="text-xs font-medium text-navy/50 text-center">Tax</span>
-                <span />
-              </div>
-
-              {items.map((item) => (
-                <div
-                  key={item.key}
-                  className="grid grid-cols-[1fr_80px_100px_44px_32px] items-center gap-2"
-                >
-                  {/* Description / product search */}
-                  <ProductSearchInput
-                    value={item.description}
-                    onChange={(description, productId, unitPrice) => {
-                      updateItem(item.key, {
-                        description,
-                        productId,
-                        unitPrice: unitPrice !== undefined ? unitPrice : item.unitPrice,
-                      });
-                    }}
-                  />
-
-                  {/* Qty */}
-                  <input
-                    type="number"
-                    min={0.01}
-                    step={0.01}
-                    value={item.qty}
-                    onChange={(e) => updateItem(item.key, { qty: parseFloat(e.target.value) || 0 })}
-                    className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
-                  />
-
-                  {/* Unit price */}
-                  <input
-                    type="number"
-                    min={0}
-                    step={0.01}
-                    value={item.unitPrice}
-                    onChange={(e) => updateItem(item.key, { unitPrice: parseFloat(e.target.value) || 0 })}
-                    className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
-                  />
-
-                  {/* Taxable checkbox */}
-                  <label className="flex cursor-pointer items-center justify-center">
+            {/* Invoice details */}
+            <Card title="Invoice Details">
+              <div className="space-y-4">
+                {/* Order Number + Subject */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-navy/80">
+                      Order Number <span className="text-navy/40 font-normal">(optional)</span>
+                    </label>
                     <input
-                      type="checkbox"
-                      checked={item.taxable}
-                      onChange={(e) => updateItem(item.key, { taxable: e.target.checked })}
-                      className="h-4 w-4 rounded border-surface-border text-brand-500 focus:ring-brand-500"
+                      type="text"
+                      placeholder="e.g. PO-1234"
+                      value={orderNumber}
+                      onChange={(e) => setOrderNumber(e.target.value)}
+                      className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
                     />
-                  </label>
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-navy/80">
+                      Subject <span className="text-navy/40 font-normal">(optional)</span>
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="What is this invoice for?"
+                      value={subject}
+                      onChange={(e) => setSubject(e.target.value)}
+                      className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    />
+                  </div>
+                </div>
 
-                  {/* Remove */}
-                  <button
-                    onClick={() => removeItem(item.key)}
-                    disabled={items.length === 1}
-                    className="flex items-center justify-center rounded p-1 text-navy/30 hover:text-danger transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-                    title="Remove item"
+                {/* Dates + Terms */}
+                <div className="grid grid-cols-3 gap-4">
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-navy/80">
+                      Issue Date *
+                    </label>
+                    <input
+                      type="date"
+                      value={issueDate}
+                      onChange={(e) => handleIssueDateChange(e.target.value)}
+                      className={cn(
+                        "h-10 w-full rounded-lg border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500",
+                        errors.issueDate ? "border-danger" : "border-surface-border",
+                      )}
+                    />
+                    {errors.issueDate && (
+                      <p className="mt-1 text-xs text-danger">{errors.issueDate}</p>
+                    )}
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-navy/80">
+                      Terms
+                    </label>
+                    <select
+                      value={terms}
+                      onChange={(e) => handleTermsChange(e.target.value)}
+                      className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    >
+                      {TERMS_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-navy/80">
+                      Due Date *
+                    </label>
+                    <input
+                      type="date"
+                      value={dueDate}
+                      min={issueDate || undefined}
+                      onChange={(e) => setDueDate(e.target.value)}
+                      className={cn(
+                        "h-10 w-full rounded-lg border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500",
+                        errors.dueDate ? "border-danger" : "border-surface-border",
+                      )}
+                    />
+                    {errors.dueDate && (
+                      <p className="mt-1 text-xs text-danger">{errors.dueDate}</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </Card>
+
+            {/* Line items */}
+            <Card title="Item Table">
+              <div className="space-y-2">
+                {errors.items && (
+                  <p className="text-xs text-danger">{errors.items}</p>
+                )}
+                {/* Table header */}
+                <div className="grid grid-cols-[1fr_70px_100px_90px_44px_32px] gap-2 rounded-t bg-gray-50 px-1 py-2 text-xs font-semibold uppercase tracking-wider text-gray-500">
+                  <span>Item Details</span>
+                  <span className="text-right">Qty</span>
+                  <span className="text-right">Rate</span>
+                  <span className="text-right">Discount</span>
+                  <span className="text-center">Tax</span>
+                  <span />
+                </div>
+
+                {items.map((item) => (
+                  <div
+                    key={item.key}
+                    className="grid grid-cols-[1fr_70px_100px_90px_44px_32px] items-center gap-2 border-b border-surface-border pb-2"
                   >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                </div>
-              ))}
+                    {/* Description / product search */}
+                    <ProductSearchInput
+                      value={item.description}
+                      onChange={(description, productId, unitPrice) => {
+                        updateItem(item.key, {
+                          description,
+                          productId,
+                          unitPrice: unitPrice !== undefined ? unitPrice : item.unitPrice,
+                        });
+                      }}
+                    />
 
-              {/* Row totals strip */}
-              {items.map((item) => (
-                <div
-                  key={item.key + "-total"}
-                  className="flex justify-end px-1 text-xs text-navy/50"
+                    {/* Qty */}
+                    <input
+                      type="number"
+                      min={0.01}
+                      step={0.01}
+                      value={item.qty}
+                      onChange={(e) => updateItem(item.key, { qty: parseFloat(e.target.value) || 0 })}
+                      className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
+                    />
+
+                    {/* Unit price */}
+                    <input
+                      type="number"
+                      min={0}
+                      step={0.01}
+                      value={item.unitPrice}
+                      onChange={(e) => updateItem(item.key, { unitPrice: parseFloat(e.target.value) || 0 })}
+                      className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
+                    />
+
+                    {/* Discount */}
+                    <input
+                      type="number"
+                      min={0}
+                      step={0.01}
+                      placeholder="0.00"
+                      value={item.discount || ""}
+                      onChange={(e) => updateItem(item.key, { discount: parseFloat(e.target.value) || 0 })}
+                      className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
+                    />
+
+                    {/* Taxable checkbox */}
+                    <label className="flex cursor-pointer items-center justify-center">
+                      <input
+                        type="checkbox"
+                        checked={item.taxable}
+                        onChange={(e) => updateItem(item.key, { taxable: e.target.checked })}
+                        className="h-4 w-4 rounded border-surface-border text-brand-500 focus:ring-brand-500"
+                      />
+                    </label>
+
+                    {/* Remove */}
+                    <button
+                      onClick={() => removeItem(item.key)}
+                      disabled={items.length === 1}
+                      className="flex items-center justify-center rounded p-1 text-navy/30 hover:text-danger transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                      title="Remove item"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
+                ))}
+
+                {/* Row totals strip */}
+                {items.map((item) => (
+                  <div
+                    key={item.key + "-total"}
+                    className="grid grid-cols-[1fr_70px_100px_90px_44px_32px] gap-2 px-1"
+                  >
+                    <span />
+                    <span />
+                    <span />
+                    <span className="col-span-1 text-right text-xs font-medium text-navy/60">
+                      = {fmt.format(lineTotal(item))}
+                    </span>
+                    <span />
+                    <span />
+                  </div>
+                ))}
+
+                <button
+                  onClick={addItem}
+                  className="mt-2 flex items-center gap-1.5 text-sm font-medium text-brand-500 hover:text-brand-600 transition-colors"
                 >
-                  <span className="w-[100px] text-right">
-                    = {fmt.format(Number(item.qty) * Number(item.unitPrice))}
-                  </span>
-                  <span className="w-[44px]" />
-                  <span className="w-[32px]" />
+                  <Plus className="h-4 w-4" />
+                  Add Line Item
+                </button>
+              </div>
+
+              {/* Totals section */}
+              <div className="mt-4 border-t border-surface-border pt-4">
+                <div className="ml-auto w-64 space-y-2 text-sm">
+                  <div className="flex justify-between text-navy/70">
+                    <span>Subtotal</span>
+                    <span>{fmt.format(subtotal)}</span>
+                  </div>
+                  {tax > 0 && (
+                    <div className="flex justify-between text-navy/70">
+                      <span>Tax ({(TAX_RATE * 100).toFixed(0)}%)</span>
+                      <span>{fmt.format(tax)}</span>
+                    </div>
+                  )}
+                  {/* Adjustment row */}
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-navy/70">Adjustment</span>
+                    <input
+                      type="number"
+                      step={0.01}
+                      placeholder="0.00"
+                      value={adjustment || ""}
+                      onChange={(e) => setAdjustment(parseFloat(e.target.value) || 0)}
+                      className="w-28 rounded border border-surface-border bg-white px-2 py-1 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
+                    />
+                  </div>
+                  <div className="flex justify-between border-t border-surface-border pt-2 text-base font-bold text-navy">
+                    <span>Total</span>
+                    <span>{fmt.format(total)}</span>
+                  </div>
                 </div>
-              ))}
+              </div>
+            </Card>
 
-              <button
-                onClick={addItem}
-                className="mt-2 flex items-center gap-1.5 text-sm font-medium text-brand-500 hover:text-brand-600 transition-colors"
-              >
-                <Plus className="h-4 w-4" />
-                Add Line Item
-              </button>
-            </div>
-          </Card>
+            {/* Notes */}
+            <Card title="Customer Notes">
+              <textarea
+                rows={3}
+                placeholder="Add any notes visible to the customer…"
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                className="w-full resize-none rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+              />
+            </Card>
 
-          {/* Notes */}
-          <Card title="Notes">
-            <textarea
-              rows={3}
-              placeholder="Add any notes or payment terms…"
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              className="w-full resize-none rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-            />
-          </Card>
+            {/* Terms & Conditions */}
+            <Card title="Terms & Conditions">
+              <textarea
+                rows={3}
+                placeholder="Terms and conditions for this invoice…"
+                value={termsText}
+                onChange={(e) => setTermsText(e.target.value)}
+                className="w-full resize-none rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+              />
+            </Card>
+          </div>
+
+          {/* ── Right column (2/5) ── */}
+          <div className="space-y-4 lg:col-span-2">
+            <Card title="Invoice Summary">
+              <dl className="space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <dt className="text-navy/60">Subtotal</dt>
+                  <dd className="font-medium text-navy">{fmt.format(subtotal)}</dd>
+                </div>
+                {tax > 0 && (
+                  <div className="flex justify-between">
+                    <dt className="text-navy/60">Tax ({(TAX_RATE * 100).toFixed(0)}%)</dt>
+                    <dd className="font-medium text-navy">{fmt.format(tax)}</dd>
+                  </div>
+                )}
+                {adjustment !== 0 && (
+                  <div className="flex justify-between">
+                    <dt className="text-navy/60">Adjustment</dt>
+                    <dd className={cn("font-medium", adjustment < 0 ? "text-success" : "text-navy")}>
+                      {adjustment < 0 ? "-" : "+"}{fmt.format(Math.abs(adjustment))}
+                    </dd>
+                  </div>
+                )}
+                <div className="flex justify-between border-t border-surface-border pt-2">
+                  <dt className="font-semibold text-navy">Total</dt>
+                  <dd className="text-base font-bold text-navy">{fmt.format(total)}</dd>
+                </div>
+                <div className="flex justify-between pt-1 text-xs text-navy/50">
+                  <dt>Total Quantity</dt>
+                  <dd>{totalQty}</dd>
+                </div>
+              </dl>
+            </Card>
+          </div>
         </div>
+      </div>
 
-        {/* ── Right column (2/5) ── */}
-        <div className="space-y-4 lg:col-span-2">
-          <Card title="Invoice Summary">
-            <dl className="space-y-2 text-sm">
-              <div className="flex justify-between">
-                <dt className="text-navy/60">Subtotal</dt>
-                <dd className="font-medium text-navy">{fmt.format(subtotal)}</dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-navy/60">Tax ({(TAX_RATE * 100).toFixed(0)}%)</dt>
-                <dd className="font-medium text-navy">{fmt.format(tax)}</dd>
-              </div>
-              <div className="flex justify-between border-t border-surface-border pt-2">
-                <dt className="font-semibold text-navy">Total</dt>
-                <dd className="text-base font-bold text-navy">{fmt.format(total)}</dd>
-              </div>
-            </dl>
-
-            <div className="mt-5 space-y-2">
-              <Button
-                className="w-full"
-                variant="secondary"
-                onClick={() => handleSubmit(false)}
-                loading={createInvoice.isPending}
-                disabled={createInvoice.isPending}
-              >
-                Save as Draft
-              </Button>
-              <Button
-                className="w-full"
-                onClick={() => handleSubmit(true)}
-                loading={createInvoice.isPending}
-                disabled={createInvoice.isPending}
-              >
-                Send Invoice
-              </Button>
-            </div>
-          </Card>
+      {/* Sticky bottom bar (Zoho-style) */}
+      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-surface-border bg-white px-6 py-3 shadow-[0_-2px_8px_0_rgb(0,0,0,0.06)]">
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4">
+          <div className="flex items-center gap-2">
+            <Button
+              variant="secondary"
+              onClick={() => handleSubmit(false)}
+              loading={createInvoice.isPending}
+              disabled={createInvoice.isPending}
+            >
+              Save as Draft
+            </Button>
+            <Button
+              onClick={() => handleSubmit(true)}
+              loading={createInvoice.isPending}
+              disabled={createInvoice.isPending}
+            >
+              Save and Send
+            </Button>
+            <button
+              onClick={() => router.push("/invoices")}
+              className="px-3 py-1.5 text-sm text-navy/60 hover:text-navy transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+          <div className="text-right">
+            <p className="text-xs text-navy/50">Total Amount</p>
+            <p className="text-lg font-bold text-navy">{fmt.format(total)}</p>
+          </div>
         </div>
       </div>
     </div>

@@ -851,14 +851,17 @@ function ReportsTab() {
       <section className="rounded-xl border border-surface-border bg-white p-6 shadow-sm">
         <div className="mb-4 flex items-center justify-between gap-3">
           <h2 className="text-base font-semibold text-navy">AR Aging Report</h2>
-          <Button
-            variant="secondary"
-            onClick={refreshAging}
-            loading={agingLoading}
-            leftIcon={<RefreshCw className="h-4 w-4" />}
-          >
-            Refresh
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={refreshAging}
+              loading={agingLoading}
+              leftIcon={<RefreshCw className="h-3.5 w-3.5" />}
+            >
+              Run Report
+            </Button>
+          </div>
         </div>
 
         {agingLoading && (
@@ -869,77 +872,131 @@ function ReportsTab() {
           </div>
         )}
 
-        {!agingLoading && agingData && (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-surface-border">
-                  {["Current", "1–30 Days", "31–60 Days", "61–90 Days", "90+ Days"].map((h) => (
-                    <th key={h} className="pb-2 pr-4 text-left text-xs font-medium text-navy/50 uppercase tracking-wide">
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {/* Max rows across all buckets */}
-                {Array.from({
-                  length: Math.max(
-                    agingData.buckets.current.length,
-                    agingData.buckets.days1_30.length,
-                    agingData.buckets.days31_60.length,
-                    agingData.buckets.days61_90.length,
-                    agingData.buckets.days90plus.length,
-                  ),
-                }).map((_, i) => (
-                  <tr key={i} className="border-b border-surface-border/50">
-                    {[
-                      agingData.buckets.current[i],
-                      agingData.buckets.days1_30[i],
-                      agingData.buckets.days31_60[i],
-                      agingData.buckets.days61_90[i],
-                      agingData.buckets.days90plus[i],
-                    ].map((bucket, bi) => (
-                      <td key={bi} className="py-2 pr-4 text-navy/80">
-                        {bucket ? (
-                          <div>
-                            <div className="font-medium text-xs">{bucket.customer?.businessName ?? bucket.customerName ?? "—"}</div>
-                            <div className="text-navy/50">{usd(Number(bucket.amount))}</div>
-                          </div>
-                        ) : null}
-                      </td>
+        {!agingLoading && agingData && (() => {
+          // Build per-customer rows from the bucket data
+          const customerMap = new Map<string, {
+            id: string;
+            name: string;
+            customerId?: string;
+            current: number;
+            days1_15: number;
+            days16_30: number;
+            days31_45: number;
+            days45plus: number;
+          }>();
+
+          const addToBucket = (buckets: AgingBucket[], bucketKey: "current" | "days1_15" | "days16_30" | "days31_45" | "days45plus") => {
+            for (const b of buckets) {
+              const name = b.customer?.businessName ?? b.customerName ?? "Unknown";
+              const id = b.customerId ?? b.id ?? name;
+              if (!customerMap.has(id)) {
+                customerMap.set(id, { id, name, customerId: b.customerId ?? b.id, current: 0, days1_15: 0, days16_30: 0, days31_45: 0, days45plus: 0 });
+              }
+              const row = customerMap.get(id)!;
+              row[bucketKey] += Number(b.amount);
+            }
+          };
+
+          // Map existing buckets to the Zoho 1-15/16-30/31-45/>45 split
+          // Existing buckets: current, days1_30, days31_60, days61_90, days90plus
+          // We approximate: 1-15 ≈ first half of days1_30, 16-30 ≈ second half
+          // Better: just use existing buckets as best-fit display
+          addToBucket(agingData.buckets.current, "current");
+          addToBucket(agingData.buckets.days1_30, "days1_15");
+          addToBucket(agingData.buckets.days31_60, "days16_30");
+          addToBucket(agingData.buckets.days61_90, "days31_45");
+          addToBucket(agingData.buckets.days90plus, "days45plus");
+
+          const rows = Array.from(customerMap.values());
+          const totals = rows.reduce(
+            (acc, r) => ({
+              current: acc.current + r.current,
+              days1_15: acc.days1_15 + r.days1_15,
+              days16_30: acc.days16_30 + r.days16_30,
+              days31_45: acc.days31_45 + r.days31_45,
+              days45plus: acc.days45plus + r.days45plus,
+            }),
+            { current: 0, days1_15: 0, days16_30: 0, days31_45: 0, days45plus: 0 },
+          );
+
+          return (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50">
+                  <tr className="border-b border-surface-border">
+                    {["Customer Name", "Current", "1–30 Days", "31–60 Days", "61–90 Days", ">90 Days", "Total"].map((h) => (
+                      <th
+                        key={h}
+                        className={cn(
+                          "px-4 py-3 text-xs font-semibold uppercase tracking-wider text-gray-500",
+                          h === "Customer Name" ? "text-left" : "text-right",
+                        )}
+                      >
+                        {h}
+                      </th>
                     ))}
                   </tr>
-                ))}
-                {/* Bucket totals */}
-                <tr className="border-t-2 border-surface-border font-semibold">
-                  {[
-                    agingData.totals.current,
-                    agingData.totals.days1_30,
-                    agingData.totals.days31_60,
-                    agingData.totals.days61_90,
-                    agingData.totals.days90plus,
-                  ].map((total, i) => (
-                    <td key={i} className="pt-2 pr-4 text-navy text-sm">
-                      {usd(Number(total))}
-                    </td>
-                  ))}
-                </tr>
-                {/* Grand total */}
-                <tr>
-                  <td colSpan={5} className="pt-2 text-right">
-                    <span className="text-xs text-navy/50 mr-2">Grand Total</span>
-                    <span className="font-bold text-navy">{usd(Number(agingData.totals.total ?? agingData.totals.grand ?? 0))}</span>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        )}
+                </thead>
+                <tbody className="divide-y divide-surface-border">
+                  {rows.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="px-4 py-8 text-center text-sm text-navy/40">
+                        No aging data available.
+                      </td>
+                    </tr>
+                  ) : (
+                    rows.map((row, i) => {
+                      const rowTotal = row.current + row.days1_15 + row.days16_30 + row.days31_45 + row.days45plus;
+                      return (
+                        <tr key={row.id} className={cn("transition-colors hover:bg-blue-50/40", i % 2 === 0 ? "" : "bg-gray-50/40")}>
+                          <td className="px-4 py-3">
+                            {row.customerId ? (
+                              <a
+                                href={`/customers/${row.customerId}`}
+                                className="font-medium text-brand-500 hover:underline"
+                              >
+                                {row.name}
+                              </a>
+                            ) : (
+                              <span className="font-medium text-navy">{row.name}</span>
+                            )}
+                          </td>
+                          {[row.current, row.days1_15, row.days16_30, row.days31_45, row.days45plus].map((val, vi) => (
+                            <td key={vi} className={cn("px-4 py-3 text-right", val > 0 ? "text-navy" : "text-navy/30")}>
+                              {val > 0 ? usd(val) : "—"}
+                            </td>
+                          ))}
+                          <td className="px-4 py-3 text-right font-semibold text-navy">
+                            {usd(rowTotal)}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+                {rows.length > 0 && (
+                  <tfoot>
+                    <tr className="border-t-2 border-surface-border bg-gray-50 font-bold">
+                      <td className="px-4 py-3 text-sm font-bold text-navy">Total</td>
+                      {[totals.current, totals.days1_15, totals.days16_30, totals.days31_45, totals.days45plus].map((val, i) => (
+                        <td key={i} className="px-4 py-3 text-right text-sm text-navy">
+                          {usd(val)}
+                        </td>
+                      ))}
+                      <td className="px-4 py-3 text-right text-sm font-bold text-navy">
+                        {usd(totals.current + totals.days1_15 + totals.days16_30 + totals.days31_45 + totals.days45plus)}
+                      </td>
+                    </tr>
+                  </tfoot>
+                )}
+              </table>
+            </div>
+          );
+        })()}
 
         {!agingLoading && !agingData && (
           <p className="text-sm text-navy/40 text-center py-8">
-            Click Refresh to load the aging report.
+            Click Run Report to load the aging data.
           </p>
         )}
       </section>

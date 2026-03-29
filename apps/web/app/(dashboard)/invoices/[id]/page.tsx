@@ -15,6 +15,12 @@ import {
   Trash2,
   AlertTriangle,
   XCircle,
+  MoreHorizontal,
+  ChevronDown,
+  Info,
+  AlertCircle,
+  CheckCheck,
+  BookOpen,
 } from "lucide-react";
 import { Button, Card, Modal, cn, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
@@ -60,6 +66,17 @@ function methodLabel(method: string) {
   }
 }
 
+function methodBadgeClass(method: string) {
+  switch (method) {
+    case "CREDIT_NOTE": return "bg-purple-100 text-purple-700";
+    case "ADVANCE": return "bg-teal-100 text-teal-700";
+    case "CASH": return "bg-green-100 text-green-700";
+    case "CHECK": return "bg-blue-100 text-blue-700";
+    case "ACH": return "bg-indigo-100 text-indigo-700";
+    default: return "bg-gray-100 text-gray-600";
+  }
+}
+
 // ─── Status badge ─────────────────────────────────────────────────────────────
 
 const STATUS_COLORS: Record<InvoiceStatus, string> = {
@@ -86,6 +103,136 @@ function InvoiceStatusBadge({ status }: { status: InvoiceStatus }) {
         : status.charAt(0) + status.slice(1).toLowerCase()}
     </span>
   );
+}
+
+// ─── Status ribbon (diagonal corner badge on invoice doc) ─────────────────────
+
+function StatusRibbon({ status }: { status: InvoiceStatus }) {
+  if (status === "DRAFT") return null;
+
+  const ribbonStyle: Record<string, { bg: string; text: string; label: string }> = {
+    SENT: { bg: "bg-teal-500", text: "text-white", label: "Sent" },
+    VIEWED: { bg: "bg-purple-500", text: "text-white", label: "Viewed" },
+    PARTIAL: { bg: "bg-yellow-500", text: "text-white", label: "Partial" },
+    PAID: { bg: "bg-green-500", text: "text-white", label: "Paid" },
+    VOID: { bg: "bg-red-500", text: "text-white", label: "Void" },
+    OVERDUE: { bg: "bg-red-500", text: "text-white", label: "Overdue" },
+    WRITTEN_OFF: { bg: "bg-stone-500", text: "text-white", label: "Written Off" },
+  };
+
+  const r = ribbonStyle[status];
+  if (!r) return null;
+
+  return (
+    <div className="pointer-events-none absolute right-0 top-0 h-24 w-24 overflow-hidden">
+      <div
+        className={cn(
+          "absolute right-[-28px] top-[18px] w-[120px] rotate-45 py-1 text-center text-xs font-bold tracking-wider shadow-sm",
+          r.bg,
+          r.text,
+        )}
+      >
+        {r.label.toUpperCase()}
+      </div>
+    </div>
+  );
+}
+
+// ─── "What's Next" guidance banner ────────────────────────────────────────────
+
+function WhatsNextBanner({
+  status,
+  onRecordPayment,
+}: {
+  status: InvoiceStatus;
+  onRecordPayment: () => void;
+}) {
+  if (status === "DRAFT") {
+    return (
+      <div className="flex items-start gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3">
+        <Info className="mt-0.5 h-4 w-4 shrink-0 text-blue-500" />
+        <p className="text-sm text-blue-700">
+          Review this invoice and send it to your customer when ready.
+        </p>
+      </div>
+    );
+  }
+
+  if (status === "SENT" || status === "VIEWED") {
+    return (
+      <div className="flex items-center justify-between gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3">
+        <div className="flex items-start gap-3">
+          <Info className="mt-0.5 h-4 w-4 shrink-0 text-blue-500" />
+          <p className="text-sm text-blue-700">
+            <strong>Invoice has been sent.</strong> Record payment as soon as you receive it.
+          </p>
+        </div>
+        <Button size="sm" onClick={onRecordPayment} leftIcon={<CreditCard className="h-4 w-4" />}>
+          Record Payment
+        </Button>
+      </div>
+    );
+  }
+
+  if (status === "PARTIAL") {
+    return (
+      <div className="flex items-center justify-between gap-3 rounded-lg border border-yellow-200 bg-yellow-50 px-4 py-3">
+        <div className="flex items-start gap-3">
+          <Info className="mt-0.5 h-4 w-4 shrink-0 text-yellow-600" />
+          <p className="text-sm text-yellow-700">
+            <strong>Partial payment received.</strong> Follow up for the remaining balance.
+          </p>
+        </div>
+        <Button size="sm" onClick={onRecordPayment} leftIcon={<CreditCard className="h-4 w-4" />}>
+          Record Payment
+        </Button>
+      </div>
+    );
+  }
+
+  if (status === "OVERDUE") {
+    return (
+      <div className="flex items-center justify-between gap-3 rounded-lg border border-orange-200 bg-orange-50 px-4 py-3">
+        <div className="flex items-start gap-3">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-orange-500" />
+          <p className="text-sm text-orange-700">
+            <strong>This invoice is overdue.</strong> Contact your customer for payment.
+          </p>
+        </div>
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={onRecordPayment}
+          leftIcon={<CreditCard className="h-4 w-4" />}
+          className="border-orange-300 text-orange-700 hover:bg-orange-100"
+        >
+          Record Payment
+        </Button>
+      </div>
+    );
+  }
+
+  if (status === "PAID") {
+    return (
+      <div className="flex items-start gap-3 rounded-lg border border-green-200 bg-green-50 px-4 py-3">
+        <CheckCheck className="mt-0.5 h-4 w-4 shrink-0 text-green-600" />
+        <p className="text-sm text-green-700">
+          <strong>Invoice has been paid in full.</strong>
+        </p>
+      </div>
+    );
+  }
+
+  if (status === "WRITTEN_OFF") {
+    return (
+      <div className="flex items-start gap-3 rounded-lg border border-stone-200 bg-stone-50 px-4 py-3">
+        <BookOpen className="mt-0.5 h-4 w-4 shrink-0 text-stone-500" />
+        <p className="text-sm text-stone-600">This invoice has been written off.</p>
+      </div>
+    );
+  }
+
+  return null;
 }
 
 // ─── Record payment modal ─────────────────────────────────────────────────────
@@ -184,7 +331,7 @@ function RecordPaymentModal({
 
         <div>
           <label className="mb-1.5 block text-sm font-medium text-navy/80">
-            Amount ($)
+            Amount Received ($)
           </label>
           <input
             type="number"
@@ -497,6 +644,54 @@ function DeletePaymentModal({
   );
 }
 
+// ─── Action Toolbar Dropdown ──────────────────────────────────────────────────
+
+function DropdownMenu({
+  trigger,
+  items,
+}: {
+  trigger: React.ReactNode;
+  items: Array<{ label: string; onClick: () => void; disabled?: boolean; danger?: boolean }>;
+}) {
+  const [open, setOpen] = React.useState(false);
+  const ref = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    function handle(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handle);
+    return () => document.removeEventListener("mousedown", handle);
+  }, []);
+
+  return (
+    <div ref={ref} className="relative">
+      <div onClick={() => setOpen((v) => !v)}>{trigger}</div>
+      {open && (
+        <div className="absolute right-0 top-full z-50 mt-1 min-w-[160px] overflow-hidden rounded-lg border border-surface-border bg-white shadow-dropdown">
+          {items.map((item, i) => (
+            <button
+              key={i}
+              onClick={() => { item.onClick(); setOpen(false); }}
+              disabled={item.disabled}
+              className={cn(
+                "flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm transition-colors",
+                item.disabled
+                  ? "cursor-not-allowed text-navy/30"
+                  : item.danger
+                  ? "text-danger hover:bg-danger/5"
+                  : "text-navy hover:bg-surface-raised",
+              )}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function InvoiceDetailPage({ params }: { params: { id: string } }) {
@@ -680,7 +875,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
     : 0;
 
   return (
-    <div className="space-y-5 p-6">
+    <div className="space-y-4 p-6">
       {/* Back */}
       <Link
         href="/invoices"
@@ -690,74 +885,77 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
         Invoices
       </Link>
 
-      {/* Header */}
-      <div className="flex flex-wrap items-start justify-between gap-4">
+      {/* Header row */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <h1 className="text-2xl font-bold text-navy">{invoice.invoiceNumber}</h1>
+          <h1 className="text-xl font-bold text-navy">{invoice.invoiceNumber}</h1>
           <InvoiceStatusBadge status={status} />
         </div>
 
-        {/* Action buttons based on status */}
-        <div className="flex flex-wrap items-center gap-2">
-          {/* DRAFT actions */}
+        {/* Zoho-style action toolbar */}
+        <div className="flex flex-wrap items-center gap-1.5">
+          {/* Edit — only for draft */}
           {status === "DRAFT" && (
-            <>
-              <Button size="sm" leftIcon={<Send className="h-4 w-4" />} onClick={handleSend} loading={sendInvoice.isPending}>
-                Send Invoice
-              </Button>
-              <Button size="sm" variant="secondary" leftIcon={<Pencil className="h-4 w-4" />} href={`/invoices/${invoice.id}/edit`}>
-                Edit
-              </Button>
-              <Button size="sm" variant="danger" leftIcon={<Ban className="h-4 w-4" />} onClick={() => setIsVoidOpen(true)}>
-                Void
-              </Button>
-            </>
+            <Button size="sm" variant="secondary" leftIcon={<Pencil className="h-3.5 w-3.5" />} href={`/invoices/${invoice.id}/edit`}>
+              Edit
+            </Button>
           )}
 
-          {/* Active (SENT / VIEWED / PARTIAL / OVERDUE) actions */}
+          {/* Send (DRAFT) / Send Reminder (SENT/VIEWED) */}
+          {(status === "DRAFT" || status === "SENT" || status === "VIEWED") && (
+            <Button
+              size="sm"
+              variant={status === "DRAFT" ? "primary" : "secondary"}
+              leftIcon={<Send className="h-3.5 w-3.5" />}
+              onClick={handleSend}
+              loading={sendInvoice.isPending}
+            >
+              {status === "DRAFT" ? "Send" : "Send Reminder"}
+            </Button>
+          )}
+
+          {/* PDF/Print */}
+          {canDownloadPdf && (
+            <Button
+              size="sm"
+              variant="secondary"
+              leftIcon={<Download className="h-3.5 w-3.5" />}
+              onClick={handleDownloadPdf}
+              loading={downloadPdf.isPending}
+            >
+              PDF
+            </Button>
+          )}
+
+          {/* Record Payment dropdown */}
           {canRecordPayment && (
-            <>
-              <Button size="sm" leftIcon={<CreditCard className="h-4 w-4" />} onClick={() => setIsPaymentOpen(true)}>
-                Record Payment
-              </Button>
-              {(status === "SENT" || status === "VIEWED") && (
-                <Button size="sm" variant="secondary" leftIcon={<Send className="h-4 w-4" />} onClick={handleSend} loading={sendInvoice.isPending}>
-                  Send Reminder
-                </Button>
-              )}
-              <Button size="sm" variant="secondary" leftIcon={<AlertTriangle className="h-4 w-4" />} onClick={() => setIsWriteOffOpen(true)}>
-                Write Off
-              </Button>
-              {canDownloadPdf && (
-                <Button size="sm" variant="secondary" leftIcon={<Download className="h-4 w-4" />} onClick={handleDownloadPdf} loading={downloadPdf.isPending}>
-                  PDF
-                </Button>
-              )}
-              <Button size="sm" variant="danger" leftIcon={<Ban className="h-4 w-4" />} onClick={() => setIsVoidOpen(true)}>
-                Void
-              </Button>
-            </>
+            <DropdownMenu
+              trigger={
+                <button className="flex items-center gap-1.5 rounded border border-surface-border bg-white px-3 py-1.5 text-sm font-medium text-navy shadow-sm transition-colors hover:bg-surface-raised">
+                  <CreditCard className="h-3.5 w-3.5" />
+                  Record Payment
+                  <ChevronDown className="h-3.5 w-3.5" />
+                </button>
+              }
+              items={[
+                { label: "Record Payment", onClick: () => setIsPaymentOpen(true) },
+                { label: "Write Off", onClick: () => setIsWriteOffOpen(true), danger: true },
+              ]}
+            />
           )}
 
-          {/* PAID actions */}
-          {status === "PAID" && (
-            <>
-              <Button size="sm" variant="secondary" leftIcon={<Download className="h-4 w-4" />} onClick={handleDownloadPdf} loading={downloadPdf.isPending}>
-                Download PDF
-              </Button>
-              <Button size="sm" variant="secondary" leftIcon={<Copy className="h-4 w-4" />} onClick={handleDuplicate} loading={createInvoice.isPending}>
-                Duplicate
-              </Button>
-            </>
-          )}
-
-          {/* VOID / WRITTEN_OFF — read-only indicator */}
-          {status === "VOID" && (
-            <span className="text-sm italic text-navy/40">This invoice is void.</span>
-          )}
-          {status === "WRITTEN_OFF" && (
-            <span className="text-sm italic text-stone-500">Written off — bad debt.</span>
-          )}
+          {/* More actions (...) */}
+          <DropdownMenu
+            trigger={
+              <button className="flex items-center justify-center rounded border border-surface-border bg-white p-1.5 shadow-sm transition-colors hover:bg-surface-raised">
+                <MoreHorizontal className="h-4 w-4 text-navy/60" />
+              </button>
+            }
+            items={[
+              { label: "Duplicate", onClick: handleDuplicate },
+              { label: "Void Invoice", onClick: () => setIsVoidOpen(true), danger: true, disabled: !canVoid },
+            ]}
+          />
         </div>
       </div>
 
@@ -772,10 +970,16 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
         </div>
       )}
 
+      {/* What's Next guidance banner */}
+      <WhatsNextBanner status={status} onRecordPayment={() => setIsPaymentOpen(true)} />
+
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
-        {/* ── Invoice preview (2/3) ── */}
-        <div className="space-y-5 lg:col-span-2">
-          <Card>
+        {/* ── Invoice document (2/3) ── */}
+        <div className="lg:col-span-2">
+          <div className="relative overflow-hidden rounded-xl border border-surface-border bg-white p-8 shadow-[0_2px_12px_0_rgb(0,0,0,0.08)]">
+            {/* Status ribbon */}
+            <StatusRibbon status={status} />
+
             {/* Invoice letterhead */}
             <div className="mb-6 flex items-start justify-between gap-4">
               <div>
@@ -788,8 +992,19 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                 <p className="mt-1 text-xs text-navy/50">Austin, TX · routeflow.io</p>
               </div>
               <div className="text-right">
-                <p className="text-xl font-bold text-navy">INVOICE</p>
-                <p className="mt-1 font-mono text-sm text-navy/60">{invoice.invoiceNumber}</p>
+                <p className="text-xl font-bold uppercase tracking-wide text-navy">Invoice</p>
+                <p className="mt-0.5 font-mono text-sm text-navy/60">{invoice.invoiceNumber}</p>
+                {balanceDue > 0 && (
+                  <div className="mt-2">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-navy/40">Balance Due</p>
+                    <p className="text-2xl font-bold text-danger">{fmt.format(balanceDue)}</p>
+                  </div>
+                )}
+                {balanceDue === 0 && status === "PAID" && (
+                  <div className="mt-2">
+                    <p className="text-lg font-bold text-green-600">Paid in Full</p>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -805,37 +1020,59 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                   <p className="mt-1 text-xs text-navy/50 whitespace-pre-line">{invoice.customer.address}</p>
                 )}
               </div>
-              <div className="text-right">
+              <div className="text-right space-y-1">
                 <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/40">Invoice Details</p>
                 <p className="text-sm text-navy/60">
                   <span className="font-medium text-navy">Issue Date:</span>{" "}
                   {fmtDate(invoice.issueDate ?? invoice.createdAt)}
                 </p>
-                <p className="text-sm text-navy/60">
-                  <span className="font-medium text-navy">Due Date:</span>{" "}
-                  {fmtDate(invoice.dueDate)}
-                </p>
+                {invoice.dueDate && (
+                  <p className="text-sm text-navy/60">
+                    <span className="font-medium text-navy">Due Date:</span>{" "}
+                    {fmtDate(invoice.dueDate)}
+                  </p>
+                )}
+                {(invoice as any).terms && (
+                  <p className="text-sm text-navy/60">
+                    <span className="font-medium text-navy">Terms:</span>{" "}
+                    {(invoice as any).terms}
+                  </p>
+                )}
+                {(invoice as any).orderNumber && (
+                  <p className="text-sm text-navy/60">
+                    <span className="font-medium text-navy">Order #:</span>{" "}
+                    {(invoice as any).orderNumber}
+                  </p>
+                )}
               </div>
             </div>
 
-            {/* Line items table */}
-            <div className="-mx-6 overflow-hidden">
+            {/* Line items table — dark navy header (Zoho style) */}
+            <div className="-mx-8 overflow-hidden">
               <table className="w-full text-sm">
-                <thead className="border-b border-surface-border bg-surface-raised">
-                  <tr>
-                    <th className="px-6 py-2.5 text-left text-xs font-medium text-navy/60">Description</th>
-                    <th className="px-4 py-2.5 text-right text-xs font-medium text-navy/60">Qty</th>
-                    <th className="px-4 py-2.5 text-right text-xs font-medium text-navy/60">Unit Price</th>
-                    <th className="px-6 py-2.5 text-right text-xs font-medium text-navy/60">Amount</th>
+                <thead>
+                  <tr className="bg-[#1B3A5C]">
+                    <th className="px-8 py-3 text-left text-xs font-semibold uppercase tracking-wider text-white/80">
+                      Description
+                    </th>
+                    <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-white/80">
+                      Qty
+                    </th>
+                    <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-white/80">
+                      Rate
+                    </th>
+                    <th className="px-8 py-3 text-right text-xs font-semibold uppercase tracking-wider text-white/80">
+                      Amount
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-surface-border">
-                  {(invoice.items ?? []).map((item) => (
-                    <tr key={item.id} className="hover:bg-surface-raised">
-                      <td className="px-6 py-3 text-navy">{item.description}</td>
+                  {(invoice.items ?? []).map((item, idx) => (
+                    <tr key={item.id} className={idx % 2 === 0 ? "bg-white" : "bg-gray-50/60"}>
+                      <td className="px-8 py-3 text-navy">{item.description}</td>
                       <td className="px-4 py-3 text-right text-navy/70">{item.qty}</td>
                       <td className="px-4 py-3 text-right text-navy/70">{fmt.format(Number(item.unitPrice))}</td>
-                      <td className="px-6 py-3 text-right font-medium text-navy">
+                      <td className="px-8 py-3 text-right font-medium text-navy">
                         {fmt.format(Number(item.qty) * Number(item.unitPrice))}
                       </td>
                     </tr>
@@ -893,12 +1130,12 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
 
             {/* Notes */}
             {invoice.notes && (
-              <div className="mt-4 border-t border-surface-border pt-4">
+              <div className="mt-6 border-t border-surface-border pt-4">
                 <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/40">Notes</p>
                 <p className="text-sm text-navy/70 whitespace-pre-line">{invoice.notes}</p>
               </div>
             )}
-          </Card>
+          </div>
         </div>
 
         {/* ── Sidebar (1/3) ── */}
@@ -912,7 +1149,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                 {payments.map((pmt) => {
                   const isEditable = pmt.method !== "CREDIT_NOTE" && pmt.method !== "ADVANCE" && status !== "VOID" && status !== "WRITTEN_OFF" && status !== "PAID";
                   return (
-                    <li key={pmt.id} className="flex items-start gap-3 px-6 py-4">
+                    <li key={pmt.id} className="group flex items-start gap-3 px-6 py-4">
                       <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-success-bg">
                         <CheckCircle2 className="h-4 w-4 text-success" />
                       </div>
@@ -925,14 +1162,14 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                               <>
                                 <button
                                   onClick={() => setEditingPayment(pmt)}
-                                  className="rounded p-1 text-navy/30 hover:text-brand-500 transition-colors"
+                                  className="rounded p-1 text-navy/30 opacity-0 group-hover:opacity-100 hover:text-brand-500 transition-all"
                                   title="Edit payment"
                                 >
                                   <Pencil className="h-3.5 w-3.5" />
                                 </button>
                                 <button
                                   onClick={() => setDeletingPayment(pmt)}
-                                  className="rounded p-1 text-navy/30 hover:text-danger transition-colors"
+                                  className="rounded p-1 text-navy/30 opacity-0 group-hover:opacity-100 hover:text-danger transition-all"
                                   title="Delete payment"
                                 >
                                   <Trash2 className="h-3.5 w-3.5" />
@@ -941,10 +1178,19 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                             )}
                           </div>
                         </div>
-                        <p className="mt-0.5 text-xs text-navy/60">
-                          {methodLabel(pmt.method)}
-                          {pmt.reference && ` · ${pmt.reference}`}
-                        </p>
+                        <div className="mt-1 flex items-center gap-2">
+                          <span
+                            className={cn(
+                              "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold",
+                              methodBadgeClass(pmt.method),
+                            )}
+                          >
+                            {methodLabel(pmt.method)}
+                          </span>
+                          {pmt.reference && (
+                            <span className="text-xs text-navy/50">· {pmt.reference}</span>
+                          )}
+                        </div>
                         {pmt.notes && <p className="mt-0.5 text-xs text-navy/40">{pmt.notes}</p>}
                       </div>
                     </li>

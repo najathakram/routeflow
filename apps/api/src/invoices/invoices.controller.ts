@@ -27,6 +27,11 @@ export class InvoicesController {
     return this.invoicesService.findAll(query, user);
   }
 
+  @Get("payments")
+  listAllPayments(@Query("page") page?: string, @Query("limit") limit?: string) {
+    return this.invoicesService.listAllPayments({ page: page ? parseInt(page) : 1, limit: limit ? parseInt(limit) : 25 });
+  }
+
   @Get(":id")
   @Roles(UserRole.OPERATOR, UserRole.CUSTOMER, UserRole.DRIVER)
   findOne(@Param("id") id: string, @CurrentUser() user: JwtPayload) {

@@ -103,6 +103,28 @@ export function useInvoice(id: string) {
   });
 }
 
+export interface AllPayment {
+  id: string;
+  amount: number;
+  method: 'CASH' | 'CHECK' | 'ACH' | 'OTHER' | 'CREDIT_NOTE' | 'ADVANCE';
+  reference?: string;
+  notes?: string;
+  createdAt: string;
+  invoice: {
+    id: string;
+    invoiceNumber: string;
+    customerId: string;
+    customer?: { id: string; businessName: string };
+  };
+}
+
+export function useInvoicePayments(params?: { page?: number; limit?: number }) {
+  return useQuery<{ data: AllPayment[]; meta: { total: number; page: number; limit: number; totalPages: number } }>({
+    queryKey: ['invoices', 'payments', params],
+    queryFn: () => apiClient.get('/invoices/payments', { params }).then((r) => r.data),
+  });
+}
+
 // ─── Mutations ────────────────────────────────────────────────────────────────
 
 export interface CreateInvoiceItem {

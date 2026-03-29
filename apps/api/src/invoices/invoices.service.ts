@@ -218,6 +218,32 @@ export class InvoicesService {
     });
   }
 
+  // ─── List all payments (across all invoices) ─────────────────────────────
+
+  async listAllPayments(query: { page?: number; limit?: number }) {
+    const { page = 1, limit = 25 } = query;
+    const skip = (page - 1) * limit;
+    const [data, total] = await Promise.all([
+      this.prisma.invoicePayment.findMany({
+        skip,
+        take: limit,
+        orderBy: { createdAt: "desc" },
+        include: {
+          invoice: {
+            select: {
+              id: true,
+              invoiceNumber: true,
+              customerId: true,
+              customer: { select: { id: true, businessName: true } },
+            },
+          },
+        },
+      }),
+      this.prisma.invoicePayment.count(),
+    ]);
+    return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
+  }
+
   // ─── Payment recording ────────────────────────────────────────────────────
 
   async recordPayment(id: string, dto: RecordInvoicePaymentDto) {

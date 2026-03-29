@@ -929,40 +929,180 @@ export default function CustomerDetailPage({
               )}
             </div>
 
-            {/* Statement */}
-            <div className="lg:col-span-2">
-              <Card title="Account Statement">
+            {/* Statement — Zoho-style rendered document */}
+            <div className="lg:col-span-2 space-y-4">
+              {/* Statement header & controls */}
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <h3 className="text-base font-semibold text-navy">Statement of Accounts</h3>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => window.print()}
+                    className="flex items-center gap-1.5 rounded border border-surface-border bg-white px-3 py-1.5 text-sm font-medium text-navy/70 transition-colors hover:bg-surface-raised"
+                  >
+                    Print
+                  </button>
+                </div>
+              </div>
+
+              {/* Rendered statement document */}
+              <div className="rounded-xl border border-surface-border bg-white p-8 shadow-[0_2px_12px_0_rgb(0,0,0,0.06)]">
+                {/* Document header */}
+                <div className="mb-6 flex items-start justify-between">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-500 text-xs font-bold text-white">
+                        RF
+                      </div>
+                      <span className="text-base font-bold text-navy">RouteFlow</span>
+                    </div>
+                    <p className="mt-0.5 text-xs text-navy/50">Austin, TX · routeflow.io</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-lg font-bold uppercase tracking-wide text-navy">Statement of Accounts</p>
+                    <p className="mt-0.5 text-xs text-navy/50">
+                      As of {new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}
+                    </p>
+                  </div>
+                </div>
+
+                {/* To block */}
+                <div className="mb-6 border-t border-surface-border pt-4">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-navy/40">To</p>
+                  <p className="mt-1 text-sm font-semibold text-navy">{customer.businessName}</p>
+                  {customer.contactName && (
+                    <p className="text-sm text-navy/60">{customer.contactName}</p>
+                  )}
+                  {customer.address && (
+                    <p className="mt-0.5 text-xs text-navy/50 whitespace-pre-line">{customer.address}</p>
+                  )}
+                </div>
+
+                {/* Account summary box */}
+                <div className="mb-6 grid grid-cols-4 gap-px overflow-hidden rounded-lg border border-surface-border bg-surface-border">
+                  {[
+                    {
+                      label: "Opening Balance",
+                      value: new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(0),
+                      valueClass: "text-navy",
+                    },
+                    {
+                      label: "Invoiced Amount",
+                      value: new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(
+                        statement?.transactions
+                          .filter((tx) => tx.type === "invoice")
+                          .reduce((s, tx) => s + Math.abs(tx.amount), 0) ?? 0
+                      ),
+                      valueClass: "text-navy",
+                    },
+                    {
+                      label: "Amount Received",
+                      value: new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(
+                        statement?.transactions
+                          .filter((tx) => tx.type === "payment" || tx.type === "advance")
+                          .reduce((s, tx) => s + Math.abs(tx.amount), 0) ?? 0
+                      ),
+                      valueClass: "text-success",
+                    },
+                    {
+                      label: "Balance Due",
+                      value: new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(statement?.outstandingAmount ?? 0),
+                      valueClass: (statement?.outstandingAmount ?? 0) > 0 ? "text-danger" : "text-success",
+                    },
+                  ].map((item) => (
+                    <div key={item.label} className="flex flex-col items-center gap-1 bg-white px-4 py-3 text-center">
+                      <span className="text-xs font-semibold uppercase tracking-wider text-navy/40">{item.label}</span>
+                      <span className={cn("text-base font-bold", item.valueClass)}>{item.value}</span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Transaction ledger */}
                 {!statement || statement.transactions.length === 0 ? (
                   <p className="text-sm text-navy/40">No transactions on record.</p>
                 ) : (
-                  <ul className="-mx-6 -mb-6 divide-y divide-surface-border">
-                    {statement.transactions.map((tx, i) => (
-                      <li key={i} className="flex items-start gap-3 px-6 py-3">
-                        <div className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${tx.amount > 0 ? "bg-danger/10" : "bg-success-bg"}`}>
-                          {tx.amount > 0
-                            ? <FileText className="h-3.5 w-3.5 text-danger" />
-                            : <CheckCircle2 className="h-3.5 w-3.5 text-success" />}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-sm font-medium text-navy truncate">{tx.description}</span>
-                            <span className={`shrink-0 text-sm font-semibold ${tx.amount > 0 ? "text-danger" : "text-success"}`}>
-                              {tx.amount > 0 ? "+" : ""}
-                              {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(tx.amount)}
-                            </span>
-                          </div>
-                          <div className="mt-0.5 flex items-center justify-between">
-                            <span className="text-xs text-navy/50">{new Date(tx.date).toLocaleDateString()}</span>
-                            <span className="text-xs text-navy/50">
-                              Balance: {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(tx.balance)}
-                            </span>
-                          </div>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
+                  <div className="-mx-8 overflow-hidden">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="bg-[#1B3A5C]">
+                          <th className="px-8 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-white/80">Date</th>
+                          <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-white/80">Type</th>
+                          <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-white/80">Details</th>
+                          <th className="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wider text-white/80">Amount</th>
+                          <th className="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wider text-white/80">Payments</th>
+                          <th className="px-8 py-2.5 text-right text-xs font-semibold uppercase tracking-wider text-white/80">Balance</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-surface-border">
+                        {statement.transactions.map((tx, i) => {
+                          const isInvoice = tx.type === "invoice";
+                          const isPayment = tx.type === "payment" || tx.type === "advance";
+                          return (
+                            <tr key={i} className={i % 2 === 0 ? "bg-white" : "bg-gray-50/60"}>
+                              <td className="px-8 py-2.5 text-xs text-navy/60">
+                                {new Date(tx.date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                              </td>
+                              <td className="px-4 py-2.5">
+                                <span className={cn(
+                                  "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold",
+                                  isInvoice ? "bg-blue-100 text-blue-700" : "bg-green-100 text-green-700",
+                                )}>
+                                  {isInvoice ? "Invoice" : "Payment"}
+                                </span>
+                              </td>
+                              <td className="px-4 py-2.5 text-sm text-navy">
+                                {tx.invoiceNumber ? (
+                                  <Link
+                                    href={`/invoices/${tx.invoiceId}`}
+                                    className="font-mono text-xs font-semibold text-brand-500 hover:underline"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    {tx.invoiceNumber}
+                                  </Link>
+                                ) : (
+                                  <span className="text-xs text-navy/60">{tx.description}</span>
+                                )}
+                              </td>
+                              <td className="px-4 py-2.5 text-right text-sm">
+                                {isInvoice ? (
+                                  <span className="font-medium text-navy">
+                                    {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(Math.abs(tx.amount))}
+                                  </span>
+                                ) : (
+                                  <span className="text-navy/30">—</span>
+                                )}
+                              </td>
+                              <td className="px-4 py-2.5 text-right text-sm">
+                                {isPayment ? (
+                                  <span className="font-medium text-success">
+                                    {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(Math.abs(tx.amount))}
+                                  </span>
+                                ) : (
+                                  <span className="text-navy/30">—</span>
+                                )}
+                              </td>
+                              <td className="px-8 py-2.5 text-right font-semibold text-navy">
+                                {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(tx.balance)}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                      <tfoot>
+                        <tr className="border-t-2 border-surface-border bg-gray-50">
+                          <td colSpan={3} className="px-8 py-3 text-sm font-bold text-navy">Balance Due</td>
+                          <td colSpan={2} />
+                          <td className={cn(
+                            "px-8 py-3 text-right text-sm font-bold",
+                            (statement?.outstandingAmount ?? 0) > 0 ? "text-danger" : "text-success",
+                          )}>
+                            {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(statement?.outstandingAmount ?? 0)}
+                          </td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
                 )}
-              </Card>
+              </div>
             </div>
           </div>
 
