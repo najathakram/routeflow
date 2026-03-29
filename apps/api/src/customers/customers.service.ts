@@ -1,9 +1,11 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
   ForbiddenException,
 } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import * as bcrypt from "bcrypt";
 import * as crypto from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
@@ -18,7 +20,60 @@ import { UserRole } from "@prisma/client";
 
 @Injectable()
 export class CustomersService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(CustomersService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
+  ) {}
+
+  /** Geocode an address string using Google Maps API. Returns null if key missing or call fails. */
+  private async geocodeAddress(addr: {
+    line1: string;
+    city: string;
+    state: string;
+    zip: string;
+  }): Promise<{ lat: number; lng: number } | null> {
+    const key = this.config.get<string>("googleMaps.apiKey") ?? "";
+    if (!key) return null;
+    const q = encodeURIComponent(`${addr.line1}, ${addr.city}, ${addr.state} ${addr.zip}`);
+    try {
+      const res = await fetch(
+        `https://maps.googleapis.com/maps/api/geocode/json?address=${q}&key=${key}`,
+      );
+      if (!res.ok) return null;
+      const data = (await res.json()) as {
+        results: Array<{ geometry: { location: { lat: number; lng: number } } }>;
+      };
+      const loc = data.results?.[0]?.geometry?.location;
+      return loc ? { lat: loc.lat, lng: loc.lng } : null;
+    } catch (err) {
+      this.logger.warn("Geocoding failed", err);
+      return null;
+    }
+  }
+
+  /** Geocode all CustomerAddress records that are missing lat/lng. Returns counts. */
+  async geocodeAllAddresses(): Promise<{ total: number; geocoded: number; failed: number }> {
+    const addresses = await this.prisma.customerAddress.findMany({
+      where: { OR: [{ lat: null }, { lng: null }] },
+    });
+    let geocoded = 0;
+    let failed = 0;
+    for (const addr of addresses) {
+      const coords = await this.geocodeAddress(addr);
+      if (coords) {
+        await this.prisma.customerAddress.update({
+          where: { id: addr.id },
+          data: coords,
+        });
+        geocoded++;
+      } else {
+        failed++;
+      }
+    }
+    return { total: addresses.length, geocoded, failed };
+  }
 
   async findAll(query: ListCustomersDto) {
     const page = Number(query.page ?? 1);
@@ -287,6 +342,8 @@ export class CustomersService {
 
   async addAddress(id: string, dto: CreateAddressDto) {
     await this.findCustomerOrThrow(id);
+    // Geocode before creating so lat/lng are set from the start
+    const coords = await this.geocodeAddress(dto);
     return this.prisma.$transaction(async (tx) => {
       if (dto.isDefault) {
         await tx.customerAddress.updateMany({
@@ -304,6 +361,7 @@ export class CustomersService {
           state: dto.state,
           zip: dto.zip,
           isDefault: dto.isDefault ?? false,
+          ...(coords ?? {}),
         },
       });
     });
@@ -311,7 +369,7 @@ export class CustomersService {
 
   async updateAddress(id: string, addrId: string, dto: UpdateAddressDto) {
     await this.findCustomerOrThrow(id);
-    return this.prisma.$transaction(async (tx) => {
+    const updated = await this.prisma.$transaction(async (tx) => {
       if (dto.isDefault) {
         await tx.customerAddress.updateMany({
           where: { customerId: id, id: { not: addrId } },
@@ -320,9 +378,18 @@ export class CustomersService {
       }
       return tx.customerAddress.update({
         where: { id: addrId, customerId: id },
-        data: dto,
+        data: { ...dto, lat: null, lng: null }, // clear stale coords when address changes
       });
     });
+    // Re-geocode asynchronously (don't block the response)
+    this.geocodeAddress(updated).then((coords) => {
+      if (coords) {
+        this.prisma.customerAddress
+          .update({ where: { id: addrId }, data: coords })
+          .catch(() => {/* ignore */});
+      }
+    }).catch(() => {/* ignore */});
+    return updated;
   }
 
   private async findCustomerOrThrow(id: string) {

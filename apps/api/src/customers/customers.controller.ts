@@ -79,6 +79,12 @@ export class CustomersController {
     return this.customersService.findOrders(id, user);
   }
 
+  @Post("geocode-all")
+  @Roles(UserRole.OPERATOR)
+  geocodeAllAddresses() {
+    return this.customersService.geocodeAllAddresses();
+  }
+
   @Post(":id/addresses")
   @Roles(UserRole.OPERATOR)
   addAddress(@Param("id") id: string, @Body() dto: CreateAddressDto) {
