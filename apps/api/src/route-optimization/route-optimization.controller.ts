@@ -19,3 +19,17 @@ export class RouteOptimizationController {
     return this.service.optimizeRoute(id);
   }
 }
+
+@ApiTags("routes")
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(UserRole.OPERATOR)
+@Controller("routes")
+export class RouteTemplateOptimizationController {
+  constructor(private readonly service: RouteOptimizationService) {}
+
+  @Post(":id/optimize")
+  optimize(@Param("id") id: string) {
+    return this.service.optimizeTemplate(id);
+  }
+}

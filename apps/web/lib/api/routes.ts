@@ -297,3 +297,15 @@ export function useOptimizeRoute() {
     },
   });
 }
+
+export function useOptimizeTemplate() {
+  const qc = useQueryClient();
+  return useMutation<OptimizeResult, Error, string>({
+    mutationFn: (id) =>
+      apiClient.post<OptimizeResult>(`/routes/${id}/optimize`).then((r) => r.data),
+    onSuccess: (_, id) => {
+      qc.invalidateQueries({ queryKey: ['routes', id] });
+      qc.invalidateQueries({ queryKey: ['routes'] });
+    },
+  });
+}

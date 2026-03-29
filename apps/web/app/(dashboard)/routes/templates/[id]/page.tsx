@@ -17,6 +17,7 @@ import {
   ToggleLeft,
   ToggleRight,
   Trash2,
+  Sparkles,
 } from "lucide-react";
 import * as Tabs from "@radix-ui/react-tabs";
 import {
@@ -49,6 +50,7 @@ import {
   useCreateRouteRun,
   useRoutePackingList,
   useDeleteRoute,
+  useOptimizeTemplate,
   type RouteTemplateStop,
 } from "@/lib/api/routes";
 import { TemplateRouteMap } from "./TemplateRouteMap";
@@ -360,6 +362,7 @@ export default function RouteTemplateDetailPage({
   const removeStop = useRemoveStop();
   const reorderStops = useReorderStops();
   const deleteRoute = useDeleteRoute();
+  const optimizeTemplate = useOptimizeTemplate();
 
   const [confirmDelete, setConfirmDelete] = React.useState(false);
 
@@ -435,6 +438,21 @@ export default function RouteTemplateDetailPage({
         router.push("/routes");
       },
       onError: (err) => toast({ title: "Delete failed", description: err.message, variant: "error" }),
+    });
+  };
+
+  const handleOptimize = () => {
+    optimizeTemplate.mutate(params.id, {
+      onSuccess: (result) => {
+        toast({
+          title: result.usedFallback ? "Route optimized (local fallback)" : "Route optimized",
+          description: result.reorderedCount > 0
+            ? `${result.reorderedCount} stop${result.reorderedCount === 1 ? "" : "s"} reordered`
+            : "Stops are already in optimal order",
+          variant: "success",
+        });
+      },
+      onError: (err) => toast({ title: "Optimization failed", description: err.message, variant: "error" }),
     });
   };
 
@@ -610,6 +628,16 @@ export default function RouteTemplateDetailPage({
               <Trash2 className="h-4 w-4" />
             </button>
           )}
+
+          <Button
+            variant="secondary"
+            leftIcon={optimizeTemplate.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+            onClick={handleOptimize}
+            disabled={optimizeTemplate.isPending || localStops.length < 2}
+            title={localStops.length < 2 ? "Need at least 2 stops to optimize" : "Optimize stop order"}
+          >
+            {optimizeTemplate.isPending ? "Optimizing…" : "Optimize"}
+          </Button>
 
           <Button
             leftIcon={<Play className="h-4 w-4" />}

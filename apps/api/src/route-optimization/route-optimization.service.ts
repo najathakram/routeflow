@@ -37,6 +37,94 @@ export class RouteOptimizationService {
     private readonly config: ConfigService,
   ) {}
 
+  async optimizeTemplate(routeId: string): Promise<OptimizeResult> {
+    const route = await this.prisma.route.findUnique({
+      where: { id: routeId },
+      include: {
+        stops: {
+          include: {
+            customer: { select: { id: true, businessName: true, deliveryWindowStart: true, deliveryWindowEnd: true } },
+            customerAddress: true,
+          },
+          orderBy: { stopNumber: "asc" },
+        },
+      },
+    });
+
+    if (!route) throw new NotFoundException("Route not found");
+    if (route.stops.length === 0) {
+      return { stopOrder: [], reorderedCount: 0, usedFallback: false };
+    }
+
+    // Geocode any stops missing lat/lng
+    for (const stop of route.stops) {
+      const addr = stop.customerAddress;
+      if (!addr || (addr.lat != null && addr.lng != null)) continue;
+      const coords = await this.geocodeAddress(addr);
+      if (coords) {
+        await this.prisma.customerAddress.update({ where: { id: addr.id }, data: coords });
+        addr.lat = coords.lat;
+        addr.lng = coords.lng;
+      }
+    }
+
+    // Validate all stops have coordinates
+    const missingCoords = route.stops.filter(
+      (s) => s.customerAddress?.lat == null || s.customerAddress?.lng == null,
+    );
+    if (missingCoords.length > 0) {
+      const names = missingCoords.map((s) => s.customer?.businessName ?? s.id).join(", ");
+      throw new BadRequestException(
+        `Missing geocoded addresses for: ${names}. Set GOOGLE_MAPS_API_KEY to auto-geocode.`,
+      );
+    }
+
+    const stops: StopWithCoords[] = route.stops.map((s) => ({
+      id: s.id,
+      stopNumber: s.stopNumber,
+      customerName: s.customer?.businessName ?? s.id,
+      lat: s.customerAddress!.lat!,
+      lng: s.customerAddress!.lng!,
+      deliveryWindowStart: s.customer?.deliveryWindowStart,
+      deliveryWindowEnd: s.customer?.deliveryWindowEnd,
+    }));
+
+    let optimizedIds: string[];
+    let usedFallback = false;
+
+    try {
+      optimizedIds = await this.callOrsOptimization(stops);
+    } catch (err: unknown) {
+      this.logger.warn(
+        "ORS optimization failed — applying nearest-neighbor fallback",
+        err instanceof Error ? err.message : String(err),
+      );
+      optimizedIds = this.nearestNeighborFallback(stops);
+      usedFallback = true;
+    }
+
+    const stopOrder = optimizedIds.map((stopId, idx) => ({
+      stopId,
+      stopNumber: idx + 1,
+    }));
+
+    await this.prisma.$transaction(
+      stopOrder.map(({ stopId, stopNumber }) =>
+        this.prisma.routeStop.update({
+          where: { id: stopId },
+          data: { stopNumber },
+        }),
+      ),
+    );
+
+    const originalOrder = new Map(stops.map((s) => [s.id, s.stopNumber]));
+    const reorderedCount = stopOrder.filter(
+      ({ stopId, stopNumber }) => originalOrder.get(stopId) !== stopNumber,
+    ).length;
+
+    return { stopOrder, reorderedCount, usedFallback };
+  }
+
   async optimizeRoute(routeRunId: string): Promise<OptimizeResult> {
     const run = await this.prisma.routeRun.findUnique({
       where: { id: routeRunId },
