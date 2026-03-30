@@ -105,6 +105,13 @@ enum MovementType {
   WRITE_OFF
 }
 
+enum CostingMethod {
+  FIFO
+  LIFO
+  AVCO
+  STANDARD
+}
+
 // ─── New Enums (Zoho-parity) ──────────────────────────────────────────────────
 
 enum InvoiceStatus {
@@ -278,6 +285,8 @@ model Product {
   barcode          String?  @unique
   currentStock     Decimal  @default(0) @db.Decimal(10, 3)
   averageCost      Decimal? @db.Decimal(10, 4)
+  costingMethod    CostingMethod @default(FIFO)
+  standardCost     Decimal?      @db.Decimal(10, 4)
   reorderPoint     Int?
   reorderQty       Int?
   createdAt        DateTime @default(now())
@@ -287,6 +296,7 @@ model Product {
   deliveryMutations       DeliveryMutation[]
   templateItems           OrderTemplateItem[]
   stockMovements          StockMovement[]
+  stockLots               StockLot[]
   invoiceItems            InvoiceItem[]
   estimateItems           EstimateItem[]
   purchaseOrderItems      PurchaseOrderItem[]
@@ -642,6 +652,23 @@ model Supplier {
   expenses       Expense[]
 
   @@index([isActive])
+}
+
+model StockLot {
+  id           String   @id @default(uuid())
+  productId    String
+  purchaseDate DateTime @default(now())
+  qty          Decimal  @db.Decimal(10, 3)
+  remainingQty Decimal  @db.Decimal(10, 3)
+  unitCost     Decimal  @db.Decimal(10, 4)
+  reference    String?
+  notes        String?
+  createdAt    DateTime @default(now())
+
+  product Product @relation(fields: [productId], references: [id])
+
+  @@index([productId])
+  @@index([purchaseDate])
 }
 
 model StockMovement {

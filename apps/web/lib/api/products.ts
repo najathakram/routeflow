@@ -61,6 +61,25 @@ export function useDeleteProduct() {
   });
 }
 
+export type CostingMethod = "FIFO" | "LIFO" | "AVCO" | "STANDARD";
+
+export interface ApiProduct {
+  id: string;
+  name: string;
+  sku?: string;
+  barcode?: string;
+  category?: string;
+  unit: string;
+  pricePerUnit: string;
+  isActive: boolean;
+  currentStock: number;
+  averageCost?: string;
+  description?: string;
+  thumbnailUrl?: string | null;
+  costingMethod?: CostingMethod;
+  standardCost?: string | number;
+}
+
 export interface ZohoImportItem {
   name: string;
   sku?: string;

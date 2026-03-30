@@ -27,6 +27,8 @@ interface ApiProduct {
   averageCost?: string;
   description?: string;
   thumbnailUrl?: string | null;
+  costingMethod?: string;
+  standardCost?: string | number;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -180,10 +182,14 @@ function makeTableColumns(
       accessorKey: "name",
       header: "Product",
       cell: ({ row }) => (
-        <div>
-          <p className="font-medium text-navy">{row.original.name}</p>
-          <p className="text-xs text-navy/40">{row.original.sku}</p>
-        </div>
+        <p className="font-medium text-navy">{row.original.name}</p>
+      ),
+    },
+    {
+      accessorKey: "sku",
+      header: "SKU",
+      cell: ({ row }) => (
+        <span className="font-mono text-xs text-navy/60">{row.original.sku ?? "—"}</span>
       ),
     },
     {
@@ -249,6 +255,7 @@ function CreateProductModal({
 }) {
   const [form, setForm] = React.useState({
     name: "", sku: "", barcode: "", unit: "", pricePerUnit: "", category: "", description: "",
+    costingMethod: "FIFO", standardCost: "",
   });
   const [pendingImages, setPendingImages] = React.useState<File[]>([]);
   const [previews, setPreviews] = React.useState<string[]>([]);
@@ -285,6 +292,10 @@ function CreateProductModal({
       pricePerUnit: form.pricePerUnit,
       category: form.category || undefined,
       description: form.description || undefined,
+      costingMethod: form.costingMethod || "FIFO",
+      standardCost: (form.costingMethod === "STANDARD" && form.standardCost)
+        ? form.standardCost
+        : undefined,
     });
     // Upload images if any were queued
     if (pendingImages.length > 0 && product?.id) {
@@ -444,6 +455,37 @@ function CreateProductModal({
                   className="w-full resize-y rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
                 />
               </div>
+
+              {/* ── Costing method ── */}
+              <div>
+                <label className="mb-1 block text-sm font-medium text-navy">Costing Method</label>
+                <select
+                  value={form.costingMethod}
+                  onChange={(e) => set("costingMethod", e.target.value)}
+                  className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                >
+                  <option value="FIFO">FIFO — First In, First Out</option>
+                  <option value="LIFO">LIFO — Last In, First Out</option>
+                  <option value="AVCO">AVCO — Weighted Average Cost</option>
+                  <option value="STANDARD">Standard Cost</option>
+                </select>
+              </div>
+
+              {form.costingMethod === "STANDARD" && (
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-navy">Standard Cost *</label>
+                  <input
+                    required={form.costingMethod === "STANDARD"}
+                    type="number"
+                    min="0"
+                    step="0.0001"
+                    value={form.standardCost}
+                    onChange={(e) => set("standardCost", e.target.value)}
+                    placeholder="e.g. 1.2500"
+                    className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  />
+                </div>
+              )}
             </div>
           </div>
 

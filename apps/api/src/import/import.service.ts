@@ -162,17 +162,58 @@ export class ImportService {
 
     for (const [, invoiceRows] of Object.entries(groups)) {
       const first = invoiceRows[0];
-      const customerName = (first['Customer Name'] || '').trim();
+      const customerName = (first['Customer Name'] || first['Company Name'] || '').trim();
       if (!customerName) { skipped++; continue; }
 
-      const customer = await this.prisma.customer.findFirst({
+      // Try to find existing customer
+      let customer = await this.prisma.customer.findFirst({
         where: { businessName: { contains: customerName, mode: 'insensitive' } },
       });
+
+      // Auto-create customer if not found
       if (!customer) {
-        skipped++;
-        errors.push(`Customer not found: ${customerName}`);
-        continue;
+        const baseUsername = this.slugify(customerName);
+        let username = baseUsername;
+        let usernameSeq = 1;
+        while (await this.prisma.user.findFirst({ where: { username } })) {
+          username = `${baseUsername}_${usernameSeq++}`;
+        }
+        const userEmail = `${username}@imported.local`;
+        const existingUser = await this.prisma.user.findFirst({ where: { OR: [{ email: userEmail }, { username }] } });
+        if (existingUser) {
+          skipped++;
+          errors.push(`${customerName}: user conflict, skipped`);
+          continue;
+        }
+        try {
+          const hashedPassword = await bcrypt.hash(this.generateTempPassword(), 10);
+          const street = (first['Billing Address'] || first['Billing Street'] || '').trim();
+          const city = (first['Billing City'] || '').trim();
+          const state = (first['Billing State'] || '').trim();
+          const zip = (first['Billing Code'] || '').trim();
+          const phone = (first['Billing Phone'] || '').replace(/['+]/g, '').trim();
+
+          await this.prisma.$transaction(async (tx) => {
+            const user = await tx.user.create({
+              data: { email: userEmail, username, password: hashedPassword, role: UserRole.CUSTOMER, forcePasswordChange: true },
+            });
+            customer = await tx.customer.create({
+              data: { userId: user.id, businessName: customerName, contactName: customerName, phone: phone || null },
+            });
+            if (street || city) {
+              await tx.customerAddress.create({
+                data: { customerId: customer!.id, label: 'default', line1: street || city || 'Unknown', city: city || 'Unknown', state: state || 'Unknown', zip: zip || '00000', isDefault: true },
+              });
+            }
+          });
+        } catch (e: any) {
+          skipped++;
+          errors.push(`${customerName}: ${e.message}`);
+          continue;
+        }
       }
+
+      if (!customer) { skipped++; continue; }
 
       const total = parseFloat(first['Total'] || '0') || 0;
       const subtotal = parseFloat(first['SubTotal'] || '0') || total;
@@ -185,23 +226,42 @@ export class ImportService {
 
       let issueDate = new Date();
       let dueDate: Date | null = null;
-      try { if (first['Invoice Date']) issueDate = new Date(first['Invoice Date']); } catch (e) {}
-      try { if (first['Due Date']) dueDate = new Date(first['Due Date']); } catch (e) {}
+      try { if (first['Invoice Date']) issueDate = new Date(first['Invoice Date']); } catch {}
+      try { if (first['Due Date']) dueDate = new Date(first['Due Date']); } catch {}
 
-      const itemsData = invoiceRows.map((row) => {
-        const description = (row['Item Name'] || '').replace(/[\n\r]/g, ' ').trim() || 'Item';
+      // Build line items; try to match product by SKU
+      const itemsData: any[] = [];
+      for (const row of invoiceRows) {
+        const description = (row['Item Name'] || '').replace(/[\n\r]+/g, ' ').trim() || 'Item';
         const qty = parseFloat(row['Quantity'] || '1') || 1;
+        if (qty <= 0) continue;
         const unitPrice = parseFloat(row['Item Price'] || '0') || 0;
         const itemDiscount = parseFloat(row['Discount Amount'] || '0') || 0;
         const sub = parseFloat(row['Item Total'] || '0') || qty * unitPrice - itemDiscount;
-        return { description, qty, unitPrice, discount: itemDiscount, taxRate: 0, subtotal: sub };
-      }).filter(i => i.qty > 0);
+        const sku = (row['SKU'] || '').trim();
+
+        let productId: string | undefined;
+        if (sku) {
+          const product = await this.prisma.product.findFirst({ where: { sku: { equals: sku, mode: 'insensitive' } } });
+          if (product) productId = product.id;
+        }
+        if (!productId && description && description !== 'Item') {
+          const product = await this.prisma.product.findFirst({ where: { name: { equals: description, mode: 'insensitive' } } });
+          if (product) productId = product.id;
+        }
+
+        itemsData.push({ description, qty, unitPrice, discount: itemDiscount, taxRate: 0, subtotal: sub, ...(productId ? { productId } : {}) });
+      }
 
       if (itemsData.length === 0) {
         itemsData.push({ description: 'Services', qty: 1, unitPrice: total, discount: 0, taxRate: 0, subtotal: total });
       }
 
       try {
+        // Skip if invoice number already exists
+        const existing = await this.prisma.invoice.findFirst({ where: { invoiceNumber } });
+        if (existing) { skipped++; errors.push(`${invoiceNumber}: already imported`); continue; }
+
         await this.prisma.invoice.create({
           data: {
             invoiceNumber,

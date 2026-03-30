@@ -148,6 +148,8 @@ export class ProductsService {
         category: dto.category,
         description: dto.description,
         isActive: dto.isActive,
+        costingMethod: dto.costingMethod,
+        standardCost: dto.standardCost,
       },
     });
   }

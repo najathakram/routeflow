@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
-import { MovementType, Prisma } from "@prisma/client";
+import { CostingMethod, MovementType, Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { RecordPurchaseDto } from "./dto/record-purchase.dto";
 import { RecordAdjustmentDto } from "./dto/record-adjustment.dto";
@@ -24,18 +24,26 @@ export class InventoryService {
         unit: true,
         currentStock: true,
         averageCost: true,
+        costingMethod: true,
+        standardCost: true,
         isActive: true,
       },
     });
 
     return products.map((p) => {
       const stock = Number(p.currentStock);
-      const avgCost = p.averageCost ? Number(p.averageCost) : null;
+      let effectiveCost: number | null = null;
+      if (p.costingMethod === CostingMethod.STANDARD) {
+        effectiveCost = p.standardCost ? Number(p.standardCost) : null;
+      } else {
+        effectiveCost = p.averageCost ? Number(p.averageCost) : null;
+      }
       return {
         ...p,
         currentStock: stock,
-        averageCost: avgCost,
-        totalValue: avgCost !== null ? +(stock * avgCost).toFixed(4) : null,
+        averageCost: effectiveCost,
+        costingMethod: p.costingMethod,
+        totalValue: effectiveCost !== null ? +(stock * effectiveCost).toFixed(4) : null,
       };
     });
   }
@@ -91,22 +99,30 @@ export class InventoryService {
     const unitCost = new Prisma.Decimal(dto.unitCost);
     const currentStock = product.currentStock;
     const currentAvgCost = product.averageCost ?? new Prisma.Decimal(0);
+    const effectiveDate = dto.effectiveDate ? new Date(dto.effectiveDate) : new Date();
 
-    // Weighted average cost calculation
+    // Calculate new average cost (used for AVCO; FIFO/LIFO still update for display)
     let newAvgCost: Prisma.Decimal;
     if (currentStock.lte(0)) {
       newAvgCost = unitCost;
     } else {
-      // (currentStock * avgCost + qty * unitCost) / (currentStock + qty)
-      newAvgCost = currentStock
-        .mul(currentAvgCost)
-        .add(qty.mul(unitCost))
-        .div(currentStock.add(qty));
+      newAvgCost = currentStock.mul(currentAvgCost).add(qty.mul(unitCost)).div(currentStock.add(qty));
     }
 
-    const effectiveDate = dto.effectiveDate ? new Date(dto.effectiveDate) : new Date();
-
     return this.prisma.$transaction(async (tx) => {
+      // Always create a StockLot for lot-tracking (used by FIFO/LIFO)
+      await tx.stockLot.create({
+        data: {
+          productId: dto.productId,
+          purchaseDate: effectiveDate,
+          qty,
+          remainingQty: qty,
+          unitCost,
+          reference: dto.reference,
+          notes: dto.notes,
+        },
+      });
+
       const movement = await tx.stockMovement.create({
         data: {
           productId: dto.productId,
@@ -121,12 +137,17 @@ export class InventoryService {
         },
       });
 
+      // Update stock and cost based on costing method
+      const costUpdate: any = { currentStock: { increment: qty } };
+      if (product.costingMethod === CostingMethod.AVCO || product.costingMethod === CostingMethod.FIFO || product.costingMethod === CostingMethod.LIFO) {
+        // For FIFO/LIFO we still store the running average in averageCost for reference
+        costUpdate.averageCost = newAvgCost;
+      }
+      // STANDARD: don't touch averageCost
+
       await tx.product.update({
         where: { id: dto.productId },
-        data: {
-          currentStock: { increment: qty },
-          averageCost: newAvgCost,
-        },
+        data: costUpdate,
       });
 
       return movement;
@@ -158,12 +179,28 @@ export class InventoryService {
         data: { currentStock: { increment: qty } },
       });
 
+      // If positive adjustment, add to lots
+      if (qty.gt(0)) {
+        await tx.stockLot.create({
+          data: {
+            productId: dto.productId,
+            purchaseDate: effectiveDate,
+            qty,
+            remainingQty: qty,
+            unitCost: product.averageCost ?? new Prisma.Decimal(0),
+            reference: dto.reference ?? 'ADJUSTMENT',
+            notes: dto.notes,
+          },
+        });
+      }
+
       return movement;
     });
   }
 
   /**
    * Internal — called from orders service inside an existing transaction.
+   * Consumes stock lots per the product's costing method.
    * Stock can go negative; never throws for insufficient stock.
    */
   async recordSale(
@@ -174,6 +211,7 @@ export class InventoryService {
     tx: Prisma.TransactionClient,
   ) {
     const negativeQty = quantity.neg();
+
     await tx.stockMovement.create({
       data: {
         productId,
@@ -183,10 +221,43 @@ export class InventoryService {
         performedById,
       },
     });
+
     await tx.product.update({
       where: { id: productId },
       data: { currentStock: { decrement: quantity } },
     });
+
+    // Consume lots for FIFO/LIFO costing
+    const product = await tx.product.findUnique({
+      where: { id: productId },
+      select: { costingMethod: true },
+    });
+
+    if (
+      product?.costingMethod === CostingMethod.FIFO ||
+      product?.costingMethod === CostingMethod.LIFO
+    ) {
+      const orderBy = product.costingMethod === CostingMethod.FIFO
+        ? { purchaseDate: 'asc' as const }
+        : { purchaseDate: 'desc' as const };
+
+      const lots = await tx.stockLot.findMany({
+        where: { productId, remainingQty: { gt: 0 } },
+        orderBy,
+      });
+
+      let remaining = quantity;
+      for (const lot of lots) {
+        if (remaining.lte(0)) break;
+        const lotRemaining = new Prisma.Decimal(lot.remainingQty);
+        const consume = remaining.lte(lotRemaining) ? remaining : lotRemaining;
+        await tx.stockLot.update({
+          where: { id: lot.id },
+          data: { remainingQty: { decrement: consume } },
+        });
+        remaining = remaining.sub(consume);
+      }
+    }
   }
 
   // ─── Suppliers ───────────────────────────────────────────────────────────────
@@ -225,7 +296,6 @@ export class InventoryService {
     const itemsData = dto.items.map((item: any) => {
       const prod = productMap.get(item.productId);
       if (!prod) throw new NotFoundException(`Product ${item.productId} not found`);
-      // Accept both 'qty' (from web UI) and 'qtyOrdered' (legacy)
       const qtyOrdered = item.qty ?? item.qtyOrdered;
       if (!qtyOrdered || qtyOrdered <= 0) throw new BadRequestException('Item quantity must be positive');
       const totalCost = qtyOrdered * item.unitCost;
@@ -272,9 +342,7 @@ export class InventoryService {
       if (po.status === 'RECEIVED') throw new BadRequestException('PO is already fully received');
 
       for (const recv of dto.items) {
-        // Accept both 'id' (from web UI) and 'itemId' (legacy)
         const itemId = recv.id ?? recv.itemId;
-        // Accept both 'receivedQty' (from web UI) and 'qtyReceived' (legacy)
         const receivedQty = recv.receivedQty ?? recv.qtyReceived ?? 0;
         const item = po.items.find((i) => i.id === itemId);
         if (!item) continue;
@@ -284,10 +352,20 @@ export class InventoryService {
         const newQtyReceived = Number(item.qtyReceived) + actualQty;
         await tx.purchaseOrderItem.update({ where: { id: item.id }, data: { qtyReceived: newQtyReceived } });
 
-        // Create stock movement
         await tx.stockMovement.create({ data: { productId: item.productId, type: 'PURCHASE', quantity: actualQty, unitCost: item.unitCost, supplierId: po.supplierId, reference: po.poNumber, performedById: userId } });
 
-        // Update product stock with WAC
+        // Create StockLot for FIFO/LIFO tracking
+        await tx.stockLot.create({
+          data: {
+            productId: item.productId,
+            purchaseDate: new Date(),
+            qty: new Prisma.Decimal(actualQty),
+            remainingQty: new Prisma.Decimal(actualQty),
+            unitCost: item.unitCost,
+            reference: po.poNumber,
+          },
+        });
+
         const prod = await tx.product.findUnique({ where: { id: item.productId } });
         if (prod) {
           const curStock = Number(prod.currentStock);
