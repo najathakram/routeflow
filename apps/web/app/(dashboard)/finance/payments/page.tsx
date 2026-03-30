@@ -4,9 +4,7 @@ import React from "react";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useInvoicePayments } from "@/lib/api/invoices";
 import Link from "next/link";
-
-const fmt = (n: number) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2 }).format(n);
-const fmtDate = (s: string) => new Date(s).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+import { fmt, fmtDate } from "@/lib/formatting";
 
 const METHOD_LABELS: Record<string, string> = { CASH: "Cash", CHECK: "Check", ACH: "ACH", OTHER: "Other", CREDIT_NOTE: "Credit Note", ADVANCE: "Advance" };
 const METHOD_COLORS: Record<string, string> = {

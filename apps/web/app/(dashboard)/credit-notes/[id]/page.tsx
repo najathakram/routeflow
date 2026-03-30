@@ -23,21 +23,7 @@ import {
   type CreditNoteStatus,
 } from "@/lib/api/credit-notes";
 import { useInvoices } from "@/lib/api/invoices";
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-const fmt = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
-
-function fmtDate(d?: string | null) {
-  if (!d) return "—";
-  const dt = new Date(d);
-  if (isNaN(dt.getTime())) return "—";
-  return dt.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-}
+import { fmt, fmtDate } from "@/lib/formatting";
 
 // ─── Status badge ─────────────────────────────────────────────────────────────
 
@@ -176,7 +162,7 @@ function ApplyToInvoiceModal({
               <option value="">Select invoice…</option>
               {invoices.map((inv) => (
                 <option key={inv.id} value={inv.id}>
-                  {inv.invoiceNumber} — {fmt.format(Number(inv.balanceDue))} due
+                  {inv.invoiceNumber} — {fmt(Number(inv.balanceDue))} due
                 </option>
               ))}
             </select>
@@ -418,7 +404,7 @@ export default function CreditNoteDetailPage({ params }: { params: { id: string 
                   <p className="text-xs font-semibold uppercase tracking-wider text-navy/40">
                     Credit Amount
                   </p>
-                  <p className="mt-1 text-3xl font-bold text-navy">{fmt.format(Number(cn.amount))}</p>
+                  <p className="mt-1 text-3xl font-bold text-navy">{fmt(Number(cn.amount))}</p>
                 </div>
                 <div className="flex h-12 w-12 items-center justify-center rounded-full bg-green-100">
                   <FileText className="h-6 w-6 text-green-600" />
@@ -456,7 +442,7 @@ export default function CreditNoteDetailPage({ params }: { params: { id: string 
               </div>
               <div className="flex justify-between">
                 <dt className="text-navy/60">Amount</dt>
-                <dd className="font-bold text-navy">{fmt.format(Number(cn.amount))}</dd>
+                <dd className="font-bold text-navy">{fmt(Number(cn.amount))}</dd>
               </div>
               <div className="flex justify-between">
                 <dt className="text-navy/60">Issue Date</dt>

@@ -21,21 +21,7 @@ import {
 } from "@/lib/api/credit-notes";
 import { useCustomers } from "@/lib/api/customers";
 import { useInvoices } from "@/lib/api/invoices";
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-const fmt = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
-
-function fmtDate(d?: string | null) {
-  if (!d) return "—";
-  const dt = new Date(d);
-  if (isNaN(dt.getTime())) return "—";
-  return dt.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-}
+import { fmt, fmtDate } from "@/lib/formatting";
 
 // ─── Status badge ─────────────────────────────────────────────────────────────
 
@@ -541,7 +527,7 @@ export default function CreditNotesPage() {
                     {fmtDate((cn as any).issueDate ?? cn.createdAt)}
                   </td>
                   <td className="px-4 py-3 text-right font-medium text-navy">
-                    {fmt.format(Number(cn.amount))}
+                    {fmt(Number(cn.amount))}
                   </td>
                   <td className="px-4 py-3">
                     <CreditNoteStatusBadge status={cn.status} />

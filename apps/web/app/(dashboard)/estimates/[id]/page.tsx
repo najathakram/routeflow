@@ -24,21 +24,7 @@ import {
   useVoidEstimate,
   type EstimateStatus,
 } from "@/lib/api/estimates";
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-const fmt = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
-
-function fmtDate(d?: string | null) {
-  if (!d) return "—";
-  const dt = new Date(d);
-  if (isNaN(dt.getTime())) return "—";
-  return dt.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-}
+import { fmt, fmtDate } from "@/lib/formatting";
 
 // ─── Status badge ─────────────────────────────────────────────────────────────
 
@@ -408,10 +394,10 @@ export default function EstimateDetailPage({ params }: { params: { id: string } 
                       <td className="px-6 py-3 text-navy">{item.description}</td>
                       <td className="px-4 py-3 text-right text-navy/70">{item.qty}</td>
                       <td className="px-4 py-3 text-right text-navy/70">
-                        {fmt.format(Number(item.unitPrice))}
+                        {fmt(Number(item.unitPrice))}
                       </td>
                       <td className="px-6 py-3 text-right font-medium text-navy">
-                        {fmt.format(Number(item.qty) * Number(item.unitPrice))}
+                        {fmt(Number(item.qty) * Number(item.unitPrice))}
                       </td>
                     </tr>
                   ))}
@@ -424,15 +410,15 @@ export default function EstimateDetailPage({ params }: { params: { id: string } 
               <div className="ml-auto w-56 space-y-2 text-sm">
                 <div className="flex justify-between text-navy/70">
                   <span>Subtotal</span>
-                  <span>{fmt.format(subtotal)}</span>
+                  <span>{fmt(subtotal)}</span>
                 </div>
                 <div className="flex justify-between text-navy/70">
                   <span>Tax</span>
-                  <span>{fmt.format(tax)}</span>
+                  <span>{fmt(tax)}</span>
                 </div>
                 <div className="flex justify-between border-t border-surface-border pt-2 text-base font-bold text-navy">
                   <span>Total</span>
-                  <span>{fmt.format(total)}</span>
+                  <span>{fmt(total)}</span>
                 </div>
               </div>
             </div>
@@ -459,15 +445,15 @@ export default function EstimateDetailPage({ params }: { params: { id: string } 
               </div>
               <div className="flex justify-between">
                 <dt className="text-navy/60">Subtotal</dt>
-                <dd className="text-navy">{fmt.format(subtotal)}</dd>
+                <dd className="text-navy">{fmt(subtotal)}</dd>
               </div>
               <div className="flex justify-between">
                 <dt className="text-navy/60">Tax</dt>
-                <dd className="text-navy">{fmt.format(tax)}</dd>
+                <dd className="text-navy">{fmt(tax)}</dd>
               </div>
               <div className="flex justify-between border-t border-surface-border pt-2 font-bold text-navy">
                 <dt>Total</dt>
-                <dd>{fmt.format(total)}</dd>
+                <dd>{fmt(total)}</dd>
               </div>
             </dl>
 

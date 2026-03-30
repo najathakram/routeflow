@@ -116,9 +116,9 @@ function daysRemainingBadge(days: number | null) {
   );
 }
 
-// ─── Record Purchase Modal ────────────────────────────────────────────────────
+// ─── Quick Restock Modal ──────────────────────────────────────────────────────
 
-function RecordPurchaseModal({
+function QuickRestockModal({
   suppliers,
   products,
   onClose,
@@ -127,7 +127,7 @@ function RecordPurchaseModal({
   products: { id: string; name: string; sku?: string; unit: string; currentStock: number }[];
   onClose: () => void;
 }) {
-  const recordPurchase = useRecordPurchase();
+  const restock = useRecordPurchase();
   const [form, setForm] = React.useState({
     productId: "",
     supplierId: "",
@@ -182,7 +182,7 @@ function RecordPurchaseModal({
       alert(`Quantity must be a whole number for unit "${selectedProduct?.unit}"`);
       return;
     }
-    recordPurchase.mutate(
+    restock.mutate(
       {
         productId: form.productId,
         supplierId: form.supplierId || undefined,
@@ -200,7 +200,8 @@ function RecordPurchaseModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="w-full max-w-md rounded-xl bg-white shadow-xl">
         <div className="border-b border-surface-border px-6 py-4">
-          <h2 className="text-base font-semibold text-navy">Record Purchase</h2>
+          <h2 className="text-base font-semibold text-navy">Quick Restock</h2>
+          <p className="mt-0.5 text-xs text-navy/40">For supplier invoices, use{" "}<a href="/purchases" className="text-brand-500 hover:underline">Purchases &rarr; Vendor Bills</a></p>
         </div>
         <form onSubmit={handleSubmit} className="space-y-4 px-6 py-4">
           <div>
@@ -339,7 +340,7 @@ function RecordPurchaseModal({
 
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="secondary" onClick={onClose} type="button">Cancel</Button>
-            <Button type="submit" loading={recordPurchase.isPending}>Record Purchase</Button>
+            <Button type="submit" loading={restock.isPending}>Record Restock</Button>
           </div>
         </form>
       </div>
@@ -1388,7 +1389,7 @@ export default function InventoryPage() {
   const { data: productsData } = useProducts({ isActive: true });
   const products = productsData?.data ?? [];
 
-  const [showPurchaseModal, setShowPurchaseModal] = React.useState(false);
+  const [showRestockModal, setShowPurchaseModal] = React.useState(false);
   const [showAdjustModal, setShowAdjustModal] = React.useState(false);
   const [showSupplierModal, setShowSupplierModal] = React.useState(false);
 
@@ -1455,7 +1456,7 @@ export default function InventoryPage() {
                 Adjust Stock
               </Button>
               <Button size="sm" leftIcon={<Plus className="h-4 w-4" />} onClick={() => setShowPurchaseModal(true)}>
-                Record Purchase
+                Quick Restock
               </Button>
             </div>
           </div>
@@ -1590,8 +1591,8 @@ export default function InventoryPage() {
         </Tabs.Content>
       </Tabs.Root>
 
-      {showPurchaseModal && (
-        <RecordPurchaseModal
+      {showRestockModal && (
+        <QuickRestockModal
           suppliers={suppliers as Supplier[]}
           products={products.map((p: any) => ({
             id: p.id,

@@ -25,25 +25,7 @@ import { useSuppliers, usePurchaseOrders } from "@/lib/api/inventory";
 import { useProducts } from "@/lib/api/products";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-const fmt = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
-
-function fmtDate(d?: string | null) {
-  if (!d) return "—";
-  const dt = new Date(d);
-  if (isNaN(dt.getTime())) return "—";
-  return dt.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-}
-
-function todayIso() {
-  return new Date().toISOString().slice(0, 10);
-}
+import { fmt, fmtDate, todayIso } from "@/lib/formatting";
 
 function isOverdue(bill: VendorBill) {
   if (!bill.dueDate) return false;
@@ -558,7 +540,7 @@ function CreateBillModal({
                   {/* Subtotal */}
                   {parseFloat(row.qty) > 0 && parseFloat(row.unitCost) > 0 && (
                     <div className="text-right text-xs text-navy/50">
-                      Subtotal: {fmt.format((parseFloat(row.qty) || 0) * (parseFloat(row.unitCost) || 0))}
+                      Subtotal: {fmt((parseFloat(row.qty) || 0) * (parseFloat(row.unitCost) || 0))}
                     </div>
                   )}
                 </div>
@@ -567,7 +549,7 @@ function CreateBillModal({
             {lineItems.length > 0 && (
               <div className="mt-3 flex justify-end">
                 <span className="text-sm font-semibold text-navy">
-                  Total: {fmt.format(lineTotal)}
+                  Total: {fmt(lineTotal)}
                 </span>
               </div>
             )}
@@ -675,7 +657,7 @@ export default function VendorBillsPage() {
       <div className="flex flex-wrap items-start gap-3">
         <KpiChip
           label="Total Outstanding"
-          value={fmt.format(kpis.outstanding)}
+          value={fmt(kpis.outstanding)}
           sub="unpaid balance"
           danger={kpis.outstanding > 0}
         />
@@ -815,10 +797,10 @@ export default function VendorBillsPage() {
                       {overdue && <span className="ml-1.5 text-xs font-semibold text-red-500">Overdue</span>}
                     </td>
                     <td className="px-4 py-3 text-right font-medium text-navy">
-                      {fmt.format(Number(bill.totalOwed ?? 0))}
+                      {fmt(Number(bill.totalOwed ?? 0))}
                     </td>
                     <td className="px-4 py-3 text-right text-navy/60">
-                      {fmt.format(Number(bill.totalPaid ?? 0))}
+                      {fmt(Number(bill.totalPaid ?? 0))}
                     </td>
                     <td className="px-4 py-3 text-right">
                       {(() => {
@@ -827,7 +809,7 @@ export default function VendorBillsPage() {
                         const bal = Math.max(0, owed - paid);
                         return (
                           <span className={cn("font-medium", bal > 0 ? "text-danger" : "text-navy/40")}>
-                            {fmt.format(bal)}
+                            {fmt(bal)}
                           </span>
                         );
                       })()}

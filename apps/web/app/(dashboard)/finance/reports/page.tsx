@@ -13,9 +13,7 @@ import { BarChart2, FileText, DollarSign, TrendingDown, Filter, BookOpen } from 
 import { cn, useToast, type ToastVariant } from "@routeflow/ui/web";
 import Link from "next/link";
 import { useTransactions, useRecordPayment, type Transaction } from "@/lib/api/bookkeeping";
-
-const fmt = (n: number) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2 }).format(n);
-const fmtDate = (s: string | null | undefined) => s ? new Date(s).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—";
+import { fmt, fmtDate } from "@/lib/formatting";
 
 const REPORT_GROUPS = [
   {

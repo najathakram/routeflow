@@ -41,21 +41,7 @@ import {
   type InvoicePayment,
 } from "@/lib/api/invoices";
 import { useRouter } from "next/navigation";
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-const fmt = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
-
-function fmtDate(d?: string | null) {
-  if (!d) return "—";
-  const dt = new Date(d);
-  if (isNaN(dt.getTime())) return "—";
-  return dt.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-}
+import { fmt, fmtDate } from "@/lib/formatting";
 
 function methodLabel(method: string) {
   switch (method) {
@@ -427,7 +413,7 @@ function EditPaymentModal({
       return;
     }
     if (amt > maxAmount + 0.001) {
-      setAmountError(`Amount cannot exceed remaining balance of ${fmt.format(maxAmount)}.`);
+      setAmountError(`Amount cannot exceed remaining balance of ${fmt(maxAmount)}.`);
       return;
     }
     setAmountError("");
@@ -631,7 +617,7 @@ function DeletePaymentModal({
       open={isOpen}
       onClose={onClose}
       title="Delete Payment?"
-      description={`Remove payment of ${fmt.format(amount)} from this invoice?`}
+      description={`Remove payment of ${fmt(amount)} from this invoice?`}
       footer={
         <>
           <Button variant="secondary" onClick={onClose} disabled={isPending}>Cancel</Button>
@@ -810,7 +796,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
       {
         onSuccess: () => {
           setIsPaymentOpen(false);
-          toast({ title: "Payment recorded", description: `Payment of ${fmt.format(parseFloat(data.amount))} recorded.`, variant: "success" });
+          toast({ title: "Payment recorded", description: `Payment of ${fmt(parseFloat(data.amount))} recorded.`, variant: "success" });
         },
         onError: (err: any) => {
           toast({ title: "Failed to record payment", description: err?.response?.data?.message ?? "Please try again.", variant: "error" });
@@ -1014,7 +1000,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                 {balanceDue > 0 && (
                   <div className="mt-2">
                     <p className="text-xs font-semibold uppercase tracking-wider text-navy/40">Balance Due</p>
-                    <p className="text-2xl font-bold text-danger">{fmt.format(balanceDue)}</p>
+                    <p className="text-2xl font-bold text-danger">{fmt(balanceDue)}</p>
                   </div>
                 )}
                 {balanceDue === 0 && status === "PAID" && (
@@ -1088,9 +1074,9 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                     <tr key={item.id} className={idx % 2 === 0 ? "bg-white" : "bg-gray-50/60"}>
                       <td className="px-8 py-3 text-navy">{item.description}</td>
                       <td className="px-4 py-3 text-right text-navy/70">{item.qty}</td>
-                      <td className="px-4 py-3 text-right text-navy/70">{fmt.format(Number(item.unitPrice))}</td>
+                      <td className="px-4 py-3 text-right text-navy/70">{fmt(Number(item.unitPrice))}</td>
                       <td className="px-8 py-3 text-right font-medium text-navy">
-                        {fmt.format(Number(item.qty) * Number(item.unitPrice))}
+                        {fmt(Number(item.qty) * Number(item.unitPrice))}
                       </td>
                     </tr>
                   ))}
@@ -1103,34 +1089,34 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
               <div className="ml-auto w-64 space-y-2 text-sm">
                 <div className="flex justify-between text-navy/70">
                   <span>Subtotal</span>
-                  <span>{fmt.format(Number(invoice.subtotal))}</span>
+                  <span>{fmt(Number(invoice.subtotal))}</span>
                 </div>
                 {discount > 0 && (
                   <div className="flex justify-between text-success">
                     <span>Discount</span>
-                    <span>-{fmt.format(discount)}</span>
+                    <span>-{fmt(discount)}</span>
                   </div>
                 )}
                 {Number(invoice.taxAmount ?? 0) > 0 && (
                   <div className="flex justify-between text-navy/70">
                     <span>Tax</span>
-                    <span>{fmt.format(Number(invoice.taxAmount))}</span>
+                    <span>{fmt(Number(invoice.taxAmount))}</span>
                   </div>
                 )}
                 {shippingFee > 0 && (
                   <div className="flex justify-between text-navy/70">
                     <span>Shipping</span>
-                    <span>{fmt.format(shippingFee)}</span>
+                    <span>{fmt(shippingFee)}</span>
                   </div>
                 )}
                 <div className="flex justify-between border-t border-surface-border pt-2 text-base font-bold text-navy">
                   <span>Total</span>
-                  <span>{fmt.format(total)}</span>
+                  <span>{fmt(total)}</span>
                 </div>
                 {amountPaid > 0 && (
                   <div className="flex justify-between text-success">
                     <span className="font-medium">Amount Paid</span>
-                    <span className="font-bold">-{fmt.format(amountPaid)}</span>
+                    <span className="font-bold">-{fmt(amountPaid)}</span>
                   </div>
                 )}
                 <div
@@ -1140,7 +1126,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                   )}
                 >
                   <span>Balance Due</span>
-                  <span>{fmt.format(balanceDue)}</span>
+                  <span>{fmt(balanceDue)}</span>
                 </div>
               </div>
             </div>
@@ -1172,7 +1158,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                       </div>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center justify-between gap-2">
-                          <span className="text-sm font-semibold text-navy">{fmt.format(Number(pmt.amount))}</span>
+                          <span className="text-sm font-semibold text-navy">{fmt(Number(pmt.amount))}</span>
                           <div className="flex items-center gap-1">
                             <span className="text-xs text-navy/50">{fmtDate(pmt.createdAt)}</span>
                             {isEditable && (
@@ -1235,11 +1221,11 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
             <dl className="space-y-2 text-sm">
               <div className="flex justify-between">
                 <dt className="text-navy/60">Invoice Total</dt>
-                <dd className="font-medium text-navy">{fmt.format(total)}</dd>
+                <dd className="font-medium text-navy">{fmt(total)}</dd>
               </div>
               <div className="flex justify-between">
                 <dt className="text-navy/60">Paid</dt>
-                <dd className="font-medium text-success">{fmt.format(amountPaid)}</dd>
+                <dd className="font-medium text-success">{fmt(amountPaid)}</dd>
               </div>
               <div
                 className={cn(
@@ -1248,7 +1234,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                 )}
               >
                 <dt>Balance Due</dt>
-                <dd>{fmt.format(balanceDue)}</dd>
+                <dd>{fmt(balanceDue)}</dd>
               </div>
             </dl>
           </Card>

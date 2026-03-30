@@ -23,21 +23,7 @@ import {
 } from "@/lib/api/estimates";
 import { useCustomers } from "@/lib/api/customers";
 import { useProducts } from "@/lib/api/products";
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-const fmt = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
-
-function fmtDate(d?: string | null) {
-  if (!d) return "—";
-  const dt = new Date(d);
-  if (isNaN(dt.getTime())) return "—";
-  return dt.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-}
+import { fmt, fmtDate } from "@/lib/formatting";
 
 // ─── Status badge ─────────────────────────────────────────────────────────────
 
@@ -455,7 +441,7 @@ function CreateEstimateModal({
           {/* Subtotal */}
           <div className="mt-2 flex justify-end">
             <p className="text-sm text-navy/60">
-              Subtotal: <span className="font-semibold text-navy">{fmt.format(subtotal)}</span>
+              Subtotal: <span className="font-semibold text-navy">{fmt(subtotal)}</span>
             </p>
           </div>
         </div>
@@ -693,7 +679,7 @@ export default function EstimatesPage() {
                     {fmtDate((est as any).expiresAt ?? (est as any).expiryDate)}
                   </td>
                   <td className="px-4 py-3 text-right font-medium text-navy">
-                    {fmt.format(Number(est.total))}
+                    {fmt(Number(est.total))}
                   </td>
                   <td className="px-4 py-3">
                     <EstimateStatusBadge status={est.status} />

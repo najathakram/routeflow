@@ -18,10 +18,7 @@ import { useCustomers, useCustomerPrices, type Customer } from "@/lib/api/custom
 import { useProducts } from "@/lib/api/products";
 import { apiClient } from "@/lib/api-client";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-const fmt = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
+import { fmt } from "@/lib/formatting";
 
 const TAX_RATE = 0.1; // 10% – adjust as needed
 
@@ -228,7 +225,7 @@ function ProductSearchInput({
                     <span className="text-sm font-medium text-navy">{p.name}</span>
                     {p.sku && <span className="ml-2 text-xs text-navy/40">{p.sku}</span>}
                   </div>
-                  <span className="text-xs text-navy/60">{fmt.format(Number(p.pricePerUnit))}</span>
+                  <span className="text-xs text-navy/60">{fmt(Number(p.pricePerUnit))}</span>
                 </button>
               </li>
             ))}
@@ -676,7 +673,7 @@ export default function NewInvoicePage() {
                     <span />
                     <span />
                     <span className="col-span-1 text-right text-xs font-medium text-navy/60">
-                      = {fmt.format(lineTotal(item))}
+                      = {fmt(lineTotal(item))}
                     </span>
                     {showAvgCost && <span />}
                     <span />
@@ -698,12 +695,12 @@ export default function NewInvoicePage() {
                 <div className="ml-auto w-64 space-y-2 text-sm">
                   <div className="flex justify-between text-navy/70">
                     <span>Subtotal</span>
-                    <span>{fmt.format(subtotal)}</span>
+                    <span>{fmt(subtotal)}</span>
                   </div>
                   {tax > 0 && (
                     <div className="flex justify-between text-navy/70">
                       <span>Tax ({(TAX_RATE * 100).toFixed(0)}%)</span>
-                      <span>{fmt.format(tax)}</span>
+                      <span>{fmt(tax)}</span>
                     </div>
                   )}
                   {/* Adjustment row */}
@@ -720,7 +717,7 @@ export default function NewInvoicePage() {
                   </div>
                   <div className="flex justify-between border-t border-surface-border pt-2 text-base font-bold text-navy">
                     <span>Total</span>
-                    <span>{fmt.format(total)}</span>
+                    <span>{fmt(total)}</span>
                   </div>
                 </div>
               </div>
@@ -755,25 +752,25 @@ export default function NewInvoicePage() {
               <dl className="space-y-2 text-sm">
                 <div className="flex justify-between">
                   <dt className="text-navy/60">Subtotal</dt>
-                  <dd className="font-medium text-navy">{fmt.format(subtotal)}</dd>
+                  <dd className="font-medium text-navy">{fmt(subtotal)}</dd>
                 </div>
                 {tax > 0 && (
                   <div className="flex justify-between">
                     <dt className="text-navy/60">Tax ({(TAX_RATE * 100).toFixed(0)}%)</dt>
-                    <dd className="font-medium text-navy">{fmt.format(tax)}</dd>
+                    <dd className="font-medium text-navy">{fmt(tax)}</dd>
                   </div>
                 )}
                 {adjustment !== 0 && (
                   <div className="flex justify-between">
                     <dt className="text-navy/60">Adjustment</dt>
                     <dd className={cn("font-medium", adjustment < 0 ? "text-success" : "text-navy")}>
-                      {adjustment < 0 ? "-" : "+"}{fmt.format(Math.abs(adjustment))}
+                      {adjustment < 0 ? "-" : "+"}{fmt(Math.abs(adjustment))}
                     </dd>
                   </div>
                 )}
                 <div className="flex justify-between border-t border-surface-border pt-2">
                   <dt className="font-semibold text-navy">Total</dt>
-                  <dd className="text-base font-bold text-navy">{fmt.format(total)}</dd>
+                  <dd className="text-base font-bold text-navy">{fmt(total)}</dd>
                 </div>
                 <div className="flex justify-between pt-1 text-xs text-navy/50">
                   <dt>Total Quantity</dt>
@@ -813,7 +810,7 @@ export default function NewInvoicePage() {
           </div>
           <div className="text-right">
             <p className="text-xs text-navy/50">Total Amount</p>
-            <p className="text-lg font-bold text-navy">{fmt.format(total)}</p>
+            <p className="text-lg font-bold text-navy">{fmt(total)}</p>
           </div>
         </div>
       </div>

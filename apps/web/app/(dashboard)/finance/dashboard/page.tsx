@@ -9,9 +9,7 @@ import {
   BarChart2, ArrowRight, RefreshCw, AlertCircle
 } from "lucide-react";
 import { cn } from "@routeflow/ui/web";
-
-const fmt = (n: number) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(n);
-const fmtShort = (n: number) => n >= 1000 ? `$${(n / 1000).toFixed(1)}k` : fmt(n);
+import { fmt, fmtShort } from "@/lib/formatting";
 
 const CHART_COLORS = ["#1e3a5f", "#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6"];
 
@@ -231,22 +229,51 @@ export default function FinanceDashboardPage() {
         </table>
       </div>
 
-      {/* Quick links */}
+      {/* Action Stats */}
       <div className="grid grid-cols-4 gap-4">
-        {[
-          { label: "AR Aging Report", href: "/finance/reports?report=ar-aging", icon: AlertCircle, color: "text-orange-500 bg-orange-50" },
-          { label: "Payments Received", href: "/finance/payments", icon: DollarSign, color: "text-success bg-success-bg" },
-          { label: "Expense Report", href: "/finance/reports?report=expenses-by-category", icon: TrendingDown, color: "text-danger bg-danger-bg" },
-          { label: "P&L Report", href: "/finance/reports?report=pl", icon: BarChart2, color: "text-brand-500 bg-brand-50" },
-        ].map((link) => (
-          <Link key={link.href} href={link.href} className="flex items-center gap-3 rounded-xl border border-surface-border bg-white p-4 hover:shadow-sm transition-shadow">
-            <span className={cn("flex h-9 w-9 items-center justify-center rounded-lg", link.color)}>
-              <link.icon className="h-4 w-4" />
+        <Link href="/finance/reports?report=ar-aging" className="group rounded-xl border border-surface-border bg-white p-4 hover:shadow-sm transition-all hover:border-orange-200">
+          <div className="flex items-center justify-between">
+            <span className="flex h-9 w-9 items-center justify-center rounded-lg text-orange-500 bg-orange-50">
+              <AlertCircle className="h-4 w-4" />
             </span>
-            <span className="text-sm font-medium text-navy">{link.label}</span>
-            <ArrowRight className="ml-auto h-4 w-4 text-navy/30" />
-          </Link>
-        ))}
+            <ArrowRight className="h-4 w-4 text-navy/20 transition-transform group-hover:translate-x-0.5" />
+          </div>
+          <p className="mt-3 text-lg font-bold text-navy">{fmt((ar?.days31_45 ?? 0) + (ar?.days45plus ?? 0))}</p>
+          <p className="text-xs text-navy/50">Overdue ({">"}30 days)</p>
+        </Link>
+
+        <Link href="/finance/payments" className="group rounded-xl border border-surface-border bg-white p-4 hover:shadow-sm transition-all hover:border-green-200">
+          <div className="flex items-center justify-between">
+            <span className="flex h-9 w-9 items-center justify-center rounded-lg text-success bg-success-bg">
+              <DollarSign className="h-4 w-4" />
+            </span>
+            <ArrowRight className="h-4 w-4 text-navy/20 transition-transform group-hover:translate-x-0.5" />
+          </div>
+          <p className="mt-3 text-lg font-bold text-navy">{fmt(table?.thisWeek?.receipts ?? 0)}</p>
+          <p className="text-xs text-navy/50">Received this week</p>
+        </Link>
+
+        <Link href="/purchases?tab=expenses" className="group rounded-xl border border-surface-border bg-white p-4 hover:shadow-sm transition-all hover:border-red-200">
+          <div className="flex items-center justify-between">
+            <span className="flex h-9 w-9 items-center justify-center rounded-lg text-danger bg-danger-bg">
+              <TrendingDown className="h-4 w-4" />
+            </span>
+            <ArrowRight className="h-4 w-4 text-navy/20 transition-transform group-hover:translate-x-0.5" />
+          </div>
+          <p className="mt-3 text-lg font-bold text-navy">{fmt(sales?.totalExpenses ?? 0)}</p>
+          <p className="text-xs text-navy/50">Total expenses YTD</p>
+        </Link>
+
+        <Link href="/purchases?tab=bills" className="group rounded-xl border border-surface-border bg-white p-4 hover:shadow-sm transition-all hover:border-brand-200">
+          <div className="flex items-center justify-between">
+            <span className="flex h-9 w-9 items-center justify-center rounded-lg text-brand-500 bg-brand-50">
+              <BarChart2 className="h-4 w-4" />
+            </span>
+            <ArrowRight className="h-4 w-4 text-navy/20 transition-transform group-hover:translate-x-0.5" />
+          </div>
+          <p className="mt-3 text-lg font-bold text-navy">{fmt((table?.thisMonth?.sales ?? 0) - (table?.thisMonth?.receipts ?? 0))}</p>
+          <p className="text-xs text-navy/50">Net outstanding this month</p>
+        </Link>
       </div>
     </div>
   );

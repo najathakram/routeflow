@@ -16,21 +16,7 @@ import { Button, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useInvoices, type Invoice, type InvoiceStatus } from "@/lib/api/invoices";
 import { useBookkeepingSummary } from "@/lib/api/bookkeeping";
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-const fmt = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
-
-function fmtDate(d?: string | null) {
-  if (!d) return "—";
-  const dt = new Date(d);
-  if (isNaN(dt.getTime())) return "—";
-  return dt.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-}
+import { fmt, fmtDate } from "@/lib/formatting";
 
 // ─── Contextual status display (Zoho-style) ───────────────────────────────────
 
@@ -179,25 +165,25 @@ function PaymentSummaryBar({
   const items = [
     {
       label: "Total Outstanding",
-      value: fmt.format(kpis.totalOutstanding),
+      value: fmt(kpis.totalOutstanding),
       filter: "SENT",
       valueClass: "text-navy font-bold",
     },
     {
       label: "Due Today",
-      value: fmt.format(kpis.dueToday),
+      value: fmt(kpis.dueToday),
       filter: "",
       valueClass: kpis.dueToday > 0 ? "text-orange-500 font-bold" : "text-navy font-bold",
     },
     {
       label: "Due Within 30 Days",
-      value: fmt.format(kpis.dueIn30),
+      value: fmt(kpis.dueIn30),
       filter: "",
       valueClass: "text-navy font-bold",
     },
     {
       label: "Overdue",
-      value: fmt.format(kpis.overdue),
+      value: fmt(kpis.overdue),
       filter: "OVERDUE",
       valueClass: kpis.overdue > 0 ? "text-red-600 font-bold" : "text-navy font-bold",
     },
@@ -463,11 +449,11 @@ export default function InvoicesPage() {
                       {fmtDate(inv.dueDate)}
                     </td>
                     <td className="px-4 py-3 text-right text-sm font-medium text-navy">
-                      {fmt.format(Number(inv.total))}
+                      {fmt(Number(inv.total))}
                     </td>
                     <td className="px-4 py-3 text-right">
                       <span className={cn("text-sm font-semibold", balance > 0 ? "text-danger" : "text-navy/30")}>
-                        {fmt.format(balance)}
+                        {fmt(balance)}
                       </span>
                     </td>
                     <td

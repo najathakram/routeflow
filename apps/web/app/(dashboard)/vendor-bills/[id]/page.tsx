@@ -21,21 +21,7 @@ import {
   type VendorBillStatus,
   type VendorBillPayment,
 } from "@/lib/api/vendor-bills";
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-const fmt = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
-
-function fmtDate(d?: string | null) {
-  if (!d) return "—";
-  const dt = new Date(d);
-  if (isNaN(dt.getTime())) return "—";
-  return dt.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-}
+import { fmt, fmtDate } from "@/lib/formatting";
 
 // ─── Status badge ─────────────────────────────────────────────────────────────
 
@@ -327,7 +313,7 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
           setIsPaymentOpen(false);
           toast({
             title: "Payment recorded",
-            description: `Payment of ${fmt.format(parseFloat(data.amount))} recorded.`,
+            description: `Payment of ${fmt(parseFloat(data.amount))} recorded.`,
             variant: "success",
           });
         },
@@ -476,10 +462,10 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
                       <td className="px-6 py-3 text-navy">{item.description}</td>
                       <td className="px-4 py-3 text-right text-navy/70">{item.qty}</td>
                       <td className="px-4 py-3 text-right text-navy/70">
-                        {fmt.format(Number(item.unitCost))}
+                        {fmt(Number(item.unitCost))}
                       </td>
                       <td className="px-6 py-3 text-right font-medium text-navy">
-                        {fmt.format(Number(item.qty) * Number(item.unitCost))}
+                        {fmt(Number(item.qty) * Number(item.unitCost))}
                       </td>
                     </tr>
                   ))}
@@ -492,12 +478,12 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
               <div className="ml-auto w-56 space-y-2 text-sm">
                 <div className="flex justify-between border-t border-surface-border pt-2 text-base font-bold text-navy">
                   <span>Total</span>
-                  <span>{fmt.format(total)}</span>
+                  <span>{fmt(total)}</span>
                 </div>
                 {amountPaid > 0 && (
                   <div className="flex justify-between text-success">
                     <span className="font-medium">Amount Paid</span>
-                    <span className="font-bold">-{fmt.format(amountPaid)}</span>
+                    <span className="font-bold">-{fmt(amountPaid)}</span>
                   </div>
                 )}
                 <div
@@ -507,7 +493,7 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
                   )}
                 >
                   <span>Balance Due</span>
-                  <span>{fmt.format(balance)}</span>
+                  <span>{fmt(balance)}</span>
                 </div>
               </div>
             </div>
@@ -540,7 +526,7 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-sm font-semibold text-navy">
-                          {fmt.format(Number(pmt.amount))}
+                          {fmt(Number(pmt.amount))}
                         </span>
                         <span className="text-xs text-navy/50">
                           {fmtDate(pmt.createdAt)}
@@ -578,11 +564,11 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
             <dl className="space-y-2 text-sm">
               <div className="flex justify-between">
                 <dt className="text-navy/60">Bill Total</dt>
-                <dd className="font-medium text-navy">{fmt.format(total)}</dd>
+                <dd className="font-medium text-navy">{fmt(total)}</dd>
               </div>
               <div className="flex justify-between">
                 <dt className="text-navy/60">Paid</dt>
-                <dd className="font-medium text-success">{fmt.format(amountPaid)}</dd>
+                <dd className="font-medium text-success">{fmt(amountPaid)}</dd>
               </div>
               <div
                 className={cn(
@@ -591,7 +577,7 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
                 )}
               >
                 <dt>Balance Due</dt>
-                <dd>{fmt.format(balance)}</dd>
+                <dd>{fmt(balance)}</dd>
               </div>
             </dl>
           </Card>

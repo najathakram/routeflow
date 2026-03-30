@@ -30,23 +30,9 @@ import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { ScanInvoiceModal } from "@/components/ScanInvoiceModal";
 import Link from "next/link";
+import { fmt, fmtDate, todayIso } from "@/lib/formatting";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-const fmt = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
-const fmtCurrency = (n: number) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2 }).format(n);
-const fmtDateStr = (s: string) => new Date(s).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-
-function fmtDate(d?: string | null) {
-  if (!d) return "—";
-  const dt = new Date(d);
-  if (isNaN(dt.getTime())) return "—";
-  return dt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-}
-
-function todayIso() {
-  return new Date().toISOString().slice(0, 10);
-}
 
 function isOverdue(bill: VendorBill) {
   if (!bill.dueDate) return false;
@@ -401,7 +387,7 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
                   </div>
                   {parseFloat(row.qty) > 0 && parseFloat(row.unitCost) > 0 && (
                     <div className="text-right text-xs text-navy/50">
-                      Subtotal: {fmt.format((parseFloat(row.qty) || 0) * (parseFloat(row.unitCost) || 0))}
+                      Subtotal: {fmt((parseFloat(row.qty) || 0) * (parseFloat(row.unitCost) || 0))}
                     </div>
                   )}
                 </div>
@@ -409,7 +395,7 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
             </div>
             {lineItems.length > 0 && (
               <div className="mt-3 flex justify-end">
-                <span className="text-sm font-semibold text-navy">Total: {fmt.format(lineTotal)}</span>
+                <span className="text-sm font-semibold text-navy">Total: {fmt(lineTotal)}</span>
               </div>
             )}
           </div>
@@ -496,7 +482,7 @@ function VendorBillsTab() {
 
       {/* KPI row */}
       <div className="flex flex-wrap items-start gap-3">
-        <KpiChip label="Total Outstanding" value={fmt.format(kpis.outstanding)} sub="unpaid balance" danger={kpis.outstanding > 0} />
+        <KpiChip label="Total Outstanding" value={fmt(kpis.outstanding)} sub="unpaid balance" danger={kpis.outstanding > 0} />
         <KpiChip label="Due This Week" value={String(kpis.dueThisWeekCount)} sub="bills due in 7 days" />
       </div>
 
@@ -577,12 +563,12 @@ function VendorBillsTab() {
                       {fmtDate(bill.dueDate)}
                       {overdue && <span className="ml-1.5 text-xs font-semibold text-red-500">Overdue</span>}
                     </td>
-                    <td className="px-4 py-3 text-right font-medium text-navy">{fmt.format(Number(bill.totalOwed ?? 0))}</td>
-                    <td className="px-4 py-3 text-right text-navy/60">{fmt.format(Number(bill.totalPaid ?? 0))}</td>
+                    <td className="px-4 py-3 text-right font-medium text-navy">{fmt(Number(bill.totalOwed ?? 0))}</td>
+                    <td className="px-4 py-3 text-right text-navy/60">{fmt(Number(bill.totalPaid ?? 0))}</td>
                     <td className="px-4 py-3 text-right">
                       {(() => {
                         const bal = Math.max(0, Number(bill.totalOwed ?? 0) - Number(bill.totalPaid ?? 0));
-                        return <span className={cn("font-medium", bal > 0 ? "text-danger" : "text-navy/40")}>{fmt.format(bal)}</span>;
+                        return <span className={cn("font-medium", bal > 0 ? "text-danger" : "text-navy/40")}>{fmt(bal)}</span>;
                       })()}
                     </td>
                     <td className="px-4 py-3"><VendorBillStatusBadge status={bill.status} /></td>
@@ -690,7 +676,7 @@ function ExpensesTab() {
             Clear filters
           </button>
         )}
-        {!isLoading && meta && <span className="ml-auto text-sm text-navy/60">{meta.total} expenses &middot; {fmtCurrency(total)} total</span>}
+        {!isLoading && meta && <span className="ml-auto text-sm text-navy/60">{meta.total} expenses &middot; {fmt(total)} total</span>}
       </div>
 
       {/* Table */}
@@ -716,12 +702,12 @@ function ExpensesTab() {
               )}
               {expenses.map((e) => (
                 <tr key={e.id} className="group hover:bg-surface-raised/50 transition-colors">
-                  <td className="px-5 py-3 text-navy/70">{fmtDateStr(e.date)}</td>
+                  <td className="px-5 py-3 text-navy/70">{fmtDate(e.date)}</td>
                   <td className="px-5 py-3 font-medium text-brand-600">{e.category.name}</td>
                   <td className="px-5 py-3 text-navy/70 max-w-xs truncate">{e.description ?? "—"}</td>
                   <td className="px-5 py-3 text-navy/70">{e.supplier?.name ?? "—"}</td>
                   <td className="px-5 py-3 text-navy/60 capitalize">{e.paymentMethod?.toLowerCase().replace("_", " ") ?? "—"}</td>
-                  <td className="px-5 py-3 text-right font-semibold text-navy">{fmtCurrency(Number(e.amount))}</td>
+                  <td className="px-5 py-3 text-right font-semibold text-navy">{fmt(Number(e.amount))}</td>
                   <td className="px-5 py-3">
                     {confirmDelete === e.id ? (
                       <div className="flex items-center gap-1">
