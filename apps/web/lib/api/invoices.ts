@@ -188,6 +188,40 @@ export function useVoidInvoice() {
   });
 }
 
+export function useReopenInvoice() {
+  const qc = useQueryClient();
+  return useMutation<Invoice, Error, string>({
+    mutationFn: (id) => apiClient.post(`/invoices/${id}/reopen`).then((r) => r.data),
+    onSuccess: (_, id) => {
+      qc.invalidateQueries({ queryKey: ['invoices'] });
+      qc.invalidateQueries({ queryKey: ['invoices', id] });
+    },
+  });
+}
+
+export function useApplyCreditNote() {
+  const qc = useQueryClient();
+  return useMutation<Invoice, Error, { creditNoteId: string; invoiceId: string; amount?: number }>({
+    mutationFn: ({ creditNoteId, ...data }) => apiClient.post(`/credit-notes/${creditNoteId}/apply`, data).then((r) => r.data),
+    onSuccess: (updated) => {
+      qc.invalidateQueries({ queryKey: ['invoices'] });
+      qc.invalidateQueries({ queryKey: ['invoices', updated.id] });
+      qc.invalidateQueries({ queryKey: ['credit-notes'] });
+    },
+  });
+}
+
+export function useApplyAdvanceToInvoice() {
+  const qc = useQueryClient();
+  return useMutation<Invoice, Error, { customerId: string; advancePaymentId: string; invoiceId: string; amount?: number }>({
+    mutationFn: ({ customerId, advancePaymentId, ...data }) => apiClient.post(`/customers/${customerId}/advance-payments/${advancePaymentId}/apply`, data).then((r) => r.data),
+    onSuccess: (updated) => {
+      qc.invalidateQueries({ queryKey: ['invoices'] });
+      qc.invalidateQueries({ queryKey: ['invoices', updated.id] });
+    },
+  });
+}
+
 export function useWriteOffInvoice() {
   const qc = useQueryClient();
   return useMutation<Invoice, Error, { id: string; reason: string }>({

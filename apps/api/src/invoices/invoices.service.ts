@@ -195,6 +195,22 @@ export class InvoicesService {
     return this.prisma.invoice.update({ where: { id }, data: { status: InvoiceStatus.VOID } });
   }
 
+  async reopenInvoice(id: string) {
+    const inv = await this.prisma.invoice.findUnique({ where: { id }, include: { payments: true } });
+    if (!inv) throw new NotFoundException('Invoice not found');
+    if (inv.status !== InvoiceStatus.PAID) throw new BadRequestException('Only PAID invoices can be reopened');
+
+    const totalPaid = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
+    const total = Number(inv.total);
+    const newStatus = this.recomputeStatus(totalPaid, total, inv.dueDate);
+
+    return this.prisma.invoice.update({
+      where: { id },
+      data: { status: newStatus, paidAt: null },
+      include: { customer: { select: { id: true, businessName: true } }, items: true, payments: { orderBy: { createdAt: 'desc' } } },
+    });
+  }
+
   async duplicate(id: string) {
     const inv = await this.prisma.invoice.findUnique({ where: { id }, include: { items: true } });
     if (!inv) throw new NotFoundException("Invoice not found");

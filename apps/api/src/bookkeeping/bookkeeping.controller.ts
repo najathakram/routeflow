@@ -92,4 +92,41 @@ export class BookkeepingController {
 
   @Get("reports/cashflow")
   getCashFlow(@Query("from") from?: string, @Query("to") to?: string) { return this.bookkeepingService.getCashFlow(from, to); }
+
+  @Get("finance-dashboard")
+  getFinanceDashboard() { return this.bookkeepingService.getFinanceDashboard(); }
+
+  // ── Extended Reports ──
+  @Get("reports/ar-aging-invoices")
+  getArAgingInvoices() { return this.bookkeepingService.getArAgingInvoices(); }
+
+  @Get("reports/sales-by-customer")
+  getSalesByCustomer(@Query("from") from?: string, @Query("to") to?: string) { return this.bookkeepingService.getSalesByCustomer(from, to); }
+
+  @Get("reports/sales-by-item")
+  getSalesByItem(@Query("from") from?: string, @Query("to") to?: string) { return this.bookkeepingService.getSalesByItem(from, to); }
+
+  @Get("reports/customer-balance")
+  getCustomerBalanceSummary() { return this.bookkeepingService.getCustomerBalanceSummary(); }
+
+  @Get("reports/invoice-details")
+  getInvoiceDetailsReport(@Query("from") from?: string, @Query("to") to?: string, @Query("status") status?: string) { return this.bookkeepingService.getInvoiceDetailsReport(from, to, status); }
+
+  @Get("reports/bad-debts")
+  getBadDebtsReport() { return this.bookkeepingService.getBadDebtsReport(); }
+
+  @Get("reports/payments-received")
+  getPaymentsReceivedReport(@Query("from") from?: string, @Query("to") to?: string) { return this.bookkeepingService.getPaymentsReceivedReport(from, to); }
+
+  @Get("reports/time-to-get-paid")
+  getTimeToGetPaid(@Query("from") from?: string, @Query("to") to?: string) { return this.bookkeepingService.getTimeToGetPaid(from, to); }
+
+  @Get("reports/expense-details")
+  getExpenseDetailsReport(@Query("from") from?: string, @Query("to") to?: string, @Query("categoryId") categoryId?: string) { return this.bookkeepingService.getExpenseDetailsReport(from, to, categoryId); }
+
+  @Get("reports/expenses-by-category")
+  getExpensesByCategoryReport(@Query("from") from?: string, @Query("to") to?: string) { return this.bookkeepingService.getExpensesByCategoryReport(from, to); }
+
+  @Get("reports/expenses-by-customer")
+  getExpensesByCustomerReport(@Query("from") from?: string, @Query("to") to?: string) { return this.bookkeepingService.getExpensesByCustomerReport(from, to); }
 }

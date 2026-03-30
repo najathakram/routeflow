@@ -31,6 +31,7 @@ import { MessagesModule } from "./messages/messages.module";
 import { UploadsModule } from "./uploads/uploads.module";
 import { SuppliersModule } from "./suppliers/suppliers.module";
 import { RecurringInvoicesModule } from "./recurring-invoices/recurring-invoices.module";
+import { ImportModule } from "./import/import.module";
 
 import { AppController } from "./app.controller";
 import { AppService } from "./app.service";
@@ -100,6 +101,7 @@ import { AppService } from "./app.service";
     UploadsModule,
     SuppliersModule,
     RecurringInvoicesModule,
+    ImportModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -21,6 +21,7 @@ import {
   AlertCircle,
   CheckCheck,
   BookOpen,
+  RotateCcw,
 } from "lucide-react";
 import { Button, Card, Modal, cn, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
@@ -28,6 +29,7 @@ import {
   useInvoice,
   useSendInvoice,
   useVoidInvoice,
+  useReopenInvoice,
   useRecordInvoicePayment,
   useCreateInvoice,
   useWriteOffInvoice,
@@ -702,6 +704,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
   const { data: invoice, isLoading, isError } = useInvoice(params.id);
   const sendInvoice = useSendInvoice();
   const voidInvoice = useVoidInvoice();
+  const reopenInvoice = useReopenInvoice();
   const recordPayment = useRecordInvoicePayment();
   const createInvoice = useCreateInvoice();
   const writeOffInvoice = useWriteOffInvoice();
@@ -711,6 +714,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
 
   const [isPaymentOpen, setIsPaymentOpen] = React.useState(false);
   const [isVoidOpen, setIsVoidOpen] = React.useState(false);
+  const [isReopenOpen, setIsReopenOpen] = React.useState(false);
   const [isWriteOffOpen, setIsWriteOffOpen] = React.useState(false);
   const [editingPayment, setEditingPayment] = React.useState<InvoicePayment | null>(null);
   const [deletingPayment, setDeletingPayment] = React.useState<InvoicePayment | null>(null);
@@ -772,6 +776,18 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
       },
       onError: () => {
         toast({ title: "Failed to void invoice", description: "Please try again.", variant: "error" });
+      },
+    });
+  };
+
+  const handleReopen = () => {
+    reopenInvoice.mutate(invoice.id, {
+      onSuccess: () => {
+        setIsReopenOpen(false);
+        toast({ title: "Invoice reopened", description: `Invoice ${invoice.invoiceNumber} has been reopened.`, variant: "success" });
+      },
+      onError: () => {
+        toast({ title: "Failed to reopen invoice", description: "Please try again.", variant: "error" });
       },
     });
   };
@@ -953,6 +969,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
             }
             items={[
               { label: "Duplicate", onClick: handleDuplicate },
+              { label: "Reopen Invoice", onClick: () => setIsReopenOpen(true), disabled: status !== "PAID" },
               { label: "Void Invoice", onClick: () => setIsVoidOpen(true), danger: true, disabled: !canVoid },
             ]}
           />
@@ -1271,6 +1288,28 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
         invoiceNumber={invoice.invoiceNumber}
         isPending={voidInvoice.isPending}
       />
+
+      <Modal
+        open={isReopenOpen}
+        onClose={() => setIsReopenOpen(false)}
+        title="Reopen Invoice?"
+        description={`Invoice ${invoice.invoiceNumber} will be moved back to the appropriate open state.`}
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setIsReopenOpen(false)} disabled={reopenInvoice.isPending}>
+              Cancel
+            </Button>
+            <Button variant="primary" onClick={handleReopen} loading={reopenInvoice.isPending}>
+              <RotateCcw className="mr-1.5 h-4 w-4" />
+              Reopen Invoice
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-navy/70">
+          Are you sure you want to reopen this invoice? This will change its status back to the appropriate state.
+        </p>
+      </Modal>
 
       <WriteOffModal
         isOpen={isWriteOffOpen}

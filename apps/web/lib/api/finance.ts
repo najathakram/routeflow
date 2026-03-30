@@ -1,0 +1,235 @@
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { apiClient } from '../api-client';
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+export interface FinanceDashboard {
+  arAging: {
+    total: number;
+    current: number;
+    days1_15: number;
+    days16_30: number;
+    days31_45: number;
+    days45plus: number;
+  };
+  monthlySales: {
+    data: Array<{ month: string; sales: number; receipts: number; expenses: number }>;
+    totalSales: number;
+    totalReceipts: number;
+    totalExpenses: number;
+  };
+  topExpenses: Array<{ name: string; amount: number }>;
+  summaryTable: {
+    today: { sales: number; receipts: number; due: number };
+    thisWeek: { sales: number; receipts: number; due: number };
+    thisMonth: { sales: number; receipts: number; due: number };
+    thisQuarter: { sales: number; receipts: number; due: number };
+    thisYear: { sales: number; receipts: number; due: number };
+  };
+}
+
+export interface ArAgingBucket {
+  id: string;
+  invoiceNumber: string;
+  customer: { id: string; businessName: string };
+  total: number;
+  balance: number;
+  dueDate?: string;
+  status: string;
+}
+
+export interface ExpenseCategory {
+  id: string;
+  name: string;
+  code: string;
+  isCustom: boolean;
+}
+
+export interface Expense {
+  id: string;
+  date: string;
+  category: ExpenseCategory;
+  supplier?: { id: string; name: string };
+  amount: number;
+  description?: string;
+  paymentMethod?: string;
+  notes?: string;
+  createdAt?: string;
+}
+
+export interface CustomerBalance {
+  customerId: string;
+  businessName: string;
+  contactName?: string;
+  phone?: string;
+  invoiceCount: number;
+  balance: number;
+  overdue: number;
+}
+
+// ─── Finance Dashboard ────────────────────────────────────────────────────────
+
+export function useFinanceDashboard() {
+  return useQuery<FinanceDashboard>({
+    queryKey: ['finance-dashboard'],
+    queryFn: () => apiClient.get('/bookkeeping/finance-dashboard').then((r) => r.data),
+    staleTime: 60_000,
+  });
+}
+
+// ─── AR Aging ─────────────────────────────────────────────────────────────────
+
+export function useArAgingInvoices() {
+  return useQuery<{
+    buckets: { current: ArAgingBucket[]; days1_30: ArAgingBucket[]; days31_60: ArAgingBucket[]; days61_90: ArAgingBucket[]; days90plus: ArAgingBucket[] };
+    totals: { current: number; days1_30: number; days31_60: number; days61_90: number; days90plus: number; total: number };
+  }>({
+    queryKey: ['reports', 'ar-aging-invoices'],
+    queryFn: () => apiClient.get('/bookkeeping/reports/ar-aging-invoices').then((r) => r.data),
+  });
+}
+
+// ─── Sales Reports ────────────────────────────────────────────────────────────
+
+export function useSalesByCustomer(from?: string, to?: string) {
+  return useQuery({
+    queryKey: ['reports', 'sales-by-customer', from, to],
+    queryFn: () => apiClient.get('/bookkeeping/reports/sales-by-customer', { params: { from, to } }).then((r) => r.data),
+  });
+}
+
+export function useSalesByItem(from?: string, to?: string) {
+  return useQuery({
+    queryKey: ['reports', 'sales-by-item', from, to],
+    queryFn: () => apiClient.get('/bookkeeping/reports/sales-by-item', { params: { from, to } }).then((r) => r.data),
+  });
+}
+
+// ─── Customer Balance ─────────────────────────────────────────────────────────
+
+export function useCustomerBalanceSummary() {
+  return useQuery<{ data: CustomerBalance[] }>({
+    queryKey: ['reports', 'customer-balance'],
+    queryFn: () => apiClient.get('/bookkeeping/reports/customer-balance').then((r) => r.data),
+  });
+}
+
+// ─── Invoice Reports ──────────────────────────────────────────────────────────
+
+export function useInvoiceDetailsReport(from?: string, to?: string, status?: string) {
+  return useQuery({
+    queryKey: ['reports', 'invoice-details', from, to, status],
+    queryFn: () => apiClient.get('/bookkeeping/reports/invoice-details', { params: { from, to, status } }).then((r) => r.data),
+  });
+}
+
+export function useBadDebtsReport() {
+  return useQuery({
+    queryKey: ['reports', 'bad-debts'],
+    queryFn: () => apiClient.get('/bookkeeping/reports/bad-debts').then((r) => r.data),
+  });
+}
+
+// ─── Payments Reports ─────────────────────────────────────────────────────────
+
+export function usePaymentsReceivedReport(from?: string, to?: string) {
+  return useQuery({
+    queryKey: ['reports', 'payments-received', from, to],
+    queryFn: () => apiClient.get('/bookkeeping/reports/payments-received', { params: { from, to } }).then((r) => r.data),
+  });
+}
+
+export function useTimeToGetPaid(from?: string, to?: string) {
+  return useQuery({
+    queryKey: ['reports', 'time-to-get-paid', from, to],
+    queryFn: () => apiClient.get('/bookkeeping/reports/time-to-get-paid', { params: { from, to } }).then((r) => r.data),
+  });
+}
+
+// ─── Expense Reports ──────────────────────────────────────────────────────────
+
+export function useExpenseDetailsReport(from?: string, to?: string, categoryId?: string) {
+  return useQuery({
+    queryKey: ['reports', 'expense-details', from, to, categoryId],
+    queryFn: () => apiClient.get('/bookkeeping/reports/expense-details', { params: { from, to, categoryId } }).then((r) => r.data),
+  });
+}
+
+export function useExpensesByCategoryReport(from?: string, to?: string) {
+  return useQuery({
+    queryKey: ['reports', 'expenses-by-category', from, to],
+    queryFn: () => apiClient.get('/bookkeeping/reports/expenses-by-category', { params: { from, to } }).then((r) => r.data),
+  });
+}
+
+// ─── Expenses CRUD ────────────────────────────────────────────────────────────
+
+export function useExpenses(params?: { categoryId?: string; supplierId?: string; from?: string; to?: string; page?: number; limit?: number }) {
+  return useQuery<{ data: Expense[]; meta: { total: number; page: number; limit: number; totalPages: number } }>({
+    queryKey: ['expenses', params],
+    queryFn: () => apiClient.get('/bookkeeping/expenses', { params }).then((r) => r.data),
+  });
+}
+
+export function useExpenseCategories() {
+  return useQuery<ExpenseCategory[]>({
+    queryKey: ['expense-categories'],
+    queryFn: () => apiClient.get('/bookkeeping/expense-categories').then((r) => r.data),
+  });
+}
+
+export interface CreateExpenseDto {
+  categoryId: string;
+  supplierId?: string;
+  amount: number;
+  date: string;
+  description?: string;
+  paymentMethod?: string;
+  notes?: string;
+}
+
+export function useCreateExpense() {
+  const qc = useQueryClient();
+  return useMutation<Expense, Error, CreateExpenseDto>({
+    mutationFn: (dto) => apiClient.post('/bookkeeping/expenses', dto).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['expenses'] });
+      qc.invalidateQueries({ queryKey: ['finance-dashboard'] });
+    },
+  });
+}
+
+export function useUpdateExpense() {
+  const qc = useQueryClient();
+  return useMutation<Expense, Error, { id: string } & Partial<CreateExpenseDto>>({
+    mutationFn: ({ id, ...dto }) => apiClient.patch(`/bookkeeping/expenses/${id}`, dto).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['expenses'] }),
+  });
+}
+
+export function useDeleteExpense() {
+  const qc = useQueryClient();
+  return useMutation<void, Error, string>({
+    mutationFn: (id) => apiClient.post(`/bookkeeping/expenses/${id}/delete`).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['expenses'] });
+      qc.invalidateQueries({ queryKey: ['finance-dashboard'] });
+    },
+  });
+}
+
+// ─── P&L, Cash Flow ──────────────────────────────────────────────────────────
+
+export function useProfitAndLoss(from?: string, to?: string) {
+  return useQuery({
+    queryKey: ['reports', 'pl', from, to],
+    queryFn: () => apiClient.get('/bookkeeping/reports/pl', { params: { from, to } }).then((r) => r.data),
+  });
+}
+
+export function useCashFlow(from?: string, to?: string) {
+  return useQuery({
+    queryKey: ['reports', 'cashflow', from, to],
+    queryFn: () => apiClient.get('/bookkeeping/reports/cashflow', { params: { from, to } }).then((r) => r.data),
+  });
+}

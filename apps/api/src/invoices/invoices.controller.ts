@@ -41,6 +41,7 @@ export class InvoicesController {
   @Patch(":id") update(@Param("id") id: string, @Body() dto: Partial<CreateInvoiceDto>) { return this.invoicesService.update(id, dto); }
   @Post(":id/send") send(@Param("id") id: string) { return this.invoicesService.send(id); }
   @Post(":id/void") void(@Param("id") id: string) { return this.invoicesService.voidInvoice(id); }
+  @Post(":id/reopen") reopenInvoice(@Param("id") id: string) { return this.invoicesService.reopenInvoice(id); }
   @Post(":id/duplicate") duplicate(@Param("id") id: string) { return this.invoicesService.duplicate(id); }
 
   @Get(":id/pdf")

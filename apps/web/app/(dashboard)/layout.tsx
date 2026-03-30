@@ -31,6 +31,11 @@ import {
   FileCheck,
   Wallet,
   Building2,
+  TrendingUp,
+  DollarSign,
+  CreditCard,
+  BarChart3,
+  PieChart,
   type LucideIcon,
 } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
@@ -69,11 +74,16 @@ const NAV_STRUCTURE: NavEntry[] = [
   {
     kind: "group", label: "Finance", icon: Wallet,
     children: [
-      { kind: "leaf", label: "Invoices",     href: "/invoices",     icon: FileText },
-      { kind: "leaf", label: "Estimates",    href: "/estimates",    icon: FileCheck },
-      { kind: "leaf", label: "Credit Notes", href: "/credit-notes", icon: Receipt },
-      { kind: "leaf", label: "Vendor Bills", href: "/vendor-bills", icon: ClipboardList },
-      { kind: "leaf", label: "Bookkeeping",  href: "/bookkeeping",  icon: BookOpen },
+      { kind: "leaf", label: "Dashboard",         href: "/finance/dashboard",  icon: LayoutDashboard },
+      { kind: "leaf", label: "Invoices",           href: "/invoices",           icon: FileText },
+      { kind: "leaf", label: "Estimates",          href: "/estimates",          icon: FileCheck },
+      { kind: "leaf", label: "Credit Notes",       href: "/credit-notes",       icon: Receipt },
+      { kind: "leaf", label: "Customers",          href: "/finance/customers",  icon: Users },
+      { kind: "leaf", label: "Payments Received",  href: "/finance/payments",   icon: CreditCard },
+      { kind: "leaf", label: "Expenses",           href: "/finance/expenses",   icon: TrendingUp },
+      { kind: "leaf", label: "Vendor Bills",       href: "/vendor-bills",       icon: ClipboardList },
+      { kind: "leaf", label: "Reports",            href: "/finance/reports",    icon: BarChart3 },
+      { kind: "leaf", label: "Bookkeeping",        href: "/bookkeeping",        icon: BookOpen },
     ],
   },
   { kind: "leaf", label: "Analytics", href: "/analytics", icon: BarChart2 },
