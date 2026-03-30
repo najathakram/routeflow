@@ -144,7 +144,7 @@ export default function NewStandingOrderScreen() {
                   <Pressable
                     key={p.label}
                     style={[styles.chip, isActive && styles.chipActive]}
-                    onPress={() => applyPreset(p.days ?? null)}
+                    onPress={() => applyPreset(p.days ? [...p.days] : null)}
                     accessibilityRole="radio"
                     accessibilityState={{ selected: isActive }}
                   >

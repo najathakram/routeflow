@@ -175,7 +175,7 @@ const aStyles = StyleSheet.create({
   productRank: {
     fontSize: 12,
     fontFamily: "Inter_700Bold",
-    color: colors.brand[400],
+    color: colors.brand[500],
     width: 20,
     textAlign: "center",
   },
@@ -197,7 +197,7 @@ const aStyles = StyleSheet.create({
   barFill: {
     height: "100%",
     borderRadius: 2,
-    backgroundColor: colors.brand[400],
+    backgroundColor: colors.brand[500],
   },
   productQty: {
     fontSize: 12,

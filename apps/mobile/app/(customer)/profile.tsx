@@ -213,7 +213,7 @@ export default function ProfileScreen() {
                 <View key={addr.id} style={styles.addressRow}>
                   <View style={styles.addressLabelRow}>
                     <Ionicons name="location-outline" size={14} color="#94a3b8" />
-                    <Text style={styles.addressLabel}>{addr.label ?? "Address"}</Text>
+                    <Text style={styles.addressLabel}>{(addr as any).label ?? "Address"}</Text>
                     {addr.isDefault && (
                       <View style={styles.defaultBadge}>
                         <Text style={styles.defaultBadgeText}>Default</Text>
