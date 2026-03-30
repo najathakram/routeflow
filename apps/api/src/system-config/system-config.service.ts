@@ -50,8 +50,10 @@ export class SystemConfigService {
   }): Promise<void> {
     const updates: Promise<void>[] = [];
     if (dto.clientId !== undefined) updates.push(this.set("zoho.clientId", dto.clientId));
-    if (dto.clientSecret !== undefined) updates.push(this.set("zoho.clientSecret", dto.clientSecret));
-    if (dto.refreshToken !== undefined) updates.push(this.set("zoho.refreshToken", dto.refreshToken));
+    if (dto.clientSecret !== undefined)
+      updates.push(this.set("zoho.clientSecret", dto.clientSecret));
+    if (dto.refreshToken !== undefined)
+      updates.push(this.set("zoho.refreshToken", dto.refreshToken));
     if (dto.region !== undefined) updates.push(this.set("zoho.region", dto.region));
     await Promise.all(updates);
   }

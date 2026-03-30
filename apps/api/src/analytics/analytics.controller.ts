@@ -27,10 +27,14 @@ export class AnalyticsController {
   }
 
   @Get("routes/performance")
-  getRoutes() { return this.analyticsService.getRoutePerformance(); }
+  getRoutes() {
+    return this.analyticsService.getRoutePerformance();
+  }
 
   @Get("drivers/performance")
-  getDrivers() { return this.analyticsService.getDriverPerformance(); }
+  getDrivers() {
+    return this.analyticsService.getDriverPerformance();
+  }
 
   @Get("inventory/turnover")
   getTurnover(@Query("from") from?: string, @Query("to") to?: string) {
@@ -43,10 +47,14 @@ export class AnalyticsController {
   }
 
   @Get("inventory/margin-alerts")
-  getMarginAlerts() { return this.analyticsService.getMarginAlerts(); }
+  getMarginAlerts() {
+    return this.analyticsService.getMarginAlerts();
+  }
 
   @Get("dso")
-  getDso() { return this.analyticsService.getDso(); }
+  getDso() {
+    return this.analyticsService.getDso();
+  }
 
   @Get("sales-by-category")
   getSalesByCategory(@Query("from") from?: string, @Query("to") to?: string) {

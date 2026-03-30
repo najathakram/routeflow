@@ -136,7 +136,7 @@ export class RouteRunsController {
   updateStopStatus(
     @Param("id") id: string,
     @Param("stopId") stopId: string,
-    @Body() body: { status: 'IN_PROGRESS' | 'SKIPPED'; driverNote?: string },
+    @Body() body: { status: "IN_PROGRESS" | "SKIPPED"; driverNote?: string },
   ) {
     return this.routesService.updateStopStatus(id, stopId, body);
   }

@@ -1,4 +1,9 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from "@nestjs/common";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { PrismaService } from "../prisma/prisma.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
@@ -30,7 +35,8 @@ export class CreditNotesService {
   }
 
   async create(dto: { customerId: string; invoiceId?: string; amount: number; reason?: string }) {
-    if (!dto.amount || dto.amount <= 0) throw new BadRequestException("Amount must be greater than 0");
+    if (!dto.amount || dto.amount <= 0)
+      throw new BadRequestException("Amount must be greater than 0");
     const cn = await this.prisma.creditNote.create({
       data: {
         creditNoteNumber: await this.nextCnNumber(),
@@ -81,7 +87,10 @@ export class CreditNotesService {
   async findOne(id: string) {
     const cn = await this.prisma.creditNote.findUnique({
       where: { id },
-      include: { customer: { select: { id: true, businessName: true } }, invoice: { select: { id: true, invoiceNumber: true } } },
+      include: {
+        customer: { select: { id: true, businessName: true } },
+        invoice: { select: { id: true, invoiceNumber: true } },
+      },
     });
     if (!cn) throw new NotFoundException("Credit note not found");
     return cn;
@@ -103,14 +112,24 @@ export class CreditNotesService {
   async applyToInvoice(creditNoteId: string, invoiceId: string, amount?: number) {
     return this.prisma.$transaction(async (tx) => {
       const cn = await tx.creditNote.findUnique({ where: { id: creditNoteId } });
-      if (!cn || cn.status !== "ISSUED") throw new BadRequestException("Credit note is not available for application");
+      if (!cn || cn.status !== "ISSUED")
+        throw new BadRequestException("Credit note is not available for application");
 
-      const inv = await tx.invoice.findUnique({ where: { id: invoiceId }, include: { payments: true } });
+      const inv = await tx.invoice.findUnique({
+        where: { id: invoiceId },
+        include: { payments: true },
+      });
       if (!inv) throw new NotFoundException("Invoice not found");
 
-      const notApplicableStatuses: InvoiceStatus[] = [InvoiceStatus.PAID, InvoiceStatus.VOID, InvoiceStatus.WRITTEN_OFF];
+      const notApplicableStatuses: InvoiceStatus[] = [
+        InvoiceStatus.PAID,
+        InvoiceStatus.VOID,
+        InvoiceStatus.WRITTEN_OFF,
+      ];
       if (notApplicableStatuses.includes(inv.status)) {
-        throw new BadRequestException(`Cannot apply credit note to invoice with status ${inv.status}`);
+        throw new BadRequestException(
+          `Cannot apply credit note to invoice with status ${inv.status}`,
+        );
       }
 
       if (cn.customerId !== inv.customerId) {
@@ -141,7 +160,11 @@ export class CreditNotesService {
       const updatedInv = await tx.invoice.update({
         where: { id: invoiceId },
         data: { status: newStatus, paidAt: newStatus === InvoiceStatus.PAID ? new Date() : null },
-        include: { customer: { select: { id: true, businessName: true } }, items: true, payments: { orderBy: { createdAt: "desc" } } },
+        include: {
+          customer: { select: { id: true, businessName: true } },
+          items: true,
+          payments: { orderBy: { createdAt: "desc" } },
+        },
       });
 
       // Mark credit note as APPLIED

@@ -1,4 +1,13 @@
-import { IsArray, IsBoolean, IsDecimal, IsInt, IsNumber, IsOptional, IsString, ValidateNested } from "class-validator";
+import {
+  IsArray,
+  IsBoolean,
+  IsDecimal,
+  IsInt,
+  IsNumber,
+  IsOptional,
+  IsString,
+  ValidateNested,
+} from "class-validator";
 import { Type } from "class-transformer";
 
 export class ImportProductItemDto {

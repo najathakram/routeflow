@@ -166,7 +166,13 @@ export class CustomersService {
       .reduce((sum, i) => sum + (Number(i.total) - i.amountPaid), 0);
 
     const overdue = invoicesWithPaid
-      .filter((i) => i.status !== "PAID" && i.status !== "VOID" && i.dueDate && new Date(i.dueDate) < new Date())
+      .filter(
+        (i) =>
+          i.status !== "PAID" &&
+          i.status !== "VOID" &&
+          i.dueDate &&
+          new Date(i.dueDate) < new Date(),
+      )
       .reduce((sum, i) => sum + (Number(i.total) - i.amountPaid), 0);
 
     const availableCredit = creditNotes
@@ -194,7 +200,12 @@ export class CustomersService {
       })),
     ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
-    return { outstandingAmount: outstanding, overdueAmount: overdue, availableCredit, transactions };
+    return {
+      outstandingAmount: outstanding,
+      overdueAmount: overdue,
+      availableCredit,
+      transactions,
+    };
   }
 
   async findOne(id: string, user: JwtPayload) {
@@ -206,7 +217,11 @@ export class CustomersService {
       },
     });
     if (!customer) throw new NotFoundException("Customer not found");
-    if (user.role !== UserRole.OPERATOR && user.role !== UserRole.DRIVER && customer.userId !== user.sub) {
+    if (
+      user.role !== UserRole.OPERATOR &&
+      user.role !== UserRole.DRIVER &&
+      customer.userId !== user.sub
+    ) {
       throw new ForbiddenException();
     }
     return customer;
@@ -276,8 +291,12 @@ export class CustomersService {
         ...(dto.phone !== undefined && { phone: dto.phone }),
         ...(dto.notes !== undefined && { notes: dto.notes }),
         ...(dto.fulfillPath && { fulfillPath: dto.fulfillPath }),
-        ...(dto.deliveryWindowStart !== undefined && { deliveryWindowStart: dto.deliveryWindowStart || null }),
-        ...(dto.deliveryWindowEnd !== undefined && { deliveryWindowEnd: dto.deliveryWindowEnd || null }),
+        ...(dto.deliveryWindowStart !== undefined && {
+          deliveryWindowStart: dto.deliveryWindowStart || null,
+        }),
+        ...(dto.deliveryWindowEnd !== undefined && {
+          deliveryWindowEnd: dto.deliveryWindowEnd || null,
+        }),
       },
     });
   }
@@ -298,7 +317,9 @@ export class CustomersService {
       include: {
         route: {
           include: {
-            driver: { select: { id: true, contactName: true, user: { select: { username: true } } } },
+            driver: {
+              select: { id: true, contactName: true, user: { select: { username: true } } },
+            },
           },
         },
         customerAddress: { select: { id: true, label: true, line1: true, city: true } },
@@ -383,13 +404,17 @@ export class CustomersService {
       });
     });
     // Re-geocode asynchronously (don't block the response)
-    this.geocodeAddress(updated).then((coords) => {
-      if (coords) {
-        this.prisma.customerAddress
-          .update({ where: { id: addrId }, data: coords })
-          .catch(() => {/* ignore */});
-      }
-    }).catch(() => {/* ignore */});
+    this.geocodeAddress(updated)
+      .then((coords) => {
+        if (coords) {
+          this.prisma.customerAddress.update({ where: { id: addrId }, data: coords }).catch(() => {
+            /* ignore */
+          });
+        }
+      })
+      .catch(() => {
+        /* ignore */
+      });
     return updated;
   }
 
@@ -417,7 +442,15 @@ export class CustomersService {
         where: { customerId },
         orderBy: { createdAt: "desc" },
         take: 100,
-        select: { id: true, invoiceNumber: true, total: true, status: true, dueDate: true, createdAt: true, payments: { select: { amount: true } } },
+        select: {
+          id: true,
+          invoiceNumber: true,
+          total: true,
+          status: true,
+          dueDate: true,
+          createdAt: true,
+          payments: { select: { amount: true } },
+        },
       }),
       this.prisma.creditNote.findMany({
         where: { customerId },
@@ -429,7 +462,14 @@ export class CustomersService {
         where: { customerId },
         orderBy: { receivedAt: "desc" },
         take: 50,
-        select: { id: true, amount: true, balance: true, method: true, reference: true, receivedAt: true },
+        select: {
+          id: true,
+          amount: true,
+          balance: true,
+          method: true,
+          reference: true,
+          receivedAt: true,
+        },
       }),
     ]);
 
@@ -443,7 +483,12 @@ export class CustomersService {
       .reduce((sum, i) => sum + (Number(i.total) - i.amountPaid), 0);
 
     const overdue = invoicesWithPaid
-      .filter((i) => !["PAID", "VOID", "WRITTEN_OFF"].includes(i.status) && i.dueDate && new Date(i.dueDate) < new Date())
+      .filter(
+        (i) =>
+          !["PAID", "VOID", "WRITTEN_OFF"].includes(i.status) &&
+          i.dueDate &&
+          new Date(i.dueDate) < new Date(),
+      )
       .reduce((sum, i) => sum + (Number(i.total) - i.amountPaid), 0);
 
     const availableCredit = creditNotes
@@ -482,12 +527,27 @@ export class CustomersService {
       })),
     ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
-    return { outstandingAmount: outstanding, overdueAmount: overdue, availableCredit, advanceBalance, transactions };
+    return {
+      outstandingAmount: outstanding,
+      overdueAmount: overdue,
+      availableCredit,
+      advanceBalance,
+      transactions,
+    };
   }
 
   // ─── Advance payments ──────────────────────────────────────────────────────
 
-  async createAdvancePayment(customerId: string, dto: { amount: number; method: string; reference?: string; notes?: string; receivedAt?: string }) {
+  async createAdvancePayment(
+    customerId: string,
+    dto: {
+      amount: number;
+      method: string;
+      reference?: string;
+      notes?: string;
+      receivedAt?: string;
+    },
+  ) {
     await this.findCustomerOrThrow(customerId);
     if (dto.amount <= 0) throw new BadRequestException("Amount must be greater than 0");
     return this.prisma.advancePayment.create({
@@ -521,7 +581,7 @@ export class CustomersService {
           select: { id: true, name: true, sku: true, unit: true, pricePerUnit: true },
         },
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { createdAt: "desc" },
     });
   }
 
@@ -551,21 +611,30 @@ export class CustomersService {
   async deleteCustomerPrice(customerId: string, priceId: string) {
     const cp = await this.prisma.customerPrice.findUnique({ where: { id: priceId } });
     if (!cp || cp.customerId !== customerId) {
-      throw new NotFoundException('Customer price not found');
+      throw new NotFoundException("Customer price not found");
     }
     await this.prisma.customerPrice.delete({ where: { id: priceId } });
   }
 
-  async applyAdvancePaymentToInvoice(advancePaymentId: string, dto: { invoiceId: string; amount?: number }) {
+  async applyAdvancePaymentToInvoice(
+    advancePaymentId: string,
+    dto: { invoiceId: string; amount?: number },
+  ) {
     return this.prisma.$transaction(async (tx) => {
       const ap = await tx.advancePayment.findUnique({ where: { id: advancePaymentId } });
       if (!ap) throw new NotFoundException("Advance payment not found");
-      if (Number(ap.balance) <= 0) throw new BadRequestException("Advance payment has no remaining balance");
+      if (Number(ap.balance) <= 0)
+        throw new BadRequestException("Advance payment has no remaining balance");
 
-      const inv = await tx.invoice.findUnique({ where: { id: dto.invoiceId }, include: { payments: true } });
+      const inv = await tx.invoice.findUnique({
+        where: { id: dto.invoiceId },
+        include: { payments: true },
+      });
       if (!inv) throw new NotFoundException("Invoice not found");
       if (["PAID", "VOID", "WRITTEN_OFF"].includes(inv.status)) {
-        throw new BadRequestException(`Cannot apply advance payment to invoice with status ${inv.status}`);
+        throw new BadRequestException(
+          `Cannot apply advance payment to invoice with status ${inv.status}`,
+        );
       }
 
       const alreadyPaid = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
@@ -599,7 +668,11 @@ export class CustomersService {
       return tx.invoice.update({
         where: { id: dto.invoiceId },
         data: { status: newStatus, paidAt: newStatus === "PAID" ? new Date() : null },
-        include: { customer: { select: { id: true, businessName: true } }, items: true, payments: { orderBy: { createdAt: "desc" } } },
+        include: {
+          customer: { select: { id: true, businessName: true } },
+          items: true,
+          payments: { orderBy: { createdAt: "desc" } },
+        },
       });
     });
   }

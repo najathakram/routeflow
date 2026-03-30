@@ -30,13 +30,25 @@ export class ReturnsController {
     @Query("page") page?: string,
     @Query("limit") limit?: string,
   ) {
-    return this.returnsService.findAllForUser(user, orderId, customerId, status, reason, page ? +page : 1, limit ? +limit : 20);
+    return this.returnsService.findAllForUser(
+      user,
+      orderId,
+      customerId,
+      status,
+      reason,
+      page ? +page : 1,
+      limit ? +limit : 20,
+    );
   }
 
   @Get(":id")
   @Roles(UserRole.OPERATOR, UserRole.DRIVER, UserRole.CUSTOMER)
-  findOne(@Param("id") id: string) { return this.returnsService.findOne(id); }
+  findOne(@Param("id") id: string) {
+    return this.returnsService.findOne(id);
+  }
 
   @Post(":id/cancel")
-  cancel(@Param("id") id: string) { return this.returnsService.cancel(id); }
+  cancel(@Param("id") id: string) {
+    return this.returnsService.cancel(id);
+  }
 }

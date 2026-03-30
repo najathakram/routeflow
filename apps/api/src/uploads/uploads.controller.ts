@@ -39,15 +39,17 @@ export class UploadsController {
   }
 
   @Get("*path")
-  serveFile(@Param() params: Record<string, string | string[]>, @Req() req: Request, @Res() res: Response) {
+  serveFile(
+    @Param() params: Record<string, string | string[]>,
+    @Req() req: Request,
+    @Res() res: Response,
+  ) {
     const dir = this.uploadDir;
 
     // Express 5 + path-to-regexp v8 captures wildcard params as string[].
     // Express 4 returns a plain string. Handle both.
     const rawNamed = params["path"];
-    const namedKey = Array.isArray(rawNamed)
-      ? rawNamed.join("/")
-      : (rawNamed ?? "");
+    const namedKey = Array.isArray(rawNamed) ? rawNamed.join("/") : (rawNamed ?? "");
 
     // Fallback: derive from the raw URL path — works regardless of Express version.
     // req.path in NestJS includes the global prefix (e.g. /api/v1/uploads/products/foo.png).

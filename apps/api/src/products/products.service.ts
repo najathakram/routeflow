@@ -34,11 +34,7 @@ export class ProductsService {
 
     // Server-side stock-status filtering so pagination counts are accurate
     if (query.stockStatus === StockStatusFilter.OUT_OF_STOCK) {
-      where.OR = [
-        ...(where.OR ?? []),
-        { isActive: false },
-        { currentStock: { lte: 0 } },
-      ];
+      where.OR = [...(where.OR ?? []), { isActive: false }, { currentStock: { lte: 0 } }];
     } else if (query.stockStatus === StockStatusFilter.LOW) {
       where.isActive = true;
       where.currentStock = { gt: 0, lte: 5 };
@@ -55,9 +51,8 @@ export class ProductsService {
     // Attach thumbnailUrl (first image only) for list/grid display without loading all images
     const enriched = await Promise.all(
       data.map(async (p) => {
-        const thumbnailUrl = p.imageKeys.length > 0
-          ? await this.storage.presignedUrl(p.imageKeys[0])
-          : null;
+        const thumbnailUrl =
+          p.imageKeys.length > 0 ? await this.storage.presignedUrl(p.imageKeys[0]) : null;
         return { ...p, thumbnailUrl };
       }),
     );
@@ -77,9 +72,8 @@ export class ProductsService {
     const product = await this.prisma.product.findUnique({ where: { id } });
     if (!product) throw new NotFoundException("Product not found");
     // Attach presigned image URLs so the frontend can render them directly
-    const imageUrls = product.imageKeys.length > 0
-      ? await this.storage.presignedUrls(product.imageKeys)
-      : [];
+    const imageUrls =
+      product.imageKeys.length > 0 ? await this.storage.presignedUrls(product.imageKeys) : [];
     return { ...product, imageUrls };
   }
 
@@ -235,7 +229,9 @@ export class ProductsService {
 
         // Check for duplicate barcode
         if (item.barcode) {
-          const existing = await this.prisma.product.findUnique({ where: { barcode: item.barcode } });
+          const existing = await this.prisma.product.findUnique({
+            where: { barcode: item.barcode },
+          });
           if (existing) {
             // If no SKU collision but barcode exists, skip
             skipped++;

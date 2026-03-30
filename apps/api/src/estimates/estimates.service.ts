@@ -24,7 +24,13 @@ export class EstimatesService {
     const itemsData = dto.items.map((i: any) => {
       const sub = i.qty * i.unitPrice;
       subtotal += sub;
-      return { description: i.description, productId: i.productId, qty: i.qty, unitPrice: i.unitPrice, subtotal: sub };
+      return {
+        description: i.description,
+        productId: i.productId,
+        qty: i.qty,
+        unitPrice: i.unitPrice,
+        subtotal: sub,
+      };
     });
     const discount = dto.discount ?? 0;
     const tax = dto.taxAmount ?? 0;
@@ -39,7 +45,11 @@ export class EstimatesService {
         taxAmount: tax,
         discount,
         total,
-        expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : dto.expiryDate ? new Date(dto.expiryDate) : null,
+        expiresAt: dto.expiresAt
+          ? new Date(dto.expiresAt)
+          : dto.expiryDate
+            ? new Date(dto.expiryDate)
+            : null,
         notes: dto.notes,
         terms: dto.terms,
         items: { create: itemsData },
@@ -76,18 +86,28 @@ export class EstimatesService {
     return est;
   }
 
-  async send(id: string) { return this.prisma.estimate.update({ where: { id }, data: { status: "SENT" } }); }
-  async accept(id: string) { return this.prisma.estimate.update({ where: { id }, data: { status: "ACCEPTED" } }); }
-  async decline(id: string) { return this.prisma.estimate.update({ where: { id }, data: { status: "DECLINED" } }); }
+  async send(id: string) {
+    return this.prisma.estimate.update({ where: { id }, data: { status: "SENT" } });
+  }
+  async accept(id: string) {
+    return this.prisma.estimate.update({ where: { id }, data: { status: "ACCEPTED" } });
+  }
+  async decline(id: string) {
+    return this.prisma.estimate.update({ where: { id }, data: { status: "DECLINED" } });
+  }
 
   async convertToInvoice(id: string) {
     const est = await this.prisma.estimate.findUnique({ where: { id }, include: { items: true } });
     if (!est) throw new NotFoundException("Estimate not found");
-    if (est.status !== "ACCEPTED") throw new BadRequestException("Only ACCEPTED estimates can be converted");
+    if (est.status !== "ACCEPTED")
+      throw new BadRequestException("Only ACCEPTED estimates can be converted");
 
     const year = new Date().getFullYear();
     const prefix = `INV-${year}-`;
-    const last = await this.prisma.invoice.findFirst({ where: { invoiceNumber: { startsWith: prefix } }, orderBy: { invoiceNumber: "desc" } });
+    const last = await this.prisma.invoice.findFirst({
+      where: { invoiceNumber: { startsWith: prefix } },
+      orderBy: { invoiceNumber: "desc" },
+    });
     const seq = last ? parseInt(last.invoiceNumber.split("-")[2], 10) + 1 : 1;
     const invoiceNumber = `${prefix}${String(seq).padStart(4, "0")}`;
 

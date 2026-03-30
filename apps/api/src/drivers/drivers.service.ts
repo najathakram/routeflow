@@ -59,7 +59,17 @@ export class DriversService {
   async findByUserId(userId: string) {
     const driver = await this.prisma.driver.findFirst({
       where: { userId },
-      include: { user: { select: { id: true, username: true, email: true, status: true, forcePasswordChange: true } } },
+      include: {
+        user: {
+          select: {
+            id: true,
+            username: true,
+            email: true,
+            status: true,
+            forcePasswordChange: true,
+          },
+        },
+      },
     });
     if (!driver) throw new NotFoundException("Driver profile not found");
     return driver;

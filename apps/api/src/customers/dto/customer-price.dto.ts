@@ -1,4 +1,4 @@
-import { IsUUID, IsDecimal, IsOptional, IsString } from 'class-validator';
+import { IsUUID, IsDecimal, IsOptional, IsString } from "class-validator";
 
 export class UpsertCustomerPriceDto {
   @IsUUID()

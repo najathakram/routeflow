@@ -1,4 +1,16 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UploadedFiles, UseGuards, UseInterceptors } from "@nestjs/common";
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  UploadedFiles,
+  UseGuards,
+  UseInterceptors,
+} from "@nestjs/common";
 import { FilesInterceptor } from "@nestjs/platform-express";
 import { memoryStorage } from "multer";
 import { UserRole } from "@prisma/client";
@@ -84,14 +96,9 @@ export class ProductsController {
       },
     }),
   )
-  async uploadImages(
-    @Param("id") id: string,
-    @UploadedFiles() files: Express.Multer.File[],
-  ) {
+  async uploadImages(@Param("id") id: string, @UploadedFiles() files: Express.Multer.File[]) {
     const results = await Promise.all(
-      files.map((f) =>
-        this.productsService.uploadImage(id, f.buffer, f.originalname, f.mimetype),
-      ),
+      files.map((f) => this.productsService.uploadImage(id, f.buffer, f.originalname, f.mimetype)),
     );
     return { uploaded: results };
   }

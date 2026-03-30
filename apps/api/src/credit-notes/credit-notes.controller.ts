@@ -15,7 +15,9 @@ export class CreditNotesController {
   @Post()
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)
-  create(@Body() dto: any) { return this.creditNotesService.create(dto); }
+  create(@Body() dto: any) {
+    return this.creditNotesService.create(dto);
+  }
 
   @Get()
   findAll(
@@ -24,7 +26,12 @@ export class CreditNotesController {
     @Query("page") page?: string,
     @Query("limit") limit?: string,
   ) {
-    return this.creditNotesService.findAllForUser(user, customerId, page ? +page : 1, limit ? +limit : 20);
+    return this.creditNotesService.findAllForUser(
+      user,
+      customerId,
+      page ? +page : 1,
+      limit ? +limit : 20,
+    );
   }
 
   @Get(":id")
@@ -35,7 +42,9 @@ export class CreditNotesController {
   @Post(":id/issue")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)
-  issue(@Param("id") id: string) { return this.creditNotesService.issue(id); }
+  issue(@Param("id") id: string) {
+    return this.creditNotesService.issue(id);
+  }
 
   @Post(":id/apply")
   @UseGuards(RolesGuard)
@@ -47,5 +56,7 @@ export class CreditNotesController {
   @Post(":id/void")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)
-  voidNote(@Param("id") id: string) { return this.creditNotesService.voidCreditNote(id); }
+  voidNote(@Param("id") id: string) {
+    return this.creditNotesService.voidCreditNote(id);
+  }
 }

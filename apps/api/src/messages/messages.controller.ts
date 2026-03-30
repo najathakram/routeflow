@@ -24,10 +24,7 @@ export class MessagesController {
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
-  create(
-    @Body() dto: CreateMessageDto,
-    @CurrentUser() user: { id: string; role: string },
-  ) {
+  create(@Body() dto: CreateMessageDto, @CurrentUser() user: { id: string; role: string }) {
     return this.messagesService.create(dto, user.id, user.role);
   }
 

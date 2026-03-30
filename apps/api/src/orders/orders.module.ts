@@ -7,7 +7,12 @@ import { GatewaysModule } from "../gateways/gateways.module";
 import { NotificationsModule } from "../notifications/notifications.module";
 
 @Module({
-  imports: [AuthModule, BullModule.registerQueue({ name: "invoices" }), GatewaysModule, NotificationsModule],
+  imports: [
+    AuthModule,
+    BullModule.registerQueue({ name: "invoices" }),
+    GatewaysModule,
+    NotificationsModule,
+  ],
   controllers: [OrdersController, RouteRunDeliveryController],
   providers: [OrdersService],
   exports: [OrdersService],

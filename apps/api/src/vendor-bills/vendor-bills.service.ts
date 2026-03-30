@@ -52,7 +52,9 @@ export class VendorBillsService {
       },
       include: {
         supplier: { select: { id: true, name: true } },
-        items: { include: { product: { select: { id: true, name: true, sku: true, unit: true } } } },
+        items: {
+          include: { product: { select: { id: true, name: true, sku: true, unit: true } } },
+        },
       },
     });
 
@@ -76,7 +78,9 @@ export class VendorBillsService {
         data: { status: "RECEIVED", receivedDate: new Date() },
         include: {
           supplier: { select: { id: true, name: true } },
-          items: { include: { product: { select: { id: true, name: true, sku: true, unit: true } } } },
+          items: {
+            include: { product: { select: { id: true, name: true, sku: true, unit: true } } },
+          },
         },
       });
 
@@ -143,7 +147,9 @@ export class VendorBillsService {
         include: {
           supplier: { select: { id: true, name: true } },
           payments: { orderBy: { createdAt: "desc" }, take: 1 },
-          items: { include: { product: { select: { id: true, name: true, sku: true, unit: true } } } },
+          items: {
+            include: { product: { select: { id: true, name: true, sku: true, unit: true } } },
+          },
         },
         orderBy: { createdAt: "desc" },
         skip,
@@ -160,7 +166,9 @@ export class VendorBillsService {
       include: {
         supplier: true,
         payments: { orderBy: { createdAt: "desc" } },
-        items: { include: { product: { select: { id: true, name: true, sku: true, unit: true } } } },
+        items: {
+          include: { product: { select: { id: true, name: true, sku: true, unit: true } } },
+        },
       },
     });
     if (!bill) throw new NotFoundException("Vendor bill not found");
@@ -175,7 +183,12 @@ export class VendorBillsService {
       const remaining = Number(bill.totalOwed) - alreadyPaid;
       if (remaining <= 0) throw new BadRequestException("Bill already fully paid");
       await tx.billPayment.create({
-        data: { vendorBillId: id, amount: dto.amount, method: dto.method as any, reference: dto.reference },
+        data: {
+          vendorBillId: id,
+          amount: dto.amount,
+          method: dto.method as any,
+          reference: dto.reference,
+        },
       });
       const newPaid = alreadyPaid + dto.amount;
       const newStatus = newPaid >= Number(bill.totalOwed) - 0.001 ? "PAID" : "PARTIAL";
@@ -185,7 +198,9 @@ export class VendorBillsService {
         include: {
           supplier: { select: { id: true, name: true } },
           payments: { orderBy: { createdAt: "desc" } },
-          items: { include: { product: { select: { id: true, name: true, sku: true, unit: true } } } },
+          items: {
+            include: { product: { select: { id: true, name: true, sku: true, unit: true } } },
+          },
         },
       });
     });

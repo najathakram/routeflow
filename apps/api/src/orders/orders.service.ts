@@ -8,7 +8,15 @@ import { InjectQueue } from "@nestjs/bull";
 import type { Queue } from "bull";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtPayload } from "../auth/jwt-payload.interface";
-import { OrderStatus, UserRole, ItemStatus, TxnStatus, MutationType, MovementType, Prisma } from "@prisma/client";
+import {
+  OrderStatus,
+  UserRole,
+  ItemStatus,
+  TxnStatus,
+  MutationType,
+  MovementType,
+  Prisma,
+} from "@prisma/client";
 import { ListOrdersDto } from "./dto/list-orders.dto";
 import { CreateOrderDto } from "./dto/create-order.dto";
 import { ChangeOrderStatusDto } from "./dto/change-order-status.dto";
@@ -33,7 +41,16 @@ export class OrdersService {
   }
 
   async findAll(query: ListOrdersDto, user: JwtPayload) {
-    const { customerId, search, status, urgent, page = 1, limit = 20, deliveryDateFrom, deliveryDateTo } = query;
+    const {
+      customerId,
+      search,
+      status,
+      urgent,
+      page = 1,
+      limit = 20,
+      deliveryDateFrom,
+      deliveryDateTo,
+    } = query;
     const skip = (page - 1) * limit;
     const where: any = {};
 
@@ -99,9 +116,13 @@ export class OrdersService {
     if (user.role === UserRole.OPERATOR) {
       // Operator creates on behalf of a customer — customerId comes from the DTO
       if (!dto.customerId) throw new BadRequestException("customerId is required");
-      const customer = await this.prisma.customer.findUnique({ where: { id: dto.customerId }, include: { user: { select: { status: true } } } });
+      const customer = await this.prisma.customer.findUnique({
+        where: { id: dto.customerId },
+        include: { user: { select: { status: true } } },
+      });
       if (!customer) throw new BadRequestException("Customer not found");
-      if (customer.user.status === "SUSPENDED") throw new BadRequestException("Cannot create orders for a suspended customer");
+      if (customer.user.status === "SUSPENDED")
+        throw new BadRequestException("Cannot create orders for a suspended customer");
       customerId = customer.id;
     } else if (user.role === UserRole.DRIVER) {
       // Driver creates on behalf of a customer (e.g. at a stop) — customerId must be supplied
@@ -151,7 +172,9 @@ export class OrdersService {
         total,
         notes: dto.notes,
         urgent: dto.urgent ?? false,
-        requestedDeliveryDate: dto.requestedDeliveryDate ? new Date(dto.requestedDeliveryDate) : undefined,
+        requestedDeliveryDate: dto.requestedDeliveryDate
+          ? new Date(dto.requestedDeliveryDate)
+          : undefined,
         lineItems: { create: lineItemsData },
       },
       include: {
@@ -218,21 +241,20 @@ export class OrdersService {
     }
 
     const allowed: Record<string, string[]> = {
-      PENDING:          ["CONFIRMED", "CANCELLED"],
-      CONFIRMED:        ["OUT_FOR_DELIVERY", "PENDING", "CANCELLED"],
+      PENDING: ["CONFIRMED", "CANCELLED"],
+      CONFIRMED: ["OUT_FOR_DELIVERY", "PENDING", "CANCELLED"],
       OUT_FOR_DELIVERY: ["DELIVERED", "CONFIRMED", "CANCELLED"],
-      DELIVERED:        ["CONFIRMED"],
+      DELIVERED: ["CONFIRMED"],
     };
     if (!(allowed[order.status] ?? []).includes(dto.status)) {
-      throw new BadRequestException(
-        `Cannot transition from ${order.status} to ${dto.status}`,
-      );
+      throw new BadRequestException(`Cannot transition from ${order.status} to ${dto.status}`);
     }
 
     // Demotions require a reason
     const isDemotion =
       (order.status === "CONFIRMED" && dto.status === "PENDING") ||
-      (order.status === "OUT_FOR_DELIVERY" && (dto.status === "PENDING" || dto.status === "CONFIRMED"));
+      (order.status === "OUT_FOR_DELIVERY" &&
+        (dto.status === "PENDING" || dto.status === "CONFIRMED"));
     if (isDemotion && !dto.reason?.trim()) {
       throw new BadRequestException("A reason is required when demoting an order");
     }
@@ -259,14 +281,28 @@ export class OrdersService {
 
     // Fire-and-forget push notifications for key status transitions
     const notifMap: Partial<Record<OrderStatus, { title: string; body: string }>> = {
-      [OrderStatus.CONFIRMED]:        { title: "Order Confirmed ✓", body: `Your order #${order.orderNumber} has been confirmed.` },
-      [OrderStatus.OUT_FOR_DELIVERY]: { title: "Out for Delivery 🚚", body: `Your order #${order.orderNumber} is on its way!` },
-      [OrderStatus.DELIVERED]:        { title: "Order Delivered ✓", body: `Your order #${order.orderNumber} has been delivered.` },
-      [OrderStatus.CANCELLED]:        { title: "Order Cancelled", body: `Your order #${order.orderNumber} has been cancelled.` },
+      [OrderStatus.CONFIRMED]: {
+        title: "Order Confirmed ✓",
+        body: `Your order #${order.orderNumber} has been confirmed.`,
+      },
+      [OrderStatus.OUT_FOR_DELIVERY]: {
+        title: "Out for Delivery 🚚",
+        body: `Your order #${order.orderNumber} is on its way!`,
+      },
+      [OrderStatus.DELIVERED]: {
+        title: "Order Delivered ✓",
+        body: `Your order #${order.orderNumber} has been delivered.`,
+      },
+      [OrderStatus.CANCELLED]: {
+        title: "Order Cancelled",
+        body: `Your order #${order.orderNumber} has been cancelled.`,
+      },
     };
     const notif = notifMap[dto.status as OrderStatus];
     if (notif) {
-      this.notifications.sendToCustomer(order.customerId, notif.title, notif.body, { orderId: id }).catch(() => {});
+      this.notifications
+        .sendToCustomer(order.customerId, notif.title, notif.body, { orderId: id })
+        .catch(() => {});
     }
 
     return updated;
@@ -279,9 +315,7 @@ export class OrdersService {
     });
     if (!order) throw new NotFoundException("Order not found");
     if (!["PENDING", "CONFIRMED"].includes(order.status)) {
-      throw new BadRequestException(
-        "Items can only be edited on PENDING or CONFIRMED orders",
-      );
+      throw new BadRequestException("Items can only be edited on PENDING or CONFIRMED orders");
     }
 
     // Customer/Driver path: replace items by productId
@@ -505,7 +539,8 @@ export class OrdersService {
         where: { routeRunId: runId },
         select: { status: true },
       });
-      const allDone = allStops.length > 0 &&
+      const allDone =
+        allStops.length > 0 &&
         allStops.every((s) => s.status === "COMPLETED" || s.status === "SKIPPED");
       if (allDone) {
         await tx.routeRun.update({
@@ -518,7 +553,9 @@ export class OrdersService {
     // Emit real-time updates for each affected order/customer + push notifications
     const stop = await this.prisma.routeRunStop.findFirst({
       where: { id: stopId, routeRunId: runId },
-      include: { orders: { select: { id: true, customerId: true, orderNumber: true, status: true } } },
+      include: {
+        orders: { select: { id: true, customerId: true, orderNumber: true, status: true } },
+      },
     });
     if (stop) {
       for (const order of stop.orders) {
@@ -531,7 +568,12 @@ export class OrdersService {
         });
         if (order.status === OrderStatus.DELIVERED) {
           this.notifications
-            .sendToCustomer(order.customerId, "Order Delivered ✓", `Your order #${order.orderNumber} has been delivered.`, { orderId: order.id })
+            .sendToCustomer(
+              order.customerId,
+              "Order Delivered ✓",
+              `Your order #${order.orderNumber} has been delivered.`,
+              { orderId: order.id },
+            )
             .catch(() => {});
         }
       }
@@ -541,7 +583,10 @@ export class OrdersService {
     const deliveredProductIds: string[] = [];
     for (const delivery of dto.deliveries) {
       if (delivery.type === MutationType.DELIVERED || delivery.type === MutationType.PARTIAL) {
-        const item = await this.prisma.orderItem.findUnique({ where: { id: delivery.orderItemId }, select: { productId: true } });
+        const item = await this.prisma.orderItem.findUnique({
+          where: { id: delivery.orderItemId },
+          select: { productId: true },
+        });
         if (item) deliveredProductIds.push(item.productId);
       }
     }

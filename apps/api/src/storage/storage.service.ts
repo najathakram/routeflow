@@ -102,11 +102,9 @@ export class StorageService {
       return `${this.publicBaseUrl}/api/v1/uploads/${key}`;
     }
 
-    return getSignedUrl(
-      this.s3!,
-      new GetObjectCommand({ Bucket: this.bucket, Key: key }),
-      { expiresIn: GET_EXPIRY_SECONDS },
-    );
+    return getSignedUrl(this.s3!, new GetObjectCommand({ Bucket: this.bucket, Key: key }), {
+      expiresIn: GET_EXPIRY_SECONDS,
+    });
   }
 
   /** Return URLs for an array of keys. */

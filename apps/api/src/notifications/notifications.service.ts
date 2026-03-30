@@ -34,9 +34,7 @@ export class NotificationsService implements OnModuleInit {
         return;
       }
 
-      const serviceAccount = JSON.parse(
-        Buffer.from(serviceAccountJson, "base64").toString("utf8"),
-      );
+      const serviceAccount = JSON.parse(Buffer.from(serviceAccountJson, "base64").toString("utf8"));
 
       admin.initializeApp({
         credential: admin.credential.cert(serviceAccount),

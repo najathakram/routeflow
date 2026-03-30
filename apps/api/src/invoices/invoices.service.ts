@@ -1,7 +1,17 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { InvoiceStatus, UserRole } from "@prisma/client";
-import { CreateInvoiceDto, RecordInvoicePaymentDto, UpdatePaymentDto, WriteOffDto } from "./dto/create-invoice.dto";
+import {
+  CreateInvoiceDto,
+  RecordInvoicePaymentDto,
+  UpdatePaymentDto,
+  WriteOffDto,
+} from "./dto/create-invoice.dto";
 import { ListInvoicesDto } from "./dto/list-invoices.dto";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
@@ -109,7 +119,10 @@ export class InvoicesService {
     const [data, total] = await Promise.all([
       this.prisma.invoice.findMany({
         where,
-        include: { customer: { select: { id: true, businessName: true } }, payments: { orderBy: { createdAt: "desc" }, take: 1 } },
+        include: {
+          customer: { select: { id: true, businessName: true } },
+          payments: { orderBy: { createdAt: "desc" }, take: 1 },
+        },
         skip,
         take: limit,
         orderBy: { createdAt: "desc" },
@@ -139,7 +152,8 @@ export class InvoicesService {
 
   async update(id: string, dto: Partial<CreateInvoiceDto>) {
     const inv = await this.findOneOrThrow(id);
-    if (inv.status !== InvoiceStatus.DRAFT) throw new BadRequestException("Only DRAFT invoices can be edited");
+    if (inv.status !== InvoiceStatus.DRAFT)
+      throw new BadRequestException("Only DRAFT invoices can be edited");
 
     if (dto.items) {
       await this.prisma.invoiceItem.deleteMany({ where: { invoiceId: id } });
@@ -147,23 +161,42 @@ export class InvoicesService {
       const itemsData = dto.items.map((item) => {
         const lineSub = item.qty * item.unitPrice - (item.discount ?? 0);
         subtotal += lineSub;
-        return { description: item.description, productId: item.productId, qty: item.qty, unitPrice: item.unitPrice, discount: item.discount ?? 0, taxRate: item.taxRate ?? 0, subtotal: lineSub };
+        return {
+          description: item.description,
+          productId: item.productId,
+          qty: item.qty,
+          unitPrice: item.unitPrice,
+          discount: item.discount ?? 0,
+          taxRate: item.taxRate ?? 0,
+          subtotal: lineSub,
+        };
       });
-      const taxTotal = dto.items.reduce((s, i) => s + (i.qty * i.unitPrice - (i.discount ?? 0)) * (i.taxRate ?? 0), 0);
+      const taxTotal = dto.items.reduce(
+        (s, i) => s + (i.qty * i.unitPrice - (i.discount ?? 0)) * (i.taxRate ?? 0),
+        0,
+      );
       const invDiscount = dto.discount ?? Number(inv.discount);
       const shipping = dto.shippingFee ?? Number(inv.shippingFee);
       const total = subtotal - invDiscount + shipping + taxTotal;
       return this.prisma.invoice.update({
         where: { id },
         data: {
-          subtotal, taxAmount: taxTotal, discount: invDiscount, shippingFee: shipping, total,
+          subtotal,
+          taxAmount: taxTotal,
+          discount: invDiscount,
+          shippingFee: shipping,
+          total,
           dueDate: dto.dueDate ? new Date(dto.dueDate) : undefined,
           issueDate: dto.issueDate ? new Date(dto.issueDate) : undefined,
           notes: dto.notes,
           terms: dto.terms,
           items: { create: itemsData },
         },
-        include: { customer: { select: { id: true, businessName: true } }, items: true, payments: true },
+        include: {
+          customer: { select: { id: true, businessName: true } },
+          items: true,
+          payments: true,
+        },
       });
     }
 
@@ -177,33 +210,53 @@ export class InvoicesService {
         ...(dto.discount !== undefined && { discount: dto.discount }),
         ...(dto.shippingFee !== undefined && { shippingFee: dto.shippingFee }),
       },
-      include: { customer: { select: { id: true, businessName: true } }, items: true, payments: true },
+      include: {
+        customer: { select: { id: true, businessName: true } },
+        items: true,
+        payments: true,
+      },
     });
   }
 
   async send(id: string) {
     const inv = await this.findOneOrThrow(id);
-    if (inv.status === InvoiceStatus.VOID) throw new BadRequestException("Cannot send a voided invoice");
-    const updated = await this.prisma.invoice.update({ where: { id }, data: { status: InvoiceStatus.SENT, sentAt: new Date() } });
-    this.gateway.emitInvoiceUpdated({ invoiceId: updated.id, invoiceNumber: updated.invoiceNumber, customerId: updated.customerId, status: InvoiceStatus.SENT, total: Number(updated.total) });
+    if (inv.status === InvoiceStatus.VOID)
+      throw new BadRequestException("Cannot send a voided invoice");
+    const updated = await this.prisma.invoice.update({
+      where: { id },
+      data: { status: InvoiceStatus.SENT, sentAt: new Date() },
+    });
+    this.gateway.emitInvoiceUpdated({
+      invoiceId: updated.id,
+      invoiceNumber: updated.invoiceNumber,
+      customerId: updated.customerId,
+      status: InvoiceStatus.SENT,
+      total: Number(updated.total),
+    });
     return updated;
   }
 
   async voidInvoice(id: string) {
     const inv = await this.findOneOrThrow(id);
-    if (inv.status === InvoiceStatus.PAID) throw new BadRequestException("Cannot void a fully paid invoice");
+    if (inv.status === InvoiceStatus.PAID)
+      throw new BadRequestException("Cannot void a fully paid invoice");
     return this.prisma.invoice.update({ where: { id }, data: { status: InvoiceStatus.VOID } });
   }
 
   async reopenInvoice(id: string) {
     const inv = await this.prisma.invoice.findUnique({ where: { id } });
-    if (!inv) throw new NotFoundException('Invoice not found');
-    if (inv.status !== InvoiceStatus.PAID) throw new BadRequestException('Only PAID invoices can be reopened');
+    if (!inv) throw new NotFoundException("Invoice not found");
+    if (inv.status !== InvoiceStatus.PAID)
+      throw new BadRequestException("Only PAID invoices can be reopened");
 
     return this.prisma.invoice.update({
       where: { id },
       data: { status: InvoiceStatus.DRAFT, paidAt: null },
-      include: { customer: { select: { id: true, businessName: true } }, items: true, payments: { orderBy: { createdAt: 'desc' } } },
+      include: {
+        customer: { select: { id: true, businessName: true } },
+        items: true,
+        payments: { orderBy: { createdAt: "desc" } },
+      },
     });
   }
 
@@ -223,10 +276,22 @@ export class InvoicesService {
         notes: inv.notes,
         terms: inv.terms,
         items: {
-          create: inv.items.map((i) => ({ description: i.description, productId: i.productId, qty: i.qty, unitPrice: i.unitPrice, discount: i.discount, taxRate: i.taxRate, subtotal: i.subtotal })),
+          create: inv.items.map((i) => ({
+            description: i.description,
+            productId: i.productId,
+            qty: i.qty,
+            unitPrice: i.unitPrice,
+            discount: i.discount,
+            taxRate: i.taxRate,
+            subtotal: i.subtotal,
+          })),
         },
       },
-      include: { customer: { select: { id: true, businessName: true } }, items: true, payments: true },
+      include: {
+        customer: { select: { id: true, businessName: true } },
+        items: true,
+        payments: true,
+      },
     });
   }
 
@@ -262,78 +327,140 @@ export class InvoicesService {
     return this.prisma.$transaction(async (tx) => {
       const inv = await tx.invoice.findUnique({ where: { id }, include: { payments: true } });
       if (!inv) throw new NotFoundException("Invoice not found");
-      if (inv.status === InvoiceStatus.VOID) throw new BadRequestException("Cannot record payment on voided invoice");
+      if (inv.status === InvoiceStatus.VOID)
+        throw new BadRequestException("Cannot record payment on voided invoice");
 
       const alreadyPaid = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
       const total = Number(inv.total);
       const remaining = total - alreadyPaid;
       if (remaining <= 0) throw new BadRequestException("Invoice is already fully paid");
-      if (dto.amount > remaining + 0.001) throw new BadRequestException(`Payment exceeds remaining balance of ${remaining.toFixed(2)}`);
+      if (dto.amount > remaining + 0.001)
+        throw new BadRequestException(
+          `Payment exceeds remaining balance of ${remaining.toFixed(2)}`,
+        );
 
-      await tx.invoicePayment.create({ data: { invoiceId: id, amount: dto.amount, method: dto.method, reference: dto.reference, notes: dto.notes } });
+      await tx.invoicePayment.create({
+        data: {
+          invoiceId: id,
+          amount: dto.amount,
+          method: dto.method,
+          reference: dto.reference,
+          notes: dto.notes,
+        },
+      });
 
       const newPaid = alreadyPaid + dto.amount;
       const newStatus = this.recomputeStatus(newPaid, total, inv.dueDate);
       const paid = await tx.invoice.update({
         where: { id },
         data: { status: newStatus, paidAt: newStatus === InvoiceStatus.PAID ? new Date() : null },
-        include: { customer: { select: { id: true, businessName: true } }, items: true, payments: { orderBy: { createdAt: "desc" } } },
+        include: {
+          customer: { select: { id: true, businessName: true } },
+          items: true,
+          payments: { orderBy: { createdAt: "desc" } },
+        },
       });
-      this.gateway.emitInvoiceUpdated({ invoiceId: paid.id, invoiceNumber: paid.invoiceNumber, customerId: paid.customerId, status: newStatus, total: Number(paid.total) });
+      this.gateway.emitInvoiceUpdated({
+        invoiceId: paid.id,
+        invoiceNumber: paid.invoiceNumber,
+        customerId: paid.customerId,
+        status: newStatus,
+        total: Number(paid.total),
+      });
       return paid;
     });
   }
 
   async updatePayment(invoiceId: string, paymentId: string, dto: UpdatePaymentDto) {
     return this.prisma.$transaction(async (tx) => {
-      const inv = await tx.invoice.findUnique({ where: { id: invoiceId }, include: { payments: true } });
+      const inv = await tx.invoice.findUnique({
+        where: { id: invoiceId },
+        include: { payments: true },
+      });
       if (!inv) throw new NotFoundException("Invoice not found");
-      if (inv.status === InvoiceStatus.VOID) throw new BadRequestException("Cannot edit payment on voided invoice");
+      if (inv.status === InvoiceStatus.VOID)
+        throw new BadRequestException("Cannot edit payment on voided invoice");
 
       const payment = inv.payments.find((p) => p.id === paymentId);
       if (!payment) throw new NotFoundException("Payment not found");
 
       // Sum all other payments plus new amount
-      const othersTotal = inv.payments.filter((p) => p.id !== paymentId).reduce((s, p) => s + Number(p.amount), 0);
+      const othersTotal = inv.payments
+        .filter((p) => p.id !== paymentId)
+        .reduce((s, p) => s + Number(p.amount), 0);
       const total = Number(inv.total);
       if (dto.amount > total - othersTotal + 0.001) {
         throw new BadRequestException(`Payment amount exceeds remaining balance`);
       }
 
-      await tx.invoicePayment.update({ where: { id: paymentId }, data: { amount: dto.amount, method: dto.method, reference: dto.reference, notes: dto.notes } });
+      await tx.invoicePayment.update({
+        where: { id: paymentId },
+        data: {
+          amount: dto.amount,
+          method: dto.method,
+          reference: dto.reference,
+          notes: dto.notes,
+        },
+      });
 
       const newPaid = othersTotal + dto.amount;
       const newStatus = this.recomputeStatus(newPaid, total, inv.dueDate);
       const updated = await tx.invoice.update({
         where: { id: invoiceId },
         data: { status: newStatus, paidAt: newStatus === InvoiceStatus.PAID ? new Date() : null },
-        include: { customer: { select: { id: true, businessName: true } }, items: true, payments: { orderBy: { createdAt: "desc" } } },
+        include: {
+          customer: { select: { id: true, businessName: true } },
+          items: true,
+          payments: { orderBy: { createdAt: "desc" } },
+        },
       });
-      this.gateway.emitInvoiceUpdated({ invoiceId: updated.id, invoiceNumber: updated.invoiceNumber, customerId: updated.customerId, status: newStatus, total: Number(updated.total) });
+      this.gateway.emitInvoiceUpdated({
+        invoiceId: updated.id,
+        invoiceNumber: updated.invoiceNumber,
+        customerId: updated.customerId,
+        status: newStatus,
+        total: Number(updated.total),
+      });
       return updated;
     });
   }
 
   async deletePayment(invoiceId: string, paymentId: string) {
     return this.prisma.$transaction(async (tx) => {
-      const inv = await tx.invoice.findUnique({ where: { id: invoiceId }, include: { payments: true } });
+      const inv = await tx.invoice.findUnique({
+        where: { id: invoiceId },
+        include: { payments: true },
+      });
       if (!inv) throw new NotFoundException("Invoice not found");
-      if (inv.status === InvoiceStatus.VOID) throw new BadRequestException("Cannot delete payment on voided invoice");
+      if (inv.status === InvoiceStatus.VOID)
+        throw new BadRequestException("Cannot delete payment on voided invoice");
 
       const payment = inv.payments.find((p) => p.id === paymentId);
       if (!payment) throw new NotFoundException("Payment not found");
 
       await tx.invoicePayment.delete({ where: { id: paymentId } });
 
-      const remaining = inv.payments.filter((p) => p.id !== paymentId).reduce((s, p) => s + Number(p.amount), 0);
+      const remaining = inv.payments
+        .filter((p) => p.id !== paymentId)
+        .reduce((s, p) => s + Number(p.amount), 0);
       const total = Number(inv.total);
       const newStatus = this.recomputeStatus(remaining, total, inv.dueDate);
       const updated = await tx.invoice.update({
         where: { id: invoiceId },
         data: { status: newStatus, paidAt: newStatus === InvoiceStatus.PAID ? new Date() : null },
-        include: { customer: { select: { id: true, businessName: true } }, items: true, payments: { orderBy: { createdAt: "desc" } } },
+        include: {
+          customer: { select: { id: true, businessName: true } },
+          items: true,
+          payments: { orderBy: { createdAt: "desc" } },
+        },
       });
-      this.gateway.emitInvoiceUpdated({ invoiceId: updated.id, invoiceNumber: updated.invoiceNumber, customerId: updated.customerId, status: newStatus, total: Number(updated.total) });
+      this.gateway.emitInvoiceUpdated({
+        invoiceId: updated.id,
+        invoiceNumber: updated.invoiceNumber,
+        customerId: updated.customerId,
+        status: newStatus,
+        total: Number(updated.total),
+      });
       return updated;
     });
   }
@@ -342,14 +469,27 @@ export class InvoicesService {
 
   async writeOff(id: string, dto: WriteOffDto) {
     const inv = await this.findOneOrThrow(id);
-    const allowedStatuses: InvoiceStatus[] = [InvoiceStatus.SENT, InvoiceStatus.VIEWED, InvoiceStatus.PARTIAL, InvoiceStatus.OVERDUE];
+    const allowedStatuses: InvoiceStatus[] = [
+      InvoiceStatus.SENT,
+      InvoiceStatus.VIEWED,
+      InvoiceStatus.PARTIAL,
+      InvoiceStatus.OVERDUE,
+    ];
     if (!allowedStatuses.includes(inv.status)) {
       throw new BadRequestException(`Cannot write off an invoice with status ${inv.status}`);
     }
     return this.prisma.invoice.update({
       where: { id },
-      data: { status: InvoiceStatus.WRITTEN_OFF, writeOffReason: dto.reason, writtenOffAt: new Date() },
-      include: { customer: { select: { id: true, businessName: true } }, items: true, payments: { orderBy: { createdAt: "desc" } } },
+      data: {
+        status: InvoiceStatus.WRITTEN_OFF,
+        writeOffReason: dto.reason,
+        writtenOffAt: new Date(),
+      },
+      include: {
+        customer: { select: { id: true, businessName: true } },
+        items: true,
+        payments: { orderBy: { createdAt: "desc" } },
+      },
     });
   }
 

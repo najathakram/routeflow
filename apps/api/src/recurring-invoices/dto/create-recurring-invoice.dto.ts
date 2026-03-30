@@ -1,4 +1,17 @@
-import { IsArray, IsBoolean, IsDateString, IsEnum, IsNumber, IsOptional, IsString, IsUUID, Max, Min, ValidateNested, ArrayMinSize } from "class-validator";
+import {
+  IsArray,
+  IsBoolean,
+  IsDateString,
+  IsEnum,
+  IsNumber,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Max,
+  Min,
+  ValidateNested,
+  ArrayMinSize,
+} from "class-validator";
 import { Type } from "class-transformer";
 import { RecurringFrequency } from "@prisma/client";
 
@@ -22,5 +35,9 @@ export class CreateRecurringInvoiceDto {
   @IsOptional() @IsNumber() @Min(0) discount?: number;
   @IsOptional() @IsNumber() @Min(0) shippingFee?: number;
   @IsDateString() nextRunAt: string;
-  @IsArray() @ArrayMinSize(1) @ValidateNested({ each: true }) @Type(() => RecurringInvoiceItemDto) items: RecurringInvoiceItemDto[];
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => RecurringInvoiceItemDto)
+  items: RecurringInvoiceItemDto[];
 }

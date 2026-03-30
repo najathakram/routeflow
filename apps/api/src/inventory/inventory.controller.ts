@@ -58,27 +58,43 @@ export class InventoryController {
 
   // ── Purchase Orders ──
   @Post("purchase-orders")
-  createPO(@Body() dto: any, @CurrentUser() user: { id: string }) { return this.inventoryService.createPurchaseOrder(dto, user.id); }
+  createPO(@Body() dto: any, @CurrentUser() user: { id: string }) {
+    return this.inventoryService.createPurchaseOrder(dto, user.id);
+  }
 
   @Get("purchase-orders")
-  listPOs(@Query() query: any) { return this.inventoryService.listPurchaseOrders(query); }
+  listPOs(@Query() query: any) {
+    return this.inventoryService.listPurchaseOrders(query);
+  }
 
   @Get("purchase-orders/:id")
-  getPO(@Param("id") id: string) { return this.inventoryService.getPurchaseOrder(id); }
+  getPO(@Param("id") id: string) {
+    return this.inventoryService.getPurchaseOrder(id);
+  }
 
   @Post("purchase-orders/:id/send")
-  sendPO(@Param("id") id: string) { return this.inventoryService.sendPurchaseOrder(id); }
+  sendPO(@Param("id") id: string) {
+    return this.inventoryService.sendPurchaseOrder(id);
+  }
 
   @Post("purchase-orders/:id/receive")
-  receivePO(@Param("id") id: string, @Body() dto: any, @CurrentUser() user: { id: string }) { return this.inventoryService.receivePurchaseOrder(id, dto, user.id); }
+  receivePO(@Param("id") id: string, @Body() dto: any, @CurrentUser() user: { id: string }) {
+    return this.inventoryService.receivePurchaseOrder(id, dto, user.id);
+  }
 
   @Post("purchase-orders/:id/close")
-  closePO(@Param("id") id: string) { return this.inventoryService.closePurchaseOrder(id); }
+  closePO(@Param("id") id: string) {
+    return this.inventoryService.closePurchaseOrder(id);
+  }
 
   // ── Forecasting ──
   @Get("forecasting")
-  getForecasting() { return this.inventoryService.getForecasting(); }
+  getForecasting() {
+    return this.inventoryService.getForecasting();
+  }
 
   @Patch("products/:productId/reorder-settings")
-  setReorderPoint(@Param("productId") productId: string, @Body() dto: any) { return this.inventoryService.setReorderPoint(productId, dto.reorderPoint, dto.reorderQty); }
+  setReorderPoint(@Param("productId") productId: string, @Body() dto: any) {
+    return this.inventoryService.setReorderPoint(productId, dto.reorderPoint, dto.reorderQty);
+  }
 }

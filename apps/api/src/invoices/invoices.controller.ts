@@ -1,4 +1,14 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  UseGuards,
+} from "@nestjs/common";
 import { UserRole } from "@prisma/client";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
@@ -7,7 +17,12 @@ import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { InvoicesService } from "./invoices.service";
 import { InvoicePdfService } from "./invoice-pdf.service";
-import { CreateInvoiceDto, RecordInvoicePaymentDto, UpdatePaymentDto, WriteOffDto } from "./dto/create-invoice.dto";
+import {
+  CreateInvoiceDto,
+  RecordInvoicePaymentDto,
+  UpdatePaymentDto,
+  WriteOffDto,
+} from "./dto/create-invoice.dto";
 import { ListInvoicesDto } from "./dto/list-invoices.dto";
 
 @Controller("invoices")
@@ -21,7 +36,9 @@ export class InvoicesController {
 
   @Post()
   @Roles(UserRole.OPERATOR, UserRole.DRIVER)
-  create(@Body() dto: CreateInvoiceDto) { return this.invoicesService.create(dto); }
+  create(@Body() dto: CreateInvoiceDto) {
+    return this.invoicesService.create(dto);
+  }
 
   @Get()
   @Roles(UserRole.OPERATOR, UserRole.CUSTOMER, UserRole.DRIVER)
@@ -31,7 +48,10 @@ export class InvoicesController {
 
   @Get("payments")
   listAllPayments(@Query("page") page?: string, @Query("limit") limit?: string) {
-    return this.invoicesService.listAllPayments({ page: page ? parseInt(page) : 1, limit: limit ? parseInt(limit) : 25 });
+    return this.invoicesService.listAllPayments({
+      page: page ? parseInt(page) : 1,
+      limit: limit ? parseInt(limit) : 25,
+    });
   }
 
   @Get(":id")
@@ -40,11 +60,21 @@ export class InvoicesController {
     return this.invoicesService.findOne(id, user);
   }
 
-  @Patch(":id") update(@Param("id") id: string, @Body() dto: Partial<CreateInvoiceDto>) { return this.invoicesService.update(id, dto); }
-  @Post(":id/send") send(@Param("id") id: string) { return this.invoicesService.send(id); }
-  @Post(":id/void") void(@Param("id") id: string) { return this.invoicesService.voidInvoice(id); }
-  @Post(":id/reopen") reopenInvoice(@Param("id") id: string) { return this.invoicesService.reopenInvoice(id); }
-  @Post(":id/duplicate") duplicate(@Param("id") id: string) { return this.invoicesService.duplicate(id); }
+  @Patch(":id") update(@Param("id") id: string, @Body() dto: Partial<CreateInvoiceDto>) {
+    return this.invoicesService.update(id, dto);
+  }
+  @Post(":id/send") send(@Param("id") id: string) {
+    return this.invoicesService.send(id);
+  }
+  @Post(":id/void") void(@Param("id") id: string) {
+    return this.invoicesService.voidInvoice(id);
+  }
+  @Post(":id/reopen") reopenInvoice(@Param("id") id: string) {
+    return this.invoicesService.reopenInvoice(id);
+  }
+  @Post(":id/duplicate") duplicate(@Param("id") id: string) {
+    return this.invoicesService.duplicate(id);
+  }
 
   @Get(":id/pdf")
   async getPdf(@Param("id") id: string) {
@@ -64,7 +94,11 @@ export class InvoicesController {
   }
 
   @Patch(":id/payments/:paymentId")
-  updatePayment(@Param("id") id: string, @Param("paymentId") paymentId: string, @Body() dto: UpdatePaymentDto) {
+  updatePayment(
+    @Param("id") id: string,
+    @Param("paymentId") paymentId: string,
+    @Body() dto: UpdatePaymentDto,
+  ) {
     return this.invoicesService.updatePayment(id, paymentId, dto);
   }
 

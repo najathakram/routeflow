@@ -1,11 +1,11 @@
-import React from 'react';
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { renderToBuffer } from '@react-pdf/renderer';
-import { PrismaService } from '../prisma/prisma.service';
-import { StorageService } from '../storage/storage.service';
-import { InvoicePdfTemplate } from './invoice-pdf-template';
+import React from "react";
+import { Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { renderToBuffer } from "@react-pdf/renderer";
+import { PrismaService } from "../prisma/prisma.service";
+import { StorageService } from "../storage/storage.service";
+import { InvoicePdfTemplate } from "./invoice-pdf-template";
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-import bwipjs from 'bwip-js';
+import bwipjs from "bwip-js";
 
 @Injectable()
 export class InvoicePdfService {
@@ -21,7 +21,7 @@ export class InvoicePdfService {
       where: { id: invoiceId },
       select: { id: true, pdfUrl: true },
     });
-    if (!inv) throw new NotFoundException('Invoice not found');
+    if (!inv) throw new NotFoundException("Invoice not found");
 
     // If pdfUrl already stored, return a fresh presigned URL
     if (inv.pdfUrl) {
@@ -41,16 +41,16 @@ export class InvoicePdfService {
             businessName: true,
             contactName: true,
             phone: true,
-            addresses: { orderBy: { isDefault: 'desc' } },
+            addresses: { orderBy: { isDefault: "desc" } },
           },
         },
         items: {
           include: { product: { select: { id: true, name: true, barcode: true, sku: true } } },
         },
-        payments: { orderBy: { paidAt: 'asc' } },
+        payments: { orderBy: { paidAt: "asc" } },
       },
     });
-    if (!inv) throw new NotFoundException('Invoice not found');
+    if (!inv) throw new NotFoundException("Invoice not found");
 
     this.logger.log(`Generating PDF for invoice ${invoiceId}`);
 
@@ -60,11 +60,16 @@ export class InvoicePdfService {
         const barcodeText = (item as any).product?.barcode ?? (item as any).product?.sku;
         if (barcodeText) {
           try {
-            // @ts-ignore
-            const buf = await bwipjs.toBuffer({ bcid: 'code128', text: String(barcodeText), scale: 2, height: 8, includetext: false });
+            const buf = await bwipjs.toBuffer({
+              bcid: "code128",
+              text: String(barcodeText),
+              scale: 2,
+              height: 8,
+              includetext: false,
+            });
             return {
               ...item,
-              barcodeDataUri: 'data:image/png;base64,' + Buffer.from(buf).toString('base64'),
+              barcodeDataUri: "data:image/png;base64," + Buffer.from(buf).toString("base64"),
               barcodeText: String(barcodeText),
             };
           } catch {
@@ -72,7 +77,7 @@ export class InvoicePdfService {
           }
         }
         return item;
-      })
+      }),
     );
 
     const invWithBarcodes = { ...inv, items: itemsWithBarcodes };
@@ -91,7 +96,7 @@ export class InvoicePdfService {
     }
 
     const key = `invoice-pdfs/${invoiceId}.pdf`;
-    await this.storage.upload(key, pdfBuffer, 'application/pdf');
+    await this.storage.upload(key, pdfBuffer, "application/pdf");
 
     await this.prisma.invoice.update({
       where: { id: invoiceId },

@@ -29,7 +29,17 @@ export class SettingsController {
 
   @Patch()
   async updateSettings(@Body() dto: Record<string, unknown>) {
-    const allowed = ["businessName", "ownerName", "phone", "email", "street", "city", "zip", "taxRate", "logoUrl"];
+    const allowed = [
+      "businessName",
+      "ownerName",
+      "phone",
+      "email",
+      "street",
+      "city",
+      "zip",
+      "taxRate",
+      "logoUrl",
+    ];
     await Promise.all(
       allowed
         .filter((k) => dto[k] !== undefined)

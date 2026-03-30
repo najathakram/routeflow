@@ -1,11 +1,5 @@
-import React from 'react';
-import {
-  Document,
-  Page,
-  Text,
-  View,
-  StyleSheet,
-} from '@react-pdf/renderer';
+import React from "react";
+import { Document, Page, Text, View, StyleSheet } from "@react-pdf/renderer";
 
 // Prisma Decimal is compatible with this interface (has toNumber / valueOf / toString)
 type DecimalLike = { toNumber(): number } | number | string;
@@ -43,57 +37,57 @@ export interface InvoiceTransactionData {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const toNum = (val: DecimalLike): number => {
-  if (typeof val === 'number') return val;
-  if (typeof val === 'string') return parseFloat(val);
+  if (typeof val === "number") return val;
+  if (typeof val === "string") return parseFloat(val);
   return val.toNumber();
 };
 
 const fmt = (val: DecimalLike) => `$${toNum(val).toFixed(2)}`;
 
 const fmtDate = (val: Date | string | null | undefined): string => {
-  if (!val) return '—';
-  return new Date(val).toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
+  if (!val) return "—";
+  return new Date(val).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
   });
 };
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
-const NAVY = '#1B3A5C';
-const BRAND = '#3B6FCA';
-const GRAY = '#64748b';
-const LIGHT_GRAY = '#f1f5f9';
-const BORDER = '#e2e8f0';
-const SUCCESS = '#16a34a';
-const WARNING = '#d97706';
-const DANGER = '#dc2626';
+const NAVY = "#1B3A5C";
+const BRAND = "#3B6FCA";
+const GRAY = "#64748b";
+const LIGHT_GRAY = "#f1f5f9";
+const BORDER = "#e2e8f0";
+const SUCCESS = "#16a34a";
+const WARNING = "#d97706";
+const DANGER = "#dc2626";
 
 const styles = StyleSheet.create({
   page: {
-    fontFamily: 'Helvetica',
+    fontFamily: "Helvetica",
     fontSize: 9,
     color: NAVY,
     paddingTop: 40,
     paddingBottom: 40,
     paddingHorizontal: 44,
-    backgroundColor: '#ffffff',
+    backgroundColor: "#ffffff",
   },
 
   // Header
   header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
     marginBottom: 28,
     paddingBottom: 20,
     borderBottomWidth: 2,
     borderBottomColor: NAVY,
   },
   logoBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     gap: 8,
   },
   logoSquare: {
@@ -101,12 +95,12 @@ const styles = StyleSheet.create({
     height: 28,
     backgroundColor: BRAND,
     borderRadius: 4,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
   },
   logoText: {
     fontSize: 13,
-    fontFamily: 'Helvetica-Bold',
+    fontFamily: "Helvetica-Bold",
     color: NAVY,
   },
   logoSub: {
@@ -116,7 +110,7 @@ const styles = StyleSheet.create({
   },
   invoiceTitle: {
     fontSize: 22,
-    fontFamily: 'Helvetica-Bold',
+    fontFamily: "Helvetica-Bold",
     color: NAVY,
     letterSpacing: 1,
   },
@@ -124,13 +118,13 @@ const styles = StyleSheet.create({
     fontSize: 9,
     color: GRAY,
     marginTop: 4,
-    fontFamily: 'Helvetica',
+    fontFamily: "Helvetica",
   },
 
   // Status badge
   badgeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     marginTop: 6,
   },
   badge: {
@@ -138,13 +132,13 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
     borderRadius: 20,
     fontSize: 8,
-    fontFamily: 'Helvetica-Bold',
+    fontFamily: "Helvetica-Bold",
   },
 
   // Bill info grid
   billGrid: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    justifyContent: "space-between",
     marginBottom: 24,
   },
   billSection: {
@@ -153,15 +147,15 @@ const styles = StyleSheet.create({
   },
   billLabel: {
     fontSize: 7,
-    fontFamily: 'Helvetica-Bold',
+    fontFamily: "Helvetica-Bold",
     color: GRAY,
-    textTransform: 'uppercase',
+    textTransform: "uppercase",
     letterSpacing: 0.5,
     marginBottom: 4,
   },
   billValue: {
     fontSize: 10,
-    fontFamily: 'Helvetica-Bold',
+    fontFamily: "Helvetica-Bold",
     color: NAVY,
     marginBottom: 2,
   },
@@ -173,7 +167,7 @@ const styles = StyleSheet.create({
 
   // Items table
   tableHeader: {
-    flexDirection: 'row',
+    flexDirection: "row",
     backgroundColor: NAVY,
     paddingVertical: 7,
     paddingHorizontal: 10,
@@ -181,13 +175,13 @@ const styles = StyleSheet.create({
   },
   tableHeaderText: {
     fontSize: 8,
-    fontFamily: 'Helvetica-Bold',
-    color: '#ffffff',
-    textTransform: 'uppercase',
+    fontFamily: "Helvetica-Bold",
+    color: "#ffffff",
+    textTransform: "uppercase",
     letterSpacing: 0.5,
   },
   tableRow: {
-    flexDirection: 'row',
+    flexDirection: "row",
     paddingVertical: 7,
     paddingHorizontal: 10,
     borderBottomWidth: 1,
@@ -197,9 +191,9 @@ const styles = StyleSheet.create({
     backgroundColor: LIGHT_GRAY,
   },
   colDescription: { flex: 3 },
-  colQty: { flex: 1, textAlign: 'right' },
-  colUnit: { flex: 1.4, textAlign: 'right' },
-  colSubtotal: { flex: 1.4, textAlign: 'right' },
+  colQty: { flex: 1, textAlign: "right" },
+  colUnit: { flex: 1.4, textAlign: "right" },
+  colSubtotal: { flex: 1.4, textAlign: "right" },
   cellText: {
     fontSize: 9,
     color: NAVY,
@@ -207,21 +201,21 @@ const styles = StyleSheet.create({
   cellTextRight: {
     fontSize: 9,
     color: NAVY,
-    textAlign: 'right',
+    textAlign: "right",
   },
 
   // Totals
   totalsWrapper: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
+    flexDirection: "row",
+    justifyContent: "flex-end",
     marginTop: 12,
   },
   totalsBox: {
     width: 200,
   },
   totalRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    justifyContent: "space-between",
     paddingVertical: 4,
   },
   totalLabel: {
@@ -231,7 +225,7 @@ const styles = StyleSheet.create({
   totalValue: {
     fontSize: 9,
     color: NAVY,
-    fontFamily: 'Helvetica-Bold',
+    fontFamily: "Helvetica-Bold",
   },
   totalDivider: {
     borderTopWidth: 1,
@@ -239,34 +233,34 @@ const styles = StyleSheet.create({
     marginVertical: 4,
   },
   totalBigRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    justifyContent: "space-between",
     paddingVertical: 5,
   },
   totalBigLabel: {
     fontSize: 11,
-    fontFamily: 'Helvetica-Bold',
+    fontFamily: "Helvetica-Bold",
     color: NAVY,
   },
   totalBigValue: {
     fontSize: 11,
-    fontFamily: 'Helvetica-Bold',
+    fontFamily: "Helvetica-Bold",
     color: NAVY,
   },
 
   // Payment history
   sectionTitle: {
     fontSize: 8,
-    fontFamily: 'Helvetica-Bold',
+    fontFamily: "Helvetica-Bold",
     color: GRAY,
-    textTransform: 'uppercase',
+    textTransform: "uppercase",
     letterSpacing: 0.5,
     marginBottom: 6,
     marginTop: 20,
   },
   paymentRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    justifyContent: "space-between",
     paddingVertical: 5,
     paddingHorizontal: 10,
     borderBottomWidth: 1,
@@ -282,7 +276,7 @@ const styles = StyleSheet.create({
   },
   paymentAmt: {
     fontSize: 9,
-    fontFamily: 'Helvetica-Bold',
+    fontFamily: "Helvetica-Bold",
     color: SUCCESS,
   },
   paymentDate: {
@@ -292,16 +286,16 @@ const styles = StyleSheet.create({
 
   // Footer
   footer: {
-    position: 'absolute',
+    position: "absolute",
     bottom: 20,
     left: 44,
     right: 44,
     borderTopWidth: 1,
     borderTopColor: BORDER,
     paddingTop: 8,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
   },
   footerText: {
     fontSize: 7,
@@ -315,12 +309,24 @@ function StatusBadge({ status }: { status: string }) {
   let bg = LIGHT_GRAY;
   let color = GRAY;
   let label = status;
-  if (status === 'PAID') { bg = '#dcfce7'; color = SUCCESS; label = 'PAID'; }
-  if (status === 'PARTIAL') { bg = '#fef3c7'; color = WARNING; label = 'PARTIAL'; }
-  if (status === 'UNPAID') { bg = '#fee2e2'; color = DANGER; label = 'UNPAID'; }
+  if (status === "PAID") {
+    bg = "#dcfce7";
+    color = SUCCESS;
+    label = "PAID";
+  }
+  if (status === "PARTIAL") {
+    bg = "#fef3c7";
+    color = WARNING;
+    label = "PARTIAL";
+  }
+  if (status === "UNPAID") {
+    bg = "#fee2e2";
+    color = DANGER;
+    label = "UNPAID";
+  }
   return (
     <View style={[styles.badge, { backgroundColor: bg }]}>
-      <Text style={{ color, fontSize: 8, fontFamily: 'Helvetica-Bold' }}>{label}</Text>
+      <Text style={{ color, fontSize: 8, fontFamily: "Helvetica-Bold" }}>{label}</Text>
     </View>
   );
 }
@@ -334,19 +340,18 @@ export function InvoiceTemplate({ transaction: txn }: { transaction: InvoiceTran
   return (
     <Document title={`Invoice ${invoiceRef}`} author="RouteFlow">
       <Page size="A4" style={styles.page}>
-
         {/* ── Header ── */}
         <View style={styles.header}>
           <View>
             <View style={styles.logoBox}>
               <View style={styles.logoSquare}>
-                <Text style={{ fontSize: 9, fontFamily: 'Helvetica-Bold', color: '#fff' }}>RF</Text>
+                <Text style={{ fontSize: 9, fontFamily: "Helvetica-Bold", color: "#fff" }}>RF</Text>
               </View>
               <Text style={styles.logoText}>RouteFlow</Text>
             </View>
             <Text style={styles.logoSub}>Austin, TX · routeflow.io</Text>
           </View>
-          <View style={{ alignItems: 'flex-end' }}>
+          <View style={{ alignItems: "flex-end" }}>
             <Text style={styles.invoiceTitle}>INVOICE</Text>
             <Text style={styles.invoiceNumber}>{invoiceRef}</Text>
             <View style={styles.badgeRow}>
@@ -359,23 +364,17 @@ export function InvoiceTemplate({ transaction: txn }: { transaction: InvoiceTran
         <View style={styles.billGrid}>
           <View style={styles.billSection}>
             <Text style={styles.billLabel}>Bill To</Text>
-            <Text style={styles.billValue}>{txn.customer?.businessName ?? '—'}</Text>
+            <Text style={styles.billValue}>{txn.customer?.businessName ?? "—"}</Text>
             {txn.customer?.contactName ? (
               <Text style={styles.billSub}>{txn.customer.contactName}</Text>
             ) : null}
           </View>
-          <View style={{ flex: 1, alignItems: 'flex-end' }}>
+          <View style={{ flex: 1, alignItems: "flex-end" }}>
             <Text style={styles.billLabel}>Invoice Details</Text>
-            <Text style={styles.billSub}>
-              Date: {fmtDate(txn.createdAt)}
-            </Text>
-            {txn.dueDate ? (
-              <Text style={styles.billSub}>Due: {fmtDate(txn.dueDate)}</Text>
-            ) : null}
+            <Text style={styles.billSub}>Date: {fmtDate(txn.createdAt)}</Text>
+            {txn.dueDate ? <Text style={styles.billSub}>Due: {fmtDate(txn.dueDate)}</Text> : null}
             {txn.paidAt ? (
-              <Text style={[styles.billSub, { color: SUCCESS }]}>
-                Paid: {fmtDate(txn.paidAt)}
-              </Text>
+              <Text style={[styles.billSub, { color: SUCCESS }]}>Paid: {fmtDate(txn.paidAt)}</Text>
             ) : null}
           </View>
         </View>
@@ -388,22 +387,13 @@ export function InvoiceTemplate({ transaction: txn }: { transaction: InvoiceTran
           <Text style={[styles.tableHeaderText, styles.colSubtotal]}>Subtotal</Text>
         </View>
         {txn.items.map((item, idx) => (
-          <View
-            key={item.id}
-            style={[styles.tableRow, idx % 2 === 1 ? styles.tableRowAlt : {}]}
-          >
+          <View key={item.id} style={[styles.tableRow, idx % 2 === 1 ? styles.tableRowAlt : {}]}>
             <View style={styles.colDescription}>
               <Text style={styles.cellText}>{item.description}</Text>
             </View>
-            <Text style={[styles.cellTextRight, styles.colQty]}>
-              {toNum(item.qty).toFixed(2)}
-            </Text>
-            <Text style={[styles.cellTextRight, styles.colUnit]}>
-              {fmt(item.unitPrice)}
-            </Text>
-            <Text style={[styles.cellTextRight, styles.colSubtotal]}>
-              {fmt(item.subtotal)}
-            </Text>
+            <Text style={[styles.cellTextRight, styles.colQty]}>{toNum(item.qty).toFixed(2)}</Text>
+            <Text style={[styles.cellTextRight, styles.colUnit]}>{fmt(item.unitPrice)}</Text>
+            <Text style={[styles.cellTextRight, styles.colSubtotal]}>{fmt(item.subtotal)}</Text>
           </View>
         ))}
 
@@ -422,9 +412,7 @@ export function InvoiceTemplate({ transaction: txn }: { transaction: InvoiceTran
             {paid > 0 ? (
               <View style={styles.totalRow}>
                 <Text style={[styles.totalLabel, { color: SUCCESS }]}>Amount Paid</Text>
-                <Text style={[styles.totalValue, { color: SUCCESS }]}>
-                  -{fmt(paid)}
-                </Text>
+                <Text style={[styles.totalValue, { color: SUCCESS }]}>-{fmt(paid)}</Text>
               </View>
             ) : null}
             <View style={styles.totalDivider} />
@@ -451,7 +439,7 @@ export function InvoiceTemplate({ transaction: txn }: { transaction: InvoiceTran
                     <Text style={styles.paymentRef}>Ref: {pmt.reference}</Text>
                   ) : null}
                 </View>
-                <View style={{ alignItems: 'flex-end' }}>
+                <View style={{ alignItems: "flex-end" }}>
                   <Text style={styles.paymentAmt}>{fmt(pmt.amount)}</Text>
                   <Text style={styles.paymentDate}>{fmtDate(pmt.createdAt)}</Text>
                 </View>
@@ -471,11 +459,8 @@ export function InvoiceTemplate({ transaction: txn }: { transaction: InvoiceTran
         {/* ── Footer ── */}
         <View style={styles.footer} fixed>
           <Text style={styles.footerText}>RouteFlow · Austin, TX · routeflow.io</Text>
-          <Text style={styles.footerText}>
-            Generated {fmtDate(new Date())}
-          </Text>
+          <Text style={styles.footerText}>Generated {fmtDate(new Date())}</Text>
         </View>
-
       </Page>
     </Document>
   );

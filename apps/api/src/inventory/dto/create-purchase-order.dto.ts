@@ -1,4 +1,13 @@
-import { IsArray, IsDateString, IsNumber, IsOptional, IsString, IsUUID, Min, ValidateNested } from "class-validator";
+import {
+  IsArray,
+  IsDateString,
+  IsNumber,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Min,
+  ValidateNested,
+} from "class-validator";
 import { Type } from "class-transformer";
 
 export class PurchaseOrderItemDto {
@@ -9,7 +18,10 @@ export class PurchaseOrderItemDto {
 
 export class CreatePurchaseOrderDto {
   @IsUUID() supplierId: string;
-  @IsArray() @ValidateNested({ each: true }) @Type(() => PurchaseOrderItemDto) items: PurchaseOrderItemDto[];
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => PurchaseOrderItemDto)
+  items: PurchaseOrderItemDto[];
   @IsOptional() @IsDateString() expectedDate?: string;
   @IsOptional() @IsString() notes?: string;
 }

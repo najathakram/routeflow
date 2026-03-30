@@ -1,6 +1,17 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from "@nestjs/common";
 
-const VALID_RETURN_REASONS = ["DAMAGED", "WRONG_ITEM", "CUSTOMER_REFUSED", "QUALITY_ISSUE", "EXCESS_ORDER"] as const;
+const VALID_RETURN_REASONS = [
+  "DAMAGED",
+  "WRONG_ITEM",
+  "CUSTOMER_REFUSED",
+  "QUALITY_ISSUE",
+  "EXCESS_ORDER",
+] as const;
 import { PrismaService } from "../prisma/prisma.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
@@ -21,7 +32,9 @@ export class ReturnsService {
 
   async create(dto: any, userId: string, userRole?: string) {
     if (!VALID_RETURN_REASONS.includes(dto.reason)) {
-      throw new BadRequestException(`Invalid reason. Must be one of: ${VALID_RETURN_REASONS.join(", ")}`);
+      throw new BadRequestException(
+        `Invalid reason. Must be one of: ${VALID_RETURN_REASONS.join(", ")}`,
+      );
     }
 
     const order = await this.prisma.order.findUnique({
@@ -32,7 +45,8 @@ export class ReturnsService {
       },
     });
     if (!order) throw new NotFoundException("Order not found");
-    if (order.status !== "DELIVERED") throw new BadRequestException("Returns can only be submitted for delivered orders");
+    if (order.status !== "DELIVERED")
+      throw new BadRequestException("Returns can only be submitted for delivered orders");
 
     // Customers can only create returns for their own orders
     if (userRole === "CUSTOMER") {
@@ -44,10 +58,17 @@ export class ReturnsService {
 
     // Validate return qty does not exceed ordered qty per item
     for (const item of dto.items) {
-      if (!item.qty || item.qty <= 0) throw new BadRequestException("Return item quantity must be greater than zero");
-      const orderLine = (order as any).lineItems?.find((li: any) => li.productId === item.productId);
-      if (!orderLine) throw new BadRequestException(`Product ${item.productId} was not in the original order`);
-      if (item.qty > Number(orderLine.qty)) throw new BadRequestException(`Return qty (${item.qty}) exceeds ordered qty (${Number(orderLine.qty)}) for product ${item.productId}`);
+      if (!item.qty || item.qty <= 0)
+        throw new BadRequestException("Return item quantity must be greater than zero");
+      const orderLine = (order as any).lineItems?.find(
+        (li: any) => li.productId === item.productId,
+      );
+      if (!orderLine)
+        throw new BadRequestException(`Product ${item.productId} was not in the original order`);
+      if (item.qty > Number(orderLine.qty))
+        throw new BadRequestException(
+          `Return qty (${item.qty}) exceeds ordered qty (${Number(orderLine.qty)}) for product ${item.productId}`,
+        );
     }
 
     const ret = await this.prisma.$transaction(async (tx) => {
@@ -75,12 +96,27 @@ export class ReturnsService {
       for (const item of dto.items) {
         if (item.restock) {
           await tx.stockMovement.create({
-            data: { productId: item.productId, type: "RETURN", quantity: item.qty, performedById: userId, reference: `RET-${created.id.slice(0, 8)}` },
+            data: {
+              productId: item.productId,
+              type: "RETURN",
+              quantity: item.qty,
+              performedById: userId,
+              reference: `RET-${created.id.slice(0, 8)}`,
+            },
           });
-          await tx.product.update({ where: { id: item.productId }, data: { currentStock: { increment: item.qty } } });
+          await tx.product.update({
+            where: { id: item.productId },
+            data: { currentStock: { increment: item.qty } },
+          });
         } else {
           await tx.stockMovement.create({
-            data: { productId: item.productId, type: "WRITE_OFF", quantity: -item.qty, performedById: userId, reference: `RET-${created.id.slice(0, 8)}` },
+            data: {
+              productId: item.productId,
+              type: "WRITE_OFF",
+              quantity: -item.qty,
+              performedById: userId,
+              reference: `RET-${created.id.slice(0, 8)}`,
+            },
           });
         }
       }
@@ -100,7 +136,15 @@ export class ReturnsService {
     return ret;
   }
 
-  async findAllForUser(user: JwtPayload, orderId?: string, customerId?: string, status?: string, reason?: string, page = 1, limit = 20) {
+  async findAllForUser(
+    user: JwtPayload,
+    orderId?: string,
+    customerId?: string,
+    status?: string,
+    reason?: string,
+    page = 1,
+    limit = 20,
+  ) {
     if (user.role === "CUSTOMER") {
       const customer = await this.prisma.customer.findFirst({ where: { userId: user.sub } });
       return this.findAll(orderId, customer?.id, status, reason, page, limit);
@@ -108,7 +152,14 @@ export class ReturnsService {
     return this.findAll(orderId, customerId, status, reason, page, limit);
   }
 
-  async findAll(orderId?: string, customerId?: string, status?: string, reason?: string, page = 1, limit = 20) {
+  async findAll(
+    orderId?: string,
+    customerId?: string,
+    status?: string,
+    reason?: string,
+    page = 1,
+    limit = 20,
+  ) {
     const skip = (page - 1) * limit;
     const where: any = {};
     if (orderId) where.orderId = orderId;

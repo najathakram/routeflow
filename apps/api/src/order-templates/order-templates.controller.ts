@@ -48,7 +48,11 @@ export class OrderTemplatesController {
   @Patch(":id")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR, UserRole.CUSTOMER)
-  update(@Param("id") id: string, @Body() dto: UpdateOrderTemplateDto, @CurrentUser() user: JwtPayload) {
+  update(
+    @Param("id") id: string,
+    @Body() dto: UpdateOrderTemplateDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
     return this.service.updateForUser(id, dto, user);
   }
 

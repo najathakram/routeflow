@@ -43,7 +43,14 @@ export class RouteOptimizationService {
       include: {
         stops: {
           include: {
-            customer: { select: { id: true, businessName: true, deliveryWindowStart: true, deliveryWindowEnd: true } },
+            customer: {
+              select: {
+                id: true,
+                businessName: true,
+                deliveryWindowStart: true,
+                deliveryWindowEnd: true,
+              },
+            },
             customerAddress: true,
           },
           orderBy: { stopNumber: "asc" },
@@ -143,7 +150,14 @@ export class RouteOptimizationService {
           include: {
             routeStop: {
               include: {
-                customer: { select: { id: true, businessName: true, deliveryWindowStart: true, deliveryWindowEnd: true } },
+                customer: {
+                  select: {
+                    id: true,
+                    businessName: true,
+                    deliveryWindowStart: true,
+                    deliveryWindowEnd: true,
+                  },
+                },
                 customerAddress: true,
               },
             },

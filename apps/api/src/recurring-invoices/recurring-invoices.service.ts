@@ -14,7 +14,12 @@ export class RecurringInvoicesService {
 
   // ─── Next run calculation ──────────────────────────────────────────────────
 
-  private calcNextRunAt(frequency: RecurringFrequency, dayOfWeek?: number | null, dayOfMonth?: number | null, from: Date = new Date()): Date {
+  private calcNextRunAt(
+    frequency: RecurringFrequency,
+    dayOfWeek?: number | null,
+    dayOfMonth?: number | null,
+    from: Date = new Date(),
+  ): Date {
     const d = new Date(from);
     d.setHours(0, 0, 0, 0);
     d.setDate(d.getDate() + 1); // always at least tomorrow

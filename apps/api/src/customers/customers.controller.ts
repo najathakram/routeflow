@@ -1,4 +1,14 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  UseGuards,
+} from "@nestjs/common";
 import { ApiTags, ApiBearerAuth } from "@nestjs/swagger";
 import { UserRole } from "@prisma/client";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
@@ -110,27 +120,21 @@ export class CustomersController {
     return this.customersService.applyAdvancePaymentToInvoice(apId, dto);
   }
 
-  @Get(':id/prices')
+  @Get(":id/prices")
   @Roles(UserRole.OPERATOR, UserRole.DRIVER)
-  getCustomerPrices(@Param('id') id: string) {
+  getCustomerPrices(@Param("id") id: string) {
     return this.customersService.getCustomerPrices(id);
   }
 
-  @Post(':id/prices')
+  @Post(":id/prices")
   @Roles(UserRole.OPERATOR, UserRole.DRIVER)
-  upsertCustomerPrice(
-    @Param('id') id: string,
-    @Body() dto: UpsertCustomerPriceDto,
-  ) {
+  upsertCustomerPrice(@Param("id") id: string, @Body() dto: UpsertCustomerPriceDto) {
     return this.customersService.upsertCustomerPrice(id, dto);
   }
 
-  @Delete(':id/prices/:priceId')
+  @Delete(":id/prices/:priceId")
   @Roles(UserRole.OPERATOR)
-  deleteCustomerPrice(
-    @Param('id') id: string,
-    @Param('priceId') priceId: string,
-  ) {
+  deleteCustomerPrice(@Param("id") id: string, @Param("priceId") priceId: string) {
     return this.customersService.deleteCustomerPrice(id, priceId);
   }
 

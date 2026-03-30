@@ -1,4 +1,9 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import { UserRole, RouteRunStatus, OrderStatus, Prisma } from "@prisma/client";
@@ -119,9 +124,9 @@ export class RoutesService {
 
   async reorderRunStops(runId: string, order: { id: string; stopNumber: number }[]) {
     const run = await this.prisma.routeRun.findUnique({ where: { id: runId } });
-    if (!run) throw new NotFoundException('Route run not found');
-    if (run.status === 'IN_PROGRESS' || run.status === 'COMPLETED') {
-      throw new BadRequestException('Cannot reorder stops on an active or completed route run');
+    if (!run) throw new NotFoundException("Route run not found");
+    if (run.status === "IN_PROGRESS" || run.status === "COMPLETED") {
+      throw new BadRequestException("Cannot reorder stops on an active or completed route run");
     }
     await this.prisma.$transaction(
       order.map(({ id, stopNumber }) =>
@@ -143,9 +148,7 @@ export class RoutesService {
     });
     if (!route) throw new NotFoundException("Route not found");
 
-    const customerIds = route.stops
-      .map((s) => s.customerId)
-      .filter((id): id is string => !!id);
+    const customerIds = route.stops.map((s) => s.customerId).filter((id): id is string => !!id);
 
     const orders = customerIds.length
       ? await this.prisma.order.findMany({
@@ -206,7 +209,9 @@ export class RoutesService {
 
   // ── Customer Route Assignments ─────────────────────────────────────────
 
-  async getCustomerRouteAssignments(): Promise<Record<string, { routeId: string; routeName: string }[]>> {
+  async getCustomerRouteAssignments(): Promise<
+    Record<string, { routeId: string; routeName: string }[]>
+  > {
     const stops = await this.prisma.routeStop.findMany({
       where: { customerId: { not: null } },
       select: {
@@ -336,7 +341,16 @@ export class RoutesService {
         driver: { select: { id: true, contactName: true, user: { select: { username: true } } } },
         stops: {
           include: {
-            customer: { select: { id: true, businessName: true, contactName: true, phone: true, deliveryWindowStart: true, deliveryWindowEnd: true } },
+            customer: {
+              select: {
+                id: true,
+                businessName: true,
+                contactName: true,
+                phone: true,
+                deliveryWindowStart: true,
+                deliveryWindowEnd: true,
+              },
+            },
             customerAddress: true,
             orders: {
               select: {
@@ -359,7 +373,16 @@ export class RoutesService {
             },
             routeStop: {
               include: {
-                customer: { select: { id: true, businessName: true, contactName: true, phone: true, deliveryWindowStart: true, deliveryWindowEnd: true } },
+                customer: {
+                  select: {
+                    id: true,
+                    businessName: true,
+                    contactName: true,
+                    phone: true,
+                    deliveryWindowStart: true,
+                    deliveryWindowEnd: true,
+                  },
+                },
                 customerAddress: true,
               },
             },
@@ -385,7 +408,8 @@ export class RoutesService {
     // Drivers can only access their own assigned run
     if (user?.role === "DRIVER") {
       const driver = await this.prisma.driver.findFirst({ where: { userId: user.sub } });
-      if (!driver || run.driverId !== driver.id) throw new ForbiddenException("You do not have access to this route run");
+      if (!driver || run.driverId !== driver.id)
+        throw new ForbiddenException("You do not have access to this route run");
     }
 
     // Normalise stops: if the run stop lacks direct customer/address links, fall back to the
@@ -448,7 +472,11 @@ export class RoutesService {
     return { ...run, stops: normalisedStops };
   }
 
-  async updateRun(id: string, dto: { driverId?: string | null; scheduledDate?: string; notes?: string }, user?: JwtPayload) {
+  async updateRun(
+    id: string,
+    dto: { driverId?: string | null; scheduledDate?: string; notes?: string },
+    user?: JwtPayload,
+  ) {
     const run = await this.prisma.routeRun.findUnique({ where: { id } });
     if (!run) throw new NotFoundException("Route run not found");
 
@@ -523,7 +551,9 @@ export class RoutesService {
     const updated = await this.prisma.routeRun.update({
       where: { id },
       data: updates,
-      include: { driver: { select: { id: true, contactName: true, user: { select: { username: true } } } } },
+      include: {
+        driver: { select: { id: true, contactName: true, user: { select: { username: true } } } },
+      },
     });
 
     if (updated.driver) {
@@ -541,16 +571,16 @@ export class RoutesService {
   async updateStopStatus(
     runId: string,
     stopId: string,
-    dto: { status: 'IN_PROGRESS' | 'SKIPPED'; driverNote?: string },
+    dto: { status: "IN_PROGRESS" | "SKIPPED"; driverNote?: string },
   ) {
     const stop = await this.prisma.routeRunStop.findFirst({
       where: { id: stopId, routeRunId: runId },
     });
-    if (!stop) throw new NotFoundException('Stop not found');
+    if (!stop) throw new NotFoundException("Stop not found");
 
     const updates: any = { status: dto.status };
     if (dto.driverNote !== undefined) updates.driverNote = dto.driverNote;
-    if (dto.status === 'IN_PROGRESS' && !stop.arrivedAt) updates.arrivedAt = new Date();
+    if (dto.status === "IN_PROGRESS" && !stop.arrivedAt) updates.arrivedAt = new Date();
 
     return this.prisma.routeRunStop.update({ where: { id: stopId }, data: updates });
   }
@@ -561,7 +591,14 @@ export class RoutesService {
       include: {
         stops: {
           include: {
-            customer: { select: { id: true, businessName: true, deliveryWindowStart: true, deliveryWindowEnd: true } },
+            customer: {
+              select: {
+                id: true,
+                businessName: true,
+                deliveryWindowStart: true,
+                deliveryWindowEnd: true,
+              },
+            },
             customerAddress: true,
             orders: {
               where: { status: { notIn: [OrderStatus.CANCELLED, OrderStatus.DELIVERED] } },
@@ -573,7 +610,14 @@ export class RoutesService {
             },
             routeStop: {
               include: {
-                customer: { select: { id: true, businessName: true, deliveryWindowStart: true, deliveryWindowEnd: true } },
+                customer: {
+                  select: {
+                    id: true,
+                    businessName: true,
+                    deliveryWindowStart: true,
+                    deliveryWindowEnd: true,
+                  },
+                },
                 customerAddress: true,
               },
             },
@@ -595,7 +639,9 @@ export class RoutesService {
     // Fallback for unlinked orders (legacy/seeded data — same logic as findOneRun)
     const anyLinked = stops.some((s: any) => (s.orders as any[]).length > 0);
     if (!anyLinked && stops.length > 0) {
-      const customerIds = stops.map((s: any) => s._resolvedCustomerId).filter((cid: string | null): cid is string => cid !== null);
+      const customerIds = stops
+        .map((s: any) => s._resolvedCustomerId)
+        .filter((cid: string | null): cid is string => cid !== null);
       if (customerIds.length > 0) {
         const orders = await this.prisma.order.findMany({
           where: {
@@ -622,7 +668,13 @@ export class RoutesService {
     // Aggregate packing list by product
     const map: Record<
       string,
-      { productId: string; productName: string; sku?: string | null; totalQty: number; customers: { name: string; qty: number }[] }
+      {
+        productId: string;
+        productName: string;
+        sku?: string | null;
+        totalQty: number;
+        customers: { name: string; qty: number }[];
+      }
     > = {};
 
     for (const stop of stops) {
@@ -655,7 +707,13 @@ export class RoutesService {
 
   async getMyStats(user: JwtPayload) {
     const driver = await this.prisma.driver.findFirst({ where: { userId: user.sub } });
-    if (!driver) return { totalStopsCompleted: 0, onTimeDeliveryPct: 100, avgStopsPerRoute: 0, returnsRate: 0 };
+    if (!driver)
+      return {
+        totalStopsCompleted: 0,
+        onTimeDeliveryPct: 100,
+        avgStopsPerRoute: 0,
+        returnsRate: 0,
+      };
 
     const runs = await this.prisma.routeRun.findMany({
       where: { driverId: driver.id, status: "COMPLETED" },
@@ -673,30 +731,42 @@ export class RoutesService {
     }
 
     const avgStopsPerRoute = runs.length === 0 ? 0 : Math.round(stopsPerRunSum / runs.length);
-    return { totalStopsCompleted: totalStops, onTimeDeliveryPct: 100, avgStopsPerRoute, returnsRate: 0 };
+    return {
+      totalStopsCompleted: totalStops,
+      onTimeDeliveryPct: 100,
+      avgStopsPerRoute,
+      returnsRate: 0,
+    };
   }
 
   async reopenStop(runId: string, stopId: string, user: JwtPayload) {
     const run = await this.prisma.routeRun.findUnique({
       where: { id: runId },
-      include: { stops: { where: { id: stopId }, include: { orders: { include: { lineItems: true } } } } },
+      include: {
+        stops: { where: { id: stopId }, include: { orders: { include: { lineItems: true } } } },
+      },
     });
     if (!run) throw new NotFoundException("Route run not found");
 
     const stop = run.stops[0];
     if (!stop) throw new NotFoundException("Stop not found");
 
-    if (run.status === "CANCELLED") throw new BadRequestException("Cannot reopen a stop on a cancelled run");
-    if (stop.status !== "COMPLETED" && stop.status !== "SKIPPED") throw new BadRequestException("Only completed or skipped stops can be reopened");
+    if (run.status === "CANCELLED")
+      throw new BadRequestException("Cannot reopen a stop on a cancelled run");
+    if (stop.status !== "COMPLETED" && stop.status !== "SKIPPED")
+      throw new BadRequestException("Only completed or skipped stops can be reopened");
 
     // Driver isolation
     if (user.role === UserRole.DRIVER) {
       const driver = await this.prisma.driver.findFirst({ where: { userId: user.sub } });
-      if (!driver || run.driverId !== driver.id) throw new ForbiddenException("You do not have access to this route run");
+      if (!driver || run.driverId !== driver.id)
+        throw new ForbiddenException("You do not have access to this route run");
     }
 
     // Load delivery mutations for this stop
-    const mutations = await this.prisma.deliveryMutation.findMany({ where: { routeRunStopId: stopId } });
+    const mutations = await this.prisma.deliveryMutation.findMany({
+      where: { routeRunStopId: stopId },
+    });
     const orderIds = [...new Set(stop.orders.map((o) => o.id))];
 
     // Check for recorded payments on any transaction — block reopen if payment exists
@@ -707,7 +777,9 @@ export class RoutesService {
       });
       for (const txn of transactions) {
         if (txn.payments.length > 0 || txn.status === "PAID" || txn.status === "PARTIAL") {
-          throw new BadRequestException("Payment already recorded against this delivery — contact your operator to correct");
+          throw new BadRequestException(
+            "Payment already recorded against this delivery — contact your operator to correct",
+          );
         }
       }
     }
@@ -716,7 +788,11 @@ export class RoutesService {
       // 1. Reverse stock movements for each SALE created by this stop's mutations
       for (const mutation of mutations) {
         const qty = Number(mutation.quantityDelivered ?? 0);
-        if (qty > 0 && mutation.productId && (mutation.type === "DELIVERED" || mutation.type === "PARTIAL")) {
+        if (
+          qty > 0 &&
+          mutation.productId &&
+          (mutation.type === "DELIVERED" || mutation.type === "PARTIAL")
+        ) {
           await tx.stockMovement.create({
             data: {
               productId: mutation.productId,
@@ -738,7 +814,10 @@ export class RoutesService {
 
       // 3. Reset order items → PENDING
       for (const order of stop.orders) {
-        await tx.orderItem.updateMany({ where: { orderId: order.id }, data: { status: "PENDING" } });
+        await tx.orderItem.updateMany({
+          where: { orderId: order.id },
+          data: { status: "PENDING" },
+        });
         // 4. Reset order status → CONFIRMED (safe fallback — it was at least CONFIRMED before going OUT_FOR_DELIVERY)
         if (order.status === "DELIVERED" || order.status === "OUT_FOR_DELIVERY") {
           await tx.order.update({ where: { id: order.id }, data: { status: "CONFIRMED" } });
@@ -763,7 +842,10 @@ export class RoutesService {
 
       // 7. If run was COMPLETED, reopen it too
       if (run.status === "COMPLETED") {
-        await tx.routeRun.update({ where: { id: runId }, data: { status: "IN_PROGRESS", completedAt: null } });
+        await tx.routeRun.update({
+          where: { id: runId },
+          data: { status: "IN_PROGRESS", completedAt: null },
+        });
       }
     });
 

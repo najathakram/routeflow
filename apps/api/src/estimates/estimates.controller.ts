@@ -11,12 +11,32 @@ import { EstimatesService } from "./estimates.service";
 export class EstimatesController {
   constructor(private readonly estimatesService: EstimatesService) {}
 
-  @Post() create(@Body() dto: any) { return this.estimatesService.create(dto); }
-  @Get() findAll(@Query("customerId") cId?: string, @Query("page") page?: string, @Query("limit") limit?: string) { return this.estimatesService.findAll(cId, page ? +page : 1, limit ? +limit : 20); }
-  @Get(":id") findOne(@Param("id") id: string) { return this.estimatesService.findOne(id); }
-  @Post(":id/send") send(@Param("id") id: string) { return this.estimatesService.send(id); }
-  @Post(":id/accept") accept(@Param("id") id: string) { return this.estimatesService.accept(id); }
-  @Post(":id/decline") decline(@Param("id") id: string) { return this.estimatesService.decline(id); }
-  @Post(":id/convert-to-invoice") convertToInvoice(@Param("id") id: string) { return this.estimatesService.convertToInvoice(id); }
-  @Post(":id/convert") convert(@Param("id") id: string) { return this.estimatesService.convertToInvoice(id); }
+  @Post() create(@Body() dto: any) {
+    return this.estimatesService.create(dto);
+  }
+  @Get() findAll(
+    @Query("customerId") cId?: string,
+    @Query("page") page?: string,
+    @Query("limit") limit?: string,
+  ) {
+    return this.estimatesService.findAll(cId, page ? +page : 1, limit ? +limit : 20);
+  }
+  @Get(":id") findOne(@Param("id") id: string) {
+    return this.estimatesService.findOne(id);
+  }
+  @Post(":id/send") send(@Param("id") id: string) {
+    return this.estimatesService.send(id);
+  }
+  @Post(":id/accept") accept(@Param("id") id: string) {
+    return this.estimatesService.accept(id);
+  }
+  @Post(":id/decline") decline(@Param("id") id: string) {
+    return this.estimatesService.decline(id);
+  }
+  @Post(":id/convert-to-invoice") convertToInvoice(@Param("id") id: string) {
+    return this.estimatesService.convertToInvoice(id);
+  }
+  @Post(":id/convert") convert(@Param("id") id: string) {
+    return this.estimatesService.convertToInvoice(id);
+  }
 }
