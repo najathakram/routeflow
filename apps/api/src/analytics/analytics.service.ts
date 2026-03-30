@@ -90,40 +90,58 @@ export class AnalyticsService {
 
   async getRoutePerformance() {
     const runs = await this.prisma.routeRun.findMany({
-      where: { status: "COMPLETED" },
       include: {
         route: { select: { id: true, name: true } },
-        orders: { include: { transaction: true } },
+        orders: { select: { id: true } },
       },
     });
-    const map: Record<string, { name: string; revenue: number; orders: number; runs: number }> = {};
+    const map: Record<string, { name: string; totalRuns: number; completedRuns: number }> = {};
     for (const run of runs) {
       const id = run.routeId;
-      if (!map[id]) map[id] = { name: run.route.name, revenue: 0, orders: 0, runs: 0 };
-      map[id].runs += 1;
-      for (const order of run.orders) {
-        map[id].orders += 1;
-        if (order.transaction) map[id].revenue += Number(order.transaction.totalOwed);
-      }
+      if (!map[id]) map[id] = { name: run.route.name, totalRuns: 0, completedRuns: 0 };
+      map[id].totalRuns += 1;
+      if (run.status === "COMPLETED") map[id].completedRuns += 1;
     }
-    return Object.entries(map).map(([id, v]) => ({ id, ...v }));
+    return Object.entries(map).map(([id, v]) => ({
+      id,
+      name: v.name,
+      totalRuns: v.totalRuns,
+      completedRuns: v.completedRuns,
+      completionRate: v.totalRuns > 0 ? (v.completedRuns / v.totalRuns) * 100 : 0,
+    }));
   }
 
   async getDriverPerformance() {
     const runs = await this.prisma.routeRun.findMany({
-      where: { status: "COMPLETED", driverId: { not: null } },
-      include: { driver: { include: { user: { select: { username: true } } } }, orders: true },
+      where: { driverId: { not: null } },
+      include: {
+        driver: { include: { user: { select: { username: true } } } },
+        orders: { select: { id: true } },
+      },
     });
-    const map: Record<string, { name: string; orders: number; runs: number }> = {};
+    const map: Record<
+      string,
+      { name: string; totalDeliveries: number; completedDeliveries: number }
+    > = {};
     for (const run of runs) {
       if (!run.driver) continue;
       const id = run.driver.id;
       if (!map[id])
-        map[id] = { name: run.driver.contactName ?? run.driver.user.username, orders: 0, runs: 0 };
-      map[id].runs += 1;
-      map[id].orders += run.orders.length;
+        map[id] = {
+          name: run.driver.contactName ?? run.driver.user.username,
+          totalDeliveries: 0,
+          completedDeliveries: 0,
+        };
+      map[id].totalDeliveries += run.orders.length;
+      if (run.status === "COMPLETED") map[id].completedDeliveries += run.orders.length;
     }
-    return Object.entries(map).map(([id, v]) => ({ id, ...v }));
+    return Object.entries(map).map(([id, v]) => ({
+      id,
+      name: v.name,
+      totalDeliveries: v.totalDeliveries,
+      completedDeliveries: v.completedDeliveries,
+      completionRate: v.totalDeliveries > 0 ? (v.completedDeliveries / v.totalDeliveries) * 100 : 0,
+    }));
   }
 
   async getInventoryTurnover(from?: string, to?: string) {

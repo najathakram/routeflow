@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
-import { TxnStatus } from "@prisma/client";
+import { InvoiceStatus, TxnStatus } from "@prisma/client";
 import { ListTransactionsDto } from "./dto/list-transactions.dto";
 import { RecordPaymentDto } from "./dto/record-payment.dto";
 import { InvoiceService } from "./invoice.service";
@@ -379,7 +379,6 @@ export class BookkeepingService {
 
   // ── Finance Dashboard ──
   async getFinanceDashboard() {
-    const { InvoiceStatus } = await import("@prisma/client");
     const now = new Date();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const startOfWeek = new Date(startOfToday);
@@ -430,7 +429,12 @@ export class BookkeepingService {
       const mEnd = new Date(now.getFullYear(), m + 1, 0, 23, 59, 59, 999);
       const [salesAgg, receiptsAgg, expensesAgg] = await Promise.all([
         this.prisma.invoice.aggregate({
-          where: { status: InvoiceStatus.PAID, paidAt: { gte: mStart, lte: mEnd } },
+          where: {
+            status: {
+              notIn: [InvoiceStatus.DRAFT, InvoiceStatus.VOID, InvoiceStatus.WRITTEN_OFF],
+            },
+            issueDate: { gte: mStart, lte: mEnd },
+          },
           _sum: { total: true },
         }),
         this.prisma.invoicePayment.aggregate({
@@ -469,7 +473,12 @@ export class BookkeepingService {
     const getPeriodSummary = async (from: Date) => {
       const [s, r] = await Promise.all([
         this.prisma.invoice.aggregate({
-          where: { issueDate: { gte: from } },
+          where: {
+            status: {
+              notIn: [InvoiceStatus.DRAFT, InvoiceStatus.VOID, InvoiceStatus.WRITTEN_OFF],
+            },
+            issueDate: { gte: from },
+          },
           _sum: { total: true },
         }),
         this.prisma.invoicePayment.aggregate({
@@ -487,7 +496,7 @@ export class BookkeepingService {
               InvoiceStatus.OVERDUE,
             ],
           },
-          dueDate: { gte: from },
+          issueDate: { gte: from },
         },
         include: { payments: true },
       });

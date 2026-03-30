@@ -1,10 +1,15 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
 import { Prisma, MovementType } from "@prisma/client";
+import Anthropic from "@anthropic-ai/sdk";
 
 @Injectable()
 export class VendorBillsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly configService: ConfigService,
+  ) {}
 
   private async nextBillNumber() {
     const year = new Date().getFullYear();
@@ -173,6 +178,104 @@ export class VendorBillsService {
     });
     if (!bill) throw new NotFoundException("Vendor bill not found");
     return bill;
+  }
+
+  async scanInvoice(imageBuffer: Buffer, mimeType: string) {
+    const apiKey = this.configService.get<string>("ANTHROPIC_API_KEY");
+    if (!apiKey) {
+      throw new Error("ANTHROPIC_API_KEY is not configured");
+    }
+
+    // Fetch all active products for matching
+    const products = await this.prisma.product.findMany({
+      where: { isActive: true },
+      select: { id: true, name: true, sku: true, unit: true, averageCost: true, barcode: true },
+      take: 500,
+    });
+
+    const productList = products
+      .map(
+        (p) =>
+          `ID: ${p.id} | Name: ${p.name}${p.sku ? ` | SKU: ${p.sku}` : ""}${p.barcode ? ` | Barcode: ${p.barcode}` : ""}`,
+      )
+      .join("\n");
+
+    const anthropic = new Anthropic({ apiKey });
+    const base64Image = imageBuffer.toString("base64");
+
+    const message = await anthropic.messages.create({
+      model: "claude-opus-4-5",
+      max_tokens: 2048,
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "image",
+              source: {
+                type: "base64",
+                media_type: mimeType as "image/jpeg" | "image/png" | "image/gif" | "image/webp",
+                data: base64Image,
+              },
+            },
+            {
+              type: "text",
+              text: `You are analyzing a vendor/supplier invoice image. Extract all information and return valid JSON only (no markdown, no explanation).
+
+Here are the existing products in our system:
+${productList}
+
+Return this exact JSON structure:
+{
+  "supplier": "supplier name or null",
+  "invoiceNumber": "invoice number or null",
+  "invoiceDate": "YYYY-MM-DD or null",
+  "items": [
+    {
+      "extractedName": "exact name from invoice",
+      "qty": numeric quantity,
+      "unitCost": numeric unit price,
+      "lineTotal": numeric line total or null,
+      "matchedProductId": "product ID from list or null",
+      "matchedProductName": "product name or null",
+      "confidence": "high|medium|low|none"
+    }
+  ],
+  "subtotal": numeric or null,
+  "tax": numeric or null,
+  "total": numeric or null,
+  "notes": "any issues, ambiguities, or unreadable text"
+}
+
+Matching rules:
+- "high" confidence: name clearly matches (same or very similar, e.g., abbreviations, plural forms)
+- "medium" confidence: likely match but name differs somewhat
+- "low" confidence: possible match but unsure
+- "none": no matching product found
+
+If you cannot read a value clearly, use null. Return ONLY the JSON object.`,
+            },
+          ],
+        },
+      ],
+    });
+
+    const content = message.content[0];
+    if (content.type !== "text") throw new Error("Unexpected response from Claude");
+
+    let parsed: Record<string, unknown>;
+    try {
+      // Strip markdown code blocks if present
+      const text = content.text
+        .replace(/^```json\s*/m, "")
+        .replace(/\s*```$/m, "")
+        .trim();
+      parsed = JSON.parse(text) as Record<string, unknown>;
+    } catch (_e) {
+      throw new Error("Failed to parse AI response as JSON");
+    }
+
+    return parsed;
   }
 
   async recordPayment(id: string, dto: { amount: number; method: string; reference?: string }) {

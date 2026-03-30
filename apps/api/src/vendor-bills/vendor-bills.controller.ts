@@ -1,4 +1,16 @@
-import { Body, Controller, Get, Param, Post, Query, UseGuards } from "@nestjs/common";
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Query,
+  UploadedFile,
+  UseGuards,
+  UseInterceptors,
+} from "@nestjs/common";
+import { FileInterceptor } from "@nestjs/platform-express";
 import { UserRole } from "@prisma/client";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
@@ -27,6 +39,14 @@ export class VendorBillsController {
       limit ? +limit : 20,
     );
   }
+  @Post("scan-invoice")
+  @UseInterceptors(FileInterceptor("image", { limits: { fileSize: 10 * 1024 * 1024 } }))
+  scanInvoice(@UploadedFile() file: Express.Multer.File) {
+    if (!file) throw new BadRequestException("No image file provided");
+    const mimeType = file.mimetype || "image/jpeg";
+    return this.vendorBillsService.scanInvoice(file.buffer, mimeType);
+  }
+
   @Get(":id") findOne(@Param("id") id: string) {
     return this.vendorBillsService.findOne(id);
   }

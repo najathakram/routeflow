@@ -9,9 +9,10 @@ import {
   usePaymentsReceivedReport, useTimeToGetPaid, useExpenseDetailsReport,
   useExpensesByCategoryReport, useProfitAndLoss, useCashFlow,
 } from "@/lib/api/finance";
-import { BarChart2, FileText, DollarSign, TrendingDown, Filter } from "lucide-react";
-import { cn } from "@routeflow/ui/web";
+import { BarChart2, FileText, DollarSign, TrendingDown, Filter, BookOpen } from "lucide-react";
+import { cn, useToast, type ToastVariant } from "@routeflow/ui/web";
 import Link from "next/link";
+import { useTransactions, useRecordPayment, type Transaction } from "@/lib/api/bookkeeping";
 
 const fmt = (n: number) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2 }).format(n);
 const fmtDate = (s: string | null | undefined) => s ? new Date(s).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—";
@@ -52,6 +53,12 @@ const REPORT_GROUPS = [
     reports: [
       { id: "pl", label: "Profit & Loss", description: "Revenue, COGS, and expenses for a period" },
       { id: "cashflow", label: "Cash Flow", description: "Cash inflows and outflows for a period" },
+    ],
+  },
+  {
+    id: "ledger", label: "Transaction Ledger", icon: BookOpen, color: "text-navy bg-navy/10",
+    reports: [
+      { id: "ledger", label: "Transactions Ledger", description: "View and manage all financial transactions with payment recording" },
     ],
   },
 ];
@@ -474,6 +481,212 @@ function Spinner() {
   return <div className="flex h-32 items-center justify-center"><div className="h-6 w-6 animate-spin rounded-full border-4 border-brand-500 border-t-transparent" /></div>;
 }
 
+// ─── Ledger Report ────────────────────────────────────────────────────────────
+
+const TX_STATUS_COLORS: Record<string, string> = {
+  PAID: "bg-green-100 text-green-700",
+  PARTIAL: "bg-yellow-100 text-yellow-700",
+  UNPAID: "bg-gray-100 text-gray-600",
+};
+
+function LedgerReport() {
+  const [statusFilter, setStatusFilter] = React.useState("");
+  const [page, setPage] = React.useState(1);
+  const [paymentModal, setPaymentModal] = React.useState<Transaction | null>(null);
+  const [payAmount, setPayAmount] = React.useState("");
+  const [payMethod, setPayMethod] = React.useState<"CASH" | "CHECK" | "ACH" | "OTHER">("CASH");
+  const [payRef, setPayRef] = React.useState("");
+  const recordPayment = useRecordPayment();
+  const { toast } = React.useContext(ToastContext);
+
+  const { data, isLoading } = useTransactions({
+    status: statusFilter || undefined,
+    page,
+  });
+
+  const transactions = data?.data ?? [];
+  const meta = data?.meta;
+
+  const openPayment = (tx: Transaction) => {
+    setPaymentModal(tx);
+    setPayAmount(String(Math.max(0, tx.totalOwed - tx.totalPaid).toFixed(2)));
+    setPayMethod("CASH");
+    setPayRef("");
+  };
+
+  const handleRecordPayment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!paymentModal) return;
+    try {
+      await recordPayment.mutateAsync({
+        id: paymentModal.id,
+        amount: parseFloat(payAmount),
+        method: payMethod,
+        reference: payRef || undefined,
+      });
+      toast({ title: "Payment recorded", variant: "success" });
+      setPaymentModal(null);
+    } catch {
+      toast({ title: "Failed to record payment", variant: "error" });
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Filter bar */}
+      <div className="flex items-center gap-3 border-b border-surface-border px-4 py-3">
+        <Filter className="h-4 w-4 text-navy/40" />
+        <select
+          value={statusFilter}
+          onChange={e => { setStatusFilter(e.target.value); setPage(1); }}
+          className="rounded-lg border border-surface-border px-3 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+        >
+          <option value="">All Statuses</option>
+          <option value="UNPAID">Unpaid</option>
+          <option value="PARTIAL">Partial</option>
+          <option value="PAID">Paid</option>
+        </select>
+        {statusFilter && (
+          <button onClick={() => { setStatusFilter(""); setPage(1); }} className="text-xs text-navy/40 hover:text-danger transition-colors">
+            Clear
+          </button>
+        )}
+        {!isLoading && meta && <span className="ml-auto text-sm text-navy/60">{meta.total} transactions</span>}
+      </div>
+
+      {/* Table */}
+      {isLoading ? (
+        <Spinner />
+      ) : (
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-surface-border bg-navy text-white">
+              <th className="px-4 py-3 text-left text-xs font-semibold uppercase">Invoice #</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold uppercase">Customer</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold uppercase">Date</th>
+              <th className="px-4 py-3 text-right text-xs font-semibold uppercase">Total</th>
+              <th className="px-4 py-3 text-right text-xs font-semibold uppercase">Paid</th>
+              <th className="px-4 py-3 text-right text-xs font-semibold uppercase">Balance</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold uppercase">Status</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold uppercase">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-surface-border">
+            {transactions.length === 0 && (
+              <tr><td colSpan={8} className="px-4 py-8 text-center text-navy/40">No transactions found</td></tr>
+            )}
+            {transactions.map((tx) => {
+              const balance = Math.max(0, tx.totalOwed - tx.totalPaid);
+              return (
+                <tr key={tx.id} className="hover:bg-surface-raised/50">
+                  <td className="px-4 py-2.5">
+                    <span className="font-mono text-xs font-semibold text-navy">
+                      {tx.order?.orderNumber ?? tx.id.slice(0, 8)}
+                    </span>
+                  </td>
+                  <td className="px-4 py-2.5 font-medium text-brand-600">
+                    {tx.customer?.businessName ?? "—"}
+                  </td>
+                  <td className="px-4 py-2.5 text-navy/60">{fmtDate(tx.createdAt)}</td>
+                  <td className="px-4 py-2.5 text-right font-medium text-navy">{fmt(tx.totalOwed)}</td>
+                  <td className="px-4 py-2.5 text-right text-navy/60">{fmt(tx.totalPaid)}</td>
+                  <td className="px-4 py-2.5 text-right">
+                    <span className={cn("font-medium", balance > 0 ? "text-danger" : "text-navy/40")}>{fmt(balance)}</span>
+                  </td>
+                  <td className="px-4 py-2.5">
+                    <span className={cn("inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold", TX_STATUS_COLORS[tx.status] ?? "bg-gray-100 text-gray-600")}>
+                      {tx.status.charAt(0) + tx.status.slice(1).toLowerCase()}
+                    </span>
+                  </td>
+                  <td className="px-4 py-2.5">
+                    {tx.status !== "PAID" && (
+                      <button
+                        onClick={() => openPayment(tx)}
+                        className="rounded-lg border border-brand-200 bg-brand-50 px-2.5 py-1 text-xs font-medium text-brand-600 hover:bg-brand-100 transition-colors"
+                      >
+                        Record Payment
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+
+      {/* Pagination */}
+      {meta && meta.totalPages > 1 && (
+        <div className="flex items-center justify-between px-4 pb-3">
+          <p className="text-sm text-navy/60">Page {meta.page} of {meta.totalPages}</p>
+          <div className="flex gap-2">
+            <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}
+              className="rounded-lg border border-surface-border px-3 py-1.5 text-sm disabled:opacity-40 hover:bg-surface-raised">
+              Previous
+            </button>
+            <button onClick={() => setPage(p => Math.min(meta.totalPages, p + 1))} disabled={page === meta.totalPages}
+              className="rounded-lg border border-surface-border px-3 py-1.5 text-sm disabled:opacity-40 hover:bg-surface-raised">
+              Next
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Payment Modal */}
+      {paymentModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
+            <h3 className="text-base font-semibold text-navy mb-1">Record Payment</h3>
+            <p className="text-sm text-navy/60 mb-4">
+              {paymentModal.customer?.businessName} &middot; Balance: {fmt(Math.max(0, paymentModal.totalOwed - paymentModal.totalPaid))}
+            </p>
+            <form onSubmit={handleRecordPayment} className="space-y-3">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-navy/70">Amount</label>
+                <input type="number" min="0.01" step="0.01" value={payAmount} onChange={e => setPayAmount(e.target.value)}
+                  className="h-9 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500" />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-navy/70">Method</label>
+                <select value={payMethod} onChange={e => setPayMethod(e.target.value as "CASH" | "CHECK" | "ACH" | "OTHER")}
+                  className="h-9 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500">
+                  <option value="CASH">Cash</option>
+                  <option value="CHECK">Check</option>
+                  <option value="ACH">ACH</option>
+                  <option value="OTHER">Other</option>
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-navy/70">Reference <span className="text-navy/40">(optional)</span></label>
+                <input type="text" value={payRef} onChange={e => setPayRef(e.target.value)} placeholder="Check #, transaction ID…"
+                  className="h-9 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/30 focus:outline-none focus:ring-2 focus:ring-brand-500" />
+              </div>
+              <div className="flex gap-2 pt-1">
+                <button type="button" onClick={() => setPaymentModal(null)}
+                  className="flex-1 rounded-lg border border-surface-border py-2 text-sm font-medium text-navy hover:bg-surface-raised transition-colors">
+                  Cancel
+                </button>
+                <button type="submit" disabled={recordPayment.isPending}
+                  className="flex-1 rounded-lg bg-brand-500 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50 transition-colors">
+                  {recordPayment.isPending ? "Saving…" : "Record"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Toast context shim ───────────────────────────────────────────────────────
+// We need useToast but the reports page doesn't yet import it. We create a small
+// context bridge so LedgerReport can call toast without restructuring the entire page.
+
+const ToastContext = React.createContext<{ toast: (opts: { title: string; variant?: ToastVariant }) => void }>({
+  toast: () => {},
+});
+
 // ─── Report Viewer ────────────────────────────────────────────────────────────
 
 function ReportViewer({ reportId, from, to }: { reportId: string; from?: string; to?: string }) {
@@ -490,6 +703,7 @@ function ReportViewer({ reportId, from, to }: { reportId: string; from?: string;
     case "expenses-by-category": return <ExpensesByCategoryReport from={from} to={to} />;
     case "pl": return <ProfitLossReport from={from} to={to} />;
     case "cashflow": return <CashFlowReport from={from} to={to} />;
+    case "ledger": return <LedgerReport />;
     default: return <div className="p-8 text-center text-navy/40">Report not found</div>;
   }
 }
@@ -499,6 +713,7 @@ function ReportViewer({ reportId, from, to }: { reportId: string; from?: string;
 function FinanceReportsContent() {
   const { setTitle } = usePageTitle();
   React.useEffect(() => { setTitle("Reports"); }, [setTitle]);
+  const { toast } = useToast();
   const router = useRouter();
   const searchParams = useSearchParams();
   const activeReport = searchParams.get("report") ?? "";
@@ -508,13 +723,14 @@ function FinanceReportsContent() {
   const [to, setTo] = React.useState(new Date().toISOString().split("T")[0]);
 
   const activeInfo = REPORT_GROUPS.flatMap(g => g.reports).find(r => r.id === activeReport);
-  const needsDates = !["ar-aging", "bad-debts", "customer-balance"].includes(activeReport);
+  const needsDates = !["ar-aging", "bad-debts", "customer-balance", "ledger"].includes(activeReport);
 
   const selectReport = (id: string) => {
     router.push(`/finance/reports?report=${id}`);
   };
 
   return (
+    <ToastContext.Provider value={{ toast }}>
     <div className="flex h-full">
       {/* Left: Report catalog */}
       <div className="w-72 shrink-0 overflow-y-auto border-r border-surface-border bg-white">
@@ -595,6 +811,7 @@ function FinanceReportsContent() {
         )}
       </div>
     </div>
+    </ToastContext.Provider>
   );
 }
 
