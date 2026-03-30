@@ -2,6 +2,7 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { NotFoundException, BadRequestException } from "@nestjs/common";
 import { ProductsService } from "./products.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { StorageService } from "../storage/storage.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 const MOCK_PRODUCT = {
@@ -13,11 +14,7 @@ const MOCK_PRODUCT = {
   category: "Produce",
   description: "Fresh cherry tomatoes",
   isActive: true,
-  lowStock: false,
-  imageKey: null,
-  zohoProductId: null,
-  hasLocalOverride: false,
-  syncConflict: false,
+  imageKeys: [] as string[],
   createdAt: new Date(),
   updatedAt: new Date(),
 };
@@ -30,7 +27,19 @@ describe("ProductsService", () => {
     prisma = createMockPrisma();
 
     const module: TestingModule = await Test.createTestingModule({
-      providers: [ProductsService, { provide: PrismaService, useValue: prisma }],
+      providers: [
+        ProductsService,
+        { provide: PrismaService, useValue: prisma },
+        {
+          provide: StorageService,
+          useValue: {
+            presignedUrl: jest.fn().mockResolvedValue("http://mock-url"),
+            presignedUrls: jest.fn().mockResolvedValue([]),
+            upload: jest.fn(),
+            delete: jest.fn(),
+          },
+        },
+      ],
     }).compile();
 
     service = module.get<ProductsService>(ProductsService);
@@ -84,7 +93,7 @@ describe("ProductsService", () => {
     it("should return a product by id", async () => {
       prisma.product.findUnique.mockResolvedValue(MOCK_PRODUCT);
       const result = await service.findOne("prod-1");
-      expect(result).toEqual(MOCK_PRODUCT);
+      expect(result).toMatchObject(MOCK_PRODUCT);
     });
 
     it("should throw NotFoundException when product does not exist", async () => {
@@ -145,17 +154,16 @@ describe("ProductsService", () => {
   // ─── update ───────────────────────────────────────────────────────────────
 
   describe("update", () => {
-    it("should update a product and set hasLocalOverride", async () => {
+    it("should update a product", async () => {
       prisma.product.findUnique.mockResolvedValue(MOCK_PRODUCT);
       prisma.product.findFirst.mockResolvedValue(null); // no SKU conflict
       prisma.product.update.mockResolvedValue({ ...MOCK_PRODUCT, name: "Updated" });
 
       const result = await service.update("prod-1", { name: "Updated" } as any);
 
-      expect(prisma.product.update).toHaveBeenCalledWith({
-        where: { id: "prod-1" },
-        data: expect.objectContaining({ hasLocalOverride: true }),
-      });
+      expect(prisma.product.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: "prod-1" } }),
+      );
     });
 
     it("should throw NotFoundException when product does not exist", async () => {
@@ -170,26 +178,6 @@ describe("ProductsService", () => {
       await expect(service.update("prod-1", { sku: "DUP-SKU" } as any)).rejects.toThrow(
         BadRequestException,
       );
-    });
-  });
-
-  // ─── clearOverride ────────────────────────────────────────────────────────
-
-  describe("clearOverride", () => {
-    it("should reset override and conflict flags", async () => {
-      prisma.product.findUnique.mockResolvedValue(MOCK_PRODUCT);
-      prisma.product.update.mockResolvedValue({
-        ...MOCK_PRODUCT,
-        hasLocalOverride: false,
-        syncConflict: false,
-      });
-
-      await service.clearOverride("prod-1");
-
-      expect(prisma.product.update).toHaveBeenCalledWith({
-        where: { id: "prod-1" },
-        data: { hasLocalOverride: false, syncConflict: false },
-      });
     });
   });
 });

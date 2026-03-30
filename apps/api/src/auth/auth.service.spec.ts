@@ -118,7 +118,7 @@ describe("AuthService", () => {
     };
 
     it("should return access token, refresh token, and user", async () => {
-      prisma.refreshToken.create.mockResolvedValue({} as any);
+      prisma.refreshToken.upsert.mockResolvedValue({} as any);
 
       const result = await service.login(validUser as any);
 
@@ -129,13 +129,13 @@ describe("AuthService", () => {
     });
 
     it("should store the refresh token hash in the database", async () => {
-      prisma.refreshToken.create.mockResolvedValue({} as any);
+      prisma.refreshToken.upsert.mockResolvedValue({} as any);
 
       await service.login(validUser as any);
 
-      expect(prisma.refreshToken.create).toHaveBeenCalledWith(
+      expect(prisma.refreshToken.upsert).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({ userId: "user-1" }),
+          create: expect.objectContaining({ userId: "user-1" }),
         }),
       );
     });
@@ -161,7 +161,9 @@ describe("AuthService", () => {
   describe("changePassword", () => {
     it("should hash the new password and update the user", async () => {
       prisma.user.findUnique.mockResolvedValue(MOCK_USER);
-      (bcrypt.compare as jest.Mock).mockResolvedValue(true);
+      (bcrypt.compare as jest.Mock)
+        .mockResolvedValueOnce(true) // current password is correct
+        .mockResolvedValueOnce(false); // new password differs from old
       (bcrypt.hash as jest.Mock).mockResolvedValue("new-hash");
       prisma.user.update.mockResolvedValue({} as any);
 

@@ -1,5 +1,6 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { NotFoundException, ForbiddenException, BadRequestException } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { CustomersService } from "./customers.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
@@ -40,7 +41,11 @@ describe("CustomersService", () => {
     prisma = createMockPrisma();
 
     const module: TestingModule = await Test.createTestingModule({
-      providers: [CustomersService, { provide: PrismaService, useValue: prisma }],
+      providers: [
+        CustomersService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(null) } },
+      ],
     }).compile();
 
     service = module.get<CustomersService>(CustomersService);
