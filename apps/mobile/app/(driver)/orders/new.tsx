@@ -2,6 +2,7 @@ import { useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -11,10 +12,13 @@ import {
 } from "react-native";
 import { router, Stack } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import { useQuery } from "@tanstack/react-query";
 import { colors, borderRadius, shadows } from "@routeflow/ui/tokens";
 import { useCreateOrderAsDriver } from "../../../lib/api/orders";
 import { useCustomers, type CustomerSummary } from "../../../lib/api/customers";
 import { useProducts } from "../../../lib/api/products";
+import { apiClient } from "../../../lib/api-client";
+import { BarcodeScanner } from "../../../components/BarcodeScanner";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -139,18 +143,37 @@ function CustomerPicker({
 function ProductPicker({
   cart,
   onCartChange,
+  customerId,
 }: {
   cart: CartItem[];
   onCartChange: (cart: CartItem[]) => void;
+  customerId: string | null;
 }) {
   const [search, setSearch] = useState("");
+  const [scannerVisible, setScannerVisible] = useState(false);
   const { data, isLoading } = useProducts({ search: search || undefined });
   const products: any[] = data?.data ?? data ?? [];
+
+  const { data: customerPrices } = useQuery({
+    queryKey: ['customer-prices', customerId],
+    queryFn: () => apiClient.get(`/customers/${customerId}/prices`).then(r => r.data),
+    enabled: !!customerId,
+  });
+  const priceMap: Record<string, number> = (() => {
+    const map: Record<string, number> = {};
+    if (customerPrices) for (const cp of customerPrices) map[cp.productId] = parseFloat(cp.specialPrice);
+    return map;
+  })();
 
   const getQty = (productId: string) =>
     cart.find((c) => c.productId === productId)?.qty ?? 0;
 
+  const getEffectivePrice = (product: any): number => {
+    return priceMap[product.id] ?? product.pricePerUnit ?? product.price ?? 0;
+  };
+
   const increment = (product: any) => {
+    const effectivePrice = getEffectivePrice(product);
     const existing = cart.find((c) => c.productId === product.id);
     if (existing) {
       onCartChange(
@@ -166,7 +189,7 @@ function ProductPicker({
           name: product.name,
           unit: product.unit ?? "",
           qty: 1,
-          unitPrice: product.price ?? 0,
+          unitPrice: effectivePrice,
         },
       ]);
     }
@@ -183,6 +206,20 @@ function ProductPicker({
           c.productId === productId ? { ...c, qty: c.qty - 1 } : c,
         ),
       );
+    }
+  };
+
+  const handleBarcodeScan = async (code: string) => {
+    setScannerVisible(false);
+    try {
+      const product = await apiClient.get(`/products/barcode/${code}`).then(r => r.data);
+      if (product) {
+        increment(product);
+      } else {
+        Alert.alert("Not found", `No product found with barcode ${code}`);
+      }
+    } catch {
+      Alert.alert("Not found", `No product found with barcode ${code}`);
     }
   };
 
@@ -204,6 +241,9 @@ function ProductPicker({
             <Ionicons name="close-circle" size={18} color="#94a3b8" />
           </Pressable>
         )}
+        <Pressable onPress={() => setScannerVisible(true)} accessibilityLabel="Scan barcode">
+          <Ionicons name="barcode-outline" size={22} color={colors.brand[500]} />
+        </Pressable>
       </View>
 
       {isLoading ? (
@@ -218,14 +258,24 @@ function ProductPicker({
         <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, gap: 8 }}>
           {products.map((product) => {
             const qty = getQty(product.id);
+            const regularPrice = parseFloat(String(product.pricePerUnit ?? product.price ?? 0));
+            const specialPrice = priceMap[product.id];
+            const displayPrice = specialPrice ?? regularPrice;
             return (
               <View key={product.id} style={styles.productRow}>
                 <View style={{ flex: 1, gap: 2 }}>
                   <Text style={styles.productName}>{product.name}</Text>
-                  <Text style={styles.productMeta}>
-                    {product.unit ?? ""}
-                    {product.price != null ? `  ·  $${product.price.toFixed(2)}` : ""}
-                  </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Text style={[styles.productMeta, specialPrice !== undefined && { color: colors.brand[500], fontFamily: 'Inter_600SemiBold' }]}>
+                      {product.unit ?? ""}
+                      {"  ·  "}${displayPrice.toFixed(2)}
+                    </Text>
+                    {specialPrice !== undefined && (
+                      <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: '#94a3b8', textDecorationLine: 'line-through' }}>
+                        ${regularPrice.toFixed(2)}
+                      </Text>
+                    )}
+                  </View>
                 </View>
                 <View style={styles.qtyControl}>
                   <Pressable
@@ -250,6 +300,14 @@ function ProductPicker({
           })}
         </ScrollView>
       )}
+
+      {/* Barcode scanner modal */}
+      <Modal visible={scannerVisible} animationType="slide" onRequestClose={() => setScannerVisible(false)}>
+        <BarcodeScanner
+          onScanned={handleBarcodeScan}
+          onClose={() => setScannerVisible(false)}
+        />
+      </Modal>
     </View>
   );
 }
@@ -337,7 +395,7 @@ export default function NewOrderScreen() {
               </Text>
             </Pressable>
 
-            <ProductPicker cart={cart} onCartChange={setCart} />
+            <ProductPicker cart={cart} onCartChange={setCart} customerId={selectedCustomer?.id ?? null} />
 
             {/* Cart summary + notes + submit */}
             <View style={styles.step2Footer}>

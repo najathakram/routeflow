@@ -1,5 +1,5 @@
 import React from 'react';
-import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer';
+import { Document, Page, Text, View, StyleSheet, Image } from '@react-pdf/renderer';
 
 type DecimalLike = { toNumber(): number } | number | string;
 
@@ -32,6 +32,8 @@ export interface InvoicePdfData {
     taxRate: DecimalLike;
     subtotal: DecimalLike;
     product?: { name: string } | null;
+    barcodeDataUri?: string;
+    barcodeText?: string;
   }>;
   payments: Array<{
     id: string;
@@ -176,6 +178,12 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
           <View key={item.id} style={[styles.tableRow, idx % 2 === 1 ? styles.tableRowAlt : {}]}>
             <View style={styles.colDescription}>
               <Text style={styles.cellText}>{item.description}</Text>
+              {item.barcodeDataUri ? (
+                <View style={{ marginTop: 3 }}>
+                  <Image src={item.barcodeDataUri} style={{ height: 18, width: 80, objectFit: 'contain' }} />
+                  <Text style={{ fontSize: 6, color: '#64748b', marginTop: 1 }}>{item.barcodeText}</Text>
+                </View>
+              ) : null}
             </View>
             <Text style={[styles.cellTextRight, styles.colQty]}>{toNum(item.qty).toFixed(2)}</Text>
             <Text style={[styles.cellTextRight, styles.colUnit]}>{fmt(item.unitPrice)}</Text>

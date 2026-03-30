@@ -160,3 +160,50 @@ export function useApplyAdvancePayment() {
     },
   });
 }
+
+// ─── Customer Special Prices ──────────────────────────────────────────────────
+
+export interface CustomerPrice {
+  id: string;
+  customerId: string;
+  productId: string;
+  specialPrice: number | string;
+  notes?: string;
+  product?: {
+    id: string;
+    name: string;
+    sku?: string;
+    unit: string;
+    pricePerUnit: number | string;
+  };
+}
+
+export function useCustomerPrices(customerId: string | undefined) {
+  return useQuery({
+    queryKey: ['customer-prices', customerId],
+    queryFn: () => apiClient.get(`/customers/${customerId}/prices`).then((r) => r.data),
+    enabled: !!customerId,
+  });
+}
+
+export function useUpsertCustomerPrice() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ customerId, ...data }: { customerId: string; productId: string; specialPrice: string; notes?: string }) =>
+      apiClient.post(`/customers/${customerId}/prices`, data).then((r) => r.data),
+    onSuccess: (_d, vars) => {
+      qc.invalidateQueries({ queryKey: ['customer-prices', vars.customerId] });
+    },
+  });
+}
+
+export function useDeleteCustomerPrice() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ customerId, priceId }: { customerId: string; priceId: string }) =>
+      apiClient.delete(`/customers/${customerId}/prices/${priceId}`).then((r) => r.data),
+    onSuccess: (_d, vars) => {
+      qc.invalidateQueries({ queryKey: ['customer-prices', vars.customerId] });
+    },
+  });
+}

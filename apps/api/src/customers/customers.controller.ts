@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import { ApiTags, ApiBearerAuth } from "@nestjs/swagger";
 import { UserRole } from "@prisma/client";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
@@ -13,6 +13,7 @@ import { ChangeCustomerStatusDto } from "./dto/change-customer-status.dto";
 import { CreateAddressDto } from "./dto/create-address.dto";
 import { UpdateAddressDto } from "./dto/update-address.dto";
 import { ListCustomersDto } from "./dto/list-customers.dto";
+import { UpsertCustomerPriceDto } from "./dto/customer-price.dto";
 
 @ApiTags("customers")
 @ApiBearerAuth()
@@ -107,6 +108,30 @@ export class CustomersController {
   @Roles(UserRole.OPERATOR)
   applyAdvancePayment(@Param("apId") apId: string, @Body() dto: any) {
     return this.customersService.applyAdvancePaymentToInvoice(apId, dto);
+  }
+
+  @Get(':id/prices')
+  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
+  getCustomerPrices(@Param('id') id: string) {
+    return this.customersService.getCustomerPrices(id);
+  }
+
+  @Post(':id/prices')
+  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
+  upsertCustomerPrice(
+    @Param('id') id: string,
+    @Body() dto: UpsertCustomerPriceDto,
+  ) {
+    return this.customersService.upsertCustomerPrice(id, dto);
+  }
+
+  @Delete(':id/prices/:priceId')
+  @Roles(UserRole.OPERATOR)
+  deleteCustomerPrice(
+    @Param('id') id: string,
+    @Param('priceId') priceId: string,
+  ) {
+    return this.customersService.deleteCustomerPrice(id, priceId);
   }
 
   @Post(":id/addresses")

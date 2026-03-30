@@ -19,7 +19,9 @@ export class InvoicesController {
     private readonly invoicePdfService: InvoicePdfService,
   ) {}
 
-  @Post() create(@Body() dto: CreateInvoiceDto) { return this.invoicesService.create(dto); }
+  @Post()
+  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
+  create(@Body() dto: CreateInvoiceDto) { return this.invoicesService.create(dto); }
 
   @Get()
   @Roles(UserRole.OPERATOR, UserRole.CUSTOMER, UserRole.DRIVER)

@@ -224,6 +224,7 @@ model Customer {
   returns        Return[]
   advancePayments   AdvancePayment[]
   recurringInvoices RecurringInvoice[]
+  prices            CustomerPrice[]
 
   @@index([zohoContactId])
   @@index([businessName])
@@ -303,6 +304,7 @@ model Product {
   returnItems             ReturnItem[]
   recurringInvoiceItems   RecurringInvoiceItem[]
   vendorBillItems         VendorBillItem[]
+  customerPrices          CustomerPrice[]
 
   @@index([category])
   @@index([isActive])
@@ -1081,4 +1083,20 @@ model Message {
 
   @@index([runId])
   @@index([senderId])
+}
+
+// ─── Customer Special Prices ──────────────────────────────────────────────────
+
+model CustomerPrice {
+  id           String   @id @default(uuid())
+  customerId   String
+  productId    String
+  specialPrice Decimal  @db.Decimal(10,2)
+  notes        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  customer     Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  product      Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  @@unique([customerId, productId])
+  @@index([customerId])
 }

@@ -15,6 +15,7 @@ import { ChangeCustomerStatusDto } from "./dto/change-customer-status.dto";
 import { CreateAddressDto } from "./dto/create-address.dto";
 import { UpdateAddressDto } from "./dto/update-address.dto";
 import { ListCustomersDto } from "./dto/list-customers.dto";
+import { UpsertCustomerPriceDto } from "./dto/customer-price.dto";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import { UserRole } from "@prisma/client";
 
@@ -508,6 +509,51 @@ export class CustomersService {
       where: { customerId },
       orderBy: { receivedAt: "desc" },
     });
+  }
+
+  // ─── Customer Prices ───────────────────────────────────────────────────────
+
+  async getCustomerPrices(customerId: string) {
+    return this.prisma.customerPrice.findMany({
+      where: { customerId },
+      include: {
+        product: {
+          select: { id: true, name: true, sku: true, unit: true, pricePerUnit: true },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async upsertCustomerPrice(customerId: string, dto: UpsertCustomerPriceDto) {
+    return this.prisma.customerPrice.upsert({
+      where: {
+        customerId_productId: { customerId, productId: dto.productId },
+      },
+      create: {
+        customerId,
+        productId: dto.productId,
+        specialPrice: dto.specialPrice,
+        notes: dto.notes,
+      },
+      update: {
+        specialPrice: dto.specialPrice,
+        notes: dto.notes,
+      },
+      include: {
+        product: {
+          select: { id: true, name: true, sku: true, unit: true, pricePerUnit: true },
+        },
+      },
+    });
+  }
+
+  async deleteCustomerPrice(customerId: string, priceId: string) {
+    const cp = await this.prisma.customerPrice.findUnique({ where: { id: priceId } });
+    if (!cp || cp.customerId !== customerId) {
+      throw new NotFoundException('Customer price not found');
+    }
+    await this.prisma.customerPrice.delete({ where: { id: priceId } });
   }
 
   async applyAdvancePaymentToInvoice(advancePaymentId: string, dto: { invoiceId: string; amount?: number }) {

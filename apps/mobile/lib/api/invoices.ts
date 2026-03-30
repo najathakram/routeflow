@@ -83,3 +83,11 @@ export function useRecordInvoicePayment() {
     },
   });
 }
+
+export function useCreateInvoice() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (dto: any) => apiClient.post('/invoices', dto).then(r => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['invoices'] }),
+  });
+}

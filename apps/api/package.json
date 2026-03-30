@@ -50,6 +50,7 @@
     "axios": "^1.13.6",
     "bcrypt": "^6.0.0",
     "bull": "^4.16.5",
+    "bwip-js": "^4.8.0",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.4",
     "csv-parse": "^6.2.1",

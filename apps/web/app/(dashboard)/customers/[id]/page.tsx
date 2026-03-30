@@ -44,8 +44,13 @@ import {
   useCustomerStatement,
   useCustomerAdvancePayments,
   useCreateAdvancePayment,
+  useCustomerPrices,
+  useUpsertCustomerPrice,
+  useDeleteCustomerPrice,
   type AdvancePayment,
+  type CustomerPrice,
 } from "@/lib/api/customers";
+import { useProducts } from "@/lib/api/products";
 import { useRoutes, useAddStopToRoute } from "@/lib/api/routes";
 import {
   useOrderTemplates,
@@ -354,6 +359,234 @@ function AssignRouteModal({
   );
 }
 
+// ─── Special Prices Tab ───────────────────────────────────────────────────────
+
+function SpecialPricesTab({ customerId }: { customerId: string }) {
+  const { data: prices, isLoading } = useCustomerPrices(customerId);
+  const upsertPrice = useUpsertCustomerPrice();
+  const deletePrice = useDeleteCustomerPrice();
+  const { data: productsData } = useProducts({ isActive: true, limit: 200 });
+  const allProducts: any[] = productsData?.data ?? [];
+
+  const [isModalOpen, setIsModalOpen] = React.useState(false);
+  const [editingPrice, setEditingPrice] = React.useState<CustomerPrice | null>(null);
+  const [deletingPriceId, setDeletingPriceId] = React.useState<string | null>(null);
+  const [productSearch, setProductSearch] = React.useState("");
+  const [selectedProductId, setSelectedProductId] = React.useState("");
+  const [specialPrice, setSpecialPrice] = React.useState("");
+  const [notes, setNotes] = React.useState("");
+  const [productDropdownOpen, setProductDropdownOpen] = React.useState(false);
+
+  const filteredProducts = allProducts.filter((p) =>
+    p.name.toLowerCase().includes(productSearch.toLowerCase()) ||
+    (p.sku ?? "").toLowerCase().includes(productSearch.toLowerCase())
+  );
+
+  const openAdd = () => {
+    setEditingPrice(null);
+    setSelectedProductId("");
+    setProductSearch("");
+    setSpecialPrice("");
+    setNotes("");
+    setIsModalOpen(true);
+  };
+
+  const openEdit = (cp: CustomerPrice) => {
+    setEditingPrice(cp);
+    setSelectedProductId(cp.productId);
+    setProductSearch(cp.product?.name ?? "");
+    setSpecialPrice(String(cp.specialPrice));
+    setNotes(cp.notes ?? "");
+    setIsModalOpen(true);
+  };
+
+  const handleSave = () => {
+    if (!selectedProductId || !specialPrice) return;
+    upsertPrice.mutate(
+      { customerId, productId: selectedProductId, specialPrice, notes: notes || undefined },
+      { onSuccess: () => { setIsModalOpen(false); setEditingPrice(null); } },
+    );
+  };
+
+  const handleDelete = (priceId: string) => {
+    deletePrice.mutate({ customerId, priceId }, {
+      onSuccess: () => setDeletingPriceId(null),
+    });
+  };
+
+  const priceList: CustomerPrice[] = prices ?? [];
+
+  return (
+    <Tabs.Content value="special-prices" className="mt-5 focus:outline-none">
+      <Card>
+        <div className="mb-4 flex items-center justify-between">
+          <div>
+            <h3 className="text-base font-semibold text-navy">Special Prices</h3>
+            <p className="text-xs text-navy/50 mt-0.5">
+              Customer-specific pricing that overrides the standard product price.
+            </p>
+          </div>
+          <Button size="sm" leftIcon={<Plus className="h-4 w-4" />} onClick={openAdd}>
+            Add Price
+          </Button>
+        </div>
+
+        {isLoading ? (
+          <p className="text-sm text-navy/40">Loading…</p>
+        ) : priceList.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-surface-border bg-surface-raised py-10 text-center">
+            <p className="text-sm text-navy/40">No special prices set.</p>
+            <button className="mt-2 text-sm text-brand-500 hover:underline" onClick={openAdd}>
+              Add the first one →
+            </button>
+          </div>
+        ) : (
+          <div className="-mx-6 -mb-6 overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-surface-border bg-gray-50">
+                  <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/50">Product</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/50">SKU</th>
+                  <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-navy/50">Regular Price</th>
+                  <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-navy/50">Special Price</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/50">Notes</th>
+                  <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wider text-navy/50">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-surface-border">
+                {priceList.map((cp) => (
+                  <tr key={cp.id} className="hover:bg-gray-50/60">
+                    <td className="px-6 py-3 text-sm font-medium text-navy">{cp.product?.name ?? "—"}</td>
+                    <td className="px-4 py-3 text-xs text-navy/50 font-mono">{cp.product?.sku ?? "—"}</td>
+                    <td className="px-4 py-3 text-right text-sm text-navy/60">
+                      {cp.product?.pricePerUnit != null
+                        ? new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(Number(cp.product.pricePerUnit))
+                        : "—"}
+                    </td>
+                    <td className="px-4 py-3 text-right text-sm font-semibold text-brand-600">
+                      {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(Number(cp.specialPrice))}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-navy/60">{cp.notes ?? "—"}</td>
+                    <td className="px-6 py-3 text-right">
+                      <div className="flex items-center justify-end gap-1">
+                        <button
+                          title="Edit price"
+                          className="rounded p-1.5 text-navy/40 hover:bg-surface-raised hover:text-navy transition-colors"
+                          onClick={() => openEdit(cp)}
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </button>
+                        <button
+                          title="Delete price"
+                          className="rounded p-1.5 text-navy/40 hover:bg-danger-bg hover:text-danger transition-colors"
+                          onClick={() => setDeletingPriceId(cp.id)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      {/* Add / Edit modal */}
+      <Modal
+        open={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        title={editingPrice ? "Edit Special Price" : "Add Special Price"}
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setIsModalOpen(false)} disabled={upsertPrice.isPending}>Cancel</Button>
+            <Button loading={upsertPrice.isPending} onClick={handleSave} disabled={!selectedProductId || !specialPrice}>
+              Save
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          {/* Product search */}
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-navy/80">Product</label>
+            <div className="relative">
+              <input
+                type="text"
+                placeholder="Search products…"
+                value={productSearch}
+                onChange={(e) => { setProductSearch(e.target.value); setProductDropdownOpen(true); }}
+                onFocus={() => setProductDropdownOpen(true)}
+                className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/40 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+              />
+              {productDropdownOpen && productSearch.length > 0 && filteredProducts.length > 0 && (
+                <div className="absolute z-10 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg">
+                  <ul className="max-h-40 overflow-y-auto">
+                    {filteredProducts.slice(0, 20).map((p) => (
+                      <li key={p.id}>
+                        <button
+                          className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-surface-raised"
+                          onClick={() => {
+                            setSelectedProductId(p.id);
+                            setProductSearch(p.name);
+                            setProductDropdownOpen(false);
+                          }}
+                        >
+                          <span className="text-sm font-medium text-navy">{p.name}</span>
+                          {p.sku && <span className="text-xs text-navy/40 font-mono">{p.sku}</span>}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Special price */}
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-navy/80">Special Price ($)</label>
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              placeholder="0.00"
+              value={specialPrice}
+              onChange={(e) => setSpecialPrice(e.target.value)}
+              className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+            />
+          </div>
+
+          {/* Notes */}
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-navy/80">Notes (optional)</label>
+            <textarea
+              rows={2}
+              placeholder="e.g. Contract price, promotional rate…"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              className="w-full resize-none rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+            />
+          </div>
+        </div>
+      </Modal>
+
+      {/* Delete confirmation */}
+      <ConfirmDialog
+        open={!!deletingPriceId}
+        onClose={() => setDeletingPriceId(null)}
+        onConfirm={() => { if (deletingPriceId) handleDelete(deletingPriceId); }}
+        title="Delete special price?"
+        description="This will remove the customer-specific price for this product."
+        confirmLabel="Yes, delete"
+        variant="danger"
+        loading={deletePrice.isPending}
+      />
+    </Tabs.Content>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 const STATUS_CYCLE = ["ACTIVE", "INACTIVE", "SUSPENDED"] as const;
@@ -520,6 +753,7 @@ export default function CustomerDetailPage({
             Standing Orders{templates.length > 0 ? ` (${templates.length})` : ""}
           </TabTrigger>
           <TabTrigger value="billing">Billing</TabTrigger>
+          <TabTrigger value="special-prices">Special Prices</TabTrigger>
         </Tabs.List>
 
         {/* ── Profile tab ──────────────────────────────────────────────── */}
@@ -1193,6 +1427,10 @@ export default function CustomerDetailPage({
             </div>
           </Modal>
         </Tabs.Content>
+
+        {/* ── Special Prices tab ───────────────────────────────────────── */}
+        <SpecialPricesTab customerId={params.id} />
+
       </Tabs.Root>
 
       {/* Modals */}

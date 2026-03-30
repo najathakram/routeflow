@@ -4,6 +4,8 @@ import { renderToBuffer } from '@react-pdf/renderer';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { InvoicePdfTemplate } from './invoice-pdf-template';
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+import bwipjs from 'bwip-js';
 
 @Injectable()
 export class InvoicePdfService {
@@ -43,7 +45,7 @@ export class InvoicePdfService {
           },
         },
         items: {
-          include: { product: { select: { id: true, name: true } } },
+          include: { product: { select: { id: true, name: true, barcode: true, sku: true } } },
         },
         payments: { orderBy: { paidAt: 'asc' } },
       },
@@ -52,10 +54,33 @@ export class InvoicePdfService {
 
     this.logger.log(`Generating PDF for invoice ${invoiceId}`);
 
+    // Generate barcodes for each line item
+    const itemsWithBarcodes = await Promise.all(
+      inv.items.map(async (item) => {
+        const barcodeText = (item as any).product?.barcode ?? (item as any).product?.sku;
+        if (barcodeText) {
+          try {
+            // @ts-ignore
+            const buf = await bwipjs.toBuffer({ bcid: 'code128', text: String(barcodeText), scale: 2, height: 8, includetext: false });
+            return {
+              ...item,
+              barcodeDataUri: 'data:image/png;base64,' + Buffer.from(buf).toString('base64'),
+              barcodeText: String(barcodeText),
+            };
+          } catch {
+            return item;
+          }
+        }
+        return item;
+      })
+    );
+
+    const invWithBarcodes = { ...inv, items: itemsWithBarcodes };
+
     let pdfBuffer: Buffer;
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const element = React.createElement(InvoicePdfTemplate as any, { invoice: inv });
+      const element = React.createElement(InvoicePdfTemplate as any, { invoice: invWithBarcodes });
       pdfBuffer = await renderToBuffer(element as any);
     } catch (err) {
       this.logger.error(

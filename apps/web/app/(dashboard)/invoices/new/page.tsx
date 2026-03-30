@@ -9,12 +9,15 @@ import {
   Trash2,
   Search,
   Loader2,
+  Eye,
 } from "lucide-react";
 import { Button, Card, Input, useToast, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useCreateInvoice, type CreateInvoiceItem } from "@/lib/api/invoices";
-import { useCustomers, type Customer } from "@/lib/api/customers";
+import { useCustomers, useCustomerPrices, type Customer } from "@/lib/api/customers";
 import { useProducts } from "@/lib/api/products";
+import { apiClient } from "@/lib/api-client";
+import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -155,7 +158,7 @@ function ProductSearchInput({
   onChange,
 }: {
   value: string;
-  onChange: (description: string, productId?: string, unitPrice?: number) => void;
+  onChange: (description: string, productId: string, unitPrice: string, avgCost?: number) => void;
 }) {
   const [query, setQuery] = React.useState(value);
   const [debouncedQuery, setDebouncedQuery] = React.useState("");
@@ -181,29 +184,43 @@ function ProductSearchInput({
   }, []);
 
   return (
-    <div ref={ref} className="relative">
+    <div ref={ref} className="relative flex items-center gap-1">
       <input
         type="text"
         placeholder="Description / product…"
         value={query}
         onChange={(e) => {
           setQuery(e.target.value);
-          onChange(e.target.value, undefined, undefined);
+          onChange(e.target.value, "", "0", undefined);
           setOpen(true);
         }}
         onFocus={() => setOpen(true)}
         className="h-9 w-full rounded border border-surface-border bg-white px-2.5 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
       />
+      <BarcodeScannerButton
+        onScan={async (code) => {
+          try {
+            const product = await apiClient.get(`/products/barcode/${code}`).then(r => r.data);
+            if (product) {
+              onChange(product.name, product.id, String(product.pricePerUnit), product.averageCost ? parseFloat(String(product.averageCost)) : undefined);
+              setQuery(product.name);
+              setOpen(false);
+            }
+          } catch {
+            // product not found, ignore
+          }
+        }}
+      />
       {open && debouncedQuery.length > 0 && products.length > 0 && (
-        <div className="absolute z-10 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg">
+        <div className="absolute left-0 top-full z-10 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg">
           <ul className="max-h-36 overflow-y-auto">
-            {products.map((p: { id: string; name: string; pricePerUnit: number; sku?: string }) => (
+            {products.map((p: { id: string; name: string; pricePerUnit: number; sku?: string; averageCost?: number }) => (
               <li key={p.id}>
                 <button
                   className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-surface-raised"
                   onClick={() => {
                     setQuery(p.name);
-                    onChange(p.name, p.id, p.pricePerUnit);
+                    onChange(p.name, p.id, String(p.pricePerUnit), p.averageCost ? parseFloat(String(p.averageCost)) : undefined);
                     setOpen(false);
                   }}
                 >
@@ -232,6 +249,9 @@ interface LineItemState {
   unitPrice: number;
   discount: number;
   taxable: boolean;
+  regularPrice?: number;      // original product price before special pricing
+  isSpecialPrice?: boolean;   // true if a customer-specific price was applied
+  avgCost?: number;           // average cost of the product (display only, never submitted)
 }
 
 function createEmptyItem(): LineItemState {
@@ -279,6 +299,18 @@ export default function NewInvoicePage() {
   const [termsText, setTermsText] = React.useState("");
   const [adjustment, setAdjustment] = React.useState(0);
   const [errors, setErrors] = React.useState<Record<string, string>>({});
+  const [showAvgCost, setShowAvgCost] = React.useState(false);
+
+  const { data: customerPricesData } = useCustomerPrices(customer?.id);
+  const priceMap = React.useMemo(() => {
+    const map: Record<string, number> = {};
+    if (customerPricesData) {
+      for (const cp of customerPricesData) {
+        map[cp.productId] = parseFloat(String(cp.specialPrice));
+      }
+    }
+    return map;
+  }, [customerPricesData]);
 
   // ── Auto-update due date when terms change ────────────────────────────────
 
@@ -510,12 +542,32 @@ export default function NewInvoicePage() {
                 {errors.items && (
                   <p className="text-xs text-danger">{errors.items}</p>
                 )}
+                {/* Avg cost toggle */}
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-medium text-navy/60">Line Items</span>
+                  <button
+                    type="button"
+                    onClick={() => setShowAvgCost(v => !v)}
+                    className={cn(
+                      "flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors",
+                      showAvgCost ? "bg-brand-500/10 text-brand-500" : "text-navy/40 hover:text-navy"
+                    )}
+                    title="Toggle average cost column (not included in invoice)"
+                  >
+                    <Eye className="h-3.5 w-3.5" />
+                    {showAvgCost ? 'Hide avg. cost' : 'Show avg. cost'}
+                  </button>
+                </div>
                 {/* Table header */}
-                <div className="grid grid-cols-[1fr_70px_100px_90px_44px_32px] gap-2 rounded-t bg-gray-50 px-1 py-2 text-xs font-semibold uppercase tracking-wider text-gray-500">
+                <div className={cn(
+                  "gap-2 rounded-t bg-gray-50 px-1 py-2 text-xs font-semibold uppercase tracking-wider text-gray-500",
+                  showAvgCost ? "grid grid-cols-[1fr_70px_100px_90px_72px_44px_32px]" : "grid grid-cols-[1fr_70px_100px_90px_44px_32px]"
+                )}>
                   <span>Item Details</span>
                   <span className="text-right">Qty</span>
                   <span className="text-right">Rate</span>
                   <span className="text-right">Discount</span>
+                  {showAvgCost && <span className="text-right text-navy/40">Avg. Cost</span>}
                   <span className="text-center">Tax</span>
                   <span />
                 </div>
@@ -523,16 +575,23 @@ export default function NewInvoicePage() {
                 {items.map((item) => (
                   <div
                     key={item.key}
-                    className="grid grid-cols-[1fr_70px_100px_90px_44px_32px] items-center gap-2 border-b border-surface-border pb-2"
+                    className={cn(
+                      "items-center gap-2 border-b border-surface-border pb-2",
+                      showAvgCost ? "grid grid-cols-[1fr_70px_100px_90px_72px_44px_32px]" : "grid grid-cols-[1fr_70px_100px_90px_44px_32px]"
+                    )}
                   >
                     {/* Description / product search */}
                     <ProductSearchInput
                       value={item.description}
-                      onChange={(description, productId, unitPrice) => {
+                      onChange={(desc, pid, price, avgCost) => {
+                        const specialPrice = pid ? priceMap[pid] : undefined;
                         updateItem(item.key, {
-                          description,
-                          productId,
-                          unitPrice: unitPrice !== undefined ? unitPrice : item.unitPrice,
+                          description: desc,
+                          productId: pid || undefined,
+                          unitPrice: specialPrice ?? (price ? parseFloat(price) : item.unitPrice),
+                          regularPrice: specialPrice !== undefined ? parseFloat(price) : undefined,
+                          isSpecialPrice: specialPrice !== undefined,
+                          avgCost,
                         });
                       }}
                     />
@@ -548,14 +607,21 @@ export default function NewInvoicePage() {
                     />
 
                     {/* Unit price */}
-                    <input
-                      type="number"
-                      min={0}
-                      step={0.01}
-                      value={item.unitPrice}
-                      onChange={(e) => updateItem(item.key, { unitPrice: parseFloat(e.target.value) || 0 })}
-                      className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
-                    />
+                    <div>
+                      {item.isSpecialPrice && item.regularPrice !== undefined && (
+                        <p className="text-xs line-through text-navy/40 mb-0.5 text-right">
+                          ${item.regularPrice.toFixed(2)}
+                        </p>
+                      )}
+                      <input
+                        type="number"
+                        min={0}
+                        step={0.01}
+                        value={item.unitPrice}
+                        onChange={(e) => updateItem(item.key, { unitPrice: parseFloat(e.target.value) || 0 })}
+                        className="h-9 w-full rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
+                      />
+                    </div>
 
                     {/* Discount */}
                     <input
@@ -567,6 +633,13 @@ export default function NewInvoicePage() {
                       onChange={(e) => updateItem(item.key, { discount: parseFloat(e.target.value) || 0 })}
                       className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
                     />
+
+                    {/* Avg cost (optional column) */}
+                    {showAvgCost && (
+                      <span className="text-right text-xs text-navy/50">
+                        {item.avgCost ? '$' + item.avgCost.toFixed(2) : '—'}
+                      </span>
+                    )}
 
                     {/* Taxable checkbox */}
                     <label className="flex cursor-pointer items-center justify-center">
@@ -594,7 +667,10 @@ export default function NewInvoicePage() {
                 {items.map((item) => (
                   <div
                     key={item.key + "-total"}
-                    className="grid grid-cols-[1fr_70px_100px_90px_44px_32px] gap-2 px-1"
+                    className={cn(
+                      "gap-2 px-1",
+                      showAvgCost ? "grid grid-cols-[1fr_70px_100px_90px_72px_44px_32px]" : "grid grid-cols-[1fr_70px_100px_90px_44px_32px]"
+                    )}
                   >
                     <span />
                     <span />
@@ -602,6 +678,7 @@ export default function NewInvoicePage() {
                     <span className="col-span-1 text-right text-xs font-medium text-navy/60">
                       = {fmt.format(lineTotal(item))}
                     </span>
+                    {showAvgCost && <span />}
                     <span />
                     <span />
                   </div>
