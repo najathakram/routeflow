@@ -264,7 +264,7 @@ export default function FinanceDashboardPage() {
           <p className="text-xs text-navy/50">Total expenses YTD</p>
         </Link>
 
-        <Link href="/purchases?tab=bills" className="group rounded-xl border border-surface-border bg-white p-4 hover:shadow-sm transition-all hover:border-brand-200">
+        <Link href="/invoices?status=OVERDUE" className="group rounded-xl border border-surface-border bg-white p-4 hover:shadow-sm transition-all hover:border-brand-200">
           <div className="flex items-center justify-between">
             <span className="flex h-9 w-9 items-center justify-center rounded-lg text-brand-500 bg-brand-50">
               <BarChart2 className="h-4 w-4" />

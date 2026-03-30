@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   Plus,
   Eye,
@@ -238,10 +238,11 @@ const STATUS_TABS = [
 
 export default function InvoicesPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { setTitle } = usePageTitle();
   React.useEffect(() => { setTitle("Invoices"); }, [setTitle]);
 
-  const [statusFilter, setStatusFilter] = React.useState("");
+  const [statusFilter, setStatusFilter] = React.useState(searchParams.get("status") ?? "");
   const [search, setSearch] = React.useState("");
   const debouncedSearch = useDebounce(search, 300);
   const [dateFrom, setDateFrom] = React.useState("");
