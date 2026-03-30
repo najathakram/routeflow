@@ -146,6 +146,15 @@ function StatSkeleton() {
   );
 }
 
+function ErrorBanner({ message = "Failed to load data" }: { message?: string }) {
+  return (
+    <div className="flex items-center gap-2 rounded-lg border border-danger/30 bg-danger-bg px-4 py-3">
+      <AlertTriangle className="h-4 w-4 shrink-0 text-danger" />
+      <p className="text-sm text-danger">{message}</p>
+    </div>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
@@ -159,12 +168,12 @@ export default function DashboardPage() {
   const todayISO = React.useMemo(() => new Date().toISOString().split("T")[0], []);
 
   // ── Data fetching ──
-  const { data: allOrdersData, isLoading: ordersLoading } = useOrders({ page: 1, limit: 100 });
-  const { data: urgentOrdersData, isLoading: urgentLoading } = useOrders({ urgent: true, limit: 5 });
-  const { data: recentOrdersData, isLoading: recentLoading } = useOrders({ page: 1, limit: 5 });
-  const { data: routeRunsData, isLoading: runsLoading } = useRouteRuns({ date: todayISO });
-  const { data: driversData, isLoading: driversLoading } = useDrivers({ page: 1, limit: 20 });
-  const { data: lowStockData, isLoading: lowStockLoading } = useProducts({ isActive: true, page: 1 });
+  const { data: allOrdersData, isLoading: ordersLoading, isError: ordersError } = useOrders({ page: 1, limit: 100 });
+  const { data: urgentOrdersData, isLoading: urgentLoading, isError: urgentError } = useOrders({ urgent: true, limit: 5 });
+  const { data: recentOrdersData, isLoading: recentLoading, isError: recentError } = useOrders({ page: 1, limit: 5 });
+  const { data: routeRunsData, isLoading: runsLoading, isError: runsError } = useRouteRuns({ date: todayISO });
+  const { data: driversData, isLoading: driversLoading, isError: driversError } = useDrivers({ page: 1, limit: 20 });
+  const { data: lowStockData, isLoading: lowStockLoading, isError: lowStockError } = useProducts({ isActive: true, page: 1 });
 
   // ── KPI calculations ──
   const activeOrders = React.useMemo(() => {
@@ -192,6 +201,7 @@ export default function DashboardPage() {
   const lowStockItems = lowStockData?.meta?.total ?? 0;
 
   const isLoading = ordersLoading || runsLoading || driversLoading || lowStockLoading;
+  const hasKpiError = ordersError || runsError || driversError || lowStockError;
 
   const urgentOrders = urgentOrdersData?.data ?? [];
   const activeRoutes = routeRunsData?.data ?? [];
@@ -210,6 +220,10 @@ export default function DashboardPage() {
             <StatSkeleton />
             <StatSkeleton />
           </>
+        ) : hasKpiError ? (
+          <div className="col-span-full">
+            <ErrorBanner message="Could not load dashboard stats. Please refresh." />
+          </div>
         ) : (
           <>
             <Link href="/orders" className="block">
@@ -274,7 +288,7 @@ export default function DashboardPage() {
               { label: "Confirmed", key: "CONFIRMED" as const, color: "text-brand-600", bg: "bg-brand-50" },
               { label: "Out for Delivery", key: "OUT_FOR_DELIVERY" as const, color: "text-blue-600", bg: "bg-blue-50" },
               { label: "Delivered", key: "DELIVERED" as const, color: "text-success", bg: "bg-success-bg" },
-              { label: "Cancelled", key: "CANCELLED" as const, color: "text-navy/40", bg: "" },
+              { label: "Cancelled", key: "CANCELLED" as const, color: "text-navy/60", bg: "" },
             ].map(({ label, key, color, bg }) => (
               <Link
                 key={key}
@@ -302,6 +316,8 @@ export default function DashboardPage() {
             <div className="animate-pulse rounded-lg border border-surface-border bg-white p-5">
               <div className="h-4 w-48 rounded bg-navy/10" />
             </div>
+          ) : urgentError ? (
+            <ErrorBanner message="Could not load urgent orders." />
           ) : urgentOrders.length > 0 ? (
             <div className="overflow-hidden rounded-lg border border-danger/30 bg-danger-bg">
               <div className="flex items-center gap-2 border-b border-danger/20 bg-danger/10 px-4 py-3">
@@ -347,6 +363,8 @@ export default function DashboardPage() {
                   <div key={i} className="h-10 rounded bg-navy/10" />
                 ))}
               </div>
+            ) : runsError ? (
+              <ErrorBanner message="Could not load route runs." />
             ) : (
               <div className="-mx-6 -mb-6">
                 <Table
@@ -374,6 +392,8 @@ export default function DashboardPage() {
                   </div>
                 ))}
               </div>
+            ) : driversError ? (
+              <ErrorBanner message="Could not load drivers." />
             ) : (
               <ul className="-mx-6 -mb-6 divide-y divide-surface-border">
                 {drivers.length === 0 ? (
@@ -389,7 +409,7 @@ export default function DashboardPage() {
                       />
                       <div className="min-w-0 flex-1">
                         <p className="text-sm font-medium text-navy">{driver.contactName}</p>
-                        <p className="mt-0.5 text-xs text-navy/40">{driver.vehiclePlate ?? driver.user?.username}</p>
+                        <p className="mt-0.5 text-xs text-navy/60">{driver.vehiclePlate ?? driver.user?.username}</p>
                       </div>
                       <Badge
                         variant={driver.status === "ACTIVE" ? "success" : "neutral"}
@@ -422,6 +442,8 @@ export default function DashboardPage() {
               <div key={i} className="h-10 rounded bg-navy/10" />
             ))}
           </div>
+        ) : recentError ? (
+          <ErrorBanner message="Could not load recent orders." />
         ) : (
           <div className="-mx-6 -mb-6">
             <Table data={recentOrders} columns={orderColumns} />

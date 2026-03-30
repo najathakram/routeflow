@@ -1,9 +1,10 @@
-import { useState } from "react";
+import React, { useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   Modal,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Switch,
@@ -16,8 +17,10 @@ import { format, addDays } from "date-fns";
 import { Ionicons } from "@expo/vector-icons";
 import { EmptyState } from "@routeflow/ui/mobile";
 import { colors, borderRadius, shadows } from "@routeflow/ui/tokens";
+import * as Haptics from "expo-haptics";
 import { useOrderStore } from "../../../store/orderStore";
 import { useMyOrders, useCreateOrder, useUpdateOrderItems, useOrderTracking } from "../../../lib/api/orders";
+import { showToast } from "../../../lib/toast";
 
 const DATE_OPTIONS = [
   { label: "Today", offset: 0 },
@@ -38,14 +41,14 @@ function QtyStepper({
   return (
     <View style={stepperStyles.row}>
       <Pressable
-        onPress={onDecrease}
+        onPress={() => { Haptics.selectionAsync(); onDecrease(); }}
         style={stepperStyles.btn}
         hitSlop={6}
       >
         <Text style={stepperStyles.btnText}>−</Text>
       </Pressable>
       <Text style={stepperStyles.count}>{value}</Text>
-      <Pressable onPress={onIncrease} style={stepperStyles.btn} hitSlop={6}>
+      <Pressable onPress={() => { Haptics.selectionAsync(); onIncrease(); }} style={stepperStyles.btn} hitSlop={6}>
         <Text style={stepperStyles.btnText}>+</Text>
       </Pressable>
     </View>
@@ -53,11 +56,11 @@ function QtyStepper({
 }
 
 const stepperStyles = StyleSheet.create({
-  row: { flexDirection: "row", alignItems: "center", gap: 10 },
+  row: { flexDirection: "row", alignItems: "center", gap: 8 },
   btn: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     borderWidth: 1,
     borderColor: colors.surface.border,
     alignItems: "center",
@@ -216,16 +219,23 @@ export default function OrderScreen() {
   const isSubmitting = isCreating || isUpdating;
 
   // Fetch pending orders from the API so the server state is always in sync
-  const { data: pendingOrdersData, isLoading: pendingLoading } = useMyOrders({ status: "PENDING" });
+  const { data: pendingOrdersData, isLoading: pendingLoading, refetch: refetchPending } = useMyOrders({ status: "PENDING" });
   const pendingOrders = pendingOrdersData?.data ?? [];
 
   // Fetch out-for-delivery orders for ETA banner
-  const { data: outForDeliveryData } = useMyOrders({ status: "OUT_FOR_DELIVERY" });
+  const { data: outForDeliveryData, refetch: refetchOutForDelivery } = useMyOrders({ status: "OUT_FOR_DELIVERY" });
   const outForDeliveryOrder = outForDeliveryData?.data?.[0] ?? null;
   const { data: trackingData } = useOrderTracking(
     outForDeliveryOrder?.id ?? "",
     outForDeliveryOrder?.status,
   );
+
+  const [refreshing, setRefreshing] = React.useState(false);
+  const onRefresh = React.useCallback(async () => {
+    setRefreshing(true);
+    await Promise.all([refetchPending(), refetchOutForDelivery()]);
+    setRefreshing(false);
+  }, [refetchPending, refetchOutForDelivery]);
 
   const [expandedNoteId, setExpandedNoteId] = useState<string | null>(null);
   const [subModalProductId, setSubModalProductId] = useState<string | null>(null);
@@ -255,6 +265,8 @@ export default function OrderScreen() {
         },
         {
           onSuccess: () => {
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            showToast("Order updated successfully!");
             clearOrder();
             router.replace("/(customer)/history" as any);
           },
@@ -292,6 +304,8 @@ export default function OrderScreen() {
         { orderId: pendingOrder.id, items: merged },
         {
           onSuccess: () => {
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            showToast("Items added to order!");
             clearOrder();
             router.replace(`/(customer)/order/confirmation?orderId=${pendingOrder.id}` as any);
           },
@@ -317,6 +331,8 @@ export default function OrderScreen() {
         } as any,
         {
           onSuccess: (order) => {
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            showToast("Order placed successfully!");
             clearOrder();
             router.replace(`/(customer)/order/confirmation?orderId=${order.id}` as any);
           },
@@ -339,7 +355,7 @@ export default function OrderScreen() {
         ) : pendingOrders.length > 0 || outForDeliveryOrder ? (
           // Show the first pending/out-for-delivery order from the server
           <View style={styles.container}>
-            <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+            <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
               {/* ETA Banner — shown when an order is out for delivery */}
               {outForDeliveryOrder && trackingData?.tracking ? (
                 <View style={styles.etaBanner}>
@@ -429,6 +445,8 @@ export default function OrderScreen() {
         <ScrollView
           contentContainerStyle={styles.scroll}
           showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         >
           {/* Urgent toggle */}
           <View style={styles.urgentToggleRow}>

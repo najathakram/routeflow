@@ -24,11 +24,13 @@ export class SuppliersController {
   constructor(private readonly suppliersService: SuppliersService) {}
 
   @Get()
+  @Roles(UserRole.OPERATOR)
   findAll(@Query() query: ListSuppliersDto) {
     return this.suppliersService.findAll(query);
   }
 
   @Get(":id")
+  @Roles(UserRole.OPERATOR)
   findOne(@Param("id") id: string) {
     return this.suppliersService.findOne(id);
   }

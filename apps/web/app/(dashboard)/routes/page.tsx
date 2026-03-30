@@ -198,8 +198,8 @@ export default function RoutesPage() {
   React.useEffect(() => { setTitle("Routes"); }, [setTitle]);
 
   const today = new Date().toISOString().split("T")[0];
-  const { data: runsData, isLoading: runsLoading } = useRouteRuns({ date: today });
-  const { data: routesData, isLoading: routesLoading } = useRoutes();
+  const { data: runsData, isLoading: runsLoading, isError: runsError } = useRouteRuns({ date: today });
+  const { data: routesData, isLoading: routesLoading, isError: routesError } = useRoutes();
 
   const todayRuns = runsData?.data ?? [];
   const routeTemplates = routesData?.data ?? [];
@@ -226,6 +226,10 @@ export default function RoutesPage() {
                 className="h-40 animate-pulse rounded-lg border border-surface-border bg-surface-raised"
               />
             ))}
+          </div>
+        ) : runsError ? (
+          <div className="flex items-center gap-2 rounded-lg border border-danger/30 bg-danger-bg px-4 py-3">
+            <span className="text-sm text-danger">Failed to load data. Please try refreshing.</span>
           </div>
         ) : todayRuns.length === 0 ? (
           <p className="text-sm text-navy/50">No runs scheduled for today.</p>
@@ -283,6 +287,10 @@ export default function RoutesPage() {
         </h2>
         {routesLoading ? (
           <div className="h-32 animate-pulse rounded-lg border border-surface-border bg-surface-raised" />
+        ) : routesError ? (
+          <div className="flex items-center gap-2 rounded-lg border border-danger/30 bg-danger-bg px-4 py-3">
+            <span className="text-sm text-danger">Failed to load data. Please try refreshing.</span>
+          </div>
         ) : (
           <Table
             data={routeTemplates}

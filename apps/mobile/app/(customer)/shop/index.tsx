@@ -1,8 +1,9 @@
-import { useMemo, useState, useEffect } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 import {
   Dimensions,
   FlatList,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -21,6 +22,7 @@ import { ShopSkeleton } from "../../../components/skeletons/ShopSkeleton";
 import { NetworkError } from "../../../components/NetworkError";
 import { BarcodeScanner } from "../../../components/BarcodeScanner";
 import { ProductImage } from "../../../components/ProductImage";
+import * as Haptics from "expo-haptics";
 import { useOrderStore } from "../../../store/orderStore";
 import { useFavouritesStore } from "../../../store/favouritesStore";
 
@@ -47,7 +49,7 @@ interface ApiProduct {
 
 function CategoryPill({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
   return (
-    <Pressable onPress={onPress} style={[styles.pill, active && styles.pillActive]}>
+    <Pressable onPress={onPress} style={[styles.pill, active && styles.pillActive]} accessibilityLabel={`Filter by ${label}`} accessibilityRole="button">
       {label === FAVOURITES ? (
         <Ionicons
           name={active ? "heart" : "heart-outline"}
@@ -74,7 +76,7 @@ function QtyControl({ productId }: { productId: string }) {
     <View style={styles.stepper}>
       <Pressable
         style={styles.stepBtn}
-        onPress={() => (qty === 1 ? removeItem(productId) : updateQuantity(productId, qty - 1))}
+        onPress={() => { Haptics.selectionAsync(); qty === 1 ? removeItem(productId) : updateQuantity(productId, qty - 1); }}
         hitSlop={6}
         accessibilityLabel="Decrease quantity"
       >
@@ -83,7 +85,7 @@ function QtyControl({ productId }: { productId: string }) {
       <Text style={styles.stepQty}>{qty}</Text>
       <Pressable
         style={styles.stepBtn}
-        onPress={() => updateQuantity(productId, qty + 1)}
+        onPress={() => { Haptics.selectionAsync(); updateQuantity(productId, qty + 1); }}
         hitSlop={6}
         accessibilityLabel="Increase quantity"
       >
@@ -163,6 +165,7 @@ function ProductCard({ product }: { product: ApiProduct }) {
               style={[styles.addButton, outOfStock && styles.addButtonDisabled]}
               onPress={() => {
                 if (outOfStock) return;
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                 addItem(
                   { id: product.id, name: product.name, unit: product.unit, pricePerUnit: product.pricePerUnit },
                   1,
@@ -307,9 +310,16 @@ export default function ShopScreen() {
 
   const { data: result, isLoading, isError, refetch } = useProducts();
   const { data: barcodeProduct, isError: barcodeError } = useProductByBarcode(pendingBarcode);
-  const { data: ordersData } = useMyOrders({ status: "DELIVERED", limit: 10 });
+  const { data: ordersData, refetch: refetchOrders } = useMyOrders({ status: "DELIVERED", limit: 10 });
   const favourites = useFavouritesStore((s) => s.favourites);
   const addItem = useOrderStore((s) => s.addItem);
+
+  const [refreshing, setRefreshing] = React.useState(false);
+  const onRefresh = React.useCallback(async () => {
+    setRefreshing(true);
+    await Promise.all([refetch(), refetchOrders()]);
+    setRefreshing(false);
+  }, [refetch, refetchOrders]);
 
   const productList: ApiProduct[] = result?.data ?? [];
 
@@ -414,6 +424,8 @@ export default function ShopScreen() {
           columnWrapperStyle={styles.row}
           contentContainerStyle={styles.grid}
           showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
           ListHeaderComponent={
             selectedCategory === ALL && !search ? (
               <FrequentlyOrderedStrip products={frequentlyOrdered} />
@@ -422,6 +434,7 @@ export default function ShopScreen() {
           renderItem={({ item }) => <ProductCard product={item} />}
           ListEmptyComponent={
             <View style={styles.empty}>
+              <Ionicons name="search-outline" size={40} color="#cbd5e1" style={{ marginBottom: 8 }} />
               <Text style={styles.emptyText}>No products found.</Text>
             </View>
           }
@@ -471,12 +484,12 @@ const freqStyles = StyleSheet.create({
   },
   chipText: { fontSize: 13, fontFamily: "Inter_500Medium", color: colors.navy.DEFAULT, flex: 1 },
   chipAdd: {
-    width: 20, height: 20, borderRadius: 10,
+    width: 26, height: 26, borderRadius: 13,
     backgroundColor: colors.brand[500],
     alignItems: "center", justifyContent: "center",
   },
   chipBadge: {
-    width: 20, height: 20, borderRadius: 10,
+    width: 26, height: 26, borderRadius: 13,
     backgroundColor: colors.brand[100] ?? "#dbeafe",
     alignItems: "center", justifyContent: "center",
   },
@@ -502,7 +515,7 @@ const styles = StyleSheet.create({
     flex: 1, height: 42,
     fontSize: 15, fontFamily: "Inter_400Regular", color: colors.navy.DEFAULT,
   },
-  scanButton: { padding: 6, marginLeft: 4 },
+  scanButton: { padding: 10, marginLeft: 4 },
   pillsScroll: { flexGrow: 0, marginTop: 8 },
   pillsContainer: { paddingHorizontal: 16, gap: 8, paddingVertical: 4 },
   pill: {
@@ -533,8 +546,8 @@ const styles = StyleSheet.create({
   },
   outOfStockText: { fontSize: 12, fontFamily: "Inter_600SemiBold", color: "#fff" },
   heartBtn: {
-    position: "absolute", top: 6, right: 6,
-    width: 26, height: 26, borderRadius: 13,
+    position: "absolute", top: 2, right: 2,
+    width: 36, height: 36, borderRadius: 18,
     backgroundColor: "rgba(0,0,0,0.25)",
     alignItems: "center", justifyContent: "center",
   },
@@ -555,11 +568,11 @@ const styles = StyleSheet.create({
   },
   cardPrice: { fontSize: 15, fontFamily: "Inter_700Bold", color: colors.navy.DEFAULT },
   addButton: {
-    width: 30, height: 30, borderRadius: 15,
+    width: 36, height: 36, borderRadius: 18,
     backgroundColor: colors.brand[500],
     alignItems: "center", justifyContent: "center",
   },
-  addButtonDisabled: { backgroundColor: "#cbd5e1" },
+  addButtonDisabled: { backgroundColor: "#cbd5e1", opacity: 0.4 },
 
   // Inline stepper
   stepper: {
@@ -567,10 +580,10 @@ const styles = StyleSheet.create({
     backgroundColor: colors.brand[500],
     borderRadius: borderRadius.full,
     overflow: "hidden",
-    height: 30,
+    height: 36,
   },
   stepBtn: {
-    width: 28, height: 30,
+    width: 36, height: 36,
     alignItems: "center", justifyContent: "center",
   },
   stepQty: {

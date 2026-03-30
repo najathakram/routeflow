@@ -19,7 +19,9 @@ import { Roles } from "../auth/decorators/roles.decorator";
 import { UserRole } from "@prisma/client";
 import { ListTransactionsDto } from "./dto/list-transactions.dto";
 import { RecordPaymentDto } from "./dto/record-payment.dto";
+import { CreateExpenseCategoryDto, CreateExpenseDto, UpdateExpenseDto, ListExpensesDto } from "./dto/create-expense.dto";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
+import type { JwtPayload } from "../auth/jwt-payload.interface";
 
 @ApiTags("bookkeeping")
 @ApiBearerAuth()
@@ -70,23 +72,23 @@ export class BookkeepingController {
   }
 
   @Post("expense-categories")
-  createExpenseCategory(@Body() dto: any) {
+  createExpenseCategory(@Body() dto: CreateExpenseCategoryDto) {
     return this.bookkeepingService.createExpenseCategory(dto);
   }
 
   // ── Expenses ──
   @Get("expenses")
-  listExpenses(@Query() query: any) {
+  listExpenses(@Query() query: ListExpensesDto) {
     return this.bookkeepingService.listExpenses(query);
   }
 
   @Post("expenses")
-  createExpense(@Body() dto: any, @CurrentUser() user: any) {
+  createExpense(@Body() dto: CreateExpenseDto, @CurrentUser() user: JwtPayload) {
     return this.bookkeepingService.createExpense(dto, user.sub);
   }
 
   @Patch("expenses/:id")
-  updateExpense(@Param("id") id: string, @Body() dto: any) {
+  updateExpense(@Param("id") id: string, @Body() dto: UpdateExpenseDto) {
     return this.bookkeepingService.updateExpense(id, dto);
   }
 

@@ -5,6 +5,7 @@ import { Plus, Search, Building2, Phone, Mail, Clock, Pencil, X, Check } from "l
 import { PageHeader, Badge, Button, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useToast } from "@routeflow/ui/web";
+import { useDebounce } from "@/lib/hooks/useDebounce";
 import { useSuppliers, useCreateSupplier, useUpdateSupplier, useDeleteSupplier, type Supplier } from "@/lib/api/suppliers";
 
 // ─── Supplier form modal ───────────────────────────────────────────────────────
@@ -201,6 +202,7 @@ export default function SuppliersPage() {
   React.useEffect(() => { setTitle("Suppliers"); }, [setTitle]);
 
   const [search, setSearch] = React.useState("");
+  const debouncedSearch = useDebounce(search, 300);
   const [activeFilter, setActiveFilter] = React.useState<"all" | "active" | "inactive">("active");
   const [showModal, setShowModal] = React.useState(false);
   const [editTarget, setEditTarget] = React.useState<Supplier | undefined>(undefined);
@@ -209,8 +211,8 @@ export default function SuppliersPage() {
   const updateSupplier = useUpdateSupplier();
   const deleteSupplier = useDeleteSupplier();
 
-  const { data: result, isLoading } = useSuppliers({
-    search: search || undefined,
+  const { data: result, isLoading, isError } = useSuppliers({
+    search: debouncedSearch || undefined,
     isActive: activeFilter === "all" ? undefined : activeFilter === "active",
     limit: 0,
   });
@@ -306,13 +308,24 @@ export default function SuppliersPage() {
             <div key={i} className="h-40 animate-pulse rounded-xl border border-surface-border bg-surface-raised" />
           ))}
         </div>
+      ) : isError ? (
+        <div className="flex items-center gap-2 rounded-lg border border-danger/30 bg-danger-bg px-4 py-3">
+          <span className="text-sm text-danger">Failed to load data. Please try refreshing.</span>
+        </div>
       ) : suppliers.length === 0 ? (
         <div className="rounded-xl border border-surface-border bg-white py-16 text-center">
           <Building2 className="mx-auto mb-3 h-10 w-10 text-navy/15" />
           <p className="text-sm font-medium text-navy/50">
-            {search ? "No suppliers match your search." : "No suppliers yet."}
+            {(search || activeFilter !== "all") ? "No suppliers match your filters." : "No suppliers yet. Add your first supplier to get started."}
           </p>
-          {!search && (
+          {(search || activeFilter !== "all") ? (
+            <button
+              onClick={() => { setSearch(""); setActiveFilter("active"); }}
+              className="mt-2 text-sm text-brand-500 hover:underline"
+            >
+              Clear filters
+            </button>
+          ) : (
             <button
               onClick={() => setShowModal(true)}
               className="mt-2 text-sm text-brand-500 hover:underline"

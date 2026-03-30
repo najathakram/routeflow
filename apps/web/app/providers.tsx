@@ -7,7 +7,11 @@ import { ToastProvider } from "@routeflow/ui/web";
 
 const queryClient = new QueryClient({
   defaultOptions: {
-    queries: { retry: 1, staleTime: 30_000 },
+    queries: {
+      retry: 1,
+      staleTime: 30_000,
+      refetchOnWindowFocus: false, // avoid jarring refetches when user switches tabs
+    },
   },
 });
 

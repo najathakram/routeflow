@@ -7,6 +7,7 @@ import { Package, LayoutGrid, LayoutList, Plus, Upload, CheckCircle, AlertCircle
 import { PageHeader, Table, Badge, Button, Select, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useToast } from "@routeflow/ui/web";
+import { useDebounce } from "@/lib/hooks/useDebounce";
 import { useProducts, useCreateProduct, useImportProducts, useBulkDeleteProducts, uploadProductImages, type ZohoImportItem, type ImportResult } from "@/lib/api/products";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 
@@ -907,11 +908,13 @@ export default function ProductsPage() {
   const importProducts = useImportProducts();
   const bulkDelete = useBulkDeleteProducts();
 
-  // Reset to page 1 whenever filters change
-  React.useEffect(() => { setPage(1); }, [search, categoryFilter, stockFilter, pageSize]);
+  const debouncedSearch = useDebounce(search, 300);
 
-  const { data: result, isLoading } = useProducts({
-    search,
+  // Reset to page 1 whenever filters change
+  React.useEffect(() => { setPage(1); }, [debouncedSearch, categoryFilter, stockFilter, pageSize]);
+
+  const { data: result, isLoading, isError } = useProducts({
+    search: debouncedSearch,
     category: categoryFilter || undefined,
     stockStatus: (stockFilter || undefined) as any,
     page,
@@ -1141,6 +1144,10 @@ export default function ProductsPage() {
               className="h-48 animate-pulse rounded-lg border border-surface-border bg-surface-raised"
             />
           ))}
+        </div>
+      ) : isError ? (
+        <div className="flex items-center gap-2 rounded-lg border border-danger/30 bg-danger-bg px-4 py-3">
+          <span className="text-sm text-danger">Failed to load data. Please try refreshing.</span>
         </div>
       ) : filtered.length === 0 ? (
         <div className="rounded-lg border border-surface-border bg-white py-12 text-center">

@@ -168,7 +168,7 @@ export class BookkeepingService {
 
   async createExpense(dto: any, userId: string) {
     const cat = await this.prisma.expenseCategory.findUnique({ where: { id: dto.categoryId } });
-    if (!cat) throw new Error("Expense category not found");
+    if (!cat) throw new NotFoundException("Expense category not found");
     return this.prisma.expense.create({
       data: {
         categoryId: dto.categoryId,

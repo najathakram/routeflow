@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View, ActivityIndicator, KeyboardAvoidingView, Platform } from "react-native";
+import React, { useState } from "react";
+import { Alert, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View, ActivityIndicator, KeyboardAvoidingView, Platform } from "react-native";
 import { router, Stack } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { StatusBadge } from "@routeflow/ui/mobile";
@@ -186,7 +186,7 @@ const stopBadgeStyles = StyleSheet.create({
 
 export default function RouteScreen() {
   const { data, isLoading, isError, refetch } = useActiveRouteRun();
-  const { data: scheduledData } = useScheduledRouteRuns();
+  const { data: scheduledData, refetch: refetchScheduled } = useScheduledRouteRuns();
   const setActiveRunId = useRouteStore((s) => s.setActiveRunId);
   const { logMileage, updateEnd, getEntry, getMiles } = useMileageStore();
   const { mutate: updateStopStatus } = useUpdateStopStatus();
@@ -201,7 +201,14 @@ export default function RouteScreen() {
   const runRef = data?.data?.[0] ?? scheduledData?.data?.[0] ?? null;
   const activeRunId = runRef?.id ?? null;
 
-  const { data: fullRun, isLoading: isLoadingRun } = useRouteRun(activeRunId ?? "");
+  const { data: fullRun, isLoading: isLoadingRun, refetch: refetchFullRun } = useRouteRun(activeRunId ?? "");
+
+  const [refreshing, setRefreshing] = React.useState(false);
+  const onRefresh = React.useCallback(async () => {
+    setRefreshing(true);
+    await Promise.all([refetch(), refetchScheduled(), refetchFullRun()]);
+    setRefreshing(false);
+  }, [refetch, refetchScheduled, refetchFullRun]);
   const { mutate: updateStatus, isPending: isUpdating } = useUpdateRunStatus();
 
   // Pending confirmation from active run stops — used in the active run widget
@@ -566,6 +573,7 @@ export default function RouteScreen() {
           style={styles.list}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         >
           {/* Before You Leave — shown for scheduled (not yet started) runs */}
           {!hasStarted && !allDone && (

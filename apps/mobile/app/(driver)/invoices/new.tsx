@@ -82,7 +82,7 @@ function CustomerPicker({
           <Text style={styles.emptyText}>No customers found</Text>
         </View>
       ) : (
-        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, gap: 8 }}>
+        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, gap: 8 }} keyboardShouldPersistTaps="handled">
           {customers.map((c) => {
             const isSelected = c.id === selectedId;
             return (
@@ -220,7 +220,7 @@ function LineItemsPicker({
         </Pressable>
       </View>
 
-      <ScrollView style={{ flex: 1 }}>
+      <ScrollView style={{ flex: 1 }} keyboardShouldPersistTaps="handled">
         {/* Product list */}
         {isLoading ? (
           <View style={styles.centered}>
@@ -357,7 +357,7 @@ function ReviewStep({
   const total = subtotal + tax;
 
   return (
-    <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, gap: 12 }}>
+    <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, gap: 12 }} keyboardShouldPersistTaps="handled">
       {/* Customer */}
       <View style={styles.reviewCard}>
         <Text style={styles.reviewCardTitle}>Bill To</Text>

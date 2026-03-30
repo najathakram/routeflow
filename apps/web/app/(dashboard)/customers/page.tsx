@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Pencil, ToggleLeft, ToggleRight, Eye } from "lucide-react";
 import { PageHeader, Table, Badge, Button, Select, cn, type BadgeStatus } from "@routeflow/ui/web";
@@ -9,6 +9,7 @@ import { usePageTitle } from "@/lib/page-title-context";
 import { CustomerFormModal } from "./_components/CustomerFormModal";
 import { useCustomers, useUpdateCustomerStatus } from "@/lib/api/customers";
 import { useCustomerRouteAssignments } from "@/lib/api/routes";
+import { useDebounce } from "@/lib/hooks/useDebounce";
 
 // ─── Local type ───────────────────────────────────────────────────────────────
 
@@ -25,20 +26,35 @@ interface Customer {
 
 export default function CustomersPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { setTitle } = usePageTitle();
 
   React.useEffect(() => { setTitle("Customers"); }, [setTitle]);
 
   // ── Local state ──────────────────────────────────────────────────────────
   const [search, setSearch] = React.useState("");
-  const [statusFilter, setStatusFilter] = React.useState<string>("");
+  const [statusFilter, setStatusFilter] = React.useState<string>(
+    searchParams.get("status") ?? "",
+  );
   const [unassignedOnly, setUnassignedOnly] = React.useState(false);
   const [isAddOpen, setIsAddOpen] = React.useState(false);
   const [editingCustomer, setEditingCustomer] = React.useState<any>(null);
 
+  // Sync status filter to URL
+  React.useEffect(() => {
+    const url = statusFilter
+      ? `/customers?status=${encodeURIComponent(statusFilter)}`
+      : "/customers";
+    router.replace(url, { scroll: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusFilter]);
+
+  // Debounce search to avoid firing API on every keystroke
+  const debouncedSearch = useDebounce(search, 300);
+
   // ── API data ─────────────────────────────────────────────────────────────
-  const { data: result, isLoading } = useCustomers({
-    search: search || undefined,
+  const { data: result, isLoading, isError } = useCustomers({
+    search: debouncedSearch || undefined,
     status: statusFilter || undefined,
   });
   const customers: Customer[] = result?.data ?? [];
@@ -222,12 +238,16 @@ export default function CustomersPage() {
         </button>
       </div>
 
-      {/* Loading skeleton */}
+      {/* Loading / Error / Table */}
       {isLoading ? (
         <div className="animate-pulse space-y-3">
           {Array.from({ length: 5 }).map((_, i) => (
             <div key={i} className="h-12 rounded bg-surface-raised" />
           ))}
+        </div>
+      ) : isError ? (
+        <div className="flex items-center gap-2 rounded-lg border border-danger/30 bg-danger-bg px-4 py-3">
+          <span className="text-sm text-danger">Failed to load customers. Please try refreshing the page.</span>
         </div>
       ) : (
         /* Table */

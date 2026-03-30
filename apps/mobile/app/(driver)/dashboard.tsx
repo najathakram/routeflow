@@ -1,8 +1,10 @@
+import React from "react";
 import {
   ActivityIndicator,
   Alert,
   Dimensions,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -21,7 +23,9 @@ import {
   type RouteRun,
 } from "../../lib/api/routes";
 import { useMyOrders, useConfirmOrder } from "../../lib/api/orders";
+import * as Haptics from "expo-haptics";
 import { useAuthStore } from "../../lib/auth-store";
+import { showToast } from "../../lib/toast";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 const COL3 = (SCREEN_WIDTH - 48) / 3;
@@ -272,8 +276,8 @@ function RunCard({ run }: { run: RouteRun }) {
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
 export default function DashboardScreen() {
-  const { data: activeData } = useActiveRouteRun();
-  const { data: scheduledData } = useScheduledRouteRuns();
+  const { data: activeData, refetch: refetchActive } = useActiveRouteRun();
+  const { data: scheduledData, refetch: refetchScheduled } = useScheduledRouteRuns();
   const user = useAuthStore((s) => s.user);
 
   const activeRuns: RouteRun[] = activeData?.data ?? [];
@@ -285,9 +289,16 @@ export default function DashboardScreen() {
   const { data: pendingOrdersData, refetch: refetchPending } = useMyOrders({ status: "PENDING", limit: 5 });
   const pendingOrders = pendingOrdersData?.data ?? [];
   const { mutate: confirmOrder, isPending: isConfirming } = useConfirmOrder();
-  const { data: stats } = useDriverStats();
-  const { data: recentData } = useMyOrders({ status: "DELIVERED", limit: 3 });
+  const { data: stats, refetch: refetchStats } = useDriverStats();
+  const { data: recentData, refetch: refetchRecent } = useMyOrders({ status: "DELIVERED", limit: 3 });
   const recentOrders = recentData?.data ?? [];
+
+  const [refreshing, setRefreshing] = React.useState(false);
+  const onRefresh = React.useCallback(async () => {
+    setRefreshing(true);
+    await Promise.all([refetchActive(), refetchScheduled(), refetchPending(), refetchStats(), refetchRecent()]);
+    setRefreshing(false);
+  }, [refetchActive, refetchScheduled, refetchPending, refetchStats, refetchRecent]);
 
   const username = user?.username ?? "Driver";
   const hour = new Date().getHours();
@@ -321,6 +332,7 @@ export default function DashboardScreen() {
         style={ds.screen}
         contentContainerStyle={{ paddingBottom: 40 }}
         showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
         {/* ── Hero header ───────────────────────────────────────────── */}
         <View style={ds.hero}>
@@ -399,7 +411,7 @@ export default function DashboardScreen() {
                       </Pressable>
                       <Pressable
                         style={[ds.confirmBtn, isConfirming && { opacity: 0.5 }]}
-                        onPress={() => confirmOrder(order.id, { onSuccess: () => refetchPending() })}
+                        onPress={() => confirmOrder(order.id, { onSuccess: () => { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); showToast("Order confirmed!"); refetchPending(); } })}
                         disabled={isConfirming}
                         accessibilityRole="button"
                       >

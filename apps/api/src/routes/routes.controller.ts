@@ -33,6 +33,8 @@ export class RoutesController {
   constructor(private readonly routesService: RoutesService) {}
 
   @Get()
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   findAll(@Query() query: ListRoutesDto) {
     return this.routesService.findAllRoutes(query);
   }
@@ -45,6 +47,8 @@ export class RoutesController {
   }
 
   @Get("customer-assignments")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR)
   getCustomerAssignments() {
     return this.routesService.getCustomerRouteAssignments();
   }

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Plus, Eye, Loader2, FileText, Trash2 } from "lucide-react";
 import { PageHeader, Button, cn, Modal, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { useDebounce } from "@/lib/hooks/useDebounce";
 import {
   useReturns,
   useCreateReturn,
@@ -126,7 +127,7 @@ function CreateReturnModal({
   const customers: Array<{ id: string; businessName: string }> =
     (customersData as any)?.data ?? customersData ?? [];
 
-  const { data: ordersData } = useOrders(
+  const { data: ordersData, isLoading: ordersLoading } = useOrders(
     customerId ? { customerId, status: "DELIVERED" } : undefined,
   );
   const orders: Order[] = (ordersData as any)?.data ?? [];
@@ -247,7 +248,7 @@ function CreateReturnModal({
       <form id="create-return-form" onSubmit={handleSubmit} noValidate className="space-y-4">
         {/* Customer */}
         <div>
-          <label className="mb-1.5 block text-sm font-medium text-navy/80">Customer</label>
+          <label className="mb-1.5 block text-sm font-medium text-navy/80">Customer<span className="text-danger ml-0.5">*</span></label>
           <input
             type="search"
             placeholder="Search customers…"
@@ -275,17 +276,17 @@ function CreateReturnModal({
 
         {/* Order */}
         <div>
-          <label className="mb-1.5 block text-sm font-medium text-navy/80">Order</label>
+          <label className="mb-1.5 block text-sm font-medium text-navy/80">Order<span className="text-danger ml-0.5">*</span></label>
           <select
             value={orderId}
             onChange={(e) => setOrderId(e.target.value)}
-            disabled={!customerId}
+            disabled={!customerId || ordersLoading}
             className={cn(
               "h-10 w-full rounded-lg border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:opacity-50",
               errors.orderId ? "border-danger" : "border-surface-border",
             )}
           >
-            <option value="">Select delivered order…</option>
+            <option value="">{customerId && ordersLoading ? "Loading orders…" : "Select delivered order…"}</option>
             {orders.map((o) => (
               <option key={o.id} value={o.id}>{o.orderNumber}</option>
             ))}
@@ -295,7 +296,7 @@ function CreateReturnModal({
 
         {/* Return Reason */}
         <div>
-          <label className="mb-1.5 block text-sm font-medium text-navy/80">Return Reason</label>
+          <label className="mb-1.5 block text-sm font-medium text-navy/80">Return Reason<span className="text-danger ml-0.5">*</span></label>
           <select
             value={reason}
             onChange={(e) => setReason(e.target.value as ReturnReason | "")}
@@ -394,6 +395,7 @@ export default function ReturnsPage() {
   const [statusFilter, setStatusFilter] = React.useState("");
   const [reasonFilter, setReasonFilter] = React.useState("");
   const [search, setSearch] = React.useState("");
+  const debouncedSearch = useDebounce(search, 300);
   const [page, setPage] = React.useState(1);
   const [isCreateOpen, setIsCreateOpen] = React.useState(false);
   const LIMIT = 20;
@@ -401,7 +403,7 @@ export default function ReturnsPage() {
   const { data, isLoading, isError } = useReturns({
     status: statusFilter || undefined,
     reason: reasonFilter || undefined,
-    search: search || undefined,
+    search: debouncedSearch || undefined,
     page,
     limit: LIMIT,
   });
@@ -494,18 +496,32 @@ export default function ReturnsPage() {
                 <td colSpan={8} className="px-4 py-12 text-center">
                   <div className="flex flex-col items-center gap-2">
                     <FileText className="h-8 w-8 text-navy/20" />
-                    <p className="text-sm text-navy/40">No returns match your filters.</p>
-                    <button
-                      className="text-sm text-brand-500 hover:underline"
-                      onClick={() => {
-                        setSearch("");
-                        setStatusFilter("");
-                        setReasonFilter("");
-                        setPage(1);
-                      }}
-                    >
-                      Clear filters
-                    </button>
+                    {(statusFilter || reasonFilter || search) ? (
+                      <>
+                        <p className="text-sm text-navy/40">No returns match your filters.</p>
+                        <button
+                          className="text-sm text-brand-500 hover:underline"
+                          onClick={() => {
+                            setSearch("");
+                            setStatusFilter("");
+                            setReasonFilter("");
+                            setPage(1);
+                          }}
+                        >
+                          Clear filters
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-sm text-navy/40">No returns yet.</p>
+                        <button
+                          className="text-sm text-brand-500 hover:underline"
+                          onClick={() => setIsCreateOpen(true)}
+                        >
+                          Create your first return
+                        </button>
+                      </>
+                    )}
                   </div>
                 </td>
               </tr>

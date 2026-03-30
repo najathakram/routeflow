@@ -1,5 +1,6 @@
 import { Body, Controller, HttpCode, HttpStatus, Post, UseGuards } from "@nestjs/common";
 import { ApiTags, ApiOperation, ApiBearerAuth } from "@nestjs/swagger";
+import { Throttle, ThrottlerGuard } from "@nestjs/throttler";
 import { AuthService } from "./auth.service";
 import { LocalAuthGuard } from "./guards/local-auth.guard";
 import { JwtAuthGuard } from "./guards/jwt-auth.guard";
@@ -15,7 +16,8 @@ export class AuthController {
 
   @Post("login")
   @HttpCode(HttpStatus.OK)
-  @UseGuards(LocalAuthGuard)
+  @UseGuards(ThrottlerGuard, LocalAuthGuard)
+  @Throttle({ default: { ttl: 60_000, limit: 10 } }) // 10 login attempts per minute
   @ApiOperation({ summary: "Login with username and password" })
   login(@CurrentUser() user: any, @Body() _dto: LoginDto) {
     return this.authService.login(user);
@@ -23,6 +25,8 @@ export class AuthController {
 
   @Post("refresh")
   @HttpCode(HttpStatus.OK)
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { ttl: 60_000, limit: 20 } }) // 20 refresh attempts per minute
   @ApiOperation({ summary: "Refresh access token" })
   refresh(@Body() dto: RefreshDto) {
     return this.authService.refresh(dto.refreshToken);

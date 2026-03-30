@@ -112,6 +112,7 @@ export default function OrdersPage() {
             type="date"
             value={dateFrom}
             onChange={(e) => setDateFrom(e.target.value)}
+            max={dateTo || undefined}
             className="h-10 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             title="Delivery date from"
           />
@@ -181,9 +182,12 @@ export default function OrdersPage() {
               filtered.map((order) => (
                 <tr
                   key={order.id}
+                  role="link"
+                  tabIndex={0}
                   onClick={() => router.push(`/orders/${order.id}`)}
+                  onKeyDown={(e) => { if (e.key === "Enter") router.push(`/orders/${order.id}`); }}
                   className={cn(
-                    "cursor-pointer transition-colors hover:bg-surface-raised",
+                    "cursor-pointer transition-colors hover:bg-surface-raised focus:outline-none focus:ring-2 focus:ring-inset focus:ring-brand-500",
                     order.urgent && "border-l-2 border-l-danger",
                   )}
                 >
@@ -220,6 +224,7 @@ export default function OrdersPage() {
                   <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
                     <button
                       title="View order"
+                      aria-label="View order details"
                       onClick={() => router.push(`/orders/${order.id}`)}
                       className="rounded p-1.5 text-navy/40 hover:bg-surface-raised hover:text-navy transition-colors"
                     >

@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { Button, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { useDebounce } from "@/lib/hooks/useDebounce";
 import { useInvoices, type Invoice, type InvoiceStatus } from "@/lib/api/invoices";
 import { useBookkeepingSummary } from "@/lib/api/bookkeeping";
 import { fmt, fmtDate } from "@/lib/formatting";
@@ -242,6 +243,7 @@ export default function InvoicesPage() {
 
   const [statusFilter, setStatusFilter] = React.useState("");
   const [search, setSearch] = React.useState("");
+  const debouncedSearch = useDebounce(search, 300);
   const [dateFrom, setDateFrom] = React.useState("");
   const [dateTo, setDateTo] = React.useState("");
   const [page, setPage] = React.useState(1);
@@ -249,7 +251,7 @@ export default function InvoicesPage() {
 
   const { data, isLoading, isError } = useInvoices({
     status: statusFilter || undefined,
-    search: search || undefined,
+    search: debouncedSearch || undefined,
     dateFrom: dateFrom || undefined,
     dateTo: dateTo || undefined,
     page,
@@ -302,13 +304,13 @@ export default function InvoicesPage() {
       <PaymentSummaryBar activeFilter={statusFilter} onFilter={handleFilterChange} />
 
       {/* Status filter tabs */}
-      <div className="flex items-center gap-1 border-b border-surface-border">
+      <div className="flex items-center gap-1 overflow-x-auto scrollbar-hide border-b border-surface-border">
         {STATUS_TABS.map((tab) => (
           <button
             key={tab.value}
             onClick={() => handleFilterChange(tab.value)}
             className={cn(
-              "-mb-px border-b-2 px-3 py-2 text-sm font-medium transition-colors",
+              "-mb-px whitespace-nowrap border-b-2 px-3 py-2 text-sm font-medium transition-colors",
               statusFilter === tab.value
                 ? "border-brand-500 text-brand-500"
                 : "border-transparent text-navy/60 hover:text-navy",
@@ -334,6 +336,7 @@ export default function InvoicesPage() {
             type="date"
             value={dateFrom}
             onChange={(e) => { setDateFrom(e.target.value); setPage(1); }}
+            max={dateTo || undefined}
             className="h-9 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             title="Issue date from"
           />
@@ -462,6 +465,7 @@ export default function InvoicesPage() {
                     >
                       <button
                         title="View invoice"
+                        aria-label="View invoice"
                         onClick={() => router.push(`/invoices/${inv.id}`)}
                         className="rounded p-1.5 text-navy/40 hover:bg-white hover:text-navy transition-colors"
                       >

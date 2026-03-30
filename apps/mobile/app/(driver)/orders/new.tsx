@@ -82,7 +82,7 @@ function CustomerPicker({
           <Text style={styles.emptyText}>No customers found</Text>
         </View>
       ) : (
-        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, gap: 8 }}>
+        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, gap: 8 }} keyboardShouldPersistTaps="handled">
           {customers.map((c) => {
             const isSelected = c.id === selectedId;
             return (
@@ -255,7 +255,7 @@ function ProductPicker({
           <Text style={styles.emptyText}>No products found</Text>
         </View>
       ) : (
-        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, gap: 8 }}>
+        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, gap: 8 }} keyboardShouldPersistTaps="handled">
           {products.map((product) => {
             const qty = getQty(product.id);
             const regularPrice = parseFloat(String(product.pricePerUnit ?? product.price ?? 0));

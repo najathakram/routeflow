@@ -1,7 +1,8 @@
-import { useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import {
   Alert,
   Pressable,
+  RefreshControl,
   ScrollView,
   SectionList,
   StyleSheet,
@@ -9,6 +10,7 @@ import {
   View,
 } from "react-native";
 import { router, Stack } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
 import { format, parseISO } from "date-fns";
 import { StatusBadge } from "@routeflow/ui/mobile";
 import { colors, borderRadius, shadows } from "@routeflow/ui/tokens";
@@ -308,6 +310,13 @@ export default function HistoryScreen() {
   const { data, isLoading, isError, refetch } = useMyOrders();
   const [activeFilter, setActiveFilter] = useState<FilterKey>("ALL");
 
+  const [refreshing, setRefreshing] = React.useState(false);
+  const onRefresh = React.useCallback(async () => {
+    setRefreshing(true);
+    await refetch();
+    setRefreshing(false);
+  }, [refetch]);
+
   const allOrders = data?.data ?? [];
 
   const filtered = useMemo(
@@ -365,6 +374,7 @@ export default function HistoryScreen() {
           style={styles.list}
           contentContainerStyle={styles.content}
           stickySectionHeadersEnabled={false}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
           ListHeaderComponent={
             activeFilter === "ALL" ? <AnalyticsPanel orders={allOrders} /> : null
           }
@@ -374,6 +384,7 @@ export default function HistoryScreen() {
           renderItem={({ item }) => <OrderRow order={item} />}
           ListEmptyComponent={
             <View style={styles.empty}>
+              <Ionicons name="receipt-outline" size={40} color="#cbd5e1" style={{ marginBottom: 8 }} />
               <Text style={styles.emptyText}>
                 {activeFilter === "ALL" ? "No past orders yet." : `No ${activeFilter.toLowerCase()} orders.`}
               </Text>

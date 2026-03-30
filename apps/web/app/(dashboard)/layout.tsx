@@ -372,10 +372,10 @@ function Header() {
             >
               <DropdownMenu.Item
                 className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-navy outline-none hover:bg-surface-raised"
-                onSelect={() => {}}
+                onSelect={() => router.push("/settings")}
               >
                 <UserIcon className="h-4 w-4 text-navy/40" />
-                Profile
+                Profile &amp; Settings
               </DropdownMenu.Item>
               <DropdownMenu.Separator className="my-1 border-t border-surface-border" />
               <DropdownMenu.Item
@@ -396,13 +396,42 @@ function Header() {
 // ─── Dashboard shell ──────────────────────────────────────────────────────────
 
 function DashboardShell({ children }: { children: React.ReactNode }) {
-  const [collapsed, setCollapsed] = React.useState(false);
+  const [collapsed, setCollapsed] = React.useState(() => {
+    if (typeof window !== "undefined") {
+      // Auto-collapse on small screens, otherwise respect saved preference
+      if (window.innerWidth < 768) return true;
+      return localStorage.getItem("rf-sidebar-collapsed") === "true";
+    }
+    return false;
+  });
   const pathname = usePathname();
-  const toggle = () => setCollapsed((v) => !v);
+  const toggle = () =>
+    setCollapsed((v) => {
+      const next = !v;
+      localStorage.setItem("rf-sidebar-collapsed", String(next));
+      return next;
+    });
+
+  // Auto-collapse sidebar on narrow viewports
+  React.useEffect(() => {
+    const mq = window.matchMedia("(max-width: 767px)");
+    const handler = (e: MediaQueryListEvent) => {
+      if (e.matches) setCollapsed(true);
+    };
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, []);
+
   useRealtimeUpdates();
 
   return (
     <div className="flex h-screen overflow-hidden">
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-brand-500 focus:px-4 focus:py-2 focus:text-white focus:shadow-lg"
+      >
+        Skip to content
+      </a>
       {/* Sidebar */}
       <aside
         className={cn(
@@ -478,7 +507,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
       {/* Right column */}
       <div className="flex flex-1 flex-col overflow-hidden">
         <Header />
-        <main className="flex-1 overflow-y-auto bg-surface-raised">
+        <main id="main-content" className="flex-1 overflow-y-auto bg-surface-raised">
           {children}
         </main>
       </div>

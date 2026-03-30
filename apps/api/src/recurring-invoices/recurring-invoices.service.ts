@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { Cron, CronExpression } from "@nestjs/schedule";
 import { PrismaService } from "../prisma/prisma.service";
 import { InvoicesService } from "../invoices/invoices.service";
@@ -7,6 +7,8 @@ import { RecurringFrequency } from "@prisma/client";
 
 @Injectable()
 export class RecurringInvoicesService {
+  private readonly logger = new Logger(RecurringInvoicesService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly invoicesService: InvoicesService,
@@ -192,12 +194,24 @@ export class RecurringInvoicesService {
       include: { items: true, customer: true },
     });
 
+    if (due.length === 0) return;
+    this.logger.log(`Processing ${due.length} due recurring invoice(s)…`);
+
+    let successCount = 0;
+    let failCount = 0;
+
     for (const ri of due) {
       try {
         await this.generateInvoiceFromTemplate(ri);
+        successCount++;
       } catch (err) {
-        console.error(`Failed to generate invoice for recurring template ${ri.id}:`, err);
+        failCount++;
+        this.logger.error(
+          `Failed to generate invoice for recurring template ${ri.id} (customer: ${ri.customerId}): ${err instanceof Error ? err.message : err}`,
+        );
       }
     }
+
+    this.logger.log(`Recurring invoices: ${successCount} generated, ${failCount} failed out of ${due.length} due.`);
   }
 }

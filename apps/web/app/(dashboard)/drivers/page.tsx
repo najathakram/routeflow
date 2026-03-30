@@ -47,7 +47,7 @@ export default function DriversPage() {
 
   React.useEffect(() => { setTitle("Drivers"); }, [setTitle]);
 
-  const { data, isLoading } = useDrivers();
+  const { data, isLoading, isError } = useDrivers();
   const createDriver = useCreateDriver();
   const updateDriver = useUpdateDriver();
   const deleteDriver = useDeleteDriver();
@@ -244,16 +244,40 @@ export default function DriversPage() {
         )}
       </div>
 
-      <Table
-        data={filtered}
-        columns={columns}
-        onRowClick={(row) => router.push(`/drivers/${row.original.id}`)}
-        emptyState={
-          isLoading ? "Loading drivers…" :
-          (search || statusFilter) ? "No drivers match your filters." :
-          "No drivers found."
-        }
-      />
+      {isError ? (
+        <div className="flex items-center gap-2 rounded-lg border border-danger/30 bg-danger-bg px-4 py-3">
+          <span className="text-sm text-danger">Failed to load data. Please try refreshing.</span>
+        </div>
+      ) : (
+        <Table
+          data={filtered}
+          columns={columns}
+          onRowClick={(row) => router.push(`/drivers/${row.original.id}`)}
+          emptyState={
+            isLoading ? "Loading drivers…" :
+            (search || statusFilter) ? (
+              <div className="flex flex-col items-center gap-2">
+                <p className="text-sm text-navy/40">No drivers match your search.</p>
+                <button
+                  className="text-sm text-brand-500 hover:underline"
+                  onClick={() => { setSearch(""); setStatusFilter(""); }}
+                >
+                  Clear filters
+                </button>
+              </div>
+            ) :
+            <div className="flex flex-col items-center gap-2">
+              <p className="text-sm text-navy/40">No drivers yet. Add your first driver to get started.</p>
+              <button
+                className="text-sm text-brand-500 hover:underline"
+                onClick={() => setIsAddOpen(true)}
+              >
+                Add a driver
+              </button>
+            </div>
+          }
+        />
+      )}
 
       {/* Add modal */}
       <AddDriverModal

@@ -17,7 +17,9 @@ import { useRouteRun, useCompleteStop, useUpdateRunStatus, type CompleteStopItem
 import { useRouteStore, selectStopResolutions } from "../../../../../store/routeStore";
 import { useRecordInvoicePayment } from "../../../../../lib/api/invoices";
 import { apiClient } from "../../../../../lib/api-client";
+import * as Haptics from "expo-haptics";
 import { PhotoCapture } from "../../../../../components/PhotoCapture";
+import { showToast } from "../../../../../lib/toast";
 
 type PaymentMethod = "CASH" | "CHECK" | "ACH" | "OTHER";
 const PAYMENT_METHODS: { key: PaymentMethod; label: string; icon: string }[] = [
@@ -157,6 +159,8 @@ export default function StopCompleteScreen() {
       { runId, stopId, driverNote: stopNote || undefined, items, podPhotoUrls: podPhotos, safeDropEnabled },
       {
         onSuccess: async () => {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          showToast("Delivery confirmed!");
           // If cash was collected, look up the customer's unpaid invoice and record payment
           const amount = parseFloat(cashAmount);
           const customerId = stop.customer?.id;
@@ -203,6 +207,7 @@ export default function StopCompleteScreen() {
         <ScrollView
           contentContainerStyle={styles.scroll}
           showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
         >
           {/* Stop identity */}
           <View style={styles.identityCard}>
