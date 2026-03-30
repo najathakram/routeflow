@@ -7,10 +7,12 @@ export type VendorBillStatus = "DRAFT" | "RECEIVED" | "PARTIAL" | "PAID" | "VOID
 
 export interface VendorBillItem {
   id: string;
+  productId?: string;
+  product?: { id: string; name: string; sku?: string; unit?: string };
   description: string;
   qty: number;
   unitCost: number;
-  total: number;
+  total?: number;
 }
 
 export interface VendorBillPayment {
@@ -30,6 +32,7 @@ export interface VendorBill {
   purchaseOrderId?: string;
   purchaseOrder?: { id: string; poNumber: string };
   status: VendorBillStatus;
+  billDate?: string;
   dueDate?: string;
   receivedDate?: string;
   totalOwed: number;

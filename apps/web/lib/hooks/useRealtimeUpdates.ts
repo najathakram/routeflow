@@ -37,7 +37,7 @@ export function useRealtimeUpdates() {
       toast({
         title: data.urgent ? '🚨 Urgent order placed' : 'New order placed',
         description: `${data.customerName} — order ${data.orderNumber}`,
-        variant: data.urgent ? 'error' : 'default',
+        variant: data.urgent ? 'error' : undefined,
       });
     });
 

@@ -8,6 +8,7 @@ import { PageHeader, Table, Badge, Button, Select, cn } from "@routeflow/ui/web"
 import { usePageTitle } from "@/lib/page-title-context";
 import { useToast } from "@routeflow/ui/web";
 import { useProducts, useCreateProduct, useImportProducts, useBulkDeleteProducts, uploadProductImages, type ZohoImportItem, type ImportResult } from "@/lib/api/products";
+import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -253,6 +254,7 @@ function CreateProductModal({
   const [previews, setPreviews] = React.useState<string[]>([]);
   const [isUploading, setIsUploading] = React.useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const barcodeInputRef = React.useRef<HTMLInputElement>(null);
 
   const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
 
@@ -373,11 +375,20 @@ function CreateProductModal({
               </div>
               <div>
                 <label className="mb-1 block text-sm font-medium text-navy">Barcode</label>
-                <input
-                  value={form.barcode}
-                  onChange={(e) => set("barcode", e.target.value)}
-                  className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                />
+                <div className="flex gap-2">
+                  <input
+                    ref={barcodeInputRef}
+                    value={form.barcode}
+                    onChange={(e) => set("barcode", e.target.value)}
+                    className="flex-1 rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    placeholder="Scan or enter barcode"
+                  />
+                  <BarcodeScannerButton
+                    inputRef={barcodeInputRef}
+                    onScan={(code) => set("barcode", code)}
+                    title="Scan barcode"
+                  />
+                </div>
               </div>
 
               {/* Unit — datalist (pick from list OR type a custom value) */}
@@ -898,7 +909,7 @@ export default function ProductsPage() {
         filteredIds.forEach((id) => next.delete(id));
         return next;
       }
-      return new Set([...prev, ...filteredIds]);
+      return new Set(Array.from(prev).concat(filteredIds));
     });
 
   const handleBulkDelete = async () => {

@@ -272,13 +272,14 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
     );
   }
 
-  const total = Number((bill as any).totalOwed ?? bill.total ?? 0);
-  const amountPaid = Number((bill as any).totalPaid ?? bill.amountPaid ?? 0);
+  const total = Number(bill.totalOwed ?? 0);
+  const amountPaid = Number(bill.totalPaid ?? 0);
   const balance = Math.max(0, total - amountPaid);
   const payments: VendorBillPayment[] = bill.payments ?? [];
   const status = bill.status;
 
   const isOverdue =
+    !!bill.dueDate &&
     status !== "PAID" &&
     status !== "VOID" &&
     new Date(bill.dueDate) < new Date(new Date().toDateString());
@@ -440,7 +441,7 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
                 )}
                 <p className="text-sm text-navy/60">
                   <span className="font-medium text-navy">Bill Date:</span>{" "}
-                  {fmtDate((bill as any).billDate ?? bill.createdAt)}
+                  {fmtDate(bill.billDate ?? bill.createdAt)}
                 </p>
                 <p className={cn("text-sm", isOverdue ? "text-red-600 font-semibold" : "text-navy/60")}>
                   <span className="font-medium text-navy">Due Date:</span>{" "}
@@ -470,7 +471,7 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-surface-border">
-                  {bill.items.map((item) => (
+                  {(bill.items ?? []).map((item) => (
                     <tr key={item.id} className="hover:bg-surface-raised">
                       <td className="px-6 py-3 text-navy">{item.description}</td>
                       <td className="px-4 py-3 text-right text-navy/70">{item.qty}</td>

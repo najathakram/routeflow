@@ -111,7 +111,7 @@ export default function ProductDetailScreen() {
       },
       quantity,
     );
-    router.push("/(customer)/order");
+    router.navigate("/(customer)/order");
   };
 
   return (

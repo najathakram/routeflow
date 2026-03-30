@@ -292,6 +292,7 @@ model Product {
   purchaseOrderItems      PurchaseOrderItem[]
   returnItems             ReturnItem[]
   recurringInvoiceItems   RecurringInvoiceItem[]
+  vendorBillItems         VendorBillItem[]
 
   @@index([category])
   @@index([isActive])
@@ -886,18 +887,36 @@ model VendorBill {
   status       VendorBillStatus @default(RECEIVED)
   totalOwed    Decimal          @db.Decimal(10, 2)
   totalPaid    Decimal          @default(0) @db.Decimal(10, 2)
+  billDate     DateTime?
   dueDate      DateTime?
   receivedDate DateTime?
   notes        String?
   createdAt    DateTime         @default(now())
   updatedAt    DateTime         @updatedAt
 
-  supplier Supplier      @relation(fields: [supplierId], references: [id])
+  supplier Supplier        @relation(fields: [supplierId], references: [id])
   payments BillPayment[]
+  items    VendorBillItem[]
 
   @@index([supplierId])
   @@index([status])
   @@index([dueDate])
+}
+
+model VendorBillItem {
+  id           String     @id @default(uuid())
+  vendorBillId String
+  productId    String?
+  description  String
+  qty          Decimal    @db.Decimal(10, 3)
+  unitCost     Decimal    @db.Decimal(10, 4)
+  createdAt    DateTime   @default(now())
+
+  vendorBill VendorBill @relation(fields: [vendorBillId], references: [id], onDelete: Cascade)
+  product    Product?   @relation(fields: [productId], references: [id])
+
+  @@index([vendorBillId])
+  @@index([productId])
 }
 
 model BillPayment {

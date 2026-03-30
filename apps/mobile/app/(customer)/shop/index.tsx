@@ -238,7 +238,7 @@ function CartBar() {
   return (
     <Pressable
       style={cartStyles.bar}
-      onPress={() => router.push("/(customer)/order")}
+      onPress={() => router.navigate("/(customer)/order")}
       accessibilityRole="button"
       accessibilityLabel={`View cart: ${totalItems} items, $${totalPrice.toFixed(2)}`}
     >
@@ -309,13 +309,18 @@ export default function ShopScreen() {
   const { data: barcodeProduct, isError: barcodeError } = useProductByBarcode(pendingBarcode);
   const { data: ordersData } = useMyOrders({ status: "DELIVERED", limit: 10 });
   const favourites = useFavouritesStore((s) => s.favourites);
+  const addItem = useOrderStore((s) => s.addItem);
 
   const productList: ApiProduct[] = result?.data ?? [];
 
   useEffect(() => {
     if (barcodeProduct) {
       setPendingBarcode(null);
-      router.push(`/(customer)/shop/${barcodeProduct.id}`);
+      addItem(
+        { id: barcodeProduct.id, name: barcodeProduct.name, unit: barcodeProduct.unit, pricePerUnit: barcodeProduct.pricePerUnit },
+        1,
+      );
+      router.navigate("/(customer)/order");
     }
   }, [barcodeProduct]);
 

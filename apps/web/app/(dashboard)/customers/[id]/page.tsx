@@ -399,13 +399,24 @@ export default function CustomerDetailPage({
   // Delivery time window
   const [windowStart, setWindowStart] = React.useState(customer?.deliveryWindowStart ?? "");
   const [windowEnd, setWindowEnd] = React.useState(customer?.deliveryWindowEnd ?? "");
+  const [anyTime, setAnyTime] = React.useState(!customer?.deliveryWindowStart && !customer?.deliveryWindowEnd);
 
   React.useEffect(() => {
     if (customer) {
       setWindowStart(customer.deliveryWindowStart ?? "");
       setWindowEnd(customer.deliveryWindowEnd ?? "");
+      setAnyTime(!customer.deliveryWindowStart && !customer.deliveryWindowEnd);
     }
   }, [customer?.deliveryWindowStart, customer?.deliveryWindowEnd]);
+
+  const handleAnyTimeToggle = (checked: boolean) => {
+    setAnyTime(checked);
+    if (checked) {
+      setWindowStart("");
+      setWindowEnd("");
+      updateCustomer.mutate({ id: params.id, deliveryWindowStart: "", deliveryWindowEnd: "" });
+    }
+  };
 
   // Advance payment
   const [isAdvanceOpen, setIsAdvanceOpen] = React.useState(false);
@@ -547,7 +558,17 @@ export default function CustomerDetailPage({
                     Set the customer's accepted delivery hours. The route optimizer will schedule
                     this stop within the window.
                   </p>
-                  <div className="grid grid-cols-2 gap-4">
+                  {/* Any time toggle */}
+                  <label className="flex cursor-pointer items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={anyTime}
+                      onChange={(e) => handleAnyTimeToggle(e.target.checked)}
+                      className="h-4 w-4 rounded border-surface-border text-brand-500 focus:ring-brand-500"
+                    />
+                    <span className="text-sm font-medium text-navy">Any time (24/7 — no window restriction)</span>
+                  </label>
+                  <div className={`grid grid-cols-2 gap-4 transition-opacity ${anyTime ? "pointer-events-none opacity-40" : ""}`}>
                     <div className="space-y-1">
                       <label className="flex items-center gap-1.5 text-xs font-medium text-navy/60">
                         <Clock className="h-3.5 w-3.5" />
@@ -558,7 +579,8 @@ export default function CustomerDetailPage({
                         value={windowStart}
                         onChange={(e) => setWindowStart(e.target.value)}
                         onBlur={handleTimeWindowBlur}
-                        className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        disabled={anyTime}
+                        className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:bg-surface-raised"
                         placeholder="08:00"
                       />
                     </div>
@@ -572,17 +594,13 @@ export default function CustomerDetailPage({
                         value={windowEnd}
                         onChange={(e) => setWindowEnd(e.target.value)}
                         onBlur={handleTimeWindowBlur}
-                        className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        disabled={anyTime}
+                        className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:bg-surface-raised"
                         placeholder="17:00"
                       />
                     </div>
                   </div>
-                  {!windowStart && !windowEnd && (
-                    <p className="text-xs text-navy/40">
-                      No window set — deliveries can be made at any time.
-                    </p>
-                  )}
-                  {windowStart && windowEnd && (
+                  {!anyTime && windowStart && windowEnd && (
                     <p className="text-xs text-success font-medium">
                       Window: {windowStart} – {windowEnd}
                     </p>

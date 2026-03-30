@@ -141,7 +141,7 @@ function SupplierCard({
         </div>
         <div className="flex shrink-0 items-center gap-1">
           <Badge
-            variant={supplier.isActive ? "success" : "secondary"}
+            variant={supplier.isActive ? "success" : "neutral"}
             label={supplier.isActive ? "Active" : "Inactive"}
           />
           <button

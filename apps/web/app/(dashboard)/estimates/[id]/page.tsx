@@ -48,6 +48,7 @@ const STATUS_COLORS: Record<EstimateStatus, string> = {
   ACCEPTED: "bg-green-100 text-green-700",
   DECLINED: "bg-red-100 text-red-600",
   EXPIRED: "bg-orange-100 text-orange-700",
+  CONVERTED: "bg-purple-100 text-purple-700",
 };
 
 function EstimateStatusBadge({ status }: { status: EstimateStatus }) {
@@ -143,7 +144,7 @@ export default function EstimateDetailPage({ params }: { params: { id: string } 
 
   const status = estimate.status;
   const subtotal = Number(estimate.subtotal);
-  const tax = Number(estimate.tax);
+  const tax = Number(estimate.taxAmount ?? 0);
   const total = Number(estimate.total);
 
   // ── Action handlers ──────────────────────────────────────────────────────────

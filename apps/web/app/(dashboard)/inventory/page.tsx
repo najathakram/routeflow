@@ -23,6 +23,12 @@ import {
   useUpdateReorderSettings,
 } from "@/lib/api/inventory";
 import { useProducts } from "@/lib/api/products";
+import { useVendorBills } from "@/lib/api/vendor-bills";
+
+const DECIMAL_UNITS = ["kg", "g", "liter", "litre", "l", "oz", "lb", "pound", "ml"];
+function isDecimalUnit(unit: string) {
+  return DECIMAL_UNITS.includes(unit.toLowerCase());
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -134,14 +140,53 @@ function RecordPurchaseModal({
   });
 
   const selectedProduct = products.find((p) => p.id === form.productId);
+  const decimalQty = selectedProduct ? isDecimalUnit(selectedProduct.unit) : true;
+
+  // Reference combobox state
+  const [refSearch, setRefSearch] = React.useState("");
+  const [refOpen, setRefOpen] = React.useState(false);
+  const refContainerRef = React.useRef<HTMLDivElement>(null);
+
+  const { data: billsData } = useVendorBills({ limit: 50 });
+  const { data: posData } = usePurchaseOrders({ limit: 50 });
+  const vendorBills: any[] = (billsData as any)?.data ?? [];
+  const purchaseOrders: any[] = (posData as any)?.data ?? [];
+
+  const refOptions = [
+    ...vendorBills.map((b: any) => ({
+      label: `${b.billNumber} — ${b.supplier?.name ?? ""} (${new Date(b.createdAt).toLocaleDateString()})`,
+      value: b.billNumber,
+      supplierId: b.supplierId,
+    })),
+    ...purchaseOrders.map((po: any) => ({
+      label: `${po.poNumber} — ${po.supplier?.name ?? ""} (PO)`,
+      value: po.poNumber,
+      supplierId: po.supplierId,
+    })),
+  ].filter((o) => !refSearch || o.label.toLowerCase().includes(refSearch.toLowerCase()));
+
+  React.useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (refContainerRef.current && !refContainerRef.current.contains(e.target as Node)) {
+        setRefOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    const qty = Number(form.quantity);
+    if (!decimalQty && !Number.isInteger(qty)) {
+      alert(`Quantity must be a whole number for unit "${selectedProduct?.unit}"`);
+      return;
+    }
     recordPurchase.mutate(
       {
         productId: form.productId,
         supplierId: form.supplierId || undefined,
-        quantity: Number(form.quantity),
+        quantity: qty,
         unitCost: Number(form.unitCost),
         reference: form.reference || undefined,
         notes: form.notes || undefined,
@@ -190,6 +235,7 @@ function RecordPurchaseModal({
             {selectedProduct && (
               <p className="mt-1 text-xs text-navy/50">
                 Current stock: {selectedProduct.currentStock} {selectedProduct.unit}
+                {!decimalQty && <span className="ml-2 text-navy/40">(whole numbers only)</span>}
               </p>
             )}
           </div>
@@ -202,11 +248,13 @@ function RecordPurchaseModal({
               <input
                 required
                 type="number"
-                min={0.001}
-                step={0.001}
+                min={decimalQty ? 0.001 : 1}
+                step={decimalQty ? 0.001 : 1}
+                inputMode={decimalQty ? "decimal" : "numeric"}
                 value={form.quantity}
                 onChange={(e) => setForm((f) => ({ ...f, quantity: e.target.value }))}
                 className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                placeholder={decimalQty ? "0.000" : "0"}
               />
             </div>
             <div>
@@ -223,14 +271,43 @@ function RecordPurchaseModal({
             </div>
           </div>
 
-          <div>
+          {/* Reference combobox */}
+          <div ref={refContainerRef} className="relative">
             <label className="mb-1 block text-xs text-navy/60">PO / Invoice Reference</label>
             <input
               type="text"
               value={form.reference}
-              onChange={(e) => setForm((f) => ({ ...f, reference: e.target.value }))}
+              onChange={(e) => { setForm((f) => ({ ...f, reference: e.target.value })); setRefSearch(e.target.value); }}
+              onFocus={() => setRefOpen(true)}
+              placeholder="Select or type reference…"
+              autoComplete="off"
               className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
             />
+            {refOpen && refOptions.length > 0 && (
+              <div className="absolute left-0 top-full z-50 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-dropdown">
+                <ul className="max-h-40 overflow-y-auto py-1">
+                  {refOptions.map((opt) => (
+                    <li key={opt.value}>
+                      <button
+                        type="button"
+                        onMouseDown={() => {
+                          setForm((f) => ({
+                            ...f,
+                            reference: opt.value,
+                            supplierId: opt.supplierId || f.supplierId,
+                          }));
+                          setRefSearch(opt.value);
+                          setRefOpen(false);
+                        }}
+                        className="w-full px-3 py-2 text-left text-xs hover:bg-brand-50 text-navy"
+                      >
+                        {opt.label}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
 
           <div>

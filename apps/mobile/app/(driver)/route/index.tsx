@@ -4,18 +4,59 @@ import { router, Stack } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { StatusBadge } from "@routeflow/ui/mobile";
 import { colors, borderRadius, shadows } from "@routeflow/ui/tokens";
-import { format } from "date-fns";
+import { format, addMinutes } from "date-fns";
 import {
   useActiveRouteRun,
   useScheduledRouteRuns,
   useRouteRun,
   useUpdateRunStatus,
+  useUpdateStopStatus,
   type RouteRunStop,
 } from "../../../lib/api/routes";
 import { useConfirmOrder } from "../../../lib/api/orders";
 import { useRouteStore } from "../../../store/routeStore";
 import { useMileageStore } from "../../../store/mileageStore";
 import { NetworkError } from "../../../components/NetworkError";
+
+// ─── ETA helpers ──────────────────────────────────────────────────────────────
+const TRAVEL_MINS = 15;
+const SERVICE_MINS = 10;
+const WARN_MINS = 30; // show warning when < 30 min before window closes
+
+function calcStopEtas(stops: RouteRunStop[], startedAt: Date = new Date()): Map<string, Date> {
+  const map = new Map<string, Date>();
+  let idx = 0;
+  for (const stop of stops) {
+    if (stop.status === "COMPLETED" || stop.status === "SKIPPED") continue;
+    idx++;
+    map.set(stop.id, addMinutes(startedAt, idx * (TRAVEL_MINS + SERVICE_MINS)));
+  }
+  return map;
+}
+
+function parseWindowTime(timeStr: string | null | undefined, baseDate: Date): Date | null {
+  if (!timeStr) return null;
+  const [h, m] = timeStr.split(":").map(Number);
+  if (isNaN(h) || isNaN(m)) return null;
+  const d = new Date(baseDate);
+  d.setHours(h, m, 0, 0);
+  return d;
+}
+
+type EtaStatus = "ok" | "warn" | "late" | "anytime";
+
+function getEtaStatus(stop: RouteRunStop, eta: Date | undefined, now: Date): EtaStatus {
+  const windowEnd = stop.customer?.deliveryWindowEnd;
+  const windowStart = stop.customer?.deliveryWindowStart;
+  if (!windowEnd && !windowStart) return "anytime";
+  if (!eta) return "ok";
+  const windowEndDate = parseWindowTime(windowEnd, now);
+  if (!windowEndDate) return "ok";
+  if (eta > windowEndDate) return "late";
+  const minsUntilClose = (windowEndDate.getTime() - eta.getTime()) / 60000;
+  if (minsUntilClose <= WARN_MINS) return "warn";
+  return "ok";
+}
 
 
 const STATUS_ICON: Record<string, { name: string; color: string }> = {
@@ -48,15 +89,18 @@ const progressStyles = StyleSheet.create({
   },
 });
 
-function StopRow({ stop, runId }: { stop: RouteRunStop; runId: string }) {
+function StopRow({ stop, runId, eta, etaStatus }: { stop: RouteRunStop; runId: string; eta?: Date; etaStatus?: EtaStatus }) {
   const icon = STATUS_ICON[stop.status] ?? STATUS_ICON.PENDING;
   const isActive = stop.status === "IN_PROGRESS";
-  const isDone = stop.status === "COMPLETED" || stop.status === "SKIPPED";
 
   const businessName = stop.customer?.businessName ?? stop.customerId;
   const address = stop.customerAddress
     ? `${stop.customerAddress.line1}, ${stop.customerAddress.city}, ${stop.customerAddress.state}`
     : null;
+
+  const windowStart = stop.customer?.deliveryWindowStart;
+  const windowEnd = stop.customer?.deliveryWindowEnd;
+  const hasWindow = windowStart || windowEnd;
 
   // Count total items across all orders at this stop
   const itemCount = (stop.orders ?? []).reduce(
@@ -67,6 +111,10 @@ function StopRow({ stop, runId }: { stop: RouteRunStop; runId: string }) {
   const handlePress = () => {
     router.push(`/(driver)/route/stop/${stop.id}?runId=${runId}`);
   };
+
+  const windowColor = etaStatus === "late" ? colors.danger?.DEFAULT ?? "#ef4444"
+    : etaStatus === "warn" ? colors.warning.DEFAULT
+    : "#94a3b8";
 
   return (
     <Pressable
@@ -95,19 +143,53 @@ function StopRow({ stop, runId }: { stop: RouteRunStop; runId: string }) {
             {itemCount} item{itemCount !== 1 ? "s" : ""}
           </Text>
         )}
+        {/* Delivery window line */}
+        {hasWindow ? (
+          <Text style={[styles.stopWindow, { color: windowColor }]}>
+            {etaStatus === "late" ? "⚠ Late — " : etaStatus === "warn" ? "⚠ Tight — " : ""}
+            {windowStart && windowEnd ? `${windowStart} – ${windowEnd}` : windowEnd ? `By ${windowEnd}` : `From ${windowStart}`}
+          </Text>
+        ) : (
+          <Text style={styles.stopWindowAny}>Any time</Text>
+        )}
       </View>
 
-      {/* Status icon */}
-      <Ionicons name={icon.name as any} size={28} color={icon.color} />
+      {/* ETA badge for warn/late, or status icon */}
+      <View style={{ alignItems: "flex-end", gap: 4 }}>
+        {etaStatus === "late" && (
+          <View style={stopBadgeStyles.lateBadge}>
+            <Text style={stopBadgeStyles.lateText}>Late</Text>
+          </View>
+        )}
+        {etaStatus === "warn" && (
+          <Ionicons name="warning-outline" size={16} color={colors.warning.DEFAULT} />
+        )}
+        <Ionicons name={icon.name as any} size={28} color={icon.color} />
+      </View>
     </Pressable>
   );
 }
+
+const stopBadgeStyles = StyleSheet.create({
+  lateBadge: {
+    backgroundColor: "#fee2e2",
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  lateText: {
+    fontSize: 10,
+    fontFamily: "Inter_700Bold",
+    color: "#ef4444",
+  },
+});
 
 export default function RouteScreen() {
   const { data, isLoading, isError, refetch } = useActiveRouteRun();
   const { data: scheduledData } = useScheduledRouteRuns();
   const setActiveRunId = useRouteStore((s) => s.setActiveRunId);
   const { logMileage, updateEnd, getEntry, getMiles } = useMileageStore();
+  const { mutate: updateStopStatus } = useUpdateStopStatus();
 
   // Mileage modal state
   const [mileageModalVisible, setMileageModalVisible] = useState(false);
@@ -200,6 +282,18 @@ export default function RouteScreen() {
   const allDone = run.status === "COMPLETED";
   const hasStarted = run.status === "IN_PROGRESS" || completedCount > 0 || currentStop !== null;
 
+  // ETA computation (client-side)
+  const now = new Date();
+  const startedAt = run.startedAt ? new Date(run.startedAt) : now;
+  const etaMap = hasStarted ? calcStopEtas(stops, startedAt) : new Map<string, Date>();
+  const etaStatusMap = new Map<string, EtaStatus>();
+  for (const stop of stops) {
+    etaStatusMap.set(stop.id, getEtaStatus(stop, etaMap.get(stop.id), now));
+  }
+  const atRiskCount = Array.from(etaStatusMap.values()).filter(
+    (s) => s === "warn" || s === "late",
+  ).length;
+
   // Dashboard stats
   const pendingOrderCount = stops.reduce(
     (n, s) => n + (s.orders ?? []).filter((o: any) => o.status === "PENDING").length,
@@ -215,6 +309,30 @@ export default function RouteScreen() {
     : !hasStarted
       ? "Start Route"
       : "Next Stop";
+
+  // End Route Early
+  const handleEndRouteEarly = () => {
+    const pendingStops = stops.filter((s) => s.status === "PENDING" || s.status === "IN_PROGRESS");
+    Alert.alert(
+      "End Route Early?",
+      `${pendingStops.length} stop${pendingStops.length !== 1 ? "s" : ""} will be marked as skipped.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "End Route",
+          style: "destructive",
+          onPress: () => {
+            // Skip all pending/in-progress stops
+            for (const stop of pendingStops) {
+              updateStopStatus({ runId: run.id, stopId: stop.id, status: "SKIPPED" });
+            }
+            // Mark run as completed
+            updateStatus({ id: run.id, status: "COMPLETED" });
+          },
+        },
+      ],
+    );
+  };
 
   // ─── Mileage logging ──────────────────────────────────────────────────────
   const mileageEntry = run ? getEntry(run.id) : null;
@@ -422,6 +540,14 @@ export default function RouteScreen() {
                 </Text>
               </View>
             )}
+            {atRiskCount > 0 && (
+              <View style={[styles.statPill, styles.statPillDanger]}>
+                <Ionicons name="time-outline" size={14} color="#ef4444" />
+                <Text style={[styles.statText, { color: "#ef4444" }]}>
+                  {atRiskCount} at risk
+                </Text>
+              </View>
+            )}
           </View>
 
           <View style={styles.progressSection}>
@@ -529,7 +655,13 @@ export default function RouteScreen() {
 
           <Text style={styles.stopsLabel}>Stops</Text>
           {stops.map((stop) => (
-            <StopRow key={stop.id} stop={stop} runId={run.id} />
+            <StopRow
+              key={stop.id}
+              stop={stop}
+              runId={run.id}
+              eta={etaMap.get(stop.id)}
+              etaStatus={etaStatusMap.get(stop.id)}
+            />
           ))}
         </ScrollView>
 
@@ -595,6 +727,19 @@ export default function RouteScreen() {
               {primaryLabel}
             </Text>
           </Pressable>
+
+          {/* End Route Early */}
+          {hasStarted && !allDone && (
+            <Pressable
+              style={styles.endRouteBtn}
+              onPress={handleEndRouteEarly}
+              accessibilityRole="button"
+              accessibilityLabel="End route early"
+            >
+              <Ionicons name="stop-circle-outline" size={17} color="#ef4444" />
+              <Text style={styles.endRouteBtnText}>End Route Early</Text>
+            </Pressable>
+          )}
         </View>
       </View>
     </>
@@ -651,6 +796,10 @@ const styles = StyleSheet.create({
   statPillWarning: {
     backgroundColor: colors.warning.bg ?? "#fef3c7",
     borderColor: colors.warning.DEFAULT + "40",
+  },
+  statPillDanger: {
+    backgroundColor: "#fee2e2",
+    borderColor: "#fca5a5",
   },
   statText: {
     fontSize: 12,
@@ -747,6 +896,15 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_500Medium",
     color: "#94a3b8",
   },
+  stopWindow: {
+    fontSize: 12,
+    fontFamily: "Inter_500Medium",
+  },
+  stopWindowAny: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    color: "#94a3b8",
+  },
   footer: {
     paddingHorizontal: 16,
     paddingBottom: 28,
@@ -809,6 +967,23 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontFamily: "Inter_400Regular",
     color: "#94a3b8",
+  },
+  endRouteBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    marginTop: 10,
+    paddingVertical: 10,
+    borderRadius: borderRadius.DEFAULT,
+    borderWidth: 1,
+    borderColor: "#fca5a5",
+    backgroundColor: "#fee2e2",
+  },
+  endRouteBtnText: {
+    fontSize: 14,
+    fontFamily: "Inter_600SemiBold",
+    color: "#ef4444",
   },
 });
 

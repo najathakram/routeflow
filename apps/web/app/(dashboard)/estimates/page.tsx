@@ -47,6 +47,7 @@ const STATUS_COLORS: Record<EstimateStatus, string> = {
   ACCEPTED: "bg-green-100 text-green-700",
   DECLINED: "bg-red-100 text-red-600",
   EXPIRED: "bg-orange-100 text-orange-700",
+  CONVERTED: "bg-purple-100 text-purple-700",
 };
 
 function EstimateStatusBadge({ status }: { status: EstimateStatus }) {

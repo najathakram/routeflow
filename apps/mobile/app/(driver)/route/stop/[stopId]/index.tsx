@@ -526,6 +526,9 @@ export default function StopDetailScreen() {
   // ─── Delivery window alert state ──────────────────────────────────────────
   const [windowStatus, setWindowStatus] = useState<"ok" | "soon" | "late">("ok");
 
+  // ─── Overtime warning (next stop at risk due to time spent here) ──────────
+  const [overtimeWarning, setOvertimeWarning] = useState<string | null>(null);
+
   // ─── Voice recording state ────────────────────────────────────────────────
   const [isRecording, setIsRecording] = useState(false);
   const recordingRef = useRef<any>(null);
@@ -597,6 +600,46 @@ export default function StopDetailScreen() {
     const interval = setInterval(checkWindow, 30_000);
     return () => clearInterval(interval);
   }, [stop?.customer?.deliveryWindowEnd, stop?.status]);
+
+  useEffect(() => {
+    if (!run || !stop) return;
+
+    function checkOvertime() {
+      if (stop!.status !== "IN_PROGRESS" || !stop!.arrivedAt) {
+        setOvertimeWarning(null);
+        return;
+      }
+      const elapsedMs = Date.now() - new Date(stop!.arrivedAt).getTime();
+      if (elapsedMs < 20 * 60 * 1000) {
+        setOvertimeWarning(null);
+        return;
+      }
+      // Find the next pending stop
+      const allStops = run!.stops ?? [];
+      const nextStop = allStops.find(
+        (s) => s.status === "PENDING" && s.stopNumber > stop!.stopNumber,
+      );
+      if (!nextStop?.customer?.deliveryWindowEnd) {
+        setOvertimeWarning(null);
+        return;
+      }
+      const [wHour, wMin] = nextStop.customer.deliveryWindowEnd.split(":").map(Number);
+      const now = new Date();
+      const windowEndDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), wHour, wMin);
+      const minsToWindow = (windowEndDate.getTime() - now.getTime()) / 60000;
+      if (minsToWindow <= 30) {
+        setOvertimeWarning(
+          `Running long — next stop (${nextStop.customer.businessName}) closes at ${nextStop.customer.deliveryWindowEnd}`,
+        );
+      } else {
+        setOvertimeWarning(null);
+      }
+    }
+
+    checkOvertime();
+    const interval = setInterval(checkOvertime, 60_000);
+    return () => clearInterval(interval);
+  }, [run, stop?.status, stop?.arrivedAt, stop?.stopNumber]);
 
   if (isLoading) {
     return (
@@ -907,6 +950,12 @@ export default function StopDetailScreen() {
               <View style={styles.bannerSoon}>
                 <Ionicons name="time-outline" size={18} color={colors.warning.DEFAULT} />
                 <Text style={styles.bannerSoonText}>Delivery window ends soon</Text>
+              </View>
+            )}
+            {overtimeWarning && (
+              <View style={styles.bannerSoon}>
+                <Ionicons name="hourglass-outline" size={18} color={colors.warning.DEFAULT} />
+                <Text style={styles.bannerSoonText}>{overtimeWarning}</Text>
               </View>
             )}
 
