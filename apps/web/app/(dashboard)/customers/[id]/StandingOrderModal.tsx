@@ -116,7 +116,7 @@ export function StandingOrderModal({
 
   // ── Item management ────────────────────────────────────────────────────────
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   const addLineItem = (product: any) => {
     if (lineItems.some((li) => li.productId === product.id)) return;
     setLineItems((prev) => [
@@ -304,7 +304,7 @@ export function StandingOrderModal({
               />
               {filteredProducts.length > 0 && productSearch && (
                 <ul className="absolute left-0 right-0 top-full z-10 mt-1 overflow-hidden rounded-lg border border-surface-border bg-white shadow-dropdown">
-                  {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+                  
                   {filteredProducts.map((p: any) => (
                     <li key={p.id}>
                       <button

@@ -502,7 +502,7 @@ export default function DispatchPage({ params }: { params: { id: string } }) {
                   <Package2 className="mx-auto mb-3 h-8 w-8 text-navy/20" />
                   <p className="text-sm font-medium text-navy/60">Nothing to pack</p>
                   <p className="mt-1 text-xs text-navy/40">
-                    No active orders are assigned to this run's stops.
+                    No active orders are assigned to this run&apos;s stops.
                   </p>
                 </div>
               ) : (

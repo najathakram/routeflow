@@ -83,7 +83,7 @@ export function CreateRouteModal({ isOpen, onClose }: CreateRouteModalProps) {
     return (customersData?.data ?? []).slice(0, 8);
   }, [customersData, debouncedSearch]);
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   const addStop = (customer: any) => {
     if (stops.some((s) => s.customerId === customer.id)) return;
     const addr = (customer.addresses ?? []).find((a: { isDefault?: boolean }) => a.isDefault) ?? customer.addresses?.[0];

@@ -789,7 +789,7 @@ export default function CustomerDetailPage({
               <Card title="Delivery Time Window">
                 <div className="space-y-3">
                   <p className="text-sm text-navy/60">
-                    Set the customer's accepted delivery hours. The route optimizer will schedule
+                    Set the customer&apos;s accepted delivery hours. The route optimizer will schedule
                     this stop within the window.
                   </p>
                   {/* Any time toggle */}

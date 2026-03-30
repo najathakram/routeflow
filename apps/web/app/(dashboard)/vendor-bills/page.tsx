@@ -256,7 +256,7 @@ function ProductCombobox({
               onMouseDown={() => { setOpen(false); onCreateNew(search); }}
               className="flex w-full items-center gap-1.5 text-sm font-medium text-brand-500 hover:text-brand-600"
             >
-              <Plus size={14} /> Create "{search || "new product"}"
+              <Plus size={14} /> Create &quot;{search || 'new product'}&quot;
             </button>
           </div>
         </div>

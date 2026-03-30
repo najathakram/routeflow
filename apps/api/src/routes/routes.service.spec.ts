@@ -2,6 +2,7 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { NotFoundException, ForbiddenException } from "@nestjs/common";
 import { RoutesService } from "./routes.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 const MOCK_ROUTE = {
@@ -51,7 +52,19 @@ describe("RoutesService", () => {
     prisma = createMockPrisma();
 
     const module: TestingModule = await Test.createTestingModule({
-      providers: [RoutesService, { provide: PrismaService, useValue: prisma }],
+      providers: [
+        RoutesService,
+        { provide: PrismaService, useValue: prisma },
+        {
+          provide: RouteFlowGateway,
+          useValue: {
+            emitStopCompleted: jest.fn(),
+            emitOrderCreated: jest.fn(),
+            emitOrderStatusChanged: jest.fn(),
+            emitLowStock: jest.fn(),
+          },
+        },
+      ],
     }).compile();
 
     service = module.get<RoutesService>(RoutesService);

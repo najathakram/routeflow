@@ -32,6 +32,7 @@ const MOCK_ORDER = {
   deliveredAt: null,
   createdAt: new Date(),
   updatedAt: new Date(),
+  customer: { businessName: "Test Business" },
 };
 
 const operatorPayload = {
@@ -54,12 +55,24 @@ describe("OrdersService", () => {
   let service: OrdersService;
   let prisma: ReturnType<typeof createMockPrisma>;
   let mockQueue: { add: jest.Mock };
-  let mockGateway: { emitStopCompleted: jest.Mock };
+  let mockGateway: {
+    emitStopCompleted: jest.Mock;
+    emitOrderCreated: jest.Mock;
+    emitUrgentOrder: jest.Mock;
+    emitOrderStatusChanged: jest.Mock;
+    emitLowStock: jest.Mock;
+  };
 
   beforeEach(async () => {
     prisma = createMockPrisma();
     mockQueue = { add: jest.fn() };
-    mockGateway = { emitStopCompleted: jest.fn() };
+    mockGateway = {
+      emitStopCompleted: jest.fn(),
+      emitOrderCreated: jest.fn(),
+      emitUrgentOrder: jest.fn(),
+      emitOrderStatusChanged: jest.fn(),
+      emitLowStock: jest.fn(),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -243,6 +256,8 @@ describe("OrdersService", () => {
     });
 
     it("should throw ForbiddenException for non-operators", async () => {
+      prisma.order.findUnique.mockResolvedValue(MOCK_ORDER);
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-other" });
       await expect(
         service.changeStatus("ord-1", { status: "CONFIRMED" as any }, customerPayload),
       ).rejects.toThrow(ForbiddenException);
