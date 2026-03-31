@@ -17,6 +17,11 @@ import {
   Building2,
   Users as UsersIcon,
   Download,
+  Sparkles,
+  Eye,
+  EyeOff,
+  ExternalLink,
+  Trash2,
 } from "lucide-react";
 import {
   Input,
@@ -811,6 +816,179 @@ function ImportTab() {
   );
 }
 
+// ─── TAB 5: AI & Integrations ─────────────────────────────────────────────────
+
+function AIIntegrationsTab() {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const [showKey, setShowKey] = React.useState(false);
+  const [keyInput, setKeyInput] = React.useState("");
+  const [isEditing, setIsEditing] = React.useState(false);
+
+  const { data: anthropicStatus, isLoading } = useQuery({
+    queryKey: ["settings", "anthropic"],
+    queryFn: () => apiClient.get("/settings/anthropic").then((r) => r.data),
+  });
+
+  const saveKey = useMutation({
+    mutationFn: (apiKey: string) =>
+      apiClient.patch("/settings/anthropic", { apiKey }).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["settings", "anthropic"] });
+      setKeyInput("");
+      setIsEditing(false);
+      toast({ title: "API key saved", description: "Claude AI scanning is now active.", variant: "success" });
+    },
+    onError: () => toast({ title: "Failed to save API key", variant: "error" }),
+  });
+
+  const removeKey = useMutation({
+    mutationFn: () =>
+      apiClient.patch("/settings/anthropic", { apiKey: "" }).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["settings", "anthropic"] });
+      toast({ title: "API key removed", variant: "success" });
+    },
+    onError: () => toast({ title: "Failed to remove key", variant: "error" }),
+  });
+
+  const isConfigured = anthropicStatus?.configured === true;
+  const keyPreview = anthropicStatus?.keyPreview ?? null;
+
+  return (
+    <div className="space-y-5">
+      <Card title="Claude AI (Invoice Scanner)">
+        <div className="space-y-5">
+          {/* Status row */}
+          <div className="flex items-center justify-between rounded-lg border border-surface-border bg-surface-raised p-4">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-[#CC785C] to-[#E8936A] font-bold text-white text-sm">
+                AI
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-navy">Anthropic Claude</p>
+                <p className="text-xs text-navy/50">
+                  {isLoading
+                    ? "Checking status..."
+                    : isConfigured
+                    ? `Key configured${keyPreview ? ` · ${keyPreview}` : ""}`
+                    : "No API key configured"}
+                </p>
+              </div>
+            </div>
+            {isConfigured ? (
+              <Badge variant="success" label="Active" />
+            ) : (
+              <Badge variant="warning" label="Not configured" />
+            )}
+          </div>
+
+          {/* Description */}
+          <div className="text-sm text-navy/60 space-y-1">
+            <p>
+              RouteFlow uses Claude to intelligently extract supplier names, invoice numbers, line items,
+              and totals from scanned documents — saving manual data entry.
+            </p>
+            <p>
+              Each operator uses their own API key so AI costs are billed directly to your Anthropic account.
+            </p>
+          </div>
+
+          {/* Get key link */}
+          <a
+            href="https://console.anthropic.com/settings/keys"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 text-sm font-medium text-brand-500 hover:text-brand-600 transition-colors"
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+            Get your API key from console.anthropic.com
+          </a>
+
+          {/* Key input */}
+          {!isEditing && !isConfigured ? (
+            <Button
+              variant="secondary"
+              size="sm"
+              leftIcon={<Sparkles className="h-4 w-4" />}
+              onClick={() => setIsEditing(true)}
+            >
+              Add API Key
+            </Button>
+          ) : isEditing ? (
+            <div className="space-y-3">
+              <div className="relative">
+                <input
+                  type={showKey ? "text" : "password"}
+                  value={keyInput}
+                  onChange={(e) => setKeyInput(e.target.value)}
+                  placeholder="sk-ant-api03-..."
+                  className="h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 text-sm font-mono text-navy placeholder:text-navy/30 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowKey((v) => !v)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-navy/40 hover:text-navy transition-colors"
+                >
+                  {showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  loading={saveKey.isPending}
+                  disabled={!keyInput.trim()}
+                  onClick={() => saveKey.mutate(keyInput.trim())}
+                >
+                  Save Key
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => { setIsEditing(false); setKeyInput(""); }}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <Button
+                variant="secondary"
+                size="sm"
+                leftIcon={<Sparkles className="h-4 w-4" />}
+                onClick={() => setIsEditing(true)}
+              >
+                Replace Key
+              </Button>
+              <Button
+                variant="danger"
+                size="sm"
+                leftIcon={<Trash2 className="h-4 w-4" />}
+                loading={removeKey.isPending}
+                onClick={() => removeKey.mutate()}
+              >
+                Remove Key
+              </Button>
+            </div>
+          )}
+
+          {/* Instructions */}
+          <div className="rounded-lg border border-brand-200 bg-brand-50 px-4 py-3 text-sm text-brand-700 space-y-1">
+            <p className="font-medium">How to get your API key:</p>
+            <ol className="ml-4 list-decimal space-y-1 text-brand-600">
+              <li>Go to <strong>console.anthropic.com</strong> and sign in (or create a free account)</li>
+              <li>Navigate to <strong>Settings → API Keys</strong></li>
+              <li>Click <strong>Create Key</strong>, name it "RouteFlow", and copy it</li>
+              <li>Paste the key above and click Save</li>
+            </ol>
+          </div>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function SettingsPage() {
@@ -829,6 +1007,9 @@ export default function SettingsPage() {
           <TabTrigger value="notifications" icon={<Bell className="h-4 w-4" />}>
             Notifications
           </TabTrigger>
+          <TabTrigger value="ai" icon={<Sparkles className="h-4 w-4" />}>
+            AI &amp; Integrations
+          </TabTrigger>
           <TabTrigger value="users" icon={<UsersIcon className="h-4 w-4" />}>
             User Management
           </TabTrigger>
@@ -843,6 +1024,10 @@ export default function SettingsPage() {
 
         <Tabs.Content value="notifications" className="mt-6 max-w-2xl focus:outline-none">
           <NotificationsTab />
+        </Tabs.Content>
+
+        <Tabs.Content value="ai" className="mt-6 max-w-2xl focus:outline-none">
+          <AIIntegrationsTab />
         </Tabs.Content>
 
         <Tabs.Content value="users" className="mt-6 focus:outline-none">

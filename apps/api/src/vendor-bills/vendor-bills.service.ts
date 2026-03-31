@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
+import { SystemConfigService } from "../system-config/system-config.service";
 import { Prisma, MovementType } from "@prisma/client";
 import Anthropic from "@anthropic-ai/sdk";
 
@@ -9,6 +10,7 @@ export class VendorBillsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
+    private readonly systemConfig: SystemConfigService,
   ) {}
 
   private async nextBillNumber() {
@@ -181,9 +183,15 @@ export class VendorBillsService {
   }
 
   async scanInvoice(imageBuffer: Buffer, mimeType: string) {
-    const apiKey = this.configService.get<string>("ANTHROPIC_API_KEY");
-    if (!apiKey) {
-      throw new Error("ANTHROPIC_API_KEY is not configured");
+    // Look up API key: DB-stored key takes precedence over env var
+    const storedKey = await this.systemConfig.get("anthropic.apiKey");
+    const apiKey = (storedKey && storedKey.length > 0)
+      ? storedKey
+      : this.configService.get<string>("ANTHROPIC_API_KEY");
+    if (!apiKey || apiKey.length === 0) {
+      throw new BadRequestException(
+        "Anthropic API key is not configured. Please add your API key in Settings → AI & Integrations.",
+      );
     }
 
     // Fetch all active products for matching

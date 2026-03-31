@@ -165,10 +165,17 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
         if (catMatch) setExpenseCategoryId(catMatch.id);
       }
       setStep("review");
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      const msg = err?.response?.data?.message ?? "";
+      const isApiKeyError = msg.toLowerCase().includes("api key") || msg.toLowerCase().includes("anthropic");
       toast({
-        title: "Failed to scan invoice. Please try again or ensure ANTHROPIC_API_KEY is configured.",
+        title: isApiKeyError
+          ? "Anthropic API key not configured"
+          : "Failed to scan invoice",
+        description: isApiKeyError
+          ? "Go to Settings → AI & Integrations to add your Claude API key."
+          : "Please check the file and try again.",
         variant: "error",
       });
       setStep("upload");

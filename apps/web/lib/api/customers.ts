@@ -14,7 +14,7 @@ export interface Customer {
   updatedAt: string;
 }
 
-export function useCustomers(params?: { search?: string; status?: string; page?: number }) {
+export function useCustomers(params?: { search?: string; status?: string; page?: number; limit?: number }) {
   return useQuery({
     queryKey: ["customers", params],
     queryFn: () => apiClient.get("/customers", { params }).then((r) => r.data),

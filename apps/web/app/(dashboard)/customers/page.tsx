@@ -43,6 +43,8 @@ export default function CustomersPage() {
   const [selectMode, setSelectMode] = React.useState(false);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [isDeleting, setIsDeleting] = React.useState(false);
+  const [page, setPage] = React.useState(1);
+  const [limit, setLimit] = React.useState(20);
   const { toast } = useToast();
 
   // Sync status filter to URL
@@ -57,12 +59,18 @@ export default function CustomersPage() {
   // Debounce search to avoid firing API on every keystroke
   const debouncedSearch = useDebounce(search, 300);
 
+  // Reset page when filters change
+  React.useEffect(() => { setPage(1); }, [debouncedSearch, statusFilter]);
+
   // ── API data ─────────────────────────────────────────────────────────────
   const { data: result, isLoading, isError } = useCustomers({
     search: debouncedSearch || undefined,
     status: statusFilter || undefined,
+    page,
+    limit,
   });
   const customers: Customer[] = result?.data ?? [];
+  const meta = result?.meta;
 
   const { data: assignments } = useCustomerRouteAssignments();
 
@@ -335,39 +343,100 @@ export default function CustomersPage() {
         </div>
       ) : (
         /* Table */
-        <Table
-          data={visibleCustomers}
-          columns={columns}
-          onRowClick={(row) => {
-            if (selectMode) toggleSelect(row.original.id);
-            else router.push(`/customers/${row.original.id}`);
-          }}
-          emptyState={
-            <span className="text-sm">
-              {unassignedOnly ? (
-                <>
-                  All customers are assigned to routes.{" "}
-                  <button
-                    className="text-brand-500 hover:underline"
-                    onClick={() => setUnassignedOnly(false)}
+        <>
+          <Table
+            data={visibleCustomers}
+            columns={columns}
+            onRowClick={(row) => {
+              if (selectMode) toggleSelect(row.original.id);
+              else router.push(`/customers/${row.original.id}`);
+            }}
+            emptyState={
+              <span className="text-sm">
+                {unassignedOnly ? (
+                  <>
+                    All customers are assigned to routes.{" "}
+                    <button
+                      className="text-brand-500 hover:underline"
+                      onClick={() => setUnassignedOnly(false)}
+                    >
+                      Show all
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    No customers match your search.{" "}
+                    <button
+                      className="text-brand-500 hover:underline"
+                      onClick={() => { setSearch(""); setStatusFilter(""); }}
+                    >
+                      Clear filters
+                    </button>
+                  </>
+                )}
+              </span>
+            }
+          />
+          {/* Pagination */}
+          {meta && (
+            <div className="flex items-center justify-between gap-4 flex-wrap mt-4">
+              <div className="flex items-center gap-3">
+                <p className="text-sm text-navy/50">
+                  {meta.total > 0
+                    ? `Showing ${(page - 1) * limit + 1}–${Math.min(page * limit, meta.total)} of ${meta.total} customers`
+                    : "No customers found"}
+                </p>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs text-navy/40">Per page:</span>
+                  <select
+                    value={limit}
+                    onChange={(e) => { setLimit(Number(e.target.value)); setPage(1); }}
+                    className="h-8 rounded border border-surface-border bg-white px-2 text-xs text-navy focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
                   >
-                    Show all
-                  </button>
-                </>
-              ) : (
-                <>
-                  No customers match your search.{" "}
+                    {[10, 20, 50, 100].map((n) => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                </div>
+              </div>
+              {(meta.totalPages ?? 1) > 1 && (
+                <div className="flex items-center gap-1">
                   <button
-                    className="text-brand-500 hover:underline"
-                    onClick={() => { setSearch(""); setStatusFilter(""); }}
+                    disabled={page <= 1}
+                    onClick={() => setPage((p) => p - 1)}
+                    className="rounded border border-surface-border bg-white px-3 py-1.5 text-sm font-medium text-navy hover:bg-surface-raised disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                   >
-                    Clear filters
+                    Previous
                   </button>
-                </>
+                  {Array.from({ length: Math.min(meta.totalPages ?? 1, 7) }, (_, i) => {
+                    const totalPages = meta.totalPages ?? 1;
+                    const p = totalPages <= 7 ? i + 1 : page <= 4 ? i + 1 : page + i - 3;
+                    if (p < 1 || p > totalPages) return null;
+                    return (
+                      <button
+                        key={p}
+                        onClick={() => setPage(p)}
+                        className={cn(
+                          "rounded border px-3 py-1.5 text-sm font-medium transition-colors",
+                          p === page
+                            ? "border-brand-500 bg-brand-500 text-white"
+                            : "border-surface-border bg-white text-navy hover:bg-surface-raised",
+                        )}
+                      >
+                        {p}
+                      </button>
+                    );
+                  })}
+                  <button
+                    disabled={page >= (meta.totalPages ?? 1)}
+                    onClick={() => setPage((p) => p + 1)}
+                    className="rounded border border-surface-border bg-white px-3 py-1.5 text-sm font-medium text-navy hover:bg-surface-raised disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  >
+                    Next
+                  </button>
+                </div>
               )}
-            </span>
-          }
-        />
+            </div>
+          )}
+        </>
       )}
 
       {/* Add modal */}
