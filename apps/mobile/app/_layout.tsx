@@ -72,8 +72,8 @@ function RootLayoutNav() {
     }
 
     if (user.role === UserRole.OPERATOR) {
-      if (!(segments[0] === "(auth)" && segments[1] === "operator-blocked")) {
-        router.replace("/(auth)/operator-blocked");
+      if (segments[0] !== "(admin)") {
+        router.replace("/(admin)/dashboard");
       }
       return;
     }
