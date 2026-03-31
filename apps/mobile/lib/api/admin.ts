@@ -362,3 +362,209 @@ export function useAdminFinanceDashboard() {
     staleTime: 120_000,
   });
 }
+
+// ─── Analytics ────────────────────────────────────────────────────────────────
+
+export interface RevenuePeriod { period: string; revenue: number; }
+export interface TopProduct { id: string; name: string; totalRevenue: number; unitsSold: number; }
+export interface TopCustomer { id: string; name: string; totalRevenue: number; orderCount: number; }
+export interface RoutePerformance { id: string; name: string; totalRuns: number; completedRuns: number; completionRate: number; }
+export interface DriverPerformance { id: string; name: string; totalDeliveries: number; completedDeliveries: number; completionRate: number; }
+export interface InventoryTurnover { id: string; name: string; unitsSold: number; currentStock: number; turnoverRate: number; }
+export interface DeadStock { id: string; name: string; currentStock: number; daysInactive: number; }
+export interface GrossMargin { revenue: number; cogs: number; grossProfit: number; grossMarginPct: number; }
+export interface SalesByCategory { category: string; revenue: number; }
+
+export function useAnalyticsRevenue(from?: string, to?: string) {
+  return useQuery<RevenuePeriod[]>({
+    queryKey: ['analytics', 'revenue', from, to],
+    queryFn: () => apiClient.get('/analytics/revenue', { params: { from, to } }).then(r => r.data).catch(() => []),
+    staleTime: 120_000,
+  });
+}
+export function useAnalyticsTopProducts(metric = 'revenue') {
+  return useQuery<TopProduct[]>({
+    queryKey: ['analytics', 'products', 'top', metric],
+    queryFn: () => apiClient.get('/analytics/products/top', { params: { metric } }).then(r => r.data).catch(() => []),
+    staleTime: 120_000,
+  });
+}
+export function useAnalyticsTopCustomers() {
+  return useQuery<TopCustomer[]>({
+    queryKey: ['analytics', 'customers', 'top'],
+    queryFn: () => apiClient.get('/analytics/customers/top').then(r => r.data).catch(() => []),
+    staleTime: 120_000,
+  });
+}
+export function useAnalyticsRoutePerformance() {
+  return useQuery<RoutePerformance[]>({
+    queryKey: ['analytics', 'routes', 'performance'],
+    queryFn: () => apiClient.get('/analytics/routes/performance').then(r => r.data).catch(() => []),
+    staleTime: 120_000,
+  });
+}
+export function useAnalyticsDriverPerformance() {
+  return useQuery<DriverPerformance[]>({
+    queryKey: ['analytics', 'drivers', 'performance'],
+    queryFn: () => apiClient.get('/analytics/drivers/performance').then(r => r.data).catch(() => []),
+    staleTime: 120_000,
+  });
+}
+export function useAnalyticsGrossMargin(from?: string, to?: string) {
+  return useQuery<GrossMargin>({
+    queryKey: ['analytics', 'gross-margin', from, to],
+    queryFn: () => apiClient.get('/analytics/gross-margin', { params: { from, to } }).then(r => r.data).catch(() => ({ revenue: 0, cogs: 0, grossProfit: 0, grossMarginPct: 0 })),
+    staleTime: 120_000,
+  });
+}
+export function useAnalyticsSalesByCategory(from?: string, to?: string) {
+  return useQuery<SalesByCategory[]>({
+    queryKey: ['analytics', 'sales-by-category', from, to],
+    queryFn: () => apiClient.get('/analytics/sales-by-category', { params: { from, to } }).then(r => r.data).catch(() => []),
+    staleTime: 120_000,
+  });
+}
+export function useAnalyticsInventoryTurnover() {
+  return useQuery<InventoryTurnover[]>({
+    queryKey: ['analytics', 'inventory', 'turnover'],
+    queryFn: () => apiClient.get('/analytics/inventory/turnover').then(r => r.data).catch(() => []),
+    staleTime: 120_000,
+  });
+}
+export function useAnalyticsDeadStock() {
+  return useQuery<DeadStock[]>({
+    queryKey: ['analytics', 'inventory', 'dead-stock'],
+    queryFn: () => apiClient.get('/analytics/inventory/dead-stock').then(r => r.data).catch(() => []),
+    staleTime: 120_000,
+  });
+}
+export function useAnalyticsDso() {
+  return useQuery<{ dso: number; count: number }>({
+    queryKey: ['analytics', 'dso'],
+    queryFn: () => apiClient.get('/analytics/dso').then(r => r.data).catch(() => ({ dso: 0, count: 0 })),
+    staleTime: 120_000,
+  });
+}
+export function useAnalyticsAov(from?: string, to?: string) {
+  return useQuery<{ aov: number }>({
+    queryKey: ['analytics', 'aov', from, to],
+    queryFn: () => apiClient.get('/analytics/aov', { params: { from, to } }).then(r => r.data).catch(() => ({ aov: 0 })),
+    staleTime: 120_000,
+  });
+}
+
+// ─── Reports ─────────────────────────────────────────────────────────────────
+
+export interface ArAgingRow { bucket: string; count: number; total: number; }
+export interface SalesByCustomerRow { customerId: string; customerName: string; totalRevenue: number; orderCount: number; }
+export interface SalesByItemRow { productId: string; productName: string; totalRevenue: number; unitsSold: number; }
+export interface PaymentReceivedRow { id: string; invoiceNumber: string; customerName: string; amount: number; method: string; paidAt: string; }
+export interface ProfitLoss { revenue: number; cogs: number; grossProfit: number; expenses: number; netIncome: number; grossMarginPct: number; }
+export interface CustomerBalanceRow { customerId: string; customerName: string; totalInvoiced: number; totalPaid: number; balance: number; }
+
+export function useReportArAging() {
+  return useQuery<ArAgingRow[]>({
+    queryKey: ['reports', 'ar-aging'],
+    queryFn: () => apiClient.get('/bookkeeping/reports/aging').then(r => r.data).catch(() => []),
+    staleTime: 120_000,
+  });
+}
+export function useReportSalesByCustomer(from?: string, to?: string) {
+  return useQuery<SalesByCustomerRow[]>({
+    queryKey: ['reports', 'sales-by-customer', from, to],
+    queryFn: () => apiClient.get('/bookkeeping/reports/sales-by-customer', { params: { from, to } }).then(r => r.data).catch(() => []),
+    staleTime: 120_000,
+  });
+}
+export function useReportSalesByItem(from?: string, to?: string) {
+  return useQuery<SalesByItemRow[]>({
+    queryKey: ['reports', 'sales-by-item', from, to],
+    queryFn: () => apiClient.get('/bookkeeping/reports/sales-by-item', { params: { from, to } }).then(r => r.data).catch(() => []),
+    staleTime: 120_000,
+  });
+}
+export function useReportPaymentsReceived(from?: string, to?: string) {
+  return useQuery<PaymentReceivedRow[]>({
+    queryKey: ['reports', 'payments-received', from, to],
+    queryFn: () => apiClient.get('/bookkeeping/reports/payments-received', { params: { from, to } }).then(r => r.data).catch(() => []),
+    staleTime: 120_000,
+  });
+}
+export function useReportProfitLoss(from?: string, to?: string) {
+  return useQuery<ProfitLoss>({
+    queryKey: ['reports', 'pl', from, to],
+    queryFn: () => apiClient.get('/bookkeeping/reports/pl', { params: { from, to } }).then(r => r.data).catch(() => ({ revenue: 0, cogs: 0, grossProfit: 0, expenses: 0, netIncome: 0, grossMarginPct: 0 })),
+    staleTime: 120_000,
+  });
+}
+export function useReportCustomerBalance() {
+  return useQuery<CustomerBalanceRow[]>({
+    queryKey: ['reports', 'customer-balance'],
+    queryFn: () => apiClient.get('/bookkeeping/reports/customer-balance').then(r => r.data).catch(() => []),
+    staleTime: 120_000,
+  });
+}
+
+// ─── Settings ─────────────────────────────────────────────────────────────────
+
+export interface BusinessSettings {
+  businessName?: string;
+  ownerName?: string;
+  phone?: string;
+  email?: string;
+  street?: string;
+  city?: string;
+  zip?: string;
+  taxRate?: number;
+}
+
+export interface AppUser {
+  id: string;
+  username: string;
+  email?: string;
+  firstName?: string;
+  lastName?: string;
+  role: string;
+  isActive: boolean;
+  createdAt: string;
+}
+
+export function useBusinessSettings() {
+  return useQuery<BusinessSettings>({
+    queryKey: ['settings'],
+    queryFn: () => apiClient.get('/settings').then(r => r.data).catch(() => ({})),
+    staleTime: 300_000,
+  });
+}
+
+export function useUpdateBusinessSettings() {
+  const qc = useQueryClient();
+  return useMutation<BusinessSettings, Error, BusinessSettings>({
+    mutationFn: (data) => apiClient.patch('/settings', data).then(r => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
+  });
+}
+
+export function useAdminUsers() {
+  return useQuery<AppUser[]>({
+    queryKey: ['admin', 'users'],
+    queryFn: () => apiClient.get('/users').then(r => r.data).catch(() => []),
+    staleTime: 60_000,
+  });
+}
+
+export function useCreateAdminUser() {
+  const qc = useQueryClient();
+  return useMutation<AppUser, Error, { firstName: string; lastName: string; username: string; email?: string; role: string; password: string }>({
+    mutationFn: (data) => apiClient.post('/users/operator', data).then(r => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'users'] }),
+  });
+}
+
+export function useToggleUserStatus() {
+  const qc = useQueryClient();
+  return useMutation<AppUser, Error, { id: string; isActive: boolean }>({
+    mutationFn: ({ id, isActive }) => apiClient.patch(`/users/${id}/status`, { isActive }).then(r => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'users'] }),
+  });
+}

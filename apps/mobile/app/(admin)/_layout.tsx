@@ -107,6 +107,9 @@ export default function AdminLayout() {
             headerLeft: () => <HeaderBackButton />,
           }}
         />
+        <Tabs.Screen name="analytics" options={{ href: null, headerShown: false }} />
+        <Tabs.Screen name="reports" options={{ href: null, headerShown: false }} />
+        <Tabs.Screen name="settings" options={{ href: null, headerShown: false }} />
       </Tabs>
       <DrawerMenu visible={drawerOpen} onClose={() => setDrawerOpen(false)} />
     </View>
