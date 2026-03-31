@@ -169,7 +169,6 @@ function useTemplateColumns(
       {
         accessorKey: "createdAt",
         header: "Created",
-        enableSorting: false,
         cell: ({ row }) => (
           <span className="flex items-center gap-1.5 text-navy/60">
             <Calendar className="h-3.5 w-3.5" />

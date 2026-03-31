@@ -191,6 +191,7 @@ export default function CustomersPage() {
       {
         id: "status",
         header: "Status",
+        accessorFn: (row) => row.user?.status ?? "ACTIVE",
         cell: ({ row }) => (
           <Badge status={(row.original.user?.status ?? "ACTIVE") as BadgeStatus} />
         ),

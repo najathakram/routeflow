@@ -175,6 +175,7 @@ export default function DriversPage() {
         id: "vehicle",
         header: "Vehicle",
         enableSorting: false,
+
         cell: ({ row }) => (
           <span className="text-sm text-navy/70">{vehicleLabel(row.original)}</span>
         ),
@@ -182,6 +183,7 @@ export default function DriversPage() {
       {
         id: "status",
         header: "Status",
+        accessorFn: (row: Driver) => row.status,
         cell: ({ row }) => <DriverStatusBadge driver={row.original} />,
       },
       {

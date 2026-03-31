@@ -110,7 +110,7 @@ export class InvoicesService {
   }
 
   async findAll(query: ListInvoicesDto, user?: JwtPayload) {
-    const { status, customerId, search, page = 1, limit = 20 } = query;
+    const { status, customerId, search, dateFrom, dateTo, sortBy, sortOrder, page = 1, limit = 20 } = query;
     const skip = (page - 1) * limit;
     const where: any = {};
     if (status) where.status = status;
@@ -121,7 +121,31 @@ export class InvoicesService {
     } else if (customerId) {
       where.customerId = customerId;
     }
-    if (search) where.customer = { businessName: { contains: search, mode: "insensitive" } };
+    if (search) {
+      where.OR = [
+        { customer: { businessName: { contains: search, mode: "insensitive" } } },
+        { invoiceNumber: { contains: search, mode: "insensitive" } },
+      ];
+    }
+    if (dateFrom || dateTo) {
+      where.issueDate = {};
+      if (dateFrom) where.issueDate.gte = new Date(dateFrom);
+      if (dateTo) {
+        const end = new Date(dateTo);
+        end.setHours(23, 59, 59, 999);
+        where.issueDate.lte = end;
+      }
+    }
+
+    // Build orderBy from sortBy/sortOrder params
+    const validSortFields: Record<string, string> = {
+      date: "issueDate", issueDate: "issueDate", dueDate: "dueDate",
+      total: "total", amount: "total", createdAt: "createdAt",
+      status: "status", invoiceNumber: "invoiceNumber",
+    };
+    const orderField = validSortFields[sortBy ?? ""] ?? "issueDate";
+    const orderDir = sortOrder === "asc" ? "asc" : "desc";
+    const orderBy: any = { [orderField]: orderDir };
 
     const [data, total] = await Promise.all([
       this.prisma.invoice.findMany({
@@ -132,7 +156,7 @@ export class InvoicesService {
         },
         skip,
         take: limit,
-        orderBy: { createdAt: "desc" },
+        orderBy,
       }),
       this.prisma.invoice.count({ where }),
     ]);

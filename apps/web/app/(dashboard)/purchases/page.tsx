@@ -13,6 +13,9 @@ import {
   Filter,
   ScanBarcode,
   Sparkles,
+  ChevronUp,
+  ChevronDown,
+  ChevronsUpDown,
 } from "lucide-react";
 import { PageHeader, Button, cn, Modal, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
@@ -435,9 +438,20 @@ function VendorBillsTab() {
   const [dateFrom, setDateFrom] = React.useState("");
   const [dateTo, setDateTo] = React.useState("");
   const [page, setPage] = React.useState(1);
+  const [sortCol, setSortCol] = React.useState("billDate");
+  const [sortDir, setSortDir] = React.useState<"asc" | "desc">("desc");
   const [isCreateOpen, setIsCreateOpen] = React.useState(false);
   const [scanOpen, setScanOpen] = React.useState(false);
   const LIMIT = 20;
+
+  const toggleSort = (col: string) => {
+    if (sortCol === col) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortCol(col); setSortDir("asc"); }
+  };
+  const SortIcon = ({ col }: { col: string }) => {
+    if (sortCol !== col) return <ChevronsUpDown className="h-3 w-3 ml-0.5 text-current/40 inline" />;
+    return sortDir === "asc" ? <ChevronUp className="h-3 w-3 ml-0.5 inline" /> : <ChevronDown className="h-3 w-3 ml-0.5 inline" />;
+  };
 
   const { data, isLoading, isError } = useVendorBills({
     status: statusFilter || undefined,
@@ -467,6 +481,19 @@ function VendorBillsTab() {
   }, [all]);
 
   const totalPages = meta?.totalPages ?? 1;
+
+  // Client-side sort of current page bills
+  const sortedBills = React.useMemo(() => {
+    const dir = sortDir === "asc" ? 1 : -1;
+    return [...bills].sort((a: any, b: any) => {
+      if (sortCol === "supplier") return dir * ((a.supplier?.name ?? "").localeCompare(b.supplier?.name ?? ""));
+      if (sortCol === "dueDate") return dir * ((a.dueDate ?? "").localeCompare(b.dueDate ?? ""));
+      if (sortCol === "total") return dir * (Number(a.totalOwed ?? a.total ?? 0) - Number(b.totalOwed ?? b.total ?? 0));
+      if (sortCol === "status") return dir * (a.status ?? "").localeCompare(b.status ?? "");
+      // billDate (default)
+      return dir * ((a.billDate ?? a.createdAt ?? "").localeCompare(b.billDate ?? b.createdAt ?? ""));
+    });
+  }, [bills, sortCol, sortDir]);
 
   return (
     <div className="space-y-5">
@@ -521,14 +548,14 @@ function VendorBillsTab() {
           <thead className="border-b border-surface-border bg-surface-raised">
             <tr>
               <th className="px-4 py-3 text-left text-xs font-medium text-navy/60">Bill #</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60">Supplier</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60 cursor-pointer select-none hover:text-navy" onClick={() => toggleSort("supplier")}>Supplier <SortIcon col="supplier" /></th>
               <th className="px-4 py-3 text-left text-xs font-medium text-navy/60">PO #</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60">Bill Date</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60">Due Date</th>
-              <th className="px-4 py-3 text-right text-xs font-medium text-navy/60">Total</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60 cursor-pointer select-none hover:text-navy" onClick={() => toggleSort("billDate")}>Bill Date <SortIcon col="billDate" /></th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60 cursor-pointer select-none hover:text-navy" onClick={() => toggleSort("dueDate")}>Due Date <SortIcon col="dueDate" /></th>
+              <th className="px-4 py-3 text-right text-xs font-medium text-navy/60 cursor-pointer select-none hover:text-navy" onClick={() => toggleSort("total")}>Total <SortIcon col="total" /></th>
               <th className="px-4 py-3 text-right text-xs font-medium text-navy/60">Paid</th>
               <th className="px-4 py-3 text-right text-xs font-medium text-navy/60">Balance</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60">Status</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60 cursor-pointer select-none hover:text-navy" onClick={() => toggleSort("status")}>Status <SortIcon col="status" /></th>
               <th className="w-10 px-3 py-3" />
             </tr>
           </thead>
@@ -550,7 +577,7 @@ function VendorBillsTab() {
                 </td>
               </tr>
             ) : (
-              bills.map((bill: VendorBill) => {
+              sortedBills.map((bill: VendorBill) => {
                 const overdue = isOverdue(bill);
                 return (
                   <tr key={bill.id} onClick={() => router.push(`/vendor-bills/${bill.id}`)}

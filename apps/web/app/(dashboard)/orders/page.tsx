@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { AlertTriangle, Eye, Loader2, Calendar, X, CheckSquare, Trash2 } from "lucide-react";
+import { AlertTriangle, Eye, Loader2, Calendar, X, CheckSquare, Trash2, ChevronUp, ChevronDown, ChevronsUpDown } from "lucide-react";
 import { PageHeader, Badge, Select, Button, cn, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useOrders, useUpdateOrderStatus, type Order } from "@/lib/api/orders";
@@ -37,6 +37,18 @@ export default function OrdersPage() {
   const [selectMode, setSelectMode] = React.useState(false);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [isCancelling, setIsCancelling] = React.useState(false);
+  const [sortCol, setSortCol] = React.useState<string>("createdAt");
+  const [sortDir, setSortDir] = React.useState<"asc" | "desc">("desc");
+
+  const toggleSort = (col: string) => {
+    if (sortCol === col) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortCol(col); setSortDir("asc"); }
+  };
+
+  const SortIcon = ({ col }: { col: string }) => {
+    if (sortCol !== col) return <ChevronsUpDown className="h-3 w-3 ml-0.5 text-navy/30 inline" />;
+    return sortDir === "asc" ? <ChevronUp className="h-3 w-3 ml-0.5 inline" /> : <ChevronDown className="h-3 w-3 ml-0.5 inline" />;
+  };
   const { toast } = useToast();
   const updateStatus = useUpdateOrderStatus();
 
@@ -76,13 +88,20 @@ export default function OrdersPage() {
       if (q && !o.customer?.businessName?.toLowerCase().includes(q) && !o.orderNumber?.toLowerCase().includes(q)) return false;
       return true;
     });
-    // Urgent orders float to top
     return [...list].sort((a, b) => {
+      // Urgent always floats to top regardless of sort column
       if (a.urgent && !b.urgent) return -1;
       if (!a.urgent && b.urgent) return 1;
-      return 0;
+      const dir = sortDir === "asc" ? 1 : -1;
+      if (sortCol === "orderNumber") return dir * (a.orderNumber ?? "").localeCompare(b.orderNumber ?? "");
+      if (sortCol === "customer") return dir * ((a.customer?.businessName ?? "").localeCompare(b.customer?.businessName ?? ""));
+      if (sortCol === "total") return dir * (Number(a.total) - Number(b.total));
+      if (sortCol === "status") return dir * (a.status ?? "").localeCompare(b.status ?? "");
+      if (sortCol === "deliveryDate") return dir * ((a.requestedDeliveryDate ?? "").localeCompare(b.requestedDeliveryDate ?? ""));
+      // default: createdAt
+      return dir * (new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
     });
-  }, [orders, customerSearch]);
+  }, [orders, customerSearch, sortCol, sortDir]);
 
   const urgentCount = orders.filter((o) => o.urgent).length;
 
@@ -211,13 +230,13 @@ export default function OrdersPage() {
             <tr>
               {selectMode && <th className="w-10 px-3 py-3" />}
               <th className="w-4 px-3 py-3" />
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60">Order #</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60">Customer</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60 cursor-pointer select-none hover:text-navy transition-colors" onClick={() => toggleSort("orderNumber")}>Order # <SortIcon col="orderNumber" /></th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60 cursor-pointer select-none hover:text-navy transition-colors" onClick={() => toggleSort("customer")}>Customer <SortIcon col="customer" /></th>
               <th className="px-4 py-3 text-left text-xs font-medium text-navy/60">Items</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60">Total</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60">Status</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60">Delivery Date</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60">Created</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60 cursor-pointer select-none hover:text-navy transition-colors" onClick={() => toggleSort("total")}>Total <SortIcon col="total" /></th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60 cursor-pointer select-none hover:text-navy transition-colors" onClick={() => toggleSort("status")}>Status <SortIcon col="status" /></th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60 cursor-pointer select-none hover:text-navy transition-colors" onClick={() => toggleSort("deliveryDate")}>Delivery Date <SortIcon col="deliveryDate" /></th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60 cursor-pointer select-none hover:text-navy transition-colors" onClick={() => toggleSort("createdAt")}>Created <SortIcon col="createdAt" /></th>
               <th className="w-10 px-3 py-3" />
             </tr>
           </thead>

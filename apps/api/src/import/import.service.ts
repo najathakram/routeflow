@@ -45,6 +45,8 @@ export class ImportService {
     if (s === "draft") return InvoiceStatus.DRAFT;
     if (s.includes("partial")) return InvoiceStatus.PARTIAL;
     if (s === "void" || s === "voided") return InvoiceStatus.VOID;
+    if (s === "write off" || s === "write-off" || s === "written off" || s === "written-off") return InvoiceStatus.WRITTEN_OFF;
+    if (s === "sent" || s === "open") return InvoiceStatus.SENT;
     return InvoiceStatus.SENT;
   }
 
@@ -66,6 +68,13 @@ export class ImportService {
     const errors: string[] = [];
 
     for (const row of rows) {
+      // Only import customer-type contacts (skip vendors etc.)
+      const contactType = (row["Contact Type"] || "customer").toLowerCase().trim();
+      if (contactType && contactType !== "customer") {
+        skipped++;
+        continue;
+      }
+
       const name = (
         row["Customer Name"] ||
         row["Display Name"] ||
@@ -77,6 +86,19 @@ export class ImportService {
         continue;
       }
 
+      // Check by Zoho Customer ID to prevent re-importing the same contact
+      const zohoContactId = (row["Customer ID"] || "").trim() || null;
+      if (zohoContactId) {
+        const existingByZohoId = await this.prisma.customer.findFirst({
+          where: { zohoContactId },
+        });
+        if (existingByZohoId) {
+          skipped++;
+          errors.push(`${name}: already imported`);
+          continue;
+        }
+      }
+
       const street = [row["Billing Address"], row["Billing Street2"]]
         .filter(Boolean)
         .join(", ")
@@ -84,13 +106,15 @@ export class ImportService {
       const city = (row["Billing City"] || "").trim();
       const state = (row["Billing State"] || "").trim();
       const zip = (row["Billing Code"] || "").trim();
+      // Strip Zoho's leading ' prefix from phone numbers (e.g. '+1-555-1234 → 1-555-1234)
       const phone = (row["Billing Phone"] || row["MobilePhone"] || row["Phone"] || "")
-        .replace(/['+]/g, "")
+        .replace(/^'+/, "")
+        .replace(/'+/g, "")
         .trim();
-      const email = (row["EmailID"] || row["Email"] || "").trim();
+      const csvEmail = (row["EmailID"] || row["Email"] || "").trim().toLowerCase();
       const contactName =
         [row["First Name"], row["Last Name"]].filter(Boolean).join(" ").trim() ||
-        row["Billing Attention"] ||
+        (row["Billing Attention"] || "").trim() ||
         name;
 
       // Generate a unique username from business name
@@ -101,17 +125,13 @@ export class ImportService {
         username = `${baseUsername}_${suffix++}`;
       }
 
-      // Generate a unique email if none provided
-      const userEmail = email || `${username}@imported.local`;
-
-      // Check if user/customer already exists
-      const existingUser = await this.prisma.user.findFirst({
-        where: { OR: [{ email: userEmail }, { username }] },
-      });
-      if (existingUser) {
-        skipped++;
-        errors.push(`${name}: username or email already exists`);
-        continue;
+      // Determine email: use CSV email if it's not already taken, otherwise synthetic
+      let userEmail: string;
+      if (csvEmail) {
+        const emailTaken = await this.prisma.user.findFirst({ where: { email: csvEmail } });
+        userEmail = emailTaken ? `${username}@imported.local` : csvEmail;
+      } else {
+        userEmail = `${username}@imported.local`;
       }
 
       try {
@@ -134,6 +154,7 @@ export class ImportService {
               businessName: name,
               contactName: contactName || name,
               phone: phone || null,
+              zohoContactId: zohoContactId || null,
               notes: null,
             },
           });
@@ -267,10 +288,9 @@ export class ImportService {
       }
 
       const total = parseFloat(first["Total"] || "0") || 0;
-      const subtotal = parseFloat(first["SubTotal"] || "0") || total;
-      const discount = parseFloat(first["Entity Discount Amount"] || "0") || 0;
+      const subtotal = parseFloat(first["SubTotal"] || first["Sub Total"] || "0") || total;
+      const discount = parseFloat(first["Entity Discount Amount"] || first["Discount Amount"] || "0") || 0;
       const shippingFee = parseFloat(first["Shipping Charge"] || "0") || 0;
-      const status = this.mapInvoiceStatus(first["Invoice Status"]);
       const invoiceNumber =
         first["Invoice Number"] || `INV-${year}-${String(seq++).padStart(4, "0")}`;
       const notes = first["Notes"] || null;
@@ -278,16 +298,47 @@ export class ImportService {
 
       let issueDate = new Date();
       let dueDate: Date | null = null;
+      let paidDate: Date | null = null;
       try {
         if (first["Invoice Date"]) issueDate = new Date(first["Invoice Date"]);
-      } catch (_e) {
-        /* ignore */
-      }
+      } catch (_e) { /* ignore */ }
       try {
         if (first["Due Date"]) dueDate = new Date(first["Due Date"]);
-      } catch (_e) {
-        /* ignore */
+      } catch (_e) { /* ignore */ }
+      try {
+        const pd = first["Payment Date"] || first["Last Payment Date"];
+        if (pd) paidDate = new Date(pd);
+      } catch (_e) { /* ignore */ }
+
+      // Determine status using Zoho's "Balance Due" field, which is more reliable
+      // than the status label (Zoho may show "Overdue" for invoices paid in cash outside the system)
+      const zohoStatus = this.mapInvoiceStatus(first["Invoice Status"]);
+      const balanceDue = parseFloat(
+        first["Balance Due"] || first["Balance"] || first["Outstanding Amount"] || "NaN",
+      );
+
+      let status: InvoiceStatus;
+      if (zohoStatus === InvoiceStatus.DRAFT) {
+        status = InvoiceStatus.DRAFT;
+      } else if (zohoStatus === InvoiceStatus.VOID) {
+        status = InvoiceStatus.VOID;
+      } else if (zohoStatus === InvoiceStatus.WRITTEN_OFF) {
+        status = InvoiceStatus.WRITTEN_OFF;
+      } else if (!isNaN(balanceDue) && total > 0 && balanceDue <= 0.01) {
+        // Balance is effectively zero → fully paid, regardless of what Zoho shows
+        status = InvoiceStatus.PAID;
+      } else if (!isNaN(balanceDue) && total > 0 && balanceDue < total - 0.01) {
+        // Partial payment recorded
+        status = InvoiceStatus.PARTIAL;
+      } else {
+        // No balance info available — trust the Zoho status label
+        status = zohoStatus;
       }
+
+      const paidAt =
+        status === InvoiceStatus.PAID
+          ? (paidDate || dueDate || issueDate)
+          : null;
 
       // Build line items; try to match product by SKU
       const itemsData: any[] = [];
@@ -357,7 +408,7 @@ export class ImportService {
             total,
             issueDate,
             dueDate,
-            paidAt: status === InvoiceStatus.PAID ? dueDate || issueDate : null,
+            paidAt,
             notes,
             terms,
             items: { create: itemsData },

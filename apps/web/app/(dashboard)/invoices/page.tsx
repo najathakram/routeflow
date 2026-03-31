@@ -11,6 +11,8 @@ import {
   FileText,
   ChevronDown,
   CreditCard,
+  ChevronUp,
+  ChevronsUpDown,
 } from "lucide-react";
 import { Button, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
@@ -248,13 +250,28 @@ export default function InvoicesPage() {
   const [dateFrom, setDateFrom] = React.useState("");
   const [dateTo, setDateTo] = React.useState("");
   const [page, setPage] = React.useState(1);
+  const [sortBy, setSortBy] = React.useState("issueDate");
+  const [sortOrder, setSortOrder] = React.useState<"asc" | "desc">("desc");
   const LIMIT = 20;
+
+  const toggleSort = (col: string) => {
+    if (sortBy === col) setSortOrder((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortBy(col); setSortOrder("asc"); }
+    setPage(1);
+  };
+
+  const SortIcon = ({ col }: { col: string }) => {
+    if (sortBy !== col) return <ChevronsUpDown className="h-3 w-3 ml-0.5 text-current/40 inline" />;
+    return sortOrder === "asc" ? <ChevronUp className="h-3 w-3 ml-0.5 inline" /> : <ChevronDown className="h-3 w-3 ml-0.5 inline" />;
+  };
 
   const { data, isLoading, isError } = useInvoices({
     status: statusFilter || undefined,
     search: debouncedSearch || undefined,
     dateFrom: dateFrom || undefined,
     dateTo: dateTo || undefined,
+    sortBy,
+    sortOrder,
     page,
     limit: LIMIT,
   });
@@ -367,23 +384,23 @@ export default function InvoicesPage() {
         <table className="w-full text-sm">
           <thead className="border-b border-surface-border bg-gray-50">
             <tr>
-              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
-                Date
+              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 cursor-pointer select-none hover:text-navy transition-colors" onClick={() => toggleSort("issueDate")}>
+                Date <SortIcon col="issueDate" />
               </th>
-              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
-                Invoice #
+              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 cursor-pointer select-none hover:text-navy transition-colors" onClick={() => toggleSort("invoiceNumber")}>
+                Invoice # <SortIcon col="invoiceNumber" />
               </th>
               <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
                 Customer Name
               </th>
-              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
-                Status
+              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 cursor-pointer select-none hover:text-navy transition-colors" onClick={() => toggleSort("status")}>
+                Status <SortIcon col="status" />
               </th>
-              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
-                Due Date
+              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 cursor-pointer select-none hover:text-navy transition-colors" onClick={() => toggleSort("dueDate")}>
+                Due Date <SortIcon col="dueDate" />
               </th>
-              <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
-                Amount
+              <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-500 cursor-pointer select-none hover:text-navy transition-colors" onClick={() => toggleSort("total")}>
+                Amount <SortIcon col="total" />
               </th>
               <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
                 Balance Due

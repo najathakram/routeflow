@@ -6,6 +6,10 @@ export class ListInvoicesDto {
   @IsOptional() @IsEnum(InvoiceStatus) status?: InvoiceStatus;
   @IsOptional() @IsString() customerId?: string;
   @IsOptional() @IsString() search?: string;
+  @IsOptional() @IsString() dateFrom?: string;
+  @IsOptional() @IsString() dateTo?: string;
+  @IsOptional() @IsString() sortBy?: string;
+  @IsOptional() @IsString() sortOrder?: "asc" | "desc";
   @IsOptional() @IsInt() @Min(1) @Type(() => Number) page?: number;
   @IsOptional() @IsInt() @Min(1) @Type(() => Number) limit?: number;
 }
