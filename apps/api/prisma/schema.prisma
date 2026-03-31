@@ -306,6 +306,7 @@ model Product {
   recurringInvoiceItems   RecurringInvoiceItem[]
   vendorBillItems         VendorBillItem[]
   customerPrices          CustomerPrice[]
+  productMappings         ProductMapping[]
 
   @@index([category])
   @@index([isActive])
@@ -965,6 +966,21 @@ model BillPayment {
   vendorBill VendorBill @relation(fields: [vendorBillId], references: [id])
 
   @@index([vendorBillId])
+}
+
+// ─── AI Product Mapping Memory ────────────────────────────────────────────────
+
+model ProductMapping {
+  id             String   @id @default(uuid())
+  supplierName   String
+  rawDescription String
+  productId      String?
+  product        Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([supplierName, rawDescription])
+  @@index([supplierName])
 }
 
 // ─── Sprint 8: Returns / RMA ──────────────────────────────────────────────────

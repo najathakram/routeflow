@@ -9,6 +9,12 @@ import {
   CheckCircle2,
   Loader2,
   PackageCheck,
+  RotateCcw,
+  Pencil,
+  X,
+  Plus,
+  Trash2,
+  Save,
 } from "lucide-react";
 import { Button, Card, Modal, cn, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
@@ -17,10 +23,15 @@ import {
   useReceiveVendorBill,
   useVoidVendorBill,
   useRecordVendorBillPayment,
+  useRevertVendorBillToDraft,
+  useUpdateVendorBill,
   type VendorBill,
   type VendorBillStatus,
   type VendorBillPayment,
+  type CreateVendorBillItem,
 } from "@/lib/api/vendor-bills";
+import { useSuppliers } from "@/lib/api/inventory";
+import { useProducts } from "@/lib/api/products";
 import { fmt, fmtDate } from "@/lib/formatting";
 
 // ─── Status badge ─────────────────────────────────────────────────────────────
@@ -221,6 +232,160 @@ function VoidConfirmModal({
   );
 }
 
+// ─── Revert to Draft Confirm Modal ────────────────────────────────────────────
+
+function RevertToDraftModal({
+  isOpen,
+  onClose,
+  onConfirm,
+  billNumber,
+  isPending,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+  billNumber: string;
+  isPending: boolean;
+}) {
+  return (
+    <Modal
+      open={isOpen}
+      onClose={onClose}
+      title="Revert to Draft?"
+      description={`Bill ${billNumber} will be reverted to Draft status.`}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={isPending}>
+            Cancel
+          </Button>
+          <Button variant="primary" onClick={onConfirm} loading={isPending}>
+            Revert to Draft
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-2 text-sm text-navy/70">
+        <p>
+          This will reverse the inventory update that was applied when the bill was received.
+          You can then edit the bill and mark it as received again.
+        </p>
+        <p className="rounded-lg border border-yellow-200 bg-yellow-50 p-3 text-yellow-700">
+          <strong>Note:</strong> Stock quantities will be decremented to reverse the original
+          receive operation. Product average costs are not reversed.
+        </p>
+      </div>
+    </Modal>
+  );
+}
+
+// ─── Edit Line Item Row ───────────────────────────────────────────────────────
+
+interface EditLineItemRow {
+  productId: string;
+  description: string;
+  qty: string;
+  unitCost: string;
+}
+
+const emptyRow = (): EditLineItemRow => ({ productId: "", description: "", qty: "1", unitCost: "" });
+
+function EditLineItems({
+  items,
+  onChange,
+}: {
+  items: EditLineItemRow[];
+  onChange: (items: EditLineItemRow[]) => void;
+}) {
+  const { data: productsData } = useProducts({ limit: 500, isActive: true });
+  const products = (productsData as any)?.data ?? [];
+
+  const update = (i: number, patch: Partial<EditLineItemRow>) => {
+    onChange(items.map((row, idx) => (idx === i ? { ...row, ...patch } : row)));
+  };
+
+  const remove = (i: number) => onChange(items.filter((_, idx) => idx !== i));
+  const add = () => onChange([...items, emptyRow()]);
+
+  return (
+    <div className="space-y-2">
+      {items.map((row, i) => (
+        <div key={i} className="grid grid-cols-[1fr_80px_100px_32px] gap-2 items-start">
+          <div>
+            <select
+              value={row.productId}
+              onChange={(e) => {
+                const pid = e.target.value;
+                const p = products.find((x: any) => x.id === pid);
+                if (p) {
+                  update(i, {
+                    productId: pid,
+                    description: p.name,
+                    unitCost: p.averageCost ? String(parseFloat(p.averageCost).toFixed(4)) : row.unitCost,
+                  });
+                } else {
+                  update(i, { productId: "", description: row.description });
+                }
+              }}
+              className="h-9 w-full rounded border border-surface-border bg-white px-2 text-sm text-navy focus:outline-none focus:ring-1 focus:ring-brand-500 mb-1"
+            >
+              <option value="">— Custom item —</option>
+              {products.map((p: any) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+            {!row.productId && (
+              <input
+                type="text"
+                value={row.description}
+                onChange={(e) => update(i, { description: e.target.value })}
+                placeholder="Description"
+                className="h-9 w-full rounded border border-surface-border bg-white px-2 text-sm text-navy placeholder:text-navy/30 focus:outline-none focus:ring-1 focus:ring-brand-500"
+              />
+            )}
+          </div>
+          <div>
+            <label className="mb-0.5 block text-[10px] text-navy/40">Qty</label>
+            <input
+              type="number"
+              min="0.001"
+              step="0.001"
+              value={row.qty}
+              onChange={(e) => update(i, { qty: e.target.value })}
+              className="h-9 w-full rounded border border-surface-border bg-white px-2 text-sm text-right text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
+            />
+          </div>
+          <div>
+            <label className="mb-0.5 block text-[10px] text-navy/40">Unit Cost ($)</label>
+            <input
+              type="number"
+              min="0"
+              step="0.0001"
+              value={row.unitCost}
+              onChange={(e) => update(i, { unitCost: e.target.value })}
+              className="h-9 w-full rounded border border-surface-border bg-white px-2 text-sm text-right text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={() => remove(i)}
+            disabled={items.length === 1}
+            className="mt-6 h-9 rounded p-1 text-navy/30 hover:text-danger transition-colors disabled:opacity-20"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        </div>
+      ))}
+      <button
+        type="button"
+        onClick={add}
+        className="flex items-center gap-1 text-xs font-medium text-brand-500 hover:text-brand-600 transition-colors"
+      >
+        <Plus className="h-3.5 w-3.5" /> Add item
+      </button>
+    </div>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function VendorBillDetailPage({ params }: { params: { id: string } }) {
@@ -231,13 +396,45 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
   const receiveBill = useReceiveVendorBill();
   const voidBill = useVoidVendorBill();
   const recordPayment = useRecordVendorBillPayment();
+  const revertToDraft = useRevertVendorBillToDraft();
+  const updateBill = useUpdateVendorBill();
+
+  const { data: suppliersData } = useSuppliers();
+  const suppliers: Array<{ id: string; name: string }> = suppliersData ?? [];
 
   const [isPaymentOpen, setIsPaymentOpen] = React.useState(false);
   const [isVoidOpen, setIsVoidOpen] = React.useState(false);
+  const [isRevertOpen, setIsRevertOpen] = React.useState(false);
+
+  // Edit mode state
+  const [isEditing, setIsEditing] = React.useState(false);
+  const [editSupplierId, setEditSupplierId] = React.useState("");
+  const [editBillDate, setEditBillDate] = React.useState("");
+  const [editDueDate, setEditDueDate] = React.useState("");
+  const [editNotes, setEditNotes] = React.useState("");
+  const [editItems, setEditItems] = React.useState<EditLineItemRow[]>([]);
 
   React.useEffect(() => {
     if (bill) setTitle(bill.billNumber);
   }, [bill, setTitle]);
+
+  // Initialise edit form from bill data
+  const startEditing = React.useCallback(() => {
+    if (!bill) return;
+    setEditSupplierId(bill.supplierId);
+    setEditBillDate(bill.billDate ? bill.billDate.slice(0, 10) : "");
+    setEditDueDate(bill.dueDate ? bill.dueDate.slice(0, 10) : "");
+    setEditNotes(bill.notes ?? "");
+    setEditItems(
+      (bill.items ?? []).map((item) => ({
+        productId: item.productId ?? "",
+        description: item.description,
+        qty: String(item.qty),
+        unitCost: String(item.unitCost),
+      })),
+    );
+    setIsEditing(true);
+  }, [bill]);
 
   if (isLoading) {
     return (
@@ -299,6 +496,62 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
     });
   };
 
+  const handleRevertToDraft = () => {
+    revertToDraft.mutate(bill.id, {
+      onSuccess: () => {
+        setIsRevertOpen(false);
+        toast({
+          title: "Bill reverted to draft",
+          description: `Bill ${bill.billNumber} is now in Draft status. Inventory has been reversed.`,
+          variant: "success",
+        });
+      },
+      onError: (err: any) => {
+        setIsRevertOpen(false);
+        toast({
+          title: "Failed to revert bill",
+          description: err?.response?.data?.message ?? "Please try again.",
+          variant: "error",
+        });
+      },
+    });
+  };
+
+  const handleSaveEdit = () => {
+    const items: CreateVendorBillItem[] = editItems
+      .filter((row) => row.description.trim() && parseFloat(row.qty) > 0)
+      .map((row) => ({
+        productId: row.productId || undefined,
+        description: row.description.trim(),
+        qty: parseFloat(row.qty),
+        unitCost: parseFloat(row.unitCost) || 0,
+      }));
+
+    updateBill.mutate(
+      {
+        id: bill.id,
+        supplierId: editSupplierId,
+        billDate: editBillDate || undefined,
+        dueDate: editDueDate || undefined,
+        notes: editNotes.trim() || undefined,
+        items,
+      },
+      {
+        onSuccess: () => {
+          setIsEditing(false);
+          toast({ title: "Bill updated", variant: "success" });
+        },
+        onError: (err: any) => {
+          toast({
+            title: "Failed to update bill",
+            description: err?.response?.data?.message ?? "Please try again.",
+            variant: "error",
+          });
+        },
+      },
+    );
+  };
+
   const handleRecordPayment = (data: PaymentFormState) => {
     recordPayment.mutate(
       {
@@ -323,6 +576,12 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
       },
     );
   };
+
+  // ── Computed edit total ───────────────────────────────────────────────────────
+  const editTotal = editItems.reduce(
+    (s, row) => s + (parseFloat(row.qty) || 0) * (parseFloat(row.unitCost) || 0),
+    0,
+  );
 
   return (
     <div className="space-y-5 p-6">
@@ -349,8 +608,16 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
 
         {/* Action buttons based on status */}
         <div className="flex flex-wrap items-center gap-2">
-          {status === "DRAFT" && (
+          {status === "DRAFT" && !isEditing && (
             <>
+              <Button
+                size="sm"
+                variant="secondary"
+                leftIcon={<Pencil className="h-4 w-4" />}
+                onClick={startEditing}
+              >
+                Edit
+              </Button>
               <Button
                 size="sm"
                 leftIcon={<PackageCheck className="h-4 w-4" />}
@@ -370,14 +637,47 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
             </>
           )}
 
+          {status === "DRAFT" && isEditing && (
+            <>
+              <Button
+                size="sm"
+                variant="secondary"
+                leftIcon={<X className="h-4 w-4" />}
+                onClick={() => setIsEditing(false)}
+                disabled={updateBill.isPending}
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                leftIcon={<Save className="h-4 w-4" />}
+                onClick={handleSaveEdit}
+                loading={updateBill.isPending}
+              >
+                Save Changes
+              </Button>
+            </>
+          )}
+
           {(status === "RECEIVED" || status === "PARTIAL") && (
-            <Button
-              size="sm"
-              leftIcon={<CreditCard className="h-4 w-4" />}
-              onClick={() => setIsPaymentOpen(true)}
-            >
-              Record Payment
-            </Button>
+            <>
+              <Button
+                size="sm"
+                variant="secondary"
+                leftIcon={<RotateCcw className="h-4 w-4" />}
+                onClick={() => setIsRevertOpen(true)}
+                disabled={revertToDraft.isPending}
+              >
+                Revert to Draft
+              </Button>
+              <Button
+                size="sm"
+                leftIcon={<CreditCard className="h-4 w-4" />}
+                onClick={() => setIsPaymentOpen(true)}
+              >
+                Record Payment
+              </Button>
+            </>
           )}
 
           {status === "PAID" && (
@@ -394,112 +694,189 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
         {/* ── Bill detail (2/3) ── */}
         <div className="space-y-5 lg:col-span-2">
           <Card>
-            {/* Supplier info & dates */}
-            <div className="mb-6 grid grid-cols-2 gap-6">
-              <div>
-                <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/40">
-                  Supplier
-                </p>
-                <p className="text-sm font-semibold text-navy">
-                  {bill.supplier?.name ?? "—"}
-                </p>
-                {bill.supplier?.contactName && (
-                  <p className="text-sm text-navy/60">{bill.supplier.contactName}</p>
-                )}
-                {bill.supplier?.address && (
-                  <p className="mt-1 text-xs text-navy/50 whitespace-pre-line">
-                    {bill.supplier.address}
-                  </p>
-                )}
+            {/* Supplier info & dates — view or edit mode */}
+            {isEditing ? (
+              <div className="mb-6 space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-navy/40">
+                      Supplier
+                    </label>
+                    <select
+                      value={editSupplierId}
+                      onChange={(e) => setEditSupplierId(e.target.value)}
+                      className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    >
+                      <option value="">Select supplier…</option>
+                      {suppliers.map((s) => (
+                        <option key={s.id} value={s.id}>{s.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-navy/40">
+                        Bill Date
+                      </label>
+                      <input
+                        type="date"
+                        value={editBillDate}
+                        onChange={(e) => setEditBillDate(e.target.value)}
+                        className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-navy/40">
+                        Due Date
+                      </label>
+                      <input
+                        type="date"
+                        value={editDueDate}
+                        onChange={(e) => setEditDueDate(e.target.value)}
+                        className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                      />
+                    </div>
+                  </div>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-navy/40">
+                    Notes
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={editNotes}
+                    onChange={(e) => setEditNotes(e.target.value)}
+                    placeholder="Internal notes…"
+                    className="w-full resize-none rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-navy placeholder:text-navy/30 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  />
+                </div>
               </div>
-              <div>
-                <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/40">
-                  Bill Details
-                </p>
-                <p className="text-sm text-navy/60">
-                  <span className="font-medium text-navy">Bill #:</span> {bill.billNumber}
-                </p>
-                {bill.purchaseOrder && (
+            ) : (
+              <div className="mb-6 grid grid-cols-2 gap-6">
+                <div>
+                  <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/40">
+                    Supplier
+                  </p>
+                  <p className="text-sm font-semibold text-navy">
+                    {bill.supplier?.name ?? "—"}
+                  </p>
+                  {bill.supplier?.contactName && (
+                    <p className="text-sm text-navy/60">{bill.supplier.contactName}</p>
+                  )}
+                  {bill.supplier?.address && (
+                    <p className="mt-1 text-xs text-navy/50 whitespace-pre-line">
+                      {bill.supplier.address}
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/40">
+                    Bill Details
+                  </p>
                   <p className="text-sm text-navy/60">
-                    <span className="font-medium text-navy">PO #:</span>{" "}
-                    {bill.purchaseOrder.poNumber}
+                    <span className="font-medium text-navy">Bill #:</span> {bill.billNumber}
                   </p>
-                )}
-                <p className="text-sm text-navy/60">
-                  <span className="font-medium text-navy">Bill Date:</span>{" "}
-                  {fmtDate(bill.billDate ?? bill.createdAt)}
-                </p>
-                <p className={cn("text-sm", isOverdue ? "text-red-600 font-semibold" : "text-navy/60")}>
-                  <span className="font-medium text-navy">Due Date:</span>{" "}
-                  {fmtDate(bill.dueDate)}
-                  {isOverdue && " (Overdue)"}
-                </p>
+                  {bill.purchaseOrder && (
+                    <p className="text-sm text-navy/60">
+                      <span className="font-medium text-navy">PO #:</span>{" "}
+                      {bill.purchaseOrder.poNumber}
+                    </p>
+                  )}
+                  <p className="text-sm text-navy/60">
+                    <span className="font-medium text-navy">Bill Date:</span>{" "}
+                    {fmtDate(bill.billDate ?? bill.createdAt)}
+                  </p>
+                  <p className={cn("text-sm", isOverdue ? "text-red-600 font-semibold" : "text-navy/60")}>
+                    <span className="font-medium text-navy">Due Date:</span>{" "}
+                    {fmtDate(bill.dueDate)}
+                    {isOverdue && " (Overdue)"}
+                  </p>
+                </div>
               </div>
-            </div>
+            )}
 
-            {/* Line items */}
-            <div className="-mx-6 overflow-hidden border-t border-surface-border">
-              <table className="w-full text-sm">
-                <thead className="border-b border-surface-border bg-surface-raised">
-                  <tr>
-                    <th className="px-6 py-2.5 text-left text-xs font-medium text-navy/60">
-                      Description
-                    </th>
-                    <th className="px-4 py-2.5 text-right text-xs font-medium text-navy/60">
-                      Qty
-                    </th>
-                    <th className="px-4 py-2.5 text-right text-xs font-medium text-navy/60">
-                      Unit Cost
-                    </th>
-                    <th className="px-6 py-2.5 text-right text-xs font-medium text-navy/60">
-                      Amount
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-surface-border">
-                  {(bill.items ?? []).map((item) => (
-                    <tr key={item.id} className="hover:bg-surface-raised">
-                      <td className="px-6 py-3 text-navy">{item.description}</td>
-                      <td className="px-4 py-3 text-right text-navy/70">{item.qty}</td>
-                      <td className="px-4 py-3 text-right text-navy/70">
-                        {fmt(Number(item.unitCost))}
-                      </td>
-                      <td className="px-6 py-3 text-right font-medium text-navy">
-                        {fmt(Number(item.qty) * Number(item.unitCost))}
-                      </td>
+            {/* Line items — view or edit mode */}
+            {isEditing ? (
+              <div className="border-t border-surface-border pt-4">
+                <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-navy/40">
+                  Line Items
+                </p>
+                <EditLineItems items={editItems} onChange={setEditItems} />
+                <div className="mt-3 flex justify-end">
+                  <span className="text-sm font-bold text-navy">Total: {fmt(editTotal)}</span>
+                </div>
+              </div>
+            ) : (
+              <div className="-mx-6 overflow-hidden border-t border-surface-border">
+                <table className="w-full text-sm">
+                  <thead className="border-b border-surface-border bg-surface-raised">
+                    <tr>
+                      <th className="px-6 py-2.5 text-left text-xs font-medium text-navy/60">
+                        Description
+                      </th>
+                      <th className="px-4 py-2.5 text-right text-xs font-medium text-navy/60">
+                        Qty
+                      </th>
+                      <th className="px-4 py-2.5 text-right text-xs font-medium text-navy/60">
+                        Unit Cost
+                      </th>
+                      <th className="px-6 py-2.5 text-right text-xs font-medium text-navy/60">
+                        Amount
+                      </th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody className="divide-y divide-surface-border">
+                    {(bill.items ?? []).map((item) => (
+                      <tr key={item.id} className="hover:bg-surface-raised">
+                        <td className="px-6 py-3 text-navy">
+                          {item.description}
+                          {item.product && (
+                            <span className="ml-2 text-xs text-navy/40">({item.product.name})</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-right text-navy/70">{item.qty}</td>
+                        <td className="px-4 py-3 text-right text-navy/70">
+                          {fmt(Number(item.unitCost))}
+                        </td>
+                        <td className="px-6 py-3 text-right font-medium text-navy">
+                          {fmt(Number(item.qty) * Number(item.unitCost))}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
 
             {/* Totals */}
-            <div className="mt-4 border-t border-surface-border pt-4">
-              <div className="ml-auto w-56 space-y-2 text-sm">
-                <div className="flex justify-between border-t border-surface-border pt-2 text-base font-bold text-navy">
-                  <span>Total</span>
-                  <span>{fmt(total)}</span>
-                </div>
-                {amountPaid > 0 && (
-                  <div className="flex justify-between text-success">
-                    <span className="font-medium">Amount Paid</span>
-                    <span className="font-bold">-{fmt(amountPaid)}</span>
+            {!isEditing && (
+              <div className="mt-4 border-t border-surface-border pt-4">
+                <div className="ml-auto w-56 space-y-2 text-sm">
+                  <div className="flex justify-between border-t border-surface-border pt-2 text-base font-bold text-navy">
+                    <span>Total</span>
+                    <span>{fmt(total)}</span>
                   </div>
-                )}
-                <div
-                  className={cn(
-                    "flex justify-between border-t border-surface-border pt-2 text-base font-bold",
-                    balance > 0 ? "text-danger" : "text-success",
+                  {amountPaid > 0 && (
+                    <div className="flex justify-between text-success">
+                      <span className="font-medium">Amount Paid</span>
+                      <span className="font-bold">-{fmt(amountPaid)}</span>
+                    </div>
                   )}
-                >
-                  <span>Balance Due</span>
-                  <span>{fmt(balance)}</span>
+                  <div
+                    className={cn(
+                      "flex justify-between border-t border-surface-border pt-2 text-base font-bold",
+                      balance > 0 ? "text-danger" : "text-success",
+                    )}
+                  >
+                    <span>Balance Due</span>
+                    <span>{fmt(balance)}</span>
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
 
             {/* Notes */}
-            {bill.notes && (
+            {!isEditing && bill.notes && (
               <div className="mt-4 border-t border-surface-border pt-4">
                 <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/40">
                   Notes
@@ -544,7 +921,7 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
                 ))}
               </ul>
             )}
-            {(status === "RECEIVED" || status === "PARTIAL") && (
+            {(status === "RECEIVED" || status === "PARTIAL") && !isEditing && (
               <div className="mt-4">
                 <Button
                   variant="secondary"
@@ -564,21 +941,25 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
             <dl className="space-y-2 text-sm">
               <div className="flex justify-between">
                 <dt className="text-navy/60">Bill Total</dt>
-                <dd className="font-medium text-navy">{fmt(total)}</dd>
+                <dd className="font-medium text-navy">{fmt(isEditing ? editTotal : total)}</dd>
               </div>
-              <div className="flex justify-between">
-                <dt className="text-navy/60">Paid</dt>
-                <dd className="font-medium text-success">{fmt(amountPaid)}</dd>
-              </div>
-              <div
-                className={cn(
-                  "flex justify-between border-t border-surface-border pt-2 font-bold",
-                  balance > 0 ? "text-danger" : "text-success",
-                )}
-              >
-                <dt>Balance Due</dt>
-                <dd>{fmt(balance)}</dd>
-              </div>
+              {!isEditing && (
+                <>
+                  <div className="flex justify-between">
+                    <dt className="text-navy/60">Paid</dt>
+                    <dd className="font-medium text-success">{fmt(amountPaid)}</dd>
+                  </div>
+                  <div
+                    className={cn(
+                      "flex justify-between border-t border-surface-border pt-2 font-bold",
+                      balance > 0 ? "text-danger" : "text-success",
+                    )}
+                  >
+                    <dt>Balance Due</dt>
+                    <dd>{fmt(balance)}</dd>
+                  </div>
+                </>
+              )}
             </dl>
           </Card>
         </div>
@@ -599,6 +980,14 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
         onConfirm={handleVoid}
         billNumber={bill.billNumber}
         isPending={voidBill.isPending}
+      />
+
+      <RevertToDraftModal
+        isOpen={isRevertOpen}
+        onClose={() => setIsRevertOpen(false)}
+        onConfirm={handleRevertToDraft}
+        billNumber={bill.billNumber}
+        isPending={revertToDraft.isPending}
       />
     </div>
   );

@@ -17,7 +17,7 @@ import { Button, useToast, cn } from "@routeflow/ui/web";
 import { scanInvoice, type ScannedItem, type ScanResult } from "@/lib/api/invoice-scan";
 import { useSuppliers } from "@/lib/api/inventory";
 import { useProducts } from "@/lib/api/products";
-import { useCreateVendorBill } from "@/lib/api/vendor-bills";
+import { useCreateVendorBill, useSaveProductMapping } from "@/lib/api/vendor-bills";
 import { useCreateExpense, useExpenseCategories } from "@/lib/api/finance";
 
 const fmt = (n: number | null | undefined) =>
@@ -103,6 +103,7 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
 
   const createBill = useCreateVendorBill();
   const createExpense = useCreateExpense();
+  const saveMapping = useSaveProductMapping();
 
   // Reset when opened
   React.useEffect(() => {
@@ -219,16 +220,27 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
 
   const handleProductSelect = (i: number, productId: string) => {
     const product = products.find((p) => p.id === productId);
+    const item = reviewItems[i];
     if (product) {
       updateItem(i, {
         productId,
         description: product.name,
         unitCost: product.averageCost
           ? String(parseFloat(product.averageCost).toFixed(4))
-          : reviewItems[i].unitCost,
+          : item.unitCost,
       });
     } else {
-      updateItem(i, { productId: "", description: reviewItems[i].extractedName });
+      updateItem(i, { productId: "", description: item.extractedName });
+    }
+
+    // Save the mapping so the AI learns from this correction
+    const detectedSupplier = scanResult?.supplier;
+    if (detectedSupplier && item.extractedName) {
+      saveMapping.mutate({
+        supplierName: detectedSupplier,
+        rawDescription: item.extractedName,
+        productId: productId || null,
+      });
     }
   };
 

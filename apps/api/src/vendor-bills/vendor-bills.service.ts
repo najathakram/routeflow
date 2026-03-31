@@ -68,6 +68,62 @@ export class VendorBillsService {
     return bill;
   }
 
+  async update(id: string, dto: any) {
+    const bill = await this.prisma.vendorBill.findUnique({ where: { id } });
+    if (!bill) throw new NotFoundException("Bill not found");
+    if (bill.status !== "DRAFT") {
+      throw new BadRequestException("Only DRAFT bills can be edited. Revert to draft first.");
+    }
+
+    // Recalculate total if items are provided
+    let totalOwed: number | undefined;
+    if (dto.items && Array.isArray(dto.items)) {
+      totalOwed = dto.items.reduce(
+        (sum: number, item: any) => sum + (Number(item.qty) || 1) * Number(item.unitCost ?? item.unitPrice ?? 0),
+        0,
+      );
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      // Delete existing items and recreate if items provided
+      if (dto.items !== undefined) {
+        await tx.vendorBillItem.deleteMany({ where: { vendorBillId: id } });
+      }
+
+      return tx.vendorBill.update({
+        where: { id },
+        data: {
+          ...(dto.supplierId !== undefined && { supplierId: dto.supplierId }),
+          ...(dto.billDate !== undefined && { billDate: dto.billDate ? new Date(dto.billDate) : null }),
+          ...(dto.dueDate !== undefined && { dueDate: dto.dueDate ? new Date(dto.dueDate) : null }),
+          ...(dto.notes !== undefined && { notes: dto.notes }),
+          ...(totalOwed !== undefined && { totalOwed }),
+          ...(dto.items !== undefined && dto.items.length > 0
+            ? {
+                items: {
+                  createMany: {
+                    data: dto.items.map((item: any) => ({
+                      productId: item.productId || null,
+                      description: item.description || item.name || "",
+                      qty: new Prisma.Decimal(item.qty || 1),
+                      unitCost: new Prisma.Decimal(item.unitCost ?? item.unitPrice ?? 0),
+                    })),
+                  },
+                },
+              }
+            : {}),
+        },
+        include: {
+          supplier: { select: { id: true, name: true } },
+          items: {
+            include: { product: { select: { id: true, name: true, sku: true, unit: true } } },
+          },
+          payments: { orderBy: { createdAt: "desc" } },
+        },
+      });
+    });
+  }
+
   async receive(id: string) {
     const bill = await this.prisma.vendorBill.findUnique({
       where: { id },
@@ -139,6 +195,59 @@ export class VendorBillsService {
     return updated;
   }
 
+  async revertToDraft(id: string) {
+    const bill = await this.prisma.vendorBill.findUnique({
+      where: { id },
+      include: {
+        items: { include: { product: true } },
+      },
+    });
+    if (!bill) throw new NotFoundException("Bill not found");
+    const allowedStatuses = ["RECEIVED", "PARTIAL"] as const;
+    if (!(allowedStatuses as readonly string[]).includes(bill.status)) {
+      throw new BadRequestException(
+        `Only RECEIVED or PARTIAL bills can be reverted to DRAFT. Current status: ${bill.status}`,
+      );
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      // Reverse inventory for each product-linked item
+      for (const item of bill.items) {
+        if (!item.productId) continue;
+
+        const qty = new Prisma.Decimal(item.qty);
+
+        // Delete the stock movement created when this bill was received
+        await tx.stockMovement.deleteMany({
+          where: {
+            productId: item.productId,
+            reference: bill.billNumber,
+            type: MovementType.PURCHASE,
+          },
+        });
+
+        // Decrement stock (note: averageCost is not reversed to keep it simple)
+        await tx.product.update({
+          where: { id: item.productId },
+          data: { currentStock: { decrement: qty } },
+        });
+      }
+
+      // Revert bill status to DRAFT
+      return tx.vendorBill.update({
+        where: { id },
+        data: { status: "DRAFT", receivedDate: null },
+        include: {
+          supplier: { select: { id: true, name: true } },
+          items: {
+            include: { product: { select: { id: true, name: true, sku: true, unit: true } } },
+          },
+          payments: { orderBy: { createdAt: "desc" } },
+        },
+      });
+    });
+  }
+
   async voidBill(id: string) {
     return this.prisma.vendorBill.update({ where: { id }, data: { status: "VOID" as any } });
   }
@@ -182,6 +291,23 @@ export class VendorBillsService {
     return bill;
   }
 
+  // ─── Product Mapping Memory ───────────────────────────────────────────────────
+
+  async saveProductMapping(supplierName: string, rawDescription: string, productId: string | null) {
+    return this.prisma.productMapping.upsert({
+      where: { supplierName_rawDescription: { supplierName, rawDescription } },
+      create: { supplierName, rawDescription, productId },
+      update: { productId },
+    });
+  }
+
+  async getProductMappings(supplierName: string) {
+    return this.prisma.productMapping.findMany({
+      where: { supplierName },
+      include: { product: { select: { id: true, name: true, sku: true, unit: true } } },
+    });
+  }
+
   async scanInvoice(imageBuffer: Buffer, mimeType: string) {
     // Look up API key: DB-stored key takes precedence over env var
     const storedKey = await this.systemConfig.get("anthropic.apiKey");
@@ -201,12 +327,34 @@ export class VendorBillsService {
       take: 500,
     });
 
+    // Fetch all stored product mappings (all suppliers, we'll filter later by supplier name once known)
+    const allMappings = await this.prisma.productMapping.findMany({
+      include: { product: { select: { id: true, name: true } } },
+    });
+    const mappingIndex: Record<string, Record<string, { productId: string | null; productName: string | null }>> = {};
+    for (const m of allMappings) {
+      if (!mappingIndex[m.supplierName]) mappingIndex[m.supplierName] = {};
+      mappingIndex[m.supplierName][m.rawDescription.toLowerCase()] = {
+        productId: m.productId,
+        productName: m.product?.name ?? null,
+      };
+    }
+
     const productList = products
       .map(
         (p) =>
           `ID: ${p.id} | Name: ${p.name}${p.sku ? ` | SKU: ${p.sku}` : ""}${p.barcode ? ` | Barcode: ${p.barcode}` : ""}`,
       )
       .join("\n");
+
+    // Build a summary of known mappings for the prompt
+    const mappingSummary = allMappings.length > 0
+      ? `\nKnown item mappings from previous invoices (use these as high-confidence matches):\n` +
+        allMappings
+          .filter((m) => m.productId && m.product)
+          .map((m) => `"${m.rawDescription}" (from ${m.supplierName}) → Product ID: ${m.productId} (${m.product?.name})`)
+          .join("\n")
+      : "";
 
     const anthropic = new Anthropic({ apiKey });
     const base64Data = imageBuffer.toString("base64");
@@ -235,6 +383,7 @@ export class VendorBillsService {
 
 Here are the existing products in our system:
 ${productList || "(no products configured yet)"}
+${mappingSummary}
 
 Return this exact JSON structure:
 {
@@ -246,8 +395,8 @@ Return this exact JSON structure:
   "items": [
     {
       "extractedName": "exact name from invoice",
-      "qty": numeric quantity,
-      "unitCost": numeric unit price,
+      "qty": numeric quantity (required, default 1 if not shown),
+      "unitCost": numeric unit price (required, calculate from line total / qty if not shown directly),
       "lineTotal": numeric line total or null,
       "matchedProductId": "product ID from list or null",
       "matchedProductName": "product name or null",
@@ -261,10 +410,13 @@ Return this exact JSON structure:
 }
 
 Matching rules:
+- If a known mapping exists for this supplier + item name, use that product ID with "high" confidence
 - "high" confidence: name clearly matches (same or very similar, e.g., abbreviations, plural forms)
 - "medium" confidence: likely match but name differs somewhat
 - "low" confidence: possible match but unsure
 - "none": no matching product found
+
+IMPORTANT: Always extract qty and unitCost for every item. If qty is not shown, default to 1. If unitCost is not shown but lineTotal is, calculate unitCost = lineTotal / qty.
 
 If you cannot read a value clearly, use null. Return ONLY the JSON object.`;
 
@@ -292,6 +444,22 @@ If you cannot read a value clearly, use null. Return ONLY the JSON object.`;
       parsed = JSON.parse(text) as Record<string, unknown>;
     } catch (_e) {
       throw new Error("Failed to parse AI response as JSON");
+    }
+
+    // Post-process: apply known mappings that AI might have missed
+    const supplierName = (parsed.supplier as string) ?? "";
+    if (supplierName && mappingIndex[supplierName]) {
+      const supplierMappings = mappingIndex[supplierName];
+      const items = parsed.items as any[] ?? [];
+      for (const item of items) {
+        const key = (item.extractedName as string ?? "").toLowerCase();
+        const mapping = supplierMappings[key];
+        if (mapping && mapping.productId && !item.matchedProductId) {
+          item.matchedProductId = mapping.productId;
+          item.matchedProductName = mapping.productName;
+          item.confidence = "high";
+        }
+      }
     }
 
     return parsed;

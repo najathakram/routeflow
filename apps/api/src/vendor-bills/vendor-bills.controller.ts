@@ -5,6 +5,7 @@ import {
   Delete,
   Get,
   Param,
+  Patch,
   Post,
   Query,
   UploadedFile,
@@ -27,6 +28,7 @@ export class VendorBillsController {
   @Post() create(@Body() dto: any) {
     return this.vendorBillsService.create(dto);
   }
+
   @Get() findAll(
     @Query("supplierId") supplierId?: string,
     @Query("status") status?: string,
@@ -40,6 +42,7 @@ export class VendorBillsController {
       limit ? +limit : 20,
     );
   }
+
   @Post("scan-invoice")
   @UseInterceptors(FileInterceptor("image", { limits: { fileSize: 20 * 1024 * 1024 } }))
   scanInvoice(@UploadedFile() file: Express.Multer.File) {
@@ -52,21 +55,52 @@ export class VendorBillsController {
     return this.vendorBillsService.scanInvoice(file.buffer, mimeType);
   }
 
+  // Product mapping memory — must be before :id routes
+  @Post("product-mappings")
+  saveProductMapping(
+    @Body() dto: { supplierName: string; rawDescription: string; productId: string | null },
+  ) {
+    return this.vendorBillsService.saveProductMapping(
+      dto.supplierName,
+      dto.rawDescription,
+      dto.productId,
+    );
+  }
+
+  @Get("product-mappings")
+  getProductMappings(@Query("supplierName") supplierName: string) {
+    if (!supplierName) throw new BadRequestException("supplierName is required");
+    return this.vendorBillsService.getProductMappings(supplierName);
+  }
+
   @Get(":id") findOne(@Param("id") id: string) {
     return this.vendorBillsService.findOne(id);
   }
+
+  @Patch(":id") updateBill(@Param("id") id: string, @Body() dto: any) {
+    return this.vendorBillsService.update(id, dto);
+  }
+
   @Post(":id/receive") receive(@Param("id") id: string) {
     return this.vendorBillsService.receive(id);
   }
+
+  @Post(":id/revert-to-draft") revertToDraft(@Param("id") id: string) {
+    return this.vendorBillsService.revertToDraft(id);
+  }
+
   @Post(":id/void") voidBill(@Param("id") id: string) {
     return this.vendorBillsService.voidBill(id);
   }
+
   @Post(":id/payments") recordPayment(@Param("id") id: string, @Body() dto: any) {
     return this.vendorBillsService.recordPayment(id, dto);
   }
+
   @Delete(":id") deleteBill(@Param("id") id: string) {
     return this.vendorBillsService.delete(id);
   }
+
   @Delete() bulkDelete(@Body() dto: { ids: string[] }) {
     return this.vendorBillsService.bulkDelete(dto.ids);
   }

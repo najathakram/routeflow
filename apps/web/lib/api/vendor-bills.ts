@@ -44,6 +44,14 @@ export interface VendorBill {
   updatedAt: string;
 }
 
+export interface ProductMapping {
+  id: string;
+  supplierName: string;
+  rawDescription: string;
+  productId: string | null;
+  product?: { id: string; name: string; sku?: string; unit?: string } | null;
+}
+
 interface PaginatedResponse<T> {
   data: T[];
   meta: { total: number; page: number; limit: number; totalPages: number };
@@ -74,6 +82,15 @@ export function useVendorBill(id: string) {
   });
 }
 
+export function useProductMappings(supplierName: string) {
+  return useQuery<ProductMapping[]>({
+    queryKey: ["product-mappings", supplierName],
+    queryFn: () =>
+      apiClient.get("/vendor-bills/product-mappings", { params: { supplierName } }).then((r) => r.data),
+    enabled: !!supplierName,
+  });
+}
+
 // ─── Mutations ────────────────────────────────────────────────────────────────
 
 export interface CreateVendorBillItem {
@@ -100,10 +117,41 @@ export function useCreateVendorBill() {
   });
 }
 
+export interface UpdateVendorBillDto {
+  id: string;
+  supplierId?: string;
+  billDate?: string;
+  dueDate?: string;
+  notes?: string;
+  items?: CreateVendorBillItem[];
+}
+
+export function useUpdateVendorBill() {
+  const qc = useQueryClient();
+  return useMutation<VendorBill, Error, UpdateVendorBillDto>({
+    mutationFn: ({ id, ...data }) => apiClient.patch(`/vendor-bills/${id}`, data).then((r) => r.data),
+    onSuccess: (_, { id }) => {
+      qc.invalidateQueries({ queryKey: ["vendor-bills"] });
+      qc.invalidateQueries({ queryKey: ["vendor-bills", id] });
+    },
+  });
+}
+
 export function useReceiveVendorBill() {
   const qc = useQueryClient();
   return useMutation<VendorBill, Error, string>({
     mutationFn: (id) => apiClient.post(`/vendor-bills/${id}/receive`).then((r) => r.data),
+    onSuccess: (_, id) => {
+      qc.invalidateQueries({ queryKey: ["vendor-bills"] });
+      qc.invalidateQueries({ queryKey: ["vendor-bills", id] });
+    },
+  });
+}
+
+export function useRevertVendorBillToDraft() {
+  const qc = useQueryClient();
+  return useMutation<VendorBill, Error, string>({
+    mutationFn: (id) => apiClient.post(`/vendor-bills/${id}/revert-to-draft`).then((r) => r.data),
     onSuccess: (_, id) => {
       qc.invalidateQueries({ queryKey: ["vendor-bills"] });
       qc.invalidateQueries({ queryKey: ["vendor-bills", id] });
@@ -155,5 +203,21 @@ export function useBulkDeleteVendorBills() {
   return useMutation<{ deleted: number; skipped: any[] }, Error, string[]>({
     mutationFn: (ids) => apiClient.delete("/vendor-bills", { data: { ids } }).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["vendor-bills"] }),
+  });
+}
+
+export interface SaveProductMappingDto {
+  supplierName: string;
+  rawDescription: string;
+  productId: string | null;
+}
+
+export function useSaveProductMapping() {
+  const qc = useQueryClient();
+  return useMutation<ProductMapping, Error, SaveProductMappingDto>({
+    mutationFn: (dto) => apiClient.post("/vendor-bills/product-mappings", dto).then((r) => r.data),
+    onSuccess: (_, { supplierName }) => {
+      qc.invalidateQueries({ queryKey: ["product-mappings", supplierName] });
+    },
   });
 }
