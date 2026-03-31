@@ -629,7 +629,7 @@ function VendorBillsTab() {
                 return (
                   <tr key={bill.id} onClick={() => router.push(`/vendor-bills/${bill.id}`)}
                     className={cn("cursor-pointer transition-colors hover:bg-surface-raised", overdue && "border-l-4 border-l-red-400", selectedIds.has(bill.id) && "bg-brand-50")}>
-                    <td className="w-10 px-4 py-3" onClick={(e) => { e.stopPropagation(); toggleSelect(bill.id); }}>
+                    <td className="w-10 px-4 py-3" onClick={(e) => e.stopPropagation()}>
                       <input
                         type="checkbox"
                         checked={selectedIds.has(bill.id)}
