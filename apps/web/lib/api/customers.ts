@@ -207,3 +207,19 @@ export function useDeleteCustomerPrice() {
     },
   });
 }
+
+export function useDeleteCustomer() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiClient.delete(`/customers/${id}`).then((r) => r.data),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["customers"] }); },
+  });
+}
+
+export function useDeleteAllCustomers() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => apiClient.delete("/customers/all").then((r) => r.data),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["customers"] }); },
+  });
+}

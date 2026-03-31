@@ -448,6 +448,7 @@ model Order {
   lineItems         OrderItem[]
   deliveryMutations DeliveryMutation[]
   transaction       Transaction?
+  invoice           Invoice?
   returns           Return[]
 
   @@index([customerId])
@@ -718,11 +719,13 @@ model Invoice {
   pdfUrl             String?
   writeOffReason     String?
   writtenOffAt       DateTime?
+  orderId            String?       @unique
   recurringInvoiceId String?
   createdAt          DateTime      @default(now())
   updatedAt          DateTime      @updatedAt
 
   customer         Customer         @relation(fields: [customerId], references: [id])
+  order            Order?           @relation(fields: [orderId], references: [id])
   items            InvoiceItem[]
   payments         InvoicePayment[]
   creditNotes      CreditNote[]

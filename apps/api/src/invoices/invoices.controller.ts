@@ -40,6 +40,12 @@ export class InvoicesController {
     return this.invoicesService.create(dto);
   }
 
+  @Post("from-order/:orderId")
+  @Roles(UserRole.OPERATOR)
+  createFromOrder(@Param("orderId") orderId: string) {
+    return this.invoicesService.createInvoiceFromOrder(orderId);
+  }
+
   @Get()
   @Roles(UserRole.OPERATOR, UserRole.CUSTOMER, UserRole.DRIVER)
   findAll(@Query() query: ListInvoicesDto, @CurrentUser() user: JwtPayload) {

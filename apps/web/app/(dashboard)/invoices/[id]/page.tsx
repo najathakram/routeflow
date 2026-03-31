@@ -22,6 +22,7 @@ import {
   CheckCheck,
   BookOpen,
   RotateCcw,
+  Package,
 } from "lucide-react";
 import { Button, Card, Modal, cn, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
@@ -1143,6 +1144,21 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
 
         {/* ── Sidebar (1/3) ── */}
         <div className="space-y-4">
+          {/* Linked order */}
+          {(invoice as any).orderId && (
+            <Card title="Linked Order">
+              <div className="flex items-center gap-2">
+                <Package className="h-4 w-4 text-navy/40" />
+                <Link
+                  href={`/orders/${(invoice as any).orderId}`}
+                  className="text-sm text-brand-500 hover:underline"
+                >
+                  View order →
+                </Link>
+              </div>
+            </Card>
+          )}
+
           {/* Payment history */}
           <Card title="Payment History">
             {payments.length === 0 ? (

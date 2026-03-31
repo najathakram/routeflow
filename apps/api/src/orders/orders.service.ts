@@ -15,6 +15,7 @@ import {
   TxnStatus,
   MutationType,
   MovementType,
+  InvoiceStatus,
   Prisma,
 } from "@prisma/client";
 import { ListOrdersDto } from "./dto/list-orders.dto";
@@ -97,6 +98,7 @@ export class OrdersService {
         customer: { select: { id: true, businessName: true, contactName: true } },
         lineItems: { include: { product: { select: { id: true, name: true, unit: true } } } },
         transaction: true,
+        invoice: { select: { id: true, invoiceNumber: true, status: true, total: true } },
       },
     });
     if (!order) throw new NotFoundException("Order not found");
@@ -519,6 +521,63 @@ export class OrdersService {
             update: {},
           });
           invoiceTransactionIds.push(createdTxn.id);
+
+          // Auto-create Invoice from the delivered order
+          const existingInvoice = await tx.invoice.findFirst({ where: { orderId: order.id } });
+          if (!existingInvoice) {
+            const fullOrder = await tx.order.findUnique({
+              where: { id: order.id },
+              include: {
+                lineItems: {
+                  where: { status: { not: ItemStatus.CANCELLED } },
+                  include: { product: { select: { name: true } } },
+                },
+              },
+            });
+            if (fullOrder && fullOrder.lineItems.length > 0) {
+              // Generate invoice number
+              const year = new Date().getFullYear();
+              const invPrefix = `INV-${year}-`;
+              const lastInv = await tx.invoice.findFirst({
+                where: { invoiceNumber: { startsWith: invPrefix } },
+                orderBy: { invoiceNumber: "desc" },
+              });
+              const seq = lastInv ? parseInt(lastInv.invoiceNumber.split("-")[2], 10) + 1 : 1;
+              const invoiceNumber = `${invPrefix}${String(seq).padStart(4, "0")}`;
+
+              const dueDate = new Date();
+              dueDate.setDate(dueDate.getDate() + 30);
+
+              await tx.invoice.create({
+                data: {
+                  invoiceNumber,
+                  customerId: fullOrder.customerId,
+                  orderId: fullOrder.id,
+                  status: InvoiceStatus.SENT,
+                  sentAt: new Date(),
+                  subtotal: fullOrder.subtotal,
+                  taxAmount: fullOrder.tax,
+                  discount: 0,
+                  shippingFee: 0,
+                  total: fullOrder.total,
+                  dueDate,
+                  issueDate: new Date(),
+                  notes: fullOrder.orderNumber ? `Order #${fullOrder.orderNumber}` : null,
+                  items: {
+                    create: fullOrder.lineItems.map((li: any) => ({
+                      description: li.product?.name ?? "Product",
+                      productId: li.productId,
+                      qty: Number(li.qty),
+                      unitPrice: Number(li.unitPrice),
+                      discount: 0,
+                      taxRate: 0,
+                      subtotal: Number(li.subtotal),
+                    })),
+                  },
+                },
+              });
+            }
+          }
         }
       }
 

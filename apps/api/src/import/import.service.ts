@@ -616,4 +616,97 @@ export class ImportService {
     }
     return { imported, skipped, errors };
   }
+
+  /**
+   * Import stock levels from Zoho Stock Summary Report CSV.
+   * Columns: Item Name, SKU, Opening Stock, Quantity In, Quantity Out, Closing Stock
+   *
+   * For each row:
+   *  - Find product by barcode (SKU) or name
+   *  - Create product if not found (using Closing Stock as initial stock)
+   *  - Update currentStock to Closing Stock value
+   */
+  async importInventory(
+    buffer: Buffer,
+    userId: string,
+  ): Promise<{ updated: number; created: number; skipped: number; errors: string[] }> {
+    const rows = this.parseCsv(buffer);
+    let updated = 0, created = 0, skipped = 0;
+    const errors: string[] = [];
+
+    for (const row of rows) {
+      const name = (row["Item Name"] || "").trim();
+      if (!name) { skipped++; continue; }
+
+      // Skip summary/header rows (e.g. "Purchase Invoice" with comma-formatted numbers)
+      const rawSku = (row["SKU"] || "").trim();
+      // If SKU contains commas it's a formatted number (not a real barcode) — skip
+      if (rawSku.includes(",")) { skipped++; continue; }
+
+      // Parse closing stock — handle comma-formatted values like "2,100.00"
+      const closingStockRaw = (row["Closing Stock"] || "0").replace(/,/g, "");
+      const closingStock = parseFloat(closingStockRaw);
+      if (isNaN(closingStock)) { skipped++; continue; }
+
+      // Detect summary rows: names like "Purchase Invoice" with no barcode and big stock numbers
+      const lowerName = name.toLowerCase();
+      if (!rawSku && (lowerName.includes("invoice") || lowerName.includes("purchase") || lowerName.includes("account"))) {
+        skipped++;
+        continue;
+      }
+
+      try {
+        // Try to find existing product by barcode first, then by name
+        let product = rawSku
+          ? await this.prisma.product.findFirst({ where: { OR: [{ barcode: rawSku }, { sku: rawSku }] } })
+          : null;
+
+        if (!product) {
+          product = await this.prisma.product.findFirst({
+            where: { name: { equals: name, mode: "insensitive" } },
+          });
+        }
+
+        if (product) {
+          // Update stock level
+          await this.prisma.product.update({
+            where: { id: product.id },
+            data: { currentStock: closingStock },
+          });
+          // Record the stock adjustment as a stock movement
+          if (closingStock !== Number(product.currentStock)) {
+            await this.prisma.stockMovement.create({
+              data: {
+                productId: product.id,
+                type: "ADJUSTMENT",
+                quantity: closingStock - Number(product.currentStock),
+                notes: "Zoho stock sync",
+                performedById: userId,
+              },
+            });
+          }
+          updated++;
+        } else {
+          // Create new product with this stock level
+          await this.prisma.product.create({
+            data: {
+              name,
+              barcode: rawSku || null,
+              sku: rawSku || null,
+              currentStock: closingStock,
+              pricePerUnit: 0,
+              unit: "unit",
+              isActive: true,
+            },
+          });
+          created++;
+        }
+      } catch (e: any) {
+        errors.push(`${name}: ${e.message}`);
+        skipped++;
+      }
+    }
+
+    return { updated, created, skipped, errors };
+  }
 }

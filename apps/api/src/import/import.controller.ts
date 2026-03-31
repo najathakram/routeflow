@@ -63,4 +63,12 @@ export class ImportController {
     if (!file) throw new BadRequestException("No file uploaded");
     return this.importService.importProducts(file.buffer, user.sub);
   }
+
+  @Post("inventory")
+  @HttpCode(HttpStatus.OK)
+  @UseInterceptors(FileInterceptor("file", { limits: { fileSize: 10 * 1024 * 1024 } }))
+  importInventory(@UploadedFile() file: Express.Multer.File, @CurrentUser() user: JwtPayload) {
+    if (!file) throw new BadRequestException("No file uploaded");
+    return this.importService.importInventory(file.buffer, user.sub);
+  }
 }

@@ -56,6 +56,7 @@ export interface Invoice {
   pdfUrl?: string;
   writeOffReason?: string;
   writtenOffAt?: string;
+  orderId?: string;
   recurringInvoiceId?: string;
   items?: InvoiceItem[];
   payments?: InvoicePayment[];
@@ -386,6 +387,19 @@ export function useRunRecurringInvoice() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['invoices'] });
       qc.invalidateQueries({ queryKey: ['recurring-invoices'] });
+    },
+  });
+}
+
+// ─── Generate Invoice from Order ──────────────────────────────────────────────
+
+export function useCreateInvoiceFromOrder() {
+  const qc = useQueryClient();
+  return useMutation<Invoice, Error, string>({
+    mutationFn: (orderId) => apiClient.post(`/invoices/from-order/${orderId}`).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['invoices'] });
+      qc.invalidateQueries({ queryKey: ['orders'] });
     },
   });
 }

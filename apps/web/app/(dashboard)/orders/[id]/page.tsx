@@ -21,6 +21,7 @@ import {
 import { Badge, Button, Card, cn, type BadgeStatus } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useOrder, useUpdateOrderStatus, useUpdateOrderItems, type OrderItem, type ItemUpdate } from "@/lib/api/orders";
+import { useCreateInvoiceFromOrder } from "@/lib/api/invoices";
 import { useProducts } from "@/lib/api/products";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 
@@ -324,6 +325,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
   const { data: order, isLoading, isError } = useOrder(params.id);
   const updateStatus = useUpdateOrderStatus();
   const updateItems = useUpdateOrderItems();
+  const generateInvoice = useCreateInvoiceFromOrder();
 
   // Status tracking — use actual API status directly
   const [localStatus, setLocalStatus] = React.useState<ApiOrderStatus>("PENDING");
@@ -839,6 +841,41 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
               </div>
             </dl>
           </Card>
+
+          {/* Invoice link */}
+          {localStatus === "DELIVERED" && (
+            <Card title="Invoice">
+              {(order as any).invoice ? (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <FileText className="h-4 w-4 text-brand-500" />
+                    <span className="text-sm font-medium text-navy">
+                      {(order as any).invoice.invoiceNumber}
+                    </span>
+                  </div>
+                  <Badge status={(order as any).invoice.status as BadgeStatus} />
+                  <Link
+                    href={`/invoices/${(order as any).invoice.id}`}
+                    className="block text-xs text-brand-500 hover:underline"
+                  >
+                    View invoice →
+                  </Link>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <p className="text-xs text-navy/50">No invoice generated yet.</p>
+                  <Button
+                    size="sm"
+                    leftIcon={<FileText className="h-4 w-4" />}
+                    loading={generateInvoice.isPending}
+                    onClick={() => generateInvoice.mutate(order.id)}
+                  >
+                    Generate Invoice
+                  </Button>
+                </div>
+              )}
+            </Card>
+          )}
         </div>
       </div>
 

@@ -153,4 +153,16 @@ export class CustomersController {
   ) {
     return this.customersService.updateAddress(id, addrId, dto);
   }
+
+  @Delete("all")
+  @Roles(UserRole.OPERATOR)
+  deleteAll() {
+    return this.customersService.deleteAllCustomers();
+  }
+
+  @Delete(":id")
+  @Roles(UserRole.OPERATOR)
+  remove(@Param("id") id: string) {
+    return this.customersService.deleteCustomer(id);
+  }
 }

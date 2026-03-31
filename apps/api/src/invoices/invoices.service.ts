@@ -26,14 +26,7 @@ export class InvoicesService {
   // ─── Helpers ──────────────────────────────────────────────────────────────
 
   private async nextInvoiceNumber(): Promise<string> {
-    const year = new Date().getFullYear();
-    const prefix = `INV-${year}-`;
-    const last = await this.prisma.invoice.findFirst({
-      where: { invoiceNumber: { startsWith: prefix } },
-      orderBy: { invoiceNumber: "desc" },
-    });
-    const seq = last ? parseInt(last.invoiceNumber.split("-")[2], 10) + 1 : 1;
-    return `${prefix}${String(seq).padStart(4, "0")}`;
+    return this.generateInvoiceNumber();
   }
 
   private recomputeStatus(totalPaid: number, total: number, dueDate: Date | null): InvoiceStatus {
@@ -107,6 +100,98 @@ export class InvoicesService {
     }
 
     return invoice;
+  }
+
+  /**
+   * Auto-generate an Invoice from a delivered Order.
+   * Accepts an optional Prisma transaction client so it can run
+   * inside completeStop()'s $transaction.
+   */
+  async createInvoiceFromOrder(
+    orderId: string,
+    txClient?: any,
+  ) {
+    const db = txClient ?? this.prisma;
+
+    // Idempotency: skip if invoice already exists for this order
+    const existing = await db.invoice.findFirst({ where: { orderId } });
+    if (existing) return existing;
+
+    // Fetch order with non-cancelled line items
+    const order = await db.order.findUnique({
+      where: { id: orderId },
+      include: {
+        lineItems: {
+          where: { status: { not: "CANCELLED" } },
+          include: { product: { select: { name: true } } },
+        },
+      },
+    });
+    if (!order) throw new NotFoundException("Order not found");
+
+    // Build invoice items from order items
+    const itemsData = order.lineItems.map((li: any) => ({
+      description: li.product?.name ?? `Product`,
+      productId: li.productId,
+      qty: Number(li.qty),
+      unitPrice: Number(li.unitPrice),
+      discount: 0,
+      taxRate: 0,
+      subtotal: Number(li.subtotal),
+    }));
+
+    const subtotal = Number(order.subtotal);
+    const taxAmount = Number(order.tax);
+    const total = Number(order.total);
+
+    // Due date: 30 days from now
+    const dueDate = new Date();
+    dueDate.setDate(dueDate.getDate() + 30);
+
+    // Generate invoice number
+    const invoiceNumber = await this.generateInvoiceNumber(db);
+
+    const invoice = await db.invoice.create({
+      data: {
+        invoiceNumber,
+        customerId: order.customerId,
+        orderId: order.id,
+        status: InvoiceStatus.SENT,
+        sentAt: new Date(),
+        subtotal,
+        taxAmount,
+        discount: 0,
+        shippingFee: 0,
+        total,
+        dueDate,
+        issueDate: new Date(),
+        notes: order.orderNumber ? `Order #${order.orderNumber}` : null,
+        items: { create: itemsData },
+      },
+      include: {
+        customer: { select: { id: true, businessName: true } },
+        items: true,
+        payments: true,
+      },
+    });
+
+    return invoice;
+  }
+
+  /**
+   * Generate next invoice number. Accepts optional tx client for
+   * transactional safety inside $transaction blocks.
+   */
+  private async generateInvoiceNumber(db?: any): Promise<string> {
+    const client = db ?? this.prisma;
+    const year = new Date().getFullYear();
+    const prefix = `INV-${year}-`;
+    const last = await client.invoice.findFirst({
+      where: { invoiceNumber: { startsWith: prefix } },
+      orderBy: { invoiceNumber: "desc" },
+    });
+    const seq = last ? parseInt(last.invoiceNumber.split("-")[2], 10) + 1 : 1;
+    return `${prefix}${String(seq).padStart(4, "0")}`;
   }
 
   async findAll(query: ListInvoicesDto, user?: JwtPayload) {

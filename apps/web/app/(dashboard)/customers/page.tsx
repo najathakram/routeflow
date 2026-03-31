@@ -3,12 +3,12 @@
 import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Pencil, ToggleLeft, ToggleRight, Eye, CheckSquare, X, ToggleLeft as Deactivate } from "lucide-react";
+import { Pencil, ToggleLeft, ToggleRight, Eye, CheckSquare, X, Trash2 } from "lucide-react";
 import { PageHeader, Table, Badge, Button, Select, cn, type BadgeStatus } from "@routeflow/ui/web";
 import { useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { CustomerFormModal } from "./_components/CustomerFormModal";
-import { useCustomers, useUpdateCustomerStatus } from "@/lib/api/customers";
+import { useCustomers, useUpdateCustomerStatus, useDeleteCustomer } from "@/lib/api/customers";
 import { useCustomerRouteAssignments } from "@/lib/api/routes";
 import { useDebounce } from "@/lib/hooks/useDebounce";
 
@@ -42,7 +42,7 @@ export default function CustomersPage() {
   const [editingCustomer, setEditingCustomer] = React.useState<any>(null);
   const [selectMode, setSelectMode] = React.useState(false);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
-  const [isDeactivating, setIsDeactivating] = React.useState(false);
+  const [isDeleting, setIsDeleting] = React.useState(false);
   const { toast } = useToast();
 
   // Sync status filter to URL
@@ -67,6 +67,7 @@ export default function CustomersPage() {
   const { data: assignments } = useCustomerRouteAssignments();
 
   const updateStatus = useUpdateCustomerStatus();
+  const deleteCustomer = useDeleteCustomer();
 
   // ── Filter: unassigned only ───────────────────────────────────────────────
   const visibleCustomers = React.useMemo(() => {
@@ -79,19 +80,17 @@ export default function CustomersPage() {
 
   const exitSelectMode = () => { setSelectMode(false); setSelected(new Set()); };
 
-  const handleBulkDeactivate = async () => {
-    if (isDeactivating) return;
-    setIsDeactivating(true);
+  const handleBulkDelete = async () => {
+    if (isDeleting || selected.size === 0) return;
+    setIsDeleting(true);
     try {
-      await Promise.all(Array.from(selected).map((id) =>
-        updateStatus.mutateAsync({ id, status: "INACTIVE" }),
-      ));
-      toast({ title: `${selected.size} customer${selected.size !== 1 ? "s" : ""} deactivated`, variant: "success" });
+      await Promise.all(Array.from(selected).map((id) => deleteCustomer.mutateAsync(id)));
+      toast({ title: `${selected.size} customer${selected.size !== 1 ? "s" : ""} deleted`, variant: "success" });
       exitSelectMode();
     } catch {
-      toast({ title: "Failed to deactivate some customers", variant: "error" });
+      toast({ title: "Failed to delete some customers", variant: "error" });
     } finally {
-      setIsDeactivating(false);
+      setIsDeleting(false);
     }
   };
 
@@ -266,7 +265,7 @@ export default function CustomersPage() {
 
       {/* Selection action bar */}
       {selectMode && selected.size > 0 && (
-        <div className="flex items-center justify-between rounded-lg border border-warning/30 bg-warning-bg px-4 py-3">
+        <div className="flex items-center justify-between rounded-lg border border-danger/30 bg-danger-bg px-4 py-3">
           <span className="text-sm font-medium text-navy">
             {selected.size} customer{selected.size !== 1 ? "s" : ""} selected
           </span>
@@ -274,8 +273,8 @@ export default function CustomersPage() {
             <button onClick={() => setSelected(new Set())} className="text-sm text-navy/50 hover:text-navy transition-colors">
               Deselect all
             </button>
-            <Button variant="secondary" leftIcon={<Deactivate className="h-4 w-4" />} loading={isDeactivating} onClick={handleBulkDeactivate}>
-              Deactivate {selected.size}
+            <Button variant="danger" leftIcon={<Trash2 className="h-4 w-4" />} loading={isDeleting} onClick={handleBulkDelete}>
+              Delete {selected.size}
             </Button>
           </div>
         </div>

@@ -40,10 +40,14 @@ export class VendorBillsController {
     );
   }
   @Post("scan-invoice")
-  @UseInterceptors(FileInterceptor("image", { limits: { fileSize: 10 * 1024 * 1024 } }))
+  @UseInterceptors(FileInterceptor("image", { limits: { fileSize: 20 * 1024 * 1024 } }))
   scanInvoice(@UploadedFile() file: Express.Multer.File) {
-    if (!file) throw new BadRequestException("No image file provided");
+    if (!file) throw new BadRequestException("No file provided");
     const mimeType = file.mimetype || "image/jpeg";
+    const allowed = ["image/jpeg", "image/png", "image/gif", "image/webp", "application/pdf"];
+    if (!allowed.includes(mimeType)) {
+      throw new BadRequestException("Only JPEG, PNG, WebP, GIF, or PDF files are accepted");
+    }
     return this.vendorBillsService.scanInvoice(file.buffer, mimeType);
   }
 

@@ -658,6 +658,7 @@ function ExpensesTab() {
   const [from, setFrom] = React.useState("");
   const [to, setTo] = React.useState("");
   const [confirmDelete, setConfirmDelete] = React.useState<string | null>(null);
+  const [scanOpen, setScanOpen] = React.useState(false);
 
   const { data, isLoading } = useExpenses({ categoryId: categoryId || undefined, from: from || undefined, to: to || undefined, page, limit: 25 });
   const { data: categories } = useExpenseCategories();
@@ -681,6 +682,9 @@ function ExpensesTab() {
     <div className="space-y-5">
       {/* Actions row */}
       <div className="flex items-center justify-end gap-2">
+        <Button variant="secondary" onClick={() => setScanOpen(true)}>
+          <Sparkles className="mr-1 h-4 w-4" /> Scan Receipt
+        </Button>
         <Link href="/finance/expenses/new" className="flex items-center gap-2 rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 transition-colors">
           <Plus className="h-4 w-4" /> New Expense
         </Link>
@@ -764,6 +768,12 @@ function ExpensesTab() {
           </div>
         </div>
       )}
+
+      <ScanInvoiceModal
+        open={scanOpen}
+        onClose={() => setScanOpen(false)}
+        onCreated={() => setScanOpen(false)}
+      />
     </div>
   );
 }

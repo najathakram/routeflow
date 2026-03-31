@@ -15,11 +15,14 @@ import {
   Package,
   ChevronDown,
   ChevronUp,
+  BarChart3,
 } from "lucide-react";
 import { cn } from "@routeflow/ui/web";
 
 interface ImportResult {
-  imported: number;
+  imported?: number;
+  updated?: number;
+  created?: number;
   skipped: number;
   errors: string[];
 }
@@ -43,6 +46,15 @@ const IMPORT_SECTIONS: ImportSection[] = [
     icon: Users,
     color: "text-brand-500 bg-brand-50",
     zohoExportPath: "Zoho Invoices → Contacts → ⋮ → Export Contacts",
+  },
+  {
+    id: "inventory",
+    label: "Inventory Stock Levels",
+    description: "Sync current stock quantities from Zoho Stock Summary Report",
+    endpoint: "/import/inventory",
+    icon: BarChart3,
+    color: "text-teal-500 bg-teal-50",
+    zohoExportPath: "Zoho Inventory → Reports → Stock Summary → Export",
   },
   {
     id: "invoices",
@@ -111,9 +123,13 @@ function ImportCard({ section }: { section: ImportSection }) {
         timeout: 300_000, // 5 min for large files
       });
       setResult(res.data);
+      const d = res.data;
+      const summary = d.updated !== undefined
+        ? `${d.updated} updated, ${d.created} created, ${d.skipped} skipped`
+        : `${d.imported} records imported, ${d.skipped} skipped`;
       toast({
         title: `${section.label} imported`,
-        description: `${res.data.imported} records imported, ${res.data.skipped} skipped`,
+        description: summary,
         variant: "success",
       });
     } catch (err: any) {
@@ -149,7 +165,9 @@ function ImportCard({ section }: { section: ImportSection }) {
           <div className="flex items-center gap-1.5 text-xs shrink-0">
             <span className="flex items-center gap-1 text-success">
               <CheckCircle2 className="h-3.5 w-3.5" />
-              {result.imported} imported
+              {result.updated !== undefined
+                ? `${result.updated} updated, ${result.created} created`
+                : `${result.imported} imported`}
             </span>
             {result.skipped > 0 && (
               <span className="flex items-center gap-1 text-warning ml-2">

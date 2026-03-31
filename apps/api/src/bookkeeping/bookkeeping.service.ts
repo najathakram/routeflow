@@ -212,9 +212,9 @@ export class BookkeepingService {
       : new Date();
 
     const [revenueAgg, cogsMovements, expenses] = await Promise.all([
-      this.prisma.transaction.aggregate({
-        where: { status: "PAID", paidAt: { gte: fromDate, lte: toDate } },
-        _sum: { totalOwed: true },
+      this.prisma.invoice.aggregate({
+        where: { status: InvoiceStatus.PAID, paidAt: { gte: fromDate, lte: toDate } },
+        _sum: { total: true },
       }),
       this.prisma.stockMovement.findMany({
         where: { type: "SALE", createdAt: { gte: fromDate, lte: toDate } },
@@ -226,7 +226,7 @@ export class BookkeepingService {
       }),
     ]);
 
-    const revenue = Number(revenueAgg._sum.totalOwed ?? 0);
+    const revenue = Number(revenueAgg._sum.total ?? 0);
     const cogs = cogsMovements.reduce(
       (s, m) => s + Math.abs(Number(m.quantity)) * Number(m.unitCost ?? 0),
       0,
@@ -254,48 +254,9 @@ export class BookkeepingService {
   }
 
   // ── AR Aging Report ──
+  /** @deprecated Use getArAgingInvoices() instead — this now delegates to it */
   async getArAging() {
-    const now = new Date();
-    const txns = await this.prisma.transaction.findMany({
-      where: { status: { in: ["UNPAID", "PARTIAL"] } },
-      include: { customer: { select: { id: true, businessName: true } } },
-    });
-
-    const buckets: Record<string, any[]> = {
-      current: [],
-      days1_30: [],
-      days31_60: [],
-      days61_90: [],
-      days90plus: [],
-    };
-
-    for (const t of txns) {
-      const remaining = Number(t.totalOwed) - Number(t.totalPaid);
-      if (remaining <= 0) continue;
-      const entry = { id: t.id, customer: t.customer, amount: remaining, dueDate: t.dueDate };
-      if (!t.dueDate || t.dueDate >= now) {
-        buckets.current.push(entry);
-        continue;
-      }
-      const daysPast = Math.floor((now.getTime() - t.dueDate.getTime()) / 86400000);
-      if (daysPast <= 30) buckets.days1_30.push(entry);
-      else if (daysPast <= 60) buckets.days31_60.push(entry);
-      else if (daysPast <= 90) buckets.days61_90.push(entry);
-      else buckets.days90plus.push(entry);
-    }
-
-    const sum = (arr: any[]) => arr.reduce((s, e) => s + e.amount, 0);
-    return {
-      buckets,
-      totals: {
-        current: sum(buckets.current),
-        days1_30: sum(buckets.days1_30),
-        days31_60: sum(buckets.days31_60),
-        days61_90: sum(buckets.days61_90),
-        days90plus: sum(buckets.days90plus),
-        total: txns.reduce((s, t) => s + Math.max(0, Number(t.totalOwed) - Number(t.totalPaid)), 0),
-      },
-    };
+    return this.getArAgingInvoices();
   }
 
   // ── Cash Flow ──
@@ -310,7 +271,7 @@ export class BookkeepingService {
       : new Date();
 
     const [payments, expenses, bills] = await Promise.all([
-      this.prisma.payment.findMany({
+      this.prisma.invoicePayment.findMany({
         where: { paidAt: { gte: fromDate, lte: toDate } },
         orderBy: { paidAt: "asc" },
       }),
@@ -342,35 +303,40 @@ export class BookkeepingService {
     const sevenDaysAgo = new Date(now);
     sevenDaysAgo.setDate(now.getDate() - 7);
 
-    const [totalRevenueResult, outstandingResult, paymentsThisWeekResult, overdueCount] =
+    const [totalRevenueResult, outstandingInvoices, paymentsThisWeekResult, overdueCount] =
       await Promise.all([
-        this.prisma.transaction.aggregate({
-          where: { status: TxnStatus.PAID, paidAt: { gte: startOfMonth } },
-          _sum: { totalOwed: true },
+        this.prisma.invoice.aggregate({
+          where: { status: InvoiceStatus.PAID, paidAt: { gte: startOfMonth } },
+          _sum: { total: true },
         }),
-        this.prisma.transaction.findMany({
-          where: { status: { in: [TxnStatus.UNPAID, TxnStatus.PARTIAL] } },
-          select: { totalOwed: true, totalPaid: true },
+        this.prisma.invoice.findMany({
+          where: {
+            status: { in: [InvoiceStatus.SENT, InvoiceStatus.VIEWED, InvoiceStatus.PARTIAL, InvoiceStatus.OVERDUE] },
+          },
+          select: { total: true, payments: { select: { amount: true } } },
         }),
-        this.prisma.payment.aggregate({
+        this.prisma.invoicePayment.aggregate({
           where: { createdAt: { gte: sevenDaysAgo } },
           _sum: { amount: true },
         }),
-        this.prisma.transaction.count({
+        this.prisma.invoice.count({
           where: {
-            status: { not: TxnStatus.PAID },
+            status: { in: [InvoiceStatus.SENT, InvoiceStatus.VIEWED, InvoiceStatus.PARTIAL, InvoiceStatus.OVERDUE] },
             dueDate: { lt: now },
           },
         }),
       ]);
 
-    const outstandingReceivables = outstandingResult.reduce(
-      (sum, t) => sum + (Number(t.totalOwed) - Number(t.totalPaid)),
+    const outstandingReceivables = outstandingInvoices.reduce(
+      (sum, inv) => {
+        const paid = inv.payments.reduce((s: number, p: any) => s + Number(p.amount), 0);
+        return sum + (Number(inv.total) - paid);
+      },
       0,
     );
 
     return {
-      totalRevenue: Number(totalRevenueResult._sum.totalOwed ?? 0),
+      totalRevenue: Number(totalRevenueResult._sum.total ?? 0),
       outstandingReceivables,
       paymentsThisWeek: Number(paymentsThisWeekResult._sum.amount ?? 0),
       overdueCount,

@@ -201,35 +201,40 @@ export class VendorBillsService {
       .join("\n");
 
     const anthropic = new Anthropic({ apiKey });
-    const base64Image = imageBuffer.toString("base64");
+    const base64Data = imageBuffer.toString("base64");
+    const isPdf = mimeType === "application/pdf";
 
-    const message = await anthropic.messages.create({
-      model: "claude-opus-4-5",
-      max_tokens: 2048,
-      messages: [
-        {
-          role: "user",
-          content: [
-            {
-              type: "image",
-              source: {
-                type: "base64",
-                media_type: mimeType as "image/jpeg" | "image/png" | "image/gif" | "image/webp",
-                data: base64Image,
-              },
-            },
-            {
-              type: "text",
-              text: `You are analyzing a vendor/supplier invoice image. Extract all information and return valid JSON only (no markdown, no explanation).
+    // Build the file content block — PDFs use "document" type, images use "image" type
+    const fileContentBlock = isPdf
+      ? ({
+          type: "document" as const,
+          source: {
+            type: "base64" as const,
+            media_type: "application/pdf" as const,
+            data: base64Data,
+          },
+        } as any)
+      : {
+          type: "image" as const,
+          source: {
+            type: "base64" as const,
+            media_type: mimeType as "image/jpeg" | "image/png" | "image/gif" | "image/webp",
+            data: base64Data,
+          },
+        };
+
+    const promptText = `You are analyzing a vendor/supplier invoice${isPdf ? " (PDF document)" : " image"}. Extract all information and return valid JSON only (no markdown, no explanation).
 
 Here are the existing products in our system:
-${productList}
+${productList || "(no products configured yet)"}
 
 Return this exact JSON structure:
 {
   "supplier": "supplier name or null",
   "invoiceNumber": "invoice number or null",
   "invoiceDate": "YYYY-MM-DD or null",
+  "expenseDescription": "one-line summary of what was purchased (e.g., 'Office supplies from Acme Corp') or null",
+  "expenseCategory": "best-fit category: Food & Beverage, Supplies, Utilities, Transport, Marketing, Equipment, Maintenance, Professional Services, or Other",
   "items": [
     {
       "extractedName": "exact name from invoice",
@@ -253,9 +258,15 @@ Matching rules:
 - "low" confidence: possible match but unsure
 - "none": no matching product found
 
-If you cannot read a value clearly, use null. Return ONLY the JSON object.`,
-            },
-          ],
+If you cannot read a value clearly, use null. Return ONLY the JSON object.`;
+
+    const message = await anthropic.messages.create({
+      model: "claude-opus-4-5",
+      max_tokens: 2048,
+      messages: [
+        {
+          role: "user",
+          content: [fileContentBlock, { type: "text", text: promptText }],
         },
       ],
     });

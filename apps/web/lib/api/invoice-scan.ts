@@ -14,6 +14,8 @@ export interface ScanResult {
   supplier: string | null;
   invoiceNumber: string | null;
   invoiceDate: string | null;
+  expenseDescription: string | null;
+  expenseCategory: string | null;
   items: ScannedItem[];
   subtotal: number | null;
   tax: number | null;
@@ -21,11 +23,12 @@ export interface ScanResult {
   notes: string | null;
 }
 
-export async function scanInvoice(imageFile: File): Promise<ScanResult> {
+export async function scanInvoice(file: File): Promise<ScanResult> {
   const formData = new FormData();
-  formData.append("image", imageFile);
+  formData.append("image", file);
   const response = await apiClient.post("/vendor-bills/scan-invoice", formData, {
     headers: { "Content-Type": "multipart/form-data" },
+    timeout: 60_000, // AI processing can take up to 60s
   });
   return response.data as ScanResult;
 }
