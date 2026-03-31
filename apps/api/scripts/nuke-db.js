@@ -18,7 +18,12 @@ const { PrismaClient } = require("../../../node_modules/@prisma/client");
 const { PrismaPg } = require("../../../node_modules/@prisma/adapter-pg");
 const { Pool } = require("../../../node_modules/pg");
 
-const dbUrl = process.env.DATABASE_URL || "postgresql://user:pass@localhost:5432/routeflow_dev";
+// Prefer the public URL when running locally (internal .railway.internal hostnames
+// are only reachable from within Railway's network).
+const dbUrl =
+  process.env.DATABASE_PUBLIC_URL ||
+  process.env.DATABASE_URL ||
+  "postgresql://user:pass@localhost:5432/routeflow_dev";
 const deleteAllUsers = process.argv.includes("--all");
 
 const pool = new Pool({ connectionString: dbUrl });
