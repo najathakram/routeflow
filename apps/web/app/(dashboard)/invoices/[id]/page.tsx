@@ -37,6 +37,8 @@ import {
   useUpdateInvoicePayment,
   useDeleteInvoicePayment,
   useDownloadInvoicePdf,
+  useRevertInvoiceToDraft,
+  useUnvoidInvoice,
   type Invoice,
   type InvoiceStatus,
   type InvoicePayment,
@@ -698,6 +700,8 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
   const updatePayment = useUpdateInvoicePayment();
   const deletePayment = useDeleteInvoicePayment();
   const downloadPdf = useDownloadInvoicePdf();
+  const revertToDraft = useRevertInvoiceToDraft();
+  const unvoid = useUnvoidInvoice();
 
   const [isPaymentOpen, setIsPaymentOpen] = React.useState(false);
   const [isVoidOpen, setIsVoidOpen] = React.useState(false);
@@ -927,6 +931,46 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
               loading={downloadPdf.isPending}
             >
               PDF
+            </Button>
+          )}
+
+          {/* Revert to Draft — SENT/VIEWED/OVERDUE with no payments */}
+          {(status === "SENT" || status === "VIEWED" || status === "OVERDUE") && amountPaid === 0 && (
+            <Button
+              size="sm"
+              variant="secondary"
+              leftIcon={<RotateCcw className="h-4 w-4" />}
+              onClick={() => {
+                if (confirm("Revert this invoice to Draft? It will be undelivered to the customer.")) {
+                  revertToDraft.mutate(invoice.id, {
+                    onSuccess: () => toast({ title: "Invoice reverted to Draft", variant: "success" }),
+                    onError: (e: any) => toast({ title: "Failed to revert", description: e?.response?.data?.message ?? "Please try again.", variant: "error" }),
+                  });
+                }
+              }}
+              loading={revertToDraft.isPending}
+            >
+              Revert to Draft
+            </Button>
+          )}
+
+          {/* Unvoid — VOID invoices */}
+          {status === "VOID" && (
+            <Button
+              size="sm"
+              variant="secondary"
+              leftIcon={<RotateCcw className="h-4 w-4" />}
+              onClick={() => {
+                if (confirm("Unvoid this invoice? It will return to Draft status.")) {
+                  unvoid.mutate(invoice.id, {
+                    onSuccess: () => toast({ title: "Invoice unvoided — now in Draft", variant: "success" }),
+                    onError: (e: any) => toast({ title: "Failed to unvoid", description: e?.response?.data?.message ?? "Please try again.", variant: "error" }),
+                  });
+                }
+              }}
+              loading={unvoid.isPending}
+            >
+              Unvoid
             </Button>
           )}
 

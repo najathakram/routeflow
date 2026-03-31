@@ -191,10 +191,24 @@ model User {
   stockMovements  StockMovement[]
   expenses        Expense[]
   messages        Message[]
+  preferences     UserPreference[]
 
   @@index([role])
   @@index([status])
   @@index([deletedAt])
+}
+
+model UserPreference {
+  id        String   @id @default(uuid())
+  userId    String
+  key       String
+  value     String
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, key])
+  @@index([userId])
 }
 
 model Customer {

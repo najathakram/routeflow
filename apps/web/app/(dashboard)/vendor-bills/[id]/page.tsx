@@ -33,6 +33,7 @@ import {
 import { useSuppliers } from "@/lib/api/inventory";
 import { useProducts } from "@/lib/api/products";
 import { fmt, fmtDate } from "@/lib/formatting";
+import { usePreferences, useSavePreferences } from "@/lib/api/users";
 
 // ─── Status badge ─────────────────────────────────────────────────────────────
 
@@ -72,15 +73,17 @@ function RecordPaymentModal({
   onRecord,
   balance,
   isPending,
+  defaultMethod,
 }: {
   isOpen: boolean;
   onClose: () => void;
   onRecord: (data: PaymentFormState) => void;
   balance: number;
   isPending: boolean;
+  defaultMethod?: PaymentFormState["method"];
 }) {
   const [form, setForm] = React.useState<PaymentFormState>({
-    method: "ACH",
+    method: defaultMethod ?? "ACH",
     amount: "",
     reference: "",
     notes: "",
@@ -90,14 +93,14 @@ function RecordPaymentModal({
   React.useEffect(() => {
     if (isOpen) {
       setForm({
-        method: "ACH",
+        method: defaultMethod ?? "ACH",
         amount: balance > 0 ? balance.toFixed(2) : "",
         reference: "",
         notes: "",
       });
       setAmountError("");
     }
-  }, [isOpen, balance]);
+  }, [isOpen, balance, defaultMethod]);
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -402,6 +405,9 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
   const { data: suppliersData } = useSuppliers();
   const suppliers: Array<{ id: string; name: string }> = suppliersData ?? [];
 
+  const { data: prefs } = usePreferences();
+  const savePrefs = useSavePreferences();
+
   const [isPaymentOpen, setIsPaymentOpen] = React.useState(false);
   const [isVoidOpen, setIsVoidOpen] = React.useState(false);
   const [isRevertOpen, setIsRevertOpen] = React.useState(false);
@@ -448,7 +454,7 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
     return (
       <div className="flex flex-col items-center gap-4 p-12 text-center">
         <p className="text-base font-medium text-navy">Vendor bill not found.</p>
-        <Button variant="secondary" href="/vendor-bills">
+        <Button variant="secondary" href="/purchases">
           Back to Vendor Bills
         </Button>
       </div>
@@ -564,6 +570,7 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
       {
         onSuccess: () => {
           setIsPaymentOpen(false);
+          savePrefs.mutate({ "payment.lastMethod": data.method });
           toast({
             title: "Payment recorded",
             description: `Payment of ${fmt(parseFloat(data.amount))} recorded.`,
@@ -587,7 +594,7 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
     <div className="space-y-5 p-6">
       {/* Back */}
       <Link
-        href="/vendor-bills"
+        href="/purchases"
         className="flex items-center gap-1.5 text-sm text-navy/60 hover:text-navy transition-colors"
       >
         <ArrowLeft className="h-4 w-4" />
@@ -972,6 +979,7 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
         onRecord={handleRecordPayment}
         balance={balance}
         isPending={recordPayment.isPending}
+        defaultMethod={prefs?.["payment.lastMethod"] as PaymentFormState["method"] ?? "ACH"}
       />
 
       <VoidConfirmModal

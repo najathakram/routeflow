@@ -402,6 +402,28 @@ export function useRunRecurringInvoice() {
   });
 }
 
+export function useRevertInvoiceToDraft() {
+  const qc = useQueryClient();
+  return useMutation<any, Error, string>({
+    mutationFn: (id) => apiClient.post(`/invoices/${id}/revert-to-draft`).then((r) => r.data),
+    onSuccess: (_, id) => {
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["invoices", id] });
+    },
+  });
+}
+
+export function useUnvoidInvoice() {
+  const qc = useQueryClient();
+  return useMutation<any, Error, string>({
+    mutationFn: (id) => apiClient.post(`/invoices/${id}/unvoid`).then((r) => r.data),
+    onSuccess: (_, id) => {
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["invoices", id] });
+    },
+  });
+}
+
 // ─── Generate Invoice from Order ──────────────────────────────────────────────
 
 export function useCreateInvoiceFromOrder() {

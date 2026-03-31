@@ -53,6 +53,13 @@ export class OrdersController {
     return this.ordersService.changeStatus(id, dto, user);
   }
 
+  @Post(":id/reopen")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR)
+  reopenOrder(@Param("id") id: string) {
+    return this.ordersService.reopenOrder(id);
+  }
+
   @Patch(":id/items")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR, UserRole.CUSTOMER, UserRole.DRIVER)

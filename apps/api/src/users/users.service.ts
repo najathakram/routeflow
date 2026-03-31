@@ -110,4 +110,23 @@ export class UsersService {
       select: { id: true, username: true, email: true, role: true, status: true },
     });
   }
+
+  async getPreferences(userId: string): Promise<Record<string, string>> {
+    const prefs = await this.prisma.userPreference.findMany({ where: { userId } });
+    return Object.fromEntries(prefs.map((p) => [p.key, p.value]));
+  }
+
+  async setPreference(userId: string, key: string, value: string): Promise<void> {
+    await this.prisma.userPreference.upsert({
+      where: { userId_key: { userId, key } },
+      create: { userId, key, value },
+      update: { value },
+    });
+  }
+
+  async setPreferences(userId: string, prefs: Record<string, string>): Promise<void> {
+    await Promise.all(
+      Object.entries(prefs).map(([key, value]) => this.setPreference(userId, key, value)),
+    );
+  }
 }

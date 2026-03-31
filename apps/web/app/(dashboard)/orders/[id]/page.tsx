@@ -20,7 +20,7 @@ import {
 } from "lucide-react";
 import { Badge, Button, Card, cn, type BadgeStatus } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
-import { useOrder, useUpdateOrderStatus, useUpdateOrderItems, type OrderItem, type ItemUpdate } from "@/lib/api/orders";
+import { useOrder, useUpdateOrderStatus, useUpdateOrderItems, useReopenOrder, type OrderItem, type ItemUpdate } from "@/lib/api/orders";
 import { useCreateInvoiceFromOrder } from "@/lib/api/invoices";
 import { useProducts } from "@/lib/api/products";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -325,6 +325,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
   const { data: order, isLoading, isError } = useOrder(params.id);
   const updateStatus = useUpdateOrderStatus();
   const updateItems = useUpdateOrderItems();
+  const reopenOrder = useReopenOrder();
   const generateInvoice = useCreateInvoiceFromOrder();
 
   // Status tracking — use actual API status directly
@@ -588,6 +589,22 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
               <Button
                 size="sm"
                 variant="secondary"
+                leftIcon={<RotateCcw className="h-4 w-4" />}
+                onClick={() => {
+                  if (confirm("Unconfirm this order? It will return to Pending status.")) {
+                    updateStatus.mutate(
+                      { id: order.id, status: "PENDING" },
+                      { onSuccess: () => setLocalStatus("PENDING") },
+                    );
+                  }
+                }}
+                loading={updateStatus.isPending}
+              >
+                Unconfirm
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
                 leftIcon={<RefreshCcw className="h-4 w-4" />}
                 onClick={() => setDemoteTarget("PENDING")}
               >
@@ -648,7 +665,21 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
 
           {/* CANCELLED */}
           {localStatus === "CANCELLED" && (
-            <span className="text-sm italic text-navy/40">Order is cancelled.</span>
+            <Button
+              variant="secondary"
+              size="sm"
+              leftIcon={<RotateCcw className="h-4 w-4" />}
+              onClick={() => {
+                if (confirm("Reopen this order? It will return to Pending status.")) {
+                  reopenOrder.mutate(order.id, {
+                    onSuccess: () => setLocalStatus("PENDING"),
+                  });
+                }
+              }}
+              loading={reopenOrder.isPending}
+            >
+              Reopen Order
+            </Button>
           )}
         </div>
       </div>

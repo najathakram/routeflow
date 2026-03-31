@@ -48,3 +48,21 @@ export function useChangeUserStatus() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
   });
 }
+
+// ─── User Preferences (smart defaults / ML adaptive UX) ──────────────────────
+
+export function usePreferences() {
+  return useQuery<Record<string, string>>({
+    queryKey: ["user-preferences"],
+    queryFn: () => apiClient.get("/users/me/preferences").then((r) => r.data),
+    staleTime: 5 * 60 * 1000, // 5 minutes
+  });
+}
+
+export function useSavePreferences() {
+  const qc = useQueryClient();
+  return useMutation<Record<string, string>, Error, Record<string, string>>({
+    mutationFn: (prefs) => apiClient.patch("/users/me/preferences", prefs).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["user-preferences"] }),
+  });
+}

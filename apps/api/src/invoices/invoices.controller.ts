@@ -75,6 +75,18 @@ export class InvoicesController {
   @Post(":id/void") void(@Param("id") id: string) {
     return this.invoicesService.voidInvoice(id);
   }
+  @Post(":id/revert-to-draft")
+  @Roles(UserRole.OPERATOR)
+  revertToDraft(@Param("id") id: string) {
+    return this.invoicesService.revertInvoiceToDraft(id);
+  }
+
+  @Post(":id/unvoid")
+  @Roles(UserRole.OPERATOR)
+  unvoid(@Param("id") id: string) {
+    return this.invoicesService.unvoidInvoice(id);
+  }
+
   @Post(":id/reopen") reopenInvoice(@Param("id") id: string) {
     return this.invoicesService.reopenInvoice(id);
   }

@@ -98,3 +98,14 @@ export function useToggleUrgent() {
     },
   });
 }
+
+export function useReopenOrder() {
+  const qc = useQueryClient();
+  return useMutation<Order, Error, string>({
+    mutationFn: (id) => apiClient.post(`/orders/${id}/reopen`).then((r) => r.data),
+    onSuccess: (_, id) => {
+      qc.invalidateQueries({ queryKey: ['orders'] });
+      qc.invalidateQueries({ queryKey: ['orders', id] });
+    },
+  });
+}

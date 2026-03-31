@@ -30,6 +30,7 @@ import {
 import { useSuppliers, usePurchaseOrders } from "@/lib/api/inventory";
 import { useProducts } from "@/lib/api/products";
 import { useExpenses, useExpenseCategories, useDeleteExpense } from "@/lib/api/finance";
+import { usePreferences, useSavePreferences } from "@/lib/api/users";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { ScanInvoiceModal } from "@/components/ScanInvoiceModal";
@@ -230,6 +231,8 @@ function ProductCombobox({
 function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
   const { toast } = useToast();
   const createBill = useCreateVendorBill();
+  const { data: prefs } = usePreferences();
+  const savePrefs = useSavePreferences();
 
   const { data: suppliersData } = useSuppliers();
   const suppliers: Array<{ id: string; name: string }> = suppliersData ?? [];
@@ -253,6 +256,7 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
     if (isOpen) {
       setSupplierId(""); setPurchaseOrderId(""); setBillDate(todayIso());
       setDueDate(""); setNotes(""); setLineItems([emptyLineItem()]); setErrors({});
+      if (prefs?.["bill.lastSupplierId"]) setSupplierId(prefs["bill.lastSupplierId"]);
     }
   }, [isOpen]);
 
@@ -295,7 +299,13 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
     createBill.mutate(
       { supplierId, purchaseOrderId: purchaseOrderId || undefined, billDate, dueDate, items, notes: notes.trim() || undefined },
       {
-        onSuccess: () => { toast({ title: "Vendor bill created", variant: "success" }); onClose(); },
+        onSuccess: () => {
+          savePrefs.mutate({
+            "bill.lastSupplierId": supplierId,
+          });
+          toast({ title: "Vendor bill created", variant: "success" });
+          onClose();
+        },
         onError: () => { toast({ title: "Failed to create vendor bill", description: "Please try again.", variant: "error" }); },
       },
     );

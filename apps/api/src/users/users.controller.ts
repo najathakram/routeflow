@@ -43,6 +43,20 @@ export class UsersController {
     return this.usersService.createOperator(dto);
   }
 
+  @Get("me/preferences")
+  getMyPreferences(@CurrentUser() user: JwtPayload) {
+    return this.usersService.getPreferences(user.sub);
+  }
+
+  @Patch("me/preferences")
+  async updateMyPreferences(
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: Record<string, string>,
+  ) {
+    await this.usersService.setPreferences(user.sub, dto);
+    return this.usersService.getPreferences(user.sub);
+  }
+
   @Get(":id")
   findOne(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
     if (user.role !== UserRole.OPERATOR && user.sub !== id) {

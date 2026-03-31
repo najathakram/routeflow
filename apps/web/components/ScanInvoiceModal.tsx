@@ -33,6 +33,9 @@ interface ReviewItem {
   description: string;
   qty: string;
   unitCost: string;
+  lineTotal: number | null;      // raw AI-extracted line total (read-only reference)
+  extractedQty: string;          // original AI-extracted qty (for hint display)
+  extractedUnitCost: string;     // original AI-extracted unit cost (for hint display)
   confidence: ScannedItem["confidence"];
 }
 
@@ -145,6 +148,9 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
         description: item.matchedProductName ?? item.extractedName,
         qty: String(item.qty ?? 1),
         unitCost: String(item.unitCost ?? ""),
+        lineTotal: item.lineTotal ?? null,
+        extractedQty: String(item.qty ?? 1),
+        extractedUnitCost: String(item.unitCost ?? ""),
         confidence: item.confidence,
       }));
       setReviewItems(
@@ -214,7 +220,7 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
   const addItem = () => {
     setReviewItems((prev) => [
       ...prev,
-      { extractedName: "", productId: "", description: "", qty: "1", unitCost: "", confidence: "none" },
+      { extractedName: "", productId: "", description: "", qty: "1", unitCost: "", lineTotal: null, extractedQty: "1", extractedUnitCost: "", confidence: "none" },
     ]);
   };
 
@@ -222,12 +228,13 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
     const product = products.find((p) => p.id === productId);
     const item = reviewItems[i];
     if (product) {
+      // Only update the product link + description.
+      // Keep the invoice-extracted price — that is what the supplier is actually charging.
+      // The product's averageCost is our historical average, not the current invoice price.
       updateItem(i, {
         productId,
         description: product.name,
-        unitCost: product.averageCost
-          ? String(parseFloat(product.averageCost).toFixed(4))
-          : item.unitCost,
+        // unitCost intentionally NOT overwritten — preserve the extracted invoice price
       });
     } else {
       updateItem(i, { productId: "", description: item.extractedName });
@@ -597,21 +604,24 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                     </h3>
                     <p className="text-xs text-navy/40">Review and correct AI-extracted data below</p>
                   </div>
-                  <div className="overflow-hidden rounded-xl border border-surface-border">
+                  <div className="overflow-x-auto overflow-hidden rounded-xl border border-surface-border">
                     <table className="w-full text-sm">
                       <thead>
                         <tr className="border-b border-surface-border bg-surface-raised">
                           <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-navy/40">
                             Product
                           </th>
-                          <th className="w-16 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-navy/40">
+                          <th className="w-20 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-navy/40">
                             Qty
                           </th>
-                          <th className="w-24 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-navy/40">
-                            Unit Cost
+                          <th className="w-28 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-navy/40">
+                            Unit Price
                           </th>
-                          <th className="w-24 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-navy/40">
-                            Total
+                          <th className="w-24 px-3 py-2 text-right text-xs font-semibold uppercase tracking-wide text-navy/40">
+                            Calculated
+                          </th>
+                          <th className="w-24 px-3 py-2 text-right text-xs font-semibold uppercase tracking-wide text-navy/40">
+                            Invoice Total
                           </th>
                           <th className="w-8 px-3 py-2" />
                         </tr>
@@ -620,13 +630,19 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                         {reviewItems.map((item, i) => {
                           const qty = parseFloat(item.qty) || 0;
                           const cost = parseFloat(item.unitCost) || 0;
+                          const calculated = qty > 0 && cost > 0 ? qty * cost : null;
+                          const invoiceTotal = item.lineTotal;
+                          // Show hint if current value differs from what AI extracted
+                          const qtyChanged = item.qty !== item.extractedQty && item.extractedQty && item.extractedQty !== "1";
+                          const costChanged = item.unitCost !== item.extractedUnitCost && item.extractedUnitCost;
                           return (
-                            <tr key={i} className="group">
+                            <tr key={i} className="group align-top">
                               <td className="px-3 py-2">
                                 <div className="space-y-1">
                                   {item.extractedName && item.extractedName !== item.description && (
-                                    <p className="text-[10px] italic text-navy/40">
-                                      Extracted: {item.extractedName}
+                                    <p className="text-[10px] italic text-navy/40 flex items-center gap-1">
+                                      <Sparkles className="h-2.5 w-2.5 shrink-0" />
+                                      {item.extractedName}
                                     </p>
                                   )}
                                   <div className="flex items-center gap-1">
@@ -662,6 +678,12 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                                   onChange={(e) => updateItem(i, { qty: e.target.value })}
                                   className="w-full rounded border border-surface-border px-2 py-1 text-right text-xs text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
                                 />
+                                {qtyChanged && (
+                                  <p className="mt-0.5 text-right text-[10px] text-navy/40 flex items-center justify-end gap-0.5">
+                                    <Sparkles className="h-2.5 w-2.5" />
+                                    {item.extractedQty}
+                                  </p>
+                                )}
                               </td>
                               <td className="px-3 py-2">
                                 <div className="relative">
@@ -671,15 +693,35 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                                   <input
                                     type="number"
                                     min="0"
-                                    step="0.01"
+                                    step="0.0001"
                                     value={item.unitCost}
                                     onChange={(e) => updateItem(i, { unitCost: e.target.value })}
                                     className="w-full rounded border border-surface-border py-1 pl-5 pr-2 text-right text-xs text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
                                   />
+                                  {costChanged && (
+                                    <p className="mt-0.5 text-right text-[10px] text-navy/40 flex items-center justify-end gap-0.5">
+                                      <Sparkles className="h-2.5 w-2.5" />
+                                      ${item.extractedUnitCost}
+                                    </p>
+                                  )}
                                 </div>
                               </td>
-                              <td className="px-3 py-2 text-right text-xs text-navy/60">
-                                {qty > 0 && cost > 0 ? fmt(qty * cost) : "—"}
+                              <td className="px-3 py-2 text-right text-xs font-medium text-navy">
+                                {calculated != null ? fmt(calculated) : <span className="text-navy/30">—</span>}
+                              </td>
+                              <td className="px-3 py-2 text-right text-xs">
+                                {invoiceTotal != null ? (
+                                  <span className={cn(
+                                    "font-medium",
+                                    calculated != null && Math.abs(calculated - invoiceTotal) > 0.01
+                                      ? "text-amber-600"  // mismatch — might be tax/rounding
+                                      : "text-navy/50"
+                                  )}>
+                                    {fmt(invoiceTotal)}
+                                  </span>
+                                ) : (
+                                  <span className="text-navy/30">—</span>
+                                )}
                               </td>
                               <td className="px-3 py-2">
                                 <button

@@ -310,6 +310,37 @@ export class OrdersService {
     return updated;
   }
 
+  async reopenOrder(id: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id },
+      include: { lineItems: true },
+    });
+    if (!order) throw new NotFoundException("Order not found");
+    if (order.status !== OrderStatus.CANCELLED) {
+      throw new BadRequestException(`Only CANCELLED orders can be reopened. Current status: ${order.status}`);
+    }
+    return this.prisma.$transaction(async (tx) => {
+      // Revert cancelled line items back to PENDING
+      await tx.orderItem.updateMany({
+        where: { orderId: id, status: ItemStatus.CANCELLED },
+        data: { status: ItemStatus.PENDING },
+      });
+      return tx.order.update({
+        where: { id },
+        data: {
+          status: OrderStatus.PENDING,
+          notes: order.notes
+            ? `${order.notes}\n[Reopened ${new Date().toLocaleDateString()}]`
+            : `[Reopened ${new Date().toLocaleDateString()}]`,
+        },
+        include: {
+          lineItems: { include: { product: true } },
+          customer: { select: { id: true, businessName: true } },
+        },
+      });
+    });
+  }
+
   async updateOrderItems(orderId: string, dto: UpdateOrderItemsDto, user?: JwtPayload) {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },

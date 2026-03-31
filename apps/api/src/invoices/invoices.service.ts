@@ -371,6 +371,40 @@ export class InvoicesService {
     return this.prisma.invoice.update({ where: { id }, data: { status: InvoiceStatus.VOID } });
   }
 
+  async revertInvoiceToDraft(id: string) {
+    const inv = await this.findOneOrThrow(id);
+    const revertableStatuses = [InvoiceStatus.SENT, InvoiceStatus.VIEWED, InvoiceStatus.OVERDUE];
+    if (!revertableStatuses.includes(inv.status as any)) {
+      throw new BadRequestException(
+        `Only SENT, VIEWED, or OVERDUE invoices with no payments can be reverted to Draft. Current status: ${inv.status}`,
+      );
+    }
+    // Block if there are any payments
+    const paymentCount = await this.prisma.invoicePayment.count({ where: { invoiceId: id } });
+    if (paymentCount > 0) {
+      throw new BadRequestException(
+        "Cannot revert to Draft: this invoice has payments recorded. Void it instead.",
+      );
+    }
+    return this.prisma.invoice.update({
+      where: { id },
+      data: { status: InvoiceStatus.DRAFT, sentAt: null },
+    });
+  }
+
+  async unvoidInvoice(id: string) {
+    const inv = await this.findOneOrThrow(id);
+    if (inv.status !== InvoiceStatus.VOID) {
+      throw new BadRequestException(`Only VOID invoices can be unvoided. Current status: ${inv.status}`);
+    }
+    // Check if there were payments before voiding (there shouldn't be, since void blocks payments)
+    // Revert to DRAFT so operator can review before re-sending
+    return this.prisma.invoice.update({
+      where: { id },
+      data: { status: InvoiceStatus.DRAFT },
+    });
+  }
+
   async reopenInvoice(id: string) {
     const inv = await this.prisma.invoice.findUnique({ where: { id } });
     if (!inv) throw new NotFoundException("Invoice not found");
