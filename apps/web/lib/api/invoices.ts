@@ -145,6 +145,8 @@ export interface CreateInvoiceDto {
   items: CreateInvoiceItem[];
   notes?: string;
   terms?: string;
+  /** If true, invoice transitions DRAFT → SENT immediately after creation. */
+  send?: boolean;
 }
 
 export function useCreateInvoice() {

@@ -78,7 +78,7 @@ export class InvoicesService {
     }, 0);
     const total = subtotal - invDiscount + shipping + taxTotal;
 
-    return this.prisma.invoice.create({
+    const invoice = await this.prisma.invoice.create({
       data: {
         invoiceNumber: await this.nextInvoiceNumber(),
         customerId: dto.customerId,
@@ -100,6 +100,13 @@ export class InvoicesService {
         payments: true,
       },
     });
+
+    // If the caller wants to immediately send the invoice, transition DRAFT → SENT
+    if (dto.send) {
+      return this.send(invoice.id);
+    }
+
+    return invoice;
   }
 
   async findAll(query: ListInvoicesDto, user?: JwtPayload) {

@@ -153,6 +153,7 @@ enum VendorBillStatus {
   PARTIAL
   PAID
   OVERDUE
+  VOID
 }
 
 enum ReturnReason {

@@ -394,8 +394,13 @@ export default function NewInvoicePage() {
         qty: Number(it.qty),
         unitPrice: Number(it.unitPrice),
         discount: Number(it.discount) || undefined,
+        // Map the taxable checkbox to an actual tax rate sent to the API
+        taxRate: it.taxable ? TAX_RATE : 0,
       })),
       notes: notes.trim() || undefined,
+      // Map adjustment to discount (negative = reduce price) or shippingFee (positive = surcharge)
+      ...(adjustment < 0 ? { discount: Math.abs(adjustment) } : {}),
+      ...(adjustment > 0 ? { shippingFee: adjustment } : {}),
       ...(sendNow ? { send: true } : {}),
     };
 

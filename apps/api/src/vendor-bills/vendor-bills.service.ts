@@ -27,7 +27,7 @@ export class VendorBillsService {
     let totalOwed = dto.totalOwed ?? 0;
     if (dto.items && Array.isArray(dto.items) && dto.items.length > 0) {
       totalOwed = dto.items.reduce(
-        (sum: number, item: any) => sum + (Number(item.qty) || 1) * Number(item.unitCost || 0),
+        (sum: number, item: any) => sum + (Number(item.qty) || 1) * Number(item.unitCost ?? item.unitPrice ?? 0),
         0,
       );
     }
@@ -49,7 +49,7 @@ export class VendorBillsService {
                     productId: item.productId || null,
                     description: item.description || item.name || "",
                     qty: new Prisma.Decimal(item.qty || 1),
-                    unitCost: new Prisma.Decimal(item.unitCost || 0),
+                    unitCost: new Prisma.Decimal(item.unitCost ?? item.unitPrice ?? 0),
                   })),
                 },
               }

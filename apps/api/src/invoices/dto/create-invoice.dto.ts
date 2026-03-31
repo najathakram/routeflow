@@ -1,6 +1,7 @@
 import {
   ArrayMinSize,
   IsArray,
+  IsBoolean,
   IsDateString,
   IsEnum,
   IsNotEmpty,
@@ -36,6 +37,8 @@ export class CreateInvoiceDto {
   @IsOptional() @IsNumber() @Min(0) shippingFee?: number;
   @IsOptional() @IsString() notes?: string;
   @IsOptional() @IsString() terms?: string;
+  /** If true, immediately send the invoice after creation (DRAFT → SENT). */
+  @IsOptional() @IsBoolean() send?: boolean;
 }
 
 export class RecordInvoicePaymentDto {

@@ -29,17 +29,20 @@ export class ProductsController {
   constructor(private readonly productsService: ProductsService) {}
 
   @Get()
+  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   findAll(@Query() query: ListProductsDto) {
     return this.productsService.findAll(query);
   }
 
   // Must be declared before :id to avoid route collision
   @Get("barcode/:barcode")
+  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   findByBarcode(@Param("barcode") barcode: string) {
     return this.productsService.findByBarcode(barcode);
   }
 
   @Get(":id")
+  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   findOne(@Param("id") id: string) {
     return this.productsService.findOne(id);
   }

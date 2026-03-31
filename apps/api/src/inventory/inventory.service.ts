@@ -390,7 +390,8 @@ export class InventoryService {
       for (const recv of dto.items) {
         const itemId = recv.id ?? recv.itemId;
         const receivedQty = recv.receivedQty ?? recv.qtyReceived ?? 0;
-        const item = po.items.find((i) => i.id === itemId);
+        // Match by item id first, fall back to productId
+        const item = po.items.find((i) => i.id === itemId || (recv.productId && i.productId === recv.productId));
         if (!item) continue;
         const maxReceivable = Number(item.qtyOrdered) - Number(item.qtyReceived);
         const actualQty = Math.min(receivedQty, maxReceivable);
