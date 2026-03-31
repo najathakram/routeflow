@@ -22,6 +22,7 @@ import {
   EyeOff,
   ExternalLink,
   Trash2,
+  BarChart3,
 } from "lucide-react";
 import {
   Input,
@@ -638,6 +639,15 @@ const IMPORT_SECTIONS = [
     zohoExportPath: "Zoho Invoices → Contacts → ⋮ → Export Contacts",
   },
   {
+    id: "inventory",
+    label: "Inventory Stock Levels",
+    description: "Sync current stock quantities from Zoho Stock Summary Report (Item Name, SKU, Closing Stock)",
+    endpoint: "/import/inventory",
+    icon: BarChart3,
+    color: "text-teal-500 bg-teal-50",
+    zohoExportPath: "Zoho Inventory → Reports → Stock Summary → Export as CSV",
+  },
+  {
     id: "invoices",
     label: "Invoices",
     description: "Import invoices and line items from Zoho Invoice CSV export",
@@ -667,7 +677,9 @@ const IMPORT_SECTIONS = [
 ] as const;
 
 interface ImportResult {
-  imported: number;
+  imported?: number;
+  updated?: number;
+  created?: number;
   skipped: number;
   errors: string[];
 }
@@ -703,7 +715,12 @@ function ImportCard({ section }: { section: typeof IMPORT_SECTIONS[number] }) {
         timeout: 300_000,
       });
       setResult(res.data);
-      toast({ title: `${section.label} imported`, description: `${res.data.imported} records imported, ${res.data.skipped} skipped`, variant: "success" });
+      // Inventory returns { updated, created, skipped }; others return { imported, skipped }
+      const total = res.data.imported ?? ((res.data.updated ?? 0) + (res.data.created ?? 0));
+      const detail = res.data.updated !== undefined
+        ? `${res.data.updated} updated, ${res.data.created ?? 0} new, ${res.data.skipped} skipped`
+        : `${total} imported, ${res.data.skipped} skipped`;
+      toast({ title: `${section.label} imported`, description: detail, variant: "success" });
     } catch (err: any) {
       toast({ title: "Import failed", description: err?.response?.data?.message ?? "Please check your file format and try again", variant: "error" });
     } finally {
@@ -723,7 +740,14 @@ function ImportCard({ section }: { section: typeof IMPORT_SECTIONS[number] }) {
         </div>
         {result && (
           <div className="flex items-center gap-1.5 text-xs shrink-0">
-            <span className="flex items-center gap-1 text-success"><CheckCircle2 className="h-3.5 w-3.5" />{result.imported} imported</span>
+            {result.updated !== undefined ? (
+              <>
+                <span className="flex items-center gap-1 text-success"><CheckCircle2 className="h-3.5 w-3.5" />{result.updated} updated</span>
+                {(result.created ?? 0) > 0 && <span className="flex items-center gap-1 text-brand-500 ml-1">+{result.created} new</span>}
+              </>
+            ) : (
+              <span className="flex items-center gap-1 text-success"><CheckCircle2 className="h-3.5 w-3.5" />{result.imported ?? 0} imported</span>
+            )}
             {result.skipped > 0 && <span className="flex items-center gap-1 text-warning ml-2"><Bell className="h-3.5 w-3.5" />{result.skipped} skipped</span>}
           </div>
         )}
@@ -796,15 +820,15 @@ function ImportTab() {
       <div>
         <h2 className="text-lg font-semibold text-navy">Import from Zoho</h2>
         <p className="mt-1 text-sm text-navy/60">
-          Import your data from Zoho Invoices exports. Follow the order below for best results:{" "}
-          <strong className="text-navy">Customers → Invoices → Payments → Expenses</strong>
+          Import your data from Zoho exports. Follow the order below for best results:{" "}
+          <strong className="text-navy">Customers → Inventory → Invoices → Payments → Expenses</strong>
         </p>
       </div>
       <div className="flex items-center gap-3 rounded-xl bg-brand-50 border border-brand-200 px-4 py-3">
         <Bell className="h-4 w-4 text-brand-500 shrink-0" />
         <p className="text-sm text-brand-700">
-          <strong>Recommended import order:</strong> Import Customers first, then Invoices, then Payments.
-          Payments require matching invoices to already exist.
+          <strong>Recommended import order:</strong> Customers → Inventory → Invoices → Payments → Expenses.
+          Payments require matching invoices; Invoices require customers to exist first.
         </p>
       </div>
       <div className="grid grid-cols-2 gap-5">
