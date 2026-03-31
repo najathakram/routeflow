@@ -60,7 +60,10 @@ export interface Invoice {
   recurringInvoiceId?: string;
   items?: InvoiceItem[];
   payments?: InvoicePayment[];
+  /** Server-computed balance due — 0 for PAID/VOID/WRITTEN_OFF regardless of payment records */
   balanceDue?: number;
+  /** Server-computed total amount paid across all InvoicePayment records */
+  paidAmount?: number;
   createdAt: string;
   updatedAt: string;
   sentAt?: string;

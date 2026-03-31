@@ -246,7 +246,19 @@ export class InvoicesService {
       this.prisma.invoice.count({ where }),
     ]);
 
-    return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
+    // Compute balanceDue server-side so the client always gets the right value
+    // regardless of whether InvoicePayment records exist (e.g. Zoho-imported invoices)
+    const computedData = data.map((inv) => {
+      const paidAmount = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
+      const isSettled =
+        inv.status === InvoiceStatus.PAID ||
+        inv.status === InvoiceStatus.VOID ||
+        inv.status === InvoiceStatus.WRITTEN_OFF;
+      const balanceDue = isSettled ? 0 : Math.max(0, Number(inv.total) - paidAmount);
+      return { ...inv, balanceDue, paidAmount };
+    });
+
+    return { data: computedData, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
   }
 
   async findOne(id: string, user?: JwtPayload) {

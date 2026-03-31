@@ -396,7 +396,7 @@ export class ImportService {
           continue;
         }
 
-        await this.prisma.invoice.create({
+        const newInvoice = await this.prisma.invoice.create({
           data: {
             invoiceNumber,
             customerId: customer.id,
@@ -414,6 +414,29 @@ export class ImportService {
             items: { create: itemsData },
           },
         });
+
+        // For PAID/PARTIAL invoices, create a synthetic payment record so
+        // balance-due calculations are correct without a separate payments import
+        if (status === InvoiceStatus.PAID || status === InvoiceStatus.PARTIAL) {
+          const paidAmount = !isNaN(balanceDue)
+            ? total - balanceDue
+            : status === InvoiceStatus.PAID
+              ? total
+              : 0;
+          if (paidAmount > 0.01) {
+            await this.prisma.invoicePayment.create({
+              data: {
+                invoiceId: newInvoice.id,
+                amount: paidAmount,
+                method: "OTHER",
+                reference: "zoho-import",
+                notes: "Imported from Zoho",
+                createdAt: paidAt || issueDate,
+              },
+            });
+          }
+        }
+
         imported++;
       } catch (e: any) {
         errors.push(`${invoiceNumber}: ${e.message}`);
@@ -460,9 +483,33 @@ export class ImportService {
         /* ignore */
       }
 
+      // Zoho's InvoicePayment ID used as zohoId for deduplication
+      const zohoPaymentId = (row["InvoicePayment ID"] || "").trim();
+
       try {
+        // Skip if already imported (check by zohoId reference, or amount+date combo)
+        if (zohoPaymentId) {
+          const dup = await this.prisma.invoicePayment.findFirst({
+            where: { invoiceId: invoice.id, reference: zohoPaymentId },
+          });
+          if (dup) { skipped++; continue; }
+        }
+
+        // Also remove any synthetic "zoho-import" placeholder payment for this invoice
+        // now that we have the real payment record
+        await this.prisma.invoicePayment.deleteMany({
+          where: { invoiceId: invoice.id, reference: "zoho-import" },
+        });
+
         await this.prisma.invoicePayment.create({
-          data: { invoiceId: invoice.id, amount, method, reference, createdAt },
+          data: {
+            invoiceId: invoice.id,
+            amount,
+            method,
+            reference: zohoPaymentId || reference || null,
+            notes: reference && reference !== zohoPaymentId ? reference : null,
+            createdAt,
+          },
         });
         imported++;
       } catch (e: any) {

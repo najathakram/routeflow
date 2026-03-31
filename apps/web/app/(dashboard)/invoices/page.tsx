@@ -133,8 +133,8 @@ function PaymentSummaryBar({
 
     for (const inv of all) {
       const total = Number(inv.total);
-      const paid = (inv.payments ?? []).reduce((s: number, p: any) => s + Number(p.amount), 0);
-      const balance = Math.max(0, total - paid);
+      const paid = inv.paidAmount ?? (inv.payments ?? []).reduce((s: number, p: any) => s + Number(p.amount), 0);
+      const balance = inv.balanceDue !== undefined ? Number(inv.balanceDue) : Math.max(0, total - paid);
       const due = inv.dueDate ? new Date(inv.dueDate) : null;
       if (due) due.setHours(0, 0, 0, 0);
 
@@ -449,8 +449,10 @@ export default function InvoicesPage() {
               </tr>
             ) : (
               invoices.map((inv: Invoice) => {
-                const paid = (inv.payments ?? []).reduce((s: number, p: any) => s + Number(p.amount), 0);
-                const balance = Math.max(0, Number(inv.total) - paid);
+                const paid = inv.paidAmount ?? (inv.payments ?? []).reduce((s: number, p: any) => s + Number(p.amount), 0);
+                const balance = inv.balanceDue !== undefined
+                  ? Number(inv.balanceDue)
+                  : Math.max(0, Number(inv.total) - paid);
                 return (
                   <tr
                     key={inv.id}
