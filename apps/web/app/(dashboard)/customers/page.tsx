@@ -3,8 +3,9 @@
 import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Pencil, ToggleLeft, ToggleRight, Eye } from "lucide-react";
+import { Pencil, ToggleLeft, ToggleRight, Eye, CheckSquare, X, ToggleLeft as Deactivate } from "lucide-react";
 import { PageHeader, Table, Badge, Button, Select, cn, type BadgeStatus } from "@routeflow/ui/web";
+import { useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { CustomerFormModal } from "./_components/CustomerFormModal";
 import { useCustomers, useUpdateCustomerStatus } from "@/lib/api/customers";
@@ -39,6 +40,10 @@ export default function CustomersPage() {
   const [unassignedOnly, setUnassignedOnly] = React.useState(false);
   const [isAddOpen, setIsAddOpen] = React.useState(false);
   const [editingCustomer, setEditingCustomer] = React.useState<any>(null);
+  const [selectMode, setSelectMode] = React.useState(false);
+  const [selected, setSelected] = React.useState<Set<string>>(new Set());
+  const [isDeactivating, setIsDeactivating] = React.useState(false);
+  const { toast } = useToast();
 
   // Sync status filter to URL
   React.useEffect(() => {
@@ -69,6 +74,27 @@ export default function CustomersPage() {
     return customers.filter((c) => !assignments?.[c.id]?.length);
   }, [customers, assignments, unassignedOnly]);
 
+  const toggleSelect = (id: string) =>
+    setSelected((prev) => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
+
+  const exitSelectMode = () => { setSelectMode(false); setSelected(new Set()); };
+
+  const handleBulkDeactivate = async () => {
+    if (isDeactivating) return;
+    setIsDeactivating(true);
+    try {
+      await Promise.all(Array.from(selected).map((id) =>
+        updateStatus.mutateAsync({ id, status: "INACTIVE" }),
+      ));
+      toast({ title: `${selected.size} customer${selected.size !== 1 ? "s" : ""} deactivated`, variant: "success" });
+      exitSelectMode();
+    } catch {
+      toast({ title: "Failed to deactivate some customers", variant: "error" });
+    } finally {
+      setIsDeactivating(false);
+    }
+  };
+
   // ── Status toggle ────────────────────────────────────────────────────────
   const toggleStatus = React.useCallback((id: string, currentStatus: string) => {
     updateStatus.mutate({
@@ -78,8 +104,39 @@ export default function CustomersPage() {
   }, [updateStatus]);
 
   // ── Column definitions ───────────────────────────────────────────────────
+  const allVisible = visibleCustomers;
+  const allVisibleIds = allVisible.map((c) => c.id);
+  const allChecked = allVisibleIds.length > 0 && allVisibleIds.every((id) => selected.has(id));
+  const someChecked = allVisibleIds.some((id) => selected.has(id));
+
   const columns = React.useMemo<ColumnDef<Customer, unknown>[]>(
     () => [
+      ...(selectMode ? [{
+        id: "select",
+        header: () => (
+          <input
+            type="checkbox"
+            checked={allChecked}
+            ref={(el) => { if (el) el.indeterminate = someChecked && !allChecked; }}
+            onChange={() => {
+              if (allChecked) setSelected(new Set());
+              else setSelected(new Set(allVisibleIds));
+            }}
+            className="h-4 w-4 cursor-pointer rounded border-navy/30 accent-brand-500"
+          />
+        ),
+        cell: ({ row }: { row: { original: Customer } }) => (
+          <input
+            type="checkbox"
+            checked={selected.has(row.original.id)}
+            onChange={() => toggleSelect(row.original.id)}
+            onClick={(e) => e.stopPropagation()}
+            className="h-4 w-4 cursor-pointer rounded border-navy/30 accent-brand-500"
+          />
+        ),
+        enableSorting: false,
+        size: 40,
+      } as ColumnDef<Customer, unknown>] : []),
       {
         accessorKey: "contactName",
         header: "Name",
@@ -184,7 +241,8 @@ export default function CustomersPage() {
         },
       },
     ],
-    [router, toggleStatus, assignments],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [router, toggleStatus, assignments, selectMode, selected, allChecked, someChecked],
   );
 
   return (
@@ -192,9 +250,35 @@ export default function CustomersPage() {
       <PageHeader
         title="Customers"
         action={
-          <Button onClick={() => setIsAddOpen(true)}>Add Customer</Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="secondary"
+              leftIcon={selectMode ? <X className="h-4 w-4" /> : <CheckSquare className="h-4 w-4" />}
+              onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
+            >
+              {selectMode ? "Cancel" : "Select"}
+            </Button>
+            <Button onClick={() => setIsAddOpen(true)}>Add Customer</Button>
+          </div>
         }
       />
+
+      {/* Selection action bar */}
+      {selectMode && selected.size > 0 && (
+        <div className="flex items-center justify-between rounded-lg border border-warning/30 bg-warning-bg px-4 py-3">
+          <span className="text-sm font-medium text-navy">
+            {selected.size} customer{selected.size !== 1 ? "s" : ""} selected
+          </span>
+          <div className="flex items-center gap-2">
+            <button onClick={() => setSelected(new Set())} className="text-sm text-navy/50 hover:text-navy transition-colors">
+              Deselect all
+            </button>
+            <Button variant="secondary" leftIcon={<Deactivate className="h-4 w-4" />} loading={isDeactivating} onClick={handleBulkDeactivate}>
+              Deactivate {selected.size}
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-3">
@@ -254,7 +338,10 @@ export default function CustomersPage() {
         <Table
           data={visibleCustomers}
           columns={columns}
-          onRowClick={(row) => router.push(`/customers/${row.original.id}`)}
+          onRowClick={(row) => {
+            if (selectMode) toggleSelect(row.original.id);
+            else router.push(`/customers/${row.original.id}`);
+          }}
           emptyState={
             <span className="text-sm">
               {unassignedOnly ? (

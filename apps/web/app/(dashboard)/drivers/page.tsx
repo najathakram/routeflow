@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Eye, Pencil, Trash2 } from "lucide-react";
+import { Eye, Pencil, Trash2, CheckSquare, X } from "lucide-react";
 import { PageHeader, Table, Badge, Button, Select, cn } from "@routeflow/ui/web";
 import { useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
@@ -44,6 +44,9 @@ export default function DriversPage() {
   const [deleteTarget, setDeleteTarget] = React.useState<Driver | null>(null);
   const [search, setSearch] = React.useState("");
   const [statusFilter, setStatusFilter] = React.useState("");
+  const [selectMode, setSelectMode] = React.useState(false);
+  const [selected, setSelected] = React.useState<Set<string>>(new Set());
+  const [isBulkDeleting, setIsBulkDeleting] = React.useState(false);
 
   React.useEffect(() => { setTitle("Drivers"); }, [setTitle]);
 
@@ -69,6 +72,25 @@ export default function DriversPage() {
       return true;
     });
   }, [drivers, search, statusFilter]);
+
+  const toggleSelect = (id: string) =>
+    setSelected((prev) => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
+
+  const exitSelectMode = () => { setSelectMode(false); setSelected(new Set()); };
+
+  const handleBulkDelete = async () => {
+    if (isBulkDeleting) return;
+    setIsBulkDeleting(true);
+    try {
+      await Promise.all(Array.from(selected).map((id) => deleteDriver.mutateAsync(id)));
+      toast({ title: `${selected.size} driver${selected.size !== 1 ? "s" : ""} deleted`, variant: "success" });
+      exitSelectMode();
+    } catch {
+      toast({ title: "Failed to delete some drivers", variant: "error" });
+    } finally {
+      setIsBulkDeleting(false);
+    }
+  };
 
   const handleCreateDriver = async (formData: {
     contactName: string;
@@ -102,8 +124,35 @@ export default function DriversPage() {
     }
   };
 
+  const allFilteredIds = filtered.map((d) => d.id);
+  const allChecked = allFilteredIds.length > 0 && allFilteredIds.every((id) => selected.has(id));
+  const someChecked = allFilteredIds.some((id) => selected.has(id));
+
   const columns = React.useMemo<ColumnDef<Driver, unknown>[]>(
     () => [
+      ...(selectMode ? [{
+        id: "select",
+        header: () => (
+          <input
+            type="checkbox"
+            checked={allChecked}
+            ref={(el) => { if (el) el.indeterminate = someChecked && !allChecked; }}
+            onChange={() => { if (allChecked) setSelected(new Set()); else setSelected(new Set(allFilteredIds)); }}
+            className="h-4 w-4 cursor-pointer rounded border-navy/30 accent-brand-500"
+          />
+        ),
+        cell: ({ row }: { row: { original: Driver } }) => (
+          <input
+            type="checkbox"
+            checked={selected.has(row.original.id)}
+            onChange={() => toggleSelect(row.original.id)}
+            onClick={(e) => e.stopPropagation()}
+            className="h-4 w-4 cursor-pointer rounded border-navy/30 accent-brand-500"
+          />
+        ),
+        enableSorting: false,
+        size: 40,
+      } as ColumnDef<Driver, unknown>] : []),
       {
         accessorKey: "contactName",
         header: "Name",
@@ -166,7 +215,8 @@ export default function DriversPage() {
         ),
       },
     ],
-    [router],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [router, selectMode, selected, allChecked, someChecked, allFilteredIds.join(",")],
   );
 
   const activeCount = drivers.filter((d) => d.status === "ACTIVE").length;
@@ -177,7 +227,16 @@ export default function DriversPage() {
       <PageHeader
         title="Drivers"
         action={
-          <Button onClick={() => setIsAddOpen(true)}>Add Driver</Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="secondary"
+              leftIcon={selectMode ? <X className="h-4 w-4" /> : <CheckSquare className="h-4 w-4" />}
+              onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
+            >
+              {selectMode ? "Cancel" : "Select"}
+            </Button>
+            <Button onClick={() => setIsAddOpen(true)}>Add Driver</Button>
+          </div>
         }
       />
 
@@ -218,6 +277,23 @@ export default function DriversPage() {
         </span>
       </div>
 
+      {/* Selection action bar */}
+      {selectMode && selected.size > 0 && (
+        <div className="flex items-center justify-between rounded-lg border border-danger/30 bg-danger-bg px-4 py-3">
+          <span className="text-sm font-medium text-navy">
+            {selected.size} driver{selected.size !== 1 ? "s" : ""} selected
+          </span>
+          <div className="flex items-center gap-2">
+            <button onClick={() => setSelected(new Set())} className="text-sm text-navy/50 hover:text-navy transition-colors">
+              Deselect all
+            </button>
+            <Button variant="danger" leftIcon={<Trash2 className="h-4 w-4" />} loading={isBulkDeleting} onClick={handleBulkDelete}>
+              Delete {selected.size}
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* Filter bar */}
       <div className="flex flex-wrap items-center gap-3">
         <input
@@ -252,7 +328,10 @@ export default function DriversPage() {
         <Table
           data={filtered}
           columns={columns}
-          onRowClick={(row) => router.push(`/drivers/${row.original.id}`)}
+          onRowClick={(row) => {
+            if (selectMode) toggleSelect(row.original.id);
+            else router.push(`/drivers/${row.original.id}`);
+          }}
           emptyState={
             isLoading ? "Loading drivers…" :
             (search || statusFilter) ? (

@@ -3,10 +3,10 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Eye, Play, Calendar } from "lucide-react";
+import { Eye, Play, Calendar, CheckSquare, X, Trash2 } from "lucide-react";
 import { PageHeader, Badge, Table, Button, Modal, useToast, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
-import { useRoutes, useRouteRuns, useCreateRouteRun, type Route, type RouteRun } from "@/lib/api/routes";
+import { useRoutes, useRouteRuns, useCreateRouteRun, useDeleteRoute, type Route, type RouteRun } from "@/lib/api/routes";
 import { useDrivers } from "@/lib/api/drivers";
 
 // ─── Status helpers ───────────────────────────────────────────────────────────
@@ -131,9 +131,27 @@ function DispatchModal({
 function useTemplateColumns(
   router: ReturnType<typeof useRouter>,
   onDispatch: (id: string) => void,
+  selectMode: boolean,
+  selected: Set<string>,
+  onToggle: (id: string) => void,
 ) {
   return React.useMemo<ColumnDef<Route, unknown>[]>(
     () => [
+      ...(selectMode ? [{
+        id: "select",
+        header: () => null,
+        cell: ({ row }: { row: { original: Route } }) => (
+          <input
+            type="checkbox"
+            checked={selected.has(row.original.id)}
+            onChange={() => onToggle(row.original.id)}
+            onClick={(e) => e.stopPropagation()}
+            className="h-4 w-4 cursor-pointer rounded border-navy/30 accent-brand-500"
+          />
+        ),
+        enableSorting: false,
+        size: 40,
+      } as ColumnDef<Route, unknown>] : []),
       {
         accessorKey: "name",
         header: "Route Name",
@@ -183,7 +201,8 @@ function useTemplateColumns(
         ),
       },
     ],
-    [router, onDispatch],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [router, onDispatch, selectMode, selected],
   );
 }
 
@@ -193,7 +212,32 @@ export default function RoutesPage() {
   const router = useRouter();
   const { setTitle } = usePageTitle();
   const [dispatchRouteId, setDispatchRouteId] = React.useState<string | null>(null);
-  const templateColumns = useTemplateColumns(router, setDispatchRouteId);
+  const [selectMode, setSelectMode] = React.useState(false);
+  const [selected, setSelected] = React.useState<Set<string>>(new Set());
+  const [isBulkDeleting, setIsBulkDeleting] = React.useState(false);
+  const deleteRoute = useDeleteRoute();
+  const { toast } = useToast();
+
+  const toggleSelect = (id: string) =>
+    setSelected((prev) => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
+
+  const exitSelectMode = () => { setSelectMode(false); setSelected(new Set()); };
+
+  const handleBulkDelete = async () => {
+    if (isBulkDeleting) return;
+    setIsBulkDeleting(true);
+    try {
+      await Promise.all(Array.from(selected).map((id) => deleteRoute.mutateAsync(id)));
+      toast({ title: `${selected.size} route${selected.size !== 1 ? "s" : ""} deleted`, variant: "success" });
+      exitSelectMode();
+    } catch {
+      toast({ title: "Failed to delete some routes", variant: "error" });
+    } finally {
+      setIsBulkDeleting(false);
+    }
+  };
+
+  const templateColumns = useTemplateColumns(router, setDispatchRouteId, selectMode, selected, toggleSelect);
 
   React.useEffect(() => { setTitle("Routes"); }, [setTitle]);
 
@@ -209,7 +253,16 @@ export default function RoutesPage() {
       <PageHeader
         title="Routes"
         action={
-          <Button onClick={() => router.push("/routes/create")}>Create Route</Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="secondary"
+              leftIcon={selectMode ? <X className="h-4 w-4" /> : <CheckSquare className="h-4 w-4" />}
+              onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
+            >
+              {selectMode ? "Cancel" : "Select"}
+            </Button>
+            <Button onClick={() => router.push("/routes/create")}>Create Route</Button>
+          </div>
         }
       />
 
@@ -282,9 +335,44 @@ export default function RoutesPage() {
 
       {/* ── Route templates ── */}
       <section className="space-y-3">
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-navy/50">
-          Route Templates
-        </h2>
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold uppercase tracking-wider text-navy/50">
+            Route Templates
+          </h2>
+          {selectMode && routeTemplates.length > 0 && (
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={routeTemplates.every((r) => selected.has(r.id))}
+                ref={(el) => { if (el) el.indeterminate = routeTemplates.some((r) => selected.has(r.id)) && !routeTemplates.every((r) => selected.has(r.id)); }}
+                onChange={() => {
+                  if (routeTemplates.every((r) => selected.has(r.id))) setSelected(new Set());
+                  else setSelected(new Set(routeTemplates.map((r) => r.id)));
+                }}
+                className="h-4 w-4 cursor-pointer rounded border-navy/30 accent-brand-500"
+              />
+              <span className="text-sm text-navy/60">Select all</span>
+            </label>
+          )}
+        </div>
+
+        {/* Selection action bar */}
+        {selectMode && selected.size > 0 && (
+          <div className="flex items-center justify-between rounded-lg border border-danger/30 bg-danger-bg px-4 py-3">
+            <span className="text-sm font-medium text-navy">
+              {selected.size} route{selected.size !== 1 ? "s" : ""} selected
+            </span>
+            <div className="flex items-center gap-2">
+              <button onClick={() => setSelected(new Set())} className="text-sm text-navy/50 hover:text-navy transition-colors">
+                Deselect all
+              </button>
+              <Button variant="danger" leftIcon={<Trash2 className="h-4 w-4" />} loading={isBulkDeleting} onClick={handleBulkDelete}>
+                Delete {selected.size}
+              </Button>
+            </div>
+          </div>
+        )}
+
         {routesLoading ? (
           <div className="h-32 animate-pulse rounded-lg border border-surface-border bg-surface-raised" />
         ) : routesError ? (
@@ -295,7 +383,10 @@ export default function RoutesPage() {
           <Table
             data={routeTemplates}
             columns={templateColumns}
-            onRowClick={(row) => router.push(`/routes/templates/${row.original.id}`)}
+            onRowClick={(row) => {
+              if (selectMode) toggleSelect(row.original.id);
+              else router.push(`/routes/templates/${row.original.id}`);
+            }}
           />
         )}
       </section>

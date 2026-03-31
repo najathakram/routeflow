@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Plus, Search, Building2, Phone, Mail, Clock, Pencil, X, Check } from "lucide-react";
+import { Plus, Search, Building2, Phone, Mail, Clock, Pencil, X, Check, CheckSquare, Trash2 } from "lucide-react";
 import { PageHeader, Badge, Button, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useToast } from "@routeflow/ui/web";
@@ -116,19 +116,41 @@ function SupplierCard({
   onEdit,
   onToggleActive,
   isUpdating,
+  selectMode,
+  selected,
+  onSelect,
 }: {
   supplier: Supplier;
   onEdit: () => void;
   onToggleActive: () => void;
   isUpdating: boolean;
+  selectMode?: boolean;
+  selected?: boolean;
+  onSelect?: () => void;
 }) {
   return (
-    <div className={cn(
-      "flex flex-col gap-3 rounded-xl border bg-white p-4 shadow-card transition-shadow hover:shadow-dropdown",
-      !supplier.isActive && "opacity-60",
-    )}>
+    <div
+      className={cn(
+        "relative flex flex-col gap-3 rounded-xl border bg-white p-4 shadow-card transition-shadow hover:shadow-dropdown",
+        !supplier.isActive && "opacity-60",
+        selectMode && "cursor-pointer",
+        selected && "ring-2 ring-brand-500 border-brand-500",
+      )}
+      onClick={selectMode ? onSelect : undefined}
+    >
+      {/* Checkbox — only in selection mode */}
+      {selectMode && (
+        <div className="absolute left-3 top-3 z-10" onClick={(e) => { e.stopPropagation(); onSelect?.(); }}>
+          <input
+            type="checkbox"
+            checked={selected ?? false}
+            onChange={() => {}}
+            className="h-4 w-4 cursor-pointer rounded border-navy/30 accent-brand-500"
+          />
+        </div>
+      )}
       {/* Header row */}
-      <div className="flex items-start justify-between gap-2">
+      <div className={cn("flex items-start justify-between gap-2", selectMode && "pl-6")}>
         <div className="flex items-start gap-2 min-w-0">
           <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-brand-50">
             <Building2 className="h-4 w-4 text-brand-500" />
@@ -206,10 +228,32 @@ export default function SuppliersPage() {
   const [activeFilter, setActiveFilter] = React.useState<"all" | "active" | "inactive">("active");
   const [showModal, setShowModal] = React.useState(false);
   const [editTarget, setEditTarget] = React.useState<Supplier | undefined>(undefined);
+  const [selectMode, setSelectMode] = React.useState(false);
+  const [selected, setSelected] = React.useState<Set<string>>(new Set());
+  const [isDeleting, setIsDeleting] = React.useState(false);
 
   const createSupplier = useCreateSupplier();
   const updateSupplier = useUpdateSupplier();
   const deleteSupplier = useDeleteSupplier();
+
+  const toggleSelect = (id: string) =>
+    setSelected((prev) => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
+
+  const exitSelectMode = () => { setSelectMode(false); setSelected(new Set()); };
+
+  const handleBulkDelete = async () => {
+    if (isDeleting) return;
+    setIsDeleting(true);
+    try {
+      await Promise.all(Array.from(selected).map((id) => deleteSupplier.mutateAsync(id)));
+      toast({ title: `${selected.size} supplier${selected.size !== 1 ? "s" : ""} deleted`, variant: "success" });
+      exitSelectMode();
+    } catch {
+      toast({ title: "Failed to delete some suppliers", variant: "error" });
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   const { data: result, isLoading, isError } = useSuppliers({
     search: debouncedSearch || undefined,
@@ -255,12 +299,21 @@ export default function SuppliersPage() {
         title="Suppliers"
         subtitle={`${total} supplier${total !== 1 ? "s" : ""}`}
         action={
-          <Button
-            leftIcon={<Plus className="h-4 w-4" />}
-            onClick={() => { setEditTarget(undefined); setShowModal(true); }}
-          >
-            Add Supplier
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="secondary"
+              leftIcon={selectMode ? <X className="h-4 w-4" /> : <CheckSquare className="h-4 w-4" />}
+              onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
+            >
+              {selectMode ? "Cancel" : "Select"}
+            </Button>
+            <Button
+              leftIcon={<Plus className="h-4 w-4" />}
+              onClick={() => { setEditTarget(undefined); setShowModal(true); }}
+            >
+              Add Supplier
+            </Button>
+          </div>
         }
       />
 
@@ -273,8 +326,40 @@ export default function SuppliersPage() {
         />
       )}
 
+      {/* Selection action bar */}
+      {selectMode && selected.size > 0 && (
+        <div className="flex items-center justify-between rounded-lg border border-danger/30 bg-danger-bg px-4 py-3">
+          <span className="text-sm font-medium text-navy">
+            {selected.size} supplier{selected.size !== 1 ? "s" : ""} selected
+          </span>
+          <div className="flex items-center gap-2">
+            <button onClick={() => setSelected(new Set())} className="text-sm text-navy/50 hover:text-navy transition-colors">
+              Deselect all
+            </button>
+            <Button variant="danger" leftIcon={<Trash2 className="h-4 w-4" />} loading={isDeleting} onClick={handleBulkDelete}>
+              Delete {selected.size}
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-3">
+        {selectMode && suppliers.length > 0 && (
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={suppliers.length > 0 && suppliers.every((s) => selected.has(s.id))}
+              ref={(el) => { if (el) el.indeterminate = suppliers.some((s) => selected.has(s.id)) && !suppliers.every((s) => selected.has(s.id)); }}
+              onChange={() => {
+                if (suppliers.every((s) => selected.has(s.id))) setSelected(new Set());
+                else setSelected(new Set(suppliers.map((s) => s.id)));
+              }}
+              className="h-4 w-4 cursor-pointer rounded border-navy/30 accent-brand-500"
+            />
+            <span className="text-sm text-navy/60">Select all</span>
+          </label>
+        )}
         <div className="relative">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-navy/30" />
           <input
@@ -340,9 +425,12 @@ export default function SuppliersPage() {
             <SupplierCard
               key={s.id}
               supplier={s}
-              onEdit={() => { setEditTarget(s); setShowModal(true); }}
-              onToggleActive={() => handleToggleActive(s)}
+              onEdit={() => { if (!selectMode) { setEditTarget(s); setShowModal(true); } }}
+              onToggleActive={() => { if (!selectMode) handleToggleActive(s); }}
               isUpdating={updateSupplier.isPending}
+              selectMode={selectMode}
+              selected={selected.has(s.id)}
+              onSelect={() => toggleSelect(s.id)}
             />
           ))}
         </div>

@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Package, LayoutGrid, LayoutList, Plus, Upload, CheckCircle, AlertCircle, Info, Trash2, ImagePlus, X as XIcon } from "lucide-react";
+import { Package, LayoutGrid, LayoutList, Plus, Upload, CheckCircle, AlertCircle, Info, Trash2, ImagePlus, X as XIcon, CheckSquare } from "lucide-react";
 import { PageHeader, Table, Badge, Button, Select, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useToast } from "@routeflow/ui/web";
@@ -76,18 +76,20 @@ function ProductCard({
       )}
       onClick={selectionMode ? onSelect : onClick}
     >
-      {/* Checkbox */}
-      <div
-        className="absolute left-2 top-2 z-10"
-        onClick={(e) => { e.stopPropagation(); onSelect(e); }}
-      >
-        <input
-          type="checkbox"
-          checked={selected}
-          onChange={() => {}}
-          className="h-4 w-4 cursor-pointer rounded border-navy/30 accent-brand-500"
-        />
-      </div>
+      {/* Checkbox — only visible in selection mode */}
+      {selectionMode && (
+        <div
+          className="absolute left-2 top-2 z-10"
+          onClick={(e) => { e.stopPropagation(); onSelect(e); }}
+        >
+          <input
+            type="checkbox"
+            checked={selected}
+            onChange={() => {}}
+            className="h-4 w-4 cursor-pointer rounded border-navy/30 accent-brand-500"
+          />
+        </div>
+      )}
 
       {/* Thumbnail / image placeholder */}
       <div
@@ -151,34 +153,37 @@ function makeTableColumns(
   onToggle: (id: string) => void,
   allIds: string[],
   onToggleAll: () => void,
+  selectMode: boolean,
 ): ColumnDef<ApiProduct, unknown>[] {
   const allSelected = allIds.length > 0 && allIds.every((id) => selected.has(id));
   const someSelected = !allSelected && allIds.some((id) => selected.has(id));
 
+  const selectCol: ColumnDef<ApiProduct, unknown> = {
+    id: "select",
+    header: () => (
+      <input
+        type="checkbox"
+        checked={allSelected}
+        ref={(el) => { if (el) el.indeterminate = someSelected; }}
+        onChange={onToggleAll}
+        className="h-4 w-4 cursor-pointer rounded border-navy/30 accent-brand-500"
+      />
+    ),
+    cell: ({ row }) => (
+      <input
+        type="checkbox"
+        checked={selected.has(row.original.id)}
+        onChange={() => onToggle(row.original.id)}
+        onClick={(e) => e.stopPropagation()}
+        className="h-4 w-4 cursor-pointer rounded border-navy/30 accent-brand-500"
+      />
+    ),
+    enableSorting: false,
+    size: 40,
+  };
+
   return [
-    {
-      id: "select",
-      header: () => (
-        <input
-          type="checkbox"
-          checked={allSelected}
-          ref={(el) => { if (el) el.indeterminate = someSelected; }}
-          onChange={onToggleAll}
-          className="h-4 w-4 cursor-pointer rounded border-navy/30 accent-brand-500"
-        />
-      ),
-      cell: ({ row }) => (
-        <input
-          type="checkbox"
-          checked={selected.has(row.original.id)}
-          onChange={() => onToggle(row.original.id)}
-          onClick={(e) => e.stopPropagation()}
-          className="h-4 w-4 cursor-pointer rounded border-navy/30 accent-brand-500"
-        />
-      ),
-      enableSorting: false,
-      size: 40,
-    },
+    ...(selectMode ? [selectCol] : []),
     {
       accessorKey: "name",
       header: "Product",
@@ -902,6 +907,7 @@ export default function ProductsPage() {
   const [showCreate, setShowCreate] = React.useState(false);
   const [showImport, setShowImport] = React.useState(false);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
+  const [selectMode, setSelectMode] = React.useState(false);
   const [page, setPage] = React.useState(1);
   const [pageSize, setPageSize] = React.useState(50);
   const createProduct = useCreateProduct();
@@ -969,9 +975,9 @@ export default function ProductsPage() {
   };
 
   const tableColumns = React.useMemo(
-    () => makeTableColumns(selected, toggleOne, filteredIds, toggleAll),
+    () => makeTableColumns(selected, toggleOne, filteredIds, toggleAll, selectMode),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [selected, filteredIds.join(","), allFilteredSelected],
+    [selected, filteredIds.join(","), allFilteredSelected, selectMode],
   );
 
   return (
@@ -981,6 +987,13 @@ export default function ProductsPage() {
         subtitle="Manage your product catalog"
         action={
           <div className="flex items-center gap-2">
+            <Button
+              variant="secondary"
+              leftIcon={selectMode ? <XIcon className="h-4 w-4" /> : <CheckSquare className="h-4 w-4" />}
+              onClick={() => { setSelectMode((m) => !m); setSelected(new Set()); }}
+            >
+              {selectMode ? "Cancel" : "Select"}
+            </Button>
             <Button
               variant="secondary"
               leftIcon={<Upload className="h-4 w-4" />}
@@ -1026,19 +1039,21 @@ export default function ProductsPage() {
 
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-3">
-        {/* Select all checkbox */}
-        <label className="flex items-center gap-2 cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={allFilteredSelected}
-            ref={(el) => {
-              if (el) el.indeterminate = !allFilteredSelected && filteredIds.some((id) => selected.has(id));
-            }}
-            onChange={toggleAll}
-            className="h-4 w-4 cursor-pointer rounded border-navy/30 accent-brand-500"
-          />
-          <span className="text-sm text-navy/60">Select all</span>
-        </label>
+        {/* Select all checkbox — only shown in selection mode */}
+        {selectMode && (
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={allFilteredSelected}
+              ref={(el) => {
+                if (el) el.indeterminate = !allFilteredSelected && filteredIds.some((id) => selected.has(id));
+              }}
+              onChange={toggleAll}
+              className="h-4 w-4 cursor-pointer rounded border-navy/30 accent-brand-500"
+            />
+            <span className="text-sm text-navy/60">Select all</span>
+          </label>
+        )}
 
         <input
           type="search"
@@ -1111,7 +1126,7 @@ export default function ProductsPage() {
       </div>
 
       {/* Selection action bar */}
-      {selected.size > 0 && (
+      {selectMode && selected.size > 0 && (
         <div className="flex items-center justify-between rounded-lg border border-danger/30 bg-danger-bg px-4 py-3">
           <span className="text-sm font-medium text-navy">
             {selected.size} item{selected.size !== 1 ? "s" : ""} selected
@@ -1160,7 +1175,7 @@ export default function ProductsPage() {
               key={p.id}
               product={p}
               selected={selected.has(p.id)}
-              selectionMode={selected.size > 0}
+              selectionMode={selectMode}
               onSelect={(e) => { e.stopPropagation(); toggleOne(p.id); }}
               onClick={() => router.push(`/products/${p.id}`)}
             />
@@ -1171,7 +1186,7 @@ export default function ProductsPage() {
           data={filtered}
           columns={tableColumns}
           onRowClick={(row) => {
-            if (selected.size > 0) toggleOne(row.original.id);
+            if (selectMode) toggleOne(row.original.id);
             else router.push(`/products/${row.original.id}`);
           }}
         />

@@ -2,10 +2,10 @@
 
 import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { AlertTriangle, Eye, Loader2, Calendar, X } from "lucide-react";
-import { PageHeader, Badge, Select, Button, cn } from "@routeflow/ui/web";
+import { AlertTriangle, Eye, Loader2, Calendar, X, CheckSquare, Trash2 } from "lucide-react";
+import { PageHeader, Badge, Select, Button, cn, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
-import { useOrders, type Order } from "@/lib/api/orders";
+import { useOrders, useUpdateOrderStatus, type Order } from "@/lib/api/orders";
 import { CreateOrderModal } from "./_components/CreateOrderModal";
 
 // ─── Status filter options ────────────────────────────────────────────────────
@@ -34,6 +34,32 @@ export default function OrdersPage() {
   const [dateFrom, setDateFrom] = React.useState("");
   const [dateTo, setDateTo] = React.useState("");
   const [isCreateOpen, setIsCreateOpen] = React.useState(false);
+  const [selectMode, setSelectMode] = React.useState(false);
+  const [selected, setSelected] = React.useState<Set<string>>(new Set());
+  const [isCancelling, setIsCancelling] = React.useState(false);
+  const { toast } = useToast();
+  const updateStatus = useUpdateOrderStatus();
+
+  const toggleSelect = (id: string) =>
+    setSelected((prev) => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
+
+  const exitSelectMode = () => { setSelectMode(false); setSelected(new Set()); };
+
+  const handleBulkCancel = async () => {
+    if (isCancelling) return;
+    setIsCancelling(true);
+    try {
+      await Promise.all(Array.from(selected).map((id) =>
+        updateStatus.mutateAsync({ id, status: "CANCELLED" }),
+      ));
+      toast({ title: `${selected.size} order${selected.size !== 1 ? "s" : ""} cancelled`, variant: "success" });
+      exitSelectMode();
+    } catch {
+      toast({ title: "Failed to cancel some orders", variant: "error" });
+    } finally {
+      setIsCancelling(false);
+    }
+  };
 
   const { data, isLoading, isError } = useOrders({
     status: statusFilter || undefined,
@@ -65,12 +91,53 @@ export default function OrdersPage() {
       <PageHeader
         title="Orders"
         action={
-          <Button onClick={() => setIsCreateOpen(true)}>Create Order</Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="secondary"
+              leftIcon={selectMode ? <X className="h-4 w-4" /> : <CheckSquare className="h-4 w-4" />}
+              onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
+            >
+              {selectMode ? "Cancel" : "Select"}
+            </Button>
+            <Button onClick={() => setIsCreateOpen(true)}>Create Order</Button>
+          </div>
         }
       />
 
+      {/* Selection action bar */}
+      {selectMode && selected.size > 0 && (
+        <div className="flex items-center justify-between rounded-lg border border-warning/30 bg-warning-bg px-4 py-3">
+          <span className="text-sm font-medium text-navy">
+            {selected.size} order{selected.size !== 1 ? "s" : ""} selected
+          </span>
+          <div className="flex items-center gap-2">
+            <button onClick={() => setSelected(new Set())} className="text-sm text-navy/50 hover:text-navy transition-colors">
+              Deselect all
+            </button>
+            <Button variant="secondary" leftIcon={<X className="h-4 w-4" />} loading={isCancelling} onClick={handleBulkCancel}>
+              Cancel {selected.size}
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* Filter bar */}
       <div className="flex flex-wrap items-center gap-3">
+        {selectMode && filtered.length > 0 && (
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={filtered.every((o) => selected.has(o.id))}
+              ref={(el) => { if (el) el.indeterminate = filtered.some((o) => selected.has(o.id)) && !filtered.every((o) => selected.has(o.id)); }}
+              onChange={() => {
+                if (filtered.every((o) => selected.has(o.id))) setSelected(new Set());
+                else setSelected(new Set(filtered.map((o) => o.id)));
+              }}
+              className="h-4 w-4 cursor-pointer rounded border-navy/30 accent-brand-500"
+            />
+            <span className="text-sm text-navy/60">Select all</span>
+          </label>
+        )}
         <input
           type="search"
           placeholder="Search by customer or order #…"
@@ -142,6 +209,7 @@ export default function OrdersPage() {
         <table className="w-full text-sm">
           <thead className="border-b border-surface-border bg-surface-raised">
             <tr>
+              {selectMode && <th className="w-10 px-3 py-3" />}
               <th className="w-4 px-3 py-3" />
               <th className="px-4 py-3 text-left text-xs font-medium text-navy/60">Order #</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-navy/60">Customer</th>
@@ -156,19 +224,19 @@ export default function OrdersPage() {
           <tbody className="divide-y divide-surface-border bg-white">
             {isLoading ? (
               <tr>
-                <td colSpan={9} className="px-4 py-12 text-center">
+                <td colSpan={selectMode ? 10 : 9} className="px-4 py-12 text-center">
                   <Loader2 className="mx-auto h-6 w-6 animate-spin text-navy/40" />
                 </td>
               </tr>
             ) : isError ? (
               <tr>
-                <td colSpan={9} className="px-4 py-12 text-center text-sm text-danger">
+                <td colSpan={selectMode ? 10 : 9} className="px-4 py-12 text-center text-sm text-danger">
                   Failed to load orders. Please try again.
                 </td>
               </tr>
             ) : filtered.length === 0 ? (
               <tr>
-                <td colSpan={9} className="px-4 py-12 text-center text-sm text-navy/40">
+                <td colSpan={selectMode ? 10 : 9} className="px-4 py-12 text-center text-sm text-navy/40">
                   No orders match your filters.{" "}
                   <button
                     className="text-brand-500 hover:underline"
@@ -184,13 +252,24 @@ export default function OrdersPage() {
                   key={order.id}
                   role="link"
                   tabIndex={0}
-                  onClick={() => router.push(`/orders/${order.id}`)}
-                  onKeyDown={(e) => { if (e.key === "Enter") router.push(`/orders/${order.id}`); }}
+                  onClick={() => { if (selectMode) toggleSelect(order.id); else router.push(`/orders/${order.id}`); }}
+                  onKeyDown={(e) => { if (e.key === "Enter") { if (selectMode) toggleSelect(order.id); else router.push(`/orders/${order.id}`); } }}
                   className={cn(
                     "cursor-pointer transition-colors hover:bg-surface-raised focus:outline-none focus:ring-2 focus:ring-inset focus:ring-brand-500",
                     order.urgent && "border-l-2 border-l-danger",
+                    selected.has(order.id) && "bg-brand-50",
                   )}
                 >
+                  {selectMode && (
+                    <td className="px-3 py-3" onClick={(e) => { e.stopPropagation(); toggleSelect(order.id); }}>
+                      <input
+                        type="checkbox"
+                        checked={selected.has(order.id)}
+                        onChange={() => toggleSelect(order.id)}
+                        className="h-4 w-4 cursor-pointer rounded border-navy/30 accent-brand-500"
+                      />
+                    </td>
+                  )}
                   <td className="px-3 py-3">
                     {order.urgent && (
                       <AlertTriangle className="h-4 w-4 text-danger" />
