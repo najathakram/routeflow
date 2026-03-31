@@ -237,7 +237,7 @@ export class InvoicesService {
         where,
         include: {
           customer: { select: { id: true, businessName: true } },
-          payments: { orderBy: { createdAt: "desc" }, take: 1 },
+          payments: { orderBy: { createdAt: "desc" } },
         },
         skip,
         take: limit,
