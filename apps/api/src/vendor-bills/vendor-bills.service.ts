@@ -327,4 +327,41 @@ If you cannot read a value clearly, use null. Return ONLY the JSON object.`;
       });
     });
   }
+
+  async delete(id: string) {
+    const bill = await this.prisma.vendorBill.findUnique({ where: { id } });
+    if (!bill) throw new NotFoundException("Bill not found");
+    if (bill.status === "RECEIVED" || bill.status === "PAID" || bill.status === "PARTIAL") {
+      throw new BadRequestException("Cannot delete a bill that has been received or paid. Void it instead.");
+    }
+    await this.prisma.$transaction([
+      this.prisma.billPayment.deleteMany({ where: { vendorBillId: id } }),
+      this.prisma.vendorBillItem.deleteMany({ where: { vendorBillId: id } }),
+      this.prisma.vendorBill.delete({ where: { id } }),
+    ]);
+    return { success: true };
+  }
+
+  async bulkDelete(ids: string[]) {
+    if (!ids || ids.length === 0) throw new BadRequestException("No IDs provided");
+    // Only delete DRAFT or VOID bills
+    const bills = await this.prisma.vendorBill.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, status: true, billNumber: true },
+    });
+    const deletable = bills.filter(b => b.status === "DRAFT" || b.status === "VOID");
+    const skipped = bills.filter(b => b.status !== "DRAFT" && b.status !== "VOID");
+    if (deletable.length > 0) {
+      const deletableIds = deletable.map(b => b.id);
+      await this.prisma.$transaction([
+        this.prisma.billPayment.deleteMany({ where: { vendorBillId: { in: deletableIds } } }),
+        this.prisma.vendorBillItem.deleteMany({ where: { vendorBillId: { in: deletableIds } } }),
+        this.prisma.vendorBill.deleteMany({ where: { id: { in: deletableIds } } }),
+      ]);
+    }
+    return {
+      deleted: deletable.length,
+      skipped: skipped.map(b => ({ id: b.id, billNumber: b.billNumber, reason: "Cannot delete received/paid/partial bills" })),
+    };
+  }
 }

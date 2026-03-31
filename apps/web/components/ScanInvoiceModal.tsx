@@ -75,6 +75,8 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
   const [createMode, setCreateMode] = React.useState<CreateMode>("bill");
   const [isDragging, setIsDragging] = React.useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const [previewUrl, setPreviewUrl] = React.useState<string | null>(null);
+  const [previewType, setPreviewType] = React.useState<"pdf" | "image" | null>(null);
 
   // Bill fields
   const [supplierId, setSupplierId] = React.useState("");
@@ -117,6 +119,8 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
       setExpenseDate(new Date().toISOString().slice(0, 10));
       setExpensePaymentMethod("CASH");
       setExpenseNotes("");
+      setPreviewUrl(null);
+      setPreviewType(null);
     }
   }, [open]);
 
@@ -126,6 +130,10 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
       toast({ title: "Please upload an image (JPEG, PNG, WebP) or PDF file", variant: "error" });
       return;
     }
+    // Store preview URL
+    const url = URL.createObjectURL(file);
+    setPreviewUrl(url);
+    setPreviewType(file.type === "application/pdf" ? "pdf" : "image");
     setStep("processing");
     try {
       const result = await scanInvoice(file);
@@ -255,6 +263,7 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
           billDate,
           dueDate: dueDate || "",
           items: validItems.map((item) => ({
+            productId: item.productId || undefined,
             description: item.description,
             qty: parseFloat(item.qty) || 1,
             unitCost: parseFloat(item.unitCost) || 0,
@@ -294,7 +303,7 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+      <div className="flex max-h-[90vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-surface-border px-6 py-4">
           <div className="flex items-center gap-2">
@@ -385,6 +394,32 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
 
           {/* Review Step */}
           {step === "review" && (
+            <div className="flex h-full min-h-0 flex-1">
+              {/* Left: Invoice Preview */}
+              {previewUrl && (
+                <div className="flex w-2/5 shrink-0 flex-col border-r border-surface-border bg-surface-raised">
+                  <div className="flex items-center gap-2 border-b border-surface-border px-4 py-2.5">
+                    <FileText className="h-4 w-4 text-brand-500" />
+                    <span className="text-xs font-semibold uppercase tracking-wide text-navy/60">Invoice Preview</span>
+                  </div>
+                  <div className="flex-1 overflow-hidden">
+                    {previewType === "pdf" ? (
+                      <iframe
+                        src={previewUrl}
+                        className="h-full w-full"
+                        style={{ minHeight: "500px" }}
+                        title="Invoice PDF"
+                      />
+                    ) : (
+                      <div className="flex h-full items-start justify-center overflow-auto p-2">
+                        <img src={previewUrl} alt="Invoice" className="max-w-full rounded object-contain" />
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+              {/* Right: Form */}
+              <div className={previewUrl ? "flex-1 overflow-y-auto" : "w-full overflow-y-auto"}>
             <div className="space-y-4 p-6">
               {scanResult?.notes && (
                 <div className="flex items-start gap-2 rounded-lg border border-yellow-200 bg-yellow-50 p-3">
@@ -680,6 +715,8 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                   )}
                 </div>
               </div>
+            </div>
+            </div>
             </div>
           )}
         </div>

@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Post,
@@ -62,5 +63,11 @@ export class VendorBillsController {
   }
   @Post(":id/payments") recordPayment(@Param("id") id: string, @Body() dto: any) {
     return this.vendorBillsService.recordPayment(id, dto);
+  }
+  @Delete(":id") deleteBill(@Param("id") id: string) {
+    return this.vendorBillsService.delete(id);
+  }
+  @Delete() bulkDelete(@Body() dto: { ids: string[] }) {
+    return this.vendorBillsService.bulkDelete(dto.ids);
   }
 }

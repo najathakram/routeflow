@@ -22,6 +22,7 @@ import { usePageTitle } from "@/lib/page-title-context";
 import {
   useVendorBills,
   useCreateVendorBill,
+  useBulkDeleteVendorBills,
   type VendorBill,
   type VendorBillStatus,
   type CreateVendorBillItem,
@@ -442,6 +443,9 @@ function VendorBillsTab() {
   const [sortDir, setSortDir] = React.useState<"asc" | "desc">("desc");
   const [isCreateOpen, setIsCreateOpen] = React.useState(false);
   const [scanOpen, setScanOpen] = React.useState(false);
+  const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set());
+  const bulkDelete = useBulkDeleteVendorBills();
+  const { toast } = useToast();
   const LIMIT = 20;
 
   const toggleSort = (col: string) => {
@@ -451,6 +455,35 @@ function VendorBillsTab() {
   const SortIcon = ({ col }: { col: string }) => {
     if (sortCol !== col) return <ChevronsUpDown className="h-3 w-3 ml-0.5 text-current/40 inline" />;
     return sortDir === "asc" ? <ChevronUp className="h-3 w-3 ml-0.5 inline" /> : <ChevronDown className="h-3 w-3 ml-0.5 inline" />;
+  };
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+  const toggleSelectAll = () => {
+    if (selectedIds.size === sortedBills.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(sortedBills.map((b: VendorBill) => b.id)));
+    }
+  };
+  const handleBulkDelete = async () => {
+    if (selectedIds.size === 0) return;
+    if (!confirm(`Delete ${selectedIds.size} selected bill(s)? Only DRAFT and VOID bills can be deleted.`)) return;
+    try {
+      const result = await bulkDelete.mutateAsync(Array.from(selectedIds));
+      toast({
+        title: `${result.deleted} bill(s) deleted${result.skipped.length > 0 ? `, ${result.skipped.length} skipped (received/paid)` : ""}`,
+        variant: result.deleted > 0 ? "success" : "error",
+      });
+      setSelectedIds(new Set());
+    } catch {
+      toast({ title: "Failed to delete bills", variant: "error" });
+    }
   };
 
   const { data, isLoading, isError } = useVendorBills({
@@ -499,6 +532,12 @@ function VendorBillsTab() {
     <div className="space-y-5">
       {/* Actions row */}
       <div className="flex items-center justify-end gap-2">
+        {selectedIds.size > 0 && (
+          <Button variant="danger" onClick={() => void handleBulkDelete()} disabled={bulkDelete.isPending}>
+            <Trash2 className="mr-1 h-4 w-4" />
+            Delete {selectedIds.size} selected
+          </Button>
+        )}
         <Button variant="secondary" onClick={() => setScanOpen(true)}>
           <Sparkles className="mr-1 h-4 w-4" /> Scan Invoice
         </Button>
@@ -547,6 +586,14 @@ function VendorBillsTab() {
         <table className="w-full text-sm">
           <thead className="border-b border-surface-border bg-surface-raised">
             <tr>
+              <th className="w-10 px-4 py-3">
+                <input
+                  type="checkbox"
+                  checked={sortedBills.length > 0 && selectedIds.size === sortedBills.length}
+                  onChange={toggleSelectAll}
+                  className="h-4 w-4 rounded border-surface-border text-brand-500 accent-brand-500"
+                />
+              </th>
               <th className="px-4 py-3 text-left text-xs font-medium text-navy/60">Bill #</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-navy/60 cursor-pointer select-none hover:text-navy" onClick={() => toggleSort("supplier")}>Supplier <SortIcon col="supplier" /></th>
               <th className="px-4 py-3 text-left text-xs font-medium text-navy/60">PO #</th>
@@ -561,12 +608,12 @@ function VendorBillsTab() {
           </thead>
           <tbody className="divide-y divide-surface-border bg-white">
             {isLoading ? (
-              <tr><td colSpan={10} className="px-4 py-12 text-center"><Loader2 className="mx-auto h-6 w-6 animate-spin text-navy/40" /></td></tr>
+              <tr><td colSpan={11} className="px-4 py-12 text-center"><Loader2 className="mx-auto h-6 w-6 animate-spin text-navy/40" /></td></tr>
             ) : isError ? (
-              <tr><td colSpan={10} className="px-4 py-12 text-center text-sm text-danger">Failed to load vendor bills. Please try again.</td></tr>
+              <tr><td colSpan={11} className="px-4 py-12 text-center text-sm text-danger">Failed to load vendor bills. Please try again.</td></tr>
             ) : bills.length === 0 ? (
               <tr>
-                <td colSpan={10} className="px-4 py-12 text-center">
+                <td colSpan={11} className="px-4 py-12 text-center">
                   <div className="flex flex-col items-center gap-2">
                     <FileText className="h-8 w-8 text-navy/20" />
                     <p className="text-sm text-navy/40">No vendor bills match your filters.</p>
@@ -581,7 +628,15 @@ function VendorBillsTab() {
                 const overdue = isOverdue(bill);
                 return (
                   <tr key={bill.id} onClick={() => router.push(`/vendor-bills/${bill.id}`)}
-                    className={cn("cursor-pointer transition-colors hover:bg-surface-raised", overdue && "border-l-4 border-l-red-400")}>
+                    className={cn("cursor-pointer transition-colors hover:bg-surface-raised", overdue && "border-l-4 border-l-red-400", selectedIds.has(bill.id) && "bg-brand-50")}>
+                    <td className="w-10 px-4 py-3" onClick={(e) => { e.stopPropagation(); toggleSelect(bill.id); }}>
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(bill.id)}
+                        onChange={() => toggleSelect(bill.id)}
+                        className="h-4 w-4 rounded border-surface-border text-brand-500 accent-brand-500"
+                      />
+                    </td>
                     <td className="px-4 py-3 font-mono text-xs font-semibold text-navy">{bill.billNumber}</td>
                     <td className="px-4 py-3 font-medium text-navy">{bill.supplier?.name ?? "—"}</td>
                     <td className="px-4 py-3 text-navy/60 font-mono text-xs">{bill.purchaseOrder?.poNumber ?? "—"}</td>

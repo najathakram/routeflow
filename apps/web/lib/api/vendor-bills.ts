@@ -77,6 +77,7 @@ export function useVendorBill(id: string) {
 // ─── Mutations ────────────────────────────────────────────────────────────────
 
 export interface CreateVendorBillItem {
+  productId?: string;
   description: string;
   qty: number;
   unitCost: number;
@@ -138,5 +139,21 @@ export function useRecordVendorBillPayment() {
       qc.invalidateQueries({ queryKey: ["vendor-bills"] });
       qc.invalidateQueries({ queryKey: ["vendor-bills", id] });
     },
+  });
+}
+
+export function useDeleteVendorBill() {
+  const qc = useQueryClient();
+  return useMutation<{ success: boolean }, Error, string>({
+    mutationFn: (id) => apiClient.delete(`/vendor-bills/${id}`).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["vendor-bills"] }),
+  });
+}
+
+export function useBulkDeleteVendorBills() {
+  const qc = useQueryClient();
+  return useMutation<{ deleted: number; skipped: any[] }, Error, string[]>({
+    mutationFn: (ids) => apiClient.delete("/vendor-bills", { data: { ids } }).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["vendor-bills"] }),
   });
 }
