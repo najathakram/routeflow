@@ -609,6 +609,46 @@ export class InvoicesService {
     });
   }
 
+  // ─── Delete ───────────────────────────────────────────────────────────────
+
+  async deleteInvoice(id: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const inv = await tx.invoice.findUnique({
+        where: { id },
+        include: { payments: true },
+      });
+      if (!inv) throw new NotFoundException("Invoice not found");
+
+      if (inv.payments.length > 0) {
+        throw new BadRequestException(
+          "Cannot delete an invoice that has recorded payments. Remove all payments first, or void the invoice.",
+        );
+      }
+
+      // Unlink credit notes that were generated for this invoice
+      await tx.creditNote.updateMany({
+        where: { invoiceId: id },
+        data: { invoiceId: null },
+      });
+
+      // Delete line items
+      await tx.invoiceItem.deleteMany({ where: { invoiceId: id } });
+
+      // Delete the invoice (also detaches orderId reference)
+      await tx.invoice.delete({ where: { id } });
+
+      this.gateway.emitInvoiceUpdated({
+        invoiceId: id,
+        invoiceNumber: inv.invoiceNumber,
+        customerId: inv.customerId,
+        status: "DELETED" as any,
+        total: Number(inv.total),
+      });
+
+      return { id, message: "Invoice deleted successfully" };
+    });
+  }
+
   // ─── Cron ─────────────────────────────────────────────────────────────────
 
   async markOverdue() {

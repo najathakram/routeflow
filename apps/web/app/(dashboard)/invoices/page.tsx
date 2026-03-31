@@ -13,11 +13,12 @@ import {
   CreditCard,
   ChevronUp,
   ChevronsUpDown,
+  Trash2,
 } from "lucide-react";
-import { Button, cn } from "@routeflow/ui/web";
+import { Button, cn, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useDebounce } from "@/lib/hooks/useDebounce";
-import { useInvoices, type Invoice, type InvoiceStatus } from "@/lib/api/invoices";
+import { useInvoices, useDeleteInvoice, type Invoice, type InvoiceStatus } from "@/lib/api/invoices";
 import { useBookkeepingSummary } from "@/lib/api/bookkeeping";
 import { fmt, fmtDate } from "@/lib/formatting";
 
@@ -244,6 +245,10 @@ export default function InvoicesPage() {
   const { setTitle } = usePageTitle();
   React.useEffect(() => { setTitle("Invoices"); }, [setTitle]);
 
+  const { toast } = useToast();
+  const deleteInvoice = useDeleteInvoice();
+  const [confirmDeleteId, setConfirmDeleteId] = React.useState<string | null>(null);
+
   const [statusFilter, setStatusFilter] = React.useState(searchParams.get("status") ?? "");
   const [search, setSearch] = React.useState("");
   const debouncedSearch = useDebounce(search, 300);
@@ -405,7 +410,7 @@ export default function InvoicesPage() {
               <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
                 Balance Due
               </th>
-              <th className="w-10 px-3 py-3" />
+              <th className="w-20 px-3 py-3" />
             </tr>
           </thead>
           <tbody className="divide-y divide-surface-border bg-white">
@@ -478,17 +483,58 @@ export default function InvoicesPage() {
                       </span>
                     </td>
                     <td
-                      className="px-3 py-3 opacity-0 group-hover:opacity-100 transition-opacity"
+                      className="px-3 py-3"
                       onClick={(e) => e.stopPropagation()}
                     >
-                      <button
-                        title="View invoice"
-                        aria-label="View invoice"
-                        onClick={() => router.push(`/invoices/${inv.id}`)}
-                        className="rounded p-1.5 text-navy/40 hover:bg-white hover:text-navy transition-colors"
-                      >
-                        <Eye className="h-4 w-4" />
-                      </button>
+                      {confirmDeleteId === inv.id ? (
+                        <div className="flex items-center gap-1">
+                          <button
+                            title="Confirm delete"
+                            disabled={deleteInvoice.isPending}
+                            onClick={async () => {
+                              try {
+                                await deleteInvoice.mutateAsync(inv.id);
+                                setConfirmDeleteId(null);
+                                toast({ title: "Invoice deleted", variant: "success" });
+                              } catch (err: any) {
+                                setConfirmDeleteId(null);
+                                toast({
+                                  title: "Delete failed",
+                                  description: err?.response?.data?.message ?? err?.message ?? "Unknown error",
+                                  variant: "error",
+                                });
+                              }
+                            }}
+                            className="rounded px-2 py-1 text-xs font-semibold text-white bg-danger hover:bg-red-700 disabled:opacity-50 transition-colors"
+                          >
+                            {deleteInvoice.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : "Delete"}
+                          </button>
+                          <button
+                            title="Cancel"
+                            onClick={() => setConfirmDeleteId(null)}
+                            className="rounded p-1 text-navy/40 hover:text-navy transition-colors"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-0.5">
+                          <button
+                            title="View invoice"
+                            onClick={() => router.push(`/invoices/${inv.id}`)}
+                            className="rounded p-1.5 text-navy/40 hover:bg-white hover:text-navy transition-colors"
+                          >
+                            <Eye className="h-4 w-4" />
+                          </button>
+                          <button
+                            title="Delete invoice"
+                            onClick={() => setConfirmDeleteId(inv.id)}
+                            className="rounded p-1.5 text-navy/40 hover:bg-white hover:text-danger transition-colors"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      )}
                     </td>
                   </tr>
                 );

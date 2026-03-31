@@ -108,6 +108,11 @@ export class InvoicesController {
     return this.invoicesService.updatePayment(id, paymentId, dto);
   }
 
+  @Delete(":id")
+  deleteInvoice(@Param("id") id: string) {
+    return this.invoicesService.deleteInvoice(id);
+  }
+
   @Delete(":id/payments/:paymentId")
   deletePayment(@Param("id") id: string, @Param("paymentId") paymentId: string) {
     return this.invoicesService.deletePayment(id, paymentId);

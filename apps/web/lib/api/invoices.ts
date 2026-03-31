@@ -227,6 +227,14 @@ export function useApplyAdvanceToInvoice() {
   });
 }
 
+export function useDeleteInvoice() {
+  const qc = useQueryClient();
+  return useMutation<{ id: string; message: string }, Error, string>({
+    mutationFn: (id) => apiClient.delete(`/invoices/${id}`).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['invoices'] }),
+  });
+}
+
 export function useWriteOffInvoice() {
   const qc = useQueryClient();
   return useMutation<Invoice, Error, { id: string; reason: string }>({
