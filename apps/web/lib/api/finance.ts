@@ -104,13 +104,17 @@ export function useFinanceDashboard() {
 
 // ─── AR Aging ─────────────────────────────────────────────────────────────────
 
-export function useArAgingInvoices() {
+export function useArAgingInvoices(intervalDays?: number) {
   return useQuery<{
     buckets: { current: ArAgingBucket[]; days1_30: ArAgingBucket[]; days31_60: ArAgingBucket[]; days61_90: ArAgingBucket[]; days90plus: ArAgingBucket[] };
     totals: { current: number; days1_30: number; days31_60: number; days61_90: number; days90plus: number; total: number };
   }>({
-    queryKey: ['reports', 'ar-aging-invoices'],
-    queryFn: () => apiClient.get('/bookkeeping/reports/ar-aging-invoices').then((r) => r.data),
+    queryKey: ['reports', 'ar-aging-invoices', intervalDays],
+    queryFn: () =>
+      apiClient
+        .get('/bookkeeping/reports/ar-aging-invoices',
+          { params: intervalDays ? { intervalDays } : undefined })
+        .then((r) => r.data),
   });
 }
 

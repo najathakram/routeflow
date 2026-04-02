@@ -33,7 +33,7 @@ export function ReportChart({
   dataKeys,
   nameKey = "name",
   colors = COLORS,
-  height = 300,
+  height = 340,
   horizontal = false,
   formatValue = currencyFormatter,
 }: ReportChartProps) {
@@ -58,7 +58,7 @@ export function ReportChart({
               data={data}
               cx="50%"
               cy="50%"
-              outerRadius={height / 3}
+              outerRadius={Math.floor(height * 0.3)}
               dataKey={dataKeys[0]}
               nameKey={nameKey}
               label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
@@ -105,7 +105,7 @@ export function ReportChart({
           {horizontal ? (
             <>
               <XAxis type="number" tick={{ fontSize: 12, fill: "#64748b" }} tickFormatter={formatValue} />
-              <YAxis dataKey={nameKey} type="category" tick={{ fontSize: 12, fill: "#64748b" }} width={120} />
+              <YAxis dataKey={nameKey} type="category" tick={{ fontSize: 12, fill: "#64748b" }} width={160} />
             </>
           ) : (
             <>

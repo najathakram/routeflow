@@ -61,9 +61,10 @@ export class ImportService {
   async importContacts(
     buffer: Buffer,
     userId: string,
-  ): Promise<{ imported: number; skipped: number; errors: string[] }> {
+  ): Promise<{ created: number; updated: number; skipped: number; errors: string[] }> {
     const rows = this.parseCsv(buffer);
-    let imported = 0,
+    let created = 0,
+      updated = 0,
       skipped = 0;
     const errors: string[] = [];
 
@@ -86,36 +87,141 @@ export class ImportService {
         continue;
       }
 
-      // Check by Zoho Customer ID to prevent re-importing the same contact
       const zohoContactId = (row["Customer ID"] || "").trim() || null;
+
+      // Extract all fields from CSV
+      const displayName = (row["Display Name"] || "").trim() || null;
+      const salutation = (row["Salutation"] || "").trim() || null;
+      const firstName = (row["First Name"] || "").trim() || null;
+      const lastName = (row["Last Name"] || "").trim() || null;
+      // Main phone from Phone column (preferred), fallback to Billing Phone
+      const phone = (row["Phone"] || row["Billing Phone"] || "")
+        .replace(/^'+/, "").replace(/'+/g, "").trim() || null;
+      // Mobile from MobilePhone column
+      const mobile = (row["MobilePhone"] || "")
+        .replace(/^'+/, "").replace(/'+/g, "").trim() || null;
+      const csvEmail = (row["EmailID"] || row["Email"] || "").trim().toLowerCase() || null;
+      const currency = (row["Currency Code"] || "USD").trim() || "USD";
+      const notes = (row["Notes"] || "").trim() || null;
+
+      // Contact name: First+Last, or Billing Attention, or business name
+      const contactName =
+        [firstName, lastName].filter(Boolean).join(" ").trim() ||
+        (row["Billing Attention"] || "").trim() ||
+        name;
+
+      // Billing address fields
+      const billingLine1 = [row["Billing Address"], row["Billing Street2"]]
+        .filter(Boolean).join(", ").trim();
+      const billingCity = (row["Billing City"] || "").trim();
+      const billingState = (row["Billing State"] || "").trim();
+      const billingZip = (row["Billing Code"] || "").trim();
+      const billingLatRaw = parseFloat(row["Billing Latitude"] || "");
+      const billingLngRaw = parseFloat(row["Billing Longitude"] || "");
+      const billingLat = isNaN(billingLatRaw) ? null : billingLatRaw;
+      const billingLng = isNaN(billingLngRaw) ? null : billingLngRaw;
+      const hasBilling = !!(billingLine1 || billingCity);
+
+      // Shipping address fields
+      const shippingLine1 = [row["Shipping Address"], row["Shipping Street2"]]
+        .filter(Boolean).join(", ").trim();
+      const shippingCity = (row["Shipping City"] || "").trim();
+      const shippingState = (row["Shipping State"] || "").trim();
+      const shippingZip = (row["Shipping Code"] || "").trim();
+      const shippingLatRaw = parseFloat(row["Shipping Latitude"] || "");
+      const shippingLngRaw = parseFloat(row["Shipping Longitude"] || "");
+      const shippingLat = isNaN(shippingLatRaw) ? null : shippingLatRaw;
+      const shippingLng = isNaN(shippingLngRaw) ? null : shippingLngRaw;
+      // Only create shipping if it has data and differs from billing
+      const hasShipping = !!(shippingLine1 || shippingCity) &&
+        (shippingLine1 !== billingLine1 || shippingCity !== billingCity || shippingZip !== billingZip);
+
+      // Check if this customer was already imported (by Zoho ID)
       if (zohoContactId) {
-        const existingByZohoId = await this.prisma.customer.findFirst({
+        const existing = await this.prisma.customer.findFirst({
           where: { zohoContactId },
+          include: { addresses: true, contactPersons: true },
         });
-        if (existingByZohoId) {
-          skipped++;
-          errors.push(`${name}: already imported`);
+        if (existing) {
+          // Update the existing customer with any missing/new fields
+          try {
+            await this.prisma.customer.update({
+              where: { id: existing.id },
+              data: {
+                ...(displayName !== null && { displayName }),
+                ...(salutation !== null && { salutation }),
+                ...(firstName !== null && { firstName }),
+                ...(lastName !== null && { lastName }),
+                ...(phone !== null && !existing.phone && { phone }),
+                ...(mobile !== null && { mobile }),
+                ...(csvEmail !== null && { email: csvEmail }),
+                ...(notes !== null && { notes }),
+                currency,
+                contactName: existing.contactName === existing.businessName ? (contactName || existing.contactName) : existing.contactName,
+              },
+            });
+
+            // Add billing address if not already present
+            const existingBilling = existing.addresses.find(a => a.addressType === "BILLING");
+            if (!existingBilling && hasBilling) {
+              await this.prisma.customerAddress.create({
+                data: {
+                  customerId: existing.id,
+                  label: "Billing",
+                  line1: billingLine1 || billingCity || "Unknown",
+                  city: billingCity || "Unknown",
+                  state: billingState || "Unknown",
+                  zip: billingZip || "00000",
+                  lat: billingLat,
+                  lng: billingLng,
+                  addressType: "BILLING",
+                  isDefault: true,
+                },
+              });
+            }
+
+            // Add shipping address if not already present and differs from billing
+            const existingShipping = existing.addresses.find(a => a.addressType === "SHIPPING");
+            if (!existingShipping && hasShipping) {
+              await this.prisma.customerAddress.create({
+                data: {
+                  customerId: existing.id,
+                  label: "Shipping",
+                  line1: shippingLine1 || shippingCity || "Unknown",
+                  city: shippingCity || "Unknown",
+                  state: shippingState || "Unknown",
+                  zip: shippingZip || "00000",
+                  lat: shippingLat,
+                  lng: shippingLng,
+                  addressType: "SHIPPING",
+                  isDefault: false,
+                },
+              });
+            }
+
+            // Add contact person if we have a name and none exists yet
+            if ((firstName || lastName) && existing.contactPersons.length === 0) {
+              await this.prisma.contactPerson.create({
+                data: {
+                  customerId: existing.id,
+                  salutation: salutation || null,
+                  firstName: firstName || contactName,
+                  lastName: lastName || null,
+                  email: csvEmail || null,
+                  phone: phone || null,
+                  mobile: mobile || null,
+                  isPrimary: true,
+                },
+              });
+            }
+
+            updated++;
+          } catch (e: any) {
+            errors.push(`${name} (update): ${e.message}`);
+          }
           continue;
         }
       }
-
-      const street = [row["Billing Address"], row["Billing Street2"]]
-        .filter(Boolean)
-        .join(", ")
-        .trim();
-      const city = (row["Billing City"] || "").trim();
-      const state = (row["Billing State"] || "").trim();
-      const zip = (row["Billing Code"] || "").trim();
-      // Strip Zoho's leading ' prefix from phone numbers (e.g. '+1-555-1234 → 1-555-1234)
-      const phone = (row["Billing Phone"] || row["MobilePhone"] || row["Phone"] || "")
-        .replace(/^'+/, "")
-        .replace(/'+/g, "")
-        .trim();
-      const csvEmail = (row["EmailID"] || row["Email"] || "").trim().toLowerCase();
-      const contactName =
-        [row["First Name"], row["Last Name"]].filter(Boolean).join(" ").trim() ||
-        (row["Billing Attention"] || "").trim() ||
-        name;
 
       // Generate a unique username from business name
       const baseUsername = this.slugify(name);
@@ -125,7 +231,7 @@ export class ImportService {
         username = `${baseUsername}_${suffix++}`;
       }
 
-      // Determine email: use CSV email if it's not already taken, otherwise synthetic
+      // Determine user email: use CSV email if not taken, otherwise synthetic
       let userEmail: string;
       if (csvEmail) {
         const emailTaken = await this.prisma.user.findFirst({ where: { email: csvEmail } });
@@ -153,35 +259,79 @@ export class ImportService {
               userId: user.id,
               businessName: name,
               contactName: contactName || name,
+              displayName: displayName || null,
+              salutation: salutation || null,
+              firstName: firstName || null,
+              lastName: lastName || null,
               phone: phone || null,
+              mobile: mobile || null,
+              email: csvEmail || null,
+              currency,
+              notes: notes || null,
               zohoContactId: zohoContactId || null,
-              notes: null,
             },
           });
 
-          // Create a default address if we have address data
-          if (street || city || state || zip) {
+          // Billing address
+          if (hasBilling) {
             await tx.customerAddress.create({
               data: {
                 customerId: customer.id,
-                label: "default",
-                line1: street || city || "Unknown",
-                city: city || "Unknown",
-                state: state || "TX",
-                zip: zip || "00000",
+                label: "Billing",
+                line1: billingLine1 || billingCity || "Unknown",
+                city: billingCity || "Unknown",
+                state: billingState || "Unknown",
+                zip: billingZip || "00000",
+                lat: billingLat,
+                lng: billingLng,
+                addressType: "BILLING",
                 isDefault: true,
+              },
+            });
+          }
+
+          // Shipping address (only if different from billing)
+          if (hasShipping) {
+            await tx.customerAddress.create({
+              data: {
+                customerId: customer.id,
+                label: "Shipping",
+                line1: shippingLine1 || shippingCity || "Unknown",
+                city: shippingCity || "Unknown",
+                state: shippingState || "Unknown",
+                zip: shippingZip || "00000",
+                lat: shippingLat,
+                lng: shippingLng,
+                addressType: "SHIPPING",
+                isDefault: false,
+              },
+            });
+          }
+
+          // Create contact person entry if we have a name
+          if (firstName || lastName) {
+            await tx.contactPerson.create({
+              data: {
+                customerId: customer.id,
+                salutation: salutation || null,
+                firstName: firstName || contactName,
+                lastName: lastName || null,
+                email: csvEmail || null,
+                phone: phone || null,
+                mobile: mobile || null,
+                isPrimary: true,
               },
             });
           }
         });
 
-        imported++;
+        created++;
       } catch (e: any) {
         errors.push(`${name}: ${e.message}`);
         skipped++;
       }
     }
-    return { imported, skipped, errors };
+    return { created, updated, skipped, errors };
   }
 
   async importInvoices(
