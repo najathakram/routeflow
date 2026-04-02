@@ -6,10 +6,18 @@ export interface Supplier {
   name: string;
   contactName?: string;
   phone?: string;
+  mobile?: string;
   email?: string;
+  website?: string;
   notes?: string;
   isActive: boolean;
   leadTimeDays?: number;
+  addressLine1?: string;
+  addressLine2?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+  country?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -66,5 +74,20 @@ export function useDeleteSupplier() {
     mutationFn: (id: string) =>
       apiClient.delete(`/suppliers/${id}`).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["suppliers"] }),
+  });
+}
+
+export function useImportExpenseSuppliers() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (file: File) => {
+      const form = new FormData();
+      form.append("file", file);
+      return apiClient.post("/import/expense-suppliers", form).then((r) => r.data);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["suppliers"] });
+      qc.invalidateQueries({ queryKey: ["customers"] });
+    },
   });
 }

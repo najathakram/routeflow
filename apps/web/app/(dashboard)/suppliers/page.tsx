@@ -1,12 +1,12 @@
 "use client";
 
 import * as React from "react";
-import { Plus, Search, Building2, Phone, Mail, Clock, Pencil, X, Check, CheckSquare, Trash2 } from "lucide-react";
+import { Plus, Search, Building2, Phone, Mail, Clock, Pencil, X, Check, CheckSquare, Trash2, Upload, MapPin, Globe, Smartphone } from "lucide-react";
 import { PageHeader, Badge, Button, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useToast } from "@routeflow/ui/web";
 import { useDebounce } from "@/lib/hooks/useDebounce";
-import { useSuppliers, useCreateSupplier, useUpdateSupplier, useDeleteSupplier, type Supplier } from "@/lib/api/suppliers";
+import { useSuppliers, useCreateSupplier, useUpdateSupplier, useDeleteSupplier, useImportExpenseSuppliers, type Supplier } from "@/lib/api/suppliers";
 
 // ─── Supplier form modal ───────────────────────────────────────────────────────
 
@@ -25,9 +25,17 @@ function SupplierModal({
     name: initial?.name ?? "",
     contactName: initial?.contactName ?? "",
     phone: initial?.phone ?? "",
+    mobile: initial?.mobile ?? "",
     email: initial?.email ?? "",
+    website: initial?.website ?? "",
     notes: initial?.notes ?? "",
     leadTimeDays: initial?.leadTimeDays != null ? String(initial.leadTimeDays) : "",
+    addressLine1: initial?.addressLine1 ?? "",
+    addressLine2: initial?.addressLine2 ?? "",
+    city: initial?.city ?? "",
+    state: initial?.state ?? "",
+    zip: initial?.zip ?? "",
+    country: initial?.country ?? "",
   });
 
   const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
@@ -39,9 +47,17 @@ function SupplierModal({
       name: form.name,
       contactName: form.contactName || undefined,
       phone: form.phone || undefined,
+      mobile: form.mobile || undefined,
       email: form.email || undefined,
+      website: form.website || undefined,
       notes: form.notes || undefined,
       leadTimeDays: form.leadTimeDays ? Number(form.leadTimeDays) : undefined,
+      addressLine1: form.addressLine1 || undefined,
+      addressLine2: form.addressLine2 || undefined,
+      city: form.city || undefined,
+      state: form.state || undefined,
+      zip: form.zip || undefined,
+      country: form.country || undefined,
     });
   };
 
@@ -58,46 +74,79 @@ function SupplierModal({
             <X className="h-4 w-4" />
           </button>
         </div>
-        <form onSubmit={handleSubmit} className="space-y-4 p-6">
-          <div className="grid grid-cols-2 gap-4">
-            <div className="col-span-2">
-              <label className="mb-1 block text-sm font-medium text-navy">Company name *</label>
-              <input required value={form.name} onChange={(e) => set("name", e.target.value)} className={inputCls} />
+        <form onSubmit={handleSubmit} className="max-h-[80vh] overflow-y-auto p-6">
+          <div className="space-y-4">
+            {/* Company info */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="col-span-2">
+                <label className="mb-1 block text-xs font-medium text-navy/60 uppercase tracking-wide">Company name *</label>
+                <input required value={form.name} onChange={(e) => set("name", e.target.value)} className={inputCls} />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-navy/60 uppercase tracking-wide">Contact person</label>
+                <input value={form.contactName} onChange={(e) => set("contactName", e.target.value)} className={inputCls} />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-navy/60 uppercase tracking-wide">Lead time (days)</label>
+                <input type="number" min="0" value={form.leadTimeDays} onChange={(e) => set("leadTimeDays", e.target.value)} placeholder="e.g. 3" className={inputCls} />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-navy/60 uppercase tracking-wide">Phone</label>
+                <input type="tel" value={form.phone} onChange={(e) => set("phone", e.target.value)} className={inputCls} />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-navy/60 uppercase tracking-wide">Mobile</label>
+                <input type="tel" value={form.mobile} onChange={(e) => set("mobile", e.target.value)} className={inputCls} />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-navy/60 uppercase tracking-wide">Email</label>
+                <input type="email" value={form.email} onChange={(e) => set("email", e.target.value)} className={inputCls} />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-navy/60 uppercase tracking-wide">Website</label>
+                <input type="url" value={form.website} onChange={(e) => set("website", e.target.value)} placeholder="https://" className={inputCls} />
+              </div>
             </div>
+
+            {/* Address */}
             <div>
-              <label className="mb-1 block text-sm font-medium text-navy">Contact name</label>
-              <input value={form.contactName} onChange={(e) => set("contactName", e.target.value)} className={inputCls} />
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-navy/40">Address</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="col-span-2">
+                  <label className="mb-1 block text-xs font-medium text-navy/60 uppercase tracking-wide">Street address</label>
+                  <input value={form.addressLine1} onChange={(e) => set("addressLine1", e.target.value)} placeholder="123 Main St" className={inputCls} />
+                </div>
+                <div className="col-span-2">
+                  <label className="mb-1 block text-xs font-medium text-navy/60 uppercase tracking-wide">Suite / Unit</label>
+                  <input value={form.addressLine2} onChange={(e) => set("addressLine2", e.target.value)} placeholder="Suite 100" className={inputCls} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-navy/60 uppercase tracking-wide">City</label>
+                  <input value={form.city} onChange={(e) => set("city", e.target.value)} className={inputCls} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-navy/60 uppercase tracking-wide">State</label>
+                  <input value={form.state} onChange={(e) => set("state", e.target.value)} className={inputCls} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-navy/60 uppercase tracking-wide">ZIP</label>
+                  <input value={form.zip} onChange={(e) => set("zip", e.target.value)} className={inputCls} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-navy/60 uppercase tracking-wide">Country</label>
+                  <input value={form.country} onChange={(e) => set("country", e.target.value)} placeholder="US" className={inputCls} />
+                </div>
+              </div>
             </div>
+
+            {/* Notes */}
             <div>
-              <label className="mb-1 block text-sm font-medium text-navy">Phone</label>
-              <input type="tel" value={form.phone} onChange={(e) => set("phone", e.target.value)} className={inputCls} />
-            </div>
-            <div>
-              <label className="mb-1 block text-sm font-medium text-navy">Email</label>
-              <input type="email" value={form.email} onChange={(e) => set("email", e.target.value)} className={inputCls} />
-            </div>
-            <div>
-              <label className="mb-1 block text-sm font-medium text-navy">Lead time (days)</label>
-              <input
-                type="number"
-                min="0"
-                value={form.leadTimeDays}
-                onChange={(e) => set("leadTimeDays", e.target.value)}
-                placeholder="e.g. 3"
-                className={inputCls}
-              />
-            </div>
-            <div className="col-span-2">
-              <label className="mb-1 block text-sm font-medium text-navy">Notes</label>
-              <textarea
-                rows={2}
-                value={form.notes}
-                onChange={(e) => set("notes", e.target.value)}
-                className={`${inputCls} resize-y`}
-              />
+              <label className="mb-1 block text-xs font-medium text-navy/60 uppercase tracking-wide">Notes</label>
+              <textarea rows={2} value={form.notes} onChange={(e) => set("notes", e.target.value)} className={`${inputCls} resize-y`} />
             </div>
           </div>
-          <div className="flex justify-end gap-2 pt-2">
+
+          <div className="flex justify-end gap-2 pt-4">
             <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
             <Button type="submit" loading={isSaving}>
               {isEdit ? "Save changes" : "Add Supplier"}
@@ -179,16 +228,30 @@ function SupplierCard({
 
       {/* Contact details */}
       <div className="space-y-1">
-        {supplier.phone && (
+        {(supplier.phone || supplier.mobile) && (
           <div className="flex items-center gap-1.5 text-xs text-navy">
             <Phone className="h-3.5 w-3.5 shrink-0 text-navy/30" />
-            {supplier.phone}
+            {supplier.phone || supplier.mobile}
           </div>
         )}
         {supplier.email && (
           <div className="flex items-center gap-1.5 text-xs text-navy">
             <Mail className="h-3.5 w-3.5 shrink-0 text-navy/30" />
             {supplier.email}
+          </div>
+        )}
+        {supplier.website && (
+          <div className="flex items-center gap-1.5 text-xs text-navy">
+            <Globe className="h-3.5 w-3.5 shrink-0 text-navy/30" />
+            <span className="truncate">{supplier.website.replace(/^https?:\/\//, "")}</span>
+          </div>
+        )}
+        {supplier.addressLine1 && (
+          <div className="flex items-start gap-1.5 text-xs text-navy/70">
+            <MapPin className="h-3.5 w-3.5 shrink-0 text-navy/30 mt-0.5" />
+            <span className="line-clamp-2">
+              {[supplier.addressLine1, supplier.city, supplier.state, supplier.zip].filter(Boolean).join(", ")}
+            </span>
           </div>
         )}
         {supplier.leadTimeDays != null && (
@@ -232,9 +295,11 @@ export default function SuppliersPage() {
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [isDeleting, setIsDeleting] = React.useState(false);
 
+  const importFileRef = React.useRef<HTMLInputElement>(null);
   const createSupplier = useCreateSupplier();
   const updateSupplier = useUpdateSupplier();
   const deleteSupplier = useDeleteSupplier();
+  const importExpenseSuppliers = useImportExpenseSuppliers();
 
   const toggleSelect = (id: string) =>
     setSelected((prev) => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
@@ -281,6 +346,22 @@ export default function SuppliersPage() {
     }
   };
 
+  const handleImportExpenses = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = "";
+    try {
+      const result = await importExpenseSuppliers.mutateAsync(file);
+      toast({
+        title: `Import complete`,
+        description: `${result.created} created, ${result.updated} updated, ${result.removedFromCustomers} removed from customers${result.errors?.length ? ` (${result.errors.length} errors)` : ""}`,
+        variant: "success",
+      });
+    } catch (err: any) {
+      toast({ title: "Import failed", description: err?.message, variant: "error" });
+    }
+  };
+
   const handleToggleActive = async (supplier: Supplier) => {
     try {
       await updateSupplier.mutateAsync({ id: supplier.id, isActive: !supplier.isActive });
@@ -300,6 +381,21 @@ export default function SuppliersPage() {
         subtitle={`${total} supplier${total !== 1 ? "s" : ""}`}
         action={
           <div className="flex items-center gap-2">
+            <input
+              ref={importFileRef}
+              type="file"
+              accept=".csv"
+              className="hidden"
+              onChange={handleImportExpenses}
+            />
+            <Button
+              variant="secondary"
+              leftIcon={<Upload className="h-4 w-4" />}
+              loading={importExpenseSuppliers.isPending}
+              onClick={() => importFileRef.current?.click()}
+            >
+              Import from Expenses
+            </Button>
             <Button
               variant="secondary"
               leftIcon={selectMode ? <X className="h-4 w-4" /> : <CheckSquare className="h-4 w-4" />}

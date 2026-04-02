@@ -914,4 +914,105 @@ export class ImportService {
 
     return { updated, created, skipped, errors };
   }
+
+  /**
+   * Reads unique supplier names from a Zoho Expense CSV ("Customer Name" column),
+   * cross-references existing Customer records (incorrectly imported from Zoho),
+   * creates/updates proper Supplier records with full info, then removes those
+   * Customer records from the database.
+   */
+  async importExpenseSuppliers(buffer: Buffer): Promise<{
+    created: number;
+    updated: number;
+    removedFromCustomers: number;
+    skipped: number;
+    errors: string[];
+  }> {
+    const rows = this.parseCsv(buffer);
+    const errors: string[] = [];
+    let created = 0, updated = 0, removedFromCustomers = 0, skipped = 0;
+
+    // Collect unique, non-empty supplier names from "Customer Name" column
+    const supplierNames = [
+      ...new Set(
+        rows
+          .map((r: any) => (r["Customer Name"] || "").trim())
+          .filter(Boolean),
+      ),
+    ] as string[];
+
+    for (const name of supplierNames) {
+      try {
+        // Find matching customer records (businessName or displayName match)
+        const matchingCustomers = await this.prisma.customer.findMany({
+          where: {
+            OR: [
+              { businessName: { equals: name, mode: "insensitive" } },
+              { displayName: { equals: name, mode: "insensitive" } },
+            ],
+          },
+          include: { addresses: true },
+        });
+
+        // Build supplier data from the first matched customer (if any)
+        const supplierData: any = { name };
+        if (matchingCustomers.length > 0) {
+          const c = matchingCustomers[0];
+          if (c.phone) supplierData.phone = c.phone;
+          if (c.mobile) supplierData.mobile = c.mobile;
+          if (c.email) supplierData.email = c.email;
+          if (c.notes) supplierData.notes = c.notes;
+
+          // Use billing address first, then any address
+          const billingAddr =
+            c.addresses.find((a) => a.addressType === "BILLING") ??
+            c.addresses[0];
+          if (billingAddr) {
+            supplierData.addressLine1 = billingAddr.line1 ?? undefined;
+            supplierData.addressLine2 = billingAddr.line2 ?? undefined;
+            supplierData.city = billingAddr.city ?? undefined;
+            supplierData.state = billingAddr.state ?? undefined;
+            supplierData.zip = billingAddr.zip ?? undefined;
+          }
+        }
+
+        // Upsert supplier (match by name case-insensitive)
+        const existing = await this.prisma.supplier.findFirst({
+          where: { name: { equals: name, mode: "insensitive" } },
+        });
+
+        if (existing) {
+          await this.prisma.supplier.update({
+            where: { id: existing.id },
+            data: supplierData,
+          });
+          updated++;
+        } else {
+          await this.prisma.supplier.create({ data: supplierData });
+          created++;
+        }
+
+        // Delete all matched customer records (they were incorrectly added as customers)
+        for (const customer of matchingCustomers) {
+          try {
+            // Delete non-cascade dependent records first
+            await this.prisma.routeCustomer.deleteMany({ where: { customerId: customer.id } });
+            await this.prisma.customerAddress.deleteMany({ where: { customerId: customer.id } });
+            await this.prisma.customerTagAssignment.deleteMany({ where: { customerId: customer.id } });
+            await this.prisma.contactPerson.deleteMany({ where: { customerId: customer.id } });
+            await this.prisma.customerComment.deleteMany({ where: { customerId: customer.id } });
+            await this.prisma.customer.delete({ where: { id: customer.id } });
+            removedFromCustomers++;
+          } catch (delErr: any) {
+            errors.push(`Could not remove customer ${customer.displayName}: ${delErr.message}`);
+          }
+        }
+      } catch (e: any) {
+        errors.push(`${name}: ${e.message}`);
+        skipped++;
+      }
+    }
+
+    return { created, updated, removedFromCustomers, skipped, errors };
+  }
 }
