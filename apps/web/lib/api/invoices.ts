@@ -112,9 +112,14 @@ export function useInvoice(id: string) {
 export interface AllPayment {
   id: string;
   amount: number;
-  method: 'CASH' | 'CHECK' | 'ACH' | 'OTHER' | 'CREDIT_NOTE' | 'ADVANCE';
+  method: 'CASH' | 'CHECK' | 'ACH' | 'OTHER' | 'CREDIT_NOTE' | 'ADVANCE' | 'CREDIT_CARD';
   reference?: string;
   notes?: string;
+  bankCharges?: number;
+  paymentNumber?: string;
+  status?: 'DRAFT' | 'PAID' | 'VOID';
+  paymentGroupId?: string;
+  paidAt?: string;
   createdAt: string;
   invoice: {
     id: string;
@@ -124,8 +129,27 @@ export interface AllPayment {
   };
 }
 
-export function useInvoicePayments(params?: { page?: number; limit?: number }) {
-  return useQuery<{ data: AllPayment[]; meta: { total: number; page: number; limit: number; totalPages: number } }>({
+export interface PaymentListParams {
+  page?: number;
+  limit?: number;
+  customerId?: string;
+  method?: string;
+  status?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  search?: string;
+  sortBy?: string;
+  sortDir?: string;
+}
+
+export interface PaymentListResponse {
+  data: AllPayment[];
+  meta: { total: number; page: number; limit: number; totalPages: number };
+  summary: { totalReceived: number; count: number; advanceBalance: number };
+}
+
+export function useInvoicePayments(params?: PaymentListParams) {
+  return useQuery<PaymentListResponse>({
     queryKey: ['invoices', 'payments', params],
     queryFn: () => apiClient.get('/invoices/payments', { params }).then((r) => r.data),
   });
@@ -257,8 +281,11 @@ export function useDownloadInvoicePdf() {
 
 export interface RecordInvoicePaymentDto {
   id: string;
-  method: 'CASH' | 'CHECK' | 'ACH' | 'OTHER';
+  method: 'CASH' | 'CHECK' | 'ACH' | 'OTHER' | 'CREDIT_CARD';
   amount: number;
+  paidAt?: string;
+  bankCharges?: number;
+  status?: 'DRAFT' | 'PAID';
   reference?: string;
   notes?: string;
 }
@@ -278,8 +305,11 @@ export function useRecordInvoicePayment() {
 export interface UpdateInvoicePaymentDto {
   invoiceId: string;
   paymentId: string;
-  method: 'CASH' | 'CHECK' | 'ACH' | 'OTHER';
+  method: 'CASH' | 'CHECK' | 'ACH' | 'OTHER' | 'CREDIT_CARD';
   amount: number;
+  paidAt?: string;
+  bankCharges?: number;
+  status?: 'DRAFT' | 'PAID' | 'VOID';
   reference?: string;
   notes?: string;
 }
@@ -305,6 +335,68 @@ export function useDeleteInvoicePayment() {
       qc.invalidateQueries({ queryKey: ['invoices'] });
       qc.invalidateQueries({ queryKey: ['invoices', updated.id] });
     },
+  });
+}
+
+export interface StandalonePaymentDto {
+  customerId: string;
+  totalAmount: number;
+  method: 'CASH' | 'CHECK' | 'ACH' | 'OTHER' | 'CREDIT_CARD';
+  paidAt?: string;
+  bankCharges?: number;
+  reference?: string;
+  notes?: string;
+  status?: 'DRAFT' | 'PAID';
+  allocations: { invoiceId: string; amount: number }[];
+}
+
+export function useRecordPaymentStandalone() {
+  const qc = useQueryClient();
+  return useMutation<{ payments: AllPayment[]; paymentGroupId: string; excess: number }, Error, StandalonePaymentDto>({
+    mutationFn: (dto) => apiClient.post('/invoices/payments/record', dto).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['invoices'] });
+      qc.invalidateQueries({ queryKey: ['invoices', 'payments'] });
+    },
+  });
+}
+
+export function useVoidPayment() {
+  const qc = useQueryClient();
+  return useMutation<{ success: boolean }, Error, { invoiceId: string; paymentId: string }>({
+    mutationFn: ({ invoiceId, paymentId }) =>
+      apiClient.patch(`/invoices/${invoiceId}/payments/${paymentId}/void`).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['invoices'] });
+      qc.invalidateQueries({ queryKey: ['invoices', 'payments'] });
+    },
+  });
+}
+
+export function useExportPayments() {
+  return useMutation<void, Error, PaymentListParams>({
+    mutationFn: async (params) => {
+      const response = await apiClient.get('/invoices/payments/export', {
+        params,
+        responseType: 'blob',
+      });
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `payments-${new Date().toISOString().split('T')[0]}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    },
+  });
+}
+
+export function usePaymentDetail(id: string) {
+  return useQuery<AllPayment>({
+    queryKey: ['invoices', 'payments', id],
+    queryFn: () => apiClient.get(`/invoices/payments/${id}`).then((r) => r.data),
+    enabled: !!id,
   });
 }
 

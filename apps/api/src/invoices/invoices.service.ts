@@ -4,11 +4,13 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
+import { randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { InvoiceStatus, UserRole } from "@prisma/client";
 import {
   CreateInvoiceDto,
   RecordInvoicePaymentDto,
+  StandalonePaymentDto,
   UpdatePaymentDto,
   WriteOffDto,
 } from "./dto/create-invoice.dto";
@@ -459,35 +461,96 @@ export class InvoicesService {
 
   // ─── List all payments (across all invoices) ─────────────────────────────
 
-  async listAllPayments(query: { page?: number; limit?: number }) {
-    const { page = 1, limit = 25 } = query;
+  async listAllPayments(query: {
+    page?: number;
+    limit?: number;
+    customerId?: string;
+    method?: string;
+    status?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    search?: string;
+    sortBy?: string;
+    sortDir?: string;
+  }) {
+    const { page = 1, limit = 25, customerId, method, status, dateFrom, dateTo, search, sortBy, sortDir } = query;
     const skip = (page - 1) * limit;
-    const [data, total] = await Promise.all([
-      this.prisma.invoicePayment.findMany({
-        skip,
-        take: limit,
-        orderBy: { createdAt: "desc" },
-        include: {
-          invoice: {
-            select: {
-              id: true,
-              invoiceNumber: true,
-              customerId: true,
-              customer: { select: { id: true, businessName: true } },
-            },
-          },
+
+    const where: any = {};
+    if (customerId) where.invoice = { customerId };
+    if (method) where.method = method;
+    if (status) where.status = status;
+    if (dateFrom || dateTo) {
+      where.paidAt = {};
+      if (dateFrom) where.paidAt.gte = new Date(dateFrom);
+      if (dateTo) {
+        const end = new Date(dateTo);
+        end.setHours(23, 59, 59, 999);
+        where.paidAt.lte = end;
+      }
+    }
+    if (search) {
+      where.OR = [
+        { paymentNumber: { contains: search, mode: "insensitive" } },
+        { reference: { contains: search, mode: "insensitive" } },
+        { invoice: { customer: { businessName: { contains: search, mode: "insensitive" } } } },
+      ];
+    }
+
+    const validSortFields: Record<string, any> = {
+      paidAt: { paidAt: sortDir === "asc" ? "asc" : "desc" },
+      amount: { amount: sortDir === "asc" ? "asc" : "desc" },
+      createdAt: { createdAt: sortDir === "asc" ? "asc" : "desc" },
+      paymentNumber: { paymentNumber: sortDir === "asc" ? "asc" : "desc" },
+    };
+    const orderBy = validSortFields[sortBy ?? ""] ?? { paidAt: "desc" };
+
+    const include = {
+      invoice: {
+        select: {
+          id: true,
+          invoiceNumber: true,
+          customerId: true,
+          customer: { select: { id: true, businessName: true } },
         },
-      }),
-      this.prisma.invoicePayment.count(),
+      },
+    };
+
+    const [data, total] = await Promise.all([
+      this.prisma.invoicePayment.findMany({ where, skip, take: limit, orderBy, include }),
+      this.prisma.invoicePayment.count({ where }),
     ]);
-    return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
+
+    // Summary: total received (PAID only) and advance balance
+    const summaryWhere = { ...where, status: "PAID" };
+    const paidPayments = await this.prisma.invoicePayment.findMany({
+      where: summaryWhere,
+      select: { amount: true },
+    });
+    const totalReceived = paidPayments.reduce((s, p) => s + Number(p.amount), 0);
+
+    const advanceWhere: any = customerId ? { customerId } : {};
+    const advances = await this.prisma.advancePayment.findMany({
+      where: advanceWhere,
+      select: { balance: true },
+    });
+    const advanceBalance = advances.reduce((s, a) => s + Number(a.balance), 0);
+
+    return {
+      data,
+      meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
+      summary: { totalReceived, count: paidPayments.length, advanceBalance },
+    };
   }
 
   // ─── Payment recording ────────────────────────────────────────────────────
 
   async recordPayment(id: string, dto: RecordInvoicePaymentDto) {
     return this.prisma.$transaction(async (tx) => {
-      const inv = await tx.invoice.findUnique({ where: { id }, include: { payments: true } });
+      const inv = await tx.invoice.findUnique({
+        where: { id },
+        include: { payments: { where: { status: { not: "VOID" as any } } } },
+      });
       if (!inv) throw new NotFoundException("Invoice not found");
       if (inv.status === InvoiceStatus.VOID)
         throw new BadRequestException("Cannot record payment on voided invoice");
@@ -495,11 +558,23 @@ export class InvoicesService {
       const alreadyPaid = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
       const total = Number(inv.total);
       const remaining = total - alreadyPaid;
-      if (remaining <= 0) throw new BadRequestException("Invoice is already fully paid");
-      if (dto.amount > remaining + 0.001)
-        throw new BadRequestException(
-          `Payment exceeds remaining balance of ${remaining.toFixed(2)}`,
-        );
+      const paymentStatus = dto.status ?? "PAID";
+
+      if (paymentStatus === "PAID") {
+        if (remaining <= 0) throw new BadRequestException("Invoice is already fully paid");
+        if (dto.amount > remaining + 0.001)
+          throw new BadRequestException(
+            `Payment exceeds remaining balance of ${remaining.toFixed(2)}`,
+          );
+      }
+
+      // Auto-generate payment number
+      const counter = await tx.paymentCounter.upsert({
+        where: { id: "singleton" },
+        update: { next: { increment: 1 } },
+        create: { id: "singleton", next: 2 },
+      });
+      const paymentNumber = `PAY-${String(counter.next - 1).padStart(4, "0")}`;
 
       await tx.invoicePayment.create({
         data: {
@@ -508,11 +583,18 @@ export class InvoicesService {
           method: dto.method,
           reference: dto.reference,
           notes: dto.notes,
+          paidAt: dto.paidAt ? new Date(dto.paidAt) : new Date(),
+          bankCharges: dto.bankCharges,
+          status: paymentStatus as any,
+          paymentNumber,
         },
       });
 
-      const newPaid = alreadyPaid + dto.amount;
-      const newStatus = this.recomputeStatus(newPaid, total, inv.dueDate);
+      const newPaid = paymentStatus === "PAID" ? alreadyPaid + dto.amount : alreadyPaid;
+      const newStatus = paymentStatus === "PAID"
+        ? this.recomputeStatus(newPaid, total, inv.dueDate)
+        : inv.status;
+
       const paid = await tx.invoice.update({
         where: { id },
         data: { status: newStatus, paidAt: newStatus === InvoiceStatus.PAID ? new Date() : null },
@@ -546,12 +628,17 @@ export class InvoicesService {
       const payment = inv.payments.find((p) => p.id === paymentId);
       if (!payment) throw new NotFoundException("Payment not found");
 
-      // Sum all other payments plus new amount
+      const newPaymentStatus = dto.status ?? (payment as any).status ?? "PAID";
+
+      // When voiding: treat the payment as $0 for balance checks
+      const effectiveAmount = newPaymentStatus === "VOID" ? 0 : dto.amount;
+
+      // Sum all other non-void payments plus the effective new amount
       const othersTotal = inv.payments
-        .filter((p) => p.id !== paymentId)
+        .filter((p) => p.id !== paymentId && (p as any).status !== "VOID")
         .reduce((s, p) => s + Number(p.amount), 0);
       const total = Number(inv.total);
-      if (dto.amount > total - othersTotal + 0.001) {
+      if (newPaymentStatus !== "VOID" && dto.amount > total - othersTotal + 0.001) {
         throw new BadRequestException(`Payment amount exceeds remaining balance`);
       }
 
@@ -562,10 +649,13 @@ export class InvoicesService {
           method: dto.method,
           reference: dto.reference,
           notes: dto.notes,
+          ...(dto.paidAt && { paidAt: new Date(dto.paidAt) }),
+          ...(dto.bankCharges !== undefined && { bankCharges: dto.bankCharges }),
+          status: newPaymentStatus as any,
         },
       });
 
-      const newPaid = othersTotal + dto.amount;
+      const newPaid = othersTotal + effectiveAmount;
       const newStatus = this.recomputeStatus(newPaid, total, inv.dueDate);
       const updated = await tx.invoice.update({
         where: { id: invoiceId },
@@ -693,6 +783,201 @@ export class InvoicesService {
 
       return { id, message: "Invoice deleted successfully" };
     });
+  }
+
+  // ─── Standalone (bulk-allocation) payment ────────────────────────────────
+
+  async recordStandalonePayment(dto: StandalonePaymentDto) {
+    const paymentGroupId = randomUUID();
+    const paidAt = dto.paidAt ? new Date(dto.paidAt) : new Date();
+    const status = dto.status ?? "PAID";
+
+    return this.prisma.$transaction(async (tx) => {
+      // Generate a block of sequential payment numbers
+      const counter = await tx.paymentCounter.upsert({
+        where: { id: "singleton" },
+        update: { next: { increment: dto.allocations.length } },
+        create: { id: "singleton", next: dto.allocations.length + 1 },
+      });
+
+      const payments: any[] = [];
+      for (let i = 0; i < dto.allocations.length; i++) {
+        const alloc = dto.allocations[i];
+        const paymentNumber = `PAY-${String(counter.next - dto.allocations.length + i).padStart(4, "0")}`;
+
+        // Validate invoice belongs to customer and is not voided
+        const invoice = await tx.invoice.findFirst({
+          where: { id: alloc.invoiceId, customerId: dto.customerId },
+          include: { payments: { where: { status: { not: "VOID" as any } } } },
+        });
+        if (!invoice) throw new NotFoundException(`Invoice ${alloc.invoiceId} not found for customer`);
+        if (invoice.status === "VOID") throw new BadRequestException(`Invoice ${alloc.invoiceId} is voided`);
+
+        const payment = await tx.invoicePayment.create({
+          data: {
+            invoiceId: alloc.invoiceId,
+            amount: alloc.amount,
+            method: dto.method as any,
+            paidAt,
+            bankCharges: dto.bankCharges,
+            reference: dto.reference,
+            notes: dto.notes,
+            status: status as any,
+            paymentNumber,
+            paymentGroupId,
+          },
+        });
+        payments.push(payment);
+
+        if (status === "PAID") {
+          const allPayments = await tx.invoicePayment.findMany({
+            where: { invoiceId: alloc.invoiceId, status: { not: "VOID" as any } },
+          });
+          const totalPaid = allPayments.reduce((s, p) => s + Number(p.amount), 0);
+          const newStatus = this.recomputeStatus(totalPaid, Number(invoice.total), invoice.dueDate);
+          await tx.invoice.update({
+            where: { id: alloc.invoiceId },
+            data: { status: newStatus, paidAt: newStatus === InvoiceStatus.PAID ? new Date() : null },
+          });
+        }
+      }
+
+      // Handle excess amount → create AdvancePayment
+      const allocatedTotal = dto.allocations.reduce((s, a) => s + a.amount, 0);
+      const excess = dto.totalAmount - allocatedTotal;
+      if (excess > 0.001) {
+        await tx.advancePayment.create({
+          data: {
+            customerId: dto.customerId,
+            amount: excess,
+            balance: excess,
+            method: dto.method as any,
+            reference: dto.reference,
+            notes: dto.notes,
+            receivedAt: paidAt,
+          },
+        });
+      }
+
+      return { payments, paymentGroupId, excess: Math.max(0, excess) };
+    });
+  }
+
+  // ─── Void a single payment ────────────────────────────────────────────────
+
+  async voidPayment(invoiceId: string, paymentId: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const payment = await tx.invoicePayment.findFirst({
+        where: { id: paymentId, invoiceId },
+      });
+      if (!payment) throw new NotFoundException("Payment not found");
+      if ((payment as any).status === "VOID") throw new BadRequestException("Payment already voided");
+
+      await tx.invoicePayment.update({
+        where: { id: paymentId },
+        data: { status: "VOID" as any },
+      });
+
+      // Recompute invoice status treating this payment as $0
+      const invoice = await tx.invoice.findUnique({
+        where: { id: invoiceId },
+        include: { payments: { where: { status: { not: "VOID" as any } } } },
+      });
+      if (!invoice) throw new NotFoundException("Invoice not found");
+
+      const totalPaid = invoice.payments
+        .filter((p) => p.id !== paymentId)
+        .reduce((s, p) => s + Number(p.amount), 0);
+      const newStatus = this.recomputeStatus(totalPaid, Number(invoice.total), invoice.dueDate);
+      await tx.invoice.update({
+        where: { id: invoiceId },
+        data: { status: newStatus, paidAt: newStatus === InvoiceStatus.PAID ? invoice.paidAt : null },
+      });
+
+      this.gateway.emitInvoiceUpdated({ invoiceId, invoiceNumber: invoice.invoiceNumber, customerId: invoice.customerId, status: newStatus, total: Number(invoice.total) });
+      return { success: true };
+    });
+  }
+
+  // ─── Export payments as CSV ───────────────────────────────────────────────
+
+  async exportPayments(params: {
+    customerId?: string;
+    method?: string;
+    status?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    search?: string;
+    sortBy?: string;
+    sortDir?: string;
+  }): Promise<string> {
+    const { customerId, method, status, dateFrom, dateTo, search, sortBy, sortDir } = params;
+
+    const where: any = {};
+    if (customerId) where.invoice = { customerId };
+    if (method) where.method = method;
+    if (status) where.status = status;
+    if (dateFrom || dateTo) {
+      where.paidAt = {};
+      if (dateFrom) where.paidAt.gte = new Date(dateFrom);
+      if (dateTo) {
+        const end = new Date(dateTo);
+        end.setHours(23, 59, 59, 999);
+        where.paidAt.lte = end;
+      }
+    }
+    if (search) {
+      where.OR = [
+        { paymentNumber: { contains: search, mode: "insensitive" } },
+        { reference: { contains: search, mode: "insensitive" } },
+        { invoice: { customer: { businessName: { contains: search, mode: "insensitive" } } } },
+      ];
+    }
+
+    const validSortFields: Record<string, any> = {
+      paidAt: { paidAt: sortDir === "asc" ? "asc" : "desc" },
+      amount: { amount: sortDir === "asc" ? "asc" : "desc" },
+      createdAt: { createdAt: sortDir === "asc" ? "asc" : "desc" },
+      paymentNumber: { paymentNumber: sortDir === "asc" ? "asc" : "desc" },
+    };
+    const orderBy = validSortFields[sortBy ?? ""] ?? { paidAt: "desc" };
+
+    const rows = await this.prisma.invoicePayment.findMany({
+      where,
+      orderBy,
+      include: {
+        invoice: {
+          select: {
+            invoiceNumber: true,
+            customer: { select: { businessName: true } },
+          },
+        },
+      },
+    });
+
+    const escape = (v: any) => {
+      const s = v == null ? "" : String(v);
+      return s.includes(",") || s.includes('"') || s.includes("\n")
+        ? `"${s.replace(/"/g, '""')}"`
+        : s;
+    };
+
+    const header = "Payment#,Date,Customer,Invoice#,Method,Reference,Bank Charges,Amount,Status";
+    const lines = rows.map((r: any) =>
+      [
+        escape(r.paymentNumber ?? ""),
+        escape(r.paidAt ? new Date(r.paidAt).toISOString().split("T")[0] : ""),
+        escape(r.invoice?.customer?.businessName ?? ""),
+        escape(r.invoice?.invoiceNumber ?? ""),
+        escape(r.method ?? ""),
+        escape(r.reference ?? ""),
+        escape(r.bankCharges != null ? Number(r.bankCharges).toFixed(2) : ""),
+        escape(Number(r.amount).toFixed(2)),
+        escape(r.status ?? ""),
+      ].join(","),
+    );
+
+    return [header, ...lines].join("\n");
   }
 
   // ─── Cron ─────────────────────────────────────────────────────────────────

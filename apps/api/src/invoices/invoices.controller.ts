@@ -7,8 +7,10 @@ import {
   Patch,
   Post,
   Query,
+  Res,
   UseGuards,
 } from "@nestjs/common";
+import type { Response } from "express";
 import { UserRole } from "@prisma/client";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
@@ -20,6 +22,7 @@ import { InvoicePdfService } from "./invoice-pdf.service";
 import {
   CreateInvoiceDto,
   RecordInvoicePaymentDto,
+  StandalonePaymentDto,
   UpdatePaymentDto,
   WriteOffDto,
 } from "./dto/create-invoice.dto";
@@ -52,11 +55,44 @@ export class InvoicesController {
     return this.invoicesService.findAll(query, user);
   }
 
+  @Get("payments/export")
+  async exportPayments(@Query() query: any, @Res() res: Response) {
+    const csv = await this.invoicesService.exportPayments(query);
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", 'attachment; filename="payments.csv"');
+    res.send(csv);
+  }
+
+  @Post("payments/record")
+  @Roles(UserRole.OPERATOR)
+  recordStandalonePayment(@Body() dto: StandalonePaymentDto) {
+    return this.invoicesService.recordStandalonePayment(dto);
+  }
+
   @Get("payments")
-  listAllPayments(@Query("page") page?: string, @Query("limit") limit?: string) {
+  listAllPayments(
+    @Query("page") page?: string,
+    @Query("limit") limit?: string,
+    @Query("customerId") customerId?: string,
+    @Query("method") method?: string,
+    @Query("status") status?: string,
+    @Query("dateFrom") dateFrom?: string,
+    @Query("dateTo") dateTo?: string,
+    @Query("search") search?: string,
+    @Query("sortBy") sortBy?: string,
+    @Query("sortDir") sortDir?: string,
+  ) {
     return this.invoicesService.listAllPayments({
       page: page ? parseInt(page) : 1,
       limit: limit ? parseInt(limit) : 25,
+      customerId,
+      method,
+      status,
+      dateFrom,
+      dateTo,
+      search,
+      sortBy,
+      sortDir,
     });
   }
 
@@ -109,6 +145,12 @@ export class InvoicesController {
   @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   recordPayment(@Param("id") id: string, @Body() dto: RecordInvoicePaymentDto) {
     return this.invoicesService.recordPayment(id, dto);
+  }
+
+  @Patch(":id/payments/:paymentId/void")
+  @Roles(UserRole.OPERATOR)
+  voidPayment(@Param("id") id: string, @Param("paymentId") paymentId: string) {
+    return this.invoicesService.voidPayment(id, paymentId);
   }
 
   @Patch(":id/payments/:paymentId")

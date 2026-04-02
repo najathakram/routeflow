@@ -74,6 +74,13 @@ enum PaymentMethod {
   OTHER
   CREDIT_NOTE
   ADVANCE
+  CREDIT_CARD
+}
+
+enum PaymentStatus {
+  DRAFT
+  PAID
+  VOID
 }
 
 enum FulfillPath {
@@ -784,12 +791,23 @@ model InvoicePayment {
   createdAt        DateTime      @default(now())
   creditNoteId     String?
   advancePaymentId String?
+  paymentNumber    String?         @unique
+  bankCharges      Decimal?        @db.Decimal(10, 2)
+  status           PaymentStatus   @default(PAID)
+  paymentGroupId   String?
 
   invoice       Invoice        @relation(fields: [invoiceId], references: [id])
   creditNote    CreditNote?    @relation(fields: [creditNoteId], references: [id])
   advancePayment AdvancePayment? @relation(fields: [advancePaymentId], references: [id])
 
   @@index([invoiceId])
+  @@index([paymentGroupId])
+  @@index([status])
+}
+
+model PaymentCounter {
+  id    String @id @default("singleton")
+  next  Int    @default(1)
 }
 
 // ─── Sprint 2: Expense Tracking ───────────────────────────────────────────────
