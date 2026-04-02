@@ -44,7 +44,7 @@ export function InlineCreateProductModal({
   const [form, setForm] = React.useState({
     name: initialName,
     sku: "",
-    unit: "each",
+    unit: "",
     pricePerUnit: "",
     category: "",
     unitsPerBox: "",
@@ -77,7 +77,7 @@ export function InlineCreateProductModal({
           toast({ title: "Product created", description: `${product.name} has been added.`, variant: "success" });
           onCreated(product);
           onClose();
-          setForm({ name: "", sku: "", unit: "each", pricePerUnit: "", category: "", unitsPerBox: "" });
+          setForm({ name: "", sku: "", unit: "", pricePerUnit: "", category: "", unitsPerBox: "" });
         },
         onError: () => {
           toast({ title: "Failed to create product", description: "Check the details and try again.", variant: "error" });
@@ -138,16 +138,17 @@ export function InlineCreateProductModal({
             </div>
             <div>
               <label className="mb-1 block text-xs font-medium text-navy">Unit *</label>
-              <select
+              <input
                 required
+                list="inline-unit-options"
+                placeholder="e.g. case, kg, unit"
                 value={form.unit}
                 onChange={(e) => setForm((f) => ({ ...f, unit: e.target.value }))}
                 className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-              >
-                {UNIT_OPTIONS.map((u) => (
-                  <option key={u} value={u}>{u}</option>
-                ))}
-              </select>
+              />
+              <datalist id="inline-unit-options">
+                {UNIT_OPTIONS.map((u) => <option key={u} value={u} />)}
+              </datalist>
             </div>
           </div>
 
