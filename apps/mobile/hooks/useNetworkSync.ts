@@ -26,8 +26,14 @@ export function useNetworkSync() {
           data: action.body,
         });
         dequeue(action.id);
-      } catch {
-        incrementRetry(action.id);
+      } catch (err: unknown) {
+        const status = (err as { response?: { status?: number } })?.response?.status;
+        // CRIT-05: Discard non-retriable client errors immediately; only retry server errors
+        if (status !== undefined && status >= 400 && status < 500) {
+          dequeue(action.id);
+        } else {
+          incrementRetry(action.id);
+        }
       }
     }
 

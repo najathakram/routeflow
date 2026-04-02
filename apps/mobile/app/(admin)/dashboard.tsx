@@ -64,7 +64,7 @@ function QuickAction({ icon, label, onPress, color = "#2563EB" }: QuickActionPro
 export default function AdminDashboardScreen() {
   const router = useRouter();
   const { user } = useAuthStore();
-  const { data: stats, isLoading: statsLoading, refetch: refetchStats } = useAdminDashboard();
+  const { data: stats, isLoading: statsLoading, isError: statsError, refetch: refetchStats } = useAdminDashboard();
   const {
     data: ordersData,
     isLoading: ordersLoading,
@@ -102,6 +102,15 @@ export default function AdminDashboardScreen() {
         <Text style={styles.sectionTitle}>Overview</Text>
         {statsLoading ? (
           <ActivityIndicator style={{ marginVertical: 24 }} color="#2563EB" />
+        ) : statsError ? (
+          <Pressable
+            style={styles.errorBanner}
+            onPress={() => refetchStats()}
+            accessibilityRole="button"
+          >
+            <Ionicons name="alert-circle-outline" size={18} color="#dc2626" />
+            <Text style={styles.errorText}>Could not load stats. Tap to retry.</Text>
+          </Pressable>
         ) : (
           <View style={styles.kpiGrid}>
             <KpiCard
@@ -445,5 +454,21 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontFamily: "Inter_400Regular",
     color: "#94a3b8",
+  },
+  errorBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "#fee2e2",
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginVertical: 8,
+  },
+  errorText: {
+    fontSize: 14,
+    fontFamily: "Inter_500Medium",
+    color: "#dc2626",
+    flex: 1,
   },
 });

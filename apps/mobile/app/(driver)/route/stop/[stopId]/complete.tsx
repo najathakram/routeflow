@@ -117,6 +117,16 @@ export default function StopCompleteScreen() {
       return;
     }
 
+    // CRIT-03: All items must be resolved before completing the stop
+    const unresolvedItems = allItems.filter((i) => !i.resolution || i.resolution.status === "UNRESOLVED");
+    if (unresolvedItems.length > 0) {
+      Alert.alert(
+        "Unresolved Items",
+        `Please resolve all items before completing this stop:\n\n• ${unresolvedItems.map((i) => i.name).join("\n• ")}`,
+      );
+      return;
+    }
+
     // Build DTO items
     const items: CompleteStopItemDto[] = allItems
       .filter((i) => i.resolution && i.resolution.status !== "UNRESOLVED")
@@ -130,6 +140,13 @@ export default function StopCompleteScreen() {
             : i.orderedQty,
         driverNote: stopNote || undefined,
       }));
+
+    // HIGH-01: Partial qty must be at least 1
+    const zeroPartialItem = items.find((i) => i.type === "PARTIAL" && i.qty < 1);
+    if (zeroPartialItem) {
+      Alert.alert("Invalid Quantity", "Partial delivery quantity must be at least 1. Please update the quantity and try again.");
+      return;
+    }
 
     // Add ADD_ON items from addedItems that weren't in original orders
     addedItems.forEach((added) => {
@@ -165,26 +182,39 @@ export default function StopCompleteScreen() {
           const amount = parseFloat(cashAmount);
           const customerId = stop.customer?.id;
           if (!isNaN(amount) && amount > 0 && customerId) {
+            let invoiceId: string | undefined;
+            let lookupFailed = false;
             try {
               const resp = await apiClient.get("/invoices", {
-                params: { customerId, limit: 1 },
+                params: { customerId, status: "SENT", limit: 1 },
               });
-              const invoiceId: string | undefined = resp.data?.data?.[0]?.id;
-              if (invoiceId) {
-                recordPayment(
-                  {
-                    invoiceId,
-                    amount,
-                    method: paymentMethod,
-                    reference: cashReference || undefined,
-                  },
-                  { onSettled: navigateAfterComplete },
-                );
-                return;
-              }
+              invoiceId = resp.data?.data?.[0]?.id;
             } catch (_) {
-              // Invoice lookup failed — proceed without recording payment
+              lookupFailed = true;
             }
+
+            if (invoiceId) {
+              recordPayment(
+                {
+                  invoiceId,
+                  amount,
+                  method: paymentMethod,
+                  reference: cashReference || undefined,
+                },
+                { onSettled: navigateAfterComplete },
+              );
+              return;
+            }
+
+            // CRIT-02: Warn driver when payment could not be auto-recorded
+            Alert.alert(
+              "Payment Not Recorded",
+              lookupFailed
+                ? "Stop completed, but the payment could not be recorded (invoice lookup failed). Please record it manually."
+                : "Stop completed, but no unpaid invoice was found for this customer. Please record the payment manually.",
+              [{ text: "OK", onPress: navigateAfterComplete }],
+            );
+            return;
           }
           navigateAfterComplete();
         },
@@ -312,7 +342,7 @@ export default function StopCompleteScreen() {
                 placeholder="0.00"
                 placeholderTextColor="#94a3b8"
                 value={cashAmount}
-                onChangeText={setCashAmount}
+                onChangeText={(v) => setCashAmount(v.replace(/[^0-9.]/g, ""))}
                 keyboardType="decimal-pad"
                 returnKeyType="done"
               />
