@@ -77,7 +77,7 @@ const NAV_STRUCTURE: NavEntry[] = [
       { kind: "leaf", label: "Estimates",          href: "/estimates",          icon: FileCheck },
       { kind: "leaf", label: "Credit Notes",       href: "/credit-notes",       icon: Receipt },
       { kind: "leaf", label: "Payments Received",  href: "/finance/payments",   icon: CreditCard },
-      { kind: "leaf", label: "Purchases",          href: "/purchases",          icon: ShoppingBag },
+      { kind: "leaf", label: "Expenses",            href: "/finance/expenses",   icon: ShoppingBag },
       { kind: "leaf", label: "Reports",            href: "/finance/reports",    icon: BarChart3 },
     ],
   },
