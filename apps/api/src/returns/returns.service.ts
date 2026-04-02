@@ -41,7 +41,8 @@ export class ReturnsService {
       where: { id: dto.orderId },
       include: {
         customer: { select: { id: true, businessName: true } },
-        lineItems: { select: { productId: true, qty: true } },
+        lineItems: { select: { productId: true, qty: true, unitPrice: true } },
+        invoice: { select: { id: true } },
       },
     });
     if (!order) throw new NotFoundException("Order not found");
@@ -121,8 +122,44 @@ export class ReturnsService {
         }
       }
 
-      await tx.return.update({ where: { id: created.id }, data: { status: "PROCESSED" } });
-      return created;
+      // Auto-create a credit note for the return value
+      const priceMap = new Map<string, number>(
+        (order as any).lineItems.map((li: any) => [li.productId, Number(li.unitPrice)]),
+      );
+      const cnAmount = dto.items.reduce((sum: number, item: any) => {
+        const price = priceMap.get(item.productId) ?? 0;
+        return sum + item.qty * price;
+      }, 0);
+
+      let creditNoteId: string | null = null;
+      if (cnAmount > 0) {
+        const year = new Date().getFullYear();
+        const prefix = `CN-${year}-`;
+        const lastCn = await tx.creditNote.findFirst({
+          where: { creditNoteNumber: { startsWith: prefix } },
+          orderBy: { creditNoteNumber: "desc" },
+        });
+        const seq = lastCn ? parseInt(lastCn.creditNoteNumber.split("-")[2], 10) + 1 : 1;
+        const cnNumber = `${prefix}${String(seq).padStart(4, "0")}`;
+
+        const cn = await tx.creditNote.create({
+          data: {
+            creditNoteNumber: cnNumber,
+            customerId: order.customerId,
+            invoiceId: (order as any).invoice?.id ?? null,
+            amount: cnAmount,
+            reason: `Return ${created.returnNumber}: ${dto.reason}`,
+            status: "ISSUED",
+          },
+        });
+        creditNoteId = cn.id;
+      }
+
+      await tx.return.update({
+        where: { id: created.id },
+        data: { status: "PROCESSED", creditNoteId },
+      });
+      return { ...created, creditNoteId };
     });
 
     this.gateway.emitReturnCreated({
@@ -184,9 +221,34 @@ export class ReturnsService {
   }
 
   async cancel(id: string) {
-    const ret = await this.prisma.return.findUnique({ where: { id } });
+    const ret = await this.prisma.return.findUnique({
+      where: { id },
+      include: { items: true },
+    });
     if (!ret) throw new NotFoundException("Return not found");
-    return this.prisma.return.update({ where: { id }, data: { status: "CANCELLED" } });
+    if (ret.status === "CANCELLED") throw new BadRequestException("Return is already cancelled");
+
+    return this.prisma.$transaction(async (tx) => {
+      // Reverse stock movements if the return was already PROCESSED
+      if (ret.status === "PROCESSED") {
+        const returnRef = `RET-${ret.id.slice(0, 8)}`;
+        for (const item of ret.items) {
+          if (item.restock) {
+            // Was incremented on RETURN movement — now decrement back
+            await tx.product.update({
+              where: { id: item.productId },
+              data: { currentStock: { decrement: item.qty } },
+            });
+          }
+          // Delete the original stock movement
+          await tx.stockMovement.deleteMany({
+            where: { productId: item.productId, reference: returnRef },
+          });
+        }
+      }
+
+      return tx.return.update({ where: { id }, data: { status: "CANCELLED" } });
+    });
   }
 
   async findOne(id: string) {

@@ -872,6 +872,7 @@ model CreditNote {
   customerId       String
   invoiceId        String?
   amount           Decimal          @db.Decimal(10, 2)
+  amountUsed       Decimal          @default(0) @db.Decimal(10, 2)
   reason           String?
   status           CreditNoteStatus @default(ISSUED)
   appliedToInvoiceId String?

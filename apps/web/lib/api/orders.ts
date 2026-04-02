@@ -109,3 +109,22 @@ export function useReopenOrder() {
     },
   });
 }
+
+export function useDeleteOrder() {
+  const qc = useQueryClient();
+  return useMutation<{ success: boolean }, Error, string>({
+    mutationFn: (id) => apiClient.delete(`/orders/${id}`).then((r) => r.data),
+    onSuccess: (_, id) => {
+      qc.invalidateQueries({ queryKey: ['orders'] });
+      qc.removeQueries({ queryKey: ['orders', id] });
+    },
+  });
+}
+
+export function useBulkDeleteOrders() {
+  const qc = useQueryClient();
+  return useMutation<{ deleted: number; errors: string[] }, Error, string[]>({
+    mutationFn: (ids) => apiClient.delete('/orders/bulk', { data: { ids } }).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['orders'] }),
+  });
+}

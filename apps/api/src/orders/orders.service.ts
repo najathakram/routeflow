@@ -762,6 +762,48 @@ export class OrdersService {
     };
   }
 
+  async deleteOrder(id: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id },
+      include: { invoice: { select: { id: true } }, transaction: { select: { id: true } } },
+    });
+    if (!order) throw new NotFoundException("Order not found");
+
+    const deletableStatuses: OrderStatus[] = [OrderStatus.PENDING, OrderStatus.CANCELLED];
+    if (!deletableStatuses.includes(order.status)) {
+      throw new BadRequestException(
+        `Only PENDING or CANCELLED orders can be deleted. This order is ${order.status}.`,
+      );
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      if (order.invoice) {
+        await tx.invoicePayment.deleteMany({ where: { invoiceId: order.invoice!.id } });
+        await tx.invoiceItem.deleteMany({ where: { invoiceId: order.invoice!.id } });
+        await tx.invoice.delete({ where: { id: order.invoice!.id } });
+      }
+      if (order.transaction) {
+        await tx.transactionItem.deleteMany({ where: { transactionId: order.transaction!.id } });
+        await tx.payment.deleteMany({ where: { transactionId: order.transaction!.id } });
+        await tx.transaction.delete({ where: { id: order.transaction!.id } });
+      }
+      await tx.deliveryMutation.deleteMany({ where: { orderId: id } });
+      await tx.orderItem.deleteMany({ where: { orderId: id } });
+      await tx.order.delete({ where: { id } });
+    });
+
+    return { success: true };
+  }
+
+  async bulkDeleteOrders(ids: string[]) {
+    const results = await Promise.allSettled(ids.map((id) => this.deleteOrder(id)));
+    const deleted = results.filter((r) => r.status === "fulfilled").length;
+    const errors = results
+      .map((r, i) => (r.status === "rejected" ? `${ids[i]}: ${(r as PromiseRejectedResult).reason?.message}` : null))
+      .filter(Boolean) as string[];
+    return { deleted, errors };
+  }
+
   private async findOneOrThrow(id: string) {
     const order = await this.prisma.order.findUnique({ where: { id } });
     if (!order) throw new NotFoundException("Order not found");

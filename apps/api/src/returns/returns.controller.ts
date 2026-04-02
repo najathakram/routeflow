@@ -48,6 +48,7 @@ export class ReturnsController {
   }
 
   @Post(":id/cancel")
+  @Roles(UserRole.OPERATOR, UserRole.CUSTOMER)
   cancel(@Param("id") id: string) {
     return this.returnsService.cancel(id);
   }

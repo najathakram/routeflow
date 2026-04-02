@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Body, Param, Query, UseGuards } from "@nestjs/common";
+import { Controller, Get, Post, Patch, Delete, Body, Param, Query, UseGuards } from "@nestjs/common";
 import { ApiTags, ApiBearerAuth } from "@nestjs/swagger";
 import { OrdersService } from "./orders.service";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
@@ -74,6 +74,20 @@ export class OrdersController {
   @Patch(":id/urgent")
   toggleUrgent(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
     return this.ordersService.toggleUrgent(id, user);
+  }
+
+  @Delete("bulk")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR)
+  bulkDelete(@Body() dto: { ids: string[] }) {
+    return this.ordersService.bulkDeleteOrders(dto.ids);
+  }
+
+  @Delete(":id")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR)
+  remove(@Param("id") id: string) {
+    return this.ordersService.deleteOrder(id);
   }
 }
 

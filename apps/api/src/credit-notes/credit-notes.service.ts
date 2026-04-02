@@ -110,71 +110,81 @@ export class CreditNotesService {
   }
 
   async applyToInvoice(creditNoteId: string, invoiceId: string, amount?: number) {
-    return this.prisma.$transaction(async (tx) => {
-      const cn = await tx.creditNote.findUnique({ where: { id: creditNoteId } });
-      if (!cn || cn.status !== "ISSUED")
-        throw new BadRequestException("Credit note is not available for application");
+    return this.prisma.$transaction(
+      async (tx) => {
+        const cn = await tx.creditNote.findUnique({ where: { id: creditNoteId } });
+        if (!cn || cn.status === "APPLIED" || cn.status === "VOID")
+          throw new BadRequestException("Credit note is not available for application");
 
-      const inv = await tx.invoice.findUnique({
-        where: { id: invoiceId },
-        include: { payments: true },
-      });
-      if (!inv) throw new NotFoundException("Invoice not found");
+        const inv = await tx.invoice.findUnique({
+          where: { id: invoiceId },
+          include: { payments: true },
+        });
+        if (!inv) throw new NotFoundException("Invoice not found");
 
-      const notApplicableStatuses: InvoiceStatus[] = [
-        InvoiceStatus.PAID,
-        InvoiceStatus.VOID,
-        InvoiceStatus.WRITTEN_OFF,
-      ];
-      if (notApplicableStatuses.includes(inv.status)) {
-        throw new BadRequestException(
-          `Cannot apply credit note to invoice with status ${inv.status}`,
-        );
-      }
+        const notApplicableStatuses: InvoiceStatus[] = [
+          InvoiceStatus.PAID,
+          InvoiceStatus.VOID,
+          InvoiceStatus.WRITTEN_OFF,
+        ];
+        if (notApplicableStatuses.includes(inv.status)) {
+          throw new BadRequestException(
+            `Cannot apply credit note to invoice with status ${inv.status}`,
+          );
+        }
 
-      if (cn.customerId !== inv.customerId) {
-        throw new BadRequestException("Credit note and invoice belong to different customers");
-      }
+        if (cn.customerId !== inv.customerId) {
+          throw new BadRequestException("Credit note and invoice belong to different customers");
+        }
 
-      const alreadyPaid = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
-      const invoiceBalance = Number(inv.total) - alreadyPaid;
-      const cnAmount = Number(cn.amount);
-      const applyAmount = Math.min(cnAmount, invoiceBalance, amount ?? Infinity);
+        const alreadyPaid = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
+        const invoiceBalance = Number(inv.total) - alreadyPaid;
+        const cnRemaining = Number(cn.amount) - Number(cn.amountUsed);
+        const applyAmount = Math.min(cnRemaining, invoiceBalance, amount ?? Infinity);
 
-      if (applyAmount <= 0) throw new BadRequestException("Invoice has no outstanding balance");
+        if (applyAmount <= 0.001)
+          throw new BadRequestException("Credit note has no remaining balance or invoice is fully paid");
 
-      // Create invoice payment record for the credit note
-      await tx.invoicePayment.create({
-        data: {
-          invoiceId,
-          amount: applyAmount,
-          method: PaymentMethod.CREDIT_NOTE,
-          creditNoteId: cn.id,
-          reference: cn.creditNoteNumber,
-        },
-      });
+        // Create invoice payment record for the credit note
+        await tx.invoicePayment.create({
+          data: {
+            invoiceId,
+            amount: applyAmount,
+            method: PaymentMethod.CREDIT_NOTE,
+            creditNoteId: cn.id,
+            reference: cn.creditNoteNumber,
+          },
+        });
 
-      // Recompute invoice status
-      const newPaid = alreadyPaid + applyAmount;
-      const newStatus = this.recomputeStatus(newPaid, Number(inv.total), inv.dueDate);
-      const updatedInv = await tx.invoice.update({
-        where: { id: invoiceId },
-        data: { status: newStatus, paidAt: newStatus === InvoiceStatus.PAID ? new Date() : null },
-        include: {
-          customer: { select: { id: true, businessName: true } },
-          items: true,
-          payments: { orderBy: { createdAt: "desc" } },
-        },
-      });
+        // Recompute invoice status
+        const newPaid = alreadyPaid + applyAmount;
+        const newStatus = this.recomputeStatus(newPaid, Number(inv.total), inv.dueDate);
+        const updatedInv = await tx.invoice.update({
+          where: { id: invoiceId },
+          data: { status: newStatus, paidAt: newStatus === InvoiceStatus.PAID ? new Date() : null },
+          include: {
+            customer: { select: { id: true, businessName: true } },
+            items: true,
+            payments: { orderBy: { createdAt: "desc" } },
+          },
+        });
 
-      // Mark credit note as APPLIED
-      await tx.creditNote.update({
-        where: { id: creditNoteId },
-        data: { status: "APPLIED", appliedToInvoiceId: invoiceId },
-      });
+        // Update amountUsed; mark APPLIED only when fully exhausted
+        const newAmountUsed = Number(cn.amountUsed) + applyAmount;
+        const fullyApplied = newAmountUsed >= Number(cn.amount) - 0.001;
+        await tx.creditNote.update({
+          where: { id: creditNoteId },
+          data: {
+            amountUsed: newAmountUsed,
+            status: fullyApplied ? "APPLIED" : "ISSUED",
+            appliedToInvoiceId: fullyApplied ? invoiceId : cn.appliedToInvoiceId,
+          },
+        });
 
-      return updatedInv;
-    });
+        return updatedInv;
+      },
+      { isolationLevel: "Serializable" },
+    );
   }
 
   async voidCreditNote(id: string) {

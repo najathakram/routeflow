@@ -216,6 +216,7 @@ export class VendorBillsService {
         if (!item.productId) continue;
 
         const qty = new Prisma.Decimal(item.qty);
+        const unitCost = new Prisma.Decimal(item.unitCost);
 
         // Delete the stock movement created when this bill was received
         await tx.stockMovement.deleteMany({
@@ -226,10 +227,30 @@ export class VendorBillsService {
           },
         });
 
-        // Decrement stock (note: averageCost is not reversed to keep it simple)
+        // Read current product state within the transaction for accurate AVCO reversal
+        const product = await tx.product.findUnique({
+          where: { id: item.productId },
+          select: { currentStock: true, averageCost: true },
+        });
+        if (!product) continue;
+
+        const currentStock = new Prisma.Decimal(product.currentStock);
+        const currentAvgCost = new Prisma.Decimal(product.averageCost ?? 0);
+        const stockAfterRevert = currentStock.sub(qty);
+
+        // Reverse AVCO: prevAvg = (currentAvg * currentStock - qty * unitCost) / (currentStock - qty)
+        let newAvgCost: Prisma.Decimal;
+        if (stockAfterRevert.lte(0)) {
+          newAvgCost = new Prisma.Decimal(0);
+        } else {
+          const numerator = currentStock.mul(currentAvgCost).sub(qty.mul(unitCost));
+          newAvgCost = numerator.div(stockAfterRevert);
+          if (newAvgCost.lt(0)) newAvgCost = new Prisma.Decimal(0);
+        }
+
         await tx.product.update({
           where: { id: item.productId },
-          data: { currentStock: { decrement: qty } },
+          data: { currentStock: { decrement: qty }, averageCost: newAvgCost },
         });
       }
 

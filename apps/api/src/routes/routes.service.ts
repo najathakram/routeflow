@@ -506,27 +506,30 @@ export class RoutesService {
 
     const stopIds = run.stops.map((s) => s.id);
 
-    // 1. Unlink orders from run and stops
-    await this.prisma.order.updateMany({
-      where: { routeRunId: id },
-      data: { routeRunId: null, routeRunStopId: null },
+    await this.prisma.$transaction(async (tx) => {
+      // 1. Unlink orders from run and stops
+      await tx.order.updateMany({
+        where: { routeRunId: id },
+        data: { routeRunId: null, routeRunStopId: null },
+      });
+
+      if (stopIds.length > 0) {
+        // 2. Unlink delivery mutations referencing these stops
+        await tx.deliveryMutation.updateMany({
+          where: { routeRunStopId: { in: stopIds } },
+          data: { routeRunStopId: null },
+        });
+
+        // 3. Delete the run stops
+        await tx.routeRunStop.deleteMany({
+          where: { routeRunId: id },
+        });
+      }
+
+      // 4. Delete the run itself
+      await tx.routeRun.delete({ where: { id } });
     });
 
-    if (stopIds.length > 0) {
-      // 2. Unlink delivery mutations referencing these stops
-      await this.prisma.deliveryMutation.updateMany({
-        where: { routeRunStopId: { in: stopIds } },
-        data: { routeRunStopId: null },
-      });
-
-      // 3. Delete the run stops
-      await this.prisma.routeRunStop.deleteMany({
-        where: { routeRunId: id },
-      });
-    }
-
-    // 4. Delete the run itself
-    await this.prisma.routeRun.delete({ where: { id } });
     return { success: true };
   }
 

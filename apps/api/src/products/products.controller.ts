@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -63,7 +64,12 @@ export class ProductsController {
   // Must be declared before :id to avoid route collision
   @Delete("clear-all")
   @Roles(UserRole.OPERATOR)
-  clearAll() {
+  clearAll(@Query("confirm") confirm?: string) {
+    if (confirm !== "true") {
+      throw new BadRequestException(
+        "This action permanently deletes ALL products and cascades to orders, invoices, and inventory. Pass ?confirm=true to proceed.",
+      );
+    }
     return this.productsService.clearAll();
   }
 

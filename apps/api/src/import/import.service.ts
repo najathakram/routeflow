@@ -518,23 +518,31 @@ export class ImportService {
       }
     }
 
-    // Update invoice statuses based on total payments
+    // Update invoice statuses based on total payments — wrapped in a single transaction
     const allInvoices = await this.prisma.invoice.findMany({ include: { payments: true } });
+    const now = new Date();
+    const statusUpdates: Array<{ id: string; status: InvoiceStatus; paidAt: Date | null }> = [];
     for (const inv of allInvoices) {
       const totalPaid = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
       const total = Number(inv.total);
       let newStatus: InvoiceStatus;
-      const now = new Date();
       if (totalPaid >= total - 0.01) newStatus = InvoiceStatus.PAID;
       else if (totalPaid > 0) newStatus = InvoiceStatus.PARTIAL;
       else if (inv.dueDate && inv.dueDate < now) newStatus = InvoiceStatus.OVERDUE;
       else newStatus = inv.status;
       if (newStatus !== inv.status) {
-        await this.prisma.invoice.update({
-          where: { id: inv.id },
-          data: { status: newStatus, paidAt: newStatus === InvoiceStatus.PAID ? now : null },
-        });
+        statusUpdates.push({ id: inv.id, status: newStatus, paidAt: newStatus === InvoiceStatus.PAID ? now : null });
       }
+    }
+    if (statusUpdates.length > 0) {
+      await this.prisma.$transaction(
+        statusUpdates.map((u) =>
+          this.prisma.invoice.update({
+            where: { id: u.id },
+            data: { status: u.status, paidAt: u.paidAt },
+          }),
+        ),
+      );
     }
 
     return { imported, skipped, errors };

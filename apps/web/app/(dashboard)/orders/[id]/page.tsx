@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
   AlertTriangle,
@@ -15,12 +16,13 @@ import {
   RefreshCcw,
   Search,
   RotateCcw,
+  Trash2,
   Truck,
   Calendar,
 } from "lucide-react";
-import { Badge, Button, Card, cn, type BadgeStatus } from "@routeflow/ui/web";
+import { Badge, Button, Card, cn, useToast, type BadgeStatus } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
-import { useOrder, useUpdateOrderStatus, useUpdateOrderItems, useReopenOrder, type OrderItem, type ItemUpdate } from "@/lib/api/orders";
+import { useOrder, useUpdateOrderStatus, useUpdateOrderItems, useReopenOrder, useDeleteOrder, type OrderItem, type ItemUpdate } from "@/lib/api/orders";
 import { useCreateInvoiceFromOrder } from "@/lib/api/invoices";
 import { useProducts } from "@/lib/api/products";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -323,9 +325,11 @@ function EditableLineItems({
 export default function OrderDetailPage({ params }: { params: { id: string } }) {
   const { setTitle } = usePageTitle();
   const { data: order, isLoading, isError } = useOrder(params.id);
+  const router = useRouter();
   const updateStatus = useUpdateOrderStatus();
   const updateItems = useUpdateOrderItems();
   const reopenOrder = useReopenOrder();
+  const deleteOrder = useDeleteOrder();
   const generateInvoice = useCreateInvoiceFromOrder();
 
   // Status tracking — use actual API status directly
@@ -340,6 +344,11 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
 
   // Cancel confirmation
   const [showCancelConfirm, setShowCancelConfirm] = React.useState(false);
+
+  // Delete confirmation
+  const [showDeleteConfirm, setShowDeleteConfirm] = React.useState(false);
+
+  const { toast } = useToast();
 
   React.useEffect(() => {
     if (order) {
@@ -571,6 +580,29 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
               >
                 Cancel Order
               </Button>
+              {showDeleteConfirm ? (
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-danger font-medium">Delete order?</span>
+                  <Button
+                    size="sm"
+                    variant="danger"
+                    loading={deleteOrder.isPending}
+                    onClick={() => {
+                      deleteOrder.mutate(order.id, {
+                        onSuccess: () => { toast({ title: "Order deleted", variant: "success" }); router.push("/orders"); },
+                        onError: (e) => { toast({ title: e.message, variant: "error" }); setShowDeleteConfirm(false); },
+                      });
+                    }}
+                  >
+                    Confirm Delete
+                  </Button>
+                  <button onClick={() => setShowDeleteConfirm(false)} className="text-sm text-navy/50 hover:text-navy transition-colors">No</button>
+                </div>
+              ) : (
+                <Button size="sm" variant="ghost" leftIcon={<Trash2 className="h-4 w-4" />} onClick={() => setShowDeleteConfirm(true)}>
+                  Delete
+                </Button>
+              )}
             </>
           )}
 
@@ -665,21 +697,46 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
 
           {/* CANCELLED */}
           {localStatus === "CANCELLED" && (
-            <Button
-              variant="secondary"
-              size="sm"
-              leftIcon={<RotateCcw className="h-4 w-4" />}
-              onClick={() => {
-                if (confirm("Reopen this order? It will return to Pending status.")) {
-                  reopenOrder.mutate(order.id, {
-                    onSuccess: () => setLocalStatus("PENDING"),
-                  });
-                }
-              }}
-              loading={reopenOrder.isPending}
-            >
-              Reopen Order
-            </Button>
+            <>
+              <Button
+                variant="secondary"
+                size="sm"
+                leftIcon={<RotateCcw className="h-4 w-4" />}
+                onClick={() => {
+                  if (confirm("Reopen this order? It will return to Pending status.")) {
+                    reopenOrder.mutate(order.id, {
+                      onSuccess: () => setLocalStatus("PENDING"),
+                    });
+                  }
+                }}
+                loading={reopenOrder.isPending}
+              >
+                Reopen Order
+              </Button>
+              {showDeleteConfirm ? (
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-danger font-medium">Delete order?</span>
+                  <Button
+                    size="sm"
+                    variant="danger"
+                    loading={deleteOrder.isPending}
+                    onClick={() => {
+                      deleteOrder.mutate(order.id, {
+                        onSuccess: () => { toast({ title: "Order deleted", variant: "success" }); router.push("/orders"); },
+                        onError: (e) => { toast({ title: e.message, variant: "error" }); setShowDeleteConfirm(false); },
+                      });
+                    }}
+                  >
+                    Confirm Delete
+                  </Button>
+                  <button onClick={() => setShowDeleteConfirm(false)} className="text-sm text-navy/50 hover:text-navy transition-colors">No</button>
+                </div>
+              ) : (
+                <Button size="sm" variant="ghost" leftIcon={<Trash2 className="h-4 w-4" />} onClick={() => setShowDeleteConfirm(true)}>
+                  Delete
+                </Button>
+              )}
+            </>
           )}
         </div>
       </div>

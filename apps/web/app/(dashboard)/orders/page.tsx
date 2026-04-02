@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { AlertTriangle, Eye, Loader2, Calendar, X, CheckSquare, Trash2, ChevronUp, ChevronDown, ChevronsUpDown } from "lucide-react";
 import { PageHeader, Badge, Select, Button, cn, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
-import { useOrders, useUpdateOrderStatus, type Order } from "@/lib/api/orders";
+import { useOrders, useUpdateOrderStatus, useBulkDeleteOrders, type Order } from "@/lib/api/orders";
 import { CreateOrderModal } from "./_components/CreateOrderModal";
 
 // ─── Status filter options ────────────────────────────────────────────────────
@@ -37,6 +37,8 @@ export default function OrdersPage() {
   const [selectMode, setSelectMode] = React.useState(false);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [isCancelling, setIsCancelling] = React.useState(false);
+  const [isDeleting, setIsDeleting] = React.useState(false);
+  const [deleteConfirm, setDeleteConfirm] = React.useState(false);
   const [sortCol, setSortCol] = React.useState<string>("createdAt");
   const [sortDir, setSortDir] = React.useState<"asc" | "desc">("desc");
 
@@ -51,11 +53,12 @@ export default function OrdersPage() {
   };
   const { toast } = useToast();
   const updateStatus = useUpdateOrderStatus();
+  const bulkDelete = useBulkDeleteOrders();
 
   const toggleSelect = (id: string) =>
     setSelected((prev) => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
 
-  const exitSelectMode = () => { setSelectMode(false); setSelected(new Set()); };
+  const exitSelectMode = () => { setSelectMode(false); setSelected(new Set()); setDeleteConfirm(false); };
 
   const handleBulkCancel = async () => {
     if (isCancelling) return;
@@ -70,6 +73,25 @@ export default function OrdersPage() {
       toast({ title: "Failed to cancel some orders", variant: "error" });
     } finally {
       setIsCancelling(false);
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (isDeleting) return;
+    setIsDeleting(true);
+    try {
+      const result = await bulkDelete.mutateAsync(Array.from(selected));
+      if (result.errors.length > 0) {
+        toast({ title: `${result.deleted} deleted, ${result.errors.length} failed (only PENDING/CANCELLED orders can be deleted)`, variant: "error" });
+      } else {
+        toast({ title: `${result.deleted} order${result.deleted !== 1 ? "s" : ""} deleted`, variant: "success" });
+      }
+      exitSelectMode();
+    } catch {
+      toast({ title: "Failed to delete orders", variant: "error" });
+    } finally {
+      setIsDeleting(false);
+      setDeleteConfirm(false);
     }
   };
 
@@ -136,6 +158,21 @@ export default function OrdersPage() {
             <Button variant="secondary" leftIcon={<X className="h-4 w-4" />} loading={isCancelling} onClick={handleBulkCancel}>
               Cancel {selected.size}
             </Button>
+            {deleteConfirm ? (
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-danger font-medium">Delete {selected.size} orders?</span>
+                <Button variant="danger" size="sm" loading={isDeleting} onClick={handleBulkDelete}>
+                  Confirm Delete
+                </Button>
+                <button onClick={() => setDeleteConfirm(false)} className="text-sm text-navy/50 hover:text-navy transition-colors">
+                  No
+                </button>
+              </div>
+            ) : (
+              <Button variant="danger" leftIcon={<Trash2 className="h-4 w-4" />} onClick={() => setDeleteConfirm(true)}>
+                Delete {selected.size}
+              </Button>
+            )}
           </div>
         </div>
       )}
