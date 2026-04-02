@@ -45,15 +45,40 @@ export interface ExpenseCategory {
   isCustom: boolean;
 }
 
+export interface ExpenseLineItem {
+  id: string;
+  account: string;
+  notes?: string;
+  amount: number;
+}
+
+export interface MileageRate {
+  id: string;
+  startDate: string;
+  ratePerUnit: number;
+  unit: string;
+  createdAt: string;
+}
+
 export interface Expense {
   id: string;
   date: string;
-  category: ExpenseCategory;
+  category?: ExpenseCategory;
   supplier?: { id: string; name: string };
+  customer?: { id: string; businessName: string };
   amount: number;
   description?: string;
   paymentMethod?: string;
   notes?: string;
+  referenceNumber?: string;
+  isItemized: boolean;
+  isMileage: boolean;
+  isBillable: boolean;
+  employeeName?: string;
+  mileageUnit?: string;
+  distance?: number;
+  mileageRateSnapshot?: number;
+  lineItems?: ExpenseLineItem[];
   createdAt?: string;
 }
 
@@ -164,7 +189,7 @@ export function useExpensesByCategoryReport(from?: string, to?: string) {
 
 // ─── Expenses CRUD ────────────────────────────────────────────────────────────
 
-export function useExpenses(params?: { categoryId?: string; supplierId?: string; from?: string; to?: string; page?: number; limit?: number }) {
+export function useExpenses(params?: { categoryId?: string; supplierId?: string; customerId?: string; from?: string; to?: string; type?: string; page?: number; limit?: number }) {
   return useQuery<{ data: Expense[]; meta: { total: number; page: number; limit: number; totalPages: number } }>({
     queryKey: ['expenses', params],
     queryFn: () => apiClient.get('/bookkeeping/expenses', { params }).then((r) => r.data),
@@ -178,20 +203,72 @@ export function useExpenseCategories() {
   });
 }
 
+export function useCreateExpenseCategory() {
+  const qc = useQueryClient();
+  return useMutation<ExpenseCategory, Error, { name: string; code: string }>({
+    mutationFn: (dto) => apiClient.post('/bookkeeping/expense-categories', dto).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['expense-categories'] }),
+  });
+}
+
+export function useMileageRates() {
+  return useQuery<MileageRate[]>({
+    queryKey: ['mileage-rates'],
+    queryFn: () => apiClient.get('/bookkeeping/mileage-rates').then((r) => r.data),
+  });
+}
+
+export function useCreateMileageRate() {
+  const qc = useQueryClient();
+  return useMutation<MileageRate, Error, { startDate: string; ratePerUnit: number; unit?: string }>({
+    mutationFn: (dto) => apiClient.post('/bookkeeping/mileage-rates', dto).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['mileage-rates'] }),
+  });
+}
+
+export function useDeleteMileageRate() {
+  const qc = useQueryClient();
+  return useMutation<void, Error, string>({
+    mutationFn: (id) => apiClient.delete(`/bookkeeping/mileage-rates/${id}`).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['mileage-rates'] }),
+  });
+}
+
 export interface CreateExpenseDto {
-  categoryId: string;
+  categoryId?: string;
   supplierId?: string;
+  customerId?: string;
   amount: number;
   date: string;
   description?: string;
   paymentMethod?: string;
   notes?: string;
+  referenceNumber?: string;
+  isItemized?: boolean;
+  isMileage?: boolean;
+  isBillable?: boolean;
+  employeeName?: string;
+  mileageUnit?: string;
+  distance?: number;
+  mileageRateSnapshot?: number;
+  lineItems?: { account: string; notes?: string; amount: number }[];
 }
 
 export function useCreateExpense() {
   const qc = useQueryClient();
   return useMutation<Expense, Error, CreateExpenseDto>({
     mutationFn: (dto) => apiClient.post('/bookkeeping/expenses', dto).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['expenses'] });
+      qc.invalidateQueries({ queryKey: ['finance-dashboard'] });
+    },
+  });
+}
+
+export function useBulkCreateExpenses() {
+  const qc = useQueryClient();
+  return useMutation<{ created: number; errors: string[] }, Error, CreateExpenseDto[]>({
+    mutationFn: (expenses) => apiClient.post('/bookkeeping/expenses/bulk', { expenses }).then((r) => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['expenses'] });
       qc.invalidateQueries({ queryKey: ['finance-dashboard'] });

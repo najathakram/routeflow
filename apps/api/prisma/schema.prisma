@@ -240,6 +240,7 @@ model Customer {
   advancePayments   AdvancePayment[]
   recurringInvoices RecurringInvoice[]
   prices            CustomerPrice[]
+  expenses          Expense[]
 
   @@index([zohoContactId])
   @@index([businessName])
@@ -803,28 +804,63 @@ model ExpenseCategory {
 }
 
 model Expense {
-  id            String   @id @default(uuid())
-  categoryId    String
-  supplierId    String?
-  amount        Decimal  @db.Decimal(10, 2)
-  date          DateTime
-  description   String?
-  paymentMethod String?
-  receiptKey    String?
-  notes         String?
-  performedById String?
-  deletedAt     DateTime?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id                  String    @id @default(uuid())
+  categoryId          String?
+  supplierId          String?
+  customerId          String?
+  amount              Decimal   @db.Decimal(10, 2)
+  date                DateTime
+  description         String?
+  paymentMethod       String?
+  receiptKey          String?
+  notes               String?
+  referenceNumber     String?
+  performedById       String?
+  isItemized          Boolean   @default(false)
+  isMileage           Boolean   @default(false)
+  isBillable          Boolean   @default(false)
+  employeeName        String?
+  mileageUnit         String?
+  distance            Decimal?  @db.Decimal(10, 2)
+  mileageRateSnapshot Decimal?  @db.Decimal(10, 4)
+  deletedAt           DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 
-  category    ExpenseCategory @relation(fields: [categoryId], references: [id])
-  supplier    Supplier?       @relation(fields: [supplierId], references: [id])
-  performedBy User?           @relation(fields: [performedById], references: [id])
+  category    ExpenseCategory? @relation(fields: [categoryId], references: [id])
+  supplier    Supplier?        @relation(fields: [supplierId], references: [id])
+  customer    Customer?        @relation(fields: [customerId], references: [id])
+  performedBy User?            @relation(fields: [performedById], references: [id])
+  lineItems   ExpenseLineItem[]
 
   @@index([categoryId])
   @@index([supplierId])
+  @@index([customerId])
   @@index([date])
   @@index([deletedAt])
+}
+
+model ExpenseLineItem {
+  id        String   @id @default(uuid())
+  expenseId String
+  account   String
+  notes     String?
+  amount    Decimal  @db.Decimal(10, 2)
+  createdAt DateTime @default(now())
+
+  expense Expense @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+
+  @@index([expenseId])
+}
+
+model MileageRate {
+  id          String   @id @default(uuid())
+  startDate   DateTime
+  ratePerUnit Decimal  @db.Decimal(10, 4)
+  unit        String   @default("MILE")
+  createdAt   DateTime @default(now())
+
+  @@index([startDate])
 }
 
 // ─── Sprint 4: Purchase Orders ────────────────────────────────────────────────

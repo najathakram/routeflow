@@ -130,20 +130,63 @@ export class BookkeepingService {
     });
   }
 
+  // ── Mileage Rates ──
+  async listMileageRates() {
+    return this.prisma.mileageRate.findMany({ orderBy: { startDate: "desc" } });
+  }
+
+  async createMileageRate(dto: { startDate: string; ratePerUnit: number; unit?: string }) {
+    return this.prisma.mileageRate.create({
+      data: {
+        startDate: new Date(dto.startDate),
+        ratePerUnit: dto.ratePerUnit,
+        unit: dto.unit ?? "MILE",
+      },
+    });
+  }
+
+  async deleteMileageRate(id: string) {
+    const rate = await this.prisma.mileageRate.findUnique({ where: { id } });
+    if (!rate) throw new NotFoundException("Mileage rate not found");
+    return this.prisma.mileageRate.delete({ where: { id } });
+  }
+
+  /** Find the applicable mileage rate for a given date: the most recent rate with startDate <= expenseDate */
+  async getApplicableMileageRate(expenseDate: Date, unit = "MILE") {
+    return this.prisma.mileageRate.findFirst({
+      where: { unit, startDate: { lte: expenseDate } },
+      orderBy: { startDate: "desc" },
+    });
+  }
+
   // ── Expenses ──
+  private get expenseInclude() {
+    return {
+      category: true,
+      supplier: { select: { id: true, name: true } },
+      customer: { select: { id: true, businessName: true } },
+      lineItems: { orderBy: { createdAt: "asc" as const } },
+    };
+  }
+
   async listExpenses(query: {
     categoryId?: string;
     supplierId?: string;
+    customerId?: string;
     from?: string;
     to?: string;
+    type?: string;
     page?: number;
     limit?: number;
   }) {
-    const { categoryId, supplierId, from, to, page = 1, limit = 20 } = query;
+    const { categoryId, supplierId, customerId, from, to, type, page = 1, limit = 20 } = query;
     const skip = (page - 1) * limit;
     const where: any = { deletedAt: null };
     if (categoryId) where.categoryId = categoryId;
     if (supplierId) where.supplierId = supplierId;
+    if (customerId) where.customerId = customerId;
+    if (type === "mileage") where.isMileage = true;
+    if (type === "itemized") where.isItemized = true;
     if (from || to) {
       where.date = {};
       if (from) where.date.gte = new Date(from);
@@ -156,7 +199,7 @@ export class BookkeepingService {
     const [data, total] = await Promise.all([
       this.prisma.expense.findMany({
         where,
-        include: { category: true, supplier: { select: { id: true, name: true } } },
+        include: this.expenseInclude,
         skip,
         take: limit,
         orderBy: { date: "desc" },
@@ -167,32 +210,84 @@ export class BookkeepingService {
   }
 
   async createExpense(dto: any, userId: string) {
-    const cat = await this.prisma.expenseCategory.findUnique({ where: { id: dto.categoryId } });
-    if (!cat) throw new NotFoundException("Expense category not found");
+    const { lineItems, isMileage, isItemized, ...rest } = dto;
+
+    // For mileage expenses, auto-lookup the applicable rate if not provided
+    let computedAmount = rest.amount;
+    let rateSnapshot = rest.mileageRateSnapshot;
+    if (isMileage && rest.distance && !rateSnapshot) {
+      const date = new Date(rest.date);
+      const rate = await this.getApplicableMileageRate(date, rest.mileageUnit ?? "MILE");
+      if (rate) {
+        rateSnapshot = Number(rate.ratePerUnit);
+        computedAmount = Number(rest.distance) * rateSnapshot;
+      }
+    }
+
+    // For itemized expenses, amount = sum of line items
+    if (isItemized && lineItems?.length) {
+      computedAmount = lineItems.reduce((s: number, li: any) => s + Number(li.amount), 0);
+    }
+
     return this.prisma.expense.create({
       data: {
-        categoryId: dto.categoryId,
-        supplierId: dto.supplierId,
-        amount: dto.amount,
-        date: new Date(dto.date),
-        description: dto.description,
-        paymentMethod: dto.paymentMethod,
-        notes: dto.notes,
+        categoryId: rest.categoryId ?? null,
+        supplierId: rest.supplierId ?? null,
+        customerId: rest.customerId ?? null,
+        amount: computedAmount,
+        date: new Date(rest.date),
+        description: rest.description,
+        paymentMethod: rest.paymentMethod,
+        notes: rest.notes,
+        referenceNumber: rest.referenceNumber,
         performedById: userId,
+        isItemized: isItemized ?? false,
+        isMileage: isMileage ?? false,
+        isBillable: rest.isBillable ?? false,
+        employeeName: rest.employeeName,
+        mileageUnit: rest.mileageUnit,
+        distance: rest.distance ?? null,
+        mileageRateSnapshot: rateSnapshot ?? null,
+        ...(isItemized && lineItems?.length
+          ? {
+              lineItems: {
+                create: lineItems.map((li: any) => ({
+                  account: li.account,
+                  notes: li.notes,
+                  amount: li.amount,
+                })),
+              },
+            }
+          : {}),
       },
-      include: { category: true, supplier: { select: { id: true, name: true } } },
+      include: this.expenseInclude,
     });
+  }
+
+  async bulkCreateExpenses(dtos: any[], userId: string) {
+    const results = await Promise.allSettled(
+      dtos.map((dto) => this.createExpense(dto, userId)),
+    );
+    const created = results.filter((r) => r.status === "fulfilled").length;
+    const errors = results
+      .filter((r): r is PromiseRejectedResult => r.status === "rejected")
+      .map((r) => r.reason?.message ?? "Unknown error");
+    return { created, errors };
   }
 
   async updateExpense(id: string, dto: any) {
     return this.prisma.expense.update({
       where: { id },
       data: {
-        ...(dto.amount && { amount: dto.amount }),
+        ...(dto.amount !== undefined && { amount: dto.amount }),
         ...(dto.date && { date: new Date(dto.date) }),
         ...(dto.description !== undefined && { description: dto.description }),
         ...(dto.notes !== undefined && { notes: dto.notes }),
+        ...(dto.referenceNumber !== undefined && { referenceNumber: dto.referenceNumber }),
+        ...(dto.isBillable !== undefined && { isBillable: dto.isBillable }),
+        ...(dto.employeeName !== undefined && { employeeName: dto.employeeName }),
       },
+      include: this.expenseInclude,
     });
   }
 
@@ -236,7 +331,7 @@ export class BookkeepingService {
     const netProfit = grossProfit - opEx;
 
     const byCategory = expenses.reduce((acc: any, e) => {
-      const cat = e.category.name;
+      const cat = e.category?.name ?? "Uncategorized";
       acc[cat] = (acc[cat] ?? 0) + Number(e.amount);
       return acc;
     }, {});
@@ -429,7 +524,8 @@ export class BookkeepingService {
     });
     const byCat: Record<string, number> = {};
     for (const e of expenses) {
-      byCat[e.category.name] = (byCat[e.category.name] ?? 0) + Number(e.amount);
+      const catName = e.category?.name ?? "Uncategorized";
+      byCat[catName] = (byCat[catName] ?? 0) + Number(e.amount);
     }
     const topExpenses = Object.entries(byCat)
       .sort((a, b) => b[1] - a[1])
@@ -875,9 +971,9 @@ export class BookkeepingService {
       { categoryId: string; categoryName: string; count: number; total: number }
     > = {};
     for (const e of expenses) {
-      const key = e.categoryId;
+      const key = e.categoryId ?? "uncategorized";
       if (!byCat[key])
-        byCat[key] = { categoryId: key, categoryName: e.category.name, count: 0, total: 0 };
+        byCat[key] = { categoryId: key, categoryName: e.category?.name ?? "Uncategorized", count: 0, total: 0 };
       byCat[key].count++;
       byCat[key].total += Number(e.amount);
     }

@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Patch,
+  Delete,
   Body,
   Param,
   Query,
@@ -19,7 +20,14 @@ import { Roles } from "../auth/decorators/roles.decorator";
 import { UserRole } from "@prisma/client";
 import { ListTransactionsDto } from "./dto/list-transactions.dto";
 import { RecordPaymentDto } from "./dto/record-payment.dto";
-import { CreateExpenseCategoryDto, CreateExpenseDto, UpdateExpenseDto, ListExpensesDto } from "./dto/create-expense.dto";
+import {
+  CreateExpenseCategoryDto,
+  CreateExpenseDto,
+  UpdateExpenseDto,
+  ListExpensesDto,
+  CreateMileageRateDto,
+  BulkCreateExpenseDto,
+} from "./dto/create-expense.dto";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 
@@ -76,10 +84,31 @@ export class BookkeepingController {
     return this.bookkeepingService.createExpenseCategory(dto);
   }
 
+  // ── Mileage Rates ──
+  @Get("mileage-rates")
+  listMileageRates() {
+    return this.bookkeepingService.listMileageRates();
+  }
+
+  @Post("mileage-rates")
+  createMileageRate(@Body() dto: CreateMileageRateDto) {
+    return this.bookkeepingService.createMileageRate(dto);
+  }
+
+  @Delete("mileage-rates/:id")
+  deleteMileageRate(@Param("id") id: string) {
+    return this.bookkeepingService.deleteMileageRate(id);
+  }
+
   // ── Expenses ──
   @Get("expenses")
   listExpenses(@Query() query: ListExpensesDto) {
     return this.bookkeepingService.listExpenses(query);
+  }
+
+  @Post("expenses/bulk")
+  bulkCreateExpenses(@Body() dto: BulkCreateExpenseDto, @CurrentUser() user: JwtPayload) {
+    return this.bookkeepingService.bulkCreateExpenses(dto.expenses, user.sub);
   }
 
   @Post("expenses")
