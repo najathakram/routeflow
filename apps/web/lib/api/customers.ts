@@ -10,11 +10,58 @@ export interface Customer {
   fulfillPath: string;
   deliveryWindowStart?: string;
   deliveryWindowEnd?: string;
+  email?: string;
+  mobile?: string;
+  customerType?: string;
+  displayName?: string;
+  salutation?: string;
+  firstName?: string;
+  lastName?: string;
+  taxId?: string;
+  isTaxExempt?: boolean;
+  creditLimit?: number;
+  currency?: string;
+  receivables?: number;
+  unusedCredits?: number;
   createdAt: string;
   updatedAt: string;
 }
 
-export function useCustomers(params?: { search?: string; status?: string; page?: number; limit?: number }) {
+export interface ContactPerson {
+  id: string;
+  customerId: string;
+  salutation?: string;
+  firstName: string;
+  lastName?: string;
+  email?: string;
+  phone?: string;
+  mobile?: string;
+  isPrimary: boolean;
+  createdAt: string;
+}
+
+export interface CustomerTag {
+  id: string;
+  name: string;
+  color: string;
+  createdAt: string;
+}
+
+export interface CustomerComment {
+  id: string;
+  customerId: string;
+  userId: string;
+  content: string;
+  createdAt: string;
+}
+
+export interface IncomeChartData {
+  month: string;
+  income: number;
+  expenses: number;
+}
+
+export function useCustomers(params?: { search?: string; status?: string; page?: number; limit?: number; tag?: string; customerType?: string; sortBy?: string; sortDir?: string }) {
   return useQuery({
     queryKey: ["customers", params],
     queryFn: () => apiClient.get("/customers", { params }).then((r) => r.data),
@@ -221,5 +268,158 @@ export function useDeleteAllCustomers() {
   return useMutation({
     mutationFn: () => apiClient.delete("/customers/all").then((r) => r.data),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["customers"] }); },
+  });
+}
+
+// ─── Tags ────────────────────────────────────────────────────────────────────
+
+export function useCustomerTags() {
+  return useQuery<CustomerTag[]>({
+    queryKey: ["customer-tags"],
+    queryFn: () => apiClient.get("/customers/tags").then((r) => r.data),
+  });
+}
+
+export function useCreateCustomerTag() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { name: string; color?: string }) =>
+      apiClient.post("/customers/tags", data).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["customer-tags"] }),
+  });
+}
+
+export function useDeleteCustomerTag() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (tagId: string) =>
+      apiClient.delete(`/customers/tags/${tagId}`).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["customer-tags"] }),
+  });
+}
+
+export function useAssignCustomerTag() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ customerId, tagId }: { customerId: string; tagId: string }) =>
+      apiClient.post(`/customers/${customerId}/tags`, { tagId }).then((r) => r.data),
+    onSuccess: (_d, vars) => {
+      qc.invalidateQueries({ queryKey: ["customers", vars.customerId] });
+      qc.invalidateQueries({ queryKey: ["customers"] });
+    },
+  });
+}
+
+export function useRemoveCustomerTag() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ customerId, tagId }: { customerId: string; tagId: string }) =>
+      apiClient.delete(`/customers/${customerId}/tags/${tagId}`).then((r) => r.data),
+    onSuccess: (_d, vars) => {
+      qc.invalidateQueries({ queryKey: ["customers", vars.customerId] });
+      qc.invalidateQueries({ queryKey: ["customers"] });
+    },
+  });
+}
+
+// ─── Contact Persons ─────────────────────────────────────────────────────────
+
+export function useContactPersons(customerId: string) {
+  return useQuery<ContactPerson[]>({
+    queryKey: ["customers", customerId, "contacts"],
+    queryFn: () => apiClient.get(`/customers/${customerId}/contacts`).then((r) => r.data),
+    enabled: !!customerId,
+  });
+}
+
+export function useAddContactPerson() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ customerId, ...data }: { customerId: string; firstName: string; lastName?: string; email?: string; phone?: string; mobile?: string; salutation?: string; isPrimary?: boolean }) =>
+      apiClient.post(`/customers/${customerId}/contacts`, data).then((r) => r.data),
+    onSuccess: (_d, vars) => qc.invalidateQueries({ queryKey: ["customers", vars.customerId, "contacts"] }),
+  });
+}
+
+export function useUpdateContactPerson() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ customerId, contactId, ...data }: { customerId: string; contactId: string; [k: string]: unknown }) =>
+      apiClient.patch(`/customers/${customerId}/contacts/${contactId}`, data).then((r) => r.data),
+    onSuccess: (_d, vars) => qc.invalidateQueries({ queryKey: ["customers", vars.customerId, "contacts"] }),
+  });
+}
+
+export function useDeleteContactPerson() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ customerId, contactId }: { customerId: string; contactId: string }) =>
+      apiClient.delete(`/customers/${customerId}/contacts/${contactId}`).then((r) => r.data),
+    onSuccess: (_d, vars) => qc.invalidateQueries({ queryKey: ["customers", vars.customerId, "contacts"] }),
+  });
+}
+
+// ─── Comments ────────────────────────────────────────────────────────────────
+
+export function useCustomerComments(customerId: string) {
+  return useQuery<CustomerComment[]>({
+    queryKey: ["customers", customerId, "comments"],
+    queryFn: () => apiClient.get(`/customers/${customerId}/comments`).then((r) => r.data),
+    enabled: !!customerId,
+  });
+}
+
+export function useAddCustomerComment() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ customerId, content }: { customerId: string; content: string }) =>
+      apiClient.post(`/customers/${customerId}/comments`, { content }).then((r) => r.data),
+    onSuccess: (_d, vars) => qc.invalidateQueries({ queryKey: ["customers", vars.customerId, "comments"] }),
+  });
+}
+
+export function useDeleteCustomerComment() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ customerId, commentId }: { customerId: string; commentId: string }) =>
+      apiClient.delete(`/customers/${customerId}/comments/${commentId}`).then((r) => r.data),
+    onSuccess: (_d, vars) => qc.invalidateQueries({ queryKey: ["customers", vars.customerId, "comments"] }),
+  });
+}
+
+// ─── Income Chart ────────────────────────────────────────────────────────────
+
+export function useCustomerIncomeChart(customerId: string) {
+  return useQuery<IncomeChartData[]>({
+    queryKey: ["customers", customerId, "income-chart"],
+    queryFn: () => apiClient.get(`/customers/${customerId}/income-chart`).then((r) => r.data),
+    enabled: !!customerId,
+  });
+}
+
+// ─── Export ──────────────────────────────────────────────────────────────────
+
+export function useExportCustomers() {
+  return useMutation({
+    mutationFn: async (params?: Record<string, string>) => {
+      const res = await apiClient.get("/customers/export", { params, responseType: "blob" });
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "customers.csv";
+      a.click();
+      URL.revokeObjectURL(url);
+    },
+  });
+}
+
+// ─── Merge ───────────────────────────────────────────────────────────────────
+
+export function useMergeCustomers() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ primaryId, secondaryId }: { primaryId: string; secondaryId: string }) =>
+      apiClient.post("/customers/merge", { primaryId, secondaryId }).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["customers"] }),
   });
 }

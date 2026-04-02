@@ -149,8 +149,9 @@ export class BookkeepingController {
 
   // ── Extended Reports ──
   @Get("reports/ar-aging-invoices")
-  getArAgingInvoices() {
-    return this.bookkeepingService.getArAgingInvoices();
+  getArAgingInvoices(@Query("intervalDays") intervalDays?: string) {
+    const interval = intervalDays ? parseInt(intervalDays, 10) : 30;
+    return this.bookkeepingService.getArAgingInvoices(interval);
   }
 
   @Get("reports/sales-by-customer")
@@ -209,5 +210,38 @@ export class BookkeepingController {
   @Get("reports/expenses-by-customer")
   getExpensesByCustomerReport(@Query("from") from?: string, @Query("to") to?: string) {
     return this.bookkeepingService.getExpensesByCustomerReport(from, to);
+  }
+
+  @Get("reports/sales-by-driver")
+  getSalesByDriver(@Query("from") from?: string, @Query("to") to?: string) {
+    return this.bookkeepingService.getSalesByDriver(from, to);
+  }
+
+  @Get("reports/ar-aging-details")
+  getArAgingDetails(
+    @Query("from") from?: string,
+    @Query("to") to?: string,
+    @Query("customerId") customerId?: string,
+  ) {
+    return this.bookkeepingService.getArAgingDetails(from, to, customerId);
+  }
+
+  @Get("reports/estimate-details")
+  getEstimateDetails(
+    @Query("from") from?: string,
+    @Query("to") to?: string,
+    @Query("status") status?: string,
+  ) {
+    return this.bookkeepingService.getEstimateDetails(from, to, status);
+  }
+
+  @Get("reports/refund-history")
+  getRefundHistory(@Query("from") from?: string, @Query("to") to?: string) {
+    return this.bookkeepingService.getRefundHistory(from, to);
+  }
+
+  @Get("reports/receivable-summary")
+  getReceivableSummary(@Query("from") from?: string, @Query("to") to?: string) {
+    return this.bookkeepingService.getReceivableSummary(from, to);
   }
 }

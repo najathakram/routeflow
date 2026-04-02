@@ -229,6 +229,17 @@ model Customer {
   fulfillPath         FulfillPath @default(ROUTE)
   deliveryWindowStart String?
   deliveryWindowEnd   String?
+  email               String?
+  mobile              String?
+  customerType        String      @default("BUSINESS")
+  displayName         String?
+  salutation          String?
+  firstName           String?
+  lastName            String?
+  taxId               String?
+  isTaxExempt         Boolean     @default(false)
+  creditLimit         Decimal?    @db.Decimal(10, 2)
+  currency            String      @default("USD")
   createdAt           DateTime    @default(now())
   updatedAt           DateTime    @updatedAt
 
@@ -244,29 +255,34 @@ model Customer {
   estimates      Estimate[]
   creditNotes    CreditNote[]
   returns        Return[]
-  advancePayments   AdvancePayment[]
-  recurringInvoices RecurringInvoice[]
-  prices            CustomerPrice[]
-  expenses          Expense[]
+  advancePayments    AdvancePayment[]
+  recurringInvoices  RecurringInvoice[]
+  prices             CustomerPrice[]
+  expenses           Expense[]
+  contactPersons     ContactPerson[]
+  tagAssignments     CustomerTagAssignment[]
+  comments           CustomerComment[]
 
   @@index([zohoContactId])
   @@index([businessName])
+  @@index([customerType])
 }
 
 model CustomerAddress {
-  id         String   @id @default(uuid())
-  customerId String
-  label      String   @default("default")
-  line1      String
-  line2      String?
-  city       String
-  state      String
-  zip        String
-  lat        Float?
-  lng        Float?
-  isDefault  Boolean  @default(false)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  id          String   @id @default(uuid())
+  customerId  String
+  label       String   @default("default")
+  line1       String
+  line2       String?
+  city        String
+  state       String
+  zip         String
+  lat         Float?
+  lng         Float?
+  isDefault   Boolean  @default(false)
+  addressType String   @default("BILLING")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   customer      Customer       @relation(fields: [customerId], references: [id])
   routeStops    RouteStop[]
@@ -879,6 +895,59 @@ model MileageRate {
   createdAt   DateTime @default(now())
 
   @@index([startDate])
+}
+
+// ─── Customer Extensions (Zoho Parity) ──────────────────────────────────────
+
+model ContactPerson {
+  id         String   @id @default(uuid())
+  customerId String
+  salutation String?
+  firstName  String
+  lastName   String?
+  email      String?
+  phone      String?
+  mobile     String?
+  isPrimary  Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+}
+
+model CustomerTag {
+  id        String                  @id @default(uuid())
+  name      String                  @unique
+  color     String                  @default("#3b82f6")
+  createdAt DateTime                @default(now())
+
+  assignments CustomerTagAssignment[]
+}
+
+model CustomerTagAssignment {
+  id         String @id @default(uuid())
+  customerId String
+  tagId      String
+
+  customer Customer    @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  tag      CustomerTag @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, tagId])
+  @@index([customerId])
+  @@index([tagId])
+}
+
+model CustomerComment {
+  id         String   @id @default(uuid())
+  customerId String
+  userId     String
+  content    String
+  createdAt  DateTime @default(now())
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
 }
 
 // ─── Sprint 4: Purchase Orders ────────────────────────────────────────────────

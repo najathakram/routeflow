@@ -20,6 +20,10 @@ import {
   TrendingDown,
   CheckCircle2,
   DollarSign,
+  X,
+  MessageSquare,
+  User,
+  Building2,
 } from "lucide-react";
 import {
   Badge,
@@ -32,8 +36,19 @@ import {
   cn,
   type BadgeStatus,
 } from "@routeflow/ui/web";
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Legend,
+} from "recharts";
 import { usePageTitle } from "@/lib/page-title-context";
 import { CustomerFormModal } from "../_components/CustomerFormModal";
+import { fmt, fmtDate } from "@/lib/formatting";
 import {
   useCustomer,
   useCustomerOrders,
@@ -47,8 +62,22 @@ import {
   useCustomerPrices,
   useUpsertCustomerPrice,
   useDeleteCustomerPrice,
+  useContactPersons,
+  useAddContactPerson,
+  useUpdateContactPerson,
+  useDeleteContactPerson,
+  useCustomerTags,
+  useAssignCustomerTag,
+  useRemoveCustomerTag,
+  useCustomerComments,
+  useAddCustomerComment,
+  useDeleteCustomerComment,
+  useCustomerIncomeChart,
   type AdvancePayment,
   type CustomerPrice,
+  type ContactPerson,
+  type CustomerTag,
+  type CustomerComment,
 } from "@/lib/api/customers";
 import { useProducts } from "@/lib/api/products";
 import { useRoutes, useAddStopToRoute } from "@/lib/api/routes";
@@ -62,7 +91,7 @@ import {
 import { StandingOrderModal } from "./StandingOrderModal";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// ── Types ─────────────────────────────────────────────────────────────────────
 
 interface ApiOrder {
   id: string;
@@ -72,7 +101,7 @@ interface ApiOrder {
   [key: string]: unknown;
 }
 
-// ─── Order table columns (stable outside component) ──────────────────────────
+// ── Order table columns (stable outside component) ───────────────────────────
 
 const orderColumns: ColumnDef<ApiOrder, unknown>[] = [
   {
@@ -102,9 +131,15 @@ const orderColumns: ColumnDef<ApiOrder, unknown>[] = [
   },
 ];
 
-// ─── Tab trigger ──────────────────────────────────────────────────────────────
+// ── Tab trigger ───────────────────────────────────────────────────────────────
 
-function TabTrigger({ value, children }: { value: string; children: React.ReactNode }) {
+function TabTrigger({
+  value,
+  children,
+}: {
+  value: string;
+  children: React.ReactNode;
+}) {
   return (
     <Tabs.Trigger
       value={value}
@@ -119,7 +154,7 @@ function TabTrigger({ value, children }: { value: string; children: React.ReactN
   );
 }
 
-// ─── Info row ─────────────────────────────────────────────────────────────────
+// ── Info row ──────────────────────────────────────────────────────────────────
 
 function InfoRow({
   icon: Icon,
@@ -141,7 +176,24 @@ function InfoRow({
   );
 }
 
-// ─── Add Address Modal ────────────────────────────────────────────────────────
+// ── Relative time helper ─────────────────────────────────────────────────────
+
+function timeAgo(dateStr: string): string {
+  const now = Date.now();
+  const then = new Date(dateStr).getTime();
+  const diff = Math.floor((now - then) / 1000);
+  const mins = Math.floor(diff / 60);
+  const hrs = Math.floor(mins / 60);
+  const days = Math.floor(hrs / 24);
+
+  if (diff < 60) return "just now";
+  if (mins < 60) return `${mins} minute${mins !== 1 ? "s" : ""} ago`;
+  if (hrs < 24) return `${hrs} hour${hrs !== 1 ? "s" : ""} ago`;
+  if (days < 30) return `${days} day${days !== 1 ? "s" : ""} ago`;
+  return fmtDate(dateStr);
+}
+
+// ── Add Address Modal ─────────────────────────────────────────────────────────
 
 interface AddAddressFormValues {
   label: string;
@@ -172,9 +224,10 @@ function AddAddressModal({
     zip: "",
   });
 
-  const handleChange = (field: keyof AddAddressFormValues) => (
-    e: React.ChangeEvent<HTMLInputElement>,
-  ) => setForm((prev) => ({ ...prev, [field]: e.target.value }));
+  const handleChange =
+    (field: keyof AddAddressFormValues) =>
+    (e: React.ChangeEvent<HTMLInputElement>) =>
+      setForm((prev) => ({ ...prev, [field]: e.target.value }));
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -224,7 +277,9 @@ function AddAddressModal({
               />
             </div>
             <div>
-              <label className="mb-1 block text-sm font-medium text-navy">State</label>
+              <label className="mb-1 block text-sm font-medium text-navy">
+                State
+              </label>
               <Input
                 placeholder="TX"
                 value={form.state}
@@ -244,7 +299,7 @@ function AddAddressModal({
   );
 }
 
-// ─── Assign Route Modal ───────────────────────────────────────────────────────
+// ── Assign Route Modal ────────────────────────────────────────────────────────
 
 function AssignRouteModal({
   isOpen,
@@ -257,14 +312,16 @@ function AssignRouteModal({
   customerId: string;
   addresses: { id: string; label: string; line1: string; city: string }[];
 }) {
-  const { data: routesData, isLoading: routesLoading } = useRoutes({ isActive: true, page: 1 });
+  const { data: routesData, isLoading: routesLoading } = useRoutes({
+    isActive: true,
+    page: 1,
+  });
   const addStop = useAddStopToRoute();
   const [routeId, setRouteId] = React.useState("");
   const [addressId, setAddressId] = React.useState("");
   const [notes, setNotes] = React.useState("");
   const [error, setError] = React.useState<string | null>(null);
 
-  // Reset state when modal opens
   React.useEffect(() => {
     if (isOpen) {
       setRouteId("");
@@ -276,13 +333,26 @@ function AssignRouteModal({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!routeId) { setError("Please select a route."); return; }
+    if (!routeId) {
+      setError("Please select a route.");
+      return;
+    }
     setError(null);
     addStop.mutate(
-      { routeId, customerId, customerAddressId: addressId || undefined, notes: notes || undefined },
+      {
+        routeId,
+        customerId,
+        customerAddressId: addressId || undefined,
+        notes: notes || undefined,
+      },
       {
         onSuccess: () => onClose(),
-        onError: (err: any) => setError(err?.response?.data?.message ?? err.message ?? "Failed to assign route."),
+        onError: (err: any) =>
+          setError(
+            err?.response?.data?.message ??
+              err.message ??
+              "Failed to assign route.",
+          ),
       },
     );
   };
@@ -300,7 +370,11 @@ function AssignRouteModal({
           <Button variant="secondary" type="button" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" form="assign-route-form" loading={addStop.isPending}>
+          <Button
+            type="submit"
+            form="assign-route-form"
+            loading={addStop.isPending}
+          >
             Assign
           </Button>
         </>
@@ -312,22 +386,28 @@ function AssignRouteModal({
             <p className="text-sm text-navy/40">Loading routes…</p>
           ) : (
             <div>
-              <label className="mb-1 block text-sm font-medium text-navy">Route</label>
+              <label className="mb-1 block text-sm font-medium text-navy">
+                Route
+              </label>
               <select
                 value={routeId}
                 onChange={(e) => setRouteId(e.target.value)}
                 className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
               >
                 <option value="">Select a route…</option>
-                {routeOptions.map((r) => (
-                  <option key={r.id} value={r.id}>{r.name}</option>
+                {routeOptions.map((r: any) => (
+                  <option key={r.id} value={r.id}>
+                    {r.name}
+                  </option>
                 ))}
               </select>
             </div>
           )}
           {addresses.length > 0 && (
             <div>
-              <label className="mb-1 block text-sm font-medium text-navy">Delivery Address</label>
+              <label className="mb-1 block text-sm font-medium text-navy">
+                Delivery Address
+              </label>
               <select
                 value={addressId}
                 onChange={(e) => setAddressId(e.target.value)}
@@ -335,14 +415,17 @@ function AssignRouteModal({
               >
                 <option value="">No specific address</option>
                 {addresses.map((a) => (
-                  <option key={a.id} value={a.id}>{a.label} — {a.line1}, {a.city}</option>
+                  <option key={a.id} value={a.id}>
+                    {a.label} — {a.line1}, {a.city}
+                  </option>
                 ))}
               </select>
             </div>
           )}
           <div>
             <label className="mb-1 block text-sm font-medium text-navy">
-              Stop Notes <span className="text-navy/40 font-normal">(optional)</span>
+              Stop Notes{" "}
+              <span className="font-normal text-navy/40">(optional)</span>
             </label>
             <input
               type="text"
@@ -359,7 +442,194 @@ function AssignRouteModal({
   );
 }
 
-// ─── Special Prices Tab ───────────────────────────────────────────────────────
+// ── Contact Person Modal ─────────────────────────────────────────────────────
+
+interface ContactFormValues {
+  salutation: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string;
+  mobile: string;
+  isPrimary: boolean;
+}
+
+const EMPTY_CONTACT: ContactFormValues = {
+  salutation: "",
+  firstName: "",
+  lastName: "",
+  email: "",
+  phone: "",
+  mobile: "",
+  isPrimary: false,
+};
+
+function ContactPersonModal({
+  isOpen,
+  onClose,
+  customerId,
+  editingContact,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  customerId: string;
+  editingContact: ContactPerson | null;
+}) {
+  const addContact = useAddContactPerson();
+  const updateContact = useUpdateContactPerson();
+  const [form, setForm] = React.useState<ContactFormValues>(EMPTY_CONTACT);
+
+  React.useEffect(() => {
+    if (isOpen) {
+      if (editingContact) {
+        setForm({
+          salutation: editingContact.salutation ?? "",
+          firstName: editingContact.firstName,
+          lastName: editingContact.lastName ?? "",
+          email: editingContact.email ?? "",
+          phone: editingContact.phone ?? "",
+          mobile: editingContact.mobile ?? "",
+          isPrimary: editingContact.isPrimary,
+        });
+      } else {
+        setForm(EMPTY_CONTACT);
+      }
+    }
+  }, [isOpen, editingContact]);
+
+  const handleChange =
+    (field: keyof ContactFormValues) =>
+    (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+      const value =
+        field === "isPrimary"
+          ? (e.target as HTMLInputElement).checked
+          : e.target.value;
+      setForm((prev) => ({ ...prev, [field]: value }));
+    };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!form.firstName.trim()) return;
+    const payload = {
+      customerId,
+      salutation: form.salutation || undefined,
+      firstName: form.firstName.trim(),
+      lastName: form.lastName.trim() || undefined,
+      email: form.email.trim() || undefined,
+      phone: form.phone.trim() || undefined,
+      mobile: form.mobile.trim() || undefined,
+      isPrimary: form.isPrimary,
+    };
+    if (editingContact) {
+      updateContact.mutate(
+        { ...payload, contactId: editingContact.id },
+        { onSuccess: () => onClose() },
+      );
+    } else {
+      addContact.mutate(payload, { onSuccess: () => onClose() });
+    }
+  };
+
+  const isSaving = addContact.isPending || updateContact.isPending;
+
+  return (
+    <Modal
+      open={isOpen}
+      onClose={onClose}
+      title={editingContact ? "Edit Contact Person" : "Add Contact Person"}
+      footer={
+        <>
+          <Button
+            variant="secondary"
+            type="button"
+            onClick={onClose}
+            disabled={isSaving}
+          >
+            Cancel
+          </Button>
+          <Button type="submit" form="contact-person-form" loading={isSaving}>
+            {editingContact ? "Save Changes" : "Add Contact"}
+          </Button>
+        </>
+      }
+    >
+      <form id="contact-person-form" onSubmit={handleSubmit} noValidate>
+        <div className="space-y-3">
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label className="mb-1 block text-sm font-medium text-navy">
+                Salutation
+              </label>
+              <select
+                value={form.salutation}
+                onChange={handleChange("salutation")}
+                className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+              >
+                <option value="">--</option>
+                <option value="Mr.">Mr.</option>
+                <option value="Ms.">Ms.</option>
+                <option value="Mrs.">Mrs.</option>
+                <option value="Dr.">Dr.</option>
+              </select>
+            </div>
+            <Input
+              label="First Name *"
+              placeholder="John"
+              value={form.firstName}
+              onChange={handleChange("firstName") as any}
+            />
+            <Input
+              label="Last Name"
+              placeholder="Doe"
+              value={form.lastName}
+              onChange={handleChange("lastName") as any}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Input
+              label="Email"
+              type="email"
+              placeholder="john@example.com"
+              value={form.email}
+              onChange={handleChange("email") as any}
+            />
+            <Input
+              label="Phone"
+              type="tel"
+              placeholder="(555) 123-4567"
+              value={form.phone}
+              onChange={handleChange("phone") as any}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Input
+              label="Mobile"
+              type="tel"
+              placeholder="(555) 987-6543"
+              value={form.mobile}
+              onChange={handleChange("mobile") as any}
+            />
+            <div className="flex items-end pb-2">
+              <label className="flex cursor-pointer items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={form.isPrimary}
+                  onChange={handleChange("isPrimary") as any}
+                  className="h-4 w-4 rounded border-surface-border text-brand-500 focus:ring-brand-500"
+                />
+                <span className="text-sm font-medium text-navy">
+                  Primary Contact
+                </span>
+              </label>
+            </div>
+          </div>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+// ── Special Prices Tab ────────────────────────────────────────────────────────
 
 function SpecialPricesTab({ customerId }: { customerId: string }) {
   const { data: prices, isLoading } = useCustomerPrices(customerId);
@@ -369,17 +639,21 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
   const allProducts: any[] = productsData?.data ?? [];
 
   const [isModalOpen, setIsModalOpen] = React.useState(false);
-  const [editingPrice, setEditingPrice] = React.useState<CustomerPrice | null>(null);
-  const [deletingPriceId, setDeletingPriceId] = React.useState<string | null>(null);
+  const [editingPrice, setEditingPrice] =
+    React.useState<CustomerPrice | null>(null);
+  const [deletingPriceId, setDeletingPriceId] = React.useState<string | null>(
+    null,
+  );
   const [productSearch, setProductSearch] = React.useState("");
   const [selectedProductId, setSelectedProductId] = React.useState("");
   const [specialPrice, setSpecialPrice] = React.useState("");
   const [notes, setNotes] = React.useState("");
   const [productDropdownOpen, setProductDropdownOpen] = React.useState(false);
 
-  const filteredProducts = allProducts.filter((p) =>
-    p.name.toLowerCase().includes(productSearch.toLowerCase()) ||
-    (p.sku ?? "").toLowerCase().includes(productSearch.toLowerCase())
+  const filteredProducts = allProducts.filter(
+    (p) =>
+      p.name.toLowerCase().includes(productSearch.toLowerCase()) ||
+      (p.sku ?? "").toLowerCase().includes(productSearch.toLowerCase()),
   );
 
   const openAdd = () => {
@@ -403,15 +677,26 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
   const handleSave = () => {
     if (!selectedProductId || !specialPrice) return;
     upsertPrice.mutate(
-      { customerId, productId: selectedProductId, specialPrice, notes: notes || undefined },
-      { onSuccess: () => { setIsModalOpen(false); setEditingPrice(null); } },
+      {
+        customerId,
+        productId: selectedProductId,
+        specialPrice,
+        notes: notes || undefined,
+      },
+      {
+        onSuccess: () => {
+          setIsModalOpen(false);
+          setEditingPrice(null);
+        },
+      },
     );
   };
 
   const handleDelete = (priceId: string) => {
-    deletePrice.mutate({ customerId, priceId }, {
-      onSuccess: () => setDeletingPriceId(null),
-    });
+    deletePrice.mutate(
+      { customerId, priceId },
+      { onSuccess: () => setDeletingPriceId(null) },
+    );
   };
 
   const priceList: CustomerPrice[] = prices ?? [];
@@ -421,12 +706,19 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
       <Card>
         <div className="mb-4 flex items-center justify-between">
           <div>
-            <h3 className="text-base font-semibold text-navy">Special Prices</h3>
-            <p className="text-xs text-navy/50 mt-0.5">
-              Customer-specific pricing that overrides the standard product price.
+            <h3 className="text-base font-semibold text-navy">
+              Special Prices
+            </h3>
+            <p className="mt-0.5 text-xs text-navy/50">
+              Customer-specific pricing that overrides the standard product
+              price.
             </p>
           </div>
-          <Button size="sm" leftIcon={<Plus className="h-4 w-4" />} onClick={openAdd}>
+          <Button
+            size="sm"
+            leftIcon={<Plus className="h-4 w-4" />}
+            onClick={openAdd}
+          >
             Add Price
           </Button>
         </div>
@@ -436,8 +728,11 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
         ) : priceList.length === 0 ? (
           <div className="rounded-lg border border-dashed border-surface-border bg-surface-raised py-10 text-center">
             <p className="text-sm text-navy/40">No special prices set.</p>
-            <button className="mt-2 text-sm text-brand-500 hover:underline" onClick={openAdd}>
-              Add the first one →
+            <button
+              className="mt-2 text-sm text-brand-500 hover:underline"
+              onClick={openAdd}
+            >
+              Add the first one &rarr;
             </button>
           </div>
         ) : (
@@ -445,40 +740,58 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-surface-border bg-gray-50">
-                  <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/50">Product</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/50">SKU</th>
-                  <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-navy/50">Regular Price</th>
-                  <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-navy/50">Special Price</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/50">Notes</th>
-                  <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wider text-navy/50">Actions</th>
+                  <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/50">
+                    Product
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/50">
+                    SKU
+                  </th>
+                  <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-navy/50">
+                    Regular Price
+                  </th>
+                  <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-navy/50">
+                    Special Price
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/50">
+                    Notes
+                  </th>
+                  <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wider text-navy/50">
+                    Actions
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-surface-border">
                 {priceList.map((cp) => (
                   <tr key={cp.id} className="hover:bg-gray-50/60">
-                    <td className="px-6 py-3 text-sm font-medium text-navy">{cp.product?.name ?? "—"}</td>
-                    <td className="px-4 py-3 text-xs text-navy/50 font-mono">{cp.product?.sku ?? "—"}</td>
+                    <td className="px-6 py-3 text-sm font-medium text-navy">
+                      {cp.product?.name ?? "\u2014"}
+                    </td>
+                    <td className="px-4 py-3 font-mono text-xs text-navy/50">
+                      {cp.product?.sku ?? "\u2014"}
+                    </td>
                     <td className="px-4 py-3 text-right text-sm text-navy/60">
                       {cp.product?.pricePerUnit != null
-                        ? new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(Number(cp.product.pricePerUnit))
-                        : "—"}
+                        ? fmt(Number(cp.product.pricePerUnit))
+                        : "\u2014"}
                     </td>
                     <td className="px-4 py-3 text-right text-sm font-semibold text-brand-600">
-                      {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(Number(cp.specialPrice))}
+                      {fmt(Number(cp.specialPrice))}
                     </td>
-                    <td className="px-4 py-3 text-sm text-navy/60">{cp.notes ?? "—"}</td>
+                    <td className="px-4 py-3 text-sm text-navy/60">
+                      {cp.notes ?? "\u2014"}
+                    </td>
                     <td className="px-6 py-3 text-right">
                       <div className="flex items-center justify-end gap-1">
                         <button
                           title="Edit price"
-                          className="rounded p-1.5 text-navy/40 hover:bg-surface-raised hover:text-navy transition-colors"
+                          className="rounded p-1.5 text-navy/40 transition-colors hover:bg-surface-raised hover:text-navy"
                           onClick={() => openEdit(cp)}
                         >
                           <Pencil className="h-4 w-4" />
                         </button>
                         <button
                           title="Delete price"
-                          className="rounded p-1.5 text-navy/40 hover:bg-danger-bg hover:text-danger transition-colors"
+                          className="rounded p-1.5 text-navy/40 transition-colors hover:bg-danger-bg hover:text-danger"
                           onClick={() => setDeletingPriceId(cp.id)}
                         >
                           <Trash2 className="h-4 w-4" />
@@ -500,53 +813,75 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
         title={editingPrice ? "Edit Special Price" : "Add Special Price"}
         footer={
           <>
-            <Button variant="secondary" onClick={() => setIsModalOpen(false)} disabled={upsertPrice.isPending}>Cancel</Button>
-            <Button loading={upsertPrice.isPending} onClick={handleSave} disabled={!selectedProductId || !specialPrice}>
+            <Button
+              variant="secondary"
+              onClick={() => setIsModalOpen(false)}
+              disabled={upsertPrice.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              loading={upsertPrice.isPending}
+              onClick={handleSave}
+              disabled={!selectedProductId || !specialPrice}
+            >
               Save
             </Button>
           </>
         }
       >
         <div className="space-y-4">
-          {/* Product search */}
           <div>
-            <label className="mb-1.5 block text-sm font-medium text-navy/80">Product</label>
+            <label className="mb-1.5 block text-sm font-medium text-navy/80">
+              Product
+            </label>
             <div className="relative">
               <input
                 type="text"
                 placeholder="Search products…"
                 value={productSearch}
-                onChange={(e) => { setProductSearch(e.target.value); setProductDropdownOpen(true); }}
+                onChange={(e) => {
+                  setProductSearch(e.target.value);
+                  setProductDropdownOpen(true);
+                }}
                 onFocus={() => setProductDropdownOpen(true)}
                 className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/40 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
               />
-              {productDropdownOpen && productSearch.length > 0 && filteredProducts.length > 0 && (
-                <div className="absolute z-10 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg">
-                  <ul className="max-h-40 overflow-y-auto">
-                    {filteredProducts.slice(0, 20).map((p) => (
-                      <li key={p.id}>
-                        <button
-                          className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-surface-raised"
-                          onClick={() => {
-                            setSelectedProductId(p.id);
-                            setProductSearch(p.name);
-                            setProductDropdownOpen(false);
-                          }}
-                        >
-                          <span className="text-sm font-medium text-navy">{p.name}</span>
-                          {p.sku && <span className="text-xs text-navy/40 font-mono">{p.sku}</span>}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
+              {productDropdownOpen &&
+                productSearch.length > 0 &&
+                filteredProducts.length > 0 && (
+                  <div className="absolute z-10 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg">
+                    <ul className="max-h-40 overflow-y-auto">
+                      {filteredProducts.slice(0, 20).map((p) => (
+                        <li key={p.id}>
+                          <button
+                            className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-surface-raised"
+                            onClick={() => {
+                              setSelectedProductId(p.id);
+                              setProductSearch(p.name);
+                              setProductDropdownOpen(false);
+                            }}
+                          >
+                            <span className="text-sm font-medium text-navy">
+                              {p.name}
+                            </span>
+                            {p.sku && (
+                              <span className="font-mono text-xs text-navy/40">
+                                {p.sku}
+                              </span>
+                            )}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
             </div>
           </div>
-
-          {/* Special price */}
           <div>
-            <label className="mb-1.5 block text-sm font-medium text-navy/80">Special Price ($)</label>
+            <label className="mb-1.5 block text-sm font-medium text-navy/80">
+              Special Price ($)
+            </label>
             <input
               type="number"
               step="0.01"
@@ -557,10 +892,10 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
               className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             />
           </div>
-
-          {/* Notes */}
           <div>
-            <label className="mb-1.5 block text-sm font-medium text-navy/80">Notes (optional)</label>
+            <label className="mb-1.5 block text-sm font-medium text-navy/80">
+              Notes (optional)
+            </label>
             <textarea
               rows={2}
               placeholder="e.g. Contract price, promotional rate…"
@@ -572,11 +907,12 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
         </div>
       </Modal>
 
-      {/* Delete confirmation */}
       <ConfirmDialog
         open={!!deletingPriceId}
         onClose={() => setDeletingPriceId(null)}
-        onConfirm={() => { if (deletingPriceId) handleDelete(deletingPriceId); }}
+        onConfirm={() => {
+          if (deletingPriceId) handleDelete(deletingPriceId);
+        }}
         title="Delete special price?"
         description="This will remove the customer-specific price for this product."
         confirmLabel="Yes, delete"
@@ -587,7 +923,111 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
   );
 }
 
-// ─── Page ─────────────────────────────────────────────────────────────────────
+// ── Comments Tab ──────────────────────────────────────────────────────────────
+
+function CommentsTab({ customerId }: { customerId: string }) {
+  const { data: comments, isLoading } = useCustomerComments(customerId);
+  const addComment = useAddCustomerComment();
+  const deleteComment = useDeleteCustomerComment();
+  const [newComment, setNewComment] = React.useState("");
+
+  const handleAddComment = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newComment.trim()) return;
+    addComment.mutate(
+      { customerId, content: newComment.trim() },
+      { onSuccess: () => setNewComment("") },
+    );
+  };
+
+  const commentList: CustomerComment[] = comments ?? [];
+  const sortedComments = [...commentList].sort(
+    (a, b) =>
+      new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+  );
+
+  return (
+    <Tabs.Content value="comments" className="mt-5 focus:outline-none">
+      <Card>
+        <h3 className="mb-4 text-base font-semibold text-navy">Comments</h3>
+
+        {/* Add comment form */}
+        <form onSubmit={handleAddComment} className="mb-6">
+          <textarea
+            rows={3}
+            placeholder="Add a comment…"
+            value={newComment}
+            onChange={(e) => setNewComment(e.target.value)}
+            className="w-full resize-none rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-navy placeholder:text-navy/40 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+          />
+          <div className="mt-2 flex justify-end">
+            <Button
+              type="submit"
+              size="sm"
+              loading={addComment.isPending}
+              disabled={!newComment.trim()}
+              leftIcon={<MessageSquare className="h-4 w-4" />}
+            >
+              Add Comment
+            </Button>
+          </div>
+        </form>
+
+        {/* Comments list */}
+        {isLoading ? (
+          <p className="text-sm text-navy/40">Loading comments…</p>
+        ) : sortedComments.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-surface-border bg-surface-raised py-10 text-center">
+            <MessageSquare className="mx-auto h-8 w-8 text-navy/20" />
+            <p className="mt-2 text-sm text-navy/40">No comments yet.</p>
+          </div>
+        ) : (
+          <ul className="space-y-4">
+            {sortedComments.map((comment) => (
+              <li
+                key={comment.id}
+                className="rounded-lg border border-surface-border bg-surface-raised p-4"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <div className="flex h-7 w-7 items-center justify-center rounded-full bg-brand-100 text-xs font-bold text-brand-700">
+                      <User className="h-3.5 w-3.5" />
+                    </div>
+                    <div>
+                      <p className="text-xs font-semibold text-navy">
+                        {(comment as any).user?.username ?? "User"}
+                      </p>
+                      <p className="text-xs text-navy/40">
+                        {timeAgo(comment.createdAt)}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    title="Delete comment"
+                    className="rounded p-1 text-navy/30 transition-colors hover:bg-danger-bg hover:text-danger"
+                    onClick={() =>
+                      deleteComment.mutate({
+                        customerId,
+                        commentId: comment.id,
+                      })
+                    }
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                <p className="mt-2 whitespace-pre-wrap text-sm text-navy/80">
+                  {comment.content}
+                </p>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+    </Tabs.Content>
+  );
+}
+
+// ── Page ──────────────────────────────────────────────────────────────────────
 
 const STATUS_CYCLE = ["ACTIVE", "INACTIVE", "SUSPENDED"] as const;
 type CustomerStatus = (typeof STATUS_CYCLE)[number];
@@ -614,6 +1054,15 @@ export default function CustomerDetailPage({
   const { data: advancePayments } = useCustomerAdvancePayments(params.id);
   const createAdvance = useCreateAdvancePayment();
 
+  // New hooks
+  const { data: contactPersons, isLoading: contactsLoading } =
+    useContactPersons(params.id);
+  const deleteContact = useDeleteContactPerson();
+  const { data: allTags } = useCustomerTags();
+  const assignTag = useAssignCustomerTag();
+  const removeTag = useRemoveCustomerTag();
+  const { data: chartData } = useCustomerIncomeChart(params.id);
+
   const allOrders: ApiOrder[] = ordersResult?.data ?? [];
   const addresses = customer?.addresses ?? [];
   const currentStatus: CustomerStatus =
@@ -627,18 +1076,27 @@ export default function CustomerDetailPage({
   const [isAddAddressOpen, setIsAddAddressOpen] = React.useState(false);
   const [isAssignRouteOpen, setIsAssignRouteOpen] = React.useState(false);
   const [orderStatusFilter, setOrderStatusFilter] = React.useState("");
-  const [pendingStatus, setPendingStatus] = React.useState<CustomerStatus | null>(null);
+  const [pendingStatus, setPendingStatus] =
+    React.useState<CustomerStatus | null>(null);
 
   // Delivery time window
-  const [windowStart, setWindowStart] = React.useState(customer?.deliveryWindowStart ?? "");
-  const [windowEnd, setWindowEnd] = React.useState(customer?.deliveryWindowEnd ?? "");
-  const [anyTime, setAnyTime] = React.useState(!customer?.deliveryWindowStart && !customer?.deliveryWindowEnd);
+  const [windowStart, setWindowStart] = React.useState(
+    customer?.deliveryWindowStart ?? "",
+  );
+  const [windowEnd, setWindowEnd] = React.useState(
+    customer?.deliveryWindowEnd ?? "",
+  );
+  const [anyTime, setAnyTime] = React.useState(
+    !customer?.deliveryWindowStart && !customer?.deliveryWindowEnd,
+  );
 
   React.useEffect(() => {
     if (customer) {
       setWindowStart(customer.deliveryWindowStart ?? "");
       setWindowEnd(customer.deliveryWindowEnd ?? "");
-      setAnyTime(!customer.deliveryWindowStart && !customer.deliveryWindowEnd);
+      setAnyTime(
+        !customer.deliveryWindowStart && !customer.deliveryWindowEnd,
+      );
     }
   }, [customer?.deliveryWindowStart, customer?.deliveryWindowEnd]);
 
@@ -647,18 +1105,55 @@ export default function CustomerDetailPage({
     if (checked) {
       setWindowStart("");
       setWindowEnd("");
-      updateCustomer.mutate({ id: params.id, deliveryWindowStart: "", deliveryWindowEnd: "" });
+      updateCustomer.mutate({
+        id: params.id,
+        deliveryWindowStart: "",
+        deliveryWindowEnd: "",
+      });
     }
   };
 
   // Advance payment
   const [isAdvanceOpen, setIsAdvanceOpen] = React.useState(false);
-  const [advanceForm, setAdvanceForm] = React.useState({ method: "ACH", amount: "", reference: "", notes: "" });
+  const [advanceForm, setAdvanceForm] = React.useState({
+    method: "ACH",
+    amount: "",
+    reference: "",
+    notes: "",
+  });
 
   // Standing orders
   const [isStandingOrderOpen, setIsStandingOrderOpen] = React.useState(false);
-  const [editingTemplate, setEditingTemplate] = React.useState<OrderTemplate | null>(null);
-  const [deletingTemplateId, setDeletingTemplateId] = React.useState<string | null>(null);
+  const [editingTemplate, setEditingTemplate] =
+    React.useState<OrderTemplate | null>(null);
+  const [deletingTemplateId, setDeletingTemplateId] = React.useState<
+    string | null
+  >(null);
+
+  // Contact person modal
+  const [isContactModalOpen, setIsContactModalOpen] = React.useState(false);
+  const [editingContact, setEditingContact] =
+    React.useState<ContactPerson | null>(null);
+  const [deletingContactId, setDeletingContactId] = React.useState<
+    string | null
+  >(null);
+
+  // Tag dropdown
+  const [tagDropdownOpen, setTagDropdownOpen] = React.useState(false);
+  const tagDropdownRef = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (
+        tagDropdownRef.current &&
+        !tagDropdownRef.current.contains(e.target as Node)
+      ) {
+        setTagDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
 
   const templates = orderTemplates ?? [];
 
@@ -691,19 +1186,18 @@ export default function CustomerDetailPage({
 
   const handleStatusChange = (s: CustomerStatus) => {
     if (s === "INACTIVE" || s === "SUSPENDED") {
-      // Confirm before deactivating
       setPendingStatus(s);
     } else {
-      // Re-activating — no confirmation needed
       updateStatus.mutate({ id: params.id, status: s });
     }
   };
 
   const confirmStatusChange = () => {
     if (!pendingStatus) return;
-    updateStatus.mutate({ id: params.id, status: pendingStatus }, {
-      onSuccess: () => setPendingStatus(null),
-    });
+    updateStatus.mutate(
+      { id: params.id, status: pendingStatus },
+      { onSuccess: () => setPendingStatus(null) },
+    );
   };
 
   const handleSaveAddress = (values: AddAddressFormValues) => {
@@ -713,13 +1207,34 @@ export default function CustomerDetailPage({
     );
   };
 
+  // Tags
+  const assignedTags: CustomerTag[] =
+    customer?.tagAssignments?.map((ta: any) => ta.tag) ?? [];
+  const assignedTagIds = new Set(assignedTags.map((t) => t.id));
+  const availableTags = (allTags ?? []).filter(
+    (t) => !assignedTagIds.has(t.id),
+  );
+
+  // Contact persons
+  const contacts: ContactPerson[] = contactPersons ?? [];
+
+  // Credit limit usage
+  const creditLimit =
+    customer?.creditLimit != null ? Number(customer.creditLimit) : null;
+  const receivables =
+    customer?.receivables != null ? Number(customer.receivables) : 0;
+  const creditUsagePercent =
+    creditLimit && creditLimit > 0
+      ? Math.min(100, (receivables / creditLimit) * 100)
+      : 0;
+
   return (
     <div className="space-y-5 p-6">
       {/* Back + header row */}
       <div className="flex items-start gap-4">
         <Link
           href="/customers"
-          className="mt-0.5 flex items-center gap-1.5 text-sm text-navy/60 hover:text-navy transition-colors"
+          className="mt-0.5 flex items-center gap-1.5 text-sm text-navy/60 transition-colors hover:text-navy"
         >
           <ArrowLeft className="h-4 w-4" />
           Customers
@@ -728,12 +1243,38 @@ export default function CustomerDetailPage({
 
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-navy">{customer.businessName}</h1>
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-bold text-navy">
+              {customer.businessName}
+            </h1>
+            <span
+              className={cn(
+                "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold",
+                customer.customerType === "individual"
+                  ? "bg-purple-100 text-purple-700"
+                  : "bg-blue-100 text-blue-700",
+              )}
+            >
+              {customer.customerType === "individual" ? (
+                <>
+                  <User className="h-3 w-3" /> Individual
+                </>
+              ) : (
+                <>
+                  <Building2 className="h-3 w-3" /> Business
+                </>
+              )}
+            </span>
+          </div>
           <p className="mt-1 text-sm text-navy/60">{customer.contactName}</p>
         </div>
         <div className="flex items-center gap-3">
           <Badge status={currentStatus} />
-          <Button variant="secondary" size="sm" onClick={() => setIsEditOpen(true)}>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setIsEditOpen(true)}
+          >
             Edit
           </Button>
         </div>
@@ -750,184 +1291,557 @@ export default function CustomerDetailPage({
             Delivery Addresses ({addresses.length})
           </TabTrigger>
           <TabTrigger value="standing-orders">
-            Standing Orders{templates.length > 0 ? ` (${templates.length})` : ""}
+            Standing Orders
+            {templates.length > 0 ? ` (${templates.length})` : ""}
           </TabTrigger>
           <TabTrigger value="billing">Billing</TabTrigger>
           <TabTrigger value="special-prices">Special Prices</TabTrigger>
+          <TabTrigger value="comments">
+            <span className="flex items-center gap-1.5">
+              <MessageSquare className="h-3.5 w-3.5" />
+              Comments
+            </span>
+          </TabTrigger>
         </Tabs.List>
 
-        {/* ── Profile tab ──────────────────────────────────────────────── */}
+        {/* ── Profile tab ────────────────────────────────────────── */}
         <Tabs.Content value="profile" className="mt-5 focus:outline-none">
-          <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
-            {/* Contact + account details */}
-            <div className="lg:col-span-2 space-y-5">
-              <Card title="Contact Information">
-                <div className="grid grid-cols-2 gap-4">
-                  <InfoRow
-                    icon={Phone}
-                    label="Phone"
-                    value={customer.phone ?? "—"}
-                  />
-                  <InfoRow
-                    icon={Mail}
-                    label="Email"
-                    value={customer.user?.email ?? "—"}
-                  />
-                  <InfoRow
-                    icon={FileText}
-                    label="Customer Since"
-                    value={
-                      customer.createdAt
-                        ? new Date(customer.createdAt).toLocaleDateString()
-                        : "—"
-                    }
-                  />
-                </div>
-              </Card>
-
-              {/* Delivery time window */}
-              <Card title="Delivery Time Window">
-                <div className="space-y-3">
-                  <p className="text-sm text-navy/60">
-                    Set the customer&apos;s accepted delivery hours. The route optimizer will schedule
-                    this stop within the window.
-                  </p>
-                  {/* Any time toggle */}
-                  <label className="flex cursor-pointer items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={anyTime}
-                      onChange={(e) => handleAnyTimeToggle(e.target.checked)}
-                      className="h-4 w-4 rounded border-surface-border text-brand-500 focus:ring-brand-500"
+          <div className="space-y-5">
+            {/* New fields & tags row */}
+            <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+              <div className="lg:col-span-2">
+                <Card title="Customer Details">
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3">
+                    {customer.displayName && (
+                      <InfoRow
+                        icon={User}
+                        label="Display Name"
+                        value={customer.displayName}
+                      />
+                    )}
+                    {customer.email && (
+                      <InfoRow
+                        icon={Mail}
+                        label="Email"
+                        value={customer.email}
+                      />
+                    )}
+                    {customer.mobile && (
+                      <InfoRow
+                        icon={Phone}
+                        label="Mobile"
+                        value={customer.mobile}
+                      />
+                    )}
+                    <InfoRow
+                      icon={Phone}
+                      label="Phone"
+                      value={customer.phone ?? "\u2014"}
                     />
-                    <span className="text-sm font-medium text-navy">Any time (24/7 — no window restriction)</span>
-                  </label>
-                  <div className={`grid grid-cols-2 gap-4 transition-opacity ${anyTime ? "pointer-events-none opacity-40" : ""}`}>
-                    <div className="space-y-1">
-                      <label className="flex items-center gap-1.5 text-xs font-medium text-navy/60">
-                        <Clock className="h-3.5 w-3.5" />
-                        Window Start
-                      </label>
-                      <input
-                        type="time"
-                        value={windowStart}
-                        onChange={(e) => setWindowStart(e.target.value)}
-                        onBlur={handleTimeWindowBlur}
-                        disabled={anyTime}
-                        className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:bg-surface-raised"
-                        placeholder="08:00"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="flex items-center gap-1.5 text-xs font-medium text-navy/60">
-                        <Clock className="h-3.5 w-3.5" />
-                        Window End
-                      </label>
-                      <input
-                        type="time"
-                        value={windowEnd}
-                        onChange={(e) => setWindowEnd(e.target.value)}
-                        onBlur={handleTimeWindowBlur}
-                        disabled={anyTime}
-                        className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:bg-surface-raised"
-                        placeholder="17:00"
-                      />
-                    </div>
-                  </div>
-                  {!anyTime && windowStart && windowEnd && (
-                    <p className="text-xs text-success font-medium">
-                      Window: {windowStart} – {windowEnd}
-                    </p>
-                  )}
-                </div>
-              </Card>
-
-              {/* Assigned routes */}
-              <Card title="Assigned Routes">
-                <div className="space-y-3">
-                  {(customerRoutes ?? []).length === 0 ? (
-                    <p className="text-sm text-navy/40">Not assigned to any routes yet.</p>
-                  ) : (
-                    <ul className="divide-y divide-surface-border -mx-6">
-                      {(customerRoutes as any[]).map((r) => (
-                        <li key={r.id} className="flex items-center gap-3 px-6 py-3">
-                          <Route className="h-4 w-4 shrink-0 text-navy/40" />
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium text-navy">{r.name}</p>
-                            {r.driverName && (
-                              <p className="text-xs text-navy/50">Driver: {r.driverName}</p>
+                    <InfoRow
+                      icon={Mail}
+                      label="Account Email"
+                      value={customer.user?.email ?? "\u2014"}
+                    />
+                    <InfoRow
+                      icon={FileText}
+                      label="Customer Since"
+                      value={fmtDate(customer.createdAt)}
+                    />
+                    {customer.currency && (
+                      <div className="flex items-start gap-3">
+                        <DollarSign className="mt-0.5 h-4 w-4 shrink-0 text-navy/40" />
+                        <div>
+                          <p className="text-xs text-navy/50">Currency</p>
+                          <span className="mt-0.5 inline-flex items-center rounded-full bg-surface-raised px-2 py-0.5 text-xs font-semibold text-navy">
+                            {customer.currency}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                    {customer.taxId && (
+                      <div className="flex items-start gap-3">
+                        <FileText className="mt-0.5 h-4 w-4 shrink-0 text-navy/40" />
+                        <div>
+                          <p className="text-xs text-navy/50">Tax ID</p>
+                          <div className="mt-0.5 flex items-center gap-2">
+                            <p className="text-sm font-medium text-navy">
+                              {customer.taxId}
+                            </p>
+                            {customer.isTaxExempt && (
+                              <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-semibold text-green-700">
+                                Tax Exempt
+                              </span>
                             )}
                           </div>
-                          <span className={cn(
-                            "shrink-0 rounded-full px-2 py-0.5 text-xs font-medium",
-                            r.isActive
-                              ? "bg-success-bg text-success"
-                              : "bg-surface-raised text-navy/50",
-                          )}>
-                            {r.isActive ? "Active" : "Inactive"}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Credit Limit bar */}
+                  {creditLimit != null && creditLimit > 0 && (
+                    <div className="mt-5 border-t border-surface-border pt-4">
+                      <div className="mb-1.5 flex items-center justify-between">
+                        <p className="text-xs font-semibold uppercase tracking-wider text-navy/50">
+                          Credit Limit
+                        </p>
+                        <p className="text-sm font-semibold text-navy">
+                          {fmt(receivables)} / {fmt(creditLimit)}
+                        </p>
+                      </div>
+                      <div className="h-2.5 w-full overflow-hidden rounded-full bg-surface-raised">
+                        <div
+                          className={cn(
+                            "h-full rounded-full transition-all",
+                            creditUsagePercent > 90
+                              ? "bg-danger"
+                              : creditUsagePercent > 70
+                                ? "bg-warning"
+                                : "bg-brand-500",
+                          )}
+                          style={{ width: `${creditUsagePercent}%` }}
+                        />
+                      </div>
+                      <p className="mt-1 text-xs text-navy/40">
+                        {creditUsagePercent.toFixed(0)}% used
+                        {creditLimit - receivables > 0 && (
+                          <>
+                            {" "}
+                            &middot; {fmt(creditLimit - receivables)} available
+                          </>
+                        )}
+                      </p>
+                    </div>
                   )}
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    leftIcon={<Plus className="h-4 w-4" />}
-                    onClick={() => setIsAssignRouteOpen(true)}
-                  >
-                    Assign to Route
-                  </Button>
-                </div>
-              </Card>
+                </Card>
+              </div>
+
+              {/* Tags card */}
+              <div>
+                <Card title="Tags">
+                  <div className="flex flex-wrap gap-2">
+                    {assignedTags.map((tag) => (
+                      <span
+                        key={tag.id}
+                        className="group inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold"
+                        style={{
+                          backgroundColor: `${tag.color}20`,
+                          color: tag.color,
+                        }}
+                      >
+                        {tag.name}
+                        <button
+                          title={`Remove tag "${tag.name}"`}
+                          className="rounded-full p-0.5 opacity-0 transition-opacity hover:bg-black/10 group-hover:opacity-100"
+                          onClick={() =>
+                            removeTag.mutate({
+                              customerId: params.id,
+                              tagId: tag.id,
+                            })
+                          }
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      </span>
+                    ))}
+                    {assignedTags.length === 0 && (
+                      <p className="text-xs text-navy/40">
+                        No tags assigned.
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="relative mt-3" ref={tagDropdownRef}>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      leftIcon={<Plus className="h-3.5 w-3.5" />}
+                      onClick={() => setTagDropdownOpen((o) => !o)}
+                    >
+                      Add Tag
+                    </Button>
+                    {tagDropdownOpen && availableTags.length > 0 && (
+                      <div className="absolute left-0 z-20 mt-1 w-56 rounded-lg border border-surface-border bg-white shadow-lg">
+                        <ul className="max-h-48 overflow-y-auto py-1">
+                          {availableTags.map((tag) => (
+                            <li key={tag.id}>
+                              <button
+                                className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-surface-raised"
+                                onClick={() => {
+                                  assignTag.mutate({
+                                    customerId: params.id,
+                                    tagId: tag.id,
+                                  });
+                                  setTagDropdownOpen(false);
+                                }}
+                              >
+                                <span
+                                  className="h-3 w-3 shrink-0 rounded-full"
+                                  style={{ backgroundColor: tag.color }}
+                                />
+                                <span className="font-medium text-navy">
+                                  {tag.name}
+                                </span>
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {tagDropdownOpen && availableTags.length === 0 && (
+                      <div className="absolute left-0 z-20 mt-1 w-56 rounded-lg border border-surface-border bg-white p-3 shadow-lg">
+                        <p className="text-xs text-navy/40">
+                          All tags assigned.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </Card>
+              </div>
             </div>
 
-            {/* Account status */}
-            <div>
-              <Card title="Account Status">
-                <div className="flex flex-col gap-4">
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm text-navy/60">Current status</p>
-                    <Badge status={currentStatus} />
-                  </div>
-                  <div className="space-y-2">
-                    {STATUS_CYCLE.map((s) => (
-                      <button
-                        key={s}
-                        onClick={() => handleStatusChange(s)}
-                        disabled={updateStatus.isPending}
-                        className={cn(
-                          "flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition-colors",
-                          currentStatus === s
-                            ? "border-brand-500 bg-brand-50 text-brand-700"
-                            : "border-surface-border text-navy/60 hover:border-navy/30 hover:text-navy",
-                        )}
-                      >
-                        <span
-                          className={cn(
-                            "h-2 w-2 rounded-full",
-                            s === "ACTIVE"
-                              ? "bg-success"
-                              : s === "INACTIVE"
-                              ? "bg-navy/30"
-                              : "bg-danger",
-                          )}
-                        />
-                        {s.charAt(0) + s.slice(1).toLowerCase()}
-                      </button>
-                    ))}
-                  </div>
+            {/* Income & Expense Chart */}
+            <Card title="Income & Expenses (Last 6 Months)">
+              {!chartData || chartData.length === 0 ? (
+                <div className="flex h-48 items-center justify-center">
+                  <p className="text-sm text-navy/40">
+                    No chart data available.
+                  </p>
                 </div>
-              </Card>
+              ) : (
+                <div className="h-72">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart
+                      data={chartData}
+                      margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
+                    >
+                      <CartesianGrid
+                        strokeDasharray="3 3"
+                        stroke="#e5e7eb"
+                      />
+                      <XAxis
+                        dataKey="month"
+                        tick={{ fontSize: 12, fill: "#6b7280" }}
+                      />
+                      <YAxis
+                        tick={{ fontSize: 12, fill: "#6b7280" }}
+                        tickFormatter={(v: number) =>
+                          `$${v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v}`
+                        }
+                      />
+                      <Tooltip
+                        formatter={(value: number) => fmt(value)}
+                        contentStyle={{
+                          borderRadius: "8px",
+                          border: "1px solid #e5e7eb",
+                          fontSize: "13px",
+                        }}
+                      />
+                      <Legend wrapperStyle={{ fontSize: "13px" }} />
+                      <Bar
+                        dataKey="income"
+                        name="Income"
+                        fill="#22c55e"
+                        radius={[4, 4, 0, 0]}
+                      />
+                      <Bar
+                        dataKey="expenses"
+                        name="Expenses"
+                        fill="#ef4444"
+                        radius={[4, 4, 0, 0]}
+                      />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </Card>
+
+            {/* Contact Persons */}
+            <Card>
+              <div className="mb-4 flex items-center justify-between">
+                <div>
+                  <h3 className="text-base font-semibold text-navy">
+                    Contact Persons
+                  </h3>
+                  <p className="mt-0.5 text-xs text-navy/50">
+                    People associated with this customer account.
+                  </p>
+                </div>
+                <Button
+                  size="sm"
+                  leftIcon={<Plus className="h-4 w-4" />}
+                  onClick={() => {
+                    setEditingContact(null);
+                    setIsContactModalOpen(true);
+                  }}
+                >
+                  Add Contact
+                </Button>
+              </div>
+
+              {contactsLoading ? (
+                <p className="text-sm text-navy/40">Loading contacts…</p>
+              ) : contacts.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-surface-border bg-surface-raised py-10 text-center">
+                  <User className="mx-auto h-8 w-8 text-navy/20" />
+                  <p className="mt-2 text-sm text-navy/40">
+                    No contact persons yet.
+                  </p>
+                  <button
+                    className="mt-2 text-sm text-brand-500 hover:underline"
+                    onClick={() => {
+                      setEditingContact(null);
+                      setIsContactModalOpen(true);
+                    }}
+                  >
+                    Add the first one &rarr;
+                  </button>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  {contacts.map((contact) => (
+                    <div
+                      key={contact.id}
+                      className="rounded-lg border border-surface-border bg-surface-raised p-4"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-100 text-xs font-bold text-brand-700">
+                            {contact.firstName.charAt(0).toUpperCase()}
+                            {contact.lastName
+                              ? contact.lastName.charAt(0).toUpperCase()
+                              : ""}
+                          </div>
+                          <div>
+                            <p className="text-sm font-semibold text-navy">
+                              {[
+                                contact.salutation,
+                                contact.firstName,
+                                contact.lastName,
+                              ]
+                                .filter(Boolean)
+                                .join(" ")}
+                            </p>
+                            {contact.isPrimary && (
+                              <span className="inline-flex items-center rounded-full bg-brand-100 px-2 py-0.5 text-xs font-semibold text-brand-700">
+                                Primary
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-0.5">
+                          <button
+                            title="Edit contact"
+                            className="rounded p-1.5 text-navy/40 transition-colors hover:bg-white hover:text-navy"
+                            onClick={() => {
+                              setEditingContact(contact);
+                              setIsContactModalOpen(true);
+                            }}
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            title="Delete contact"
+                            className="rounded p-1.5 text-navy/40 transition-colors hover:bg-danger-bg hover:text-danger"
+                            onClick={() =>
+                              setDeletingContactId(contact.id)
+                            }
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                      <div className="mt-3 space-y-1.5">
+                        {contact.email && (
+                          <p className="flex items-center gap-2 text-xs text-navy/60">
+                            <Mail className="h-3 w-3 shrink-0 text-navy/30" />
+                            {contact.email}
+                          </p>
+                        )}
+                        {contact.phone && (
+                          <p className="flex items-center gap-2 text-xs text-navy/60">
+                            <Phone className="h-3 w-3 shrink-0 text-navy/30" />
+                            {contact.phone}
+                          </p>
+                        )}
+                        {contact.mobile && (
+                          <p className="flex items-center gap-2 text-xs text-navy/60">
+                            <Phone className="h-3 w-3 shrink-0 text-navy/30" />
+                            {contact.mobile}
+                            <span className="text-navy/30">(mobile)</span>
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Card>
+
+            {/* Existing: Delivery window + Routes + Status */}
+            <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+              <div className="space-y-5 lg:col-span-2">
+                <Card title="Delivery Time Window">
+                  <div className="space-y-3">
+                    <p className="text-sm text-navy/60">
+                      Set the customer&apos;s accepted delivery hours. The
+                      route optimizer will schedule this stop within the
+                      window.
+                    </p>
+                    <label className="flex cursor-pointer items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={anyTime}
+                        onChange={(e) =>
+                          handleAnyTimeToggle(e.target.checked)
+                        }
+                        className="h-4 w-4 rounded border-surface-border text-brand-500 focus:ring-brand-500"
+                      />
+                      <span className="text-sm font-medium text-navy">
+                        Any time (24/7 — no window restriction)
+                      </span>
+                    </label>
+                    <div
+                      className={`grid grid-cols-2 gap-4 transition-opacity ${anyTime ? "pointer-events-none opacity-40" : ""}`}
+                    >
+                      <div className="space-y-1">
+                        <label className="flex items-center gap-1.5 text-xs font-medium text-navy/60">
+                          <Clock className="h-3.5 w-3.5" />
+                          Window Start
+                        </label>
+                        <input
+                          type="time"
+                          value={windowStart}
+                          onChange={(e) => setWindowStart(e.target.value)}
+                          onBlur={handleTimeWindowBlur}
+                          disabled={anyTime}
+                          className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:bg-surface-raised"
+                          placeholder="08:00"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="flex items-center gap-1.5 text-xs font-medium text-navy/60">
+                          <Clock className="h-3.5 w-3.5" />
+                          Window End
+                        </label>
+                        <input
+                          type="time"
+                          value={windowEnd}
+                          onChange={(e) => setWindowEnd(e.target.value)}
+                          onBlur={handleTimeWindowBlur}
+                          disabled={anyTime}
+                          className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:bg-surface-raised"
+                          placeholder="17:00"
+                        />
+                      </div>
+                    </div>
+                    {!anyTime && windowStart && windowEnd && (
+                      <p className="text-xs font-medium text-success">
+                        Window: {windowStart} – {windowEnd}
+                      </p>
+                    )}
+                  </div>
+                </Card>
+
+                <Card title="Assigned Routes">
+                  <div className="space-y-3">
+                    {(customerRoutes ?? []).length === 0 ? (
+                      <p className="text-sm text-navy/40">
+                        Not assigned to any routes yet.
+                      </p>
+                    ) : (
+                      <ul className="-mx-6 divide-y divide-surface-border">
+                        {(customerRoutes as any[]).map((r) => (
+                          <li
+                            key={r.id}
+                            className="flex items-center gap-3 px-6 py-3"
+                          >
+                            <Route className="h-4 w-4 shrink-0 text-navy/40" />
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-medium text-navy">
+                                {r.name}
+                              </p>
+                              {r.driverName && (
+                                <p className="text-xs text-navy/50">
+                                  Driver: {r.driverName}
+                                </p>
+                              )}
+                            </div>
+                            <span
+                              className={cn(
+                                "shrink-0 rounded-full px-2 py-0.5 text-xs font-medium",
+                                r.isActive
+                                  ? "bg-success-bg text-success"
+                                  : "bg-surface-raised text-navy/50",
+                              )}
+                            >
+                              {r.isActive ? "Active" : "Inactive"}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      leftIcon={<Plus className="h-4 w-4" />}
+                      onClick={() => setIsAssignRouteOpen(true)}
+                    >
+                      Assign to Route
+                    </Button>
+                  </div>
+                </Card>
+              </div>
+
+              <div>
+                <Card title="Account Status">
+                  <div className="flex flex-col gap-4">
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm text-navy/60">Current status</p>
+                      <Badge status={currentStatus} />
+                    </div>
+                    <div className="space-y-2">
+                      {STATUS_CYCLE.map((s) => (
+                        <button
+                          key={s}
+                          onClick={() => handleStatusChange(s)}
+                          disabled={updateStatus.isPending}
+                          className={cn(
+                            "flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition-colors",
+                            currentStatus === s
+                              ? "border-brand-500 bg-brand-50 text-brand-700"
+                              : "border-surface-border text-navy/60 hover:border-navy/30 hover:text-navy",
+                          )}
+                        >
+                          <span
+                            className={cn(
+                              "h-2 w-2 rounded-full",
+                              s === "ACTIVE"
+                                ? "bg-success"
+                                : s === "INACTIVE"
+                                  ? "bg-navy/30"
+                                  : "bg-danger",
+                            )}
+                          />
+                          {s.charAt(0) + s.slice(1).toLowerCase()}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </Card>
+              </div>
             </div>
           </div>
         </Tabs.Content>
 
-        {/* ── Orders tab ───────────────────────────────────────────────── */}
+        {/* ── Orders tab ─────────────────────────────────────────── */}
         <Tabs.Content value="orders" className="mt-5 focus:outline-none">
           <Card>
             <div className="mb-4 flex items-center justify-between gap-3">
-              <h3 className="text-base font-semibold text-navy">Order History</h3>
+              <h3 className="text-base font-semibold text-navy">
+                Order History
+              </h3>
               <div className="w-48">
                 <Select
                   options={[
@@ -953,11 +1867,13 @@ export default function CustomerDetailPage({
           </Card>
         </Tabs.Content>
 
-        {/* ── Delivery addresses tab ───────────────────────────────────── */}
+        {/* ── Delivery addresses tab ─────────────────────────────── */}
         <Tabs.Content value="addresses" className="mt-5 focus:outline-none">
           <Card>
             <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-base font-semibold text-navy">Delivery Addresses</h3>
+              <h3 className="text-base font-semibold text-navy">
+                Delivery Addresses
+              </h3>
               <Button
                 size="sm"
                 leftIcon={<Plus className="h-4 w-4" />}
@@ -972,11 +1888,16 @@ export default function CustomerDetailPage({
             ) : (
               <ul className="-mx-6 -mb-6 divide-y divide-surface-border">
                 {addresses.map((addr: any) => (
-                  <li key={addr.id} className="flex items-start gap-3 px-6 py-4">
+                  <li
+                    key={addr.id}
+                    className="flex items-start gap-3 px-6 py-4"
+                  >
                     <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-navy/40" />
-                    <div className="flex-1 min-w-0">
+                    <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <p className="text-sm font-medium text-navy">{addr.label}</p>
+                        <p className="text-sm font-medium text-navy">
+                          {addr.label}
+                        </p>
                         {addr.isDefault && (
                           <Star className="h-3.5 w-3.5 fill-warning text-warning" />
                         )}
@@ -998,20 +1919,29 @@ export default function CustomerDetailPage({
             )}
           </Card>
         </Tabs.Content>
-        {/* ── Standing Orders tab ──────────────────────────────────────── */}
-        <Tabs.Content value="standing-orders" className="mt-5 focus:outline-none">
+
+        {/* ── Standing Orders tab ────────────────────────────────── */}
+        <Tabs.Content
+          value="standing-orders"
+          className="mt-5 focus:outline-none"
+        >
           <Card>
             <div className="mb-4 flex items-center justify-between">
               <div>
-                <h3 className="text-base font-semibold text-navy">Standing Orders</h3>
-                <p className="text-xs text-navy/50 mt-0.5">
+                <h3 className="text-base font-semibold text-navy">
+                  Standing Orders
+                </h3>
+                <p className="mt-0.5 text-xs text-navy/50">
                   Auto-generated orders based on recurring schedules.
                 </p>
               </div>
               <Button
                 size="sm"
                 leftIcon={<Plus className="h-4 w-4" />}
-                onClick={() => { setEditingTemplate(null); setIsStandingOrderOpen(true); }}
+                onClick={() => {
+                  setEditingTemplate(null);
+                  setIsStandingOrderOpen(true);
+                }}
               >
                 Add Standing Order
               </Button>
@@ -1019,12 +1949,17 @@ export default function CustomerDetailPage({
 
             {templates.length === 0 ? (
               <div className="rounded-lg border border-dashed border-surface-border bg-surface-raised py-10 text-center">
-                <p className="text-sm text-navy/40">No standing orders yet.</p>
+                <p className="text-sm text-navy/40">
+                  No standing orders yet.
+                </p>
                 <button
                   className="mt-2 text-sm text-brand-500 hover:underline"
-                  onClick={() => { setEditingTemplate(null); setIsStandingOrderOpen(true); }}
+                  onClick={() => {
+                    setEditingTemplate(null);
+                    setIsStandingOrderOpen(true);
+                  }}
                 >
-                  Add the first one →
+                  Add the first one &rarr;
                 </button>
               </div>
             ) : (
@@ -1032,9 +1967,11 @@ export default function CustomerDetailPage({
                 {templates.map((tmpl) => (
                   <li key={tmpl.id} className="px-6 py-4">
                     <div className="flex items-start justify-between gap-4">
-                      <div className="flex-1 min-w-0">
+                      <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
-                          <p className="text-sm font-semibold text-navy">{tmpl.name}</p>
+                          <p className="text-sm font-semibold text-navy">
+                            {tmpl.name}
+                          </p>
                           <span
                             className={cn(
                               "rounded-full px-2 py-0.5 text-xs font-medium",
@@ -1046,10 +1983,17 @@ export default function CustomerDetailPage({
                             {tmpl.isActive ? "Active" : "Paused"}
                           </span>
                         </div>
-                        {/* Days pills */}
                         <div className="mt-1.5 flex flex-wrap gap-1">
                           {[1, 2, 3, 4, 5, 6, 7].map((iso) => {
-                            const labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+                            const labels = [
+                              "Mon",
+                              "Tue",
+                              "Wed",
+                              "Thu",
+                              "Fri",
+                              "Sat",
+                              "Sun",
+                            ];
                             return tmpl.daysOfWeek.includes(iso) ? (
                               <span
                                 key={iso}
@@ -1061,50 +2005,64 @@ export default function CustomerDetailPage({
                           })}
                         </div>
                         <p className="mt-1 text-xs text-navy/50">
-                          {tmpl.items.length} item{tmpl.items.length !== 1 ? "s" : ""}
-                          {tmpl.notes && ` · ${tmpl.notes}`}
+                          {tmpl.items.length} item
+                          {tmpl.items.length !== 1 ? "s" : ""}
+                          {tmpl.notes && ` \u00b7 ${tmpl.notes}`}
                         </p>
                       </div>
-
-                      {/* Actions */}
-                      <div className="flex items-center gap-1 shrink-0">
-                        {/* Toggle active */}
+                      <div className="flex shrink-0 items-center gap-1">
                         <button
-                          title={tmpl.isActive ? "Pause template" : "Activate template"}
-                          className="rounded p-1.5 text-navy/40 hover:bg-surface-raised hover:text-navy transition-colors"
+                          title={
+                            tmpl.isActive
+                              ? "Pause template"
+                              : "Activate template"
+                          }
+                          className="rounded p-1.5 text-navy/40 transition-colors hover:bg-surface-raised hover:text-navy"
                           onClick={() =>
-                            updateTemplate.mutate({ id: tmpl.id, isActive: !tmpl.isActive })
+                            updateTemplate.mutate({
+                              id: tmpl.id,
+                              isActive: !tmpl.isActive,
+                            })
                           }
                         >
-                          <span className={cn("h-4 w-4 block", tmpl.isActive ? "text-success" : "text-navy/30")}>
-                            {tmpl.isActive ? "⏸" : "▶"}
+                          <span
+                            className={cn(
+                              "block h-4 w-4",
+                              tmpl.isActive
+                                ? "text-success"
+                                : "text-navy/30",
+                            )}
+                          >
+                            {tmpl.isActive ? "\u23f8" : "\u25b6"}
                           </span>
                         </button>
-                        {/* Generate now */}
                         <button
                           title="Generate order now"
-                          className="rounded p-1.5 text-navy/40 hover:bg-brand-50 hover:text-brand-600 transition-colors"
+                          className="rounded p-1.5 text-navy/40 transition-colors hover:bg-brand-50 hover:text-brand-600"
                           onClick={() =>
                             generateOrder.mutate(tmpl.id, {
                               onSuccess: () =>
-                                window.alert(`Order generated for "${tmpl.name}"!`),
+                                window.alert(
+                                  `Order generated for "${tmpl.name}"!`,
+                                ),
                             })
                           }
                         >
                           <Zap className="h-4 w-4" />
                         </button>
-                        {/* Edit */}
                         <button
                           title="Edit template"
-                          className="rounded p-1.5 text-navy/40 hover:bg-surface-raised hover:text-navy transition-colors"
-                          onClick={() => { setEditingTemplate(tmpl); setIsStandingOrderOpen(true); }}
+                          className="rounded p-1.5 text-navy/40 transition-colors hover:bg-surface-raised hover:text-navy"
+                          onClick={() => {
+                            setEditingTemplate(tmpl);
+                            setIsStandingOrderOpen(true);
+                          }}
                         >
                           <Pencil className="h-4 w-4" />
                         </button>
-                        {/* Delete */}
                         <button
                           title="Delete template"
-                          className="rounded p-1.5 text-navy/40 hover:bg-danger-bg hover:text-danger transition-colors"
+                          className="rounded p-1.5 text-navy/40 transition-colors hover:bg-danger-bg hover:text-danger"
                           onClick={() => setDeletingTemplateId(tmpl.id)}
                         >
                           <Trash2 className="h-4 w-4" />
@@ -1118,46 +2076,62 @@ export default function CustomerDetailPage({
           </Card>
         </Tabs.Content>
 
-        {/* ── Billing tab ──────────────────────────────────────────────── */}
+        {/* ── Billing tab ────────────────────────────────────────── */}
         <Tabs.Content value="billing" className="mt-5 focus:outline-none">
           <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
-            {/* Balance cards */}
-            <div className="lg:col-span-1 space-y-4">
+            <div className="space-y-4 lg:col-span-1">
               <Card>
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-navy/40">Open Balance</p>
+                    <p className="text-xs font-semibold uppercase tracking-wider text-navy/40">
+                      Open Balance
+                    </p>
                     <TrendingDown className="h-4 w-4 text-danger" />
                   </div>
-                  <p className={`text-2xl font-bold ${(statement?.outstandingAmount ?? 0) > 0 ? "text-danger" : "text-success"}`}>
-                    {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(statement?.outstandingAmount ?? 0)}
+                  <p
+                    className={`text-2xl font-bold ${(statement?.outstandingAmount ?? 0) > 0 ? "text-danger" : "text-success"}`}
+                  >
+                    {fmt(statement?.outstandingAmount ?? 0)}
                   </p>
-                  <p className="text-xs text-navy/50">Amount currently owed on invoices</p>
+                  <p className="text-xs text-navy/50">
+                    Amount currently owed on invoices
+                  </p>
                 </div>
               </Card>
               <Card>
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-navy/40">Advance Balance</p>
+                    <p className="text-xs font-semibold uppercase tracking-wider text-navy/40">
+                      Advance Balance
+                    </p>
                     <DollarSign className="h-4 w-4 text-success" />
                   </div>
                   <p className="text-2xl font-bold text-success">
-                    {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(statement?.advanceBalance ?? 0)}
+                    {fmt(statement?.advanceBalance ?? 0)}
                   </p>
-                  <p className="text-xs text-navy/50">Pre-paid credit available to apply</p>
+                  <p className="text-xs text-navy/50">
+                    Pre-paid credit available to apply
+                  </p>
                   <Button
                     size="sm"
                     variant="secondary"
                     className="w-full"
                     leftIcon={<Plus className="h-4 w-4" />}
-                    onClick={() => { setAdvanceForm({ method: "ACH", amount: "", reference: "", notes: "" }); setIsAdvanceOpen(true); }}
+                    onClick={() => {
+                      setAdvanceForm({
+                        method: "ACH",
+                        amount: "",
+                        reference: "",
+                        notes: "",
+                      });
+                      setIsAdvanceOpen(true);
+                    }}
                   >
                     Record Advance Payment
                   </Button>
                 </div>
               </Card>
 
-              {/* Advance payments list */}
               {(advancePayments ?? []).length > 0 && (
                 <Card title="Advance Payments">
                   <ul className="-mx-6 -mb-6 divide-y divide-surface-border">
@@ -1165,14 +2139,21 @@ export default function CustomerDetailPage({
                       <li key={ap.id} className="px-6 py-3">
                         <div className="flex items-center justify-between">
                           <span className="text-sm font-semibold text-navy">
-                            {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(Number(ap.amount))}
+                            {fmt(Number(ap.amount))}
                           </span>
-                          <span className={`text-xs font-medium ${Number(ap.balance) > 0 ? "text-success" : "text-navy/40"}`}>
-                            {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(Number(ap.balance))} left
+                          <span
+                            className={`text-xs font-medium ${Number(ap.balance) > 0 ? "text-success" : "text-navy/40"}`}
+                          >
+                            {fmt(Number(ap.balance))} left
                           </span>
                         </div>
                         <p className="mt-0.5 text-xs text-navy/50">
-                          {ap.method}{ap.reference ? ` · ${ap.reference}` : ""} · {new Date(ap.createdAt).toLocaleDateString()}
+                          {ap.method}
+                          {ap.reference
+                            ? ` \u00b7 ${ap.reference}`
+                            : ""}{" "}
+                          \u00b7{" "}
+                          {new Date(ap.createdAt).toLocaleDateString()}
                         </p>
                       </li>
                     ))}
@@ -1181,11 +2162,11 @@ export default function CustomerDetailPage({
               )}
             </div>
 
-            {/* Statement — Zoho-style rendered document */}
-            <div className="lg:col-span-2 space-y-4">
-              {/* Statement header & controls */}
+            <div className="space-y-4 lg:col-span-2">
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <h3 className="text-base font-semibold text-navy">Statement of Accounts</h3>
+                <h3 className="text-base font-semibold text-navy">
+                  Statement of Accounts
+                </h3>
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => window.print()}
@@ -1196,108 +2177,172 @@ export default function CustomerDetailPage({
                 </div>
               </div>
 
-              {/* Rendered statement document */}
               <div className="rounded-xl border border-surface-border bg-white p-8 shadow-[0_2px_12px_0_rgb(0,0,0,0.06)]">
-                {/* Document header */}
                 <div className="mb-6 flex items-start justify-between">
                   <div>
                     <div className="flex items-center gap-2">
                       <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-500 text-xs font-bold text-white">
                         RF
                       </div>
-                      <span className="text-base font-bold text-navy">RouteFlow</span>
+                      <span className="text-base font-bold text-navy">
+                        RouteFlow
+                      </span>
                     </div>
-                    <p className="mt-0.5 text-xs text-navy/50">Austin, TX · routeflow.io</p>
+                    <p className="mt-0.5 text-xs text-navy/50">
+                      Austin, TX · routeflow.io
+                    </p>
                   </div>
                   <div className="text-right">
-                    <p className="text-lg font-bold uppercase tracking-wide text-navy">Statement of Accounts</p>
+                    <p className="text-lg font-bold uppercase tracking-wide text-navy">
+                      Statement of Accounts
+                    </p>
                     <p className="mt-0.5 text-xs text-navy/50">
-                      As of {new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}
+                      As of{" "}
+                      {new Date().toLocaleDateString("en-US", {
+                        month: "long",
+                        day: "numeric",
+                        year: "numeric",
+                      })}
                     </p>
                   </div>
                 </div>
 
-                {/* To block */}
                 <div className="mb-6 border-t border-surface-border pt-4">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-navy/40">To</p>
-                  <p className="mt-1 text-sm font-semibold text-navy">{customer.businessName}</p>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-navy/40">
+                    To
+                  </p>
+                  <p className="mt-1 text-sm font-semibold text-navy">
+                    {customer.businessName}
+                  </p>
                   {customer.contactName && (
-                    <p className="text-sm text-navy/60">{customer.contactName}</p>
+                    <p className="text-sm text-navy/60">
+                      {customer.contactName}
+                    </p>
                   )}
                   {customer.address && (
-                    <p className="mt-0.5 text-xs text-navy/50 whitespace-pre-line">{customer.address}</p>
+                    <p className="mt-0.5 whitespace-pre-line text-xs text-navy/50">
+                      {customer.address}
+                    </p>
                   )}
                 </div>
 
-                {/* Account summary box */}
                 <div className="mb-6 grid grid-cols-4 gap-px overflow-hidden rounded-lg border border-surface-border bg-surface-border">
                   {[
                     {
                       label: "Opening Balance",
-                      value: new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(0),
+                      value: fmt(0),
                       valueClass: "text-navy",
                     },
                     {
                       label: "Invoiced Amount",
-                      value: new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(
+                      value: fmt(
                         statement?.transactions
                           .filter((tx) => tx.type === "invoice")
-                          .reduce((s, tx) => s + Math.abs(tx.amount), 0) ?? 0
+                          .reduce((s, tx) => s + Math.abs(tx.amount), 0) ??
+                          0,
                       ),
                       valueClass: "text-navy",
                     },
                     {
                       label: "Amount Received",
-                      value: new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(
+                      value: fmt(
                         statement?.transactions
-                          .filter((tx) => tx.type === "payment" || tx.type === "advance")
-                          .reduce((s, tx) => s + Math.abs(tx.amount), 0) ?? 0
+                          .filter(
+                            (tx) =>
+                              tx.type === "payment" ||
+                              tx.type === "advance",
+                          )
+                          .reduce((s, tx) => s + Math.abs(tx.amount), 0) ??
+                          0,
                       ),
                       valueClass: "text-success",
                     },
                     {
                       label: "Balance Due",
-                      value: new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(statement?.outstandingAmount ?? 0),
-                      valueClass: (statement?.outstandingAmount ?? 0) > 0 ? "text-danger" : "text-success",
+                      value: fmt(statement?.outstandingAmount ?? 0),
+                      valueClass:
+                        (statement?.outstandingAmount ?? 0) > 0
+                          ? "text-danger"
+                          : "text-success",
                     },
                   ].map((item) => (
-                    <div key={item.label} className="flex flex-col items-center gap-1 bg-white px-4 py-3 text-center">
-                      <span className="text-xs font-semibold uppercase tracking-wider text-navy/40">{item.label}</span>
-                      <span className={cn("text-base font-bold", item.valueClass)}>{item.value}</span>
+                    <div
+                      key={item.label}
+                      className="flex flex-col items-center gap-1 bg-white px-4 py-3 text-center"
+                    >
+                      <span className="text-xs font-semibold uppercase tracking-wider text-navy/40">
+                        {item.label}
+                      </span>
+                      <span
+                        className={cn("text-base font-bold", item.valueClass)}
+                      >
+                        {item.value}
+                      </span>
                     </div>
                   ))}
                 </div>
 
-                {/* Transaction ledger */}
                 {!statement || statement.transactions.length === 0 ? (
-                  <p className="text-sm text-navy/40">No transactions on record.</p>
+                  <p className="text-sm text-navy/40">
+                    No transactions on record.
+                  </p>
                 ) : (
                   <div className="-mx-8 overflow-hidden">
                     <table className="w-full text-sm">
                       <thead>
                         <tr className="bg-[#1B3A5C]">
-                          <th className="px-8 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-white/80">Date</th>
-                          <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-white/80">Type</th>
-                          <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-white/80">Details</th>
-                          <th className="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wider text-white/80">Amount</th>
-                          <th className="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wider text-white/80">Payments</th>
-                          <th className="px-8 py-2.5 text-right text-xs font-semibold uppercase tracking-wider text-white/80">Balance</th>
+                          <th className="px-8 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-white/80">
+                            Date
+                          </th>
+                          <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-white/80">
+                            Type
+                          </th>
+                          <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-white/80">
+                            Details
+                          </th>
+                          <th className="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wider text-white/80">
+                            Amount
+                          </th>
+                          <th className="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wider text-white/80">
+                            Payments
+                          </th>
+                          <th className="px-8 py-2.5 text-right text-xs font-semibold uppercase tracking-wider text-white/80">
+                            Balance
+                          </th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-surface-border">
                         {statement.transactions.map((tx, i) => {
                           const isInvoice = tx.type === "invoice";
-                          const isPayment = tx.type === "payment" || tx.type === "advance";
+                          const isPayment =
+                            tx.type === "payment" ||
+                            tx.type === "advance";
                           return (
-                            <tr key={i} className={i % 2 === 0 ? "bg-white" : "bg-gray-50/60"}>
+                            <tr
+                              key={i}
+                              className={
+                                i % 2 === 0 ? "bg-white" : "bg-gray-50/60"
+                              }
+                            >
                               <td className="px-8 py-2.5 text-xs text-navy/60">
-                                {new Date(tx.date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                                {new Date(tx.date).toLocaleDateString(
+                                  "en-US",
+                                  {
+                                    month: "short",
+                                    day: "numeric",
+                                    year: "numeric",
+                                  },
+                                )}
                               </td>
                               <td className="px-4 py-2.5">
-                                <span className={cn(
-                                  "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold",
-                                  isInvoice ? "bg-blue-100 text-blue-700" : "bg-green-100 text-green-700",
-                                )}>
+                                <span
+                                  className={cn(
+                                    "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold",
+                                    isInvoice
+                                      ? "bg-blue-100 text-blue-700"
+                                      : "bg-green-100 text-green-700",
+                                  )}
+                                >
                                   {isInvoice ? "Invoice" : "Payment"}
                                 </span>
                               </td>
@@ -1311,29 +2356,35 @@ export default function CustomerDetailPage({
                                     {tx.invoiceNumber}
                                   </Link>
                                 ) : (
-                                  <span className="text-xs text-navy/60">{tx.description}</span>
+                                  <span className="text-xs text-navy/60">
+                                    {tx.description}
+                                  </span>
                                 )}
                               </td>
                               <td className="px-4 py-2.5 text-right text-sm">
                                 {isInvoice ? (
                                   <span className="font-medium text-navy">
-                                    {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(Math.abs(tx.amount))}
+                                    {fmt(Math.abs(tx.amount))}
                                   </span>
                                 ) : (
-                                  <span className="text-navy/30">—</span>
+                                  <span className="text-navy/30">
+                                    {"\u2014"}
+                                  </span>
                                 )}
                               </td>
                               <td className="px-4 py-2.5 text-right text-sm">
                                 {isPayment ? (
                                   <span className="font-medium text-success">
-                                    {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(Math.abs(tx.amount))}
+                                    {fmt(Math.abs(tx.amount))}
                                   </span>
                                 ) : (
-                                  <span className="text-navy/30">—</span>
+                                  <span className="text-navy/30">
+                                    {"\u2014"}
+                                  </span>
                                 )}
                               </td>
                               <td className="px-8 py-2.5 text-right font-semibold text-navy">
-                                {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(tx.balance)}
+                                {fmt(tx.balance)}
                               </td>
                             </tr>
                           );
@@ -1341,13 +2392,22 @@ export default function CustomerDetailPage({
                       </tbody>
                       <tfoot>
                         <tr className="border-t-2 border-surface-border bg-gray-50">
-                          <td colSpan={3} className="px-8 py-3 text-sm font-bold text-navy">Balance Due</td>
+                          <td
+                            colSpan={3}
+                            className="px-8 py-3 text-sm font-bold text-navy"
+                          >
+                            Balance Due
+                          </td>
                           <td colSpan={2} />
-                          <td className={cn(
-                            "px-8 py-3 text-right text-sm font-bold",
-                            (statement?.outstandingAmount ?? 0) > 0 ? "text-danger" : "text-success",
-                          )}>
-                            {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(statement?.outstandingAmount ?? 0)}
+                          <td
+                            className={cn(
+                              "px-8 py-3 text-right text-sm font-bold",
+                              (statement?.outstandingAmount ?? 0) > 0
+                                ? "text-danger"
+                                : "text-success",
+                            )}
+                          >
+                            {fmt(statement?.outstandingAmount ?? 0)}
                           </td>
                         </tr>
                       </tfoot>
@@ -1358,7 +2418,6 @@ export default function CustomerDetailPage({
             </div>
           </div>
 
-          {/* Record Advance Payment Modal */}
           <Modal
             open={isAdvanceOpen}
             onClose={() => setIsAdvanceOpen(false)}
@@ -1366,14 +2425,26 @@ export default function CustomerDetailPage({
             description="Record a pre-payment that can be applied to future invoices."
             footer={
               <>
-                <Button variant="secondary" onClick={() => setIsAdvanceOpen(false)} disabled={createAdvance.isPending}>Cancel</Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => setIsAdvanceOpen(false)}
+                  disabled={createAdvance.isPending}
+                >
+                  Cancel
+                </Button>
                 <Button
                   loading={createAdvance.isPending}
                   onClick={() => {
                     const amt = parseFloat(advanceForm.amount);
                     if (!amt || amt <= 0) return;
                     createAdvance.mutate(
-                      { customerId: params.id, method: advanceForm.method, amount: amt, reference: advanceForm.reference || undefined, notes: advanceForm.notes || undefined },
+                      {
+                        customerId: params.id,
+                        method: advanceForm.method,
+                        amount: amt,
+                        reference: advanceForm.reference || undefined,
+                        notes: advanceForm.notes || undefined,
+                      },
                       { onSuccess: () => setIsAdvanceOpen(false) },
                     );
                   }}
@@ -1385,10 +2456,17 @@ export default function CustomerDetailPage({
           >
             <div className="space-y-4">
               <div>
-                <label className="mb-1.5 block text-sm font-medium text-navy/80">Payment Method</label>
+                <label className="mb-1.5 block text-sm font-medium text-navy/80">
+                  Payment Method
+                </label>
                 <select
                   value={advanceForm.method}
-                  onChange={(e) => setAdvanceForm((f) => ({ ...f, method: e.target.value }))}
+                  onChange={(e) =>
+                    setAdvanceForm((f) => ({
+                      ...f,
+                      method: e.target.value,
+                    }))
+                  }
                   className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
                 >
                   <option value="CASH">Cash</option>
@@ -1398,29 +2476,53 @@ export default function CustomerDetailPage({
                 </select>
               </div>
               <div>
-                <label className="mb-1.5 block text-sm font-medium text-navy/80">Amount ($)</label>
+                <label className="mb-1.5 block text-sm font-medium text-navy/80">
+                  Amount ($)
+                </label>
                 <input
-                  type="number" step="0.01" min="0.01" placeholder="0.00"
+                  type="number"
+                  step="0.01"
+                  min="0.01"
+                  placeholder="0.00"
                   value={advanceForm.amount}
-                  onChange={(e) => setAdvanceForm((f) => ({ ...f, amount: e.target.value }))}
+                  onChange={(e) =>
+                    setAdvanceForm((f) => ({
+                      ...f,
+                      amount: e.target.value,
+                    }))
+                  }
                   className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
                 />
               </div>
               <div>
-                <label className="mb-1.5 block text-sm font-medium text-navy/80">Reference # (optional)</label>
+                <label className="mb-1.5 block text-sm font-medium text-navy/80">
+                  Reference # (optional)
+                </label>
                 <input
                   type="text"
                   value={advanceForm.reference}
-                  onChange={(e) => setAdvanceForm((f) => ({ ...f, reference: e.target.value }))}
+                  onChange={(e) =>
+                    setAdvanceForm((f) => ({
+                      ...f,
+                      reference: e.target.value,
+                    }))
+                  }
                   className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
                 />
               </div>
               <div>
-                <label className="mb-1.5 block text-sm font-medium text-navy/80">Notes (optional)</label>
+                <label className="mb-1.5 block text-sm font-medium text-navy/80">
+                  Notes (optional)
+                </label>
                 <textarea
                   rows={2}
                   value={advanceForm.notes}
-                  onChange={(e) => setAdvanceForm((f) => ({ ...f, notes: e.target.value }))}
+                  onChange={(e) =>
+                    setAdvanceForm((f) => ({
+                      ...f,
+                      notes: e.target.value,
+                    }))
+                  }
                   className="w-full resize-none rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
                 />
               </div>
@@ -1428,9 +2530,11 @@ export default function CustomerDetailPage({
           </Modal>
         </Tabs.Content>
 
-        {/* ── Special Prices tab ───────────────────────────────────────── */}
+        {/* ── Special Prices tab ─────────────────────────────────── */}
         <SpecialPricesTab customerId={params.id} />
 
+        {/* ── Comments tab ───────────────────────────────────────── */}
+        <CommentsTab customerId={params.id} />
       </Tabs.Root>
 
       {/* Modals */}
@@ -1457,32 +2561,47 @@ export default function CustomerDetailPage({
           city: a.city,
         }))}
       />
+      <ContactPersonModal
+        isOpen={isContactModalOpen}
+        onClose={() => {
+          setIsContactModalOpen(false);
+          setEditingContact(null);
+        }}
+        customerId={params.id}
+        editingContact={editingContact}
+      />
 
-      {/* Status change confirmation (INACTIVE / SUSPENDED) */}
       <ConfirmDialog
         open={pendingStatus !== null}
         onClose={() => setPendingStatus(null)}
         onConfirm={confirmStatusChange}
-        title={pendingStatus === "SUSPENDED" ? "Suspend this customer?" : "Deactivate this customer?"}
+        title={
+          pendingStatus === "SUSPENDED"
+            ? "Suspend this customer?"
+            : "Deactivate this customer?"
+        }
         description={
           pendingStatus === "SUSPENDED"
             ? `${customer.businessName} will be suspended and will lose access to the platform.`
             : `${customer.businessName} will be marked as inactive.`
         }
-        confirmLabel={pendingStatus === "SUSPENDED" ? "Yes, suspend" : "Yes, deactivate"}
+        confirmLabel={
+          pendingStatus === "SUSPENDED" ? "Yes, suspend" : "Yes, deactivate"
+        }
         variant={pendingStatus === "SUSPENDED" ? "danger" : "secondary"}
         loading={updateStatus.isPending}
       />
 
-      {/* Standing order modal */}
       <StandingOrderModal
         isOpen={isStandingOrderOpen}
-        onClose={() => { setIsStandingOrderOpen(false); setEditingTemplate(null); }}
+        onClose={() => {
+          setIsStandingOrderOpen(false);
+          setEditingTemplate(null);
+        }}
         customerId={params.id}
         template={editingTemplate}
       />
 
-      {/* Delete standing order confirmation */}
       <ConfirmDialog
         open={!!deletingTemplateId}
         onClose={() => setDeletingTemplateId(null)}
@@ -1498,6 +2617,23 @@ export default function CustomerDetailPage({
         confirmLabel="Yes, delete"
         variant="danger"
         loading={deleteTemplate.isPending}
+      />
+
+      <ConfirmDialog
+        open={!!deletingContactId}
+        onClose={() => setDeletingContactId(null)}
+        onConfirm={() => {
+          if (!deletingContactId) return;
+          deleteContact.mutate(
+            { customerId: params.id, contactId: deletingContactId },
+            { onSuccess: () => setDeletingContactId(null) },
+          );
+        }}
+        title="Delete contact person?"
+        description="This contact person will be permanently removed from this customer."
+        confirmLabel="Yes, delete"
+        variant="danger"
+        loading={deleteContact.isPending}
       />
     </div>
   );

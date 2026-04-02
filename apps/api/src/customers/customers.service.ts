@@ -88,10 +88,27 @@ export class CustomersService {
         { businessName: { contains: q, mode: "insensitive" } },
         { contactName: { contains: q, mode: "insensitive" } },
         { phone: { contains: q, mode: "insensitive" } },
+        { email: { contains: q, mode: "insensitive" } },
+        { displayName: { contains: q, mode: "insensitive" } },
       ];
     }
     if (query.status) {
       where.user = { status: query.status };
+    }
+    if (query.customerType) {
+      where.customerType = query.customerType;
+    }
+    if (query.tag) {
+      where.tagAssignments = {
+        some: { tagId: query.tag },
+      };
+    }
+
+    // Build orderBy
+    let orderBy: any = { createdAt: "desc" };
+    if (query.sortBy) {
+      const dir = query.sortDir === "asc" ? "asc" : "desc";
+      orderBy = { [query.sortBy]: dir };
     }
 
     const [data, total] = await Promise.all([
@@ -100,15 +117,58 @@ export class CustomersService {
         include: {
           user: { select: { id: true, email: true, username: true, status: true } },
           addresses: true,
+          tagAssignments: { include: { tag: true } },
         },
         skip,
         take: limit,
-        orderBy: { createdAt: "desc" },
+        orderBy,
       }),
       this.prisma.customer.count({ where }),
     ]);
 
-    return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
+    // Compute receivables and unusedCredits for each customer
+    const customerIds = data.map((c) => c.id);
+
+    const [invoices, advancePayments] = await Promise.all([
+      this.prisma.invoice.findMany({
+        where: {
+          customerId: { in: customerIds },
+          status: { notIn: ["PAID", "VOID", "WRITTEN_OFF"] },
+        },
+        select: {
+          customerId: true,
+          total: true,
+          payments: { select: { amount: true } },
+        },
+      }),
+      this.prisma.advancePayment.findMany({
+        where: {
+          customerId: { in: customerIds },
+          balance: { gt: 0 },
+        },
+        select: { customerId: true, balance: true },
+      }),
+    ]);
+
+    const receivablesMap: Record<string, number> = {};
+    for (const inv of invoices) {
+      const paid = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
+      const outstanding = Number(inv.total) - paid;
+      receivablesMap[inv.customerId] = (receivablesMap[inv.customerId] ?? 0) + outstanding;
+    }
+
+    const creditsMap: Record<string, number> = {};
+    for (const ap of advancePayments) {
+      creditsMap[ap.customerId] = (creditsMap[ap.customerId] ?? 0) + Number(ap.balance);
+    }
+
+    const enriched = data.map((c) => ({
+      ...c,
+      receivables: receivablesMap[c.id] ?? 0,
+      unusedCredits: creditsMap[c.id] ?? 0,
+    }));
+
+    return { data: enriched, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
   }
 
   async findMyProfile(user: JwtPayload) {
@@ -214,6 +274,7 @@ export class CustomersService {
       include: {
         user: { select: { id: true, email: true, username: true, status: true } },
         addresses: true,
+        tagAssignments: { include: { tag: true } },
       },
     });
     if (!customer) throw new NotFoundException("Customer not found");
@@ -255,6 +316,16 @@ export class CustomersService {
           phone: dto.phone,
           notes: dto.notes,
           fulfillPath: dto.fulfillPath ?? "ROUTE",
+          ...(dto.mobile !== undefined && { mobile: dto.mobile }),
+          ...(dto.customerType !== undefined && { customerType: dto.customerType }),
+          ...(dto.displayName !== undefined && { displayName: dto.displayName }),
+          ...(dto.salutation !== undefined && { salutation: dto.salutation }),
+          ...(dto.firstName !== undefined && { firstName: dto.firstName }),
+          ...(dto.lastName !== undefined && { lastName: dto.lastName }),
+          ...(dto.taxId !== undefined && { taxId: dto.taxId }),
+          ...(dto.isTaxExempt !== undefined && { isTaxExempt: dto.isTaxExempt }),
+          ...(dto.creditLimit !== undefined && { creditLimit: dto.creditLimit }),
+          ...(dto.currency !== undefined && { currency: dto.currency }),
         },
       });
 
@@ -297,6 +368,17 @@ export class CustomersService {
         ...(dto.deliveryWindowEnd !== undefined && {
           deliveryWindowEnd: dto.deliveryWindowEnd || null,
         }),
+        ...(dto.email !== undefined && { email: dto.email }),
+        ...(dto.mobile !== undefined && { mobile: dto.mobile }),
+        ...(dto.customerType !== undefined && { customerType: dto.customerType }),
+        ...(dto.displayName !== undefined && { displayName: dto.displayName }),
+        ...(dto.salutation !== undefined && { salutation: dto.salutation }),
+        ...(dto.firstName !== undefined && { firstName: dto.firstName }),
+        ...(dto.lastName !== undefined && { lastName: dto.lastName }),
+        ...(dto.taxId !== undefined && { taxId: dto.taxId }),
+        ...(dto.isTaxExempt !== undefined && { isTaxExempt: dto.isTaxExempt }),
+        ...(dto.creditLimit !== undefined && { creditLimit: dto.creditLimit }),
+        ...(dto.currency !== undefined && { currency: dto.currency }),
       },
     });
   }
@@ -677,6 +759,401 @@ export class CustomersService {
     });
   }
 
+  // ─── Contact Persons CRUD ─────────────────────────────────────────────────
+
+  async listContactPersons(customerId: string) {
+    await this.findCustomerOrThrow(customerId);
+    return this.prisma.contactPerson.findMany({
+      where: { customerId },
+      orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
+    });
+  }
+
+  async addContactPerson(
+    customerId: string,
+    dto: {
+      salutation?: string;
+      firstName: string;
+      lastName?: string;
+      email?: string;
+      phone?: string;
+      mobile?: string;
+      isPrimary?: boolean;
+    },
+  ) {
+    await this.findCustomerOrThrow(customerId);
+    return this.prisma.$transaction(async (tx) => {
+      if (dto.isPrimary) {
+        await tx.contactPerson.updateMany({
+          where: { customerId },
+          data: { isPrimary: false },
+        });
+      }
+      return tx.contactPerson.create({
+        data: {
+          customerId,
+          salutation: dto.salutation,
+          firstName: dto.firstName,
+          lastName: dto.lastName,
+          email: dto.email,
+          phone: dto.phone,
+          mobile: dto.mobile,
+          isPrimary: dto.isPrimary ?? false,
+        },
+      });
+    });
+  }
+
+  async updateContactPerson(
+    customerId: string,
+    contactId: string,
+    dto: {
+      salutation?: string;
+      firstName?: string;
+      lastName?: string;
+      email?: string;
+      phone?: string;
+      mobile?: string;
+      isPrimary?: boolean;
+    },
+  ) {
+    await this.findCustomerOrThrow(customerId);
+    const existing = await this.prisma.contactPerson.findFirst({
+      where: { id: contactId, customerId },
+    });
+    if (!existing) throw new NotFoundException("Contact person not found");
+
+    return this.prisma.$transaction(async (tx) => {
+      if (dto.isPrimary) {
+        await tx.contactPerson.updateMany({
+          where: { customerId, id: { not: contactId } },
+          data: { isPrimary: false },
+        });
+      }
+      return tx.contactPerson.update({
+        where: { id: contactId },
+        data: {
+          ...(dto.salutation !== undefined && { salutation: dto.salutation }),
+          ...(dto.firstName !== undefined && { firstName: dto.firstName }),
+          ...(dto.lastName !== undefined && { lastName: dto.lastName }),
+          ...(dto.email !== undefined && { email: dto.email }),
+          ...(dto.phone !== undefined && { phone: dto.phone }),
+          ...(dto.mobile !== undefined && { mobile: dto.mobile }),
+          ...(dto.isPrimary !== undefined && { isPrimary: dto.isPrimary }),
+        },
+      });
+    });
+  }
+
+  async deleteContactPerson(customerId: string, contactId: string) {
+    await this.findCustomerOrThrow(customerId);
+    const existing = await this.prisma.contactPerson.findFirst({
+      where: { id: contactId, customerId },
+    });
+    if (!existing) throw new NotFoundException("Contact person not found");
+    await this.prisma.contactPerson.delete({ where: { id: contactId } });
+    return { success: true };
+  }
+
+  // ─── Tags ─────────────────────────────────────────────────────────────────
+
+  async listTags() {
+    return this.prisma.customerTag.findMany({
+      orderBy: { name: "asc" },
+      include: { _count: { select: { assignments: true } } },
+    });
+  }
+
+  async createTag(dto: { name: string; color?: string }) {
+    return this.prisma.customerTag.create({
+      data: {
+        name: dto.name,
+        ...(dto.color && { color: dto.color }),
+      },
+    });
+  }
+
+  async deleteTag(tagId: string) {
+    const tag = await this.prisma.customerTag.findUnique({ where: { id: tagId } });
+    if (!tag) throw new NotFoundException("Tag not found");
+    await this.prisma.customerTag.delete({ where: { id: tagId } });
+    return { success: true };
+  }
+
+  async assignTag(customerId: string, tagId: string) {
+    await this.findCustomerOrThrow(customerId);
+    const tag = await this.prisma.customerTag.findUnique({ where: { id: tagId } });
+    if (!tag) throw new NotFoundException("Tag not found");
+
+    // Upsert to avoid duplicate constraint errors
+    return this.prisma.customerTagAssignment.upsert({
+      where: { customerId_tagId: { customerId, tagId } },
+      create: { customerId, tagId },
+      update: {},
+      include: { tag: true },
+    });
+  }
+
+  async removeTag(customerId: string, tagId: string) {
+    await this.findCustomerOrThrow(customerId);
+    const assignment = await this.prisma.customerTagAssignment.findUnique({
+      where: { customerId_tagId: { customerId, tagId } },
+    });
+    if (!assignment) throw new NotFoundException("Tag assignment not found");
+    await this.prisma.customerTagAssignment.delete({
+      where: { customerId_tagId: { customerId, tagId } },
+    });
+    return { success: true };
+  }
+
+  // ─── Comments ─────────────────────────────────────────────────────────────
+
+  async listComments(customerId: string) {
+    await this.findCustomerOrThrow(customerId);
+    return this.prisma.customerComment.findMany({
+      where: { customerId },
+      orderBy: { createdAt: "desc" },
+    });
+  }
+
+  async addComment(customerId: string, userId: string, content: string) {
+    await this.findCustomerOrThrow(customerId);
+    if (!content || content.trim().length === 0) {
+      throw new BadRequestException("Comment content cannot be empty");
+    }
+    return this.prisma.customerComment.create({
+      data: { customerId, userId, content: content.trim() },
+    });
+  }
+
+  async deleteComment(customerId: string, commentId: string) {
+    await this.findCustomerOrThrow(customerId);
+    const comment = await this.prisma.customerComment.findFirst({
+      where: { id: commentId, customerId },
+    });
+    if (!comment) throw new NotFoundException("Comment not found");
+    await this.prisma.customerComment.delete({ where: { id: commentId } });
+    return { success: true };
+  }
+
+  // ─── Income Chart ─────────────────────────────────────────────────────────
+
+  async getIncomeChart(customerId: string) {
+    await this.findCustomerOrThrow(customerId);
+
+    const now = new Date();
+    const months: Array<{ month: string; start: Date; end: Date }> = [];
+
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const start = new Date(d.getFullYear(), d.getMonth(), 1);
+      const end = new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999);
+      const label = d.toLocaleString("en-US", { month: "short", year: "numeric" });
+      months.push({ month: label, start, end });
+    }
+
+    const sixMonthsAgo = months[0].start;
+
+    // Get all invoice payments for this customer's invoices in the last 6 months
+    const payments = await this.prisma.invoicePayment.findMany({
+      where: {
+        invoice: { customerId },
+        paidAt: { gte: sixMonthsAgo },
+      },
+      select: { amount: true, paidAt: true },
+    });
+
+    // Get all expenses for this customer in the last 6 months
+    const expenses = await this.prisma.expense.findMany({
+      where: {
+        customerId,
+        date: { gte: sixMonthsAgo },
+        deletedAt: null,
+      },
+      select: { amount: true, date: true },
+    });
+
+    return months.map(({ month, start, end }) => {
+      const income = payments
+        .filter((p) => p.paidAt >= start && p.paidAt <= end)
+        .reduce((sum, p) => sum + Number(p.amount), 0);
+
+      const expense = expenses
+        .filter((e) => e.date >= start && e.date <= end)
+        .reduce((sum, e) => sum + Number(e.amount), 0);
+
+      return { month, income: Math.round(income * 100) / 100, expenses: Math.round(expense * 100) / 100 };
+    });
+  }
+
+  // ─── Export CSV ────────────────────────────────────────────────────────────
+
+  async exportCustomers(query: ListCustomersDto): Promise<string> {
+    const where: any = {};
+    if (query.search) {
+      const q = query.search;
+      where.OR = [
+        { businessName: { contains: q, mode: "insensitive" } },
+        { contactName: { contains: q, mode: "insensitive" } },
+        { phone: { contains: q, mode: "insensitive" } },
+        { email: { contains: q, mode: "insensitive" } },
+        { displayName: { contains: q, mode: "insensitive" } },
+      ];
+    }
+    if (query.status) {
+      where.user = { status: query.status };
+    }
+    if (query.customerType) {
+      where.customerType = query.customerType;
+    }
+    if (query.tag) {
+      where.tagAssignments = {
+        some: { tagId: query.tag },
+      };
+    }
+
+    const customers = await this.prisma.customer.findMany({
+      where,
+      include: {
+        user: { select: { status: true } },
+        invoices: {
+          where: { status: { notIn: ["PAID", "VOID", "WRITTEN_OFF"] } },
+          select: { total: true, payments: { select: { amount: true } } },
+        },
+        advancePayments: {
+          where: { balance: { gt: 0 } },
+          select: { balance: true },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    const escCsv = (val: string | null | undefined) => {
+      if (!val) return "";
+      if (val.includes(",") || val.includes('"') || val.includes("\n")) {
+        return `"${val.replace(/"/g, '""')}"`;
+      }
+      return val;
+    };
+
+    const header = "Business Name,Contact Name,Email,Phone,Customer Type,Status,Receivables,Credits";
+    const rows = customers.map((c) => {
+      const receivables = c.invoices.reduce((sum, inv) => {
+        const paid = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
+        return sum + (Number(inv.total) - paid);
+      }, 0);
+      const credits = c.advancePayments.reduce((s, a) => s + Number(a.balance), 0);
+
+      return [
+        escCsv(c.businessName),
+        escCsv(c.contactName),
+        escCsv(c.email),
+        escCsv(c.phone),
+        escCsv(c.customerType),
+        escCsv(c.user?.status),
+        receivables.toFixed(2),
+        credits.toFixed(2),
+      ].join(",");
+    });
+
+    return [header, ...rows].join("\n");
+  }
+
+  // ─── Merge Customers ──────────────────────────────────────────────────────
+
+  async mergeCustomers(primaryId: string, secondaryId: string) {
+    if (primaryId === secondaryId) {
+      throw new BadRequestException("Cannot merge a customer into itself");
+    }
+
+    const primary = await this.findCustomerOrThrow(primaryId);
+    const secondary = await this.findCustomerOrThrow(secondaryId);
+
+    return this.prisma.$transaction(async (tx) => {
+      // Move invoices
+      await tx.invoice.updateMany({
+        where: { customerId: secondaryId },
+        data: { customerId: primaryId },
+      });
+
+      // Move orders
+      await tx.order.updateMany({
+        where: { customerId: secondaryId },
+        data: { customerId: primaryId },
+      });
+
+      // Move estimates
+      await tx.estimate.updateMany({
+        where: { customerId: secondaryId },
+        data: { customerId: primaryId },
+      });
+
+      // Move credit notes
+      await tx.creditNote.updateMany({
+        where: { customerId: secondaryId },
+        data: { customerId: primaryId },
+      });
+
+      // Move returns
+      await tx.return.updateMany({
+        where: { customerId: secondaryId },
+        data: { customerId: primaryId },
+      });
+
+      // Move advance payments
+      await tx.advancePayment.updateMany({
+        where: { customerId: secondaryId },
+        data: { customerId: primaryId },
+      });
+
+      // Move expenses
+      await tx.expense.updateMany({
+        where: { customerId: secondaryId },
+        data: { customerId: primaryId },
+      });
+
+      // Move transactions
+      await tx.transaction.updateMany({
+        where: { customerId: secondaryId },
+        data: { customerId: primaryId },
+      });
+
+      // Clean up secondary's own records before deleting
+      await tx.contactPerson.deleteMany({ where: { customerId: secondaryId } });
+      await tx.customerTagAssignment.deleteMany({ where: { customerId: secondaryId } });
+      await tx.customerComment.deleteMany({ where: { customerId: secondaryId } });
+      await tx.customerPrice.deleteMany({ where: { customerId: secondaryId } });
+      await tx.customerAddress.deleteMany({ where: { customerId: secondaryId } });
+      await tx.routeRunStop.deleteMany({ where: { customerId: secondaryId } });
+      await tx.routeCustomer.deleteMany({ where: { customerId: secondaryId } });
+      await tx.routeStop.deleteMany({ where: { customerId: secondaryId } });
+      await tx.recurringInvoice.updateMany({
+        where: { customerId: secondaryId },
+        data: { customerId: primaryId },
+      });
+      await tx.orderTemplate.updateMany({
+        where: { customerId: secondaryId },
+        data: { customerId: primaryId },
+      });
+
+      // Delete secondary customer and their user
+      await tx.customer.delete({ where: { id: secondaryId } });
+      await tx.user.delete({ where: { id: secondary.userId } });
+
+      // Return the primary customer
+      return tx.customer.findUnique({
+        where: { id: primaryId },
+        include: {
+          user: { select: { id: true, email: true, username: true, status: true } },
+          addresses: true,
+          tagAssignments: { include: { tag: true } },
+        },
+      });
+    }, { timeout: 30_000 });
+  }
+
+  // ─── Delete ────────────────────────────────────────────────────────────────
+
   async deleteCustomer(id: string) {
     const customer = await this.prisma.customer.findUnique({ where: { id } });
     if (!customer) throw new NotFoundException("Customer not found");
@@ -758,6 +1235,14 @@ export class CustomersService {
       await tx.customerPrice.deleteMany({ where: { customerId: id } });
       await tx.customerAddress.deleteMany({ where: { customerId: id } });
 
+      // Delete new related records
+      await tx.contactPerson.deleteMany({ where: { customerId: id } });
+      await tx.customerTagAssignment.deleteMany({ where: { customerId: id } });
+      await tx.customerComment.deleteMany({ where: { customerId: id } });
+
+      // Expenses
+      await tx.expense.updateMany({ where: { customerId: id }, data: { customerId: null } });
+
       // Finally delete customer + user
       await tx.customer.delete({ where: { id } });
       await tx.user.delete({ where: { id: customer.userId } });
@@ -832,6 +1317,14 @@ export class CustomersService {
       await tx.advancePayment.deleteMany({ where: { customerId: { in: customerIds } } });
       await tx.customerPrice.deleteMany({ where: { customerId: { in: customerIds } } });
       await tx.customerAddress.deleteMany({ where: { customerId: { in: customerIds } } });
+
+      // Delete new related records
+      await tx.contactPerson.deleteMany({ where: { customerId: { in: customerIds } } });
+      await tx.customerTagAssignment.deleteMany({ where: { customerId: { in: customerIds } } });
+      await tx.customerComment.deleteMany({ where: { customerId: { in: customerIds } } });
+
+      // Expenses — detach rather than delete
+      await tx.expense.updateMany({ where: { customerId: { in: customerIds } }, data: { customerId: null } });
 
       await tx.customer.deleteMany({ where: { id: { in: customerIds } } });
       await tx.user.deleteMany({ where: { id: { in: userIds } } });

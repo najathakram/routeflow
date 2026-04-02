@@ -7,10 +7,12 @@ import {
   Patch,
   Post,
   Query,
+  Res,
   UseGuards,
 } from "@nestjs/common";
 import { ApiTags, ApiBearerAuth } from "@nestjs/swagger";
 import { UserRole } from "@prisma/client";
+import type { Response } from "express";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
@@ -44,6 +46,49 @@ export class CustomersController {
     return this.customersService.create(dto);
   }
 
+  // ─── Static routes (must come BEFORE ":id" param routes) ──────────────────
+
+  @Get("export")
+  @Roles(UserRole.OPERATOR)
+  async exportCsv(@Query() query: ListCustomersDto, @Res() res: Response) {
+    const csv = await this.customersService.exportCustomers(query);
+    res.set({
+      "Content-Type": "text/csv",
+      "Content-Disposition": 'attachment; filename="customers.csv"',
+    });
+    res.send(csv);
+  }
+
+  @Get("tags")
+  @Roles(UserRole.OPERATOR)
+  listTags() {
+    return this.customersService.listTags();
+  }
+
+  @Post("tags")
+  @Roles(UserRole.OPERATOR)
+  createTag(@Body() dto: { name: string; color?: string }) {
+    return this.customersService.createTag(dto);
+  }
+
+  @Delete("tags/:tagId")
+  @Roles(UserRole.OPERATOR)
+  deleteTag(@Param("tagId") tagId: string) {
+    return this.customersService.deleteTag(tagId);
+  }
+
+  @Post("merge")
+  @Roles(UserRole.OPERATOR)
+  mergeCustomers(@Body() dto: { primaryId: string; secondaryId: string }) {
+    return this.customersService.mergeCustomers(dto.primaryId, dto.secondaryId);
+  }
+
+  @Post("geocode-all")
+  @Roles(UserRole.OPERATOR)
+  geocodeAllAddresses() {
+    return this.customersService.geocodeAllAddresses();
+  }
+
   @Get("me")
   @Roles(UserRole.CUSTOMER)
   getMyProfile(@CurrentUser() user: JwtPayload) {
@@ -61,6 +106,14 @@ export class CustomersController {
   updateMyProfile(@CurrentUser() user: JwtPayload, @Body() dto: UpdateCustomerDto) {
     return this.customersService.updateMyProfile(user, dto);
   }
+
+  @Delete("all")
+  @Roles(UserRole.OPERATOR)
+  deleteAll() {
+    return this.customersService.deleteAllCustomers();
+  }
+
+  // ─── :id param routes ─────────────────────────────────────────────────────
 
   @Get(":id")
   findOne(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
@@ -88,12 +141,6 @@ export class CustomersController {
   @Get(":id/orders")
   findOrders(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
     return this.customersService.findOrders(id, user);
-  }
-
-  @Post("geocode-all")
-  @Roles(UserRole.OPERATOR)
-  geocodeAllAddresses() {
-    return this.customersService.geocodeAllAddresses();
   }
 
   @Get(":id/statement")
@@ -154,11 +201,83 @@ export class CustomersController {
     return this.customersService.updateAddress(id, addrId, dto);
   }
 
-  @Delete("all")
+  // ─── Tags (per customer) ──────────────────────────────────────────────────
+
+  @Post(":id/tags")
   @Roles(UserRole.OPERATOR)
-  deleteAll() {
-    return this.customersService.deleteAllCustomers();
+  assignTag(@Param("id") id: string, @Body() dto: { tagId: string }) {
+    return this.customersService.assignTag(id, dto.tagId);
   }
+
+  @Delete(":id/tags/:tagId")
+  @Roles(UserRole.OPERATOR)
+  removeTag(@Param("id") id: string, @Param("tagId") tagId: string) {
+    return this.customersService.removeTag(id, tagId);
+  }
+
+  // ─── Contact Persons ──────────────────────────────────────────────────────
+
+  @Get(":id/contacts")
+  @Roles(UserRole.OPERATOR)
+  listContacts(@Param("id") id: string) {
+    return this.customersService.listContactPersons(id);
+  }
+
+  @Post(":id/contacts")
+  @Roles(UserRole.OPERATOR)
+  addContact(@Param("id") id: string, @Body() dto: any) {
+    return this.customersService.addContactPerson(id, dto);
+  }
+
+  @Patch(":id/contacts/:cid")
+  @Roles(UserRole.OPERATOR)
+  updateContact(
+    @Param("id") id: string,
+    @Param("cid") cid: string,
+    @Body() dto: any,
+  ) {
+    return this.customersService.updateContactPerson(id, cid, dto);
+  }
+
+  @Delete(":id/contacts/:cid")
+  @Roles(UserRole.OPERATOR)
+  deleteContact(@Param("id") id: string, @Param("cid") cid: string) {
+    return this.customersService.deleteContactPerson(id, cid);
+  }
+
+  // ─── Comments ─────────────────────────────────────────────────────────────
+
+  @Get(":id/comments")
+  @Roles(UserRole.OPERATOR)
+  listComments(@Param("id") id: string) {
+    return this.customersService.listComments(id);
+  }
+
+  @Post(":id/comments")
+  @Roles(UserRole.OPERATOR)
+  addComment(
+    @Param("id") id: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: { content: string },
+  ) {
+    return this.customersService.addComment(id, user.sub, dto.content);
+  }
+
+  @Delete(":id/comments/:cid")
+  @Roles(UserRole.OPERATOR)
+  deleteComment(@Param("id") id: string, @Param("cid") cid: string) {
+    return this.customersService.deleteComment(id, cid);
+  }
+
+  // ─── Income Chart ─────────────────────────────────────────────────────────
+
+  @Get(":id/income-chart")
+  @Roles(UserRole.OPERATOR)
+  getIncomeChart(@Param("id") id: string) {
+    return this.customersService.getIncomeChart(id);
+  }
+
+  // ─── Delete ───────────────────────────────────────────────────────────────
 
   @Delete(":id")
   @Roles(UserRole.OPERATOR)

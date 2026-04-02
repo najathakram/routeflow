@@ -310,3 +310,47 @@ export function useCashFlow(from?: string, to?: string) {
     queryFn: () => apiClient.get('/bookkeeping/reports/cashflow', { params: { from, to } }).then((r) => r.data),
   });
 }
+
+// ─── New Reports (Zoho Parity) ──────────────────────────────────────────────
+
+export function useSalesByDriver(from?: string, to?: string) {
+  return useQuery({
+    queryKey: ['reports', 'sales-by-driver', from, to],
+    queryFn: () => apiClient.get('/bookkeeping/reports/sales-by-driver', { params: { from, to } }).then((r) => r.data),
+  });
+}
+
+export function useArAgingDetails(from?: string, to?: string, customerId?: string) {
+  return useQuery({
+    queryKey: ['reports', 'ar-aging-details', from, to, customerId],
+    queryFn: () => apiClient.get('/bookkeeping/reports/ar-aging-details', { params: { from, to, customerId } }).then((r) => r.data),
+  });
+}
+
+export function useEstimateDetails(from?: string, to?: string, status?: string) {
+  return useQuery({
+    queryKey: ['reports', 'estimate-details', from, to, status],
+    queryFn: () => apiClient.get('/bookkeeping/reports/estimate-details', { params: { from, to, status } }).then((r) => r.data),
+  });
+}
+
+export function useRefundHistory(from?: string, to?: string) {
+  return useQuery({
+    queryKey: ['reports', 'refund-history', from, to],
+    queryFn: () => apiClient.get('/bookkeeping/reports/refund-history', { params: { from, to } }).then((r) => r.data),
+  });
+}
+
+export function useReceivableSummary(from?: string, to?: string) {
+  return useQuery({
+    queryKey: ['reports', 'receivable-summary', from, to],
+    queryFn: () => apiClient.get('/bookkeeping/reports/receivable-summary', { params: { from, to } }).then((r) => r.data),
+  });
+}
+
+export function useExpensesByCustomer(from?: string, to?: string) {
+  return useQuery({
+    queryKey: ['reports', 'expenses-by-customer', from, to],
+    queryFn: () => apiClient.get('/bookkeeping/reports/expenses-by-customer', { params: { from, to } }).then((r) => r.data),
+  });
+}

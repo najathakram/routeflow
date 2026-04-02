@@ -591,9 +591,10 @@ export class BookkeepingService {
     };
   }
 
-  async getArAgingInvoices() {
+  async getArAgingInvoices(intervalDays = 30) {
     const { InvoiceStatus } = await import("@prisma/client");
     const now = new Date();
+    const interval = Math.max(1, intervalDays);
     const invoices = await this.prisma.invoice.findMany({
       where: {
         status: {
@@ -608,13 +609,17 @@ export class BookkeepingService {
       include: { customer: { select: { id: true, businessName: true } }, payments: true },
     });
 
-    const buckets: Record<string, any[]> = {
-      current: [],
-      days1_30: [],
-      days31_60: [],
-      days61_90: [],
-      days90plus: [],
-    };
+    // Dynamic bucket labels based on interval
+    const bucketKeys = [
+      "current",
+      `days1_${interval}`,
+      `days${interval + 1}_${interval * 2}`,
+      `days${interval * 2 + 1}_${interval * 3}`,
+      `days${interval * 3}plus`,
+    ];
+    const buckets: Record<string, any[]> = {};
+    for (const key of bucketKeys) buckets[key] = [];
+
     for (const inv of invoices) {
       const paid = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
       const balance = Number(inv.total) - paid;
@@ -629,33 +634,25 @@ export class BookkeepingService {
         status: inv.status,
       };
       if (!inv.dueDate || inv.dueDate >= now) {
-        buckets.current.push(entry);
+        buckets[bucketKeys[0]].push(entry);
         continue;
       }
       const daysPast = Math.floor((now.getTime() - inv.dueDate.getTime()) / 86400000);
-      if (daysPast <= 30) buckets.days1_30.push(entry);
-      else if (daysPast <= 60) buckets.days31_60.push(entry);
-      else if (daysPast <= 90) buckets.days61_90.push(entry);
-      else buckets.days90plus.push(entry);
+      if (daysPast <= interval) buckets[bucketKeys[1]].push(entry);
+      else if (daysPast <= interval * 2) buckets[bucketKeys[2]].push(entry);
+      else if (daysPast <= interval * 3) buckets[bucketKeys[3]].push(entry);
+      else buckets[bucketKeys[4]].push(entry);
     }
     const sum = (arr: any[]) => arr.reduce((s, e) => s + e.balance, 0);
-    return {
-      buckets,
-      totals: {
-        current: sum(buckets.current),
-        days1_30: sum(buckets.days1_30),
-        days31_60: sum(buckets.days31_60),
-        days61_90: sum(buckets.days61_90),
-        days90plus: sum(buckets.days90plus),
-        total: sum([
-          ...buckets.current,
-          ...buckets.days1_30,
-          ...buckets.days31_60,
-          ...buckets.days61_90,
-          ...buckets.days90plus,
-        ]),
-      },
-    };
+    const totals: Record<string, number> = {};
+    let grandTotal = 0;
+    for (const key of bucketKeys) {
+      totals[key] = sum(buckets[key]);
+      grandTotal += totals[key];
+    }
+    totals.total = grandTotal;
+
+    return { buckets, totals, intervalDays: interval };
   }
 
   async getSalesByCustomer(from?: string, to?: string) {
@@ -727,22 +724,18 @@ export class BookkeepingService {
 
   async getCustomerBalanceSummary() {
     const { InvoiceStatus } = await import("@prisma/client");
-    const invoices = await this.prisma.invoice.findMany({
+
+    // Get all non-draft/non-void invoices for full invoiced + received calculation
+    const allInvoices = await this.prisma.invoice.findMany({
       where: {
-        status: {
-          in: [
-            InvoiceStatus.SENT,
-            InvoiceStatus.VIEWED,
-            InvoiceStatus.PARTIAL,
-            InvoiceStatus.OVERDUE,
-          ],
-        },
+        status: { notIn: [InvoiceStatus.DRAFT, InvoiceStatus.VOID] },
       },
       include: {
         customer: { select: { id: true, businessName: true, contactName: true, phone: true } },
         payments: true,
       },
     });
+
     const byCustomer: Record<
       string,
       {
@@ -753,10 +746,21 @@ export class BookkeepingService {
         invoiceCount: number;
         balance: number;
         overdue: number;
+        invoicedAmount: number;
+        receivedAmount: number;
+        closingBalance: number;
+        indicator: string;
       }
     > = {};
     const now = new Date();
-    for (const inv of invoices) {
+    const unpaidStatuses: Set<string> = new Set([
+      InvoiceStatus.SENT,
+      InvoiceStatus.VIEWED,
+      InvoiceStatus.PARTIAL,
+      InvoiceStatus.OVERDUE,
+    ]);
+
+    for (const inv of allInvoices) {
       const key = inv.customerId;
       if (!byCustomer[key])
         byCustomer[key] = {
@@ -767,13 +771,32 @@ export class BookkeepingService {
           invoiceCount: 0,
           balance: 0,
           overdue: 0,
+          invoicedAmount: 0,
+          receivedAmount: 0,
+          closingBalance: 0,
+          indicator: "\u2014",
         };
+
       const paid = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
-      const bal = Number(inv.total) - paid;
-      byCustomer[key].invoiceCount++;
-      byCustomer[key].balance += bal;
-      if (inv.dueDate && inv.dueDate < now) byCustomer[key].overdue += bal;
+      byCustomer[key].invoicedAmount += Number(inv.total);
+      byCustomer[key].receivedAmount += paid;
+
+      if (unpaidStatuses.has(inv.status)) {
+        const bal = Number(inv.total) - paid;
+        byCustomer[key].invoiceCount++;
+        byCustomer[key].balance += bal;
+        if (inv.dueDate && inv.dueDate < now) byCustomer[key].overdue += bal;
+      }
     }
+
+    // Compute closing balance and indicator for each customer
+    for (const cust of Object.values(byCustomer)) {
+      cust.closingBalance = cust.invoicedAmount - cust.receivedAmount;
+      if (cust.closingBalance > 0) cust.indicator = "Dr";
+      else if (cust.closingBalance < 0) cust.indicator = "Cr";
+      else cust.indicator = "\u2014";
+    }
+
     return { data: Object.values(byCustomer).sort((a, b) => b.balance - a.balance) };
   }
 
@@ -918,7 +941,25 @@ export class BookkeepingService {
       withDaysFiltered.length > 0
         ? withDaysFiltered.reduce((s, i) => s + (i.daysToPayment ?? 0), 0) / withDaysFiltered.length
         : 0;
-    return { data: withDays, averageDays: Math.round(avg), period: { from: fromDate, to: toDate } };
+
+    // Distribution across day buckets
+    const total = withDaysFiltered.length;
+    const bucketCounts = { "0-15d": 0, "16-30d": 0, "31-45d": 0, ">45d": 0 };
+    for (const inv of withDaysFiltered) {
+      const d = inv.daysToPayment!;
+      if (d <= 15) bucketCounts["0-15d"]++;
+      else if (d <= 30) bucketCounts["16-30d"]++;
+      else if (d <= 45) bucketCounts["31-45d"]++;
+      else bucketCounts[">45d"]++;
+    }
+    const distribution = {
+      "0-15d": total > 0 ? Math.round((bucketCounts["0-15d"] / total) * 10000) / 100 : 0,
+      "16-30d": total > 0 ? Math.round((bucketCounts["16-30d"] / total) * 10000) / 100 : 0,
+      "31-45d": total > 0 ? Math.round((bucketCounts["31-45d"] / total) * 10000) / 100 : 0,
+      ">45d": total > 0 ? Math.round((bucketCounts[">45d"] / total) * 10000) / 100 : 0,
+    };
+
+    return { data: withDays, averageDays: Math.round(avg), distribution, period: { from: fromDate, to: toDate } };
   }
 
   async getExpenseDetailsReport(from?: string, to?: string, categoryId?: string) {
@@ -985,12 +1026,355 @@ export class BookkeepingService {
   }
 
   async getExpensesByCustomerReport(from?: string, to?: string) {
-    return {
-      data: [],
-      period: {
-        from: from ? new Date(from) : new Date(new Date().getFullYear(), 0, 1),
-        to: to ? new Date(to) : new Date(),
+    const fromDate = from ? new Date(from) : new Date(new Date().getFullYear(), 0, 1);
+    const toDate = to
+      ? (() => {
+          const d = new Date(to);
+          d.setUTCHours(23, 59, 59, 999);
+          return d;
+        })()
+      : new Date();
+    const expenses = await this.prisma.expense.findMany({
+      where: {
+        deletedAt: null,
+        date: { gte: fromDate, lte: toDate },
+        customerId: { not: null },
       },
+      include: { customer: { select: { id: true, businessName: true } } },
+    });
+    const byCust: Record<
+      string,
+      { customerId: string; customerName: string; count: number; totalAmount: number }
+    > = {};
+    for (const e of expenses) {
+      const key = e.customerId!;
+      if (!byCust[key])
+        byCust[key] = {
+          customerId: key,
+          customerName: e.customer?.businessName ?? "Unknown",
+          count: 0,
+          totalAmount: 0,
+        };
+      byCust[key].count++;
+      byCust[key].totalAmount += Number(e.amount);
+    }
+    return {
+      data: Object.values(byCust).sort((a, b) => b.totalAmount - a.totalAmount),
+      period: { from: fromDate, to: toDate },
+    };
+  }
+
+  // ── Sales by Driver Report ──
+  async getSalesByDriver(from?: string, to?: string) {
+    const { InvoiceStatus } = await import("@prisma/client");
+    const fromDate = from ? new Date(from) : new Date(new Date().getFullYear(), 0, 1);
+    const toDate = to
+      ? (() => {
+          const d = new Date(to);
+          d.setUTCHours(23, 59, 59, 999);
+          return d;
+        })()
+      : new Date();
+
+    const invoices = await this.prisma.invoice.findMany({
+      where: {
+        status: { notIn: [InvoiceStatus.VOID, InvoiceStatus.DRAFT] },
+        issueDate: { gte: fromDate, lte: toDate },
+      },
+      include: {
+        order: {
+          select: {
+            routeRun: {
+              select: {
+                driverId: true,
+                driver: {
+                  select: { id: true, contactName: true, user: { select: { username: true } } },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const byDriver: Record<
+      string,
+      { driverId: string; driverName: string; invoiceCount: number; salesTotal: number; salesWithTax: number }
+    > = {};
+    for (const inv of invoices) {
+      const driver = inv.order?.routeRun?.driver;
+      if (!driver) continue;
+      const key = driver.id;
+      if (!byDriver[key])
+        byDriver[key] = {
+          driverId: driver.id,
+          driverName: driver.contactName ?? driver.user.username,
+          invoiceCount: 0,
+          salesTotal: 0,
+          salesWithTax: 0,
+        };
+      byDriver[key].invoiceCount++;
+      byDriver[key].salesTotal += Number(inv.subtotal);
+      byDriver[key].salesWithTax += Number(inv.total);
+    }
+
+    return {
+      data: Object.values(byDriver).sort((a, b) => b.salesWithTax - a.salesWithTax),
+      period: { from: fromDate, to: toDate },
+    };
+  }
+
+  // ── AR Aging Details Report ──
+  async getArAgingDetails(from?: string, to?: string, customerId?: string) {
+    const { InvoiceStatus } = await import("@prisma/client");
+    const now = new Date();
+    const where: any = {
+      status: { in: [InvoiceStatus.SENT, InvoiceStatus.PARTIAL, InvoiceStatus.OVERDUE] },
+    };
+    if (from || to) {
+      where.issueDate = {};
+      if (from) where.issueDate.gte = new Date(from);
+      if (to) {
+        const d = new Date(to);
+        d.setUTCHours(23, 59, 59, 999);
+        where.issueDate.lte = d;
+      }
+    }
+    if (customerId) where.customerId = customerId;
+
+    const invoices = await this.prisma.invoice.findMany({
+      where,
+      include: {
+        customer: { select: { id: true, businessName: true } },
+        payments: true,
+      },
+      orderBy: { issueDate: "desc" },
+    });
+
+    const data = invoices.map((inv) => {
+      const paid = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
+      const balance = Number(inv.total) - paid;
+      const refDate = inv.dueDate ?? inv.issueDate;
+      const ageDays = Math.max(0, Math.floor((now.getTime() - refDate.getTime()) / 86400000));
+      return {
+        id: inv.id,
+        date: inv.issueDate,
+        dueDate: inv.dueDate,
+        invoiceNumber: inv.invoiceNumber,
+        status: inv.status,
+        customerName: inv.customer.businessName,
+        customerId: inv.customerId,
+        ageDays,
+        amount: Number(inv.total),
+        balance,
+      };
+    }).filter((row) => row.balance > 0);
+
+    return { data };
+  }
+
+  // ── Estimate Details Report ──
+  async getEstimateDetails(from?: string, to?: string, status?: string) {
+    const fromDate = from ? new Date(from) : new Date(new Date().getFullYear(), 0, 1);
+    const toDate = to
+      ? (() => {
+          const d = new Date(to);
+          d.setUTCHours(23, 59, 59, 999);
+          return d;
+        })()
+      : new Date();
+    const where: any = { createdAt: { gte: fromDate, lte: toDate } };
+    if (status) where.status = status;
+
+    const estimates = await this.prisma.estimate.findMany({
+      where,
+      include: { customer: { select: { id: true, businessName: true } } },
+      orderBy: { createdAt: "desc" },
+    });
+
+    return {
+      data: estimates.map((est) => ({
+        id: est.id,
+        status: est.status,
+        date: est.createdAt,
+        expiresAt: est.expiresAt,
+        estimateNumber: est.estimateNumber,
+        customerName: est.customer.businessName,
+        customerId: est.customerId,
+        total: Number(est.total),
+      })),
+      period: { from: fromDate, to: toDate },
+    };
+  }
+
+  // ── Refund History Report ──
+  async getRefundHistory(from?: string, to?: string) {
+    const { PaymentStatus, CreditNoteStatus } = await import("@prisma/client");
+    const fromDate = from ? new Date(from) : new Date(new Date().getFullYear(), 0, 1);
+    const toDate = to
+      ? (() => {
+          const d = new Date(to);
+          d.setUTCHours(23, 59, 59, 999);
+          return d;
+        })()
+      : new Date();
+
+    const [voidPayments, appliedCreditNotes] = await Promise.all([
+      this.prisma.invoicePayment.findMany({
+        where: { status: PaymentStatus.VOID, createdAt: { gte: fromDate, lte: toDate } },
+        include: {
+          invoice: {
+            select: {
+              invoiceNumber: true,
+              customer: { select: { id: true, businessName: true } },
+            },
+          },
+        },
+        orderBy: { createdAt: "desc" },
+      }),
+      this.prisma.creditNote.findMany({
+        where: { status: CreditNoteStatus.APPLIED, createdAt: { gte: fromDate, lte: toDate } },
+        include: {
+          customer: { select: { id: true, businessName: true } },
+        },
+        orderBy: { createdAt: "desc" },
+      }),
+    ]);
+
+    const rows: Array<{
+      date: Date;
+      reference: string;
+      customerName: string;
+      customerId: string;
+      method: string;
+      amount: number;
+      type: string;
+    }> = [];
+
+    for (const p of voidPayments) {
+      rows.push({
+        date: p.createdAt,
+        reference: p.paymentNumber ?? p.reference ?? p.id,
+        customerName: p.invoice.customer.businessName,
+        customerId: p.invoice.customer.id,
+        method: p.method,
+        amount: Number(p.amount),
+        type: "VOID_PAYMENT",
+      });
+    }
+
+    for (const cn of appliedCreditNotes) {
+      rows.push({
+        date: cn.createdAt,
+        reference: cn.creditNoteNumber,
+        customerName: cn.customer.businessName,
+        customerId: cn.customer.id,
+        method: "CREDIT_NOTE",
+        amount: Number(cn.amount),
+        type: "CREDIT_NOTE",
+      });
+    }
+
+    rows.sort((a, b) => b.date.getTime() - a.date.getTime());
+
+    return {
+      data: rows,
+      period: { from: fromDate, to: toDate },
+    };
+  }
+
+  // ── Receivable Summary Report ──
+  async getReceivableSummary(from?: string, to?: string) {
+    const { InvoiceStatus } = await import("@prisma/client");
+    const fromDate = from ? new Date(from) : new Date(new Date().getFullYear(), 0, 1);
+    const toDate = to
+      ? (() => {
+          const d = new Date(to);
+          d.setUTCHours(23, 59, 59, 999);
+          return d;
+        })()
+      : new Date();
+
+    const [invoices, creditNotes, payments] = await Promise.all([
+      this.prisma.invoice.findMany({
+        where: {
+          status: { notIn: [InvoiceStatus.DRAFT, InvoiceStatus.VOID] },
+          issueDate: { gte: fromDate, lte: toDate },
+        },
+        include: {
+          customer: { select: { id: true, businessName: true } },
+          payments: true,
+        },
+      }),
+      this.prisma.creditNote.findMany({
+        where: { createdAt: { gte: fromDate, lte: toDate } },
+        include: { customer: { select: { id: true, businessName: true } } },
+      }),
+      this.prisma.invoicePayment.findMany({
+        where: { createdAt: { gte: fromDate, lte: toDate } },
+        include: {
+          invoice: {
+            select: {
+              invoiceNumber: true,
+              customer: { select: { id: true, businessName: true } },
+            },
+          },
+        },
+      }),
+    ]);
+
+    const rows: Array<{
+      customerName: string;
+      date: Date;
+      transactionNumber: string;
+      type: string;
+      status: string;
+      total: number;
+      balance: number;
+    }> = [];
+
+    for (const inv of invoices) {
+      const paid = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
+      rows.push({
+        customerName: inv.customer.businessName,
+        date: inv.issueDate,
+        transactionNumber: inv.invoiceNumber,
+        type: "INVOICE",
+        status: inv.status,
+        total: Number(inv.total),
+        balance: Number(inv.total) - paid,
+      });
+    }
+
+    for (const cn of creditNotes) {
+      rows.push({
+        customerName: cn.customer.businessName,
+        date: cn.createdAt,
+        transactionNumber: cn.creditNoteNumber,
+        type: "CREDIT_NOTE",
+        status: cn.status,
+        total: Number(cn.amount),
+        balance: Number(cn.amount) - Number(cn.amountUsed),
+      });
+    }
+
+    for (const p of payments) {
+      rows.push({
+        customerName: p.invoice.customer.businessName,
+        date: p.createdAt,
+        transactionNumber: p.paymentNumber ?? p.id,
+        type: "PAYMENT",
+        status: p.status,
+        total: Number(p.amount),
+        balance: 0,
+      });
+    }
+
+    rows.sort((a, b) => a.date.getTime() - b.date.getTime());
+
+    return {
+      data: rows,
+      period: { from: fromDate, to: toDate },
     };
   }
 }

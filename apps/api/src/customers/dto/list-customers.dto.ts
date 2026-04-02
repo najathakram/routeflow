@@ -7,4 +7,8 @@ export class ListCustomersDto {
   @IsOptional() @IsEnum(UserStatus) status?: UserStatus;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) page?: number;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) limit?: number;
+  @IsOptional() @IsString() tag?: string;
+  @IsOptional() @IsString() customerType?: string;
+  @IsOptional() @IsString() sortBy?: string;
+  @IsOptional() @IsString() sortDir?: string;
 }

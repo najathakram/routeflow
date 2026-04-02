@@ -3,14 +3,15 @@
 import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Pencil, ToggleLeft, ToggleRight, Eye, CheckSquare, X, Trash2 } from "lucide-react";
+import { Pencil, ToggleLeft, ToggleRight, Eye, CheckSquare, X, Trash2, Download, ArrowUpDown, Merge } from "lucide-react";
 import { PageHeader, Table, Badge, Button, Select, cn, type BadgeStatus } from "@routeflow/ui/web";
 import { useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { CustomerFormModal } from "./_components/CustomerFormModal";
-import { useCustomers, useUpdateCustomerStatus, useDeleteCustomer } from "@/lib/api/customers";
+import { useCustomers, useUpdateCustomerStatus, useDeleteCustomer, useCustomerTags, useExportCustomers, useMergeCustomers } from "@/lib/api/customers";
 import { useCustomerRouteAssignments } from "@/lib/api/routes";
 import { useDebounce } from "@/lib/hooks/useDebounce";
+import { fmt } from "@/lib/formatting";
 
 // ─── Local type ───────────────────────────────────────────────────────────────
 
@@ -19,6 +20,11 @@ interface Customer {
   businessName: string;
   contactName: string;
   phone?: string;
+  email?: string;
+  customerType?: string;
+  receivables?: number;
+  unusedCredits?: number;
+  tagAssignments?: Array<{ tag: { id: string; name: string; color: string } }>;
   user: { id: string; email: string; username: string; status: string };
   addresses: any[];
 }
@@ -37,6 +43,8 @@ export default function CustomersPage() {
   const [statusFilter, setStatusFilter] = React.useState<string>(
     searchParams.get("status") ?? "",
   );
+  const [typeFilter, setTypeFilter] = React.useState("");
+  const [tagFilter, setTagFilter] = React.useState("");
   const [unassignedOnly, setUnassignedOnly] = React.useState(false);
   const [isAddOpen, setIsAddOpen] = React.useState(false);
   const [editingCustomer, setEditingCustomer] = React.useState<any>(null);
@@ -45,6 +53,8 @@ export default function CustomersPage() {
   const [isDeleting, setIsDeleting] = React.useState(false);
   const [page, setPage] = React.useState(1);
   const [limit, setLimit] = React.useState(20);
+  const [sortBy, setSortBy] = React.useState("");
+  const [sortDir, setSortDir] = React.useState<"asc" | "desc">("asc");
   const { toast } = useToast();
 
   // Sync status filter to URL
@@ -60,7 +70,7 @@ export default function CustomersPage() {
   const debouncedSearch = useDebounce(search, 300);
 
   // Reset page when filters change
-  React.useEffect(() => { setPage(1); }, [debouncedSearch, statusFilter]);
+  React.useEffect(() => { setPage(1); }, [debouncedSearch, statusFilter, typeFilter, tagFilter]);
 
   // ── API data ─────────────────────────────────────────────────────────────
   const { data: result, isLoading, isError } = useCustomers({
@@ -68,11 +78,18 @@ export default function CustomersPage() {
     status: statusFilter || undefined,
     page,
     limit,
+    tag: tagFilter || undefined,
+    customerType: typeFilter || undefined,
+    sortBy: sortBy || undefined,
+    sortDir: sortBy ? sortDir : undefined,
   });
   const customers: Customer[] = result?.data ?? [];
   const meta = result?.meta;
 
   const { data: assignments } = useCustomerRouteAssignments();
+  const { data: tags } = useCustomerTags();
+  const exportCustomers = useExportCustomers();
+  const mergeCustomers = useMergeCustomers();
 
   const updateStatus = useUpdateCustomerStatus();
   const deleteCustomer = useDeleteCustomer();
@@ -101,6 +118,35 @@ export default function CustomersPage() {
       setIsDeleting(false);
     }
   };
+
+  const handleMerge = async () => {
+    if (selected.size !== 2) return;
+    const [primaryId, secondaryId] = Array.from(selected);
+    try {
+      await mergeCustomers.mutateAsync({ primaryId, secondaryId });
+      toast({ title: "Customers merged successfully", variant: "success" });
+      exitSelectMode();
+    } catch {
+      toast({ title: "Failed to merge customers", variant: "error" });
+    }
+  };
+
+  // ── Sorting ──────────────────────────────────────────────────────────────
+  const handleSort = (col: string) => {
+    if (sortBy === col) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortBy(col);
+      setSortDir("asc");
+    }
+  };
+
+  const SortHeader = ({ col, children }: { col: string; children: React.ReactNode }) => (
+    <button onClick={() => handleSort(col)} className="flex items-center gap-1 group">
+      {children}
+      <ArrowUpDown className={cn("h-3 w-3 transition-colors", sortBy === col ? "text-white" : "text-white/40 group-hover:text-white/70")} />
+    </button>
+  );
 
   // ── Status toggle ────────────────────────────────────────────────────────
   const toggleStatus = React.useCallback((id: string, currentStatus: string) => {
@@ -146,16 +192,24 @@ export default function CustomersPage() {
       } as ColumnDef<Customer, unknown>] : []),
       {
         accessorKey: "contactName",
-        header: "Name",
+        header: () => <SortHeader col="contactName">Name</SortHeader>,
         cell: ({ row }) => (
           <span className="font-medium text-navy">{row.original.contactName}</span>
         ),
       },
       {
         accessorKey: "businessName",
-        header: "Business Name",
+        header: () => <SortHeader col="businessName">Business Name</SortHeader>,
         cell: ({ row }) => (
           <span className="text-navy/80">{row.original.businessName}</span>
+        ),
+      },
+      {
+        accessorKey: "email",
+        header: "Email",
+        enableSorting: false,
+        cell: ({ row }) => (
+          <span className="text-navy/70 text-xs">{row.original.email ?? row.original.user?.email ?? "—"}</span>
         ),
       },
       {
@@ -167,30 +221,49 @@ export default function CustomersPage() {
         ),
       },
       {
-        id: "routes",
-        header: "Routes",
+        id: "receivables",
+        header: () => <SortHeader col="receivables">Receivables</SortHeader>,
+        cell: ({ row }) => {
+          const val = row.original.receivables ?? 0;
+          return (
+            <span className={cn("text-right font-medium", val > 0 ? "text-danger" : "text-navy/40")}>
+              {val > 0 ? fmt(val) : "—"}
+            </span>
+          );
+        },
+      },
+      {
+        id: "credits",
+        header: "Credits",
         enableSorting: false,
         cell: ({ row }) => {
-          const customerRoutes = assignments?.[row.original.id] ?? [];
-          if (!customerRoutes.length) {
-            return <span className="text-xs text-navy/30 italic">Unassigned</span>;
-          }
-          const visible = customerRoutes.slice(0, 2);
-          const overflow = customerRoutes.length - visible.length;
+          const val = row.original.unusedCredits ?? 0;
           return (
-            <div className="flex flex-wrap items-center gap-1">
-              {visible.map((r) => (
+            <span className={cn("text-right font-medium", val > 0 ? "text-success" : "text-navy/40")}>
+              {val > 0 ? fmt(val) : "—"}
+            </span>
+          );
+        },
+      },
+      {
+        id: "tags",
+        header: "Tags",
+        enableSorting: false,
+        cell: ({ row }) => {
+          const tagList = row.original.tagAssignments ?? [];
+          if (!tagList.length) return <span className="text-navy/30 text-xs">—</span>;
+          return (
+            <div className="flex flex-wrap gap-1">
+              {tagList.slice(0, 2).map((ta) => (
                 <span
-                  key={r.routeId}
-                  title={r.routeName}
-                  className="inline-flex max-w-[120px] items-center truncate rounded-full bg-brand-50 px-2 py-0.5 text-xs font-medium text-brand-600"
+                  key={ta.tag.id}
+                  className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium text-white"
+                  style={{ backgroundColor: ta.tag.color }}
                 >
-                  {r.routeName}
+                  {ta.tag.name}
                 </span>
               ))}
-              {overflow > 0 && (
-                <span className="text-xs text-navy/50">+{overflow} more</span>
-              )}
+              {tagList.length > 2 && <span className="text-xs text-navy/40">+{tagList.length - 2}</span>}
             </div>
           );
         },
@@ -250,7 +323,7 @@ export default function CustomersPage() {
       },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [router, toggleStatus, assignments, selectMode, selected, allChecked, someChecked],
+    [router, toggleStatus, assignments, selectMode, selected, allChecked, someChecked, sortBy, sortDir],
   );
 
   return (
@@ -259,6 +332,14 @@ export default function CustomersPage() {
         title="Customers"
         action={
           <div className="flex items-center gap-2">
+            <Button
+              variant="secondary"
+              leftIcon={<Download className="h-4 w-4" />}
+              onClick={() => exportCustomers.mutate({})}
+              loading={exportCustomers.isPending}
+            >
+              Export
+            </Button>
             <Button
               variant="secondary"
               leftIcon={selectMode ? <X className="h-4 w-4" /> : <CheckSquare className="h-4 w-4" />}
@@ -281,6 +362,11 @@ export default function CustomersPage() {
             <button onClick={() => setSelected(new Set())} className="text-sm text-navy/50 hover:text-navy transition-colors">
               Deselect all
             </button>
+            {selected.size === 2 && (
+              <Button variant="secondary" leftIcon={<Merge className="h-4 w-4" />} onClick={handleMerge} loading={mergeCustomers.isPending}>
+                Merge
+              </Button>
+            )}
             <Button variant="danger" leftIcon={<Trash2 className="h-4 w-4" />} loading={isDeleting} onClick={handleBulkDelete}>
               Delete {selected.size}
             </Button>
@@ -297,7 +383,7 @@ export default function CustomersPage() {
           onChange={(e) => setSearch(e.target.value)}
           className="h-10 w-72 rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/40 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
         />
-        <div className="w-44">
+        <div className="w-36">
           <Select
             options={[
               { value: "", label: "All Statuses" },
@@ -309,6 +395,29 @@ export default function CustomersPage() {
             onChange={(e) => setStatusFilter(e.target.value)}
           />
         </div>
+        <div className="w-36">
+          <Select
+            options={[
+              { value: "", label: "All Types" },
+              { value: "BUSINESS", label: "Business" },
+              { value: "INDIVIDUAL", label: "Individual" },
+            ]}
+            value={typeFilter}
+            onChange={(e) => setTypeFilter(e.target.value)}
+          />
+        </div>
+        {tags && tags.length > 0 && (
+          <div className="w-36">
+            <Select
+              options={[
+                { value: "", label: "All Tags" },
+                ...tags.map((t) => ({ value: t.id, label: t.name })),
+              ]}
+              value={tagFilter}
+              onChange={(e) => setTagFilter(e.target.value)}
+            />
+          </div>
+        )}
 
         {/* Unassigned only toggle chip */}
         <button
@@ -368,7 +477,7 @@ export default function CustomersPage() {
                     No customers match your search.{" "}
                     <button
                       className="text-brand-500 hover:underline"
-                      onClick={() => { setSearch(""); setStatusFilter(""); }}
+                      onClick={() => { setSearch(""); setStatusFilter(""); setTypeFilter(""); setTagFilter(""); }}
                     >
                       Clear filters
                     </button>
