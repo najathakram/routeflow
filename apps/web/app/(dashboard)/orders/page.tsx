@@ -267,13 +267,13 @@ export default function OrdersPage() {
             <tr>
               {selectMode && <th className="w-10 px-3 py-3" />}
               <th className="w-4 px-3 py-3" />
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60 cursor-pointer select-none hover:text-navy transition-colors" onClick={() => toggleSort("orderNumber")}>Order # <SortIcon col="orderNumber" /></th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60 cursor-pointer select-none hover:text-navy transition-colors" onClick={() => toggleSort("customer")}>Customer <SortIcon col="customer" /></th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60">Items</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60 cursor-pointer select-none hover:text-navy transition-colors" onClick={() => toggleSort("total")}>Total <SortIcon col="total" /></th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60 cursor-pointer select-none hover:text-navy transition-colors" onClick={() => toggleSort("status")}>Status <SortIcon col="status" /></th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60 cursor-pointer select-none hover:text-navy transition-colors" onClick={() => toggleSort("deliveryDate")}>Delivery Date <SortIcon col="deliveryDate" /></th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60 cursor-pointer select-none hover:text-navy transition-colors" onClick={() => toggleSort("createdAt")}>Created <SortIcon col="createdAt" /></th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy transition-colors" onClick={() => toggleSort("orderNumber")}>Order # <SortIcon col="orderNumber" /></th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy transition-colors" onClick={() => toggleSort("customer")}>Customer <SortIcon col="customer" /></th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Items</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy transition-colors" onClick={() => toggleSort("total")}>Total <SortIcon col="total" /></th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy transition-colors" onClick={() => toggleSort("status")}>Status <SortIcon col="status" /></th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy transition-colors" onClick={() => toggleSort("deliveryDate")}>Delivery Date <SortIcon col="deliveryDate" /></th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy transition-colors" onClick={() => toggleSort("createdAt")}>Created <SortIcon col="createdAt" /></th>
               <th className="w-10 px-3 py-3" />
             </tr>
           </thead>
@@ -337,7 +337,7 @@ export default function OrdersPage() {
                   <td className="px-4 py-3 font-medium text-navy">
                     {order.customer?.businessName ?? "—"}
                   </td>
-                  <td className="px-4 py-3 text-navy/70">{order.lineItems.length}</td>
+                  <td className="px-4 py-3 text-navy">{order.lineItems.length}</td>
                   <td className="px-4 py-3 font-medium text-navy">
                     ${Number(order.total).toLocaleString("en-US", { minimumFractionDigits: 2 })}
                   </td>
@@ -353,7 +353,7 @@ export default function OrdersPage() {
                       <span className="text-navy/30">—</span>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-sm text-navy/60">
+                  <td className="px-4 py-3 text-sm text-navy">
                     {new Date(order.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
                   </td>
                   <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>

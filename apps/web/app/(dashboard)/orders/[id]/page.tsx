@@ -155,9 +155,9 @@ function SubstitutePicker({
           >
             <div>
               <span className="font-medium text-navy">{p.name}</span>
-              {p.sku && <span className="ml-2 text-xs text-navy/40">{p.sku}</span>}
+              {p.sku && <span className="ml-2 text-xs text-navy/70">{p.sku}</span>}
             </div>
-            <span className="text-xs text-navy/60">${Number(p.pricePerUnit).toFixed(2)}</span>
+            <span className="text-xs text-navy">${Number(p.pricePerUnit).toFixed(2)}</span>
           </button>
         ))}
       </div>
@@ -794,11 +794,11 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                 <table className="w-full text-sm">
                   <thead className="border-b border-surface-border bg-surface-raised">
                     <tr>
-                      <th className="px-6 py-2.5 text-left text-xs font-medium text-navy/60">Product</th>
-                      <th className="px-4 py-2.5 text-right text-xs font-medium text-navy/60">Qty</th>
-                      <th className="px-4 py-2.5 text-right text-xs font-medium text-navy/60">Unit Price</th>
-                      <th className="px-4 py-2.5 text-right text-xs font-medium text-navy/60">Total</th>
-                      <th className="px-6 py-2.5 text-left text-xs font-medium text-navy/60">Status</th>
+                      <th className="px-6 py-2.5 text-left text-xs font-medium text-navy/70">Product</th>
+                      <th className="px-4 py-2.5 text-right text-xs font-medium text-navy/70">Qty</th>
+                      <th className="px-4 py-2.5 text-right text-xs font-medium text-navy/70">Unit Price</th>
+                      <th className="px-4 py-2.5 text-right text-xs font-medium text-navy/70">Total</th>
+                      <th className="px-6 py-2.5 text-left text-xs font-medium text-navy/70">Status</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-surface-border">

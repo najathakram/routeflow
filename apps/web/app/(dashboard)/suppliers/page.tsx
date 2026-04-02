@@ -180,19 +180,19 @@ function SupplierCard({
       {/* Contact details */}
       <div className="space-y-1">
         {supplier.phone && (
-          <div className="flex items-center gap-1.5 text-xs text-navy/60">
+          <div className="flex items-center gap-1.5 text-xs text-navy">
             <Phone className="h-3.5 w-3.5 shrink-0 text-navy/30" />
             {supplier.phone}
           </div>
         )}
         {supplier.email && (
-          <div className="flex items-center gap-1.5 text-xs text-navy/60">
+          <div className="flex items-center gap-1.5 text-xs text-navy">
             <Mail className="h-3.5 w-3.5 shrink-0 text-navy/30" />
             {supplier.email}
           </div>
         )}
         {supplier.leadTimeDays != null && (
-          <div className="flex items-center gap-1.5 text-xs text-navy/60">
+          <div className="flex items-center gap-1.5 text-xs text-navy">
             <Clock className="h-3.5 w-3.5 shrink-0 text-navy/30" />
             {supplier.leadTimeDays} day lead time
           </div>

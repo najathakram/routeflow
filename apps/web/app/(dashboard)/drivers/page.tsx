@@ -159,7 +159,7 @@ export default function DriversPage() {
         cell: ({ row }) => (
           <div>
             <p className="font-medium text-navy">{row.original.contactName ?? row.original.user?.username ?? "—"}</p>
-            <p className="text-xs text-navy/50">{row.original.user?.username}</p>
+            <p className="text-xs text-navy/80">{row.original.user?.username}</p>
           </div>
         ),
       },

@@ -616,12 +616,12 @@ export default function EstimatesPage() {
         <table className="w-full text-sm">
           <thead className="border-b border-surface-border bg-surface-raised">
             <tr>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60">Estimate #</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60">Customer</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60">Issue Date</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60">Expiry Date</th>
-              <th className="px-4 py-3 text-right text-xs font-medium text-navy/60">Total</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60">Status</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Estimate #</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Customer</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Issue Date</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Expiry Date</th>
+              <th className="px-4 py-3 text-right text-xs font-medium text-navy/70">Total</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Status</th>
               <th className="w-10 px-3 py-3" />
             </tr>
           </thead>
@@ -672,10 +672,10 @@ export default function EstimatesPage() {
                   <td className="px-4 py-3 font-medium text-navy">
                     {est.customer?.businessName ?? "—"}
                   </td>
-                  <td className="px-4 py-3 text-navy/60">
+                  <td className="px-4 py-3 text-navy">
                     {fmtDate((est as any).issueDate ?? est.createdAt)}
                   </td>
-                  <td className="px-4 py-3 text-navy/60">
+                  <td className="px-4 py-3 text-navy">
                     {fmtDate((est as any).expiresAt ?? (est as any).expiryDate)}
                   </td>
                   <td className="px-4 py-3 text-right font-medium text-navy">

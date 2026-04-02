@@ -449,7 +449,7 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
 
               {/* Create mode selector */}
               <div>
-                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-navy/40">
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-navy">
                   What would you like to create?
                 </p>
                 <div className="grid grid-cols-3 gap-2">
@@ -481,7 +481,7 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
               {/* Shared header: supplier + dates */}
               <div className="grid grid-cols-2 gap-4 rounded-xl border border-surface-border bg-surface-raised p-4">
                 <div>
-                  <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-navy/40">
+                  <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-navy">
                     Supplier
                   </label>
                   <select
@@ -501,7 +501,7 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                 {(createMode === "bill" || createMode === "both") ? (
                   <div className="grid grid-cols-2 gap-2">
                     <div>
-                      <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-navy/40">
+                      <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-navy">
                         Bill Date
                       </label>
                       <input
@@ -512,7 +512,7 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                       />
                     </div>
                     <div>
-                      <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-navy/40">
+                      <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-navy">
                         Due Date
                       </label>
                       <input
@@ -525,7 +525,7 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                   </div>
                 ) : (
                   <div>
-                    <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-navy/40">
+                    <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-navy">
                       Expense Date
                     </label>
                     <input
@@ -542,7 +542,7 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
               {(createMode === "expense" || createMode === "both") && (
                 <div className="grid grid-cols-2 gap-4 rounded-xl border border-brand-100 bg-brand-50/40 p-4">
                   <div>
-                    <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-navy/40">
+                    <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-navy">
                       Expense Category <span className="text-danger">*</span>
                     </label>
                     <select
@@ -562,7 +562,7 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                     )}
                   </div>
                   <div>
-                    <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-navy/40">
+                    <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-navy">
                       Payment Method
                     </label>
                     <select
@@ -578,7 +578,7 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                     </select>
                   </div>
                   <div className="col-span-2">
-                    <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-navy/40">
+                    <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-navy">
                       Description
                     </label>
                     <input
@@ -608,19 +608,19 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                     <table className="w-full text-sm">
                       <thead>
                         <tr className="border-b border-surface-border bg-surface-raised">
-                          <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-navy/40">
+                          <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-navy">
                             Product
                           </th>
-                          <th className="w-20 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-navy/40">
+                          <th className="w-20 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-navy">
                             Qty
                           </th>
-                          <th className="w-28 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-navy/40">
+                          <th className="w-28 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-navy">
                             Unit Price
                           </th>
-                          <th className="w-24 px-3 py-2 text-right text-xs font-semibold uppercase tracking-wide text-navy/40">
+                          <th className="w-24 px-3 py-2 text-right text-xs font-semibold uppercase tracking-wide text-navy">
                             Calculated
                           </th>
-                          <th className="w-24 px-3 py-2 text-right text-xs font-semibold uppercase tracking-wide text-navy/40">
+                          <th className="w-24 px-3 py-2 text-right text-xs font-semibold uppercase tracking-wide text-navy">
                             Invoice Total
                           </th>
                           <th className="w-8 px-3 py-2" />
@@ -715,7 +715,7 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                                     "font-medium",
                                     calculated != null && Math.abs(calculated - invoiceTotal) > 0.01
                                       ? "text-amber-600"  // mismatch — might be tax/rounding
-                                      : "text-navy/50"
+                                      : "text-navy"
                                   )}>
                                     {fmt(invoiceTotal)}
                                   </span>
@@ -750,20 +750,20 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
               <div className="flex justify-end">
                 <div className="min-w-[200px] rounded-lg border border-surface-border bg-surface-raised p-3 text-sm">
                   <div className="flex justify-between gap-8">
-                    <span className="text-navy/60">Subtotal</span>
+                    <span className="text-navy">Subtotal</span>
                     <span className="font-medium text-navy">
                       {fmt(createMode === "expense" ? (scanResult?.total ?? 0) : computedTotal)}
                     </span>
                   </div>
                   {scanResult?.tax != null && scanResult.tax > 0 && (
                     <div className="mt-1 flex justify-between gap-8">
-                      <span className="text-navy/60">Tax (detected)</span>
-                      <span className="text-navy/60">{fmt(scanResult.tax)}</span>
+                      <span className="text-navy">Tax (detected)</span>
+                      <span className="text-navy">{fmt(scanResult.tax)}</span>
                     </div>
                   )}
                   {scanResult?.total != null && (
                     <div className="mt-1 flex justify-between gap-8 border-t border-surface-border pt-1">
-                      <span className="text-navy/60">Invoice Total</span>
+                      <span className="text-navy">Invoice Total</span>
                       <span className="font-semibold text-navy">{fmt(scanResult.total)}</span>
                     </div>
                   )}

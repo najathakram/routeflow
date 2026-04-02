@@ -389,25 +389,25 @@ export default function InvoicesPage() {
         <table className="w-full text-sm">
           <thead className="border-b border-surface-border bg-gray-50">
             <tr>
-              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 cursor-pointer select-none hover:text-navy transition-colors" onClick={() => toggleSort("issueDate")}>
+              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70 cursor-pointer select-none hover:text-navy transition-colors" onClick={() => toggleSort("issueDate")}>
                 Date <SortIcon col="issueDate" />
               </th>
-              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 cursor-pointer select-none hover:text-navy transition-colors" onClick={() => toggleSort("invoiceNumber")}>
+              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70 cursor-pointer select-none hover:text-navy transition-colors" onClick={() => toggleSort("invoiceNumber")}>
                 Invoice # <SortIcon col="invoiceNumber" />
               </th>
-              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70">
                 Customer Name
               </th>
-              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 cursor-pointer select-none hover:text-navy transition-colors" onClick={() => toggleSort("status")}>
+              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70 cursor-pointer select-none hover:text-navy transition-colors" onClick={() => toggleSort("status")}>
                 Status <SortIcon col="status" />
               </th>
-              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 cursor-pointer select-none hover:text-navy transition-colors" onClick={() => toggleSort("dueDate")}>
+              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70 cursor-pointer select-none hover:text-navy transition-colors" onClick={() => toggleSort("dueDate")}>
                 Due Date <SortIcon col="dueDate" />
               </th>
-              <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-500 cursor-pointer select-none hover:text-navy transition-colors" onClick={() => toggleSort("total")}>
+              <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-navy/70 cursor-pointer select-none hover:text-navy transition-colors" onClick={() => toggleSort("total")}>
                 Amount <SortIcon col="total" />
               </th>
-              <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+              <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-navy/70">
                 Balance Due
               </th>
               <th className="w-20 px-3 py-3" />
@@ -459,7 +459,7 @@ export default function InvoicesPage() {
                     onClick={() => router.push(`/invoices/${inv.id}`)}
                     className="group cursor-pointer transition-colors hover:bg-blue-50/40"
                   >
-                    <td className="px-4 py-3 text-sm text-navy/60">
+                    <td className="px-4 py-3 text-sm text-navy">
                       {fmtDate((inv as any).issueDate ?? inv.createdAt)}
                     </td>
                     <td className="px-4 py-3">
@@ -473,14 +473,14 @@ export default function InvoicesPage() {
                     <td className="px-4 py-3">
                       {renderStatus(inv.status, inv.dueDate)}
                     </td>
-                    <td className="px-4 py-3 text-sm text-navy/60">
+                    <td className="px-4 py-3 text-sm text-navy">
                       {fmtDate(inv.dueDate)}
                     </td>
                     <td className="px-4 py-3 text-right text-sm font-medium text-navy">
                       {fmt(Number(inv.total))}
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <span className={cn("text-sm font-semibold", balance > 0 ? "text-danger" : "text-navy/30")}>
+                      <span className={cn("text-sm font-semibold", balance > 0 ? "text-danger" : "text-navy")}>
                         {fmt(balance)}
                       </span>
                     </td>

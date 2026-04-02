@@ -604,15 +604,15 @@ function VendorBillsTab() {
                   className="h-4 w-4 rounded border-surface-border text-brand-500 accent-brand-500"
                 />
               </th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60">Bill #</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60 cursor-pointer select-none hover:text-navy" onClick={() => toggleSort("supplier")}>Supplier <SortIcon col="supplier" /></th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60">PO #</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60 cursor-pointer select-none hover:text-navy" onClick={() => toggleSort("billDate")}>Bill Date <SortIcon col="billDate" /></th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60 cursor-pointer select-none hover:text-navy" onClick={() => toggleSort("dueDate")}>Due Date <SortIcon col="dueDate" /></th>
-              <th className="px-4 py-3 text-right text-xs font-medium text-navy/60 cursor-pointer select-none hover:text-navy" onClick={() => toggleSort("total")}>Total <SortIcon col="total" /></th>
-              <th className="px-4 py-3 text-right text-xs font-medium text-navy/60">Paid</th>
-              <th className="px-4 py-3 text-right text-xs font-medium text-navy/60">Balance</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60 cursor-pointer select-none hover:text-navy" onClick={() => toggleSort("status")}>Status <SortIcon col="status" /></th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Bill #</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy" onClick={() => toggleSort("supplier")}>Supplier <SortIcon col="supplier" /></th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">PO #</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy" onClick={() => toggleSort("billDate")}>Bill Date <SortIcon col="billDate" /></th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy" onClick={() => toggleSort("dueDate")}>Due Date <SortIcon col="dueDate" /></th>
+              <th className="px-4 py-3 text-right text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy" onClick={() => toggleSort("total")}>Total <SortIcon col="total" /></th>
+              <th className="px-4 py-3 text-right text-xs font-medium text-navy/70">Paid</th>
+              <th className="px-4 py-3 text-right text-xs font-medium text-navy/70">Balance</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy" onClick={() => toggleSort("status")}>Status <SortIcon col="status" /></th>
               <th className="w-10 px-3 py-3" />
             </tr>
           </thead>
@@ -649,18 +649,18 @@ function VendorBillsTab() {
                     </td>
                     <td className="px-4 py-3 font-mono text-xs font-semibold text-navy">{bill.billNumber}</td>
                     <td className="px-4 py-3 font-medium text-navy">{bill.supplier?.name ?? "—"}</td>
-                    <td className="px-4 py-3 text-navy/60 font-mono text-xs">{bill.purchaseOrder?.poNumber ?? "—"}</td>
-                    <td className="px-4 py-3 text-navy/60">{fmtDate(bill.billDate ?? bill.createdAt)}</td>
-                    <td className={cn("px-4 py-3", overdue ? "text-red-600 font-medium" : "text-navy/60")}>
+                    <td className="px-4 py-3 text-navy font-mono text-xs">{bill.purchaseOrder?.poNumber ?? "—"}</td>
+                    <td className="px-4 py-3 text-navy">{fmtDate(bill.billDate ?? bill.createdAt)}</td>
+                    <td className={cn("px-4 py-3", overdue ? "text-red-600 font-medium" : "text-navy")}>
                       {fmtDate(bill.dueDate)}
                       {overdue && <span className="ml-1.5 text-xs font-semibold text-red-500">Overdue</span>}
                     </td>
                     <td className="px-4 py-3 text-right font-medium text-navy">{fmt(Number(bill.totalOwed ?? 0))}</td>
-                    <td className="px-4 py-3 text-right text-navy/60">{fmt(Number(bill.totalPaid ?? 0))}</td>
+                    <td className="px-4 py-3 text-right text-navy">{fmt(Number(bill.totalPaid ?? 0))}</td>
                     <td className="px-4 py-3 text-right">
                       {(() => {
                         const bal = Math.max(0, Number(bill.totalOwed ?? 0) - Number(bill.totalPaid ?? 0));
-                        return <span className={cn("font-medium", bal > 0 ? "text-danger" : "text-navy/40")}>{fmt(bal)}</span>;
+                        return <span className={cn("font-medium", bal > 0 ? "text-danger" : "text-navy")}>{fmt(bal)}</span>;
                       })()}
                     </td>
                     <td className="px-4 py-3"><VendorBillStatusBadge status={bill.status} /></td>

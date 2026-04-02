@@ -195,7 +195,7 @@ function makeTableColumns(
       accessorKey: "sku",
       header: "SKU",
       cell: ({ row }) => (
-        <span className="font-mono text-xs text-navy/60">{row.original.sku ?? "—"}</span>
+        <span className="font-mono text-xs text-navy">{row.original.sku ?? "—"}</span>
       ),
     },
     {
@@ -207,7 +207,7 @@ function makeTableColumns(
       accessorKey: "unit",
       header: "Unit",
       enableSorting: false,
-      cell: ({ row }) => <span className="text-navy/60">{row.original.unit}</span>,
+      cell: ({ row }) => <span className="text-navy">{row.original.unit}</span>,
     },
     {
       accessorKey: "pricePerUnit",
@@ -814,7 +814,7 @@ function ZohoImportModal({
                 <thead className="sticky top-0 bg-surface-raised border-b border-surface-border">
                   <tr>
                     {["Name", "SKU", "Barcode", "Unit", "Price", "Category", "Stock"].map((h) => (
-                      <th key={h} className="px-3 py-2 text-left font-semibold text-navy/60 whitespace-nowrap">{h}</th>
+                      <th key={h} className="px-3 py-2 text-left font-semibold text-navy/70 whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
                 </thead>
@@ -822,12 +822,12 @@ function ZohoImportModal({
                   {parsedItems.map((item, i) => (
                     <tr key={i} className="border-b border-surface-border hover:bg-surface-raised">
                       <td className="px-3 py-2 font-medium text-navy max-w-[200px] truncate" title={item.name}>{item.name}</td>
-                      <td className="px-3 py-2 text-navy/60">{item.sku ?? "—"}</td>
-                      <td className="px-3 py-2 text-navy/60">{item.barcode ?? "—"}</td>
-                      <td className="px-3 py-2 text-navy/60">{item.unit}</td>
+                      <td className="px-3 py-2 text-navy">{item.sku ?? "—"}</td>
+                      <td className="px-3 py-2 text-navy">{item.barcode ?? "—"}</td>
+                      <td className="px-3 py-2 text-navy">{item.unit}</td>
                       <td className="px-3 py-2 text-navy">${item.pricePerUnit}</td>
-                      <td className="px-3 py-2 text-navy/60">{item.category ?? "—"}</td>
-                      <td className="px-3 py-2 text-navy/60">{item.currentStock ?? "0"}</td>
+                      <td className="px-3 py-2 text-navy">{item.category ?? "—"}</td>
+                      <td className="px-3 py-2 text-navy">{item.currentStock ?? "0"}</td>
                     </tr>
                   ))}
                 </tbody>

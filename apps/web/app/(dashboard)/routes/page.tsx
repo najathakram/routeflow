@@ -170,7 +170,7 @@ function useTemplateColumns(
         accessorKey: "createdAt",
         header: "Created",
         cell: ({ row }) => (
-          <span className="flex items-center gap-1.5 text-navy/60">
+          <span className="flex items-center gap-1.5 text-navy">
             <Calendar className="h-3.5 w-3.5" />
             {new Date(row.original.createdAt).toLocaleDateString()}
           </span>
@@ -267,7 +267,7 @@ export default function RoutesPage() {
 
       {/* ── Today's route runs ── */}
       <section className="space-y-3">
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-navy/50">
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-navy">
           Route Runs Today
         </h2>
         {runsLoading ? (

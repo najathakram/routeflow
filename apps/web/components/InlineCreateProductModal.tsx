@@ -105,7 +105,7 @@ export function InlineCreateProductModal({
         <form onSubmit={handleSubmit} className="space-y-4 px-6 py-4">
           {/* Name */}
           <div>
-            <label className="mb-1 block text-xs font-medium text-navy/60">Name *</label>
+            <label className="mb-1 block text-xs font-medium text-navy">Name *</label>
             <input
               required
               autoFocus
@@ -120,7 +120,7 @@ export function InlineCreateProductModal({
           {/* SKU + Unit */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="mb-1 block text-xs font-medium text-navy/60">SKU</label>
+              <label className="mb-1 block text-xs font-medium text-navy">SKU</label>
               <input
                 type="text"
                 value={form.sku}
@@ -130,7 +130,7 @@ export function InlineCreateProductModal({
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs font-medium text-navy/60">Unit *</label>
+              <label className="mb-1 block text-xs font-medium text-navy">Unit *</label>
               <select
                 required
                 value={form.unit}
@@ -146,7 +146,7 @@ export function InlineCreateProductModal({
 
           {/* Barcode */}
           <div>
-            <label className="mb-1 block text-xs font-medium text-navy/60">Barcode</label>
+            <label className="mb-1 block text-xs font-medium text-navy">Barcode</label>
             <div className="flex gap-2">
               <input
                 ref={barcodeInputRef}
@@ -167,7 +167,7 @@ export function InlineCreateProductModal({
           {/* Price + Category */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="mb-1 block text-xs font-medium text-navy/60">Price ($)</label>
+              <label className="mb-1 block text-xs font-medium text-navy">Price ($)</label>
               <input
                 type="number"
                 min={0}
@@ -179,7 +179,7 @@ export function InlineCreateProductModal({
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs font-medium text-navy/60">Category</label>
+              <label className="mb-1 block text-xs font-medium text-navy">Category</label>
               <input
                 type="text"
                 value={form.category}

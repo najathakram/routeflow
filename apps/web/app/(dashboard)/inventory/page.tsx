@@ -102,7 +102,7 @@ function poStatusBadge(status: POStatus) {
 }
 
 function daysRemainingBadge(days: number | null) {
-  if (days === null) return <span className="text-navy/40 text-xs">N/A</span>;
+  if (days === null) return <span className="text-navy/60 text-xs">N/A</span>;
   const cls =
     days <= 7
       ? "bg-red-100 text-red-700"
@@ -205,7 +205,7 @@ function QuickRestockModal({
         </div>
         <form onSubmit={handleSubmit} className="space-y-4 px-6 py-4">
           <div>
-            <label className="mb-1 block text-xs text-navy/60">Supplier</label>
+            <label className="mb-1 block text-xs text-navy">Supplier</label>
             <select
               value={form.supplierId}
               onChange={(e) => setForm((f) => ({ ...f, supplierId: e.target.value }))}
@@ -219,7 +219,7 @@ function QuickRestockModal({
           </div>
 
           <div>
-            <label className="mb-1 block text-xs text-navy/60">Product *</label>
+            <label className="mb-1 block text-xs text-navy">Product *</label>
             <select
               required
               value={form.productId}
@@ -243,7 +243,7 @@ function QuickRestockModal({
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="mb-1 block text-xs text-navy/60">
+              <label className="mb-1 block text-xs text-navy">
                 Quantity ({selectedProduct?.unit ?? "units"}) *
               </label>
               <input
@@ -259,7 +259,7 @@ function QuickRestockModal({
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs text-navy/60">Unit Cost ($) *</label>
+              <label className="mb-1 block text-xs text-navy">Unit Cost ($) *</label>
               <input
                 required
                 type="number"
@@ -274,7 +274,7 @@ function QuickRestockModal({
 
           {/* Reference combobox */}
           <div ref={refContainerRef} className="relative">
-            <label className="mb-1 block text-xs text-navy/60">PO / Invoice Reference</label>
+            <label className="mb-1 block text-xs text-navy">PO / Invoice Reference</label>
             <input
               type="text"
               value={form.reference}
@@ -312,7 +312,7 @@ function QuickRestockModal({
           </div>
 
           <div>
-            <label className="mb-1 block text-xs text-navy/60">Notes</label>
+            <label className="mb-1 block text-xs text-navy">Notes</label>
             <textarea
               rows={2}
               value={form.notes}
@@ -392,7 +392,7 @@ function AdjustStockModal({
         </div>
         <form onSubmit={handleSubmit} className="space-y-4 px-6 py-4">
           <div>
-            <label className="mb-1 block text-xs text-navy/60">Product *</label>
+            <label className="mb-1 block text-xs text-navy">Product *</label>
             <select
               required
               value={form.productId}
@@ -417,7 +417,7 @@ function AdjustStockModal({
           </div>
 
           <div>
-            <label className="mb-1 block text-xs text-navy/60">
+            <label className="mb-1 block text-xs text-navy">
               Quantity change (positive to add, negative to remove) *
             </label>
             <input
@@ -431,7 +431,7 @@ function AdjustStockModal({
           </div>
 
           <div>
-            <label className="mb-1 block text-xs text-navy/60">Reference</label>
+            <label className="mb-1 block text-xs text-navy">Reference</label>
             <input
               type="text"
               value={form.reference}
@@ -441,7 +441,7 @@ function AdjustStockModal({
           </div>
 
           <div>
-            <label className="mb-1 block text-xs text-navy/60">Notes</label>
+            <label className="mb-1 block text-xs text-navy">Notes</label>
             <textarea
               rows={2}
               value={form.notes}
@@ -511,7 +511,7 @@ function CreateSupplierModal({ onClose }: { onClose: () => void }) {
             { key: "email", label: "Email", type: "email" },
           ].map(({ key, label, required, type }) => (
             <div key={key}>
-              <label className="mb-1 block text-xs text-navy/60">{label}</label>
+              <label className="mb-1 block text-xs text-navy">{label}</label>
               <input
                 required={required}
                 type={type ?? "text"}
@@ -522,7 +522,7 @@ function CreateSupplierModal({ onClose }: { onClose: () => void }) {
             </div>
           ))}
           <div>
-            <label className="mb-1 block text-xs text-navy/60">Notes</label>
+            <label className="mb-1 block text-xs text-navy">Notes</label>
             <textarea
               rows={2}
               value={form.notes}
@@ -621,7 +621,7 @@ function CreatePOModal({
         <form onSubmit={handleSubmit} className="space-y-5 overflow-y-auto px-6 py-5" style={{ maxHeight: "80vh" }}>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="mb-1 block text-xs text-navy/60">Supplier</label>
+              <label className="mb-1 block text-xs text-navy">Supplier</label>
               <select
                 value={supplierId}
                 onChange={(e) => setSupplierId(e.target.value)}
@@ -634,7 +634,7 @@ function CreatePOModal({
               </select>
             </div>
             <div>
-              <label className="mb-1 block text-xs text-navy/60">Expected Date</label>
+              <label className="mb-1 block text-xs text-navy">Expected Date</label>
               <input
                 type="date"
                 value={expectedDate}
@@ -647,7 +647,7 @@ function CreatePOModal({
           {/* Line items */}
           <div>
             <div className="mb-2 flex items-center justify-between">
-              <label className="text-xs font-medium text-navy/60 uppercase tracking-wide">Line Items</label>
+              <label className="text-xs font-medium text-navy uppercase tracking-wide">Line Items</label>
               <button
                 type="button"
                 onClick={addLine}
@@ -659,7 +659,7 @@ function CreatePOModal({
 
             <div className="rounded-lg border border-surface-border overflow-hidden">
               <table className="w-full text-sm">
-                <thead className="bg-surface-raised text-xs text-navy/50">
+                <thead className="bg-surface-raised text-xs text-navy/70">
                   <tr>
                     <th className="px-3 py-2 text-left font-medium">Product</th>
                     <th className="px-3 py-2 text-left font-medium w-24">Qty</th>
@@ -738,7 +738,7 @@ function CreatePOModal({
           </div>
 
           <div>
-            <label className="mb-1 block text-xs text-navy/60">Notes</label>
+            <label className="mb-1 block text-xs text-navy">Notes</label>
             <textarea
               rows={2}
               value={notes}
@@ -803,7 +803,7 @@ function ReceivePOModal({
           <p className="text-xs text-navy/50">Enter the quantity actually received for each item.</p>
           <div className="rounded-lg border border-surface-border overflow-hidden">
             <table className="w-full text-sm">
-              <thead className="bg-surface-raised text-xs text-navy/50">
+              <thead className="bg-surface-raised text-xs text-navy/70">
                 <tr>
                   <th className="px-3 py-2 text-left font-medium">Product</th>
                   <th className="px-3 py-2 text-center font-medium w-24">Ordered</th>
@@ -814,7 +814,7 @@ function ReceivePOModal({
                 {po.items.map((item) => (
                   <tr key={item.id}>
                     <td className="px-3 py-2 font-medium text-navy">{item.productName}</td>
-                    <td className="px-3 py-2 text-center text-navy/60">{item.qty}</td>
+                    <td className="px-3 py-2 text-center text-navy">{item.qty}</td>
                     <td className="px-3 py-2">
                       <input
                         type="number"
@@ -873,7 +873,7 @@ function PODetailRow({
           {/* Line items */}
           <div className="rounded-lg border border-surface-border overflow-hidden bg-white">
             <table className="w-full text-xs">
-              <thead className="bg-surface-raised text-navy/50">
+              <thead className="bg-surface-raised text-navy/70">
                 <tr>
                   <th className="px-3 py-2 text-left font-medium">Product</th>
                   <th className="px-3 py-2 text-right font-medium">Qty</th>
@@ -999,7 +999,7 @@ function ReorderSettingsModal({
         <form onSubmit={handleSubmit} className="space-y-4 px-6 py-5">
           <p className="text-sm text-navy/60">{item.name}</p>
           <div>
-            <label className="mb-1 block text-xs text-navy/60">Reorder Point (trigger qty)</label>
+            <label className="mb-1 block text-xs text-navy">Reorder Point (trigger qty)</label>
             <input
               required
               type="number"
@@ -1011,7 +1011,7 @@ function ReorderSettingsModal({
             />
           </div>
           <div>
-            <label className="mb-1 block text-xs text-navy/60">Reorder Qty (amount to order)</label>
+            <label className="mb-1 block text-xs text-navy">Reorder Qty (amount to order)</label>
             <input
               required
               type="number"
@@ -1133,7 +1133,7 @@ function PurchaseOrdersTab({
       ) : (
         <div className="overflow-x-auto rounded-xl border border-surface-border">
           <table className="w-full text-sm">
-            <thead className="border-b border-surface-border bg-surface-raised text-xs text-navy/50">
+            <thead className="border-b border-surface-border bg-surface-raised text-xs text-navy/70">
               <tr>
                 {["PO #", "Supplier", "Status", "Items", "Total", "Expected Date", "Actions", ""].map((h) => (
                   <th key={h} className="px-4 py-3 text-left font-medium">{h}</th>
@@ -1282,7 +1282,7 @@ function ForecastingTab({
       ) : (
         <div className="overflow-x-auto rounded-xl border border-surface-border">
           <table className="w-full text-sm">
-            <thead className="border-b border-surface-border bg-surface-raised text-xs text-navy/50">
+            <thead className="border-b border-surface-border bg-surface-raised text-xs text-navy/70">
               <tr>
                 {[
                   "Product",
@@ -1470,7 +1470,7 @@ export default function InventoryPage() {
           ) : (
             <div className="overflow-x-auto rounded-xl border border-surface-border">
               <table className="w-full text-sm">
-                <thead className="border-b border-surface-border bg-surface-raised text-xs text-navy/50">
+                <thead className="border-b border-surface-border bg-surface-raised text-xs text-navy/70">
                   <tr>
                     {["Product", "SKU", "Category", "Current Stock", "Avg Cost", "Total Value"].map((h) => (
                       <th key={h} className="px-4 py-3 text-left font-medium">{h}</th>
@@ -1488,7 +1488,7 @@ export default function InventoryPage() {
                       )}
                     >
                       <td className="px-4 py-3 font-medium text-navy">{item.name}</td>
-                      <td className="px-4 py-3 font-mono text-navy/50">{item.sku ?? "—"}</td>
+                      <td className="px-4 py-3 font-mono text-navy">{item.sku ?? "—"}</td>
                       <td className="px-4 py-3 text-navy/70">{item.category ?? "—"}</td>
                       <td className="px-4 py-3">
                         <span className={cn("font-medium", item.currentStock <= 0 ? "text-danger" : item.currentStock <= 5 ? "text-warning" : "text-navy")}>
@@ -1542,7 +1542,7 @@ export default function InventoryPage() {
           ) : (
             <div className="overflow-x-auto rounded-xl border border-surface-border">
               <table className="w-full text-sm">
-                <thead className="border-b border-surface-border bg-surface-raised text-xs text-navy/50">
+                <thead className="border-b border-surface-border bg-surface-raised text-xs text-navy/70">
                   <tr>
                     {["Name", "Contact", "Phone", "Email", "Status"].map((h) => (
                       <th key={h} className="px-4 py-3 text-left font-medium">{h}</th>
