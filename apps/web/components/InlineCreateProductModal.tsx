@@ -39,12 +39,11 @@ export function InlineCreateProductModal({
 }: InlineCreateProductModalProps) {
   const { toast } = useToast();
   const createProduct = useCreateProduct();
-  const barcodeInputRef = React.useRef<HTMLInputElement>(null);
+  const skuInputRef = React.useRef<HTMLInputElement>(null);
 
   const [form, setForm] = React.useState({
     name: initialName,
     sku: "",
-    barcode: "",
     unit: "each",
     pricePerUnit: "",
     category: "",
@@ -68,9 +67,8 @@ export function InlineCreateProductModal({
       {
         name: form.name.trim(),
         sku: form.sku.trim() || undefined,
-        barcode: form.barcode.trim() || undefined,
         unit: form.unit,
-        pricePerUnit: Number(form.pricePerUnit) || 0,
+        pricePerUnit: form.pricePerUnit || "0",
         category: form.category.trim() || undefined,
         unitsPerBox: form.unitsPerBox ? parseInt(form.unitsPerBox, 10) : undefined,
       },
@@ -79,8 +77,7 @@ export function InlineCreateProductModal({
           toast({ title: "Product created", description: `${product.name} has been added.`, variant: "success" });
           onCreated(product);
           onClose();
-          // reset
-          setForm({ name: "", sku: "", barcode: "", unit: "each", pricePerUnit: "", category: "", unitsPerBox: "" });
+          setForm({ name: "", sku: "", unit: "each", pricePerUnit: "", category: "", unitsPerBox: "" });
         },
         onError: () => {
           toast({ title: "Failed to create product", description: "Check the details and try again.", variant: "error" });
@@ -119,17 +116,25 @@ export function InlineCreateProductModal({
             />
           </div>
 
-          {/* SKU + Unit */}
+          {/* SKU (barcode scanner) + Unit */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="mb-1 block text-xs font-medium text-navy">SKU</label>
-              <input
-                type="text"
-                value={form.sku}
-                onChange={(e) => setForm((f) => ({ ...f, sku: e.target.value }))}
-                className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                placeholder="e.g. BREAD-001"
-              />
+              <label className="mb-1 block text-xs font-medium text-navy">SKU / Barcode</label>
+              <div className="flex gap-2">
+                <input
+                  ref={skuInputRef}
+                  type="text"
+                  value={form.sku}
+                  onChange={(e) => setForm((f) => ({ ...f, sku: e.target.value }))}
+                  className="flex-1 rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  placeholder="Scan or type"
+                />
+                <BarcodeScannerButton
+                  inputRef={skuInputRef}
+                  onScan={(code) => setForm((f) => ({ ...f, sku: code }))}
+                  title="Scan barcode"
+                />
+              </div>
             </div>
             <div>
               <label className="mb-1 block text-xs font-medium text-navy">Unit *</label>
@@ -143,26 +148,6 @@ export function InlineCreateProductModal({
                   <option key={u} value={u}>{u}</option>
                 ))}
               </select>
-            </div>
-          </div>
-
-          {/* Barcode */}
-          <div>
-            <label className="mb-1 block text-xs font-medium text-navy">Barcode</label>
-            <div className="flex gap-2">
-              <input
-                ref={barcodeInputRef}
-                type="text"
-                value={form.barcode}
-                onChange={(e) => setForm((f) => ({ ...f, barcode: e.target.value }))}
-                className="flex-1 rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                placeholder="Scan or type barcode"
-              />
-              <BarcodeScannerButton
-                inputRef={barcodeInputRef}
-                onScan={(code) => setForm((f) => ({ ...f, barcode: code }))}
-                title="Scan barcode"
-              />
             </div>
           </div>
 

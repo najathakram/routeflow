@@ -175,7 +175,6 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
     setEditDraft({
       name: product.name,
       sku: product.sku ?? "",
-      barcode: product.barcode ?? "",
       unit: product.unit,
       pricePerUnit: String(priceNumber),
       category: product.category ?? "",
@@ -664,18 +663,11 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
 
             <div className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3">
               <InfoRow
-                label="SKU"
+                label="SKU / Barcode"
                 value={isEditing ? (
                   <input value={(editDraft.sku as string) ?? ""} onChange={(e) => setEditDraft((d) => ({ ...d, sku: e.target.value }))}
                     className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500" />
-                ) : product.sku}
-              />
-              <InfoRow
-                label="Barcode"
-                value={isEditing ? (
-                  <input value={(editDraft.barcode as string) ?? ""} onChange={(e) => setEditDraft((d) => ({ ...d, barcode: e.target.value }))}
-                    className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500" />
-                ) : product.barcode ?? <span className="text-navy/30">—</span>}
+                ) : product.sku ?? <span className="text-navy/30">—</span>}
               />
               <InfoRow
                 label="Category"

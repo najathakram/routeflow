@@ -336,7 +336,7 @@ function CreateProductModal({
   units: string[];
 }) {
   const [form, setForm] = React.useState({
-    name: "", sku: "", barcode: "", unit: "", pricePerUnit: "", category: "", description: "",
+    name: "", sku: "", unit: "", pricePerUnit: "", category: "", description: "",
     costingMethod: "FIFO", standardCost: "", unitsPerBox: "",
   });
   const [priceError, setPriceError] = React.useState("");
@@ -375,7 +375,6 @@ function CreateProductModal({
     const product = await onCreate({
       name: form.name,
       sku: form.sku || undefined,
-      barcode: form.barcode || undefined,
       unit: form.unit,
       pricePerUnit: form.pricePerUnit,
       category: form.category || undefined,
@@ -465,27 +464,19 @@ function CreateProductModal({
                   className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
                 />
               </div>
-              <div>
-                <label className="mb-1 block text-sm font-medium text-navy">SKU</label>
-                <input
-                  value={form.sku}
-                  onChange={(e) => set("sku", e.target.value)}
-                  className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-sm font-medium text-navy">Barcode</label>
+              <div className="col-span-2">
+                <label className="mb-1 block text-sm font-medium text-navy">SKU / Barcode</label>
                 <div className="flex gap-2">
                   <input
                     ref={barcodeInputRef}
-                    value={form.barcode}
-                    onChange={(e) => set("barcode", e.target.value)}
+                    value={form.sku}
+                    onChange={(e) => set("sku", e.target.value)}
                     className="flex-1 rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                    placeholder="Scan or enter barcode"
+                    placeholder="Scan or enter SKU / barcode"
                   />
                   <BarcodeScannerButton
                     inputRef={barcodeInputRef}
-                    onScan={(code) => set("barcode", code)}
+                    onScan={(code) => set("sku", code)}
                     title="Scan barcode"
                   />
                 </div>
