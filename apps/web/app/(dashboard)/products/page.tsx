@@ -10,6 +10,7 @@ import { useToast } from "@routeflow/ui/web";
 import { useDebounce } from "@/lib/hooks/useDebounce";
 import { useProducts, useCreateProduct, useUpdateProduct, useImportProducts, useBulkDeleteProducts, uploadProductImages, type ZohoImportItem, type ImportResult } from "@/lib/api/products";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
+import { UnitCombobox } from "@/components/UnitCombobox";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -312,13 +313,6 @@ function makeTableColumns(
   ];
 }
 
-// ─── Common units & helpers ────────────────────────────────────────────────────
-
-const COMMON_UNITS = [
-  "unit", "each", "case", "box", "bag", "pack", "dozen", "pallet",
-  "kg", "g", "lb", "oz", "L", "ml", "tray", "bottle", "can", "roll", "sheet",
-];
-
 // ─── Create product modal ──────────────────────────────────────────────────────
 
 function CreateProductModal({
@@ -396,9 +390,6 @@ function CreateProductModal({
     }
     onClose();
   };
-
-  // All known units: common defaults + whatever exists in the catalog already
-  const allUnits = Array.from(new Set([...COMMON_UNITS, ...units])).sort();
 
   const busy = isLoading || isUploading;
 
@@ -482,20 +473,15 @@ function CreateProductModal({
                 </div>
               </div>
 
-              {/* Unit — datalist (pick from list OR type a custom value) */}
+              {/* Unit — combobox (pick from list OR type a custom value) */}
               <div>
                 <label className="mb-1 block text-sm font-medium text-navy">Unit *</label>
-                <input
+                <UnitCombobox
                   required
-                  list="create-unit-options"
-                  placeholder="e.g. case, kg, unit"
                   value={form.unit}
-                  onChange={(e) => set("unit", e.target.value)}
-                  className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  onChange={(v) => set("unit", v)}
+                  extraUnits={units}
                 />
-                <datalist id="create-unit-options">
-                  {allUnits.map((u) => <option key={u} value={u} />)}
-                </datalist>
               </div>
 
               <div>

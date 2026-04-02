@@ -5,13 +5,7 @@ import { X } from "lucide-react";
 import { Button, useToast } from "@routeflow/ui/web";
 import { useCreateProduct } from "@/lib/api/products";
 import { BarcodeScannerButton } from "./BarcodeScannerButton";
-
-const UNIT_OPTIONS = [
-  "kg", "g", "lb", "oz",
-  "liter", "ml",
-  "each", "box", "case", "bag", "pack", "pcs", "roll",
-  "dozen", "tray", "bundle",
-];
+import { UnitCombobox } from "./UnitCombobox";
 
 interface CreatedProduct {
   id: string;
@@ -138,17 +132,11 @@ export function InlineCreateProductModal({
             </div>
             <div>
               <label className="mb-1 block text-xs font-medium text-navy">Unit *</label>
-              <input
+              <UnitCombobox
                 required
-                list="inline-unit-options"
-                placeholder="e.g. case, kg, unit"
                 value={form.unit}
-                onChange={(e) => setForm((f) => ({ ...f, unit: e.target.value }))}
-                className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                onChange={(v) => setForm((f) => ({ ...f, unit: v }))}
               />
-              <datalist id="inline-unit-options">
-                {UNIT_OPTIONS.map((u) => <option key={u} value={u} />)}
-              </datalist>
             </div>
           </div>
 
