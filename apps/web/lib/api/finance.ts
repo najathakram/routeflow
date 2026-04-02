@@ -145,10 +145,10 @@ export function useCustomerBalanceSummary() {
 
 // ─── Invoice Reports ──────────────────────────────────────────────────────────
 
-export function useInvoiceDetailsReport(from?: string, to?: string, status?: string) {
+export function useInvoiceDetailsReport(from?: string, to?: string, status?: string, customerId?: string) {
   return useQuery({
-    queryKey: ['reports', 'invoice-details', from, to, status],
-    queryFn: () => apiClient.get('/bookkeeping/reports/invoice-details', { params: { from, to, status } }).then((r) => r.data),
+    queryKey: ['reports', 'invoice-details', from, to, status, customerId],
+    queryFn: () => apiClient.get('/bookkeeping/reports/invoice-details', { params: { from, to, status, customerId } }).then((r) => r.data),
   });
 }
 

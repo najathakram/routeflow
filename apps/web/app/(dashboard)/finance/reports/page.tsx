@@ -335,13 +335,19 @@ function SalesByDriverReport({ from, to }: { from?: string; to?: string }) {
   );
 }
 
-function InvoiceDetailsReport({ from, to }: { from?: string; to?: string }) {
+function InvoiceDetailsReport({ from, to, contextCustomerId, onSelectReport }: { from?: string; to?: string; contextCustomerId?: string; onSelectReport?: (id: string, context?: Record<string, string>) => void }) {
   const [statusFilter, setStatusFilter] = React.useState("");
-  const { data, isLoading, isFetching, isError, refetch } = useInvoiceDetailsReport(from, to, statusFilter || undefined);
+  const { data, isLoading, isFetching, isError, refetch } = useInvoiceDetailsReport(from, to, statusFilter || undefined, contextCustomerId);
   if (isError) return <ErrorState onRetry={() => refetch()} />;
   const rows: Array<{ id: string; invoiceNumber: string; issueDate: string; customer: { businessName: string }; status: string; total: number; balance: number }> = data?.data ?? [];
   return (
     <div>
+      {contextCustomerId && (
+        <div className="mb-3 flex items-center justify-between rounded-lg bg-brand-50 px-4 py-2 text-sm text-brand-700">
+          <span>Filtered to selected customer</span>
+          <button onClick={() => onSelectReport?.("invoice-details")} className="text-xs underline">Clear filter</button>
+        </div>
+      )}
       <div className="mb-3 flex flex-wrap items-center gap-1.5 px-4 pt-4">
         {["", "DRAFT", "SENT", "PAID", "OVERDUE", "PARTIAL", "VOID"].map(s => (
           <button key={s} onClick={() => setStatusFilter(s)}
@@ -470,7 +476,7 @@ function CustomerBalanceReport({ onSelectReport, contextCustomerId }: { onSelect
             <tr
               key={r.customerId}
               className={cn("hover:bg-surface-raised/50", onSelectReport && "cursor-pointer")}
-              onClick={() => onSelectReport?.("ar-aging-details", { customerId: r.customerId })}
+              onClick={() => onSelectReport?.("invoice-details", { customerId: r.customerId })}
             >
               <td className="px-4 py-2.5 font-medium text-brand-600">{r.businessName}</td>
               <td className="px-4 py-2.5 text-right text-navy">{r.invoiceCount}</td>
@@ -1287,7 +1293,7 @@ function ReportViewer({
     case "sales-by-customer": return <SalesByCustomerReport from={from} to={to} onSelectReport={onSelectReport} />;
     case "sales-by-item": return <SalesByItemReport from={from} to={to} />;
     case "sales-by-driver": return <SalesByDriverReport from={from} to={to} />;
-    case "invoice-details": return <InvoiceDetailsReport from={from} to={to} />;
+    case "invoice-details": return <InvoiceDetailsReport from={from} to={to} contextCustomerId={contextCustomerId} onSelectReport={onSelectReport} />;
     case "bad-debts": return <BadDebtsReport />;
     case "customer-balance": return <CustomerBalanceReport onSelectReport={onSelectReport} contextCustomerId={contextCustomerId} />;
     case "estimate-details": return <EstimateDetailsReport from={from} to={to} />;

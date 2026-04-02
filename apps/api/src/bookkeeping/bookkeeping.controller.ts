@@ -174,8 +174,9 @@ export class BookkeepingController {
     @Query("from") from?: string,
     @Query("to") to?: string,
     @Query("status") status?: string,
+    @Query("customerId") customerId?: string,
   ) {
-    return this.bookkeepingService.getInvoiceDetailsReport(from, to, status);
+    return this.bookkeepingService.getInvoiceDetailsReport(from, to, status, customerId);
   }
 
   @Get("reports/bad-debts")

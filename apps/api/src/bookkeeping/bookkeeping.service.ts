@@ -800,7 +800,7 @@ export class BookkeepingService {
     return { data: Object.values(byCustomer).sort((a, b) => b.balance - a.balance) };
   }
 
-  async getInvoiceDetailsReport(from?: string, to?: string, status?: string) {
+  async getInvoiceDetailsReport(from?: string, to?: string, status?: string, customerId?: string) {
     const { InvoiceStatus } = await import("@prisma/client");
     const fromDate = from ? new Date(from) : new Date(new Date().getFullYear(), 0, 1);
     const toDate = to
@@ -812,6 +812,7 @@ export class BookkeepingService {
       : new Date();
     const where: any = { issueDate: { gte: fromDate, lte: toDate } };
     if (status) where.status = status as (typeof InvoiceStatus)[keyof typeof InvoiceStatus];
+    if (customerId) where.customerId = customerId;
     const invoices = await this.prisma.invoice.findMany({
       where,
       include: { customer: { select: { id: true, businessName: true } }, payments: true },
