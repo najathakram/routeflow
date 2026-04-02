@@ -144,6 +144,7 @@ export class ProductsService {
         isActive: dto.isActive,
         costingMethod: dto.costingMethod,
         standardCost: dto.standardCost,
+        unitsPerBox: dto.unitsPerBox,
       },
     });
   }

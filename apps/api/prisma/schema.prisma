@@ -329,6 +329,7 @@ model Product {
   standardCost     Decimal?      @db.Decimal(10, 4)
   reorderPoint     Int?
   reorderQty       Int?
+  unitsPerBox      Int?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 

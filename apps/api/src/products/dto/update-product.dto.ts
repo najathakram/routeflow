@@ -1,4 +1,4 @@
-import { IsArray, IsBoolean, IsDecimal, IsEnum, IsOptional, IsString } from "class-validator";
+import { IsArray, IsBoolean, IsDecimal, IsEnum, IsInt, IsOptional, IsString } from "class-validator";
 import { CostingMethod } from "@prisma/client";
 
 export class UpdateProductDto {
@@ -14,4 +14,5 @@ export class UpdateProductDto {
   @IsOptional() @IsArray() @IsString({ each: true }) imageKeys?: string[];
   @IsOptional() @IsEnum(CostingMethod) costingMethod?: CostingMethod;
   @IsOptional() @IsDecimal() standardCost?: string;
+  @IsOptional() @IsInt() unitsPerBox?: number;
 }

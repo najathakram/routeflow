@@ -48,6 +48,7 @@ export function InlineCreateProductModal({
     unit: "each",
     pricePerUnit: "",
     category: "",
+    unitsPerBox: "",
   });
 
   // Sync initialName when it changes
@@ -71,6 +72,7 @@ export function InlineCreateProductModal({
         unit: form.unit,
         pricePerUnit: Number(form.pricePerUnit) || 0,
         category: form.category.trim() || undefined,
+        unitsPerBox: form.unitsPerBox ? parseInt(form.unitsPerBox, 10) : undefined,
       },
       {
         onSuccess: (product: CreatedProduct) => {
@@ -78,7 +80,7 @@ export function InlineCreateProductModal({
           onCreated(product);
           onClose();
           // reset
-          setForm({ name: "", sku: "", barcode: "", unit: "each", pricePerUnit: "", category: "" });
+          setForm({ name: "", sku: "", barcode: "", unit: "each", pricePerUnit: "", category: "", unitsPerBox: "" });
         },
         onError: () => {
           toast({ title: "Failed to create product", description: "Check the details and try again.", variant: "error" });
@@ -188,6 +190,20 @@ export function InlineCreateProductModal({
                 placeholder="e.g. Bakery"
               />
             </div>
+          </div>
+
+          {/* Units per box */}
+          <div>
+            <label className="mb-1 block text-xs font-medium text-navy">Units per box</label>
+            <input
+              type="number"
+              min={1}
+              step={1}
+              value={form.unitsPerBox}
+              onChange={(e) => setForm((f) => ({ ...f, unitsPerBox: e.target.value }))}
+              className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+              placeholder="e.g. 12 (optional)"
+            />
           </div>
 
           <div className="flex justify-end gap-2 pt-2">

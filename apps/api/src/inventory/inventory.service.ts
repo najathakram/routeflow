@@ -27,6 +27,7 @@ export class InventoryService {
         costingMethod: true,
         standardCost: true,
         isActive: true,
+        unitsPerBox: true,
       },
     });
 

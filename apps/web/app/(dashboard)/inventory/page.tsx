@@ -3,7 +3,7 @@
 import * as React from "react";
 import * as Tabs from "@radix-ui/react-tabs";
 import Link from "next/link";
-import { Plus, Eye, Send, PackageCheck, X, ChevronDown, ChevronUp } from "lucide-react";
+import { Plus, Eye, Send, PackageCheck, X, ChevronDown, ChevronUp, Info } from "lucide-react";
 import { Badge, Button, Card, cn, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import {
@@ -24,6 +24,7 @@ import {
 } from "@/lib/api/inventory";
 import { useProducts } from "@/lib/api/products";
 import { useVendorBills } from "@/lib/api/vendor-bills";
+import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 
 const DECIMAL_UNITS = ["kg", "g", "liter", "litre", "l", "oz", "lb", "pound", "ml"];
 function isDecimalUnit(unit: string) {
@@ -42,6 +43,7 @@ interface StockItem {
   averageCost: number | null;
   totalValue: number | null;
   isActive: boolean;
+  unitsPerBox?: number | null;
 }
 
 interface Supplier {
@@ -366,6 +368,14 @@ function AdjustStockModal({
     backdate: false,
     effectiveDate: "",
   });
+  const [productSearch, setProductSearch] = React.useState("");
+
+  const filteredProducts = productSearch.trim()
+    ? products.filter((p) =>
+        p.name.toLowerCase().includes(productSearch.toLowerCase()) ||
+        (p.sku ?? "").toLowerCase().includes(productSearch.toLowerCase())
+      )
+    : products;
 
   const selectedProduct = products.find((p) => p.id === form.productId);
   const qty = Number(form.quantity);
@@ -392,6 +402,16 @@ function AdjustStockModal({
         </div>
         <form onSubmit={handleSubmit} className="space-y-4 px-6 py-4">
           <div>
+            <label className="mb-1 block text-xs text-navy">Search product</label>
+            <input
+              type="text"
+              value={productSearch}
+              onChange={(e) => setProductSearch(e.target.value)}
+              placeholder="Type name or SKU to filter…"
+              className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+            />
+          </div>
+          <div>
             <label className="mb-1 block text-xs text-navy">Product *</label>
             <select
               required
@@ -400,12 +420,15 @@ function AdjustStockModal({
               className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
             >
               <option value="">Select product…</option>
-              {products.map((p) => (
+              {filteredProducts.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name}{p.sku ? ` (${p.sku})` : ""}
                 </option>
               ))}
             </select>
+            {productSearch && filteredProducts.length === 0 && (
+              <p className="mt-1 text-xs text-navy/40">No products match "{productSearch}"</p>
+            )}
             {selectedProduct && (
               <p className="mt-1 text-xs text-navy/50">
                 Current stock: {selectedProduct.currentStock} {selectedProduct.unit}
@@ -1386,12 +1409,13 @@ export default function InventoryPage() {
 
   const { data: stockItems = [], isLoading: stockLoading } = useStockOverview();
   const { data: suppliers = [], isLoading: suppliersLoading } = useSuppliers();
-  const { data: productsData } = useProducts({ isActive: true });
+  const { data: productsData } = useProducts({ isActive: true, limit: 0 });
   const products = productsData?.data ?? [];
 
   const [showRestockModal, setShowPurchaseModal] = React.useState(false);
   const [showAdjustModal, setShowAdjustModal] = React.useState(false);
   const [showSupplierModal, setShowSupplierModal] = React.useState(false);
+  const [showAddProductModal, setShowAddProductModal] = React.useState(false);
 
   const totalInventoryValue = (stockItems as StockItem[]).reduce(
     (sum, item) => sum + (item.totalValue ?? 0),
@@ -1455,6 +1479,9 @@ export default function InventoryPage() {
               <Button size="sm" variant="secondary" onClick={() => setShowAdjustModal(true)}>
                 Adjust Stock
               </Button>
+              <Button size="sm" variant="secondary" leftIcon={<Plus className="h-4 w-4" />} onClick={() => setShowAddProductModal(true)}>
+                Add Product
+              </Button>
               <Button size="sm" leftIcon={<Plus className="h-4 w-4" />} onClick={() => setShowPurchaseModal(true)}>
                 Quick Restock
               </Button>
@@ -1472,9 +1499,18 @@ export default function InventoryPage() {
               <table className="w-full text-sm">
                 <thead className="border-b border-surface-border bg-surface-raised text-xs text-navy/70">
                   <tr>
-                    {["Product", "SKU", "Category", "Current Stock", "Avg Cost", "Total Value"].map((h) => (
+                    {["Product", "SKU", "Category", "Current Stock", "Per Box"].map((h) => (
                       <th key={h} className="px-4 py-3 text-left font-medium">{h}</th>
                     ))}
+                    <th className="px-4 py-3 text-left font-medium">
+                      <span className="flex items-center gap-1">
+                        Unit Cost
+                        <span title="Shows standard cost for STANDARD-costing products, or weighted average cost for AVCO/FIFO/LIFO. Updates automatically when vendor bills are received.">
+                          <Info className="h-3 w-3 text-navy/30 cursor-help" />
+                        </span>
+                      </span>
+                    </th>
+                    <th className="px-4 py-3 text-left font-medium">Total Value</th>
                     <th className="px-4 py-3" />
                   </tr>
                 </thead>
@@ -1496,6 +1532,9 @@ export default function InventoryPage() {
                         </span>
                       </td>
                       <td className="px-4 py-3 text-navy/70">
+                        {item.unitsPerBox != null ? item.unitsPerBox : "—"}
+                      </td>
+                      <td className="px-4 py-3 text-navy/70">
                         {item.averageCost != null ? `$${Number(item.averageCost).toFixed(2)}` : "—"}
                       </td>
                       <td className="px-4 py-3 text-navy/70">
@@ -1513,7 +1552,7 @@ export default function InventoryPage() {
                   ))}
                   {(stockItems as StockItem[]).length === 0 && (
                     <tr>
-                      <td colSpan={7} className="px-4 py-10 text-center text-navy/40">
+                      <td colSpan={8} className="px-4 py-10 text-center text-navy/40">
                         No products found.
                       </td>
                     </tr>
@@ -1619,6 +1658,11 @@ export default function InventoryPage() {
       {showSupplierModal && (
         <CreateSupplierModal onClose={() => setShowSupplierModal(false)} />
       )}
+      <InlineCreateProductModal
+        isOpen={showAddProductModal}
+        onClose={() => setShowAddProductModal(false)}
+        onCreated={() => setShowAddProductModal(false)}
+      />
     </div>
   );
 }

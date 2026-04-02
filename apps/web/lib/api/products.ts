@@ -78,6 +78,7 @@ export interface ApiProduct {
   thumbnailUrl?: string | null;
   costingMethod?: CostingMethod;
   standardCost?: string | number;
+  unitsPerBox?: number | null;
 }
 
 export interface ZohoImportItem {

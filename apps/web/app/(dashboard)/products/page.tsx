@@ -3,12 +3,12 @@
 import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Package, LayoutGrid, LayoutList, Plus, Upload, CheckCircle, AlertCircle, Info, Trash2, ImagePlus, X as XIcon, CheckSquare } from "lucide-react";
+import { Package, LayoutGrid, LayoutList, Plus, Upload, CheckCircle, AlertCircle, Info, Trash2, ImagePlus, X as XIcon, CheckSquare, Pencil, Check } from "lucide-react";
 import { PageHeader, Table, Badge, Button, Select, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useToast } from "@routeflow/ui/web";
 import { useDebounce } from "@/lib/hooks/useDebounce";
-import { useProducts, useCreateProduct, useImportProducts, useBulkDeleteProducts, uploadProductImages, type ZohoImportItem, type ImportResult } from "@/lib/api/products";
+import { useProducts, useCreateProduct, useUpdateProduct, useImportProducts, useBulkDeleteProducts, uploadProductImages, type ZohoImportItem, type ImportResult } from "@/lib/api/products";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -30,6 +30,7 @@ interface ApiProduct {
   thumbnailUrl?: string | null;
   costingMethod?: string;
   standardCost?: string | number;
+  unitsPerBox?: number | null;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -154,6 +155,12 @@ function makeTableColumns(
   allIds: string[],
   onToggleAll: () => void,
   selectMode: boolean,
+  onEditPrice: (product: ApiProduct) => void,
+  editingPriceId: string | null,
+  editPriceValue: string,
+  onEditPriceChange: (v: string) => void,
+  onEditPriceSave: (id: string) => void,
+  onEditPriceCancel: () => void,
 ): ColumnDef<ApiProduct, unknown>[] {
   const allSelected = allIds.length > 0 && allIds.every((id) => selected.has(id));
   const someSelected = !allSelected && allIds.some((id) => selected.has(id));
@@ -212,9 +219,78 @@ function makeTableColumns(
     {
       accessorKey: "pricePerUnit",
       header: "Price",
+      cell: ({ row }) => {
+        const p = row.original;
+        if (editingPriceId === p.id) {
+          return (
+            <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+              <span className="text-sm text-navy/50">$</span>
+              <input
+                autoFocus
+                type="number"
+                min="0"
+                step="0.01"
+                value={editPriceValue}
+                onChange={(e) => onEditPriceChange(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") onEditPriceSave(p.id);
+                  if (e.key === "Escape") onEditPriceCancel();
+                }}
+                className="w-20 rounded border border-brand-500 px-1.5 py-0.5 text-sm text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
+              />
+              <button
+                onClick={() => onEditPriceSave(p.id)}
+                className="text-success hover:text-success/70 transition-colors"
+                title="Save"
+              >
+                <Check className="h-3.5 w-3.5" />
+              </button>
+              <button
+                onClick={onEditPriceCancel}
+                className="text-navy/40 hover:text-navy transition-colors"
+                title="Cancel"
+              >
+                <XIcon className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          );
+        }
+        return (
+          <div className="group flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+            <span className="font-medium text-navy">
+              ${parseFloat(String(p.pricePerUnit)).toFixed(2)}
+            </span>
+            <button
+              onClick={() => onEditPrice(p)}
+              className="opacity-0 group-hover:opacity-100 transition-opacity text-navy/40 hover:text-brand-500"
+              title="Edit price"
+            >
+              <Pencil className="h-3 w-3" />
+            </button>
+          </div>
+        );
+      },
+    },
+    {
+      accessorKey: "averageCost",
+      header: "Avg Cost",
+      cell: ({ row }) => {
+        const p = row.original;
+        const cost = p.averageCost ? parseFloat(String(p.averageCost)) : null;
+        return (
+          <span className="text-navy/70">
+            {cost != null ? `$${cost.toFixed(2)}` : "—"}
+          </span>
+        );
+      },
+    },
+    {
+      accessorKey: "unitsPerBox",
+      header: "Per Box",
+      enableSorting: false,
       cell: ({ row }) => (
-        <span className="font-medium text-navy">
-          ${parseFloat(String(row.original.pricePerUnit)).toFixed(2)}
+        <span className="text-navy/70">
+          {row.original.unitsPerBox ?? "—"}
         </span>
       ),
     },
@@ -261,8 +337,9 @@ function CreateProductModal({
 }) {
   const [form, setForm] = React.useState({
     name: "", sku: "", barcode: "", unit: "", pricePerUnit: "", category: "", description: "",
-    costingMethod: "FIFO", standardCost: "",
+    costingMethod: "FIFO", standardCost: "", unitsPerBox: "",
   });
+  const [priceError, setPriceError] = React.useState("");
   const [pendingImages, setPendingImages] = React.useState<File[]>([]);
   const [previews, setPreviews] = React.useState<string[]>([]);
   const [isUploading, setIsUploading] = React.useState(false);
@@ -290,6 +367,11 @@ function CreateProductModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!form.pricePerUnit || parseFloat(form.pricePerUnit) < 0) {
+      setPriceError("Please enter a valid price.");
+      return;
+    }
+    setPriceError("");
     const product = await onCreate({
       name: form.name,
       sku: form.sku || undefined,
@@ -302,6 +384,7 @@ function CreateProductModal({
       standardCost: (form.costingMethod === "STANDARD" && form.standardCost)
         ? form.standardCost
         : undefined,
+      unitsPerBox: form.unitsPerBox ? parseInt(form.unitsPerBox, 10) : undefined,
     });
     // Upload images if any were queued
     if (pendingImages.length > 0 && product?.id) {
@@ -426,15 +509,20 @@ function CreateProductModal({
 
               <div>
                 <label className="mb-1 block text-sm font-medium text-navy">Price per unit *</label>
-                <input
-                  required
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={form.pricePerUnit}
-                  onChange={(e) => set("pricePerUnit", e.target.value)}
-                  className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                />
+                <div className="flex items-center">
+                  <span className="flex h-[38px] items-center rounded-l border border-r-0 border-surface-border bg-surface-raised px-2.5 text-sm text-navy/50">$</span>
+                  <input
+                    required
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    placeholder="0.00"
+                    value={form.pricePerUnit}
+                    onChange={(e) => { set("pricePerUnit", e.target.value); setPriceError(""); }}
+                    className={`w-full rounded-r border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500 ${priceError ? "border-danger focus:ring-danger" : "border-surface-border"}`}
+                  />
+                </div>
+                {priceError && <p className="mt-1 text-xs text-danger">{priceError}</p>}
               </div>
 
               {/* Category — datalist (pick from list OR type a new one) */}
@@ -492,6 +580,20 @@ function CreateProductModal({
                   />
                 </div>
               )}
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-navy">Units per box</label>
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  placeholder="e.g. 12"
+                  value={form.unitsPerBox}
+                  onChange={(e) => set("unitsPerBox", e.target.value)}
+                  className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                />
+                <p className="mt-0.5 text-xs text-navy/40">How many individual units are in one box (optional)</p>
+              </div>
             </div>
           </div>
 
@@ -911,8 +1013,33 @@ export default function ProductsPage() {
   const [page, setPage] = React.useState(1);
   const [pageSize, setPageSize] = React.useState(50);
   const createProduct = useCreateProduct();
+  const updateProduct = useUpdateProduct();
   const importProducts = useImportProducts();
   const bulkDelete = useBulkDeleteProducts();
+
+  const [editingPriceId, setEditingPriceId] = React.useState<string | null>(null);
+  const [editPriceValue, setEditPriceValue] = React.useState("");
+
+  const handleEditPrice = (product: ApiProduct) => {
+    setEditingPriceId(product.id);
+    setEditPriceValue(parseFloat(String(product.pricePerUnit)).toFixed(2));
+  };
+
+  const handleEditPriceSave = async (id: string) => {
+    if (!editPriceValue) return;
+    try {
+      await updateProduct.mutateAsync({ id, pricePerUnit: parseFloat(editPriceValue).toFixed(2) });
+      toast({ title: "Price updated", variant: "success" });
+    } catch {
+      toast({ title: "Failed to update price", variant: "error" });
+    }
+    setEditingPriceId(null);
+  };
+
+  const handleEditPriceCancel = () => {
+    setEditingPriceId(null);
+    setEditPriceValue("");
+  };
 
   const debouncedSearch = useDebounce(search, 300);
 
@@ -975,9 +1102,13 @@ export default function ProductsPage() {
   };
 
   const tableColumns = React.useMemo(
-    () => makeTableColumns(selected, toggleOne, filteredIds, toggleAll, selectMode),
+    () => makeTableColumns(
+      selected, toggleOne, filteredIds, toggleAll, selectMode,
+      handleEditPrice, editingPriceId, editPriceValue, setEditPriceValue,
+      handleEditPriceSave, handleEditPriceCancel,
+    ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [selected, filteredIds.join(","), allFilteredSelected, selectMode],
+    [selected, filteredIds.join(","), allFilteredSelected, selectMode, editingPriceId, editPriceValue],
   );
 
   return (
