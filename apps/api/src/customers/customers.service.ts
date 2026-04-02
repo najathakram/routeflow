@@ -465,6 +465,7 @@ export class CustomersService {
           state: dto.state,
           zip: dto.zip,
           isDefault: dto.isDefault ?? false,
+          addressType: dto.addressType ?? "BILLING",
           ...(coords ?? {}),
         },
       });

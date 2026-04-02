@@ -203,6 +203,7 @@ interface AddAddressFormValues {
   state: string;
   zip: string;
   isDefault?: boolean;
+  addressType: string;
 }
 
 function AddAddressModal({
@@ -222,6 +223,7 @@ function AddAddressModal({
     city: "",
     state: "",
     zip: "",
+    addressType: "BILLING",
   });
 
   const handleChange =
@@ -238,7 +240,7 @@ function AddAddressModal({
     <Modal
       open={isOpen}
       onClose={onClose}
-      title="Add Delivery Address"
+      title="Add Address"
       footer={
         <>
           <Button variant="secondary" type="button" onClick={onClose}>
@@ -253,13 +255,24 @@ function AddAddressModal({
       <form id="add-address-form" onSubmit={handleSubmit} noValidate>
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="mb-1 block text-sm font-medium text-navy">Address Type</label>
+              <select
+                className="w-full rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                value={form.addressType}
+                onChange={(e) => setForm((prev) => ({ ...prev, addressType: e.target.value }))}
+              >
+                <option value="BILLING">Billing</option>
+                <option value="SHIPPING">Shipping</option>
+                <option value="DELIVERY">Delivery</option>
+              </select>
+            </div>
             <Input
               label="Address Label"
-              placeholder="Warehouse, Kitchen…"
+              placeholder="Main Office, Warehouse…"
               value={form.label}
               onChange={handleChange("label")}
             />
-            <div />
           </div>
           <Input
             label="Street"
@@ -1288,7 +1301,7 @@ export default function CustomerDetailPage({
             Orders{allOrders.length > 0 ? ` (${allOrders.length})` : ""}
           </TabTrigger>
           <TabTrigger value="addresses">
-            Delivery Addresses ({addresses.length})
+            Addresses ({addresses.length})
           </TabTrigger>
           <TabTrigger value="standing-orders">
             Standing Orders
@@ -1867,13 +1880,11 @@ export default function CustomerDetailPage({
           </Card>
         </Tabs.Content>
 
-        {/* ── Delivery addresses tab ─────────────────────────────── */}
+        {/* ── Addresses tab ──────────────────────────────────────── */}
         <Tabs.Content value="addresses" className="mt-5 focus:outline-none">
           <Card>
             <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-base font-semibold text-navy">
-                Delivery Addresses
-              </h3>
+              <h3 className="text-base font-semibold text-navy">Addresses</h3>
               <Button
                 size="sm"
                 leftIcon={<Plus className="h-4 w-4" />}
@@ -1886,36 +1897,62 @@ export default function CustomerDetailPage({
             {addresses.length === 0 ? (
               <p className="text-sm text-navy/40">No addresses on file.</p>
             ) : (
-              <ul className="-mx-6 -mb-6 divide-y divide-surface-border">
-                {addresses.map((addr: any) => (
-                  <li
-                    key={addr.id}
-                    className="flex items-start gap-3 px-6 py-4"
-                  >
-                    <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-navy/40" />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <p className="text-sm font-medium text-navy">
-                          {addr.label}
-                        </p>
-                        {addr.isDefault && (
-                          <Star className="h-3.5 w-3.5 fill-warning text-warning" />
-                        )}
+              (() => {
+                const typeOrder = ["BILLING", "SHIPPING", "DELIVERY"];
+                const typeLabel: Record<string, string> = { BILLING: "Billing", SHIPPING: "Shipping", DELIVERY: "Delivery" };
+                const typeColor: Record<string, string> = {
+                  BILLING: "bg-brand-100 text-brand-700",
+                  SHIPPING: "bg-teal-100 text-teal-700",
+                  DELIVERY: "bg-purple-100 text-purple-700",
+                };
+                const grouped: Record<string, any[]> = {};
+                for (const addr of addresses as any[]) {
+                  const t = addr.addressType || "BILLING";
+                  if (!grouped[t]) grouped[t] = [];
+                  grouped[t].push(addr);
+                }
+                const orderedTypes = [
+                  ...typeOrder.filter((t) => grouped[t]),
+                  ...Object.keys(grouped).filter((t) => !typeOrder.includes(t)),
+                ];
+                return (
+                  <div className="space-y-4">
+                    {orderedTypes.map((type) => (
+                      <div key={type}>
+                        <div className="mb-2 flex items-center gap-2">
+                          <span className={cn("rounded-full px-2.5 py-0.5 text-xs font-semibold", typeColor[type] ?? "bg-gray-100 text-gray-700")}>
+                            {typeLabel[type] ?? type}
+                          </span>
+                          <span className="text-xs text-navy/40">{grouped[type].length} address{grouped[type].length > 1 ? "es" : ""}</span>
+                        </div>
+                        <ul className="divide-y divide-surface-border rounded-lg border border-surface-border">
+                          {grouped[type].map((addr: any) => (
+                            <li key={addr.id} className="flex items-start gap-3 px-4 py-3">
+                              <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-navy/40" />
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-2">
+                                  <p className="text-sm font-medium text-navy">{addr.label}</p>
+                                  {addr.isDefault && (
+                                    <Star className="h-3.5 w-3.5 fill-warning text-warning" />
+                                  )}
+                                </div>
+                                <p className="mt-0.5 text-sm text-navy/60">
+                                  {addr.line1}{addr.line2 ? `, ${addr.line2}` : ""}, {addr.city}, {addr.state} {addr.zip}
+                                </p>
+                              </div>
+                              {addr.isDefault && (
+                                <span className="shrink-0 rounded-full bg-brand-100 px-2 py-0.5 text-xs font-medium text-brand-700">
+                                  Primary
+                                </span>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
                       </div>
-                      <p className="mt-0.5 text-sm text-navy/60">
-                        {addr.line1}
-                        {addr.line2 ? `, ${addr.line2}` : ""}, {addr.city},{" "}
-                        {addr.state} {addr.zip}
-                      </p>
-                    </div>
-                    {addr.isDefault && (
-                      <span className="shrink-0 rounded-full bg-brand-100 px-2 py-0.5 text-xs font-medium text-brand-700">
-                        Primary
-                      </span>
-                    )}
-                  </li>
-                ))}
-              </ul>
+                    ))}
+                  </div>
+                );
+              })()
             )}
           </Card>
         </Tabs.Content>

@@ -8,4 +8,5 @@ export class CreateAddressDto {
   @IsString() state: string;
   @IsString() zip: string;
   @IsOptional() @IsBoolean() isDefault?: boolean;
+  @IsOptional() @IsString() addressType?: string;
 }

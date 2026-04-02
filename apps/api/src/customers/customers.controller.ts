@@ -116,6 +116,7 @@ export class CustomersController {
   // ─── :id param routes ─────────────────────────────────────────────────────
 
   @Get(":id")
+  @Roles(UserRole.OPERATOR, UserRole.CUSTOMER, UserRole.DRIVER)
   findOne(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
     return this.customersService.findOne(id, user);
   }
