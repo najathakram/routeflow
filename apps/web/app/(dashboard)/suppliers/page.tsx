@@ -177,6 +177,7 @@ function SupplierCard({
   selected?: boolean;
   onSelect?: () => void;
 }) {
+  const [confirmDeactivate, setConfirmDeactivate] = React.useState(false);
   return (
     <div
       className={cn(
@@ -267,13 +268,42 @@ function SupplierCard({
 
       {/* Footer */}
       <div className="border-t border-surface-border pt-2">
-        <button
-          onClick={onToggleActive}
-          disabled={isUpdating}
-          className="text-xs text-navy/40 hover:text-navy transition-colors disabled:opacity-40"
-        >
-          {supplier.isActive ? "Deactivate" : "Reactivate"}
-        </button>
+        {supplier.isActive ? (
+          confirmDeactivate ? (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-danger">Deactivate supplier?</span>
+              <button
+                onClick={() => { setConfirmDeactivate(false); onToggleActive(); }}
+                disabled={isUpdating}
+                className="text-xs font-medium text-danger hover:underline disabled:opacity-40"
+              >
+                Yes
+              </button>
+              <button
+                onClick={() => setConfirmDeactivate(false)}
+                className="text-xs text-navy/40 hover:text-navy transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setConfirmDeactivate(true)}
+              disabled={isUpdating}
+              className="text-xs text-danger/60 hover:text-danger transition-colors disabled:opacity-40"
+            >
+              Deactivate
+            </button>
+          )
+        ) : (
+          <button
+            onClick={onToggleActive}
+            disabled={isUpdating}
+            className="text-xs text-navy/40 hover:text-navy transition-colors disabled:opacity-40"
+          >
+            Reactivate
+          </button>
+        )}
       </div>
     </div>
   );

@@ -507,7 +507,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
       {/* Right column */}
       <div className="flex flex-1 flex-col overflow-hidden">
         <Header />
-        <main id="main-content" className="flex-1 overflow-y-auto bg-surface-raised">
+        <main id="main-content" className="flex-1 overflow-x-hidden overflow-y-auto bg-surface-raised">
           {children}
         </main>
       </div>

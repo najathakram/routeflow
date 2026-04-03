@@ -79,4 +79,11 @@ export class UsersController {
   changeStatus(@Param("id") id: string, @Body() dto: ChangeUserStatusDto) {
     return this.usersService.changeStatus(id, dto);
   }
+
+  @Post(":id/reset-password")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR)
+  resetPassword(@Param("id") id: string) {
+    return this.usersService.resetPassword(id);
+  }
 }

@@ -16,10 +16,14 @@ export class EstimatesController {
   }
   @Get() findAll(
     @Query("customerId") cId?: string,
+    @Query("status") status?: string,
+    @Query("search") search?: string,
+    @Query("dateFrom") dateFrom?: string,
+    @Query("dateTo") dateTo?: string,
     @Query("page") page?: string,
     @Query("limit") limit?: string,
   ) {
-    return this.estimatesService.findAll(cId, page ? +page : 1, limit ? +limit : 20);
+    return this.estimatesService.findAll(cId, status, search, dateFrom, dateTo, page ? +page : 1, limit ? +limit : 20);
   }
   @Get(":id") findOne(@Param("id") id: string) {
     return this.estimatesService.findOne(id);
@@ -38,5 +42,9 @@ export class EstimatesController {
   }
   @Post(":id/convert") convert(@Param("id") id: string) {
     return this.estimatesService.convertToInvoice(id);
+  }
+
+  @Post(":id/void") void(@Param("id") id: string) {
+    return this.estimatesService.voidEstimate(id);
   }
 }

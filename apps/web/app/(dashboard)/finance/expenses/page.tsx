@@ -739,9 +739,9 @@ function OtherExpensesTab() {
           {categories?.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
         <input type="date" value={from} onChange={e => { setFrom(e.target.value); setPage(1); }}
-          className="rounded-lg border border-surface-border px-3 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500" />
+          className="h-9 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500" />
         <input type="date" value={to} onChange={e => { setTo(e.target.value); setPage(1); }}
-          className="rounded-lg border border-surface-border px-3 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500" />
+          className="h-9 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500" />
         {(categoryId || from || to) && (
           <button onClick={() => { setCategoryId(""); setFrom(""); setTo(""); setPage(1); }} className="text-xs text-navy/40 hover:text-danger transition-colors">
             Clear filters

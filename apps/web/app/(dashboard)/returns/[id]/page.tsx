@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
   CheckCircle2,
@@ -11,6 +12,7 @@ import {
   RefreshCw,
   Loader2,
   Clock,
+  FileText,
 } from "lucide-react";
 import { Button, Card, Modal, cn, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
@@ -25,6 +27,7 @@ import {
   type ReturnStatus,
   type ReturnReason,
 } from "@/lib/api/returns";
+import { useCreateCreditNote } from "@/lib/api/credit-notes";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -49,21 +52,25 @@ function fmtDateTime(d: string) {
 // ─── Status badge ─────────────────────────────────────────────────────────────
 
 const STATUS_COLORS: Record<ReturnStatus, string> = {
-  REQUESTED: "bg-yellow-100 text-yellow-700",
+  PENDING: "bg-yellow-100 text-yellow-700",
   APPROVED: "bg-blue-100 text-blue-700",
   IN_TRANSIT: "bg-purple-100 text-purple-700",
   RECEIVED: "bg-green-100 text-green-700",
   REFUNDED: "bg-emerald-100 text-emerald-800",
   REJECTED: "bg-red-100 text-red-600",
+  CANCELLED: "bg-gray-100 text-gray-500",
+  PROCESSED: "bg-teal-100 text-teal-700",
 };
 
 const STATUS_LABELS: Record<ReturnStatus, string> = {
-  REQUESTED: "Requested",
+  PENDING: "Pending",
   APPROVED: "Approved",
   IN_TRANSIT: "In Transit",
   RECEIVED: "Received",
   REFUNDED: "Refunded",
   REJECTED: "Rejected",
+  CANCELLED: "Cancelled",
+  PROCESSED: "Processed",
 };
 
 function ReturnStatusBadge({ status }: { status: ReturnStatus }) {
@@ -84,10 +91,9 @@ function ReturnStatusBadge({ status }: { status: ReturnStatus }) {
 const REASON_LABELS: Record<ReturnReason, string> = {
   DAMAGED: "Damaged",
   WRONG_ITEM: "Wrong Item",
-  OVERDELIVERED: "Overdelivered",
+  EXCESS_ORDER: "Excess / Overdelivery",
   CUSTOMER_REFUSED: "Customer Refused",
   QUALITY_ISSUE: "Quality Issue",
-  OTHER: "Other",
 };
 
 // ─── Process Refund Modal ─────────────────────────────────────────────────────
@@ -193,7 +199,7 @@ function ConfirmActionModal({
 // ─── Status timeline ──────────────────────────────────────────────────────────
 
 const STATUS_ORDER: ReturnStatus[] = [
-  "REQUESTED",
+  "PENDING",
   "APPROVED",
   "IN_TRANSIT",
   "RECEIVED",
@@ -201,12 +207,12 @@ const STATUS_ORDER: ReturnStatus[] = [
 ];
 
 function StatusTimeline({ currentStatus, logs }: { currentStatus: ReturnStatus; logs?: Return["logs"] }) {
-  if (currentStatus === "REJECTED") {
+  if (currentStatus === "REJECTED" || currentStatus === "CANCELLED") {
     return (
       <div className="flex items-center gap-3 rounded-lg bg-red-50 px-4 py-3">
         <XCircle className="h-5 w-5 shrink-0 text-red-500" />
         <div>
-          <p className="text-sm font-semibold text-red-700">Return Rejected</p>
+          <p className="text-sm font-semibold text-red-700">{currentStatus === "CANCELLED" ? "Return Cancelled" : "Return Rejected"}</p>
           {logs && logs.length > 0 && (
             <p className="text-xs text-red-500">{fmtDateTime(logs[logs.length - 1].createdAt)}</p>
           )}
@@ -279,6 +285,7 @@ function StatusTimeline({ currentStatus, logs }: { currentStatus: ReturnStatus; 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function ReturnDetailPage({ params }: { params: { id: string } }) {
+  const router = useRouter();
   const { setTitle } = usePageTitle();
   const { toast } = useToast();
 
@@ -288,6 +295,7 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
   const markInTransit = useMarkReturnInTransit();
   const markReceived = useMarkReturnReceived();
   const processRefund = useProcessRefund();
+  const createCreditNote = useCreateCreditNote();
 
   const [isRefundOpen, setIsRefundOpen] = React.useState(false);
   const [isRejectOpen, setIsRejectOpen] = React.useState(false);
@@ -364,6 +372,29 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
     });
   };
 
+  const handleConvertToCreditNote = () => {
+    if (!ret) return;
+    const returnTotal = ret.items.reduce((sum, item) => {
+      return sum + item.qty * (item.unitPrice ?? 0);
+    }, 0);
+    createCreditNote.mutate(
+      {
+        customerId: ret.customerId,
+        amount: returnTotal > 0 ? returnTotal : 0.01,
+        reason: `Return ${ret.returnNumber} — ${REASON_LABELS[ret.reason]}`,
+        issueDate: new Date().toISOString().split("T")[0],
+        notes: `Created from return ${ret.returnNumber}. Update the amount before issuing.`,
+      },
+      {
+        onSuccess: () => {
+          toast({ title: "Credit note created", description: "Review and update the amount before issuing.", variant: "success" });
+          router.push("/credit-notes");
+        },
+        onError: () => toast({ title: "Failed to create credit note", variant: "error" }),
+      },
+    );
+  };
+
   const handleProcessRefund = (restock: boolean) => {
     processRefund.mutate(
       { id: ret.id, restock },
@@ -403,7 +434,7 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
 
         {/* Actions based on status */}
         <div className="flex flex-wrap items-center gap-2">
-          {status === "REQUESTED" && (
+          {status === "PENDING" && (
             <>
               <Button
                 size="sm"
@@ -447,21 +478,36 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
           )}
 
           {status === "RECEIVED" && (
-            <Button
-              size="sm"
-              leftIcon={<RefreshCw className="h-4 w-4" />}
-              onClick={() => setIsRefundOpen(true)}
-            >
-              Process Refund
-            </Button>
+            <>
+              <Button
+                size="sm"
+                variant="secondary"
+                leftIcon={<FileText className="h-4 w-4" />}
+                onClick={handleConvertToCreditNote}
+                loading={createCreditNote.isPending}
+              >
+                Issue Credit Note
+              </Button>
+              <Button
+                size="sm"
+                leftIcon={<RefreshCw className="h-4 w-4" />}
+                onClick={() => setIsRefundOpen(true)}
+              >
+                Process Refund
+              </Button>
+            </>
           )}
 
-          {status === "REFUNDED" && (
+          {(status === "REFUNDED" || status === "PROCESSED") && (
             <span className="text-sm italic text-navy/40">Return fully processed.</span>
           )}
 
           {status === "REJECTED" && (
             <span className="text-sm italic text-navy/40">This return was rejected.</span>
+          )}
+
+          {status === "CANCELLED" && (
+            <span className="text-sm italic text-navy/40">This return was cancelled.</span>
           )}
         </div>
       </div>
@@ -546,7 +592,7 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
                   {ret.items.map((item) => (
                     <tr key={item.id} className="hover:bg-surface-raised">
                       <td className="px-6 py-3 font-medium text-navy">
-                        {item.product?.name ?? item.orderItemId}
+                        {item.product?.name ?? item.productId}
                       </td>
                       <td className="px-4 py-3 text-center text-navy/60">
                         {item.orderedQty}

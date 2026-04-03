@@ -23,12 +23,20 @@ export class CreditNotesController {
   findAll(
     @CurrentUser() user: JwtPayload,
     @Query("customerId") customerId?: string,
+    @Query("status") status?: string,
+    @Query("search") search?: string,
+    @Query("dateFrom") dateFrom?: string,
+    @Query("dateTo") dateTo?: string,
     @Query("page") page?: string,
     @Query("limit") limit?: string,
   ) {
     return this.creditNotesService.findAllForUser(
       user,
       customerId,
+      status,
+      search,
+      dateFrom,
+      dateTo,
       page ? +page : 1,
       limit ? +limit : 20,
     );

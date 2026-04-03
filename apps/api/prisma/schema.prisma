@@ -173,6 +173,11 @@ enum ReturnReason {
 
 enum ReturnStatus {
   PENDING
+  APPROVED
+  REJECTED
+  IN_TRANSIT
+  RECEIVED
+  REFUNDED
   PROCESSED
   CANCELLED
 }

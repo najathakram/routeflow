@@ -87,6 +87,7 @@ export function useApplyCreditNote() {
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ['credit-notes'] });
       qc.invalidateQueries({ queryKey: ['credit-notes', id] });
+      qc.invalidateQueries({ queryKey: ['invoices'] });
     },
   });
 }

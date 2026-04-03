@@ -167,7 +167,7 @@ function ProductSearchInput({
     return () => clearTimeout(t);
   }, [query]);
 
-  const { data } = useProducts({ search: debouncedQuery || undefined, isActive: true });
+  const { data } = useProducts({ search: debouncedQuery || undefined, isActive: true, limit: 20 });
   const products = data?.data ?? [];
 
   React.useEffect(() => {
@@ -208,7 +208,7 @@ function ProductSearchInput({
           }
         }}
       />
-      {open && debouncedQuery.length > 0 && products.length > 0 && (
+      {open && products.length > 0 && (
         <div className="absolute left-0 top-full z-10 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg">
           <ul className="max-h-36 overflow-y-auto">
             {products.map((p: { id: string; name: string; pricePerUnit: number; sku?: string; averageCost?: number }) => (

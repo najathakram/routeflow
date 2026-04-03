@@ -26,6 +26,7 @@ import { CompleteStopDto } from "./dto/complete-stop.dto";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { ConfigService } from "@nestjs/config";
 import { NotificationsService } from "../notifications/notifications.service";
+import { InvoicesService } from "../invoices/invoices.service";
 
 @Injectable()
 export class OrdersService {
@@ -37,6 +38,7 @@ export class OrdersService {
     private readonly gateway: RouteFlowGateway,
     private readonly config: ConfigService,
     private readonly notifications: NotificationsService,
+    private readonly invoicesService: InvoicesService,
   ) {
     this.taxRate = this.config.get<number>("taxRate") ?? 0.1;
   }
@@ -280,6 +282,11 @@ export class OrdersService {
       status: dto.status,
       previousStatus: order.status,
     });
+
+    // Auto-create invoice when operator manually marks order as delivered
+    if (dto.status === OrderStatus.DELIVERED) {
+      this.invoicesService.createInvoiceFromOrder(id).catch(() => {});
+    }
 
     // Fire-and-forget push notifications for key status transitions
     const notifMap: Partial<Record<OrderStatus, { title: string; body: string }>> = {

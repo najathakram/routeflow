@@ -165,15 +165,13 @@ export default function DashboardPage() {
     setTitle("Dashboard");
   }, [setTitle]);
 
-  const todayISO = React.useMemo(() => new Date().toISOString().split("T")[0], []);
-
   // ── Data fetching ──
   const { data: allOrdersData, isLoading: ordersLoading, isError: ordersError } = useOrders({ page: 1, limit: 100 });
   const { data: urgentOrdersData, isLoading: urgentLoading, isError: urgentError } = useOrders({ urgent: true, limit: 5 });
   const { data: recentOrdersData, isLoading: recentLoading, isError: recentError } = useOrders({ page: 1, limit: 5 });
-  const { data: routeRunsData, isLoading: runsLoading, isError: runsError } = useRouteRuns({ date: todayISO });
+  const { data: routeRunsData, isLoading: runsLoading, isError: runsError } = useRouteRuns({ status: "SCHEDULED" });
   const { data: driversData, isLoading: driversLoading, isError: driversError } = useDrivers({ page: 1, limit: 20 });
-  const { data: lowStockData, isLoading: lowStockLoading, isError: lowStockError } = useProducts({ isActive: true, page: 1 });
+  const { data: lowStockData, isLoading: lowStockLoading, isError: lowStockError } = useProducts({ isActive: true, stockStatus: "LOW", limit: 1 });
 
   // ── KPI calculations ──
   const activeOrders = React.useMemo(() => {
@@ -236,7 +234,7 @@ export default function DashboardPage() {
             </Link>
             <Link href="/routes" className="block">
               <StatCard
-                label="Routes Today"
+                label="Scheduled Routes"
                 value={routesToday}
                 icon={<MapPin className="h-5 w-5" />}
                 className="cursor-pointer transition-shadow hover:shadow-md"
@@ -244,7 +242,7 @@ export default function DashboardPage() {
             </Link>
             <Link href="/drivers" className="block">
               <StatCard
-                label="Drivers On Road"
+                label="Active Drivers"
                 value={driversOnRoad}
                 icon={<Truck className={cn("h-5 w-5", driversOnRoad > 0 && "text-success")} />}
                 className={cn(
@@ -355,8 +353,8 @@ export default function DashboardPage() {
             </div>
           )}
 
-          {/* Active route runs */}
-          <Card title="Active Route Runs">
+          {/* Scheduled route runs */}
+          <Card title="Scheduled Route Runs">
             {runsLoading ? (
               <div className="animate-pulse space-y-3 py-4">
                 {[1, 2, 3].map((i) => (

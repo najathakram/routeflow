@@ -707,6 +707,8 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
   const [isVoidOpen, setIsVoidOpen] = React.useState(false);
   const [isReopenOpen, setIsReopenOpen] = React.useState(false);
   const [isWriteOffOpen, setIsWriteOffOpen] = React.useState(false);
+  const [isRevertToDraftOpen, setIsRevertToDraftOpen] = React.useState(false);
+  const [isUnvoidOpen, setIsUnvoidOpen] = React.useState(false);
   const [editingPayment, setEditingPayment] = React.useState<InvoicePayment | null>(null);
   const [deletingPayment, setDeletingPayment] = React.useState<InvoicePayment | null>(null);
 
@@ -940,14 +942,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
               size="sm"
               variant="secondary"
               leftIcon={<RotateCcw className="h-4 w-4" />}
-              onClick={() => {
-                if (confirm("Revert this invoice to Draft? It will be undelivered to the customer.")) {
-                  revertToDraft.mutate(invoice.id, {
-                    onSuccess: () => toast({ title: "Invoice reverted to Draft", variant: "success" }),
-                    onError: (e: any) => toast({ title: "Failed to revert", description: e?.response?.data?.message ?? "Please try again.", variant: "error" }),
-                  });
-                }
-              }}
+              onClick={() => setIsRevertToDraftOpen(true)}
               loading={revertToDraft.isPending}
             >
               Revert to Draft
@@ -960,14 +955,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
               size="sm"
               variant="secondary"
               leftIcon={<RotateCcw className="h-4 w-4" />}
-              onClick={() => {
-                if (confirm("Unvoid this invoice? It will return to Draft status.")) {
-                  unvoid.mutate(invoice.id, {
-                    onSuccess: () => toast({ title: "Invoice unvoided — now in Draft", variant: "success" }),
-                    onError: (e: any) => toast({ title: "Failed to unvoid", description: e?.response?.data?.message ?? "Please try again.", variant: "error" }),
-                  });
-                }
-              }}
+              onClick={() => setIsUnvoidOpen(true)}
               loading={unvoid.isPending}
             >
               Unvoid
@@ -1364,6 +1352,74 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
         invoiceNumber={invoice.invoiceNumber}
         isPending={writeOffInvoice.isPending}
       />
+
+      <Modal
+        open={isRevertToDraftOpen}
+        onClose={() => setIsRevertToDraftOpen(false)}
+        title="Revert to Draft?"
+        description={`Invoice ${invoice.invoiceNumber} will be moved back to Draft status.`}
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setIsRevertToDraftOpen(false)} disabled={revertToDraft.isPending}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              onClick={() => {
+                revertToDraft.mutate(invoice.id, {
+                  onSuccess: () => {
+                    setIsRevertToDraftOpen(false);
+                    toast({ title: "Invoice reverted to Draft", variant: "success" });
+                  },
+                  onError: (e: any) => toast({ title: "Failed to revert", description: e?.response?.data?.message ?? "Please try again.", variant: "error" }),
+                });
+              }}
+              loading={revertToDraft.isPending}
+            >
+              <RotateCcw className="mr-1.5 h-4 w-4" />
+              Revert to Draft
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-navy/70">
+          This will undeliver the invoice from the customer. No payments have been recorded, so this is safe to revert.
+        </p>
+      </Modal>
+
+      <Modal
+        open={isUnvoidOpen}
+        onClose={() => setIsUnvoidOpen(false)}
+        title="Unvoid Invoice?"
+        description={`Invoice ${invoice.invoiceNumber} will be moved back to Draft status.`}
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setIsUnvoidOpen(false)} disabled={unvoid.isPending}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              onClick={() => {
+                unvoid.mutate(invoice.id, {
+                  onSuccess: () => {
+                    setIsUnvoidOpen(false);
+                    toast({ title: "Invoice unvoided — now in Draft", variant: "success" });
+                  },
+                  onError: (e: any) => toast({ title: "Failed to unvoid", description: e?.response?.data?.message ?? "Please try again.", variant: "error" }),
+                });
+              }}
+              loading={unvoid.isPending}
+            >
+              <RotateCcw className="mr-1.5 h-4 w-4" />
+              Unvoid
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-navy/70">
+          Are you sure you want to unvoid this invoice? It will return to Draft status and can be edited and re-sent.
+        </p>
+      </Modal>
     </div>
   );
 }

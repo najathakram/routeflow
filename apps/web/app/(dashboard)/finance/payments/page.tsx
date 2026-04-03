@@ -351,9 +351,9 @@ export default function FinancePaymentsPage() {
       <div className="rounded-xl border border-surface-border bg-white p-4 space-y-3">
         <div className="flex flex-wrap gap-3 items-center">
           <input id="payments-search" type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search payment #, reference, customer... (/)" className="w-64 rounded-lg border border-surface-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
-          <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="rounded-lg border border-surface-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" title="From date" />
+          <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="h-9 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500" title="From date" />
           <span className="text-navy/40 text-sm">–</span>
-          <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="rounded-lg border border-surface-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" title="To date" />
+          <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="h-9 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500" title="To date" />
           <select value={method} onChange={(e) => setMethod(e.target.value)} className="rounded-lg border border-surface-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
             <option value="">All Methods</option>
             <option value="CASH">Cash</option>

@@ -247,9 +247,10 @@ export function useApplyAdvanceToInvoice() {
   const qc = useQueryClient();
   return useMutation<Invoice, Error, { customerId: string; advancePaymentId: string; invoiceId: string; amount?: number }>({
     mutationFn: ({ customerId, advancePaymentId, ...data }) => apiClient.post(`/customers/${customerId}/advance-payments/${advancePaymentId}/apply`, data).then((r) => r.data),
-    onSuccess: (updated) => {
+    onSuccess: (updated, { customerId }) => {
       qc.invalidateQueries({ queryKey: ['invoices'] });
       qc.invalidateQueries({ queryKey: ['invoices', updated.id] });
+      qc.invalidateQueries({ queryKey: ['customers', customerId, 'advance-payments'] });
     },
   });
 }
@@ -471,7 +472,10 @@ export function useUpdateRecurringInvoice() {
   const qc = useQueryClient();
   return useMutation<RecurringInvoice, Error, { id: string } & Partial<CreateRecurringInvoiceDto>>({
     mutationFn: ({ id, ...dto }) => apiClient.patch(`/recurring-invoices/${id}`, dto).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['recurring-invoices'] }),
+    onSuccess: (_, { id }) => {
+      qc.invalidateQueries({ queryKey: ['recurring-invoices'] });
+      qc.invalidateQueries({ queryKey: ['recurring-invoices', id] });
+    },
   });
 }
 

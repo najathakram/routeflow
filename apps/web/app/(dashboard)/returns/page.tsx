@@ -30,21 +30,25 @@ function fmtDate(d: string) {
 // ─── Status badge ─────────────────────────────────────────────────────────────
 
 const STATUS_COLORS: Record<ReturnStatus, string> = {
-  REQUESTED: "bg-yellow-100 text-yellow-700",
+  PENDING: "bg-yellow-100 text-yellow-700",
   APPROVED: "bg-blue-100 text-blue-700",
   IN_TRANSIT: "bg-purple-100 text-purple-700",
   RECEIVED: "bg-green-100 text-green-700",
   REFUNDED: "bg-emerald-100 text-emerald-800",
   REJECTED: "bg-red-100 text-red-600",
+  CANCELLED: "bg-gray-100 text-gray-500",
+  PROCESSED: "bg-teal-100 text-teal-700",
 };
 
 const STATUS_LABELS: Record<ReturnStatus, string> = {
-  REQUESTED: "Requested",
+  PENDING: "Pending",
   APPROVED: "Approved",
   IN_TRANSIT: "In Transit",
   RECEIVED: "Received",
   REFUNDED: "Refunded",
   REJECTED: "Rejected",
+  CANCELLED: "Cancelled",
+  PROCESSED: "Processed",
 };
 
 function ReturnStatusBadge({ status }: { status: ReturnStatus }) {
@@ -65,38 +69,37 @@ function ReturnStatusBadge({ status }: { status: ReturnStatus }) {
 const REASON_LABELS: Record<ReturnReason, string> = {
   DAMAGED: "Damaged",
   WRONG_ITEM: "Wrong Item",
-  OVERDELIVERED: "Overdelivered",
+  EXCESS_ORDER: "Excess / Overdelivery",
   CUSTOMER_REFUSED: "Customer Refused",
   QUALITY_ISSUE: "Quality Issue",
-  OTHER: "Other",
 };
 
 // ─── Filter options ───────────────────────────────────────────────────────────
 
 const STATUS_OPTIONS = [
   { value: "", label: "All Statuses" },
-  { value: "REQUESTED", label: "Requested" },
+  { value: "PENDING", label: "Pending" },
   { value: "APPROVED", label: "Approved" },
   { value: "IN_TRANSIT", label: "In Transit" },
   { value: "RECEIVED", label: "Received" },
   { value: "REFUNDED", label: "Refunded" },
   { value: "REJECTED", label: "Rejected" },
+  { value: "CANCELLED", label: "Cancelled" },
 ];
 
 const REASON_OPTIONS = [
   { value: "", label: "All Reasons" },
   { value: "DAMAGED", label: "Damaged" },
   { value: "WRONG_ITEM", label: "Wrong Item" },
-  { value: "OVERDELIVERED", label: "Overdelivered" },
+  { value: "EXCESS_ORDER", label: "Excess / Overdelivery" },
   { value: "CUSTOMER_REFUSED", label: "Customer Refused" },
   { value: "QUALITY_ISSUE", label: "Quality Issue" },
-  { value: "OTHER", label: "Other" },
 ];
 
 // ─── Create Return Modal ──────────────────────────────────────────────────────
 
 interface ReturnItemRow {
-  orderItemId: string;
+  productId: string;
   productName: string;
   orderedQty: number;
   qty: string;
@@ -158,7 +161,7 @@ function CreateReturnModal({
     if (!order) return;
     setReturnItems(
       order.lineItems.map((item) => ({
-        orderItemId: item.id,
+        productId: item.productId,
         productName: item.product?.name ?? item.productId,
         orderedQty: Number(item.qty),
         qty: "",
@@ -199,7 +202,7 @@ function CreateReturnModal({
     setErrors({});
 
     const items: CreateReturnItemDto[] = selectedReturnItems.map((row) => ({
-      orderItemId: row.orderItemId,
+      productId: row.productId,
       qty: parseFloat(row.qty),
       notes: row.notes.trim() || undefined,
     }));
@@ -332,7 +335,7 @@ function CreateReturnModal({
                 </thead>
                 <tbody className="divide-y divide-surface-border">
                   {returnItems.map((row, i) => (
-                    <tr key={row.orderItemId}>
+                    <tr key={row.productId}>
                       <td className="px-3 py-2 text-navy font-medium">{row.productName}</td>
                       <td className="px-3 py-2 text-center text-navy/60">{row.orderedQty}</td>
                       <td className="px-3 py-2">

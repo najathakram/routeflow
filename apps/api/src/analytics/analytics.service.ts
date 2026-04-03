@@ -19,18 +19,21 @@ export class AnalyticsService {
 
   async getRevenueTrend(from?: string, to?: string, groupBy = "month") {
     const { fromDate, toDate } = this.dateRange(from, to);
-    // Use Transaction records (created when orders are delivered) as earned revenue
-    const transactions = await this.prisma.transaction.findMany({
-      where: { createdAt: { gte: fromDate, lte: toDate } },
-      orderBy: { createdAt: "asc" },
+    const invoices = await this.prisma.invoice.findMany({
+      where: {
+        issueDate: { gte: fromDate, lte: toDate },
+        status: { notIn: ["DRAFT", "VOID", "WRITTEN_OFF"] },
+      },
+      orderBy: { issueDate: "asc" },
+      select: { issueDate: true, total: true },
     });
     const grouped: Record<string, number> = {};
-    for (const t of transactions) {
+    for (const inv of invoices) {
       const key =
         groupBy === "month"
-          ? `${t.createdAt.getFullYear()}-${String(t.createdAt.getMonth() + 1).padStart(2, "0")}`
-          : t.createdAt.toISOString().split("T")[0];
-      grouped[key] = (grouped[key] ?? 0) + Number(t.totalOwed);
+          ? `${inv.issueDate.getFullYear()}-${String(inv.issueDate.getMonth() + 1).padStart(2, "0")}`
+          : inv.issueDate.toISOString().split("T")[0];
+      grouped[key] = (grouped[key] ?? 0) + Number(inv.total);
     }
     return Object.entries(grouped)
       .map(([period, revenue]) => ({ period, revenue }))
@@ -70,21 +73,27 @@ export class AnalyticsService {
       .slice(0, limit);
   }
 
-  async getTopCustomers(metric = "revenue", limit = 10) {
-    const txns = await this.prisma.transaction.findMany({
-      where: { status: "PAID" },
+  async getTopCustomers(metric = "revenue", limit = 10, from?: string, to?: string) {
+    const where: any = { status: { notIn: ["DRAFT", "VOID", "WRITTEN_OFF"] } };
+    if (from || to) {
+      where.createdAt = {};
+      if (from) where.createdAt.gte = new Date(from);
+      if (to) where.createdAt.lte = new Date(to + "T23:59:59.999Z");
+    }
+    const invoices = await this.prisma.invoice.findMany({
+      where,
       include: { customer: { select: { id: true, businessName: true } } },
     });
-    const map: Record<string, { name: string; revenue: number; orders: number }> = {};
-    for (const t of txns) {
-      const id = t.customer.id;
-      if (!map[id]) map[id] = { name: t.customer.businessName, revenue: 0, orders: 0 };
-      map[id].revenue += Number(t.totalOwed);
-      map[id].orders += 1;
+    const map: Record<string, { name: string; totalRevenue: number; orderCount: number }> = {};
+    for (const inv of invoices) {
+      const id = inv.customerId;
+      if (!map[id]) map[id] = { name: inv.customer.businessName, totalRevenue: 0, orderCount: 0 };
+      map[id].totalRevenue += Number(inv.total);
+      map[id].orderCount += 1;
     }
     const arr = Object.entries(map).map(([id, v]) => ({ id, ...v }));
     return arr
-      .sort((a, b) => (metric === "orders" ? b.orders - a.orders : b.revenue - a.revenue))
+      .sort((a, b) => (metric === "orders" ? b.orderCount - a.orderCount : b.totalRevenue - a.totalRevenue))
       .slice(0, limit);
   }
 
@@ -218,18 +227,19 @@ export class AnalyticsService {
   }
 
   async getDso() {
-    const paidTxns = await this.prisma.transaction.findMany({
+    const paidInvoices = await this.prisma.invoice.findMany({
       where: { status: "PAID", paidAt: { not: null } },
+      select: { issueDate: true, paidAt: true },
     });
-    if (paidTxns.length === 0) return { dso: 0, count: 0 };
-    const totalDays = paidTxns.reduce((s, t) => {
+    if (paidInvoices.length === 0) return { dso: 0, count: 0 };
+    const totalDays = paidInvoices.reduce((s, inv) => {
       const days =
-        t.paidAt && t.createdAt
-          ? Math.floor((t.paidAt.getTime() - t.createdAt.getTime()) / 86400000)
+        inv.paidAt && inv.issueDate
+          ? Math.floor((inv.paidAt.getTime() - inv.issueDate.getTime()) / 86400000)
           : 0;
       return s + days;
     }, 0);
-    return { dso: totalDays / paidTxns.length, count: paidTxns.length };
+    return { dso: totalDays / paidInvoices.length, count: paidInvoices.length };
   }
 
   async getPriceHistory(productId: string) {
@@ -269,14 +279,17 @@ export class AnalyticsService {
 
   async getGrossMarginTrend(from?: string, to?: string) {
     const { fromDate, toDate } = this.dateRange(from, to);
-    const txns = await this.prisma.transaction.findMany({
-      where: { status: "PAID", paidAt: { gte: fromDate, lte: toDate } },
-      include: { items: { include: { orderItem: true } } },
+    const invoices = await this.prisma.invoice.findMany({
+      where: {
+        issueDate: { gte: fromDate, lte: toDate },
+        status: { notIn: ["DRAFT", "VOID", "WRITTEN_OFF"] },
+      },
+      select: { total: true },
     });
     const movements = await this.prisma.stockMovement.findMany({
       where: { type: "SALE", createdAt: { gte: fromDate, lte: toDate } },
     });
-    const revenue = txns.reduce((s, t) => s + Number(t.totalOwed), 0);
+    const revenue = invoices.reduce((s, inv) => s + Number(inv.total), 0);
     const cogs = movements.reduce(
       (s, m) => s + Math.abs(Number(m.quantity)) * Number(m.unitCost ?? 0),
       0,
@@ -293,15 +306,18 @@ export class AnalyticsService {
 
   async getAverageOrderValue(from?: string, to?: string) {
     const { fromDate, toDate } = this.dateRange(from, to);
-    const orders = await this.prisma.order.findMany({
-      where: { status: "DELIVERED", createdAt: { gte: fromDate, lte: toDate } },
+    const invoices = await this.prisma.invoice.findMany({
+      where: {
+        issueDate: { gte: fromDate, lte: toDate },
+        status: { notIn: ["DRAFT", "VOID", "WRITTEN_OFF"] },
+      },
       select: { total: true },
     });
-    const total = orders.reduce((s, o) => s + Number(o.total), 0);
+    const total = invoices.reduce((s, inv) => s + Number(inv.total), 0);
     return {
-      count: orders.length,
+      count: invoices.length,
       total,
-      aov: orders.length > 0 ? total / orders.length : 0,
+      aov: invoices.length > 0 ? total / invoices.length : 0,
       period: { from: fromDate, to: toDate },
     };
   }

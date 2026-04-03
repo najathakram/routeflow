@@ -59,9 +59,31 @@ export class CreditNotesService {
     return cn;
   }
 
-  async findAll(customerId?: string, page = 1, limit = 20) {
+  async findAll(
+    customerId?: string,
+    status?: string,
+    search?: string,
+    dateFrom?: string,
+    dateTo?: string,
+    page = 1,
+    limit = 20,
+  ) {
     const skip = (page - 1) * limit;
-    const where: any = customerId ? { customerId } : {};
+    const where: any = {};
+    if (customerId) where.customerId = customerId;
+    if (status) where.status = status;
+    if (dateFrom || dateTo) {
+      where.createdAt = {};
+      if (dateFrom) where.createdAt.gte = new Date(dateFrom);
+      if (dateTo) where.createdAt.lte = new Date(dateTo + "T23:59:59.999Z");
+    }
+    if (search) {
+      where.OR = [
+        { creditNoteNumber: { contains: search, mode: "insensitive" } },
+        { customer: { businessName: { contains: search, mode: "insensitive" } } },
+        { reason: { contains: search, mode: "insensitive" } },
+      ];
+    }
     const [data, total] = await Promise.all([
       this.prisma.creditNote.findMany({
         where,
@@ -75,13 +97,26 @@ export class CreditNotesService {
     return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
   }
 
-  async findAllForUser(user: JwtPayload, customerId?: string, page = 1, limit = 20) {
+  async findAllForUser(
+    user: JwtPayload,
+    customerId?: string,
+    status?: string,
+    search?: string,
+    dateFrom?: string,
+    dateTo?: string,
+    page = 1,
+    limit = 20,
+  ) {
     if (user.role === "CUSTOMER") {
       const customer = await this.prisma.customer.findFirst({ where: { userId: user.sub } });
       if (!customer) return { data: [], meta: { total: 0, page, limit, totalPages: 0 } };
-      return this.findAll(customer.id, page, limit);
+      return this.findAll(customer.id, status, search, dateFrom, dateTo, page, limit);
     }
-    return this.findAll(customerId, page, limit);
+    if (user.role === "DRIVER") {
+      // Drivers have no business reading credit notes
+      return { data: [], meta: { total: 0, page, limit, totalPages: 0 } };
+    }
+    return this.findAll(customerId, status, search, dateFrom, dateTo, page, limit);
   }
 
   async findOne(id: string) {

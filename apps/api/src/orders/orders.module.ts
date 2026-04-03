@@ -5,6 +5,7 @@ import { OrdersController, RouteRunDeliveryController } from "./orders.controlle
 import { AuthModule } from "../auth/auth.module";
 import { GatewaysModule } from "../gateways/gateways.module";
 import { NotificationsModule } from "../notifications/notifications.module";
+import { InvoicesModule } from "../invoices/invoices.module";
 
 @Module({
   imports: [
@@ -12,6 +13,7 @@ import { NotificationsModule } from "../notifications/notifications.module";
     BullModule.registerQueue({ name: "invoices" }),
     GatewaysModule,
     NotificationsModule,
+    InvoicesModule,
   ],
   controllers: [OrdersController, RouteRunDeliveryController],
   providers: [OrdersService],

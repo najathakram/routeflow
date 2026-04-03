@@ -36,7 +36,7 @@ import {
 } from "@routeflow/ui/web";
 import { useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
-import { useUsers, useCreateOperator, useUpdateUser, useChangeUserStatus, AppUser } from "@/lib/api/users";
+import { useUsers, useCreateOperator, useUpdateUser, useChangeUserStatus, useResetUserPassword, AppUser } from "@/lib/api/users";
 import { useNotificationsStatus, useSendTestNotification } from "@/lib/api/notifications";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api-client";
@@ -248,32 +248,34 @@ function NotificationsTab() {
 
   return (
     <div className="space-y-5">
-      <Card title="Firebase (Push Notifications)">
+      <Card title="Push Notifications">
         <div className="space-y-4">
           <div className="flex items-center justify-between rounded-lg border border-surface-border bg-surface-raised p-4">
             <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#FF6D00] font-bold text-white text-sm">
-                F
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-50">
+                <Bell className="h-5 w-5 text-brand-500" />
               </div>
               <div>
-                <p className="text-sm font-semibold text-navy">Firebase Cloud Messaging</p>
+                <p className="text-sm font-semibold text-navy">Driver App Notifications</p>
                 <p className="text-xs text-navy/50">
                   {notificationsStatus?.configured
                     ? `${notificationsStatus.deviceCount} device(s) registered`
-                    : "FCM_SERVICE_ACCOUNT_JSON not set in environment"}
+                    : "Push notifications are not configured"}
                 </p>
               </div>
             </div>
             {notificationsStatus?.configured ? (
-              <Badge variant="success" label="Configured" />
+              <Badge variant="success" label="Active" />
             ) : (
-              <Badge variant="warning" label="Not configured" />
+              <Badge variant="warning" label="Not set up" />
             )}
           </div>
 
-          <div className="text-sm text-navy/60">
-            <p>To enable push notifications, set the <code className="text-xs bg-surface-raised px-1 py-0.5 rounded">FCM_SERVICE_ACCOUNT_JSON</code> environment variable to the base64-encoded Firebase service account JSON from Firebase Console → Project Settings → Service Accounts.</p>
-          </div>
+          {!notificationsStatus?.configured && (
+            <div className="text-sm text-navy/60">
+              <p>Push notifications allow drivers to receive real-time alerts for new orders and route assignments. Contact your system administrator to enable this feature.</p>
+            </div>
+          )}
 
           <Button
             variant="secondary"
@@ -283,7 +285,7 @@ function NotificationsTab() {
             disabled={!notificationsStatus?.configured}
             onClick={handleTestNotification}
           >
-            Test Notification
+            Send Test Notification
           </Button>
         </div>
       </Card>
@@ -423,6 +425,7 @@ function AddUserModal({ isOpen, onClose, onCreated }: {
 const editUserSchema = z.object({
   username: z.string().min(3, "At least 3 characters").regex(/^[a-z0-9_.]+$/, "Lowercase letters, numbers, dots, underscores"),
   email: z.string().email("Enter a valid email"),
+  role: z.enum(["OPERATOR", "DRIVER", "CUSTOMER"]),
 });
 type EditUserFormValues = z.infer<typeof editUserSchema>;
 
@@ -436,7 +439,10 @@ function EditUserModal({
   user: AppUser | null;
 }) {
   const updateUser = useUpdateUser();
+  const resetPassword = useResetUserPassword();
   const { toast } = useToast();
+  const [tempPassword, setTempPassword] = React.useState<string | null>(null);
+  const [copied, setCopied] = React.useState(false);
 
   const { register, handleSubmit, reset, formState: { errors, isSubmitting } } =
     useForm<EditUserFormValues>({
@@ -445,14 +451,16 @@ function EditUserModal({
 
   React.useEffect(() => {
     if (isOpen && user) {
-      reset({ username: user.username, email: user.email });
+      reset({ username: user.username, email: user.email, role: user.role });
+      setTempPassword(null);
+      setCopied(false);
     }
   }, [isOpen, user, reset]);
 
   const onSubmit = async (data: EditUserFormValues) => {
     if (!user) return;
     await updateUser.mutateAsync(
-      { id: user.id, username: data.username, email: data.email },
+      { id: user.id, username: data.username, email: data.email, role: data.role },
       {
         onSuccess: () => {
           toast({ title: "User updated", variant: "success" });
@@ -464,12 +472,26 @@ function EditUserModal({
     );
   };
 
+  const handleResetPassword = () => {
+    if (!user) return;
+    resetPassword.mutate(user.id, {
+      onSuccess: (result) => setTempPassword(result.tempPassword),
+      onError: () => toast({ title: "Failed to reset password", variant: "error" }),
+    });
+  };
+
+  const copyPw = async () => {
+    if (!tempPassword) return;
+    try { await navigator.clipboard.writeText(tempPassword); setCopied(true); setTimeout(() => setCopied(false), 2000); }
+    catch { /* clipboard unavailable */ }
+  };
+
   return (
     <Modal
       open={isOpen}
       onClose={onClose}
       title="Edit User"
-      description="Update the user's username or email address."
+      description="Update the user's details or reset their password."
       footer={
         <>
           <Button variant="secondary" type="button" onClick={onClose}>Cancel</Button>
@@ -483,12 +505,16 @@ function EditUserModal({
         {updateUser.error && (
           <p className="text-sm text-danger">{updateUser.error.message}</p>
         )}
-        <div className="rounded-lg border border-surface-border bg-surface-raised px-4 py-3">
-          <p className="text-xs text-navy/50">Role</p>
-          <p className="mt-0.5 text-sm font-medium text-navy capitalize">
-            {user?.role.toLowerCase()}
-          </p>
-        </div>
+        <Select
+          label="Role"
+          options={[
+            { value: "DRIVER", label: "Driver" },
+            { value: "OPERATOR", label: "Operator" },
+            { value: "CUSTOMER", label: "Customer" },
+          ]}
+          register={register("role")}
+          error={errors.role?.message}
+        />
         <Input
           label="Username"
           placeholder="jsmith"
@@ -503,6 +529,32 @@ function EditUserModal({
           error={errors.email?.message}
         />
       </form>
+
+      {/* Password reset section */}
+      <div className="mt-4 border-t border-surface-border pt-4">
+        {tempPassword ? (
+          <div className="space-y-2">
+            <p className="text-xs font-medium text-navy">New temporary password — share with user:</p>
+            <div className="flex items-center gap-2">
+              <code className="flex-1 rounded border border-surface-border bg-surface-raised px-3 py-1.5 font-mono text-sm font-bold tracking-widest text-navy">
+                {tempPassword}
+              </code>
+              <button onClick={copyPw} title="Copy" className="rounded p-1.5 text-navy/40 hover:bg-surface-raised hover:text-navy transition-colors">
+                {copied ? <Check className="h-4 w-4 text-success" /> : <Copy className="h-4 w-4" />}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <Button
+            variant="secondary"
+            size="sm"
+            loading={resetPassword.isPending}
+            onClick={handleResetPassword}
+          >
+            Reset Password
+          </Button>
+        )}
+      </div>
     </Modal>
   );
 }

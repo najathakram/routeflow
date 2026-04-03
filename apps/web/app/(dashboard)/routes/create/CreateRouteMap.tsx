@@ -216,7 +216,7 @@ function MapPlaceholder({ customerCount }: { customerCount: number }) {
           </p>
         </div>
         <span className="rounded-full border border-surface-border bg-surface-raised px-3 py-1 text-xs font-medium text-navy/60">
-          {customerCount} customers loaded
+          {customerCount} customer{customerCount !== 1 ? "s" : ""} available
         </span>
       </div>
     </div>

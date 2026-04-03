@@ -69,6 +69,11 @@ export class InvoicesController {
     return this.invoicesService.recordStandalonePayment(dto);
   }
 
+  @Get("payments/:paymentId")
+  findPayment(@Param("paymentId") paymentId: string) {
+    return this.invoicesService.findPaymentById(paymentId);
+  }
+
   @Get("payments")
   listAllPayments(
     @Query("page") page?: string,

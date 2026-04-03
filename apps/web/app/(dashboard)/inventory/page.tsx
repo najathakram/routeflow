@@ -1270,6 +1270,60 @@ function SendPOButton({ poId }: { poId: string }) {
   );
 }
 
+// ─── Inline editable cell ─────────────────────────────────────────────────────
+
+function InlineNumberEdit({
+  value,
+  onSave,
+}: {
+  value: number | null;
+  onSave: (v: number) => void;
+}) {
+  const [editing, setEditing] = React.useState(false);
+  const [inputVal, setInputVal] = React.useState(value != null ? String(value) : "");
+  const inputRef = React.useRef<HTMLInputElement>(null);
+
+  React.useEffect(() => {
+    if (editing) inputRef.current?.select();
+  }, [editing]);
+
+  const commit = () => {
+    const n = parseFloat(inputVal);
+    if (!isNaN(n) && n >= 0) onSave(n);
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <input
+        ref={inputRef}
+        type="number"
+        min={0}
+        step={0.01}
+        value={inputVal}
+        onChange={(e) => setInputVal(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") { e.preventDefault(); commit(); }
+          if (e.key === "Escape") setEditing(false);
+        }}
+        className="w-20 rounded border border-brand-400 px-2 py-0.5 text-sm text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
+      />
+    );
+  }
+
+  return (
+    <button
+      onClick={() => { setInputVal(value != null ? String(value) : ""); setEditing(true); }}
+      title="Click to edit"
+      className="group flex items-center gap-1 rounded px-1 py-0.5 text-sm text-navy/70 hover:bg-surface-raised"
+    >
+      {value != null ? value : <span className="text-navy/30">—</span>}
+      <span className="hidden text-[10px] text-navy/30 group-hover:inline">✎</span>
+    </button>
+  );
+}
+
 // ─── Forecasting Tab ──────────────────────────────────────────────────────────
 
 function ForecastingTab({
@@ -1280,10 +1334,25 @@ function ForecastingTab({
   products: { id: string; name: string; sku?: string }[];
 }) {
   const { data: forecastData, isLoading } = useForecasting();
+  const updateSettings = useUpdateReorderSettings();
+  const { toast } = useToast();
   const items: ForecastItem[] = forecastData ?? [];
 
-  const [reorderItem, setReorderItem] = React.useState<ForecastItem | null>(null);
   const [createPOItem, setCreatePOItem] = React.useState<ForecastItem | null>(null);
+
+  const handleSaveField = (item: ForecastItem, field: "reorderPoint" | "reorderQty", value: number) => {
+    updateSettings.mutate(
+      {
+        productId: item.productId,
+        reorderPoint: field === "reorderPoint" ? value : (item.reorderPoint ?? 0),
+        reorderQty: field === "reorderQty" ? value : (item.reorderQty ?? 0),
+      },
+      {
+        onSuccess: () => toast({ title: "Saved", variant: "success" }),
+        onError: () => toast({ title: "Failed to save", variant: "error" }),
+      },
+    );
+  };
 
   return (
     <>
@@ -1338,11 +1407,17 @@ function ForecastingTab({
                       : "—"}
                   </td>
                   <td className="px-4 py-3">{daysRemainingBadge(item.daysRemaining)}</td>
-                  <td className="px-4 py-3 text-navy/70">
-                    {item.reorderPoint != null ? item.reorderPoint : <span className="text-navy/30">—</span>}
+                  <td className="px-4 py-3">
+                    <InlineNumberEdit
+                      value={item.reorderPoint}
+                      onSave={(v) => handleSaveField(item, "reorderPoint", v)}
+                    />
                   </td>
-                  <td className="px-4 py-3 text-navy/70">
-                    {item.reorderQty != null ? item.reorderQty : <span className="text-navy/30">—</span>}
+                  <td className="px-4 py-3">
+                    <InlineNumberEdit
+                      value={item.reorderQty}
+                      onSave={(v) => handleSaveField(item, "reorderQty", v)}
+                    />
                   </td>
                   <td className="px-4 py-3">
                     {item.needsReorder ? (
@@ -1356,22 +1431,14 @@ function ForecastingTab({
                     )}
                   </td>
                   <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
+                    {item.needsReorder && (
                       <button
-                        onClick={() => setReorderItem(item)}
-                        className="rounded px-2 py-1 text-xs text-brand-600 hover:bg-brand-50 border border-brand-200"
+                        onClick={() => setCreatePOItem(item)}
+                        className="rounded px-2 py-1 text-xs text-white bg-brand-500 hover:bg-brand-600"
                       >
-                        Set Reorder
+                        Create PO
                       </button>
-                      {item.needsReorder && (
-                        <button
-                          onClick={() => setCreatePOItem(item)}
-                          className="rounded px-2 py-1 text-xs text-white bg-brand-500 hover:bg-brand-600"
-                        >
-                          Create PO
-                        </button>
-                      )}
-                    </div>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -1387,9 +1454,6 @@ function ForecastingTab({
         </div>
       )}
 
-      {reorderItem && (
-        <ReorderSettingsModal item={reorderItem} onClose={() => setReorderItem(null)} />
-      )}
       {createPOItem && (
         <CreatePOModal
           suppliers={suppliers}
@@ -1443,8 +1507,21 @@ export default function InventoryPage() {
           <p className="mt-1 text-2xl font-bold text-navy">{(stockItems as StockItem[]).length}</p>
         </Card>
         <Card>
-          <p className="text-xs text-navy/50">Inventory Value</p>
+          <div className="flex items-center gap-1.5">
+            <p className="text-xs text-navy/50">Inventory Value</p>
+            {totalInventoryValue === 0 && (
+              <span
+                title="Value is calculated from average cost per unit. Record purchase receipts in the Vendor Bills tab to populate costs."
+                className="cursor-help"
+              >
+                <Info className="h-3.5 w-3.5 text-navy/30" />
+              </span>
+            )}
+          </div>
           <p className="mt-1 text-2xl font-bold text-navy">${totalInventoryValue.toFixed(2)}</p>
+          {totalInventoryValue === 0 && (
+            <p className="mt-0.5 text-[10px] text-navy/40">Based on average cost — record purchases to update</p>
+          )}
         </Card>
         <Card>
           <p className="text-xs text-navy/50">Out of Stock</p>

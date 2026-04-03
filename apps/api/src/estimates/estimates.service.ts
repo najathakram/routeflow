@@ -58,9 +58,30 @@ export class EstimatesService {
     });
   }
 
-  async findAll(customerId?: string, page = 1, limit = 20) {
+  async findAll(
+    customerId?: string,
+    status?: string,
+    search?: string,
+    dateFrom?: string,
+    dateTo?: string,
+    page = 1,
+    limit = 20,
+  ) {
     const skip = (page - 1) * limit;
-    const where: any = customerId ? { customerId } : {};
+    const where: any = {};
+    if (customerId) where.customerId = customerId;
+    if (status) where.status = status;
+    if (dateFrom || dateTo) {
+      where.createdAt = {};
+      if (dateFrom) where.createdAt.gte = new Date(dateFrom);
+      if (dateTo) where.createdAt.lte = new Date(dateTo + "T23:59:59.999Z");
+    }
+    if (search) {
+      where.OR = [
+        { estimateNumber: { contains: search, mode: "insensitive" } },
+        { customer: { businessName: { contains: search, mode: "insensitive" } } },
+      ];
+    }
     const [data, total] = await Promise.all([
       this.prisma.estimate.findMany({
         where,
@@ -93,6 +114,13 @@ export class EstimatesService {
     return this.prisma.estimate.update({ where: { id }, data: { status: "ACCEPTED" } });
   }
   async decline(id: string) {
+    return this.prisma.estimate.update({ where: { id }, data: { status: "DECLINED" } });
+  }
+  async voidEstimate(id: string) {
+    const est = await this.prisma.estimate.findUnique({ where: { id } });
+    if (!est) throw new NotFoundException("Estimate not found");
+    if (est.status === "CONVERTED")
+      throw new BadRequestException("Converted estimates cannot be voided");
     return this.prisma.estimate.update({ where: { id }, data: { status: "DECLINED" } });
   }
 

@@ -134,6 +134,15 @@ export function useAddCustomerAddress() {
   });
 }
 
+export function useUpdateCustomerAddress() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, addrId, ...data }: { id: string; addrId: string; [k: string]: unknown }) =>
+      apiClient.patch(`/customers/${id}/addresses/${addrId}`, data).then((r) => r.data),
+    onSuccess: (_d, vars) => qc.invalidateQueries({ queryKey: ["customers", vars.id] }),
+  });
+}
+
 // ─── Statement ────────────────────────────────────────────────────────────────
 
 export interface StatementTransaction {

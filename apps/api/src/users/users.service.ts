@@ -111,6 +111,18 @@ export class UsersService {
     });
   }
 
+  async resetPassword(userId: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException("User not found");
+    const tempPassword = `${crypto.randomBytes(3).toString("hex").toUpperCase()}-${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
+    const hashedPassword = await bcrypt.hash(tempPassword, 10);
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { password: hashedPassword, forcePasswordChange: true },
+    });
+    return { tempPassword };
+  }
+
   async getPreferences(userId: string): Promise<Record<string, string>> {
     const prefs = await this.prisma.userPreference.findMany({ where: { userId } });
     return Object.fromEntries(prefs.map((p) => [p.key, p.value]));

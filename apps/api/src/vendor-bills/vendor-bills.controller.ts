@@ -32,12 +32,18 @@ export class VendorBillsController {
   @Get() findAll(
     @Query("supplierId") supplierId?: string,
     @Query("status") status?: string,
+    @Query("dateFrom") dateFrom?: string,
+    @Query("dateTo") dateTo?: string,
+    @Query("search") search?: string,
     @Query("page") page?: string,
     @Query("limit") limit?: string,
   ) {
     return this.vendorBillsService.findAll(
       supplierId,
       status,
+      dateFrom,
+      dateTo,
+      search,
       page ? +page : 1,
       limit ? +limit : 20,
     );

@@ -1453,8 +1453,6 @@ function FinanceReportsContent() {
                 to={to}
                 onFromChange={handleFromChange}
                 onToChange={handleToChange}
-                onExportCSV={handleExport}
-                onPrint={() => printReport()}
               />
             )}
             {/* Report content */}

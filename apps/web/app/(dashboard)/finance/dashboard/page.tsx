@@ -50,7 +50,7 @@ function DonutChart({ data }: { data: Array<{ name: string; amount: number }> })
   const circumference = 2 * Math.PI * 40;
 
   return (
-    <div className="flex items-center gap-4">
+    <div className="flex flex-col items-center gap-3">
       <svg width="100" height="100" viewBox="0 0 100 100">
         {slices.map((s, i) => (
           <circle
@@ -66,12 +66,12 @@ function DonutChart({ data }: { data: Array<{ name: string; amount: number }> })
         ))}
         <circle cx="50" cy="50" r="31" fill="white" />
       </svg>
-      <div className="flex flex-col gap-1 min-w-0">
+      <div className="w-full space-y-1.5">
         {slices.slice(0, 5).map((s, i) => (
           <div key={i} className="flex items-center gap-1.5 text-xs">
             <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ backgroundColor: s.color }} />
-            <span className="truncate text-navy/70">{s.name}</span>
-            <span className="ml-auto font-medium text-navy">{fmtShort(s.amount)}</span>
+            <span className="min-w-0 flex-1 truncate text-navy/70">{s.name}</span>
+            <span className="shrink-0 font-medium text-navy">{fmtShort(s.amount)}</span>
           </div>
         ))}
       </div>

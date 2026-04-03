@@ -273,11 +273,31 @@ export class VendorBillsService {
     return this.prisma.vendorBill.update({ where: { id }, data: { status: "VOID" as any } });
   }
 
-  async findAll(supplierId?: string, status?: string, page = 1, limit = 20) {
+  async findAll(
+    supplierId?: string,
+    status?: string,
+    dateFrom?: string,
+    dateTo?: string,
+    search?: string,
+    page = 1,
+    limit = 20,
+  ) {
     const skip = (page - 1) * limit;
     const where: any = {};
     if (supplierId) where.supplierId = supplierId;
     if (status) where.status = status;
+    if (dateFrom || dateTo) {
+      where.billDate = {};
+      if (dateFrom) where.billDate.gte = new Date(dateFrom);
+      if (dateTo) where.billDate.lte = new Date(dateTo + "T23:59:59.999Z");
+    }
+    if (search) {
+      where.OR = [
+        { billNumber: { contains: search, mode: "insensitive" } },
+        { supplier: { name: { contains: search, mode: "insensitive" } } },
+        { notes: { contains: search, mode: "insensitive" } },
+      ];
+    }
     const [data, total] = await Promise.all([
       this.prisma.vendorBill.findMany({
         where,

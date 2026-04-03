@@ -543,6 +543,24 @@ export class InvoicesService {
     };
   }
 
+  async findPaymentById(paymentId: string) {
+    const payment = await this.prisma.invoicePayment.findUnique({
+      where: { id: paymentId },
+      include: {
+        invoice: {
+          select: {
+            id: true,
+            invoiceNumber: true,
+            customerId: true,
+            customer: { select: { id: true, businessName: true } },
+          },
+        },
+      },
+    });
+    if (!payment) throw new NotFoundException("Payment not found");
+    return payment;
+  }
+
   // ─── Payment recording ────────────────────────────────────────────────────
 
   async recordPayment(id: string, dto: RecordInvoicePaymentDto) {

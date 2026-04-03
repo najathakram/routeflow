@@ -47,6 +47,36 @@ export class ReturnsController {
     return this.returnsService.findOne(id);
   }
 
+  @Post(":id/approve")
+  @Roles(UserRole.OPERATOR)
+  approve(@Param("id") id: string) {
+    return this.returnsService.approve(id);
+  }
+
+  @Post(":id/reject")
+  @Roles(UserRole.OPERATOR)
+  reject(@Param("id") id: string) {
+    return this.returnsService.reject(id);
+  }
+
+  @Post(":id/in-transit")
+  @Roles(UserRole.OPERATOR)
+  markInTransit(@Param("id") id: string) {
+    return this.returnsService.markInTransit(id);
+  }
+
+  @Post(":id/receive")
+  @Roles(UserRole.OPERATOR)
+  receive(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
+    return this.returnsService.receive(id, user.sub);
+  }
+
+  @Post(":id/refund")
+  @Roles(UserRole.OPERATOR)
+  processRefund(@Param("id") id: string) {
+    return this.returnsService.processRefund(id);
+  }
+
   @Post(":id/cancel")
   @Roles(UserRole.OPERATOR, UserRole.CUSTOMER)
   cancel(@Param("id") id: string) {

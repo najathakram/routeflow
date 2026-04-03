@@ -488,17 +488,17 @@ export class InventoryService {
       const currentStock = Number(p.currentStock);
       const daysRemaining = avgDailyUsage > 0 ? Math.floor(currentStock / avgDailyUsage) : null;
       return {
-        id: p.id,
+        productId: p.id,
         name: p.name,
         sku: p.sku,
         unit: p.unit,
         currentStock,
-        avgDailyUsage: Math.round(avgDailyUsage * 100) / 100,
+        avgDailySales: Math.round(avgDailyUsage * 100) / 100,
         totalUsed30Days: totalUsed30,
         daysRemaining,
         reorderPoint: p.reorderPoint,
         reorderQty: p.reorderQty,
-        isBelowReorder: p.reorderPoint != null && currentStock < p.reorderPoint,
+        needsReorder: p.reorderPoint != null && currentStock < p.reorderPoint,
       };
     });
   }

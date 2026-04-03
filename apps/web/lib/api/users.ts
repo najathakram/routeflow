@@ -33,10 +33,16 @@ export function useCreateOperator() {
 
 export function useUpdateUser() {
   const qc = useQueryClient();
-  return useMutation<AppUser, Error, { id: string; email?: string; username?: string }>({
+  return useMutation<AppUser, Error, { id: string; email?: string; username?: string; role?: string }>({
     mutationFn: ({ id, ...data }) =>
       apiClient.patch(`/users/${id}`, data).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
+  });
+}
+
+export function useResetUserPassword() {
+  return useMutation<{ tempPassword: string }, Error, string>({
+    mutationFn: (id) => apiClient.post(`/users/${id}/reset-password`).then((r) => r.data),
   });
 }
 

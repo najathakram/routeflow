@@ -4,29 +4,32 @@ import { apiClient } from "../api-client";
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export type ReturnStatus =
-  | "REQUESTED"
+  | "PENDING"
   | "APPROVED"
+  | "REJECTED"
   | "IN_TRANSIT"
   | "RECEIVED"
   | "REFUNDED"
-  | "REJECTED";
+  | "CANCELLED"
+  | "PROCESSED";
 
 export type ReturnReason =
   | "DAMAGED"
   | "WRONG_ITEM"
-  | "OVERDELIVERED"
+  | "EXCESS_ORDER"
   | "CUSTOMER_REFUSED"
-  | "QUALITY_ISSUE"
-  | "OTHER";
+  | "QUALITY_ISSUE";
 
 export interface ReturnItem {
   id: string;
-  orderItemId: string;
+  productId: string;
   product?: { id: string; name: string; unit?: string };
   orderedQty: number;
+  unitPrice?: number | null;
   qty: number;
   condition?: string;
   notes?: string;
+  restock?: boolean;
 }
 
 export interface ReturnLog {
@@ -83,9 +86,10 @@ export function useReturn(id: string) {
 // ─── Mutations ────────────────────────────────────────────────────────────────
 
 export interface CreateReturnItemDto {
-  orderItemId: string;
+  productId: string;
   qty: number;
   notes?: string;
+  restock?: boolean;
 }
 
 export interface CreateReturnDto {

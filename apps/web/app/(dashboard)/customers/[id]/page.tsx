@@ -166,11 +166,11 @@ function InfoRow({
   value: string;
 }) {
   return (
-    <div className="flex items-start gap-3">
+    <div className="flex items-start gap-3 min-w-0">
       <Icon className="mt-0.5 h-4 w-4 shrink-0 text-navy/40" />
-      <div>
+      <div className="min-w-0">
         <p className="text-xs text-navy/50">{label}</p>
-        <p className="mt-0.5 text-sm font-medium text-navy">{value}</p>
+        <p className="mt-0.5 text-sm font-medium text-navy break-words">{value}</p>
       </div>
     </div>
   );
