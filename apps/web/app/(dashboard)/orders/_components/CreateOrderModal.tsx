@@ -132,6 +132,8 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
+  const [orderDiscount, setOrderDiscount] = React.useState("");
+
   // ── Derived totals ────────────────────────────────────────────────────────
 
   const subtotal = lineItems.reduce((sum, li) => sum + li.unitPrice * li.qty, 0);
@@ -232,7 +234,6 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
   // ── Submit ────────────────────────────────────────────────────────────────
 
   const [requestedDeliveryDate, setRequestedDeliveryDate] = React.useState("");
-  const [orderDiscount, setOrderDiscount] = React.useState("");
 
   const onSubmit = (data: FormValues) => {
     let hasErrors = false;
