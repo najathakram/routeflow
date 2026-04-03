@@ -131,13 +131,15 @@ export class InvoicesService {
     });
     if (!order) throw new NotFoundException("Order not found");
 
-    // Build invoice items from order items
+    // Build invoice items from order items, carrying price type info
     const itemsData = order.lineItems.map((li: any) => ({
       description: li.product?.name ?? `Product`,
       productId: li.productId,
       qty: Number(li.qty),
       unitPrice: Number(li.unitPrice),
-      discount: 0,
+      discount: li.originalPrice != null ? Number(li.originalPrice) - Number(li.unitPrice) : 0,
+      originalPrice: li.originalPrice != null ? Number(li.originalPrice) : null,
+      priceType: li.priceType ?? "STANDARD",
       taxRate: 0,
       subtotal: Number(li.subtotal),
     }));

@@ -1107,7 +1107,23 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                     <tr key={item.id} className={idx % 2 === 0 ? "bg-white" : "bg-gray-50/60"}>
                       <td className="px-8 py-3 text-navy">{item.description}</td>
                       <td className="px-4 py-3 text-right text-navy/70">{item.qty}</td>
-                      <td className="px-4 py-3 text-right text-navy/70">{fmt(Number(item.unitPrice))}</td>
+                      <td className="px-4 py-3 text-right">
+                        {item.priceType === 'SPECIAL' ? (
+                          <div className="flex flex-col items-end gap-0.5">
+                            <span className="text-xs text-navy/40 line-through">{fmt(Number(item.originalPrice))}</span>
+                            <span className="font-medium text-emerald-600">{fmt(Number(item.unitPrice))}</span>
+                            <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">Special price</span>
+                          </div>
+                        ) : item.priceType === 'DISCOUNTED' ? (
+                          <div className="flex flex-col items-end gap-0.5">
+                            <span className="text-xs text-navy/40 line-through">{fmt(Number(item.originalPrice))}</span>
+                            <span className="font-medium text-amber-600">{fmt(Number(item.unitPrice))}</span>
+                            <span className="rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 ring-1 ring-amber-200">Discounted price</span>
+                          </div>
+                        ) : (
+                          <span className="text-navy/70">{fmt(Number(item.unitPrice))}</span>
+                        )}
+                      </td>
                       <td className="px-8 py-3 text-right font-medium text-navy">
                         {fmt(Number(item.qty) * Number(item.unitPrice))}
                       </td>

@@ -13,6 +13,8 @@ export type InvoiceStatus =
   | 'OVERDUE'
   | 'WRITTEN_OFF';
 
+export type PriceType = 'STANDARD' | 'SPECIAL' | 'DISCOUNTED';
+
 export interface InvoiceItem {
   id: string;
   productId?: string;
@@ -21,6 +23,8 @@ export interface InvoiceItem {
   qty: number;
   unitPrice: number;
   discount?: number;
+  originalPrice?: number | null;
+  priceType?: PriceType;
   taxRate?: number;
   subtotal?: number;
   taxable?: boolean;

@@ -16,6 +16,7 @@ import {
   MutationType,
   MovementType,
   InvoiceStatus,
+  PriceType,
   Prisma,
 } from "@prisma/client";
 import { ListOrdersDto } from "./dto/list-orders.dto";
@@ -146,6 +147,16 @@ export class OrdersService {
     });
 
     const productMap = new Map(products.map((p) => [p.id, p]));
+
+    // Load any permanent customer-specific prices for this order
+    const customerPrices = await this.prisma.customerPrice.findMany({
+      where: {
+        customerId,
+        productId: { in: dto.items.map((i) => i.productId) },
+      },
+    });
+    const cpMap = new Map(customerPrices.map((cp) => [cp.productId, Number(cp.specialPrice)]));
+
     const orderNumber = `ORD-${Date.now()}`;
 
     let subtotal = 0;
@@ -160,7 +171,28 @@ export class OrdersService {
         qty = (item.boxes ?? 0) * unitsPerBox + (item.pieces ?? 0);
       }
 
-      const unitPrice = Number(product.pricePerUnit);
+      // Price priority: operator one-time override (DISCOUNTED) > permanent special price (SPECIAL) > list price (STANDARD)
+      const listPrice = Number(product.pricePerUnit);
+      const specialPrice = cpMap.get(item.productId);
+      const overridePrice = item.unitPrice;
+
+      let unitPrice: number;
+      let priceType: PriceType;
+      let originalPrice: number | null = null;
+
+      if (overridePrice != null && overridePrice < listPrice) {
+        unitPrice = overridePrice;
+        priceType = PriceType.DISCOUNTED;
+        originalPrice = listPrice;
+      } else if (specialPrice != null) {
+        unitPrice = specialPrice;
+        priceType = PriceType.SPECIAL;
+        originalPrice = listPrice;
+      } else {
+        unitPrice = listPrice;
+        priceType = PriceType.STANDARD;
+      }
+
       const itemSubtotal = unitPrice * qty;
       subtotal += itemSubtotal;
       return {
@@ -169,13 +201,16 @@ export class OrdersService {
         boxes: item.boxes ?? null,
         pieces: item.pieces ?? null,
         unitPrice,
+        priceType,
+        originalPrice,
         subtotal: itemSubtotal,
         notes: (item as any).itemNote || item.notes,
       };
     });
 
+    const orderDiscount = dto.discountAmount ?? 0;
     const tax = subtotal * this.taxRate;
-    const total = subtotal + tax;
+    const total = subtotal + tax - orderDiscount;
 
     const order = await this.prisma.order.create({
       data: {
@@ -184,6 +219,7 @@ export class OrdersService {
         subtotal,
         tax,
         total,
+        discountAmount: orderDiscount,
         notes: dto.notes,
         urgent: dto.urgent ?? false,
         requestedDeliveryDate: dto.requestedDeliveryDate
@@ -617,7 +653,9 @@ export class OrdersService {
                       productId: li.productId,
                       qty: Number(li.qty),
                       unitPrice: Number(li.unitPrice),
-                      discount: 0,
+                      discount: li.originalPrice != null ? Number(li.originalPrice) - Number(li.unitPrice) : 0,
+                      originalPrice: li.originalPrice != null ? Number(li.originalPrice) : null,
+                      priceType: li.priceType ?? PriceType.STANDARD,
                       taxRate: 0,
                       subtotal: Number(li.subtotal),
                     })),

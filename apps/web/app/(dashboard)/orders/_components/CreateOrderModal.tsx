@@ -6,7 +6,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { X, AlertTriangle } from "lucide-react";
 import { Modal, Textarea, Button, cn, useToast } from "@routeflow/ui/web";
-import { useCustomers } from "@/lib/api/customers";
+import { useCustomers, useCustomerPrices } from "@/lib/api/customers";
 import { useProducts } from "@/lib/api/products";
 import { useCreateOrder } from "@/lib/api/orders";
 
@@ -32,11 +32,15 @@ interface LineItem {
   productId: string;
   productName: string;
   unit: string;
-  unitPrice: number;
-  qty: number;           // total pieces (authoritative)
-  unitsPerBox?: number;  // set when product has box packaging
-  boxes?: number;        // whole boxes (only when unitsPerBox is set)
-  pieces?: number;       // extra loose pieces (only when unitsPerBox is set)
+  listPrice: number;          // standard pricePerUnit from product catalog
+  specialPrice?: number;      // permanent customer-specific price (from CustomerPrice)
+  discountedPrice?: number;   // one-time ad-hoc price entered by operator
+  unitPrice: number;          // effective price used for display totals
+  priceType: 'STANDARD' | 'SPECIAL' | 'DISCOUNTED';
+  qty: number;                // total pieces (authoritative)
+  unitsPerBox?: number;       // set when product has box packaging
+  boxes?: number;             // whole boxes (only when unitsPerBox is set)
+  pieces?: number;            // extra loose pieces (only when unitsPerBox is set)
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -55,6 +59,14 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
   const [debouncedCustomerSearch, setDebouncedCustomerSearch] = React.useState("");
   const [selectedCustomer, setSelectedCustomer] = React.useState<SelectedCustomer | null>(null);
   const [customerError, setCustomerError] = React.useState("");
+
+  // Customer special prices
+  const { data: customerPricesData } = useCustomerPrices(selectedCustomer?.id);
+  const cpMap = React.useMemo(() => {
+    const map = new Map<string, number>();
+    (customerPricesData ?? []).forEach((cp: any) => map.set(cp.productId, Number(cp.specialPrice)));
+    return map;
+  }, [customerPricesData]);
 
   // Product search state
   const [productSearch, setProductSearch] = React.useState("");
@@ -114,6 +126,7 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
       setLineItems([]);
       setLineItemsError("");
       setRequestedDeliveryDate("");
+      setOrderDiscount("");
       createOrder.reset();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -123,7 +136,8 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
 
   const subtotal = lineItems.reduce((sum, li) => sum + li.unitPrice * li.qty, 0);
   const tax = subtotal * 0.1;
-  const total = subtotal + tax;
+  const discountAmt = parseFloat(orderDiscount) || 0;
+  const total = subtotal + tax - discountAmt;
 
   // ── Stop management ───────────────────────────────────────────────────────
 
@@ -131,6 +145,10 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
   const addLineItem = (product: any) => {
     if (lineItems.some((li) => li.productId === product.id)) return;
     const upb: number | undefined = product.unitsPerBox ? Number(product.unitsPerBox) : undefined;
+    const listPrice = Number(product.pricePerUnit ?? 0);
+    const specialPrice = cpMap.get(product.id);
+    const effectivePrice = specialPrice ?? listPrice;
+    const priceType = specialPrice != null ? 'SPECIAL' as const : 'STANDARD' as const;
     setLineItems((prev) => [
       ...prev,
       {
@@ -138,7 +156,10 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
         productId: product.id,
         productName: product.name,
         unit: product.unit ?? "each",
-        unitPrice: Number(product.pricePerUnit ?? 0),
+        listPrice,
+        specialPrice,
+        unitPrice: effectivePrice,
+        priceType,
         qty: upb ? upb : 1,
         unitsPerBox: upb,
         boxes: upb ? 1 : undefined,
@@ -187,9 +208,31 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
     );
   };
 
+  const setDiscountedPrice = (tempId: string, rawValue: string) => {
+    setLineItems((prev) =>
+      prev.map((li) => {
+        if (li.tempId !== tempId) return li;
+        const parsed = parseFloat(rawValue);
+        if (rawValue === "" || isNaN(parsed)) {
+          // Clear override — revert to special or list price
+          const revertPrice = li.specialPrice ?? li.listPrice;
+          return { ...li, discountedPrice: undefined, unitPrice: revertPrice, priceType: li.specialPrice != null ? 'SPECIAL' : 'STANDARD' };
+        }
+        const discountedPrice = Math.max(0, parsed);
+        if (discountedPrice < li.listPrice) {
+          return { ...li, discountedPrice, unitPrice: discountedPrice, priceType: 'DISCOUNTED' };
+        }
+        // If entered price >= list price, treat as no discount
+        const revertPrice = li.specialPrice ?? li.listPrice;
+        return { ...li, discountedPrice: undefined, unitPrice: revertPrice, priceType: li.specialPrice != null ? 'SPECIAL' : 'STANDARD' };
+      }),
+    );
+  };
+
   // ── Submit ────────────────────────────────────────────────────────────────
 
   const [requestedDeliveryDate, setRequestedDeliveryDate] = React.useState("");
+  const [orderDiscount, setOrderDiscount] = React.useState("");
 
   const onSubmit = (data: FormValues) => {
     let hasErrors = false;
@@ -214,10 +257,13 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
           productId: li.productId,
           qty: li.qty,
           ...(li.unitsPerBox ? { boxes: li.boxes ?? 0, pieces: li.pieces ?? 0 } : {}),
+          // Only send unitPrice for one-time discounts (not permanent special prices — backend handles those via CustomerPrice)
+          ...(li.priceType === 'DISCOUNTED' && li.discountedPrice != null ? { unitPrice: li.discountedPrice } : {}),
         })),
         notes: data.notes,
         urgent: data.urgent,
         requestedDeliveryDate: requestedDeliveryDate || undefined,
+        ...(discountAmt > 0 ? { discountAmount: discountAmt } : {}),
       },
       {
         onSuccess: () => {
@@ -394,12 +440,42 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
             {lineItems.length > 0 ? (
               <ul className="divide-y divide-surface-border overflow-hidden rounded-lg border border-surface-border">
                 {lineItems.map((li) => (
-                  <li key={li.tempId} className="flex items-center gap-3 px-3 py-2.5">
+                  <li key={li.tempId} className="flex items-start gap-3 px-3 py-2.5">
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium text-navy">{li.productName}</p>
-                      <p className="text-xs text-navy/50">
-                        ${li.unitPrice.toFixed(2)} / {li.unit}
-                      </p>
+                      {/* Price display with special/discount indicators */}
+                      <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
+                        {li.priceType === 'SPECIAL' ? (
+                          <>
+                            <span className="text-xs text-navy/40 line-through">${li.listPrice.toFixed(2)}</span>
+                            <span className="text-xs font-medium text-emerald-600">${li.unitPrice.toFixed(2)} / {li.unit}</span>
+                            <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">Special price</span>
+                          </>
+                        ) : li.priceType === 'DISCOUNTED' ? (
+                          <>
+                            <span className="text-xs text-navy/40 line-through">${li.listPrice.toFixed(2)}</span>
+                            <span className="text-xs font-medium text-amber-600">${li.unitPrice.toFixed(2)} / {li.unit}</span>
+                            <span className="rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 ring-1 ring-amber-200">Discounted</span>
+                          </>
+                        ) : (
+                          <span className="text-xs text-navy/50">${li.unitPrice.toFixed(2)} / {li.unit}</span>
+                        )}
+                      </div>
+                      {/* One-time discount input (only when no special price already applied) */}
+                      {li.priceType !== 'SPECIAL' && (
+                        <div className="mt-1 flex items-center gap-1">
+                          <span className="text-[10px] text-navy/40">One-time discount price:</span>
+                          <input
+                            type="number"
+                            min={0}
+                            step="0.01"
+                            placeholder={li.listPrice.toFixed(2)}
+                            value={li.discountedPrice != null ? li.discountedPrice : ""}
+                            onChange={(e) => setDiscountedPrice(li.tempId, e.target.value)}
+                            className="w-20 rounded border border-surface-border bg-white px-1.5 py-0.5 text-xs text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
+                          />
+                        </div>
+                      )}
                     </div>
                     {/* Qty controls */}
                     {li.unitsPerBox ? (
@@ -487,6 +563,22 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
               <div className="flex justify-between text-navy/70">
                 <span>Tax (10%)</span>
                 <span>${tax.toFixed(2)}</span>
+              </div>
+              {/* Order-level discount */}
+              <div className="flex items-center justify-between text-navy/70">
+                <label className="flex items-center gap-2 text-sm">
+                  Order discount
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    placeholder="0.00"
+                    value={orderDiscount}
+                    onChange={(e) => setOrderDiscount(e.target.value)}
+                    className="w-20 rounded border border-surface-border bg-white px-2 py-0.5 text-xs text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
+                  />
+                </label>
+                {discountAmt > 0 && <span className="text-amber-600">−${discountAmt.toFixed(2)}</span>}
               </div>
               <div className="flex justify-between border-t border-surface-border pt-1.5 font-semibold text-navy">
                 <span>Total</span>

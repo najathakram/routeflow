@@ -831,8 +831,24 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                             : Number(li.qty)
                           }
                         </td>
-                        <td className="px-4 py-3 text-right text-navy/70">
-                          ${Number(li.unitPrice).toFixed(2)}
+                        <td className="px-4 py-3 text-right">
+                          <div className="flex flex-col items-end gap-0.5">
+                            {li.priceType === 'SPECIAL' ? (
+                              <>
+                                <span className="text-xs text-navy/40 line-through">${Number(li.originalPrice).toFixed(2)}</span>
+                                <span className="font-medium text-emerald-600">${Number(li.unitPrice).toFixed(2)}</span>
+                                <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">Special</span>
+                              </>
+                            ) : li.priceType === 'DISCOUNTED' ? (
+                              <>
+                                <span className="text-xs text-navy/40 line-through">${Number(li.originalPrice).toFixed(2)}</span>
+                                <span className="font-medium text-amber-600">${Number(li.unitPrice).toFixed(2)}</span>
+                                <span className="rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 ring-1 ring-amber-200">Discounted</span>
+                              </>
+                            ) : (
+                              <span className="text-navy/70">${Number(li.unitPrice).toFixed(2)}</span>
+                            )}
+                          </div>
                         </td>
                         <td className="px-4 py-3 text-right font-medium text-navy">
                           {li.status === "CANCELLED"
