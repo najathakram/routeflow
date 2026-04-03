@@ -1012,4 +1012,97 @@ export class InvoicesService {
       data: { status: InvoiceStatus.OVERDUE },
     });
   }
+
+  // ─── Retroactive Price Adjustment ─────────────────────────────────────────
+
+  async applyPriceAdjustment(
+    id: string,
+    dto: { items: { itemId: string; newUnitPrice: number }[]; scope: string; sinceDate?: string },
+  ) {
+    const invoice = await this.prisma.invoice.findUnique({
+      where: { id },
+      include: { items: true },
+    });
+    if (!invoice) throw new NotFoundException("Invoice not found");
+
+    // Build a map of itemId → newUnitPrice for quick lookup
+    const priceMap = new Map(dto.items.map((i) => [i.itemId, i.newUnitPrice]));
+
+    // Build a map of itemId → productId from this invoice's items (used for bulk scope)
+    const productIdMap = new Map(invoice.items.map((li) => [li.id, li.productId]));
+
+    // Helper: update items on a single invoice and recalculate totals
+    const applyToInvoice = async (inv: typeof invoice, localPriceMap: Map<string, number>) => {
+      const auditLine = `\n[${new Date().toLocaleDateString()} — Price adjusted by operator]`;
+
+      for (const item of inv.items) {
+        const newPrice = localPriceMap.get(item.id);
+        if (newPrice == null) continue;
+        const newSubtotal = Number(item.qty) * newPrice - Number(item.discount ?? 0);
+        await this.prisma.invoiceItem.update({
+          where: { id: item.id },
+          data: { unitPrice: newPrice, subtotal: newSubtotal },
+        });
+      }
+
+      // Recalculate invoice totals from fresh item data
+      const updatedItems = await this.prisma.invoiceItem.findMany({ where: { invoiceId: inv.id } });
+      const subtotal = updatedItems.reduce((s, li) => s + Number(li.subtotal), 0);
+      const taxAmount = updatedItems.reduce(
+        (s, li) => s + Number(li.subtotal) * Number(li.taxRate ?? 0),
+        0,
+      );
+      const total = subtotal - Number(inv.discount ?? 0) + Number(inv.shippingFee ?? 0) + taxAmount;
+
+      await this.prisma.invoice.update({
+        where: { id: inv.id },
+        data: {
+          subtotal,
+          taxAmount,
+          total,
+          notes: (inv.notes ?? "") + auditLine,
+        },
+      });
+    };
+
+    if (dto.scope === "SINGLE") {
+      await applyToInvoice(invoice, priceMap);
+    } else {
+      // ALL_CUSTOMER_SINCE: find all invoices for the same customer on or after sinceDate
+      if (!dto.sinceDate) throw new BadRequestException("sinceDate is required for bulk scope");
+
+      // Build productId → newUnitPrice map from this invoice (to apply same price to same product elsewhere)
+      const productPriceMap = new Map<string, number>();
+      for (const [itemId, newPrice] of priceMap.entries()) {
+        const productId = productIdMap.get(itemId);
+        if (productId) productPriceMap.set(productId, newPrice);
+      }
+
+      const targetInvoices = await this.prisma.invoice.findMany({
+        where: {
+          customerId: invoice.customerId,
+          createdAt: { gte: new Date(dto.sinceDate) },
+        },
+        include: { items: true },
+      });
+
+      for (const inv of targetInvoices) {
+        // Build itemId → newUnitPrice for items whose productId matches
+        const localMap = new Map<string, number>();
+        for (const item of inv.items) {
+          if (item.productId && productPriceMap.has(item.productId)) {
+            localMap.set(item.id, productPriceMap.get(item.productId)!);
+          }
+        }
+        if (localMap.size > 0) {
+          await applyToInvoice(inv, localMap);
+        }
+      }
+    }
+
+    return this.prisma.invoice.findUnique({
+      where: { id },
+      include: { items: true, customer: { select: { id: true, businessName: true } } },
+    });
+  }
 }

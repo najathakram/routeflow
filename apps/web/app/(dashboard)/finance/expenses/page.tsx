@@ -15,6 +15,9 @@ import {
   ChevronUp,
   ChevronDown,
   ChevronsUpDown,
+  Paperclip,
+  Upload,
+  ExternalLink,
 } from "lucide-react";
 import { PageHeader, Button, cn, Modal, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
@@ -28,7 +31,15 @@ import {
 } from "@/lib/api/vendor-bills";
 import { useSuppliers as useInventorySuppliers, usePurchaseOrders } from "@/lib/api/inventory";
 import { useProducts } from "@/lib/api/products";
-import { useExpenses, useExpenseCategories, useDeleteExpense } from "@/lib/api/finance";
+import {
+  useExpenses,
+  useExpenseCategories,
+  useDeleteExpense,
+  useUploadExpenseReceipt,
+  useDeleteExpenseReceipt,
+  useGetExpenseReceiptUrl,
+  useExtractExpenseItems,
+} from "@/lib/api/finance";
 import { usePreferences, useSavePreferences } from "@/lib/api/users";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
@@ -702,10 +713,16 @@ function OtherExpensesTab() {
   const [from, setFrom] = React.useState("");
   const [to, setTo] = React.useState("");
   const [confirmDelete, setConfirmDelete] = React.useState<string | null>(null);
+  const [uploadingFor, setUploadingFor] = React.useState<string | null>(null);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   const { data, isLoading } = useExpenses({ categoryId: categoryId || undefined, from: from || undefined, to: to || undefined, page, limit: 25 });
   const { data: categories } = useExpenseCategories();
   const deleteExpense = useDeleteExpense();
+  const uploadReceipt = useUploadExpenseReceipt();
+  const deleteReceipt = useDeleteExpenseReceipt();
+  const getReceiptUrl = useGetExpenseReceiptUrl();
+  const extractItems = useExtractExpenseItems();
 
   const expenses = data?.data ?? [];
   const meta = data?.meta;
@@ -721,8 +738,63 @@ function OtherExpensesTab() {
     }
   };
 
+  const triggerUpload = (expenseId: string) => {
+    setUploadingFor(expenseId);
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !uploadingFor) return;
+    e.target.value = "";
+    try {
+      await uploadReceipt.mutateAsync({ id: uploadingFor, file });
+      toast({ title: "Receipt uploaded", variant: "success" });
+    } catch {
+      toast({ title: "Failed to upload receipt", variant: "error" });
+    } finally {
+      setUploadingFor(null);
+    }
+  };
+
+  const handleViewReceipt = async (expenseId: string) => {
+    try {
+      const { url } = await getReceiptUrl.mutateAsync(expenseId);
+      window.open(url, "_blank", "noopener,noreferrer");
+    } catch {
+      toast({ title: "Failed to fetch receipt URL", variant: "error" });
+    }
+  };
+
+  const handleDeleteReceipt = async (expenseId: string) => {
+    try {
+      await deleteReceipt.mutateAsync(expenseId);
+      toast({ title: "Receipt removed", variant: "success" });
+    } catch {
+      toast({ title: "Failed to remove receipt", variant: "error" });
+    }
+  };
+
+  const handleExtract = async (expenseId: string) => {
+    try {
+      await extractItems.mutateAsync(expenseId);
+      toast({ title: "Items extracted", description: "Line items have been populated from the receipt.", variant: "success" });
+    } catch (err: any) {
+      toast({ title: "Extraction failed", description: err?.response?.data?.message ?? "Please check the receipt quality.", variant: "error" });
+    }
+  };
+
   return (
     <div className="space-y-5">
+      {/* Hidden file input */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*,application/pdf"
+        className="hidden"
+        onChange={handleFileChange}
+      />
+
       {/* Actions row */}
       <div className="flex items-center justify-end gap-2">
         <Link href="/finance/expenses/new" className="flex items-center gap-2 rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 transition-colors">
@@ -762,7 +834,7 @@ function OtherExpensesTab() {
                 <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-navy/40">Category</th>
                 <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-navy/40">Description</th>
                 <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-navy/40">Supplier</th>
-                <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-navy/40">Payment Method</th>
+                <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-navy/40">Receipt</th>
                 <th className="px-5 py-3 text-right text-xs font-semibold uppercase tracking-wide text-navy/40">Amount</th>
                 <th className="px-5 py-3 w-10" />
               </tr>
@@ -774,10 +846,65 @@ function OtherExpensesTab() {
               {expenses.map((e) => (
                 <tr key={e.id} className="group hover:bg-surface-raised/50 transition-colors">
                   <td className="px-5 py-3 text-navy/70">{fmtDate(e.date)}</td>
-                  <td className="px-5 py-3 font-medium text-brand-600">{e.category.name}</td>
+                  <td className="px-5 py-3 font-medium text-brand-600">{e.category?.name ?? "—"}</td>
                   <td className="px-5 py-3 text-navy/70 max-w-xs truncate">{e.description ?? "—"}</td>
                   <td className="px-5 py-3 text-navy/70">{e.supplier?.name ?? "—"}</td>
-                  <td className="px-5 py-3 text-navy/60 capitalize">{e.paymentMethod?.toLowerCase().replace("_", " ") ?? "—"}</td>
+                  {/* Receipt column */}
+                  <td className="px-5 py-3">
+                    {!e.receiptKey ? (
+                      <button
+                        onClick={() => triggerUpload(e.id)}
+                        disabled={uploadReceipt.isPending && uploadingFor === e.id}
+                        className="flex items-center gap-1.5 rounded-full border border-dashed border-amber-400 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700 hover:bg-amber-100 transition-colors"
+                      >
+                        <Paperclip className="h-3 w-3" />
+                        Add receipt
+                      </button>
+                    ) : (
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={() => handleViewReceipt(e.id)}
+                          title="View receipt"
+                          className="rounded p-1 text-brand-500 hover:bg-brand-50 transition-colors"
+                        >
+                          <Eye className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          onClick={() => triggerUpload(e.id)}
+                          title="Replace receipt"
+                          className="rounded p-1 text-navy/50 hover:bg-surface-raised transition-colors"
+                        >
+                          <Upload className="h-3.5 w-3.5" />
+                        </button>
+                        {!e.isItemized && (
+                          <button
+                            onClick={() => handleExtract(e.id)}
+                            title="Extract line items from receipt"
+                            disabled={extractItems.isPending}
+                            className="rounded p-1 text-purple-500 hover:bg-purple-50 transition-colors disabled:opacity-40"
+                          >
+                            <Sparkles className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                        {e.vendorBillId && (
+                          <Link
+                            href={`/finance/vendor-bills/${e.vendorBillId}`}
+                            title="View in Vendor Bills"
+                            className="rounded p-1 text-teal-600 hover:bg-teal-50 transition-colors"
+                          >
+                            <ExternalLink className="h-3.5 w-3.5" />
+                          </Link>
+                        )}
+                        <button
+                          onClick={() => handleDeleteReceipt(e.id)}
+                          title="Remove receipt"
+                          className="rounded p-1 text-navy/30 hover:text-danger transition-colors"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      </div>
+                    )}
+                  </td>
                   <td className="px-5 py-3 text-right font-semibold text-navy">{fmt(Number(e.amount))}</td>
                   <td className="px-5 py-3">
                     {confirmDelete === e.id ? (

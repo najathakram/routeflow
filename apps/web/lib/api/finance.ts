@@ -80,6 +80,10 @@ export interface Expense {
   mileageRateSnapshot?: number;
   lineItems?: ExpenseLineItem[];
   createdAt?: string;
+  receiptKey?: string | null;
+  receiptOriginalName?: string | null;
+  receiptMimeType?: string | null;
+  vendorBillId?: string | null;
 }
 
 export interface CustomerBalance {
@@ -296,6 +300,42 @@ export function useDeleteExpense() {
       qc.invalidateQueries({ queryKey: ['expenses'] });
       qc.invalidateQueries({ queryKey: ['finance-dashboard'] });
     },
+  });
+}
+
+export function useUploadExpenseReceipt() {
+  const qc = useQueryClient();
+  return useMutation<{ url: string }, Error, { id: string; file: File }>({
+    mutationFn: ({ id, file }) => {
+      const form = new FormData();
+      form.append('file', file);
+      return apiClient.post(`/bookkeeping/expenses/${id}/receipt`, form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      }).then((r) => r.data);
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['expenses'] }),
+  });
+}
+
+export function useDeleteExpenseReceipt() {
+  const qc = useQueryClient();
+  return useMutation<{ success: boolean }, Error, string>({
+    mutationFn: (id) => apiClient.delete(`/bookkeeping/expenses/${id}/receipt`).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['expenses'] }),
+  });
+}
+
+export function useGetExpenseReceiptUrl() {
+  return useMutation<{ url: string }, Error, string>({
+    mutationFn: (id) => apiClient.get(`/bookkeeping/expenses/${id}/receipt`).then((r) => r.data),
+  });
+}
+
+export function useExtractExpenseItems() {
+  const qc = useQueryClient();
+  return useMutation<Expense, Error, string>({
+    mutationFn: (id) => apiClient.post(`/bookkeeping/expenses/${id}/extract-items`).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['expenses'] }),
   });
 }
 

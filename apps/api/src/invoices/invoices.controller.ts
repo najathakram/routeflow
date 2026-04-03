@@ -27,6 +27,7 @@ import {
   WriteOffDto,
 } from "./dto/create-invoice.dto";
 import { ListInvoicesDto } from "./dto/list-invoices.dto";
+import { PriceAdjustmentDto } from "./dto/price-adjustment.dto";
 
 @Controller("invoices")
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -165,6 +166,12 @@ export class InvoicesController {
     @Body() dto: UpdatePaymentDto,
   ) {
     return this.invoicesService.updatePayment(id, paymentId, dto);
+  }
+
+  @Post(":id/price-adjustment")
+  @Roles(UserRole.OPERATOR)
+  applyPriceAdjustment(@Param("id") id: string, @Body() dto: PriceAdjustmentDto) {
+    return this.invoicesService.applyPriceAdjustment(id, dto);
   }
 
   @Delete(":id")

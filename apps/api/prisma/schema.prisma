@@ -874,6 +874,9 @@ model Expense {
   description         String?
   paymentMethod       String?
   receiptKey          String?
+  receiptOriginalName String?
+  receiptMimeType     String?
+  vendorBillId        String?   @unique
   notes               String?
   referenceNumber     String?
   performedById       String?
@@ -907,6 +910,9 @@ model ExpenseLineItem {
   account   String
   notes     String?
   amount    Decimal  @db.Decimal(10, 2)
+  productId String?
+  unitCost  Decimal? @db.Decimal(10, 4)
+  qty       Decimal? @db.Decimal(10, 3)
   createdAt DateTime @default(now())
 
   expense Expense @relation(fields: [expenseId], references: [id], onDelete: Cascade)

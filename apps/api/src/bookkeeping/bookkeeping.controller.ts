@@ -11,7 +11,10 @@ import {
   HttpCode,
   HttpStatus,
   HttpException,
+  UploadedFile,
+  UseInterceptors,
 } from "@nestjs/common";
+import { FileInterceptor } from "@nestjs/platform-express";
 import { ApiTags, ApiBearerAuth } from "@nestjs/swagger";
 import { BookkeepingService } from "./bookkeeping.service";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
@@ -124,6 +127,38 @@ export class BookkeepingController {
   @Post("expenses/:id/delete")
   deleteExpense(@Param("id") id: string) {
     return this.bookkeepingService.deleteExpense(id);
+  }
+
+  @Post("expenses/:id/receipt")
+  @UseInterceptors(
+    FileInterceptor("file", { limits: { fileSize: 10 * 1024 * 1024 } }),
+  )
+  uploadReceipt(
+    @Param("id") id: string,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (!file) throw new HttpException("No file uploaded", HttpStatus.BAD_REQUEST);
+    return this.bookkeepingService.uploadExpenseReceipt(
+      id,
+      file.buffer,
+      file.originalname,
+      file.mimetype,
+    );
+  }
+
+  @Get("expenses/:id/receipt")
+  getReceipt(@Param("id") id: string) {
+    return this.bookkeepingService.getExpenseReceiptUrl(id);
+  }
+
+  @Delete("expenses/:id/receipt")
+  deleteReceipt(@Param("id") id: string) {
+    return this.bookkeepingService.deleteExpenseReceipt(id);
+  }
+
+  @Post("expenses/:id/extract-items")
+  extractItems(@Param("id") id: string) {
+    return this.bookkeepingService.extractExpenseItems(id);
   }
 
   // ── Reports ──

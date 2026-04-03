@@ -1,16 +1,30 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable, NotFoundException, OnModuleInit } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
 import { InvoiceStatus, TxnStatus } from "@prisma/client";
 import { ListTransactionsDto } from "./dto/list-transactions.dto";
 import { RecordPaymentDto } from "./dto/record-payment.dto";
 import { InvoiceService } from "./invoice.service";
+import { StorageService } from "../storage/storage.service";
+import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
+import { SystemConfigService } from "../system-config/system-config.service";
+import Anthropic from "@anthropic-ai/sdk";
+import * as sharp from "sharp";
 
 @Injectable()
-export class BookkeepingService {
+export class BookkeepingService implements OnModuleInit {
   constructor(
     private readonly prisma: PrismaService,
     private readonly invoiceService: InvoiceService,
+    private readonly storage: StorageService,
+    private readonly vendorBillsService: VendorBillsService,
+    private readonly configService: ConfigService,
+    private readonly systemConfig: SystemConfigService,
   ) {}
+
+  async onModuleInit() {
+    await this.ensureInventoryPurchaseCategory();
+  }
 
   async findAll(query: ListTransactionsDto) {
     const { status, customerId, dateFrom, dateTo, page = 1, limit = 20 } = query;
@@ -229,7 +243,7 @@ export class BookkeepingService {
       computedAmount = lineItems.reduce((s: number, li: any) => s + Number(li.amount), 0);
     }
 
-    return this.prisma.expense.create({
+    const expense = await this.prisma.expense.create({
       data: {
         categoryId: rest.categoryId ?? null,
         supplierId: rest.supplierId ?? null,
@@ -262,6 +276,8 @@ export class BookkeepingService {
       },
       include: this.expenseInclude,
     });
+    await this.maybeConvertToVendorBill(expense);
+    return expense;
   }
 
   async bulkCreateExpenses(dtos: any[], userId: string) {
@@ -276,7 +292,7 @@ export class BookkeepingService {
   }
 
   async updateExpense(id: string, dto: any) {
-    return this.prisma.expense.update({
+    const updated = await this.prisma.expense.update({
       where: { id },
       data: {
         ...(dto.amount !== undefined && { amount: dto.amount }),
@@ -286,13 +302,200 @@ export class BookkeepingService {
         ...(dto.referenceNumber !== undefined && { referenceNumber: dto.referenceNumber }),
         ...(dto.isBillable !== undefined && { isBillable: dto.isBillable }),
         ...(dto.employeeName !== undefined && { employeeName: dto.employeeName }),
+        ...(dto.categoryId !== undefined && { categoryId: dto.categoryId }),
       },
       include: this.expenseInclude,
     });
+    await this.maybeConvertToVendorBill(updated);
+    return updated;
   }
 
   async deleteExpense(id: string) {
     return this.prisma.expense.update({ where: { id }, data: { deletedAt: new Date() } });
+  }
+
+  // ── Expense Receipt Management ─────────────────────────────────────────────
+
+  private async findExpenseOrThrow(id: string) {
+    const expense = await this.prisma.expense.findFirst({
+      where: { id, deletedAt: null },
+      include: this.expenseInclude,
+    });
+    if (!expense) throw new NotFoundException("Expense not found");
+    return expense;
+  }
+
+  async uploadExpenseReceipt(
+    id: string,
+    buffer: Buffer,
+    originalName: string,
+    mimeType: string,
+  ): Promise<{ url: string }> {
+    await this.findExpenseOrThrow(id);
+
+    const isPdf = mimeType === "application/pdf";
+    let finalBuffer = buffer;
+    let finalMime = mimeType;
+
+    if (!isPdf) {
+      // Compress images: resize to max 1600px wide, JPEG 80% quality
+      finalBuffer = await (sharp as any)(buffer)
+        .resize({ width: 1600, withoutEnlargement: true })
+        .jpeg({ quality: 80 })
+        .toBuffer();
+      finalMime = "image/jpeg";
+    }
+
+    const ext = isPdf ? "pdf" : "jpg";
+    const key = `expenses/${id}/receipt.${ext}`;
+    await this.storage.upload(key, finalBuffer, finalMime);
+
+    await this.prisma.expense.update({
+      where: { id },
+      data: {
+        receiptKey: key,
+        receiptOriginalName: originalName,
+        receiptMimeType: finalMime,
+      },
+    });
+
+    const url = await this.storage.presignedUrl(key);
+    return { url };
+  }
+
+  async getExpenseReceiptUrl(id: string): Promise<{ url: string }> {
+    const expense = await this.findExpenseOrThrow(id);
+    if (!expense.receiptKey) throw new NotFoundException("No receipt uploaded for this expense");
+    const url = await this.storage.presignedUrl(expense.receiptKey);
+    return { url };
+  }
+
+  async deleteExpenseReceipt(id: string): Promise<{ success: boolean }> {
+    const expense = await this.findExpenseOrThrow(id);
+    if (!expense.receiptKey) throw new NotFoundException("No receipt to delete");
+    await this.storage.delete(expense.receiptKey);
+    await this.prisma.expense.update({
+      where: { id },
+      data: { receiptKey: null, receiptOriginalName: null, receiptMimeType: null },
+    });
+    return { success: true };
+  }
+
+  async extractExpenseItems(id: string) {
+    const expense = await this.findExpenseOrThrow(id);
+    if (!expense.receiptKey) throw new BadRequestException("Upload a receipt first before extracting items");
+
+    // Fetch receipt from storage
+    const receiptBuffer = await this.storage.download(expense.receiptKey);
+    const mimeType = (expense as any).receiptMimeType ?? "image/jpeg";
+
+    // Retrieve Anthropic API key
+    const storedKey = await this.systemConfig.get("anthropic.apiKey");
+    const apiKey = storedKey?.length ? storedKey : this.configService.get<string>("ANTHROPIC_API_KEY");
+    if (!apiKey) throw new BadRequestException("Anthropic API key not configured");
+
+    const anthropic = new Anthropic({ apiKey });
+    const base64 = receiptBuffer.toString("base64");
+    const isPdf = mimeType === "application/pdf";
+
+    const fileBlock = isPdf
+      ? ({ type: "document", source: { type: "base64", media_type: "application/pdf", data: base64 } } as any)
+      : { type: "image", source: { type: "base64", media_type: mimeType, data: base64 } };
+
+    const response = await anthropic.messages.create({
+      model: "claude-opus-4-5-20251101",
+      max_tokens: 2048,
+      messages: [
+        {
+          role: "user",
+          content: [
+            fileBlock,
+            {
+              type: "text",
+              text: `Extract all line items from this receipt/invoice. Return valid JSON only:\n{"vendor":"...","date":"YYYY-MM-DD or null","total":0.00,"items":[{"description":"...","qty":1,"unitCost":0.00,"amount":0.00}]}`,
+            },
+          ],
+        },
+      ],
+    });
+
+    let parsed: any = {};
+    try {
+      const text = (response.content[0] as any).text ?? "";
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : {};
+    } catch {
+      throw new BadRequestException("Could not parse receipt — please check the image quality");
+    }
+
+    const items: any[] = parsed.items ?? [];
+
+    // Replace existing line items with extracted ones
+    await this.prisma.expenseLineItem.deleteMany({ where: { expenseId: id } });
+    if (items.length > 0) {
+      await this.prisma.expenseLineItem.createMany({
+        data: items.map((item: any) => ({
+          expenseId: id,
+          account: item.description ?? "Item",
+          notes: null,
+          amount: Number(item.amount ?? item.unitCost ?? 0),
+          unitCost: item.unitCost != null ? Number(item.unitCost) : null,
+          qty: item.qty != null ? Number(item.qty) : null,
+        })),
+      });
+    }
+
+    const totalFromItems = items.reduce((s: number, i: any) => s + Number(i.amount ?? 0), 0);
+
+    const updated = await this.prisma.expense.update({
+      where: { id },
+      data: {
+        isItemized: items.length > 0,
+        ...(totalFromItems > 0 && { amount: totalFromItems }),
+        ...(parsed.vendor && !(expense as any).description ? { description: parsed.vendor } : {}),
+      },
+      include: this.expenseInclude,
+    });
+
+    return updated;
+  }
+
+  // ── Inventory Purchase Auto-Routing ────────────────────────────────────────
+
+  private async maybeConvertToVendorBill(expense: any): Promise<void> {
+    if (!expense.categoryId) return;
+    const category = await this.prisma.expenseCategory.findUnique({ where: { id: expense.categoryId } });
+    if (!category || category.code !== "INVENTORY_PURCHASE") return;
+    if (expense.vendorBillId) return; // already converted
+
+    const lineItems = await this.prisma.expenseLineItem.findMany({ where: { expenseId: expense.id } });
+
+    const bill = await this.vendorBillsService.create({
+      supplierId: expense.supplierId ?? undefined,
+      totalOwed: Number(expense.amount),
+      billDate: expense.date?.toISOString(),
+      notes: expense.description ?? undefined,
+      items: lineItems.map((li) => ({
+        description: li.account,
+        qty: li.qty != null ? Number(li.qty) : 1,
+        unitCost: li.unitCost != null ? Number(li.unitCost) : Number(li.amount),
+        productId: (li as any).productId ?? undefined,
+      })),
+    });
+
+    await this.prisma.expense.update({
+      where: { id: expense.id },
+      data: { vendorBillId: bill.id },
+    });
+  }
+
+  async ensureInventoryPurchaseCategory(): Promise<void> {
+    const existing = await this.prisma.expenseCategory.findUnique({ where: { code: "INVENTORY_PURCHASE" } });
+    if (!existing) {
+      await this.prisma.expenseCategory.create({
+        data: { name: "Inventory Purchase", code: "INVENTORY_PURCHASE", isCustom: false },
+      });
+    }
   }
 
   // ── P&L Report ──

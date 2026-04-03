@@ -111,4 +111,20 @@ export class StorageService {
   async presignedUrls(keys: string[]): Promise<string[]> {
     return Promise.all(keys.map((k) => this.presignedUrl(k)));
   }
+
+  /** Download a stored object and return it as a Buffer. */
+  async download(key: string): Promise<Buffer> {
+    if (this.useLocal) {
+      const dest = path.join(this.uploadDir, key);
+      return fs.readFile(dest);
+    }
+
+    const response = await this.s3!.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
+    const stream = response.Body as any;
+    const chunks: Uint8Array[] = [];
+    for await (const chunk of stream) {
+      chunks.push(chunk);
+    }
+    return Buffer.concat(chunks);
+  }
 }

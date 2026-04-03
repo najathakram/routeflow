@@ -536,3 +536,28 @@ export function useCreateInvoiceFromOrder() {
     },
   });
 }
+
+// ─── Price Adjustment ─────────────────────────────────────────────────────────
+
+export interface PriceAdjustmentItem {
+  itemId: string;
+  newUnitPrice: number;
+}
+
+export interface PriceAdjustmentDto {
+  items: PriceAdjustmentItem[];
+  scope: 'SINGLE' | 'ALL_CUSTOMER_SINCE';
+  sinceDate?: string;
+}
+
+export function useAdjustInvoicePrices() {
+  const qc = useQueryClient();
+  return useMutation<Invoice, Error, { id: string } & PriceAdjustmentDto>({
+    mutationFn: ({ id, ...dto }) =>
+      apiClient.post(`/invoices/${id}/price-adjustment`, dto).then((r) => r.data),
+    onSuccess: (updated) => {
+      qc.invalidateQueries({ queryKey: ['invoices'] });
+      qc.invalidateQueries({ queryKey: ['invoices', updated.id] });
+    },
+  });
+}
