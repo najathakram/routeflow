@@ -193,7 +193,7 @@ function PaymentSummaryBar({
     },
     {
       label: "Avg. Days to Get Paid",
-      value: kpis.avgDays > 0 ? `${kpis.avgDays} Days` : "—",
+      value: kpis.avgDays > 0 ? `${kpis.avgDays} Days` : "N/A",
       filter: "PAID",
       valueClass: "text-navy font-bold",
     },

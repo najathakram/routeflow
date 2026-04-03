@@ -267,7 +267,7 @@ export default function RoutesPage() {
 
       {/* ── Today's route runs ── */}
       <section className="space-y-3">
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-navy">
+        <h2 className="text-sm font-semibold text-navy">
           Route Runs Today
         </h2>
         {runsLoading ? (
@@ -335,7 +335,7 @@ export default function RoutesPage() {
       {/* ── Route templates ── */}
       <section className="space-y-3">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold uppercase tracking-wider text-navy/50">
+          <h2 className="text-sm font-semibold text-navy">
             Route Templates
           </h2>
           {selectMode && routeTemplates.length > 0 && (

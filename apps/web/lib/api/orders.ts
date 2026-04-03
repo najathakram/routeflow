@@ -21,9 +21,11 @@ export interface Order {
 export interface OrderItem {
   id: string;
   productId: string;
-  product?: { id: string; name: string; unit: string };
+  product?: { id: string; name: string; unit: string; unitsPerBox?: number | null };
   qty: number;
   unitPrice: number;
+  boxes?: number | null;
+  pieces?: number | null;
   status: string;
   notes?: string;
 }
@@ -50,7 +52,7 @@ export function useOrder(id: string) {
 
 export function useCreateOrder() {
   const qc = useQueryClient();
-  return useMutation<Order, Error, { customerId: string; items: { productId: string; qty: number; notes?: string }[]; notes?: string; urgent?: boolean; requestedDeliveryDate?: string }>({
+  return useMutation<Order, Error, { customerId: string; items: { productId: string; qty: number; boxes?: number; pieces?: number; notes?: string }[]; notes?: string; urgent?: boolean; requestedDeliveryDate?: string }>({
     mutationFn: (dto) => apiClient.post('/orders', dto).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['orders'] }),
   });

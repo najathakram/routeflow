@@ -1528,8 +1528,22 @@ export default function InventoryPage() {
           <p className={cn("mt-1 text-2xl font-bold", outOfStockCount > 0 ? "text-danger" : "text-navy")}>
             {outOfStockCount}
           </p>
+          {outOfStockCount > (stockItems as StockItem[]).length * 0.5 && (
+            <p className="mt-0.5 text-[10px] text-navy/40">Stock may need updating after import</p>
+          )}
         </Card>
       </div>
+
+      {/* Import artifact notice */}
+      {outOfStockCount > (stockItems as StockItem[]).length * 0.5 && (
+        <div className="flex items-start gap-3 rounded-lg border border-brand-200 bg-brand-50 px-4 py-3">
+          <Info className="mt-0.5 h-4 w-4 shrink-0 text-brand-500" />
+          <p className="text-sm text-brand-700">
+            Many products show zero stock because stock quantities were not included in the initial import.
+            Use <strong>Quick Restock</strong> or record a purchase receipt to assign stock levels.
+          </p>
+        </div>
+      )}
 
       <Tabs.Root defaultValue="stock">
         <Tabs.List className="flex gap-1 border-b border-surface-border">

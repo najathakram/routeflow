@@ -4,7 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Eye, Pencil, Trash2, CheckSquare, X } from "lucide-react";
-import { PageHeader, Table, Badge, Button, Select, cn } from "@routeflow/ui/web";
+import { PageHeader, Table, Badge, Button, cn } from "@routeflow/ui/web";
 import { useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { AddDriverModal } from "./_components/AddDriverModal";
@@ -24,14 +24,6 @@ function vehicleLabel(driver: Driver): string {
   const parts = [driver.vehicleMake, driver.vehicleModel, driver.vehicleColour, driver.vehiclePlate].filter(Boolean);
   return parts.length > 0 ? parts.join(" · ") : "—";
 }
-
-// ─── Status filter options ────────────────────────────────────────────────────
-
-const STATUS_OPTIONS = [
-  { value: "", label: "All Statuses" },
-  { value: "ACTIVE", label: "Active" },
-  { value: "INACTIVE", label: "Inactive" },
-];
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
@@ -305,13 +297,6 @@ export default function DriversPage() {
           onChange={(e) => setSearch(e.target.value)}
           className="h-10 w-64 rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/40 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
         />
-        <div className="w-40">
-          <Select
-            options={STATUS_OPTIONS}
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-          />
-        </div>
         {(search || statusFilter) && (
           <button
             onClick={() => { setSearch(""); setStatusFilter(""); }}

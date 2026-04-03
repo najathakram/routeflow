@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Eye, Loader2, FileText, Trash2 } from "lucide-react";
+import { Plus, Eye, Loader2, FileText, Trash2, RotateCcw, DollarSign, Calendar } from "lucide-react";
 import { PageHeader, Button, cn, Modal, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useDebounce } from "@/lib/hooks/useDebounce";
@@ -411,6 +411,19 @@ export default function ReturnsPage() {
     limit: LIMIT,
   });
 
+  // Unfiltered summary query for KPI cards
+  const { data: summaryData } = useReturns({ limit: 500 });
+  const allReturns = summaryData?.data ?? [];
+  const pendingCount = allReturns.filter((r) => r.status === "PENDING").length;
+  const now = new Date();
+  const thisMonthCount = allReturns.filter((r) => {
+    const d = new Date(r.createdAt);
+    return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+  }).length;
+  const totalReturnValue = allReturns.reduce((sum, r) => {
+    return sum + r.items.reduce((s, i) => s + (i.unitPrice ?? 0) * i.qty, 0);
+  }, 0);
+
   const returns = data?.data ?? [];
   const meta = data?.meta;
   const totalPages = meta?.totalPages ?? 1;
@@ -428,6 +441,36 @@ export default function ReturnsPage() {
           </Button>
         }
       />
+
+      {/* KPI summary */}
+      <div className="grid grid-cols-3 gap-4">
+        <div className="rounded-xl border border-surface-border bg-white p-4">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-semibold uppercase tracking-wide text-navy/50">Pending Review</p>
+            <RotateCcw className="h-4 w-4 text-yellow-500" />
+          </div>
+          <p className="mt-2 text-2xl font-bold text-navy">{pendingCount}</p>
+          <p className="text-xs text-navy/40">awaiting approval</p>
+        </div>
+        <div className="rounded-xl border border-surface-border bg-white p-4">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-semibold uppercase tracking-wide text-navy/50">Total Return Value</p>
+            <DollarSign className="h-4 w-4 text-brand-500" />
+          </div>
+          <p className="mt-2 text-2xl font-bold text-navy">
+            ${totalReturnValue.toFixed(2)}
+          </p>
+          <p className="text-xs text-navy/40">across all returns</p>
+        </div>
+        <div className="rounded-xl border border-surface-border bg-white p-4">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-semibold uppercase tracking-wide text-navy/50">This Month</p>
+            <Calendar className="h-4 w-4 text-brand-500" />
+          </div>
+          <p className="mt-2 text-2xl font-bold text-navy">{thisMonthCount}</p>
+          <p className="text-xs text-navy/40">returns created</p>
+        </div>
+      </div>
 
       {/* Filter bar */}
       <div className="flex flex-wrap items-center gap-3">

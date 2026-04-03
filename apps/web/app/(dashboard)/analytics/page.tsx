@@ -1035,6 +1035,44 @@ function getDefaultDates() {
   return { from, to };
 }
 
+function fmt(d: Date) {
+  return d.toISOString().split("T")[0];
+}
+
+const DATE_PRESETS = [
+  {
+    label: "This Month",
+    range: () => {
+      const now = new Date();
+      return { from: fmt(new Date(now.getFullYear(), now.getMonth(), 1)), to: fmt(now) };
+    },
+  },
+  {
+    label: "Last Month",
+    range: () => {
+      const now = new Date();
+      const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const end = new Date(now.getFullYear(), now.getMonth(), 0);
+      return { from: fmt(start), to: fmt(end) };
+    },
+  },
+  {
+    label: "This Quarter",
+    range: () => {
+      const now = new Date();
+      const q = Math.floor(now.getMonth() / 3);
+      return { from: fmt(new Date(now.getFullYear(), q * 3, 1)), to: fmt(now) };
+    },
+  },
+  {
+    label: "YTD",
+    range: () => {
+      const now = new Date();
+      return { from: fmt(new Date(now.getFullYear(), 0, 1)), to: fmt(now) };
+    },
+  },
+];
+
 export default function AnalyticsPage() {
   const { setTitle } = usePageTitle();
 
@@ -1053,6 +1091,14 @@ export default function AnalyticsPage() {
   const handleApply = () => {
     setAppliedFrom(fromInput);
     setAppliedTo(toInput);
+  };
+
+  const applyPreset = (preset: (typeof DATE_PRESETS)[number]) => {
+    const { from, to } = preset.range();
+    setFromInput(from);
+    setToInput(to);
+    setAppliedFrom(from);
+    setAppliedTo(to);
   };
 
   return (
@@ -1086,6 +1132,28 @@ export default function AnalyticsPage() {
           </div>
         }
       />
+
+      {/* Date preset shortcuts */}
+      <div className="flex items-center gap-2">
+        {DATE_PRESETS.map((preset) => {
+          const { from, to } = preset.range();
+          const isActive = appliedFrom === from && appliedTo === to;
+          return (
+            <button
+              key={preset.label}
+              onClick={() => applyPreset(preset)}
+              className={cn(
+                "rounded-full px-3 py-1 text-sm font-medium transition-colors",
+                isActive
+                  ? "bg-brand-100 text-brand-700"
+                  : "bg-surface-raised text-navy/60 hover:text-navy",
+              )}
+            >
+              {preset.label}
+            </button>
+          );
+        })}
+      </div>
 
       {/* Tabs */}
       <div className="border-b border-surface-border">

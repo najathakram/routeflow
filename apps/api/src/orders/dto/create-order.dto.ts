@@ -14,6 +14,8 @@ import { Type } from "class-transformer";
 class OrderItemDto {
   @IsString() productId: string;
   @IsInt() @Min(1) qty: number;
+  @IsOptional() @IsInt() @Min(0) boxes?: number;
+  @IsOptional() @IsInt() @Min(0) pieces?: number;
   @IsOptional() @IsString() notes?: string;
   @IsOptional() @IsString() itemNote?: string;
   @IsOptional() @IsString() substitution?: string;

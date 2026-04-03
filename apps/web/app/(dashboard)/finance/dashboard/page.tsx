@@ -2,6 +2,7 @@
 
 import React from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useFinanceDashboard } from "@/lib/api/finance";
 import {
@@ -82,6 +83,7 @@ function DonutChart({ data }: { data: Array<{ name: string; amount: number }> })
 export default function FinanceDashboardPage() {
   const { setTitle } = usePageTitle();
   React.useEffect(() => { setTitle("Finance Dashboard"); }, [setTitle]);
+  const router = useRouter();
   const { data, isLoading, refetch } = useFinanceDashboard();
 
   const summaryRows = [
@@ -143,24 +145,24 @@ export default function FinanceDashboardPage() {
         {totalAr > 0 && (
           <>
             <div className="flex h-4 overflow-hidden rounded-full">
-              {arPcts.current > 0 && <div style={{ width: `${arPcts.current}%` }} className="bg-brand-500" title={`Current: ${fmt(ar?.current ?? 0)}`} />}
-              {arPcts.d1_15 > 0 && <div style={{ width: `${arPcts.d1_15}%` }} className="bg-yellow-400" title={`1-15 days: ${fmt(ar?.days1_15 ?? 0)}`} />}
-              {arPcts.d16_30 > 0 && <div style={{ width: `${arPcts.d16_30}%` }} className="bg-orange-400" title={`16-30 days: ${fmt(ar?.days16_30 ?? 0)}`} />}
-              {arPcts.d31_45 > 0 && <div style={{ width: `${arPcts.d31_45}%` }} className="bg-red-400" title={`31-45 days: ${fmt(ar?.days31_45 ?? 0)}`} />}
-              {arPcts.d45plus > 0 && <div style={{ width: `${arPcts.d45plus}%` }} className="bg-red-700" title={`45+ days: ${fmt(ar?.days45plus ?? 0)}`} />}
+              {arPcts.current > 0 && <div onClick={() => router.push("/invoices?status=SENT")} style={{ width: `${arPcts.current}%` }} className="cursor-pointer bg-brand-500 hover:brightness-90 transition-all" title={`Current: ${fmt(ar?.current ?? 0)} — click to view`} />}
+              {arPcts.d1_15 > 0 && <div onClick={() => router.push("/invoices?status=OVERDUE")} style={{ width: `${arPcts.d1_15}%` }} className="cursor-pointer bg-yellow-400 hover:brightness-90 transition-all" title={`1-15 days overdue: ${fmt(ar?.days1_15 ?? 0)} — click to view`} />}
+              {arPcts.d16_30 > 0 && <div onClick={() => router.push("/invoices?status=OVERDUE")} style={{ width: `${arPcts.d16_30}%` }} className="cursor-pointer bg-orange-400 hover:brightness-90 transition-all" title={`16-30 days overdue: ${fmt(ar?.days16_30 ?? 0)} — click to view`} />}
+              {arPcts.d31_45 > 0 && <div onClick={() => router.push("/invoices?status=OVERDUE")} style={{ width: `${arPcts.d31_45}%` }} className="cursor-pointer bg-red-400 hover:brightness-90 transition-all" title={`31-45 days overdue: ${fmt(ar?.days31_45 ?? 0)} — click to view`} />}
+              {arPcts.d45plus > 0 && <div onClick={() => router.push("/invoices?status=OVERDUE")} style={{ width: `${arPcts.d45plus}%` }} className="cursor-pointer bg-red-700 hover:brightness-90 transition-all" title={`45+ days overdue: ${fmt(ar?.days45plus ?? 0)} — click to view`} />}
             </div>
             <div className="mt-3 grid grid-cols-5 gap-3">
               {[
-                { label: "CURRENT", value: ar?.current ?? 0, color: "text-brand-500" },
-                { label: "1-15 DAYS", value: ar?.days1_15 ?? 0, color: "text-yellow-500" },
-                { label: "16-30 DAYS", value: ar?.days16_30 ?? 0, color: "text-orange-500" },
-                { label: "31-45 DAYS", value: ar?.days31_45 ?? 0, color: "text-red-500" },
-                { label: "ABOVE 45", value: ar?.days45plus ?? 0, color: "text-red-700" },
+                { label: "CURRENT", value: ar?.current ?? 0, color: "text-brand-500", href: "/invoices?status=SENT" },
+                { label: "1-15 DAYS", value: ar?.days1_15 ?? 0, color: "text-yellow-500", href: "/invoices?status=OVERDUE" },
+                { label: "16-30 DAYS", value: ar?.days16_30 ?? 0, color: "text-orange-500", href: "/invoices?status=OVERDUE" },
+                { label: "31-45 DAYS", value: ar?.days31_45 ?? 0, color: "text-red-500", href: "/invoices?status=OVERDUE" },
+                { label: "ABOVE 45", value: ar?.days45plus ?? 0, color: "text-red-700", href: "/invoices?status=OVERDUE" },
               ].map((b) => (
-                <div key={b.label} className="text-center">
+                <button key={b.label} onClick={() => router.push(b.href)} className="text-center hover:opacity-75 transition-opacity">
                   <p className="text-[10px] font-semibold uppercase tracking-wide text-navy/40">{b.label}</p>
                   <p className={cn("mt-0.5 text-sm font-bold", b.color)}>{fmt(b.value)}</p>
-                </div>
+                </button>
               ))}
             </div>
           </>

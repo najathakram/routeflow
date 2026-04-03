@@ -514,6 +514,8 @@ model OrderItem {
   qty       Decimal    @db.Decimal(10, 3)
   unitPrice Decimal    @db.Decimal(10, 2)
   subtotal  Decimal    @default(0) @db.Decimal(10, 2)
+  boxes     Int?
+  pieces    Int?
   notes     String?
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt

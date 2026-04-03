@@ -118,7 +118,43 @@ export class RoutesService {
 
   async deleteRoute(id: string) {
     await this.findRouteOrThrow(id);
-    await this.prisma.route.delete({ where: { id } });
+
+    // Collect all run IDs and run-stop IDs for this route before deleting
+    const runs = await this.prisma.routeRun.findMany({
+      where: { routeId: id },
+      include: { stops: { select: { id: true } } },
+    });
+    const runIds = runs.map((r) => r.id);
+    const runStopIds = runs.flatMap((r) => r.stops.map((s) => s.id));
+
+    await this.prisma.$transaction(async (tx) => {
+      // 1. Unlink orders from runs/stops
+      if (runIds.length > 0) {
+        await tx.order.updateMany({
+          where: { routeRunId: { in: runIds } },
+          data: { routeRunId: null, routeRunStopId: null },
+        });
+      }
+      // 2. Unlink delivery mutations from run stops
+      if (runStopIds.length > 0) {
+        await tx.deliveryMutation.updateMany({
+          where: { routeRunStopId: { in: runStopIds } },
+          data: { routeRunStopId: null },
+        });
+        // 3. Delete run stops
+        await tx.routeRunStop.deleteMany({ where: { id: { in: runStopIds } } });
+      }
+      // 4. Delete runs
+      if (runIds.length > 0) {
+        await tx.routeRun.deleteMany({ where: { id: { in: runIds } } });
+      }
+      // 5. Delete route stops and customer associations
+      await tx.routeStop.deleteMany({ where: { routeId: id } });
+      await tx.routeCustomer.deleteMany({ where: { routeId: id } });
+      // 6. Delete the route itself
+      await tx.route.delete({ where: { id } });
+    });
+
     return { success: true };
   }
 

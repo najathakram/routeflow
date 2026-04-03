@@ -825,7 +825,12 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                             </span>
                           </div>
                         </td>
-                        <td className="px-4 py-3 text-right text-navy/70">{li.qty}</td>
+                        <td className="px-4 py-3 text-right text-navy/70">
+                          {li.boxes != null
+                            ? <span title={`${Number(li.qty)} ${li.product?.unit ?? "pcs"} total`}>{li.boxes} box{li.boxes !== 1 ? "es" : ""}{li.pieces ? ` + ${li.pieces} pcs` : ""}</span>
+                            : Number(li.qty)
+                          }
+                        </td>
                         <td className="px-4 py-3 text-right text-navy/70">
                           ${Number(li.unitPrice).toFixed(2)}
                         </td>

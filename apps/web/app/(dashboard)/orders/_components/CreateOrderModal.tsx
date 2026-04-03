@@ -33,7 +33,10 @@ interface LineItem {
   productName: string;
   unit: string;
   unitPrice: number;
-  qty: number;
+  qty: number;           // total pieces (authoritative)
+  unitsPerBox?: number;  // set when product has box packaging
+  boxes?: number;        // whole boxes (only when unitsPerBox is set)
+  pieces?: number;       // extra loose pieces (only when unitsPerBox is set)
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -127,6 +130,7 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
 
   const addLineItem = (product: any) => {
     if (lineItems.some((li) => li.productId === product.id)) return;
+    const upb: number | undefined = product.unitsPerBox ? Number(product.unitsPerBox) : undefined;
     setLineItems((prev) => [
       ...prev,
       {
@@ -135,7 +139,10 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
         productName: product.name,
         unit: product.unit ?? "each",
         unitPrice: Number(product.pricePerUnit ?? 0),
-        qty: 1,
+        qty: upb ? upb : 1,
+        unitsPerBox: upb,
+        boxes: upb ? 1 : undefined,
+        pieces: upb ? 0 : undefined,
       },
     ]);
     setProductSearch("");
@@ -156,6 +163,30 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
     );
   };
 
+  const setBoxes = (tempId: string, value: number) => {
+    setLineItems((prev) =>
+      prev.map((li) => {
+        if (li.tempId !== tempId) return li;
+        const boxes = Math.max(0, isNaN(value) ? 0 : value);
+        const pieces = li.pieces ?? 0;
+        const qty = boxes * (li.unitsPerBox ?? 1) + pieces;
+        return { ...li, boxes, qty: Math.max(qty, boxes > 0 || pieces > 0 ? qty : 0) };
+      }),
+    );
+  };
+
+  const setPieces = (tempId: string, value: number) => {
+    setLineItems((prev) =>
+      prev.map((li) => {
+        if (li.tempId !== tempId) return li;
+        const pieces = Math.max(0, isNaN(value) ? 0 : value);
+        const boxes = li.boxes ?? 0;
+        const qty = boxes * (li.unitsPerBox ?? 1) + pieces;
+        return { ...li, pieces, qty };
+      }),
+    );
+  };
+
   // ── Submit ────────────────────────────────────────────────────────────────
 
   const [requestedDeliveryDate, setRequestedDeliveryDate] = React.useState("");
@@ -170,12 +201,20 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
       setLineItemsError("Add at least one product");
       hasErrors = true;
     }
+    if (lineItems.some((li) => li.qty <= 0)) {
+      setLineItemsError("All items must have a quantity greater than zero");
+      hasErrors = true;
+    }
     if (hasErrors) return;
 
     createOrder.mutate(
       {
         customerId: selectedCustomer!.id,
-        items: lineItems.map((li) => ({ productId: li.productId, qty: li.qty })),
+        items: lineItems.map((li) => ({
+          productId: li.productId,
+          qty: li.qty,
+          ...(li.unitsPerBox ? { boxes: li.boxes ?? 0, pieces: li.pieces ?? 0 } : {}),
+        })),
         notes: data.notes,
         urgent: data.urgent,
         requestedDeliveryDate: requestedDeliveryDate || undefined,
@@ -363,26 +402,59 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
                       </p>
                     </div>
                     {/* Qty controls */}
-                    <div className="flex items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={() => updateQty(li.tempId, -1)}
-                        disabled={li.qty <= 1}
-                        className="flex h-6 w-6 items-center justify-center rounded border border-surface-border text-sm text-navy/60 hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-30 transition-colors"
-                      >
-                        −
-                      </button>
-                      <span className="w-8 text-center text-sm font-semibold text-navy">
-                        {li.qty}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => updateQty(li.tempId, 1)}
-                        className="flex h-6 w-6 items-center justify-center rounded border border-surface-border text-sm text-navy/60 hover:bg-surface-raised transition-colors"
-                      >
-                        +
-                      </button>
-                    </div>
+                    {li.unitsPerBox ? (
+                      <div className="flex flex-col gap-0.5 min-w-[190px]">
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            type="number"
+                            min={0}
+                            value={li.boxes ?? 0}
+                            onChange={(e) => setBoxes(li.tempId, parseInt(e.target.value, 10))}
+                            onFocus={(e) => e.target.select()}
+                            className="w-12 rounded border border-surface-border bg-white px-1.5 py-1 text-center text-sm font-semibold text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
+                            title="Number of whole boxes"
+                          />
+                          <span className="text-xs text-navy/50">boxes</span>
+                          <span className="text-xs text-navy/30">+</span>
+                          <input
+                            type="number"
+                            min={0}
+                            max={li.unitsPerBox - 1}
+                            value={li.pieces ?? 0}
+                            onChange={(e) => setPieces(li.tempId, parseInt(e.target.value, 10))}
+                            onFocus={(e) => e.target.select()}
+                            className="w-12 rounded border border-surface-border bg-white px-1.5 py-1 text-center text-sm font-semibold text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
+                            title="Extra loose pieces (less than a full box)"
+                          />
+                          <span className="text-xs text-navy/50">pcs</span>
+                        </div>
+                        <span className="text-[10px] text-navy/30">
+                          1 box = {li.unitsPerBox} pcs
+                          {li.qty > 0 && <> · <span className="font-medium text-navy/40">{li.qty} pcs total</span></>}
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => updateQty(li.tempId, -1)}
+                          disabled={li.qty <= 1}
+                          className="flex h-6 w-6 items-center justify-center rounded border border-surface-border text-sm text-navy/60 hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-30 transition-colors"
+                        >
+                          −
+                        </button>
+                        <span className="w-8 text-center text-sm font-semibold text-navy">
+                          {li.qty}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => updateQty(li.tempId, 1)}
+                          className="flex h-6 w-6 items-center justify-center rounded border border-surface-border text-sm text-navy/60 hover:bg-surface-raised transition-colors"
+                        >
+                          +
+                        </button>
+                      </div>
+                    )}
                     {/* Line total */}
                     <span className="w-16 text-right text-sm font-semibold text-navy">
                       ${(li.unitPrice * li.qty).toFixed(2)}

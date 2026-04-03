@@ -257,12 +257,12 @@ export default function DashboardPage() {
                 value={lowStockItems}
                 icon={
                   <AlertTriangle
-                    className={cn("h-5 w-5", lowStockItems > 0 ? "text-danger" : "")}
+                    className={cn("h-5 w-5", lowStockItems > 0 ? "text-warning" : "")}
                   />
                 }
                 className={cn(
                   "cursor-pointer transition-shadow hover:shadow-md",
-                  lowStockItems > 0 ? "ring-1 ring-inset ring-danger/20" : ""
+                  lowStockItems > 0 ? "ring-1 ring-inset ring-warning/20" : ""
                 )}
               />
             </Link>

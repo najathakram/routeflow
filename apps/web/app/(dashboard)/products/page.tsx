@@ -3,13 +3,14 @@
 import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Package, LayoutGrid, LayoutList, Plus, Upload, CheckCircle, AlertCircle, Info, Trash2, ImagePlus, X as XIcon, CheckSquare, Pencil, Check } from "lucide-react";
+import { Package, LayoutGrid, LayoutList, Plus, Upload, CheckCircle, AlertCircle, Info, Trash2, ImagePlus, X as XIcon, CheckSquare, Pencil, Check, Undo2, Redo2 } from "lucide-react";
 import { PageHeader, Table, Badge, Button, Select, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useToast } from "@routeflow/ui/web";
 import { useDebounce } from "@/lib/hooks/useDebounce";
 import { useProducts, useCreateProduct, useUpdateProduct, useImportProducts, useBulkDeleteProducts, uploadProductImages, type ZohoImportItem, type ImportResult } from "@/lib/api/products";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
+import { QuickEditCell, type EditRecord } from "./_components/QuickEditCell";
 import { UnitCombobox } from "@/components/UnitCombobox";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -162,6 +163,11 @@ function makeTableColumns(
   onEditPriceChange: (v: string) => void,
   onEditPriceSave: (id: string) => void,
   onEditPriceCancel: () => void,
+  quickEditMode: boolean,
+  onQuickSave: (product: ApiProduct, field: string, newVal: string, record: EditRecord) => Promise<void>,
+  barcodeRefs: React.MutableRefObject<Record<string, React.RefObject<HTMLInputElement | null>>>,
+  productIds: string[],
+  categories: string[],
 ): ColumnDef<ApiProduct, unknown>[] {
   const allSelected = allIds.length > 0 && allIds.every((id) => selected.has(id));
   const someSelected = !allSelected && allIds.some((id) => selected.has(id));
@@ -201,15 +207,70 @@ function makeTableColumns(
     },
     {
       accessorKey: "sku",
-      header: "SKU",
-      cell: ({ row }) => (
-        <span className="font-mono text-xs text-navy">{row.original.sku ?? "—"}</span>
-      ),
+      header: "SKU / Barcode",
+      cell: ({ row }) => {
+        const p = row.original;
+        const idx = productIds.indexOf(p.id);
+        const nextId = productIds[idx + 1];
+        const nextRef = nextId ? barcodeRefs.current[nextId] : undefined;
+        const thisRef = (barcodeRefs.current[p.id] ??= React.createRef());
+        return (
+          <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+            <QuickEditCell
+              ref={thisRef}
+              productId={p.id}
+              productName={p.name}
+              field="sku"
+              value={p.sku}
+              placeholder="Scan or type SKU…"
+              quickEditMode={quickEditMode}
+              nextInputRef={nextRef}
+              onSave={(val, rec) => onQuickSave(p, "sku", val, rec)}
+            />
+            {quickEditMode && (
+              <BarcodeScannerButton
+                inputRef={thisRef}
+                onScan={async (code) => {
+                  await onQuickSave(p, "sku", code, {
+                    productId: p.id,
+                    productName: p.name,
+                    field: "sku",
+                    oldValue: p.sku ?? null,
+                    newValue: code,
+                  });
+                  // Jump to next row after camera scan
+                  if (nextRef?.current) {
+                    nextRef.current.focus();
+                    nextRef.current.select();
+                  }
+                }}
+                title="Scan with camera"
+              />
+            )}
+          </div>
+        );
+      },
     },
     {
       accessorKey: "category",
       header: "Category",
-      cell: ({ row }) => <span className="text-navy/70">{row.original.category}</span>,
+      cell: ({ row }) => {
+        const p = row.original;
+        return (
+          <div onClick={(e) => e.stopPropagation()}>
+            <QuickEditCell
+              productId={p.id}
+              productName={p.name}
+              field="category"
+              value={p.category}
+              options={categories}
+              placeholder="Select or add category…"
+              quickEditMode={quickEditMode}
+              onSave={(val, rec) => onQuickSave(p, "category", val, rec)}
+            />
+          </div>
+        );
+      },
     },
     {
       accessorKey: "unit",
@@ -997,6 +1058,38 @@ export default function ProductsPage() {
   const [editingPriceId, setEditingPriceId] = React.useState<string | null>(null);
   const [editPriceValue, setEditPriceValue] = React.useState("");
 
+  // ── Quick Edit Mode & undo/redo ───────────────────────────────────────────
+  const [quickEditMode, setQuickEditMode] = React.useState(false);
+  const [undoStack, setUndoStack] = React.useState<EditRecord[]>([]);
+  const [redoStack, setRedoStack] = React.useState<EditRecord[]>([]);
+  // Refs map for barcode scanner row-jump: productId → ref of its barcode input
+  const barcodeRefs = React.useRef<Record<string, React.RefObject<HTMLInputElement | null>>>({});
+
+  const handleQuickSave = React.useCallback(async (product: ApiProduct, field: string, newVal: string, record: EditRecord) => {
+    await updateProduct.mutateAsync({ id: product.id, [field]: newVal || null });
+    toast({ title: `${field} updated`, variant: "success" });
+    setUndoStack((prev) => [...prev.slice(-19), record]);
+    setRedoStack([]);
+  }, [updateProduct, toast]);
+
+  const handleUndo = async () => {
+    const record = undoStack[undoStack.length - 1];
+    if (!record) return;
+    await updateProduct.mutateAsync({ id: record.productId, [record.field]: record.oldValue });
+    toast({ title: `Undone: ${record.productName} · ${record.field}`, variant: "success" });
+    setUndoStack((prev) => prev.slice(0, -1));
+    setRedoStack((prev) => [...prev, record]);
+  };
+
+  const handleRedo = async () => {
+    const record = redoStack[redoStack.length - 1];
+    if (!record) return;
+    await updateProduct.mutateAsync({ id: record.productId, [record.field]: record.newValue });
+    toast({ title: `Redone: ${record.productName} · ${record.field}`, variant: "success" });
+    setRedoStack((prev) => prev.slice(0, -1));
+    setUndoStack((prev) => [...prev, record]);
+  };
+
   const handleEditPrice = (product: ApiProduct) => {
     setEditingPriceId(product.id);
     setEditPriceValue(parseFloat(String(product.pricePerUnit)).toFixed(2));
@@ -1031,13 +1124,16 @@ export default function ProductsPage() {
     limit: pageSize, // 0 = all
   });
 
+  // Separate unfiltered query just to populate the category dropdown — always fetches all
+  const { data: allProductsForCategories } = useProducts({ limit: 0 });
+
   const productList: ApiProduct[] = result?.data ?? [];
   const meta = result?.meta;
   const totalPages = meta?.totalPages ?? 1;
   const totalItems = meta?.total ?? 0;
 
   const categories = Array.from(
-    new Set(productList.map((p) => p.category).filter(Boolean))
+    new Set((allProductsForCategories?.data ?? productList).map((p) => p.category).filter(Boolean))
   ) as string[];
 
   const existingUnits = Array.from(
@@ -1078,14 +1174,17 @@ export default function ProductsPage() {
     }
   };
 
+  const productIdList = (result?.data ?? []).map((p) => p.id);
+
   const tableColumns = React.useMemo(
     () => makeTableColumns(
       selected, toggleOne, filteredIds, toggleAll, selectMode,
       handleEditPrice, editingPriceId, editPriceValue, setEditPriceValue,
       handleEditPriceSave, handleEditPriceCancel,
+      quickEditMode, handleQuickSave, barcodeRefs, productIdList, categories,
     ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [selected, filteredIds.join(","), allFilteredSelected, selectMode, editingPriceId, editPriceValue],
+    [selected, filteredIds.join(","), allFilteredSelected, selectMode, editingPriceId, editPriceValue, quickEditMode, productIdList.join(","), categories.join(",")],
   );
 
   return (
@@ -1103,6 +1202,14 @@ export default function ProductsPage() {
               {selectMode ? "Cancel" : "Select"}
             </Button>
             <Button
+              variant={quickEditMode ? "primary" : "secondary"}
+              leftIcon={<Pencil className="h-4 w-4" />}
+              onClick={() => { setQuickEditMode((q) => !q); setViewMode("table"); }}
+              title="Quickly add SKU, barcode, and category inline. Supports barcode scanners."
+            >
+              {quickEditMode ? "Exit Quick Edit" : "Quick Edit"}
+            </Button>
+            <Button
               variant="secondary"
               leftIcon={<Upload className="h-4 w-4" />}
               onClick={() => setShowImport(true)}
@@ -1115,6 +1222,19 @@ export default function ProductsPage() {
           </div>
         }
       />
+
+      {/* Quick Edit mode banner */}
+      {quickEditMode && (
+        <div className="rounded-lg bg-brand-50 border border-brand-200 px-4 py-2.5 text-sm text-brand-700 flex items-center gap-2">
+          <Pencil className="h-4 w-4 shrink-0" />
+          <span>
+            <strong>Quick Edit Mode</strong> — click any SKU/Barcode or Category cell to edit.
+            Press <kbd className="rounded border border-brand-300 bg-white px-1 py-0.5 text-xs font-mono">Enter</kbd> to save,{" "}
+            <kbd className="rounded border border-brand-300 bg-white px-1 py-0.5 text-xs font-mono">Esc</kbd> to cancel.
+            Enter jumps to the next row — ideal for barcode scanner workflows. Use the 📷 camera button for mobile scanning.
+          </span>
+        </div>
+      )}
 
       {/* Create product modal */}
       {showCreate && (
@@ -1376,6 +1496,38 @@ export default function ProductsPage() {
         <p className="text-center text-sm text-navy/40">
           Showing all <span className="font-medium text-navy">{totalItems}</span> products
         </p>
+      )}
+
+      {/* Floating undo/redo bar */}
+      {undoStack.length > 0 && (
+        <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 flex items-center gap-3 rounded-full bg-navy px-5 py-2.5 shadow-xl text-sm text-white">
+          <button
+            onClick={handleUndo}
+            className="flex items-center gap-1.5 hover:opacity-80 transition-opacity"
+            title="Undo last change"
+          >
+            <Undo2 className="h-3.5 w-3.5" /> Undo
+          </button>
+          <span className="text-white/40 text-xs max-w-[200px] truncate">
+            {undoStack[undoStack.length - 1].productName} · {undoStack[undoStack.length - 1].field}
+          </span>
+          {redoStack.length > 0 && (
+            <button
+              onClick={handleRedo}
+              className="flex items-center gap-1.5 hover:opacity-80 transition-opacity"
+              title="Redo last undone change"
+            >
+              Redo <Redo2 className="h-3.5 w-3.5" />
+            </button>
+          )}
+          <button
+            onClick={() => { setUndoStack([]); setRedoStack([]); }}
+            className="ml-1 text-white/30 hover:text-white transition-colors"
+            title="Clear history"
+          >
+            ✕
+          </button>
+        </div>
       )}
     </div>
   );

@@ -52,37 +52,42 @@ type NavEntry = NavLeaf | NavGroup;
 const NAV_STRUCTURE: NavEntry[] = [
   { kind: "leaf", label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   {
-    kind: "group", label: "Operations", icon: Truck,
+    kind: "group", label: "Orders", icon: ShoppingCart,
     children: [
-      { kind: "leaf", label: "Orders",  href: "/orders",  icon: ShoppingCart },
-      { kind: "leaf", label: "Routes",  href: "/routes",  icon: MapPin },
-      { kind: "leaf", label: "Drivers", href: "/drivers", icon: Truck },
-      { kind: "leaf", label: "Returns", href: "/returns", icon: RotateCcw },
+      { kind: "leaf", label: "All Orders", href: "/orders",  icon: ShoppingCart },
+      { kind: "leaf", label: "Returns",    href: "/returns", icon: RotateCcw },
     ],
   },
   {
-    kind: "group", label: "Catalog", icon: Package,
+    kind: "group", label: "Dispatch", icon: Truck,
     children: [
-      { kind: "leaf", label: "Customers",  href: "/customers",  icon: Users },
-      { kind: "leaf", label: "Products",   href: "/products",   icon: Package },
-      { kind: "leaf", label: "Suppliers",  href: "/suppliers",  icon: Building2 },
-      { kind: "leaf", label: "Inventory",  href: "/inventory",  icon: Layers },
+      { kind: "leaf", label: "Routes",  href: "/routes",  icon: MapPin },
+      { kind: "leaf", label: "Drivers", href: "/drivers", icon: Truck },
+    ],
+  },
+  { kind: "leaf", label: "Customers", href: "/customers", icon: Users },
+  {
+    kind: "group", label: "Warehouse", icon: Package,
+    children: [
+      { kind: "leaf", label: "Inventory", href: "/inventory", icon: Layers },
+      { kind: "leaf", label: "Products",  href: "/products",  icon: Package },
+      { kind: "leaf", label: "Suppliers", href: "/suppliers", icon: Building2 },
     ],
   },
   {
     kind: "group", label: "Finance", icon: Wallet,
     children: [
-      { kind: "leaf", label: "Dashboard",         href: "/finance/dashboard",  icon: LayoutDashboard },
-      { kind: "leaf", label: "Invoices",           href: "/invoices",           icon: FileText },
-      { kind: "leaf", label: "Estimates",          href: "/estimates",          icon: FileCheck },
-      { kind: "leaf", label: "Credit Notes",       href: "/credit-notes",       icon: Receipt },
-      { kind: "leaf", label: "Payments Received",  href: "/finance/payments",   icon: CreditCard },
-      { kind: "leaf", label: "Expenses",            href: "/finance/expenses",   icon: ShoppingBag },
-      { kind: "leaf", label: "Reports",            href: "/finance/reports",    icon: BarChart3 },
+      { kind: "leaf", label: "Overview",         href: "/finance/dashboard", icon: LayoutDashboard },
+      { kind: "leaf", label: "Invoices",         href: "/invoices",          icon: FileText },
+      { kind: "leaf", label: "Estimates",        href: "/estimates",         icon: FileCheck },
+      { kind: "leaf", label: "Credit Notes",     href: "/credit-notes",      icon: Receipt },
+      { kind: "leaf", label: "Payments",         href: "/finance/payments",  icon: CreditCard },
+      { kind: "leaf", label: "Expenses",         href: "/finance/expenses",  icon: ShoppingBag },
+      { kind: "leaf", label: "Reports",          href: "/finance/reports",   icon: BarChart3 },
+      { kind: "leaf", label: "Analytics",        href: "/analytics",         icon: BarChart2 },
     ],
   },
-  { kind: "leaf", label: "Analytics", href: "/analytics", icon: BarChart2 },
-  { kind: "leaf", label: "Settings",  href: "/settings",  icon: Settings },
+  { kind: "leaf", label: "Settings", href: "/settings", icon: Settings },
 ];
 
 // ─── Auth guard ───────────────────────────────────────────────────────────────

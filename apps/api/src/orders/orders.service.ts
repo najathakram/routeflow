@@ -152,12 +152,22 @@ export class OrdersService {
     const lineItemsData = dto.items.map((item) => {
       const product = productMap.get(item.productId);
       if (!product) throw new BadRequestException(`Product ${item.productId} not found`);
+
+      // Recompute qty from boxes/pieces when provided (backend is authoritative)
+      let qty = item.qty;
+      if (item.boxes != null || item.pieces != null) {
+        const unitsPerBox = Number(product.unitsPerBox ?? 0);
+        qty = (item.boxes ?? 0) * unitsPerBox + (item.pieces ?? 0);
+      }
+
       const unitPrice = Number(product.pricePerUnit);
-      const itemSubtotal = unitPrice * item.qty;
+      const itemSubtotal = unitPrice * qty;
       subtotal += itemSubtotal;
       return {
         productId: item.productId,
-        qty: item.qty,
+        qty,
+        boxes: item.boxes ?? null,
+        pieces: item.pieces ?? null,
         unitPrice,
         subtotal: itemSubtotal,
         notes: (item as any).itemNote || item.notes,
