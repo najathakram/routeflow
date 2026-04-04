@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=390, initial-scale=1.0">
+<title>RouteFlow — Notifications</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    width: 390px; height: 844px; overflow: hidden;
+    font-family: -apple-system, "SF Pro Display", "Inter", sans-serif;
+    background: #F8FAFC; display: flex; flex-direction: column;
+  }
+
+  /* STATUS BAR */
+  .status-bar {
+    height: 44px; background: #1B3A5C;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 20px; flex-shrink: 0;
+  }
+  .status-time { color: #fff; font-size: 15px; font-weight: 600; letter-spacing: -0.3px; }
+  .status-icons { display: flex; align-items: center; gap: 6px; }
+  .status-icons svg { fill: #fff; }
+
+  /* TOP NAV */
+  .top-nav {
+    height: 56px; background: #1B3A5C;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 20px; flex-shrink: 0;
+  }
+  .back-btn { display: flex; align-items: center; gap: 6px; color: rgba(255,255,255,0.8); font-size: 15px; cursor: pointer; }
+  .nav-title { color: #fff; font-size: 18px; font-weight: 700; letter-spacing: -0.4px; }
+  .mark-all { color: #93C5FD; font-size: 13px; font-weight: 600; cursor: pointer; }
+
+  /* CONTENT */
+  .content { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+  .scroll-area { flex: 1; overflow-y: auto; }
+  .scroll-area::-webkit-scrollbar { display: none; }
+
+  /* FILTER PILLS */
+  .filter-row {
+    padding: 12px 20px; background: #fff;
+    border-bottom: 1px solid #E2E8F0;
+    display: flex; gap: 8px; overflow-x: auto;
+  }
+  .filter-row::-webkit-scrollbar { display: none; }
+  .filter-pill {
+    padding: 6px 14px; border-radius: 20px;
+    font-size: 13px; font-weight: 600; cursor: pointer;
+    white-space: nowrap; flex-shrink: 0;
+  }
+  .filter-pill.active { background: #2563EB; color: #fff; }
+  .filter-pill:not(.active) { background: #F1F5F9; color: #64748B; }
+
+  /* GROUP HEADER */
+  .group-header {
+    padding: 14px 20px 8px;
+    font-size: 12px; font-weight: 700; color: #94A3B8;
+    text-transform: uppercase; letter-spacing: 0.8px;
+  }
+
+  /* NOTIFICATION ITEM */
+  .notif-item {
+    background: #fff; margin: 0 16px 8px;
+    border-radius: 14px; padding: 14px;
+    display: flex; align-items: flex-start; gap: 12px;
+    border: 1px solid #E2E8F0;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    position: relative;
+  }
+  .notif-item.unread { background: #F0F6FF; border-color: #BFDBFE; }
+  .notif-icon-circle {
+    width: 40px; height: 40px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px; flex-shrink: 0; margin-top: 1px;
+  }
+  .icon-red { background: #FEE2E2; }
+  .icon-green { background: #DCFCE7; }
+  .icon-amber { background: #FEF3C7; }
+  .icon-blue { background: #DBEAFE; }
+  .notif-body { flex: 1; min-width: 0; }
+  .notif-title { font-size: 13px; font-weight: 700; color: #1E293B; line-height: 1.3; }
+  .notif-sub { font-size: 12px; color: #64748B; margin-top: 3px; line-height: 1.3; }
+  .notif-time { font-size: 11px; color: #94A3B8; margin-top: 4px; font-weight: 500; }
+  .unread-dot {
+    width: 8px; height: 8px; background: #2563EB; border-radius: 50%;
+    position: absolute; top: 14px; right: 14px; flex-shrink: 0;
+  }
+
+  /* BOTTOM NAV */
+  .bottom-nav {
+    height: 82px; background: #fff; border-top: 1px solid #E2E8F0;
+    display: flex; align-items: flex-start; padding-top: 10px; flex-shrink: 0;
+  }
+  .nav-item { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; cursor: pointer; }
+  .nav-label { font-size: 10px; font-weight: 500; color: #94A3B8; }
+  .nav-item.active .nav-label { color: #2563EB; font-weight: 600; }
+
+  /* Bell active highlight */
+  .bell-nav {
+    width: 44px; height: 44px; background: #DBEAFE; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    position: relative; margin: 0 auto -4px;
+  }
+</style>
+</head>
+<body>
+
+<!-- STATUS BAR -->
+<div class="status-bar">
+  <span class="status-time">9:41</span>
+  <div class="status-icons">
+    <svg width="17" height="12" viewBox="0 0 17 12">
+      <rect x="0" y="3" width="3" height="9" rx="1" opacity="0.4"/>
+      <rect x="4" y="2" width="3" height="10" rx="1" opacity="0.6"/>
+      <rect x="8" y="0" width="3" height="12" rx="1" opacity="0.8"/>
+      <rect x="12" y="0" width="3" height="12" rx="1"/>
+    </svg>
+    <svg width="16" height="12" viewBox="0 0 16 12">
+      <path d="M8 2.4C5.6 2.4 3.4 3.4 1.8 5L0 3.2C2.2 1.2 5 0 8 0s5.8 1.2 8 3.2L14.2 5C12.6 3.4 10.4 2.4 8 2.4z" opacity="0.4"/>
+      <path d="M8 5.6c-1.6 0-3 .6-4.1 1.6L2.1 5.4C3.6 4.1 5.7 3.2 8 3.2s4.4.9 5.9 2.2L12.1 7.2C11 6.2 9.6 5.6 8 5.6z" opacity="0.7"/>
+      <circle cx="8" cy="10" r="2"/>
+    </svg>
+    <svg width="25" height="12" viewBox="0 0 25 12">
+      <rect x="0" y="1" width="22" height="10" rx="3" stroke="white" stroke-width="1.2" fill="none" opacity="0.6"/>
+      <rect x="22.5" y="3.5" width="2" height="5" rx="1" fill="white" opacity="0.6"/>
+      <rect x="1.5" y="2.5" width="17" height="7" rx="2" fill="white"/>
+    </svg>
+  </div>
+</div>
+
+<!-- TOP NAV -->
+<div class="top-nav">
+  <div class="back-btn">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.8)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="15 18 9 12 15 6"/>
+    </svg>
+    Back
+  </div>
+  <div class="nav-title">Notifications</div>
+  <div class="mark-all">Mark all read</div>
+</div>
+
+<!-- CONTENT -->
+<div class="content">
+
+  <!-- FILTER PILLS -->
+  <div class="filter-row">
+    <div class="filter-pill active">All</div>
+    <div class="filter-pill">Alerts</div>
+    <div class="filter-pill">Orders</div>
+    <div class="filter-pill">Routes</div>
+    <div class="filter-pill">Finance</div>
+  </div>
+
+  <div class="scroll-area">
+
+    <!-- TODAY GROUP -->
+    <div class="group-header">Today</div>
+
+    <!-- Notification 1 — unread -->
+    <div class="notif-item unread">
+      <div class="notif-icon-circle icon-red">🔴</div>
+      <div class="notif-body">
+        <div class="notif-title">Invoice #INV-0042 is 5 days overdue</div>
+        <div class="notif-sub">Harbor Cafe owes $340</div>
+        <div class="notif-time">2 min ago</div>
+      </div>
+      <div class="unread-dot"></div>
+    </div>
+
+    <!-- Notification 2 — unread -->
+    <div class="notif-item unread">
+      <div class="notif-icon-circle icon-green">🟢</div>
+      <div class="notif-body">
+        <div class="notif-title">Route B completed</div>
+        <div class="notif-sub">driver_sara delivered 4/4 stops successfully</div>
+        <div class="notif-time">45 min ago</div>
+      </div>
+      <div class="unread-dot"></div>
+    </div>
+
+    <!-- Notification 3 — unread -->
+    <div class="notif-item unread">
+      <div class="notif-icon-circle icon-amber">🟡</div>
+      <div class="notif-body">
+        <div class="notif-title">Low stock alert: Butter</div>
+        <div class="notif-sub">Only 8 units remaining in inventory</div>
+        <div class="notif-time">1 hr ago</div>
+      </div>
+      <div class="unread-dot"></div>
+    </div>
+
+    <!-- Notification 4 — read -->
+    <div class="notif-item">
+      <div class="notif-icon-circle icon-blue">🔵</div>
+      <div class="notif-body">
+        <div class="notif-title">New order #ORD-0089 from Central Kitchen</div>
+        <div class="notif-sub">Order total: $520</div>
+        <div class="notif-time">2 hr ago</div>
+      </div>
+    </div>
+
+    <!-- YESTERDAY GROUP -->
+    <div class="group-header">Yesterday</div>
+
+    <!-- Notification 5 — read -->
+    <div class="notif-item">
+      <div class="notif-icon-circle icon-green">🟢</div>
+      <div class="notif-body">
+        <div class="notif-title">Payment received: $1,240</div>
+        <div class="notif-sub">From Bayside Bistro</div>
+        <div class="notif-time">Yesterday 3:12 PM</div>
+      </div>
+    </div>
+
+    <!-- Notification 6 — read -->
+    <div class="notif-item">
+      <div class="notif-icon-circle icon-red">🔴</div>
+      <div class="notif-body">
+        <div class="notif-title">Route D driver_mia has not started</div>
+        <div class="notif-sub">Was scheduled at 9:00 AM — now 45 min delayed</div>
+        <div class="notif-time">Yesterday 10:05 AM</div>
+      </div>
+    </div>
+
+    <!-- Notification 7 — read -->
+    <div class="notif-item">
+      <div class="notif-icon-circle icon-blue">🔵</div>
+      <div class="notif-body">
+        <div class="notif-title">Standing order generated: North Deli</div>
+        <div class="notif-sub">Mon / Wed / Fri schedule active</div>
+        <div class="notif-time">Yesterday 7:00 AM</div>
+      </div>
+    </div>
+
+    <div style="height: 12px;"></div>
+
+  </div>
+</div>
+
+<!-- BOTTOM NAV -->
+<div class="bottom-nav">
+  <div class="nav-item">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+      <polyline points="9 22 9 12 15 12 15 22"/>
+    </svg>
+    <span class="nav-label">Home</span>
+  </div>
+  <div class="nav-item">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/>
+    </svg>
+    <span class="nav-label">Routes</span>
+  </div>
+  <div class="nav-item">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/>
+      <line x1="3" y1="6" x2="21" y2="6"/>
+      <path d="M16 10a4 4 0 0 1-8 0"/>
+    </svg>
+    <span class="nav-label">Orders</span>
+  </div>
+  <div class="nav-item">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+      <circle cx="9" cy="7" r="4"/>
+      <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+      <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+    </svg>
+    <span class="nav-label">Customers</span>
+  </div>
+  <div class="nav-item">
+    <!-- Bell highlighted — notifications screen -->
+    <div style="position:relative;">
+      <div style="width:38px;height:38px;background:#DBEAFE;border-radius:50%;display:flex;align-items:center;justify-content:center;margin: -7px auto 0;">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#2563EB" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+          <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+        </svg>
+      </div>
+    </div>
+    <span class="nav-label" style="color:#2563EB;font-weight:600;">More</span>
+  </div>
+</div>
+
+</body>
+</html>

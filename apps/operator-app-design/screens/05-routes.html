@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=390, initial-scale=1.0">
+<title>RouteFlow — Routes</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    width: 390px; height: 844px; overflow: hidden;
+    font-family: -apple-system, "SF Pro Display", "Inter", sans-serif;
+    background: #F8FAFC; display: flex; flex-direction: column;
+  }
+
+  /* STATUS BAR */
+  .status-bar {
+    height: 44px; background: #1B3A5C;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 20px; flex-shrink: 0;
+  }
+  .status-time { color: #fff; font-size: 15px; font-weight: 600; }
+  .status-icons { display: flex; align-items: center; gap: 6px; }
+
+  /* TOP NAV */
+  .top-nav {
+    height: 56px; background: #1B3A5C;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 20px; flex-shrink: 0;
+  }
+  .nav-title { color: #fff; font-size: 20px; font-weight: 700; letter-spacing: -0.5px; }
+  .add-btn {
+    width: 36px; height: 36px; background: rgba(255,255,255,0.18);
+    border-radius: 50%; display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+  }
+
+  /* DATE SCROLLER */
+  .date-scroller {
+    background: #1B3A5C; padding: 0 20px 14px;
+    display: flex; gap: 8px; overflow-x: auto; flex-shrink: 0;
+  }
+  .date-scroller::-webkit-scrollbar { display: none; }
+  .date-chip {
+    display: flex; flex-direction: column; align-items: center;
+    padding: 8px 14px; border-radius: 12px; cursor: pointer; flex-shrink: 0;
+    min-width: 52px;
+  }
+  .date-chip.today { background: #2563EB; }
+  .date-chip:not(.today) { background: rgba(255,255,255,0.1); }
+  .date-day { font-size: 11px; font-weight: 500; color: rgba(255,255,255,0.7); }
+  .date-chip.today .date-day { color: rgba(255,255,255,0.85); }
+  .date-num { font-size: 18px; font-weight: 700; color: #fff; line-height: 1.1; }
+
+  /* CONTENT */
+  .content { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+
+  /* SUMMARY CHIPS */
+  .summary-row {
+    background: #fff; padding: 10px 20px;
+    display: flex; gap: 6px; align-items: center;
+    border-bottom: 1px solid #E2E8F0; flex-shrink: 0; flex-wrap: wrap;
+  }
+  .summary-chip {
+    font-size: 12px; color: #64748B; font-weight: 500;
+    padding: 3px 0;
+  }
+  .summary-dot { color: #CBD5E1; font-size: 12px; }
+
+  /* FILTER TABS */
+  .filter-tabs {
+    background: #fff; display: flex;
+    border-bottom: 2px solid #E2E8F0; flex-shrink: 0;
+  }
+  .filter-tab {
+    flex: 1; padding: 10px 4px; text-align: center;
+    font-size: 13px; font-weight: 600; color: #94A3B8; cursor: pointer;
+    border-bottom: 2px solid transparent; margin-bottom: -2px;
+  }
+  .filter-tab.active { color: #2563EB; border-bottom-color: #2563EB; }
+
+  /* SCROLL AREA */
+  .scroll-area { flex: 1; overflow-y: auto; padding: 12px 16px 72px; }
+  .scroll-area::-webkit-scrollbar { display: none; }
+
+  /* ROUTE CARD */
+  .route-card {
+    background: #fff; border-radius: 16px; margin-bottom: 10px;
+    padding: 14px 16px; box-shadow: 0 1px 4px rgba(0,0,0,0.07);
+    border: 1px solid #E2E8F0;
+  }
+  .card-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .route-left { display: flex; align-items: center; gap: 10px; }
+  .driver-av {
+    width: 38px; height: 38px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 700; color: #fff; flex-shrink: 0;
+  }
+  .route-name { font-size: 15px; font-weight: 700; color: #1B3A5C; letter-spacing: -0.3px; }
+  .driver-name { font-size: 12px; color: #64748B; margin-top: 1px; }
+  .status-pill {
+    padding: 4px 10px; border-radius: 20px;
+    font-size: 11px; font-weight: 700; letter-spacing: 0.2px;
+  }
+  .pill-inprogress { background: #DCFCE7; color: #16A34A; }
+  .pill-completed { background: #BBF7D0; color: #15803D; }
+  .pill-scheduled { background: #DBEAFE; color: #2563EB; }
+  .pill-delayed { background: #FEE2E2; color: #DC2626; }
+
+  .card-meta {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 8px;
+  }
+  .stops-text { font-size: 12px; color: #64748B; }
+  .est-text { font-size: 12px; color: #64748B; }
+  .progress-track {
+    height: 6px; background: #E2E8F0; border-radius: 3px; overflow: hidden;
+  }
+  .progress-fill { height: 100%; border-radius: 3px; transition: width 0.3s; }
+
+  /* FAB */
+  .fab {
+    position: absolute; bottom: 96px; right: 20px;
+    width: 52px; height: 52px; background: #2563EB; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 4px 12px rgba(37,99,235,0.4); cursor: pointer; z-index: 10;
+  }
+
+  /* BOTTOM NAV */
+  .bottom-nav {
+    height: 82px; background: #fff; border-top: 1px solid #E2E8F0;
+    display: flex; align-items: flex-start; padding-top: 10px; flex-shrink: 0;
+  }
+  .nav-item { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; cursor: pointer; }
+  .nav-label { font-size: 10px; font-weight: 500; color: #94A3B8; }
+  .nav-item.active .nav-label { color: #2563EB; font-weight: 600; }
+</style>
+</head>
+<body>
+
+<!-- STATUS BAR -->
+<div class="status-bar">
+  <span class="status-time">9:41</span>
+  <div class="status-icons">
+    <svg width="17" height="12" viewBox="0 0 17 12" fill="white">
+      <rect x="0" y="3" width="3" height="9" rx="1" opacity="0.4"/>
+      <rect x="4" y="2" width="3" height="10" rx="1" opacity="0.6"/>
+      <rect x="8" y="0" width="3" height="12" rx="1" opacity="0.8"/>
+      <rect x="12" y="0" width="3" height="12" rx="1"/>
+    </svg>
+    <svg width="16" height="12" viewBox="0 0 16 12" fill="white">
+      <path d="M8 2.4C5.6 2.4 3.4 3.4 1.8 5L0 3.2C2.2 1.2 5 0 8 0s5.8 1.2 8 3.2L14.2 5C12.6 3.4 10.4 2.4 8 2.4z" opacity="0.4"/>
+      <path d="M8 5.6c-1.6 0-3 .6-4.1 1.6L2.1 5.4C3.6 4.1 5.7 3.2 8 3.2s4.4.9 5.9 2.2L12.1 7.2C11 6.2 9.6 5.6 8 5.6z" opacity="0.7"/>
+      <circle cx="8" cy="10" r="2"/>
+    </svg>
+    <svg width="25" height="12" viewBox="0 0 25 12">
+      <rect x="0" y="1" width="22" height="10" rx="3" stroke="white" stroke-width="1.2" fill="none" opacity="0.6"/>
+      <rect x="22.5" y="3.5" width="2" height="5" rx="1" fill="white" opacity="0.6"/>
+      <rect x="1.5" y="2.5" width="17" height="7" rx="2" fill="white"/>
+    </svg>
+  </div>
+</div>
+
+<!-- TOP NAV -->
+<div class="top-nav">
+  <div class="nav-title">Routes</div>
+  <div class="add-btn">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round">
+      <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+    </svg>
+  </div>
+</div>
+
+<!-- DATE SCROLLER -->
+<div class="date-scroller">
+  <div class="date-chip"><span class="date-day">Mon</span><span class="date-num">31</span></div>
+  <div class="date-chip"><span class="date-day">Tue</span><span class="date-num">1</span></div>
+  <div class="date-chip"><span class="date-day">Wed</span><span class="date-num">2</span></div>
+  <div class="date-chip today"><span class="date-day">Thu</span><span class="date-num">3</span></div>
+  <div class="date-chip"><span class="date-day">Fri</span><span class="date-num">4</span></div>
+  <div class="date-chip"><span class="date-day">Sat</span><span class="date-num">5</span></div>
+</div>
+
+<!-- CONTENT -->
+<div class="content">
+
+  <!-- SUMMARY -->
+  <div class="summary-row">
+    <span class="summary-chip" style="color:#1B3A5C;font-weight:700;">8 Total</span>
+    <span class="summary-dot">·</span>
+    <span class="summary-chip" style="color:#16A34A;font-weight:600;">3 Active</span>
+    <span class="summary-dot">·</span>
+    <span class="summary-chip" style="color:#2563EB;font-weight:600;">3 Scheduled</span>
+    <span class="summary-dot">·</span>
+    <span class="summary-chip" style="color:#64748B;">2 Completed</span>
+  </div>
+
+  <!-- FILTER TABS -->
+  <div class="filter-tabs">
+    <div class="filter-tab active">All</div>
+    <div class="filter-tab">Active</div>
+    <div class="filter-tab">Scheduled</div>
+    <div class="filter-tab">Completed</div>
+  </div>
+
+  <!-- SCROLL AREA -->
+  <div class="scroll-area">
+
+    <!-- Route A — In Progress -->
+    <div class="route-card">
+      <div class="card-top">
+        <div class="route-left">
+          <div class="driver-av" style="background:#2563EB;">TM</div>
+          <div>
+            <div class="route-name">Route A</div>
+            <div class="driver-name">driver_tom</div>
+          </div>
+        </div>
+        <div class="status-pill pill-inprogress">IN PROGRESS</div>
+      </div>
+      <div class="card-meta">
+        <span class="stops-text">2 / 4 stops completed</span>
+        <span class="est-text">Est: 2:30 PM</span>
+      </div>
+      <div class="progress-track">
+        <div class="progress-fill" style="width:50%; background:#2563EB;"></div>
+      </div>
+    </div>
+
+    <!-- Route B — Completed -->
+    <div class="route-card">
+      <div class="card-top">
+        <div class="route-left">
+          <div class="driver-av" style="background:#7C3AED;">SS</div>
+          <div>
+            <div class="route-name">Route B</div>
+            <div class="driver-name">driver_sara</div>
+          </div>
+        </div>
+        <div class="status-pill pill-completed">COMPLETED ✓</div>
+      </div>
+      <div class="card-meta">
+        <span class="stops-text">4 / 4 stops · Done 11:45 AM ✓</span>
+        <span class="est-text" style="color:#16A34A;font-weight:600;">100%</span>
+      </div>
+      <div class="progress-track">
+        <div class="progress-fill" style="width:100%; background:#16A34A;"></div>
+      </div>
+    </div>
+
+    <!-- Route C — Scheduled -->
+    <div class="route-card">
+      <div class="card-top">
+        <div class="route-left">
+          <div class="driver-av" style="background:#0891B2;">MM</div>
+          <div>
+            <div class="route-name">Route C</div>
+            <div class="driver-name">driver_mia</div>
+          </div>
+        </div>
+        <div class="status-pill pill-scheduled">SCHEDULED</div>
+      </div>
+      <div class="card-meta">
+        <span class="stops-text">0 / 3 stops · Starts 1:00 PM</span>
+        <span class="est-text">0%</span>
+      </div>
+      <div class="progress-track">
+        <div class="progress-fill" style="width:0%; background:#2563EB;"></div>
+      </div>
+    </div>
+
+    <!-- Route D — Delayed -->
+    <div class="route-card" style="border-color:#FECACA;">
+      <div class="card-top">
+        <div class="route-left">
+          <div class="driver-av" style="background:#DC2626;">JJ</div>
+          <div>
+            <div class="route-name">Route D</div>
+            <div class="driver-name">driver_jay</div>
+          </div>
+        </div>
+        <div class="status-pill pill-delayed">DELAYED</div>
+      </div>
+      <div class="card-meta">
+        <span class="stops-text">1 / 5 stops · ⚠ 45 min behind</span>
+        <span class="est-text" style="color:#DC2626;">20%</span>
+      </div>
+      <div class="progress-track">
+        <div class="progress-fill" style="width:20%; background:#EF4444;"></div>
+      </div>
+    </div>
+
+    <!-- Route E — Scheduled -->
+    <div class="route-card">
+      <div class="card-top">
+        <div class="route-left">
+          <div class="driver-av" style="background:#059669;">MX</div>
+          <div>
+            <div class="route-name">Route E</div>
+            <div class="driver-name">driver_max</div>
+          </div>
+        </div>
+        <div class="status-pill pill-scheduled">SCHEDULED</div>
+      </div>
+      <div class="card-meta">
+        <span class="stops-text">0 / 3 stops · Starts 3:00 PM</span>
+        <span class="est-text">0%</span>
+      </div>
+      <div class="progress-track">
+        <div class="progress-fill" style="width:0%; background:#2563EB;"></div>
+      </div>
+    </div>
+
+    <!-- Route F — Scheduled -->
+    <div class="route-card">
+      <div class="card-top">
+        <div class="route-left">
+          <div class="driver-av" style="background:#9333EA;">EV</div>
+          <div>
+            <div class="route-name">Route F</div>
+            <div class="driver-name">driver_eve</div>
+          </div>
+        </div>
+        <div class="status-pill pill-scheduled">SCHEDULED</div>
+      </div>
+      <div class="card-meta">
+        <span class="stops-text">0 / 4 stops · Starts 4:00 PM</span>
+        <span class="est-text">0%</span>
+      </div>
+      <div class="progress-track">
+        <div class="progress-fill" style="width:0%; background:#2563EB;"></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- FAB -->
+<div style="position:relative;">
+  <div class="fab">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round">
+      <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+    </svg>
+  </div>
+</div>
+
+<!-- BOTTOM NAV -->
+<div class="bottom-nav">
+  <div class="nav-item">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+      <polyline points="9 22 9 12 15 12 15 22"/>
+    </svg>
+    <span class="nav-label">Home</span>
+  </div>
+  <div class="nav-item active">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#2563EB" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/>
+    </svg>
+    <span class="nav-label" style="color:#2563EB;">Routes</span>
+  </div>
+  <div class="nav-item">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/>
+      <line x1="3" y1="6" x2="21" y2="6"/>
+      <path d="M16 10a4 4 0 0 1-8 0"/>
+    </svg>
+    <span class="nav-label">Orders</span>
+  </div>
+  <div class="nav-item">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+      <circle cx="9" cy="7" r="4"/>
+      <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+      <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+    </svg>
+    <span class="nav-label">Customers</span>
+  </div>
+  <div class="nav-item">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>
+    </svg>
+    <span class="nav-label">More</span>
+  </div>
+</div>
+
+</body>
+</html>
