@@ -58,6 +58,25 @@ export class ImportService {
       .slice(0, 30);
   }
 
+  /**
+   * Extracts the vendor/supplier name from a CSV row, checking all common
+   * Zoho column names in priority order:
+   * Zoho Expense → "Merchant Name"
+   * Zoho Books   → "Vendor Name" | "Customer Name"
+   * Generic      → "Payee" | "Supplier Name" | "Company Name"
+   */
+  private getVendorName(row: any): string {
+    return (
+      row["Merchant Name"] ||
+      row["Vendor Name"] ||
+      row["Customer Name"] ||
+      row["Payee"] ||
+      row["Supplier Name"] ||
+      row["Company Name"] ||
+      ""
+    ).trim();
+  }
+
   async importContacts(
     buffer: Buffer,
     userId: string,
@@ -735,22 +754,22 @@ export class ImportService {
       if (cat) catMap[catName] = cat.id;
     }
 
-    // ── Step 2: Auto-upsert suppliers from "Customer Name" column ────────────
-    // Zoho expense exports include the vendor/supplier in the "Customer Name" column.
-    // We also extract any vendor detail columns present in the CSV.
+    // ── Step 2: Auto-upsert suppliers from vendor column ─────────────────────
+    // Zoho Expense uses "Merchant Name"; Zoho Books uses "Customer Name" or
+    // "Vendor Name". getVendorName() checks all variants in priority order.
     const vendorMap: Record<string, string> = {}; // vendorName (lowercase) → supplierId
 
     // Group rows by vendor name to extract detail columns
     const vendorRowsMap: Record<string, any> = {};
     for (const row of rows) {
-      const n = (row["Customer Name"] || "").trim();
+      const n = this.getVendorName(row);
       if (n && !vendorRowsMap[n.toLowerCase()]) {
         vendorRowsMap[n.toLowerCase()] = row; // keep first row per vendor
       }
     }
 
     const vendorNames = Object.keys(vendorRowsMap).map(
-      (k) => vendorRowsMap[k]["Customer Name"].trim(),
+      (k) => this.getVendorName(vendorRowsMap[k]),
     ) as string[];
 
     for (const name of vendorNames) {
@@ -835,8 +854,8 @@ export class ImportService {
       const description = row["Expense Description"] || row["Reference#"] || null;
       const notes = row["Reference#"] || null;
 
-      // Resolve supplier from the "Customer Name" column
-      const vendorName = (row["Customer Name"] || "").trim();
+      // Resolve supplier from the vendor name column (Merchant Name / Vendor Name / Customer Name …)
+      const vendorName = this.getVendorName(row);
       const supplierId = vendorName ? (vendorMap[vendorName.toLowerCase()] ?? null) : null;
 
       try {
@@ -1012,16 +1031,15 @@ export class ImportService {
     const errors: string[] = [];
     let created = 0, updated = 0, removedFromCustomers = 0, skipped = 0;
 
-    // Group rows by vendor name to extract detail columns from the CSV itself
+    // Group rows by vendor name — checks Merchant Name / Vendor Name / Customer Name / etc.
     const vendorRowMap: Record<string, any> = {};
     for (const row of rows) {
-      const n = (row["Customer Name"] || "").trim();
+      const n = this.getVendorName(row);
       if (n && !vendorRowMap[n.toLowerCase()]) vendorRowMap[n.toLowerCase()] = row;
     }
 
-    // Collect unique, non-empty supplier names from "Customer Name" column
     const supplierNames = Object.keys(vendorRowMap).map(
-      (k) => vendorRowMap[k]["Customer Name"].trim(),
+      (k) => this.getVendorName(vendorRowMap[k]),
     ) as string[];
 
     for (const name of supplierNames) {
