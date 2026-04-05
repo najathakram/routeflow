@@ -6,7 +6,7 @@ import { PageHeader, Badge, Button, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useToast } from "@routeflow/ui/web";
 import { useDebounce } from "@/lib/hooks/useDebounce";
-import { useSuppliers, useCreateSupplier, useUpdateSupplier, useDeleteSupplier, type Supplier } from "@/lib/api/suppliers";
+import { useSuppliers, useCreateSupplier, useUpdateSupplier, useDeleteSupplier, useDeactivateSupplier, type Supplier } from "@/lib/api/suppliers";
 
 // ─── Supplier form modal ───────────────────────────────────────────────────────
 
@@ -163,7 +163,9 @@ function SupplierModal({
 function SupplierCard({
   supplier,
   onEdit,
-  onToggleActive,
+  onDeactivate,
+  onReactivate,
+  onDelete,
   isUpdating,
   selectMode,
   selected,
@@ -171,13 +173,16 @@ function SupplierCard({
 }: {
   supplier: Supplier;
   onEdit: () => void;
-  onToggleActive: () => void;
+  onDeactivate: () => void;
+  onReactivate: () => void;
+  onDelete: () => void;
   isUpdating: boolean;
   selectMode?: boolean;
   selected?: boolean;
   onSelect?: () => void;
 }) {
   const [confirmDeactivate, setConfirmDeactivate] = React.useState(false);
+  const [confirmDelete, setConfirmDelete] = React.useState(false);
   return (
     <div
       className={cn(
@@ -268,41 +273,67 @@ function SupplierCard({
 
       {/* Footer */}
       <div className="border-t border-surface-border pt-2">
-        {supplier.isActive ? (
-          confirmDeactivate ? (
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-danger">Deactivate supplier?</span>
-              <button
-                onClick={() => { setConfirmDeactivate(false); onToggleActive(); }}
-                disabled={isUpdating}
-                className="text-xs font-medium text-danger hover:underline disabled:opacity-40"
-              >
-                Yes
-              </button>
-              <button
-                onClick={() => setConfirmDeactivate(false)}
-                className="text-xs text-navy/40 hover:text-navy transition-colors"
-              >
-                Cancel
-              </button>
-            </div>
-          ) : (
+        {confirmDelete ? (
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-danger">Permanently delete?</span>
             <button
-              onClick={() => setConfirmDeactivate(true)}
+              onClick={() => { setConfirmDelete(false); onDelete(); }}
               disabled={isUpdating}
-              className="text-xs text-danger/60 hover:text-danger transition-colors disabled:opacity-40"
+              className="text-xs font-medium text-danger hover:underline disabled:opacity-40"
             >
-              Deactivate
+              Delete
             </button>
-          )
+            <button
+              onClick={() => setConfirmDelete(false)}
+              className="text-xs text-navy/40 hover:text-navy transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        ) : confirmDeactivate ? (
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-warning">Deactivate supplier?</span>
+            <button
+              onClick={() => { setConfirmDeactivate(false); onDeactivate(); }}
+              disabled={isUpdating}
+              className="text-xs font-medium text-warning hover:underline disabled:opacity-40"
+            >
+              Yes
+            </button>
+            <button
+              onClick={() => setConfirmDeactivate(false)}
+              className="text-xs text-navy/40 hover:text-navy transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
         ) : (
-          <button
-            onClick={onToggleActive}
-            disabled={isUpdating}
-            className="text-xs text-navy/40 hover:text-navy transition-colors disabled:opacity-40"
-          >
-            Reactivate
-          </button>
+          <div className="flex items-center justify-between">
+            {supplier.isActive ? (
+              <button
+                onClick={() => setConfirmDeactivate(true)}
+                disabled={isUpdating}
+                className="text-xs text-navy/40 hover:text-warning transition-colors disabled:opacity-40"
+              >
+                Deactivate
+              </button>
+            ) : (
+              <button
+                onClick={onReactivate}
+                disabled={isUpdating}
+                className="text-xs font-medium text-brand-500 hover:text-brand-600 transition-colors disabled:opacity-40"
+              >
+                Reactivate
+              </button>
+            )}
+            <button
+              onClick={() => setConfirmDelete(true)}
+              disabled={isUpdating}
+              className="text-xs text-danger/50 hover:text-danger transition-colors disabled:opacity-40"
+            >
+              Delete
+            </button>
+          </div>
         )}
       </div>
     </div>
@@ -318,7 +349,7 @@ export default function SuppliersPage() {
 
   const [search, setSearch] = React.useState("");
   const debouncedSearch = useDebounce(search, 300);
-  const [activeFilter, setActiveFilter] = React.useState<"all" | "active" | "inactive">("active");
+  const [activeFilter, setActiveFilter] = React.useState<"all" | "active" | "inactive">("all");
   const [showModal, setShowModal] = React.useState(false);
   const [editTarget, setEditTarget] = React.useState<Supplier | undefined>(undefined);
   const [selectMode, setSelectMode] = React.useState(false);
@@ -327,6 +358,7 @@ export default function SuppliersPage() {
 
   const createSupplier = useCreateSupplier();
   const updateSupplier = useUpdateSupplier();
+  const deactivateSupplier = useDeactivateSupplier();
   const deleteSupplier = useDeleteSupplier();
 
   const toggleSelect = (id: string) =>
@@ -374,15 +406,30 @@ export default function SuppliersPage() {
     }
   };
 
-  const handleToggleActive = async (supplier: Supplier) => {
+  const handleDeactivate = async (supplier: Supplier) => {
     try {
-      await updateSupplier.mutateAsync({ id: supplier.id, isActive: !supplier.isActive });
-      toast({
-        title: supplier.isActive ? "Supplier deactivated" : "Supplier reactivated",
-        variant: "success",
-      });
+      await deactivateSupplier.mutateAsync(supplier.id);
+      toast({ title: "Supplier deactivated", variant: "success" });
     } catch {
       toast({ title: "Update failed", variant: "error" });
+    }
+  };
+
+  const handleReactivate = async (supplier: Supplier) => {
+    try {
+      await updateSupplier.mutateAsync({ id: supplier.id, isActive: true });
+      toast({ title: "Supplier reactivated", variant: "success" });
+    } catch {
+      toast({ title: "Update failed", variant: "error" });
+    }
+  };
+
+  const handleDelete = async (supplier: Supplier) => {
+    try {
+      await deleteSupplier.mutateAsync(supplier.id);
+      toast({ title: "Supplier deleted", variant: "success" });
+    } catch {
+      toast({ title: "Failed to delete supplier", variant: "error" });
     }
   };
 
@@ -519,8 +566,10 @@ export default function SuppliersPage() {
               key={s.id}
               supplier={s}
               onEdit={() => { if (!selectMode) { setEditTarget(s); setShowModal(true); } }}
-              onToggleActive={() => { if (!selectMode) handleToggleActive(s); }}
-              isUpdating={updateSupplier.isPending}
+              onDeactivate={() => { if (!selectMode) handleDeactivate(s); }}
+              onReactivate={() => { if (!selectMode) handleReactivate(s); }}
+              onDelete={() => { if (!selectMode) handleDelete(s); }}
+              isUpdating={updateSupplier.isPending || deactivateSupplier.isPending || deleteSupplier.isPending}
               selectMode={selectMode}
               selected={selected.has(s.id)}
               onSelect={() => toggleSelect(s.id)}

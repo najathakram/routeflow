@@ -56,8 +56,21 @@ export class SuppliersService {
     return this.prisma.supplier.update({ where: { id }, data: { ...dto } });
   }
 
-  async remove(id: string) {
+  async deactivate(id: string) {
     await this.findOne(id);
     return this.prisma.supplier.update({ where: { id }, data: { isActive: false } });
+  }
+
+  async remove(id: string) {
+    await this.findOne(id);
+    // Null out supplierId on related records before deleting to avoid FK violations
+    await this.prisma.$transaction([
+      this.prisma.expense.updateMany({ where: { supplierId: id }, data: { supplierId: null as any } }),
+      this.prisma.vendorBill.updateMany({ where: { supplierId: id }, data: { supplierId: null as any } }),
+      this.prisma.purchaseOrder.updateMany({ where: { supplierId: id }, data: { supplierId: null as any } }),
+      this.prisma.stockMovement.updateMany({ where: { supplierId: id }, data: { supplierId: null as any } }),
+      this.prisma.supplier.delete({ where: { id } }),
+    ]);
+    return { deleted: true };
   }
 }

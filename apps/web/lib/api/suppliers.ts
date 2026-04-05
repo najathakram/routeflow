@@ -68,6 +68,15 @@ export function useUpdateSupplier() {
   });
 }
 
+export function useDeactivateSupplier() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiClient.patch(`/suppliers/${id}/deactivate`).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["suppliers"] }),
+  });
+}
+
 export function useDeleteSupplier() {
   const qc = useQueryClient();
   return useMutation({

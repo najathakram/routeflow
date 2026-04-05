@@ -802,18 +802,19 @@ export class ImportService {
           where: { name: { equals: name, mode: "insensitive" } },
         });
         if (existing) {
-          // Update with any new details (don't overwrite fields already filled in)
+          // Always update supplier with all fields present in the CSV
+          // (CSV is the source of truth; fields not in CSV are left unchanged)
           const updateData: Record<string, any> = {};
-          if (vendorEmail && !existing.email) updateData.email = vendorEmail;
-          if (vendorPhone && !existing.phone) updateData.phone = vendorPhone;
-          if (vendorMobile && !existing.mobile) updateData.mobile = vendorMobile;
-          if (vendorWebsite && !existing.website) updateData.website = vendorWebsite;
-          if (contactName && !existing.contactName) updateData.contactName = contactName;
-          if (addrLine1 && !existing.addressLine1) updateData.addressLine1 = addrLine1;
-          if (city && !existing.city) updateData.city = city;
-          if (state && !existing.state) updateData.state = state;
-          if (zip && !existing.zip) updateData.zip = zip;
-          if (country && !existing.country) updateData.country = country;
+          if (vendorEmail) updateData.email = vendorEmail;
+          if (vendorPhone) updateData.phone = vendorPhone;
+          if (vendorMobile) updateData.mobile = vendorMobile;
+          if (vendorWebsite) updateData.website = vendorWebsite;
+          if (contactName) updateData.contactName = contactName;
+          if (addrLine1) updateData.addressLine1 = addrLine1;
+          if (city) updateData.city = city;
+          if (state) updateData.state = state;
+          if (zip) updateData.zip = zip;
+          if (country) updateData.country = country;
           if (Object.keys(updateData).length > 0) {
             await this.prisma.supplier.update({ where: { id: existing.id }, data: updateData });
           }
