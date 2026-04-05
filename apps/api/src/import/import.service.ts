@@ -77,6 +77,71 @@ export class ImportService {
     ).trim();
   }
 
+  /**
+   * Builds a complete supplier data object for a given vendor name by:
+   * 1. Extracting whatever detail columns are present in the CSV row
+   * 2. Looking up a matching Customer contact by name (case-insensitive)
+   * 3. Filling any remaining gaps from the customer record
+   *
+   * CSV columns always take priority over customer contact data.
+   */
+  private async buildSupplierData(name: string, csvRow: any): Promise<Record<string, any>> {
+    const data: Record<string, any> = { name };
+
+    // ── Layer 1: CSV columns ─────────────────────────────────────────────────
+    const csv = {
+      email:       (csvRow["Vendor Email"]   || csvRow["Email"]          || "").trim(),
+      phone:       (csvRow["Vendor Phone"]   || csvRow["Phone"]          || "").trim(),
+      mobile:      (csvRow["Vendor Mobile"]  || csvRow["Mobile"]         || "").trim(),
+      website:     (csvRow["Vendor Website"] || csvRow["Website"]        || "").trim(),
+      contactName: (csvRow["Contact Name"]   || csvRow["Vendor Contact"] || "").trim(),
+      addressLine1:(csvRow["Vendor Address"] || csvRow["Billing Address"]|| csvRow["Address"] || "").trim(),
+      city:        (csvRow["Vendor City"]    || csvRow["City"]           || "").trim(),
+      state:       (csvRow["Vendor State"]   || csvRow["State"]          || "").trim(),
+      zip:         (csvRow["Vendor Zip"]     || csvRow["Vendor ZIP"]     || csvRow["Zip"] || "").trim(),
+      country:     (csvRow["Vendor Country"] || csvRow["Country"]        || "").trim(),
+    };
+    for (const [k, v] of Object.entries(csv)) {
+      if (v) data[k] = v;
+    }
+
+    // ── Layer 2: Customer contact match (fills gaps left by CSV) ─────────────
+    const matchingCustomers = await this.prisma.customer.findMany({
+      where: {
+        OR: [
+          { businessName: { equals: name, mode: "insensitive" } },
+          { displayName:  { equals: name, mode: "insensitive" } },
+          { contactName:  { equals: name, mode: "insensitive" } },
+        ],
+      },
+      include: { addresses: true },
+    });
+
+    if (matchingCustomers.length > 0) {
+      const c = matchingCustomers[0];
+      if (!data.phone       && c.phone)       data.phone       = c.phone;
+      if (!data.mobile      && c.mobile)      data.mobile      = c.mobile;
+      if (!data.email       && c.email)       data.email       = c.email;
+      if (!data.contactName && c.contactName) data.contactName = c.contactName;
+      if (c.notes && !data.notes)             data.notes       = c.notes;
+
+      // Address — only if CSV didn't provide one
+      if (!data.addressLine1) {
+        const addr =
+          c.addresses.find((a) => a.addressType === "BILLING") ?? c.addresses[0];
+        if (addr) {
+          if (addr.line1)  data.addressLine1 = addr.line1;
+          if (addr.line2)  data.addressLine2 = addr.line2;
+          if (addr.city)   data.city         = addr.city;
+          if (addr.state)  data.state        = addr.state;
+          if (addr.zip)    data.zip          = addr.zip;
+        }
+      }
+    }
+
+    return data;
+  }
+
   async importContacts(
     buffer: Buffer,
     userId: string,
@@ -775,53 +840,22 @@ export class ImportService {
     for (const name of vendorNames) {
       try {
         const sampleRow = vendorRowsMap[name.toLowerCase()];
-        // Extract any detail columns Zoho may include
-        const details: Record<string, any> = { name };
-        const vendorEmail = (sampleRow["Vendor Email"] || sampleRow["Email"] || "").trim();
-        const vendorPhone = (sampleRow["Vendor Phone"] || sampleRow["Phone"] || "").trim();
-        const vendorMobile = (sampleRow["Vendor Mobile"] || sampleRow["Mobile"] || "").trim();
-        const vendorWebsite = (sampleRow["Vendor Website"] || sampleRow["Website"] || "").trim();
-        const contactName = (sampleRow["Contact Name"] || sampleRow["Vendor Contact"] || "").trim();
-        const addrLine1 = (sampleRow["Vendor Address"] || sampleRow["Billing Address"] || sampleRow["Address"] || "").trim();
-        const city = (sampleRow["Vendor City"] || sampleRow["City"] || "").trim();
-        const state = (sampleRow["Vendor State"] || sampleRow["State"] || "").trim();
-        const zip = (sampleRow["Vendor Zip"] || sampleRow["Vendor ZIP"] || sampleRow["Zip"] || "").trim();
-        const country = (sampleRow["Vendor Country"] || sampleRow["Country"] || "").trim();
-        if (vendorEmail) details.email = vendorEmail;
-        if (vendorPhone) details.phone = vendorPhone;
-        if (vendorMobile) details.mobile = vendorMobile;
-        if (vendorWebsite) details.website = vendorWebsite;
-        if (contactName) details.contactName = contactName;
-        if (addrLine1) details.addressLine1 = addrLine1;
-        if (city) details.city = city;
-        if (state) details.state = state;
-        if (zip) details.zip = zip;
-        if (country) details.country = country;
+        // Build full supplier profile: CSV columns + customer contact match
+        const supplierData = await this.buildSupplierData(name, sampleRow);
 
         const existing = await this.prisma.supplier.findFirst({
           where: { name: { equals: name, mode: "insensitive" } },
         });
         if (existing) {
-          // Always update supplier with all fields present in the CSV
-          // (CSV is the source of truth; fields not in CSV are left unchanged)
-          const updateData: Record<string, any> = {};
-          if (vendorEmail) updateData.email = vendorEmail;
-          if (vendorPhone) updateData.phone = vendorPhone;
-          if (vendorMobile) updateData.mobile = vendorMobile;
-          if (vendorWebsite) updateData.website = vendorWebsite;
-          if (contactName) updateData.contactName = contactName;
-          if (addrLine1) updateData.addressLine1 = addrLine1;
-          if (city) updateData.city = city;
-          if (state) updateData.state = state;
-          if (zip) updateData.zip = zip;
-          if (country) updateData.country = country;
+          // Update — remove the 'name' key (not needed in update) and apply the rest
+          const { name: _n, ...updateData } = supplierData;
           if (Object.keys(updateData).length > 0) {
             await this.prisma.supplier.update({ where: { id: existing.id }, data: updateData });
           }
           vendorMap[name.toLowerCase()] = existing.id;
           suppliersUpdated++;
         } else {
-          const created = await this.prisma.supplier.create({ data: details as any });
+          const created = await this.prisma.supplier.create({ data: supplierData as any });
           vendorMap[name.toLowerCase()] = created.id;
           suppliersCreated++;
         }
@@ -1047,64 +1081,8 @@ export class ImportService {
       try {
         const sampleRow = vendorRowMap[name.toLowerCase()];
 
-        // Extract detail columns directly from the CSV rows first
-        const csvEmail = (sampleRow["Vendor Email"] || sampleRow["Email"] || "").trim();
-        const csvPhone = (sampleRow["Vendor Phone"] || sampleRow["Phone"] || "").trim();
-        const csvMobile = (sampleRow["Vendor Mobile"] || sampleRow["Mobile"] || "").trim();
-        const csvWebsite = (sampleRow["Vendor Website"] || sampleRow["Website"] || "").trim();
-        const csvContact = (sampleRow["Contact Name"] || sampleRow["Vendor Contact"] || "").trim();
-        const csvAddr1 = (sampleRow["Vendor Address"] || sampleRow["Billing Address"] || sampleRow["Address"] || "").trim();
-        const csvCity = (sampleRow["Vendor City"] || sampleRow["City"] || "").trim();
-        const csvState = (sampleRow["Vendor State"] || sampleRow["State"] || "").trim();
-        const csvZip = (sampleRow["Vendor Zip"] || sampleRow["Vendor ZIP"] || sampleRow["Zip"] || "").trim();
-        const csvCountry = (sampleRow["Vendor Country"] || sampleRow["Country"] || "").trim();
-
-        // Find matching customer records (businessName or displayName match)
-        const matchingCustomers = await this.prisma.customer.findMany({
-          where: {
-            OR: [
-              { businessName: { equals: name, mode: "insensitive" } },
-              { displayName: { equals: name, mode: "insensitive" } },
-            ],
-          },
-          include: { addresses: true },
-        });
-
-        // Build supplier data: CSV columns take priority, customer records as fallback
-        const supplierData: any = { name };
-        if (csvEmail) supplierData.email = csvEmail;
-        if (csvPhone) supplierData.phone = csvPhone;
-        if (csvMobile) supplierData.mobile = csvMobile;
-        if (csvWebsite) supplierData.website = csvWebsite;
-        if (csvContact) supplierData.contactName = csvContact;
-        if (csvAddr1) supplierData.addressLine1 = csvAddr1;
-        if (csvCity) supplierData.city = csvCity;
-        if (csvState) supplierData.state = csvState;
-        if (csvZip) supplierData.zip = csvZip;
-        if (csvCountry) supplierData.country = csvCountry;
-
-        if (matchingCustomers.length > 0) {
-          const c = matchingCustomers[0];
-          // Fill gaps from customer record if CSV didn't provide them
-          if (!supplierData.phone && c.phone) supplierData.phone = c.phone;
-          if (!supplierData.mobile && c.mobile) supplierData.mobile = c.mobile;
-          if (!supplierData.email && c.email) supplierData.email = c.email;
-          if (c.notes) supplierData.notes = c.notes;
-
-          // Use billing address first, then any address — only if CSV had none
-          if (!supplierData.addressLine1) {
-            const billingAddr =
-              c.addresses.find((a) => a.addressType === "BILLING") ??
-              c.addresses[0];
-            if (billingAddr) {
-              supplierData.addressLine1 = billingAddr.line1 ?? undefined;
-              supplierData.addressLine2 = billingAddr.line2 ?? undefined;
-              supplierData.city = billingAddr.city ?? undefined;
-              supplierData.state = billingAddr.state ?? undefined;
-              supplierData.zip = billingAddr.zip ?? undefined;
-            }
-          }
-        }
+        // Build full supplier profile: CSV columns + customer contact match
+        const supplierData = await this.buildSupplierData(name, sampleRow);
 
         // Upsert supplier (match by name case-insensitive)
         const existing = await this.prisma.supplier.findFirst({
@@ -1118,25 +1096,11 @@ export class ImportService {
           });
           updated++;
         } else {
-          await this.prisma.supplier.create({ data: supplierData });
+          await this.prisma.supplier.create({ data: supplierData as any });
           created++;
         }
 
-        // Delete all matched customer records (they were incorrectly added as customers)
-        for (const customer of matchingCustomers) {
-          try {
-            // Delete non-cascade dependent records first
-            await this.prisma.routeCustomer.deleteMany({ where: { customerId: customer.id } });
-            await this.prisma.customerAddress.deleteMany({ where: { customerId: customer.id } });
-            await this.prisma.customerTagAssignment.deleteMany({ where: { customerId: customer.id } });
-            await this.prisma.contactPerson.deleteMany({ where: { customerId: customer.id } });
-            await this.prisma.customerComment.deleteMany({ where: { customerId: customer.id } });
-            await this.prisma.customer.delete({ where: { id: customer.id } });
-            removedFromCustomers++;
-          } catch (delErr: any) {
-            errors.push(`Could not remove customer ${customer.displayName}: ${delErr.message}`);
-          }
-        }
+
       } catch (e: any) {
         errors.push(`${name}: ${e.message}`);
         skipped++;
