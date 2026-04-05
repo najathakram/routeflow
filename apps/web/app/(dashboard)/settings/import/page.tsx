@@ -16,6 +16,7 @@ import {
   ChevronDown,
   ChevronUp,
   BarChart3,
+  Building2,
 } from "lucide-react";
 import { cn } from "@routeflow/ui/web";
 
@@ -25,6 +26,8 @@ interface ImportResult {
   created?: number;
   skipped: number;
   errors: string[];
+  suppliersCreated?: number;
+  suppliersUpdated?: number;
 }
 
 interface ImportSection {
@@ -77,11 +80,20 @@ const IMPORT_SECTIONS: ImportSection[] = [
   {
     id: "expenses",
     label: "Expenses",
-    description: "Import expense records from Zoho Expense CSV export",
+    description: "Import expense records from Zoho Expense CSV export. Suppliers are auto-created from vendor names.",
     endpoint: "/import/expenses",
     icon: Receipt,
     color: "text-danger bg-danger-bg",
     zohoExportPath: "Zoho Expense → My Expenses → Export",
+  },
+  {
+    id: "suppliers",
+    label: "Suppliers",
+    description: "Import suppliers from a Zoho Expense CSV — creates/updates supplier records from the vendor names",
+    endpoint: "/import/expense-suppliers",
+    icon: Building2,
+    color: "text-purple-500 bg-purple-50",
+    zohoExportPath: "Zoho Expense → My Expenses → Export (same file as Expenses)",
   },
 ];
 
@@ -124,9 +136,15 @@ function ImportCard({ section }: { section: ImportSection }) {
       });
       setResult(res.data);
       const d = res.data;
-      const summary = d.updated !== undefined
+      let summary = d.updated !== undefined
         ? `${d.updated} updated, ${d.created} created, ${d.skipped} skipped`
         : `${d.imported} records imported, ${d.skipped} skipped`;
+      if (d.suppliersCreated || d.suppliersUpdated) {
+        const supplierParts: string[] = [];
+        if (d.suppliersCreated) supplierParts.push(`${d.suppliersCreated} supplier${d.suppliersCreated !== 1 ? "s" : ""} created`);
+        if (d.suppliersUpdated) supplierParts.push(`${d.suppliersUpdated} supplier${d.suppliersUpdated !== 1 ? "s" : ""} matched`);
+        summary += ` · ${supplierParts.join(", ")}`;
+      }
       toast({
         title: `${section.label} imported`,
         description: summary,

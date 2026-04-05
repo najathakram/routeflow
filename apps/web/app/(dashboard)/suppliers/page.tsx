@@ -1,12 +1,12 @@
 "use client";
 
 import * as React from "react";
-import { Plus, Search, Building2, Phone, Mail, Clock, Pencil, X, Check, CheckSquare, Trash2, Upload, MapPin, Globe, Smartphone } from "lucide-react";
+import { Plus, Search, Building2, Phone, Mail, Clock, Pencil, X, Check, CheckSquare, Trash2, MapPin, Globe, Smartphone } from "lucide-react";
 import { PageHeader, Badge, Button, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useToast } from "@routeflow/ui/web";
 import { useDebounce } from "@/lib/hooks/useDebounce";
-import { useSuppliers, useCreateSupplier, useUpdateSupplier, useDeleteSupplier, useImportExpenseSuppliers, type Supplier } from "@/lib/api/suppliers";
+import { useSuppliers, useCreateSupplier, useUpdateSupplier, useDeleteSupplier, type Supplier } from "@/lib/api/suppliers";
 
 // ─── Supplier form modal ───────────────────────────────────────────────────────
 
@@ -325,11 +325,9 @@ export default function SuppliersPage() {
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [isDeleting, setIsDeleting] = React.useState(false);
 
-  const importFileRef = React.useRef<HTMLInputElement>(null);
   const createSupplier = useCreateSupplier();
   const updateSupplier = useUpdateSupplier();
   const deleteSupplier = useDeleteSupplier();
-  const importExpenseSuppliers = useImportExpenseSuppliers();
 
   const toggleSelect = (id: string) =>
     setSelected((prev) => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
@@ -376,22 +374,6 @@ export default function SuppliersPage() {
     }
   };
 
-  const handleImportExpenses = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    e.target.value = "";
-    try {
-      const result = await importExpenseSuppliers.mutateAsync(file);
-      toast({
-        title: `Import complete`,
-        description: `${result.created} created, ${result.updated} updated, ${result.removedFromCustomers} removed from customers${result.errors?.length ? ` (${result.errors.length} errors)` : ""}`,
-        variant: "success",
-      });
-    } catch (err: any) {
-      toast({ title: "Import failed", description: err?.message, variant: "error" });
-    }
-  };
-
   const handleToggleActive = async (supplier: Supplier) => {
     try {
       await updateSupplier.mutateAsync({ id: supplier.id, isActive: !supplier.isActive });
@@ -411,21 +393,6 @@ export default function SuppliersPage() {
         subtitle={`${total} supplier${total !== 1 ? "s" : ""}`}
         action={
           <div className="flex items-center gap-2">
-            <input
-              ref={importFileRef}
-              type="file"
-              accept=".csv"
-              className="hidden"
-              onChange={handleImportExpenses}
-            />
-            <Button
-              variant="secondary"
-              leftIcon={<Upload className="h-4 w-4" />}
-              loading={importExpenseSuppliers.isPending}
-              onClick={() => importFileRef.current?.click()}
-            >
-              Import from Expenses
-            </Button>
             <Button
               variant="secondary"
               leftIcon={selectMode ? <X className="h-4 w-4" /> : <CheckSquare className="h-4 w-4" />}

@@ -701,13 +701,12 @@ export class ImportService {
   async importExpenses(
     buffer: Buffer,
     userId: string,
-  ): Promise<{ imported: number; skipped: number; errors: string[] }> {
+  ): Promise<{ imported: number; skipped: number; errors: string[]; suppliersCreated: number; suppliersUpdated: number }> {
     const rows = this.parseCsv(buffer);
-    let imported = 0,
-      skipped = 0;
+    let imported = 0, skipped = 0, suppliersCreated = 0, suppliersUpdated = 0;
     const errors: string[] = [];
 
-    // Ensure expense categories exist
+    // ── Step 1: Ensure expense categories exist ──────────────────────────────
     const catMap: Record<string, string> = {};
     const catNames = [
       ...new Set(rows.map((r: any) => r["Expense Category"]).filter(Boolean)),
@@ -736,6 +735,34 @@ export class ImportService {
       if (cat) catMap[catName] = cat.id;
     }
 
+    // ── Step 2: Auto-upsert suppliers from "Customer Name" column ────────────
+    // Zoho expense exports include the vendor/supplier in the "Customer Name" column.
+    const vendorMap: Record<string, string> = {}; // vendorName (lowercase) → supplierId
+    const vendorNames = [
+      ...new Set(
+        rows.map((r: any) => (r["Customer Name"] || "").trim()).filter(Boolean),
+      ),
+    ] as string[];
+
+    for (const name of vendorNames) {
+      try {
+        const existing = await this.prisma.supplier.findFirst({
+          where: { name: { equals: name, mode: "insensitive" } },
+        });
+        if (existing) {
+          vendorMap[name.toLowerCase()] = existing.id;
+          suppliersUpdated++;
+        } else {
+          const created = await this.prisma.supplier.create({ data: { name } });
+          vendorMap[name.toLowerCase()] = created.id;
+          suppliersCreated++;
+        }
+      } catch (e: any) {
+        errors.push(`Supplier "${name}": ${e.message}`);
+      }
+    }
+
+    // ── Step 3: Import expense rows ──────────────────────────────────────────
     for (const row of rows) {
       const catName = row["Expense Category"];
       const categoryId = catMap[catName];
@@ -760,6 +787,10 @@ export class ImportService {
       const description = row["Expense Description"] || row["Reference#"] || null;
       const notes = row["Reference#"] || null;
 
+      // Resolve supplier from the "Customer Name" column
+      const vendorName = (row["Customer Name"] || "").trim();
+      const supplierId = vendorName ? (vendorMap[vendorName.toLowerCase()] ?? null) : null;
+
       try {
         await this.prisma.expense.create({
           data: {
@@ -770,6 +801,7 @@ export class ImportService {
             paymentMethod: "CASH",
             notes,
             performedById: userId,
+            ...(supplierId ? { supplierId } : {}),
           },
         });
         imported++;
@@ -778,7 +810,7 @@ export class ImportService {
         skipped++;
       }
     }
-    return { imported, skipped, errors };
+    return { imported, skipped, errors, suppliersCreated, suppliersUpdated };
   }
 
   async importProducts(
