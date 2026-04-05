@@ -428,8 +428,9 @@ export default function SuppliersPage() {
     try {
       await deleteSupplier.mutateAsync(supplier.id);
       toast({ title: "Supplier deleted", variant: "success" });
-    } catch {
-      toast({ title: "Failed to delete supplier", variant: "error" });
+    } catch (err: any) {
+      const msg = err?.response?.data?.message ?? "Failed to delete supplier";
+      toast({ title: "Cannot delete supplier", description: msg, variant: "error" });
     }
   };
 

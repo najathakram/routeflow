@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateSupplierDto } from "./dto/create-supplier.dto";
 import { UpdateSupplierDto } from "./dto/update-supplier.dto";
@@ -63,14 +63,30 @@ export class SuppliersService {
 
   async remove(id: string) {
     await this.findOne(id);
-    // Null out supplierId on related records before deleting to avoid FK violations
+
+    // VendorBill.supplierId and PurchaseOrder.supplierId are non-nullable —
+    // we cannot null them out, so block deletion if any exist.
+    const [billCount, poCount] = await Promise.all([
+      this.prisma.vendorBill.count({ where: { supplierId: id } }),
+      this.prisma.purchaseOrder.count({ where: { supplierId: id } }),
+    ]);
+
+    if (billCount > 0 || poCount > 0) {
+      const parts: string[] = [];
+      if (billCount > 0) parts.push(`${billCount} vendor bill${billCount !== 1 ? "s" : ""}`);
+      if (poCount > 0) parts.push(`${poCount} purchase order${poCount !== 1 ? "s" : ""}`);
+      throw new BadRequestException(
+        `Cannot delete: supplier has ${parts.join(" and ")}. Delete those first, or deactivate the supplier instead.`,
+      );
+    }
+
+    // Expense.supplierId and StockMovement.supplierId are nullable — safe to clear
     await this.prisma.$transaction([
-      this.prisma.expense.updateMany({ where: { supplierId: id }, data: { supplierId: null as any } }),
-      this.prisma.vendorBill.updateMany({ where: { supplierId: id }, data: { supplierId: null as any } }),
-      this.prisma.purchaseOrder.updateMany({ where: { supplierId: id }, data: { supplierId: null as any } }),
-      this.prisma.stockMovement.updateMany({ where: { supplierId: id }, data: { supplierId: null as any } }),
+      this.prisma.expense.updateMany({ where: { supplierId: id }, data: { supplierId: null } }),
+      this.prisma.stockMovement.updateMany({ where: { supplierId: id }, data: { supplierId: null } }),
       this.prisma.supplier.delete({ where: { id } }),
     ]);
+
     return { deleted: true };
   }
 }
