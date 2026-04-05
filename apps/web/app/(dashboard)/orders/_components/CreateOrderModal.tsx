@@ -4,11 +4,12 @@ import * as React from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { X, AlertTriangle } from "lucide-react";
+import { X, AlertTriangle, ChevronRight } from "lucide-react";
 import { Modal, Textarea, Button, cn, useToast } from "@routeflow/ui/web";
 import { useCustomers, useCustomerPrices } from "@/lib/api/customers";
 import { useProducts } from "@/lib/api/products";
 import { useCreateOrder } from "@/lib/api/orders";
+import { apiClient } from "@/lib/api-client";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -73,6 +74,8 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
   const [debouncedProductSearch, setDebouncedProductSearch] = React.useState("");
   const [lineItems, setLineItems] = React.useState<LineItem[]>([]);
   const [lineItemsError, setLineItemsError] = React.useState("");
+  const [expandedParentId, setExpandedParentId] = React.useState<string | null>(null);
+  const productSearchRef = React.useRef<HTMLInputElement>(null);
 
   // Debounce customer search
   React.useEffect(() => {
@@ -92,6 +95,7 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
   const { data: productsData } = useProducts({
     search: debouncedProductSearch || undefined,
     isActive: true,
+    includeVariants: true,
   });
 
   const filteredCustomers = React.useMemo(() => {
@@ -101,10 +105,52 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
 
   const filteredProducts = React.useMemo(() => {
     if (!debouncedProductSearch) return [];
+    // Only return top-level products (parents + standalones); variants are nested inside parents
     return (productsData?.data ?? [])
-      .filter((p: { id: string }) => !lineItems.some((li) => li.productId === p.id))
-      .slice(0, 8);
-  }, [productsData, debouncedProductSearch, lineItems]);
+      .filter((p: any) => !p.parentProductId) // exclude variant rows from top-level
+      .slice(0, 10);
+  }, [productsData, debouncedProductSearch]);
+
+  // Barcode scan handler — kept in a ref so the keydown listener never goes stale
+  const barcodeScanHandlerRef = React.useRef<(code: string) => void>(() => {});
+  barcodeScanHandlerRef.current = async (code: string) => {
+    try {
+      const product = await apiClient.get(`/products/barcode/${encodeURIComponent(code)}`).then((r) => r.data);
+      addLineItem(product);
+    } catch {
+      toast({ title: `No product found for barcode: ${code}`, variant: "error" });
+    }
+  };
+
+  // USB/physical scanner detection — rapid keystrokes (≥6 chars in <150ms gaps + Enter = barcode)
+  React.useEffect(() => {
+    const input = productSearchRef.current;
+    if (!input) return;
+    let lastKeyTime = 0;
+    let sequence = "";
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const now = Date.now();
+      if (e.key === "Enter") {
+        if (sequence.length >= 6 && now - lastKeyTime < 150) {
+          e.preventDefault();
+          barcodeScanHandlerRef.current(sequence);
+          sequence = "";
+        }
+        return;
+      }
+      if (e.key.length === 1) {
+        if (now - lastKeyTime > 200) {
+          sequence = e.key;
+        } else {
+          sequence += e.key;
+        }
+        lastKeyTime = now;
+      }
+    };
+    input.addEventListener("keydown", handleKeyDown);
+    return () => input.removeEventListener("keydown", handleKeyDown);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const { register, handleSubmit, reset, watch } = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -395,12 +441,14 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
             {/* Product search */}
             <div className="relative">
               <input
+                ref={productSearchRef}
                 type="search"
-                placeholder="Search products to add…"
+                placeholder="Search by name, SKU or scan barcode…"
                 value={productSearch}
                 onChange={(e) => {
                   setProductSearch(e.target.value);
                   setLineItemsError("");
+                  setExpandedParentId(null);
                 }}
                 className={cn(
                   "h-10 w-full rounded border bg-white px-3 text-sm text-navy placeholder:text-navy/40 focus:outline-none focus:ring-2 focus:ring-brand-500",
@@ -411,24 +459,78 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
               />
               {filteredProducts.length > 0 && productSearch && (
                 <ul className="absolute left-0 right-0 top-full z-10 mt-1 overflow-hidden rounded-lg border border-surface-border bg-white shadow-dropdown">
-                  
-                  {filteredProducts.map((p: any) => (
-                    <li key={p.id}>
-                      <button
-                        type="button"
-                        onClick={() => addLineItem(p)}
-                        className="flex w-full items-center justify-between px-3 py-2.5 text-left text-sm text-navy hover:bg-surface-raised"
-                      >
-                        <div>
-                          <span className="font-medium">{p.name}</span>
-                          <span className="ml-2 text-xs text-navy/50">{p.unit}</span>
-                        </div>
-                        <span className="text-xs font-medium text-navy/60">
-                          ${Number(p.pricePerUnit ?? 0).toFixed(2)}
-                        </span>
-                      </button>
-                    </li>
-                  ))}
+                  {filteredProducts.map((p: any) => {
+                    const hasVariants = p.variants?.length > 0;
+                    const isExpanded = expandedParentId === p.id;
+                    const alreadyAdded = lineItems.some((li) => li.productId === p.id);
+                    return (
+                      <React.Fragment key={p.id}>
+                        <li>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (hasVariants) {
+                                setExpandedParentId(isExpanded ? null : p.id);
+                              } else if (!alreadyAdded) {
+                                addLineItem(p);
+                              }
+                            }}
+                            className={cn(
+                              "flex w-full items-center justify-between px-3 py-2.5 text-left text-sm text-navy hover:bg-surface-raised",
+                              alreadyAdded && !hasVariants && "opacity-40 cursor-default",
+                            )}
+                          >
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              {hasVariants && (
+                                <ChevronRight
+                                  className={cn(
+                                    "h-3.5 w-3.5 shrink-0 text-navy/40 transition-transform",
+                                    isExpanded && "rotate-90",
+                                  )}
+                                />
+                              )}
+                              <span className="font-medium truncate">{p.name}</span>
+                              {p.sku && <span className="text-xs text-navy/40 shrink-0">{p.sku}</span>}
+                              {hasVariants && (
+                                <span className="ml-1 text-[10px] text-navy/40 shrink-0">{p.variants.length} variants</span>
+                              )}
+                              {!hasVariants && <span className="ml-1 text-xs text-navy/50 shrink-0">{p.unit}</span>}
+                            </div>
+                            {!hasVariants && (
+                              <span className="text-xs font-medium text-navy/60 shrink-0 ml-2">
+                                ${Number(p.pricePerUnit ?? 0).toFixed(2)}
+                              </span>
+                            )}
+                          </button>
+                        </li>
+                        {/* Expanded variants */}
+                        {hasVariants && isExpanded && p.variants.map((v: any) => {
+                          const variantAdded = lineItems.some((li) => li.productId === v.id);
+                          return (
+                            <li key={v.id} className="bg-surface-raised/50">
+                              <button
+                                type="button"
+                                onClick={() => { if (!variantAdded) addLineItem(v); }}
+                                className={cn(
+                                  "flex w-full items-center justify-between pl-8 pr-3 py-2 text-left text-sm text-navy hover:bg-surface-raised",
+                                  variantAdded && "opacity-40 cursor-default",
+                                )}
+                              >
+                                <div className="flex items-center gap-1.5 min-w-0">
+                                  <span className="font-medium truncate">{v.variantName ?? v.name}</span>
+                                  {v.sku && <span className="text-xs text-navy/40 shrink-0">{v.sku}</span>}
+                                  <span className="text-xs text-navy/50 shrink-0">{v.unit}</span>
+                                </div>
+                                <span className="text-xs font-medium text-navy/60 shrink-0 ml-2">
+                                  ${Number(v.pricePerUnit ?? 0).toFixed(2)}
+                                </span>
+                              </button>
+                            </li>
+                          );
+                        })}
+                      </React.Fragment>
+                    );
+                  })}
                 </ul>
               )}
             </div>
@@ -462,6 +564,12 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
                           <span className="text-xs text-navy/50">${li.unitPrice.toFixed(2)} / {li.unit}</span>
                         )}
                       </div>
+                      {/* Price per piece (when product has box packaging) */}
+                      {li.unitsPerBox && li.unitsPerBox > 1 && (
+                        <div className="mt-0.5 text-[10px] text-navy/40">
+                          ${(li.unitPrice / li.unitsPerBox).toFixed(2)} / piece
+                        </div>
+                      )}
                       {/* One-time discount input (only when no special price already applied) */}
                       {li.priceType !== 'SPECIAL' && (
                         <div className="mt-1 flex items-center gap-1">

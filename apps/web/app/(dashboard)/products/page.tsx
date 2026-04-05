@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Package, LayoutGrid, LayoutList, Plus, Upload, CheckCircle, AlertCircle, Info, Trash2, ImagePlus, X as XIcon, CheckSquare, Pencil, Check, Undo2, Redo2 } from "lucide-react";
+import { Package, LayoutGrid, LayoutList, Plus, Upload, CheckCircle, AlertCircle, Info, Trash2, ImagePlus, X as XIcon, CheckSquare, Pencil, Check, Undo2, Redo2, ChevronDown, ChevronRight, GitBranch } from "lucide-react";
 import { PageHeader, Table, Badge, Button, Select, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useToast } from "@routeflow/ui/web";
@@ -33,6 +33,10 @@ interface ApiProduct {
   costingMethod?: string;
   standardCost?: string | number;
   unitsPerBox?: number | null;
+  parentProductId?: string | null;
+  variantName?: string | null;
+  variants?: ApiProduct[];
+  parent?: ApiProduct | null;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -60,12 +64,14 @@ function ProductCard({
   selected,
   onSelect,
   selectionMode,
+  onAddVariant,
 }: {
   product: ApiProduct;
   onClick: () => void;
   selected: boolean;
   onSelect: (e: React.MouseEvent) => void;
   selectionMode: boolean;
+  onAddVariant?: (parentId: string) => void;
 }) {
   const status = getStockStatus(product);
   return (
@@ -142,8 +148,28 @@ function ProductCard({
               / {product.unit}
             </span>
           </p>
+          {product.variants && product.variants.length > 0 && (
+            <span className="shrink-0 rounded-full bg-brand-50 px-1.5 py-0.5 text-[10px] font-medium text-brand-600 ring-1 ring-brand-200">
+              {product.variants.length} var.
+            </span>
+          )}
         </div>
+        {/* Variant indicator */}
+        {product.variantName && product.parent && (
+          <p className="text-[10px] text-navy/40 truncate">{product.parent.name}</p>
+        )}
         <StockBadge status={status} />
+        {/* Add variant button for parent products */}
+        {product.variants && product.variants.length > 0 && onAddVariant && !selectionMode && (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onAddVariant(product.id); }}
+            className="mt-1 flex items-center gap-1 text-[10px] text-navy/40 hover:text-brand-500 transition-colors"
+          >
+            <Plus className="h-2.5 w-2.5" />
+            Add variant
+          </button>
+        )}
       </div>
     </div>
   );
@@ -382,6 +408,8 @@ function CreateProductModal({
   isLoading,
   categories,
   units,
+  defaultParentId,
+  allProducts,
 }: {
   onClose: () => void;
   /** Returns the created product (with .id) so we can upload images. */
@@ -389,11 +417,29 @@ function CreateProductModal({
   isLoading: boolean;
   categories: string[];
   units: string[];
+  defaultParentId?: string;
+  allProducts?: ApiProduct[];
 }) {
   const [form, setForm] = React.useState({
     name: "", sku: "", unit: "", pricePerUnit: "", category: "", description: "",
     costingMethod: "FIFO", standardCost: "", unitsPerBox: "",
+    parentProductId: defaultParentId ?? "", variantName: "",
   });
+
+  // Pre-populate fields from parent when a parent is selected
+  React.useEffect(() => {
+    if (!form.parentProductId || !allProducts) return;
+    const parent = allProducts.find((p) => p.id === form.parentProductId);
+    if (!parent) return;
+    setForm((f) => ({
+      ...f,
+      category: parent.category ?? f.category,
+      unit: parent.unit ?? f.unit,
+      pricePerUnit: f.pricePerUnit || String(parseFloat(String(parent.pricePerUnit)).toFixed(2)),
+      unitsPerBox: f.unitsPerBox || String(parent.unitsPerBox ?? ""),
+    }));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.parentProductId]);
   const [priceError, setPriceError] = React.useState("");
   const [pendingImages, setPendingImages] = React.useState<File[]>([]);
   const [previews, setPreviews] = React.useState<string[]>([]);
@@ -439,6 +485,8 @@ function CreateProductModal({
         ? form.standardCost
         : undefined,
       unitsPerBox: form.unitsPerBox ? parseInt(form.unitsPerBox, 10) : undefined,
+      parentProductId: form.parentProductId || undefined,
+      variantName: form.variantName || undefined,
     });
     // Upload images if any were queued
     if (pendingImages.length > 0 && product?.id) {
@@ -507,6 +555,37 @@ function CreateProductModal({
             </div>
 
             <div className="grid grid-cols-2 gap-4">
+              {/* Variant of — optional parent selector */}
+              {allProducts && allProducts.filter(p => !p.parentProductId).length > 0 && (
+                <div className="col-span-2">
+                  <label className="mb-1 block text-sm font-medium text-navy">Variant of <span className="font-normal text-navy/40">(optional)</span></label>
+                  <select
+                    value={form.parentProductId}
+                    onChange={(e) => set("parentProductId", e.target.value)}
+                    className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  >
+                    <option value="">— Standalone product —</option>
+                    {allProducts.filter(p => !p.parentProductId).map((p) => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </select>
+                  {form.parentProductId && (
+                    <p className="mt-0.5 text-xs text-navy/40">Fields below have been pre-filled from the parent. Adjust as needed.</p>
+                  )}
+                </div>
+              )}
+              {form.parentProductId && (
+                <div className="col-span-2">
+                  <label className="mb-1 block text-sm font-medium text-navy">Variant name *</label>
+                  <input
+                    required={!!form.parentProductId}
+                    placeholder="e.g. Chocolate, Large, Plain…"
+                    value={form.variantName}
+                    onChange={(e) => set("variantName", e.target.value)}
+                    className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  />
+                </div>
+              )}
               <div className="col-span-2">
                 <label className="mb-1 block text-sm font-medium text-navy">Name *</label>
                 <input
@@ -1046,6 +1125,8 @@ export default function ProductsPage() {
   const [viewMode, setViewMode] = React.useState<"grid" | "table">("grid");
   const [showCreate, setShowCreate] = React.useState(false);
   const [showImport, setShowImport] = React.useState(false);
+  const [newVariantParentId, setNewVariantParentId] = React.useState<string | undefined>(undefined);
+  const searchInputRef = React.useRef<HTMLInputElement>(null);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [selectMode, setSelectMode] = React.useState(false);
   const [page, setPage] = React.useState(1);
@@ -1113,6 +1194,34 @@ export default function ProductsPage() {
 
   const debouncedSearch = useDebounce(search, 300);
 
+  // USB barcode detection on the main search input — rapid keystrokes + Enter = scan
+  React.useEffect(() => {
+    const input = searchInputRef.current;
+    if (!input) return;
+    let lastKeyTime = 0;
+    let sequence = "";
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const now = Date.now();
+      if (e.key === "Enter") {
+        if (sequence.length >= 6 && now - lastKeyTime < 150) {
+          e.preventDefault();
+          // Code already in `search` via onChange; just trigger immediately by setting directly
+          setSearch(sequence);
+          sequence = "";
+        }
+        return;
+      }
+      if (e.key.length === 1) {
+        if (now - lastKeyTime > 200) sequence = e.key;
+        else sequence += e.key;
+        lastKeyTime = now;
+      }
+    };
+    input.addEventListener("keydown", handleKeyDown);
+    return () => input.removeEventListener("keydown", handleKeyDown);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Reset to page 1 whenever filters change
   React.useEffect(() => { setPage(1); }, [debouncedSearch, categoryFilter, stockFilter, pageSize]);
 
@@ -1122,6 +1231,7 @@ export default function ProductsPage() {
     stockStatus: (stockFilter || undefined) as any,
     page,
     limit: pageSize, // 0 = all
+    includeVariants: true,
   });
 
   // Separate unfiltered query just to populate the category dropdown — always fetches all
@@ -1239,7 +1349,7 @@ export default function ProductsPage() {
       {/* Create product modal */}
       {showCreate && (
         <CreateProductModal
-          onClose={() => setShowCreate(false)}
+          onClose={() => { setShowCreate(false); setNewVariantParentId(undefined); }}
           onCreate={async (data) => {
             try {
               const product = await createProduct.mutateAsync(data as any);
@@ -1253,6 +1363,8 @@ export default function ProductsPage() {
           isLoading={createProduct.isPending}
           categories={categories}
           units={existingUnits}
+          defaultParentId={newVariantParentId}
+          allProducts={productList}
         />
       )}
 
@@ -1284,11 +1396,12 @@ export default function ProductsPage() {
         )}
 
         <input
+          ref={searchInputRef}
           type="search"
-          placeholder="Search by name or SKU…"
+          placeholder="Search by name, SKU or scan barcode…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="h-10 w-64 rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/40 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+          className="h-10 w-72 rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/40 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
         />
         <div className="w-44">
           <Select
@@ -1406,6 +1519,7 @@ export default function ProductsPage() {
               selectionMode={selectMode}
               onSelect={(e) => { e.stopPropagation(); toggleOne(p.id); }}
               onClick={() => router.push(`/products/${p.id}`)}
+              onAddVariant={(parentId) => { setNewVariantParentId(parentId); setShowCreate(true); }}
             />
           ))}
         </div>

@@ -3,7 +3,7 @@
 import * as React from "react";
 import { X } from "lucide-react";
 import { Button, useToast } from "@routeflow/ui/web";
-import { useCreateProduct } from "@/lib/api/products";
+import { useCreateProduct, useProducts } from "@/lib/api/products";
 import { BarcodeScannerButton } from "./BarcodeScannerButton";
 import { UnitCombobox } from "./UnitCombobox";
 
@@ -42,7 +42,13 @@ export function InlineCreateProductModal({
     pricePerUnit: "",
     category: "",
     unitsPerBox: "",
+    parentProductId: "",
+    variantName: "",
   });
+
+  // Fetch existing products for the "Variant of" dropdown
+  const { data: allProductsData } = useProducts({ limit: 0, isActive: true });
+  const parentCandidates = (allProductsData?.data ?? []).filter((p: any) => !p.parentProductId);
 
   // Sync initialName when it changes
   React.useEffect(() => {
@@ -65,13 +71,15 @@ export function InlineCreateProductModal({
         pricePerUnit: form.pricePerUnit || "0",
         category: form.category.trim() || undefined,
         unitsPerBox: form.unitsPerBox ? parseInt(form.unitsPerBox, 10) : undefined,
+        parentProductId: form.parentProductId || undefined,
+        variantName: form.variantName.trim() || undefined,
       },
       {
         onSuccess: (product: CreatedProduct) => {
           toast({ title: "Product created", description: `${product.name} has been added.`, variant: "success" });
           onCreated(product);
           onClose();
-          setForm({ name: "", sku: "", unit: "", pricePerUnit: "", category: "", unitsPerBox: "" });
+          setForm({ name: "", sku: "", unit: "", pricePerUnit: "", category: "", unitsPerBox: "", parentProductId: "", variantName: "" });
         },
         onError: () => {
           toast({ title: "Failed to create product", description: "Check the details and try again.", variant: "error" });
@@ -96,6 +104,35 @@ export function InlineCreateProductModal({
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4 px-6 py-4">
+          {/* Variant of — optional parent */}
+          {parentCandidates.length > 0 && (
+            <div>
+              <label className="mb-1 block text-xs font-medium text-navy">Variant of <span className="font-normal text-navy/40">(optional)</span></label>
+              <select
+                value={form.parentProductId}
+                onChange={(e) => setForm((f) => ({ ...f, parentProductId: e.target.value }))}
+                className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+              >
+                <option value="">— Standalone product —</option>
+                {parentCandidates.map((p: any) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+          {form.parentProductId && (
+            <div>
+              <label className="mb-1 block text-xs font-medium text-navy">Variant name *</label>
+              <input
+                required={!!form.parentProductId}
+                type="text"
+                value={form.variantName}
+                onChange={(e) => setForm((f) => ({ ...f, variantName: e.target.value }))}
+                className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                placeholder="e.g. Chocolate, Large, Plain…"
+              />
+            </div>
+          )}
           {/* Name */}
           <div>
             <label className="mb-1 block text-xs font-medium text-navy">Name *</label>

@@ -43,8 +43,18 @@ export class ProductsService {
       where.currentStock = { gt: 5 };
     }
 
+    const variantsInclude = query.includeVariants
+      ? { variants: { where: { isActive: true }, orderBy: { variantName: "asc" as const } } }
+      : undefined;
+
     const [data, total] = await Promise.all([
-      this.prisma.product.findMany({ where, skip, take: limit, orderBy: { name: "asc" } }),
+      this.prisma.product.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { name: "asc" },
+        include: variantsInclude,
+      }),
       this.prisma.product.count({ where }),
     ]);
 
@@ -69,7 +79,13 @@ export class ProductsService {
   }
 
   async findOne(id: string) {
-    const product = await this.prisma.product.findUnique({ where: { id } });
+    const product = await this.prisma.product.findUnique({
+      where: { id },
+      include: {
+        variants: { where: { isActive: true }, orderBy: { variantName: "asc" } },
+        parent: true,
+      },
+    });
     if (!product) throw new NotFoundException("Product not found");
     // Attach presigned image URLs so the frontend can render them directly
     const imageUrls =
@@ -118,7 +134,10 @@ export class ProductsService {
   }
 
   async findByBarcode(barcode: string) {
-    const product = await this.prisma.product.findUnique({ where: { barcode } });
+    const product = await this.prisma.product.findUnique({
+      where: { barcode },
+      include: { variants: { where: { isActive: true } }, parent: true },
+    });
     if (!product) throw new NotFoundException("Product not found");
     return product;
   }
@@ -131,6 +150,10 @@ export class ProductsService {
     if (dto.barcode) {
       const existing = await this.prisma.product.findUnique({ where: { barcode: dto.barcode } });
       if (existing) throw new BadRequestException("Barcode already exists");
+    }
+    if (dto.parentProductId) {
+      const parent = await this.prisma.product.findUnique({ where: { id: dto.parentProductId } });
+      if (!parent) throw new BadRequestException("Parent product not found");
     }
     return this.prisma.product.create({
       data: {
@@ -145,7 +168,10 @@ export class ProductsService {
         costingMethod: dto.costingMethod,
         standardCost: dto.standardCost,
         unitsPerBox: dto.unitsPerBox,
+        parentProductId: dto.parentProductId ?? null,
+        variantName: dto.variantName ?? null,
       },
+      include: { variants: true, parent: true },
     });
   }
 

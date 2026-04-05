@@ -8,6 +8,7 @@ export function useProducts(params?: {
   stockStatus?: "IN_STOCK" | "LOW" | "OUT_OF_STOCK";
   page?: number;
   limit?: number;
+  includeVariants?: boolean;
 }) {
   return useQuery({
     queryKey: ["products", params],
@@ -79,6 +80,10 @@ export interface ApiProduct {
   costingMethod?: CostingMethod;
   standardCost?: string | number;
   unitsPerBox?: number | null;
+  parentProductId?: string | null;
+  variantName?: string | null;
+  variants?: ApiProduct[];
+  parent?: ApiProduct | null;
 }
 
 export interface ZohoImportItem {

@@ -10,6 +10,7 @@ import {
   Search,
   Loader2,
   Eye,
+  ChevronRight,
 } from "lucide-react";
 import { Button, Card, Input, useToast, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
@@ -155,20 +156,23 @@ function ProductSearchInput({
   onChange,
 }: {
   value: string;
-  onChange: (description: string, productId: string, unitPrice: string, avgCost?: number) => void;
+  onChange: (description: string, productId: string, unitPrice: string, avgCost?: number, unitsPerBox?: number) => void;
 }) {
   const [query, setQuery] = React.useState(value);
   const [debouncedQuery, setDebouncedQuery] = React.useState("");
   const [open, setOpen] = React.useState(false);
+  const [expandedParentId, setExpandedParentId] = React.useState<string | null>(null);
   const ref = React.useRef<HTMLDivElement>(null);
+  const inputRef = React.useRef<HTMLInputElement>(null);
 
   React.useEffect(() => {
     const t = setTimeout(() => setDebouncedQuery(query), 300);
     return () => clearTimeout(t);
   }, [query]);
 
-  const { data } = useProducts({ search: debouncedQuery || undefined, isActive: true, limit: 20 });
-  const products = data?.data ?? [];
+  const { data } = useProducts({ search: debouncedQuery || undefined, isActive: true, limit: 20, includeVariants: true });
+  // Only top-level products (parents + standalones) shown at root; variants appear as children
+  const products = (data?.data ?? []).filter((p: any) => !p.parentProductId);
 
   React.useEffect(() => {
     function handle(e: MouseEvent) {
@@ -180,55 +184,93 @@ function ProductSearchInput({
     return () => document.removeEventListener("mousedown", handle);
   }, []);
 
+  function selectProduct(p: any) {
+    onChange(
+      p.name,
+      p.id,
+      String(p.pricePerUnit),
+      p.averageCost ? parseFloat(String(p.averageCost)) : undefined,
+      p.unitsPerBox ? Number(p.unitsPerBox) : undefined,
+    );
+    setQuery(p.name);
+    setOpen(false);
+    setExpandedParentId(null);
+  }
+
   return (
     <div ref={ref} className="relative flex items-center gap-1">
       <input
+        ref={inputRef}
         type="text"
         placeholder="Description / product…"
         value={query}
         onChange={(e) => {
           setQuery(e.target.value);
-          onChange(e.target.value, "", "0", undefined);
+          onChange(e.target.value, "", "0", undefined, undefined);
           setOpen(true);
+          setExpandedParentId(null);
         }}
         onFocus={() => setOpen(true)}
         className="h-9 w-full rounded border border-surface-border bg-white px-2.5 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
       />
       <BarcodeScannerButton
+        inputRef={inputRef}
         onScan={async (code) => {
           try {
-            const product = await apiClient.get(`/products/barcode/${code}`).then(r => r.data);
-            if (product) {
-              onChange(product.name, product.id, String(product.pricePerUnit), product.averageCost ? parseFloat(String(product.averageCost)) : undefined);
-              setQuery(product.name);
-              setOpen(false);
-            }
+            const product = await apiClient.get(`/products/barcode/${encodeURIComponent(code)}`).then(r => r.data);
+            if (product) selectProduct(product);
           } catch {
-            // product not found, ignore
+            // product not found — leave query as-is
           }
         }}
       />
       {open && products.length > 0 && (
         <div className="absolute left-0 top-full z-10 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg">
-          <ul className="max-h-36 overflow-y-auto">
-            {products.map((p: { id: string; name: string; pricePerUnit: number; sku?: string; averageCost?: number }) => (
-              <li key={p.id}>
-                <button
-                  className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-surface-raised"
-                  onClick={() => {
-                    setQuery(p.name);
-                    onChange(p.name, p.id, String(p.pricePerUnit), p.averageCost ? parseFloat(String(p.averageCost)) : undefined);
-                    setOpen(false);
-                  }}
-                >
-                  <div>
-                    <span className="text-sm font-medium text-navy">{p.name}</span>
-                    {p.sku && <span className="ml-2 text-xs text-navy/40">{p.sku}</span>}
-                  </div>
-                  <span className="text-xs text-navy/60">{fmt(Number(p.pricePerUnit))}</span>
-                </button>
-              </li>
-            ))}
+          <ul className="max-h-48 overflow-y-auto">
+            {products.map((p: any) => {
+              const hasVariants = p.variants?.length > 0;
+              const isExpanded = expandedParentId === p.id;
+              return (
+                <React.Fragment key={p.id}>
+                  <li>
+                    <button
+                      className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-surface-raised"
+                      onClick={() => {
+                        if (hasVariants) {
+                          setExpandedParentId(isExpanded ? null : p.id);
+                        } else {
+                          selectProduct(p);
+                        }
+                      }}
+                    >
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        {hasVariants && (
+                          <ChevronRight className={cn("h-3.5 w-3.5 shrink-0 text-navy/40 transition-transform", isExpanded && "rotate-90")} />
+                        )}
+                        <span className="text-sm font-medium text-navy truncate">{p.name}</span>
+                        {p.sku && <span className="ml-1 text-xs text-navy/40 shrink-0">{p.sku}</span>}
+                        {hasVariants && <span className="text-[10px] text-navy/40 shrink-0">{p.variants.length} variants</span>}
+                      </div>
+                      {!hasVariants && <span className="text-xs text-navy/60 shrink-0 ml-2">{fmt(Number(p.pricePerUnit))}</span>}
+                    </button>
+                  </li>
+                  {hasVariants && isExpanded && p.variants.map((v: any) => (
+                    <li key={v.id} className="bg-surface-raised/50">
+                      <button
+                        className="flex w-full items-center justify-between pl-8 pr-3 py-2 text-left hover:bg-surface-raised"
+                        onClick={() => selectProduct(v)}
+                      >
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <span className="text-sm font-medium text-navy truncate">{v.variantName ?? v.name}</span>
+                          {v.sku && <span className="text-xs text-navy/40 shrink-0">{v.sku}</span>}
+                        </div>
+                        <span className="text-xs text-navy/60 shrink-0 ml-2">{fmt(Number(v.pricePerUnit))}</span>
+                      </button>
+                    </li>
+                  ))}
+                </React.Fragment>
+              );
+            })}
           </ul>
         </div>
       )}
@@ -249,6 +291,9 @@ interface LineItemState {
   regularPrice?: number;      // original product price before special pricing
   isSpecialPrice?: boolean;   // true if a customer-specific price was applied
   avgCost?: number;           // average cost of the product (display only, never submitted)
+  unitsPerBox?: number;       // set when product has box packaging
+  boxes?: number;             // whole boxes (only when unitsPerBox is set)
+  pieces?: number;            // extra loose pieces (only when unitsPerBox is set)
 }
 
 function createEmptyItem(): LineItemState {
@@ -396,6 +441,7 @@ export default function NewInvoicePage() {
         discount: Number(it.discount) || undefined,
         // Map the taxable checkbox to an actual tax rate sent to the API
         taxRate: it.taxable ? TAX_RATE : 0,
+        ...(it.unitsPerBox ? { boxes: it.boxes ?? 0, pieces: it.pieces ?? 0 } : {}),
       })),
       notes: notes.trim() || undefined,
       // Map adjustment to discount (negative = reduce price) or shippingFee (positive = surcharge)
@@ -585,28 +631,70 @@ export default function NewInvoicePage() {
                     {/* Description / product search */}
                     <ProductSearchInput
                       value={item.description}
-                      onChange={(desc, pid, price, avgCost) => {
+                      onChange={(desc, pid, price, avgCost, unitsPerBox) => {
                         const specialPrice = pid ? priceMap[pid] : undefined;
+                        const effectivePrice = specialPrice ?? (price ? parseFloat(price) : item.unitPrice);
+                        const upb = unitsPerBox ?? undefined;
                         updateItem(item.key, {
                           description: desc,
                           productId: pid || undefined,
-                          unitPrice: specialPrice ?? (price ? parseFloat(price) : item.unitPrice),
+                          unitPrice: effectivePrice,
                           regularPrice: specialPrice !== undefined ? parseFloat(price) : undefined,
                           isSpecialPrice: specialPrice !== undefined,
                           avgCost,
+                          unitsPerBox: upb,
+                          boxes: upb ? 1 : undefined,
+                          pieces: upb ? 0 : undefined,
+                          qty: upb ? upb : (item.qty || 1),
                         });
                       }}
                     />
 
-                    {/* Qty */}
-                    <input
-                      type="number"
-                      min={0.01}
-                      step={0.01}
-                      value={item.qty}
-                      onChange={(e) => updateItem(item.key, { qty: parseFloat(e.target.value) || 0 })}
-                      className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
-                    />
+                    {/* Qty — box/piece mode if unitsPerBox set, otherwise plain number */}
+                    {item.unitsPerBox ? (
+                      <div className="flex flex-col gap-0.5">
+                        <div className="flex items-center gap-0.5">
+                          <input
+                            type="number"
+                            min={0}
+                            value={item.boxes ?? 0}
+                            onChange={(e) => {
+                              const boxes = Math.max(0, parseInt(e.target.value, 10) || 0);
+                              const pieces = item.pieces ?? 0;
+                              updateItem(item.key, { boxes, qty: boxes * item.unitsPerBox! + pieces });
+                            }}
+                            onFocus={(e) => e.target.select()}
+                            className="w-8 rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
+                            title="Boxes"
+                          />
+                          <span className="text-[10px] text-navy/40">b+</span>
+                          <input
+                            type="number"
+                            min={0}
+                            max={item.unitsPerBox - 1}
+                            value={item.pieces ?? 0}
+                            onChange={(e) => {
+                              const pieces = Math.max(0, parseInt(e.target.value, 10) || 0);
+                              const boxes = item.boxes ?? 0;
+                              updateItem(item.key, { pieces, qty: boxes * item.unitsPerBox! + pieces });
+                            }}
+                            onFocus={(e) => e.target.select()}
+                            className="w-8 rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
+                            title="Pieces"
+                          />
+                        </div>
+                        <span className="text-[9px] text-navy/30 text-right">{item.qty} pcs</span>
+                      </div>
+                    ) : (
+                      <input
+                        type="number"
+                        min={0.01}
+                        step={0.01}
+                        value={item.qty}
+                        onChange={(e) => updateItem(item.key, { qty: parseFloat(e.target.value) || 0 })}
+                        className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
+                      />
+                    )}
 
                     {/* Unit price */}
                     <div>
@@ -623,6 +711,11 @@ export default function NewInvoicePage() {
                         onChange={(e) => updateItem(item.key, { unitPrice: parseFloat(e.target.value) || 0 })}
                         className="h-9 w-full rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
                       />
+                      {item.unitsPerBox && item.unitsPerBox > 1 && item.unitPrice > 0 && (
+                        <p className="text-[9px] text-navy/40 text-right mt-0.5">
+                          ${(item.unitPrice / item.unitsPerBox).toFixed(2)}/pc
+                        </p>
+                      )}
                     </div>
 
                     {/* Discount */}

@@ -4,6 +4,7 @@ import {
   IsBoolean,
   IsDateString,
   IsEnum,
+  IsInt,
   IsNotEmpty,
   IsNumber,
   IsOptional,
@@ -22,6 +23,8 @@ export class CreateInvoiceItemDto {
   @IsNumber() @Min(0) unitPrice: number;
   @IsOptional() @IsNumber() @Min(0) discount?: number;
   @IsOptional() @IsNumber() @Min(0) taxRate?: number;
+  @IsOptional() @IsInt() @Min(0) boxes?: number;
+  @IsOptional() @IsInt() @Min(0) pieces?: number;
 }
 
 export class CreateInvoiceDto {

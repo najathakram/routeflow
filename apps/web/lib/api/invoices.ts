@@ -168,6 +168,8 @@ export interface CreateInvoiceItem {
   unitPrice: number;
   taxRate?: number;
   discount?: number;
+  boxes?: number;
+  pieces?: number;
 }
 
 export interface CreateInvoiceDto {

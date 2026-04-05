@@ -50,18 +50,36 @@ export class InvoicesService {
     const customer = await this.prisma.customer.findUnique({ where: { id: dto.customerId } });
     if (!customer) throw new NotFoundException("Customer not found");
 
+    // Pre-fetch products for items that specify boxes/pieces so we can resolve qty
+    const productIds = [...new Set(dto.items.filter((i) => i.productId && (i.boxes != null || i.pieces != null)).map((i) => i.productId!))];
+    const products = productIds.length > 0 ? await this.prisma.product.findMany({ where: { id: { in: productIds } } }) : [];
+    const productMap = new Map(products.map((p) => [p.id, p]));
+
     let subtotal = 0;
     const itemsData = dto.items.map((item) => {
-      const lineSub = item.qty * item.unitPrice - (item.discount ?? 0);
+      let qty = item.qty;
+      let boxes: number | undefined;
+      let pieces: number | undefined;
+      if (item.productId && (item.boxes != null || item.pieces != null)) {
+        const product = productMap.get(item.productId);
+        if (product?.unitsPerBox) {
+          boxes = item.boxes ?? 0;
+          pieces = item.pieces ?? 0;
+          qty = boxes * product.unitsPerBox + pieces;
+        }
+      }
+      const lineSub = qty * item.unitPrice - (item.discount ?? 0);
       subtotal += lineSub;
       return {
         description: item.description,
         productId: item.productId,
-        qty: item.qty,
+        qty,
         unitPrice: item.unitPrice,
         discount: item.discount ?? 0,
         taxRate: item.taxRate ?? 0,
         subtotal: lineSub,
+        boxes: boxes ?? null,
+        pieces: pieces ?? null,
       };
     });
 
@@ -289,18 +307,37 @@ export class InvoicesService {
 
     if (dto.items) {
       await this.prisma.invoiceItem.deleteMany({ where: { invoiceId: id } });
+
+      // Pre-fetch products for boxes/pieces resolution
+      const productIds = [...new Set(dto.items.filter((i) => i.productId && (i.boxes != null || i.pieces != null)).map((i) => i.productId!))];
+      const products = productIds.length > 0 ? await this.prisma.product.findMany({ where: { id: { in: productIds } } }) : [];
+      const productMap = new Map(products.map((p) => [p.id, p]));
+
       let subtotal = 0;
       const itemsData = dto.items.map((item) => {
-        const lineSub = item.qty * item.unitPrice - (item.discount ?? 0);
+        let qty = item.qty;
+        let boxes: number | undefined;
+        let pieces: number | undefined;
+        if (item.productId && (item.boxes != null || item.pieces != null)) {
+          const product = productMap.get(item.productId);
+          if (product?.unitsPerBox) {
+            boxes = item.boxes ?? 0;
+            pieces = item.pieces ?? 0;
+            qty = boxes * product.unitsPerBox + pieces;
+          }
+        }
+        const lineSub = qty * item.unitPrice - (item.discount ?? 0);
         subtotal += lineSub;
         return {
           description: item.description,
           productId: item.productId,
-          qty: item.qty,
+          qty,
           unitPrice: item.unitPrice,
           discount: item.discount ?? 0,
           taxRate: item.taxRate ?? 0,
           subtotal: lineSub,
+          boxes: boxes ?? null,
+          pieces: pieces ?? null,
         };
       });
       const taxTotal = dto.items.reduce(
