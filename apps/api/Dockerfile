@@ -69,5 +69,5 @@ WORKDIR /app/apps/api
 
 EXPOSE 3000
 
-# Run db push then start API; set -x prints each command for visibility in logs
-CMD ["sh", "-c", "set -x && npx prisma db push --accept-data-loss && echo '=== DB synced, starting NestJS ===' && exec node dist/main.js"]
+# Start the NestJS API — schema/migrations are managed manually, NOT on container start
+CMD ["node", "dist/main.js"]
