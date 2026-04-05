@@ -40,8 +40,14 @@ function renderStatus(status: InvoiceStatus, dueDate?: string | null): React.Rea
   if (status === "DRAFT") {
     return <span className="text-xs font-semibold text-gray-500">Draft</span>;
   }
+  if (status === "SENT") {
+    return <span className="text-xs font-semibold text-blue-600">Sent</span>;
+  }
+  if (status === "VIEWED") {
+    return <span className="text-xs font-semibold text-purple-600">Viewed</span>;
+  }
 
-  // For SENT / VIEWED / PARTIAL / OVERDUE — compute days
+  // For PARTIAL / OVERDUE — compute days to add context
   if (dueDate) {
     const due = new Date(dueDate);
     due.setHours(0, 0, 0, 0);

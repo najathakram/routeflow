@@ -10,16 +10,32 @@
 const { PrismaClient } = require("../../../node_modules/@prisma/client");
 const { PrismaPg } = require("../../../node_modules/@prisma/adapter-pg");
 const { Pool } = require("../../../node_modules/pg");
+const path = require("path");
+const fs = require("fs");
 
 const BASE = "http://localhost:3000/api/v1";
 
-const pool = new Pool({ connectionString: "postgresql://user:pass@localhost:5432/routeflow_dev" });
+// Load DATABASE_URL from the API's .env file so TRUNCATE runs against the
+// same database the API server is connected to.
+function loadEnvDatabaseUrl() {
+  const envPath = path.join(__dirname, "../.env");
+  if (fs.existsSync(envPath)) {
+    const content = fs.readFileSync(envPath, "utf8");
+    const match = content.match(/^DATABASE_URL\s*=\s*["']?([^"'\r\n]+)["']?/m);
+    if (match) return match[1];
+  }
+  return process.env.DATABASE_URL || "postgresql://user:pass@localhost:5432/routeflow_dev";
+}
+
+const pool = new Pool({ connectionString: loadEnvDatabaseUrl() });
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 
 // ─── HTTP helpers ────────────────────────────────────────────────────────────
 
-async function api(method, path, body, token) {
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function api(method, path, body, token, retries = 3) {
   const headers = { "Content-Type": "application/json" };
   if (token) headers["Authorization"] = `Bearer ${token}`;
   const res = await fetch(`${BASE}${path}`, {
@@ -30,6 +46,12 @@ async function api(method, path, body, token) {
   const text = await res.text();
   let json;
   try { json = JSON.parse(text); } catch { json = text; }
+  // Retry on rate-limit errors
+  if (res.status === 429 && retries > 0) {
+    console.log(`   ⏳ Rate limited — waiting 65s before retry...`);
+    await sleep(65_000);
+    return api(method, path, body, token, retries - 1);
+  }
   if (!res.ok) {
     throw new Error(`${method} ${path} → ${res.status}: ${JSON.stringify(json)}`);
   }

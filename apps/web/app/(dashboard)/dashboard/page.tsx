@@ -199,7 +199,6 @@ export default function DashboardPage() {
   const lowStockItems = lowStockData?.meta?.total ?? 0;
 
   const isLoading = ordersLoading || runsLoading || driversLoading || lowStockLoading;
-  const hasKpiError = ordersError || runsError || driversError || lowStockError;
 
   const urgentOrders = urgentOrdersData?.data ?? [];
   const activeRoutes = routeRunsData?.data ?? [];
@@ -211,62 +210,63 @@ export default function DashboardPage() {
 
       {/* ── KPI stat cards ── */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        {isLoading ? (
-          <>
-            <StatSkeleton />
-            <StatSkeleton />
-            <StatSkeleton />
-            <StatSkeleton />
-          </>
-        ) : hasKpiError ? (
-          <div className="col-span-full">
-            <ErrorBanner message="Could not load dashboard stats. Please refresh." />
-          </div>
+        {ordersLoading ? <StatSkeleton /> : ordersError ? (
+          <div className="rounded-lg border border-danger/20 bg-danger/5 p-4 text-center text-xs text-danger">Could not load orders</div>
         ) : (
-          <>
-            <Link href="/orders" className="block">
-              <StatCard
-                label="Active Orders"
-                value={activeOrders}
-                icon={<ShoppingCart className="h-5 w-5" />}
-                className="cursor-pointer transition-shadow hover:shadow-md"
-              />
-            </Link>
-            <Link href="/routes" className="block">
-              <StatCard
-                label="Scheduled Routes"
-                value={routesToday}
-                icon={<MapPin className="h-5 w-5" />}
-                className="cursor-pointer transition-shadow hover:shadow-md"
-              />
-            </Link>
-            <Link href="/drivers" className="block">
-              <StatCard
-                label="Active Drivers"
-                value={driversOnRoad}
-                icon={<Truck className={cn("h-5 w-5", driversOnRoad > 0 && "text-success")} />}
-                className={cn(
-                  "cursor-pointer transition-shadow hover:shadow-md",
-                  driversOnRoad > 0 ? "ring-1 ring-inset ring-success/20" : ""
-                )}
-              />
-            </Link>
-            <Link href="/products?lowStock=true" className="block">
-              <StatCard
-                label="Low Stock Items"
-                value={lowStockItems}
-                icon={
-                  <AlertTriangle
-                    className={cn("h-5 w-5", lowStockItems > 0 ? "text-warning" : "")}
-                  />
-                }
-                className={cn(
-                  "cursor-pointer transition-shadow hover:shadow-md",
-                  lowStockItems > 0 ? "ring-1 ring-inset ring-warning/20" : ""
-                )}
-              />
-            </Link>
-          </>
+          <Link href="/orders" className="block">
+            <StatCard
+              label="Active Orders"
+              value={activeOrders}
+              icon={<ShoppingCart className="h-5 w-5" />}
+              className="cursor-pointer transition-shadow hover:shadow-md"
+            />
+          </Link>
+        )}
+        {runsLoading ? <StatSkeleton /> : runsError ? (
+          <div className="rounded-lg border border-danger/20 bg-danger/5 p-4 text-center text-xs text-danger">Could not load routes</div>
+        ) : (
+          <Link href="/routes" className="block">
+            <StatCard
+              label="Scheduled Routes"
+              value={routesToday}
+              icon={<MapPin className="h-5 w-5" />}
+              className="cursor-pointer transition-shadow hover:shadow-md"
+            />
+          </Link>
+        )}
+        {driversLoading ? <StatSkeleton /> : driversError ? (
+          <div className="rounded-lg border border-danger/20 bg-danger/5 p-4 text-center text-xs text-danger">Could not load drivers</div>
+        ) : (
+          <Link href="/drivers" className="block">
+            <StatCard
+              label="Active Drivers"
+              value={driversOnRoad}
+              icon={<Truck className={cn("h-5 w-5", driversOnRoad > 0 && "text-success")} />}
+              className={cn(
+                "cursor-pointer transition-shadow hover:shadow-md",
+                driversOnRoad > 0 ? "ring-1 ring-inset ring-success/20" : ""
+              )}
+            />
+          </Link>
+        )}
+        {lowStockLoading ? <StatSkeleton /> : lowStockError ? (
+          <div className="rounded-lg border border-danger/20 bg-danger/5 p-4 text-center text-xs text-danger">Could not load inventory</div>
+        ) : (
+          <Link href="/products?lowStock=true" className="block">
+            <StatCard
+              label="Low Stock Items"
+              value={lowStockItems}
+              icon={
+                <AlertTriangle
+                  className={cn("h-5 w-5", lowStockItems > 0 ? "text-warning" : "")}
+                />
+              }
+              className={cn(
+                "cursor-pointer transition-shadow hover:shadow-md",
+                lowStockItems > 0 ? "ring-1 ring-inset ring-warning/20" : ""
+              )}
+            />
+          </Link>
         )}
       </div>
 

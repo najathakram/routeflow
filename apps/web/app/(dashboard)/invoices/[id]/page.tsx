@@ -231,7 +231,7 @@ function WhatsNextBanner({
 // ─── Record payment modal ─────────────────────────────────────────────────────
 
 interface PaymentFormState {
-  method: "CASH" | "CHECK" | "ACH" | "OTHER";
+  method: "CASH" | "CHECK" | "ACH" | "OTHER" | "CREDIT_NOTE" | "ADVANCE" | "CREDIT_CARD";
   amount: string;
   reference: string;
   notes: string;
@@ -318,6 +318,9 @@ function RecordPaymentModal({
             <option value="CASH">Cash</option>
             <option value="CHECK">Check</option>
             <option value="ACH">ACH / Bank Transfer</option>
+            <option value="CREDIT_CARD">Credit Card</option>
+            <option value="CREDIT_NOTE">Credit Note</option>
+            <option value="ADVANCE">Advance Payment</option>
             <option value="OTHER">Other</option>
           </select>
         </div>
@@ -399,9 +402,7 @@ function EditPaymentModal({
   React.useEffect(() => {
     if (isOpen && payment) {
       setForm({
-        method: (payment.method === "CREDIT_NOTE" || payment.method === "ADVANCE"
-          ? "ACH"
-          : payment.method) as PaymentFormState["method"],
+        method: payment.method as PaymentFormState["method"],
         amount: Number(payment.amount).toFixed(2),
         reference: payment.reference ?? "",
         notes: payment.notes ?? "",
@@ -452,6 +453,9 @@ function EditPaymentModal({
             <option value="CASH">Cash</option>
             <option value="CHECK">Check</option>
             <option value="ACH">ACH / Bank Transfer</option>
+            <option value="CREDIT_CARD">Credit Card</option>
+            <option value="CREDIT_NOTE">Credit Note</option>
+            <option value="ADVANCE">Advance Payment</option>
             <option value="OTHER">Other</option>
           </select>
         </div>

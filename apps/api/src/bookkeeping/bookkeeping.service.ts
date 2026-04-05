@@ -869,7 +869,10 @@ export class BookkeepingService implements OnModuleInit {
         })()
       : new Date();
     const invoices = await this.prisma.invoice.findMany({
-      where: { status: InvoiceStatus.PAID, paidAt: { gte: fromDate, lte: toDate } },
+      where: {
+        status: { notIn: [InvoiceStatus.DRAFT, InvoiceStatus.VOID, 'WRITTEN_OFF' as any] },
+        issueDate: { gte: fromDate, lte: toDate },
+      },
       include: { customer: { select: { id: true, businessName: true } } },
     });
     const byCustomer: Record<
@@ -905,7 +908,12 @@ export class BookkeepingService implements OnModuleInit {
         })()
       : new Date();
     const items = await this.prisma.invoiceItem.findMany({
-      where: { invoice: { status: InvoiceStatus.PAID, paidAt: { gte: fromDate, lte: toDate } } },
+      where: {
+        invoice: {
+          status: { notIn: [InvoiceStatus.DRAFT, InvoiceStatus.VOID, 'WRITTEN_OFF' as any] },
+          issueDate: { gte: fromDate, lte: toDate },
+        },
+      },
       include: { product: { select: { id: true, name: true } } },
     });
     const byItem: Record<
