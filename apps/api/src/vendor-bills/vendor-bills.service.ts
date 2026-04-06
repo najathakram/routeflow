@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
 import { SystemConfigService } from "../system-config/system-config.service";
@@ -7,6 +7,8 @@ import Anthropic from "@anthropic-ai/sdk";
 
 @Injectable()
 export class VendorBillsService {
+  private readonly logger = new Logger(VendorBillsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
@@ -477,13 +479,18 @@ If you cannot read a value clearly, use null. Return ONLY the JSON object.`;
 
     let parsed: Record<string, unknown>;
     try {
-      // Strip markdown code blocks if present
-      const text = content.text
-        .replace(/^```json\s*/m, "")
-        .replace(/\s*```$/m, "")
-        .trim();
+      // Strip markdown code fences (``` or ```json) and try to extract the JSON object
+      let text = content.text.trim();
+      // Remove leading ```json or ``` fence
+      text = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/i, "").trim();
+      // If still can't parse, extract the first {...} block (handles extra prose around JSON)
+      if (!text.startsWith("{")) {
+        const match = text.match(/\{[\s\S]*\}/);
+        if (match) text = match[0];
+      }
       parsed = JSON.parse(text) as Record<string, unknown>;
     } catch (_e) {
+      this.logger.error(`scanInvoice: failed to parse AI response. Raw output:\n${content.text}`);
       throw new Error("Failed to parse AI response as JSON");
     }
 
