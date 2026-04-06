@@ -181,12 +181,12 @@ function SalesByCustomerReport({ from, to, onSelectReport }: { from?: string; to
               <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
               <XAxis type="number" tick={{ fontSize: 12, fill: "#64748b" }} tickFormatter={(v: number) => fmt(v)} />
               <YAxis dataKey="name" type="category" width={160}
-                tick={({ x, y, payload }: { x: number; y: number; payload: { value: string } }) => (
+                tick={({ x, y, payload }: any) => (
                   <text x={x} y={y} dy={4} textAnchor="end" fill="#64748b" fontSize={12}>
                     {String(payload.value ?? "").length > 20 ? `${String(payload.value).slice(0, 19)}\u2026` : payload.value}
                   </text>
                 )} />
-              <Tooltip {...chartTooltipStyle} formatter={(value: number) => fmt(value)} />
+              <Tooltip {...chartTooltipStyle} formatter={(value) => fmt(Number(value))} />
               <Bar dataKey="salesAmount" fill={CHART_COLORS[0]} radius={[0, 4, 4, 0]} name="Sales Amount" />
             </BarChart>
           </ResponsiveContainer>
@@ -242,7 +242,7 @@ function SalesByItemReport({ from, to }: { from?: string; to?: string }) {
               <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
               <XAxis dataKey="name" angle={-35} textAnchor="end" height={80} interval="preserveStartEnd" tick={{ fontSize: 11 }} />
               <YAxis tick={{ fontSize: 12, fill: "#64748b" }} tickFormatter={(v: number) => fmt(v)} />
-              <Tooltip {...chartTooltipStyle} formatter={(value: number) => fmt(value)} />
+              <Tooltip {...chartTooltipStyle} formatter={(value) => fmt(Number(value))} />
               <Bar dataKey="amount" fill={CHART_COLORS[1]} radius={[4, 4, 0, 0]} name="Sales Amount" />
             </BarChart>
           </ResponsiveContainer>
@@ -295,12 +295,12 @@ function SalesByDriverReport({ from, to }: { from?: string; to?: string }) {
               <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
               <XAxis type="number" tick={{ fontSize: 12, fill: "#64748b" }} tickFormatter={(v: number) => fmt(v)} />
               <YAxis dataKey="name" type="category" width={160}
-                tick={({ x, y, payload }: { x: number; y: number; payload: { value: string } }) => (
+                tick={({ x, y, payload }: any) => (
                   <text x={x} y={y} dy={4} textAnchor="end" fill="#64748b" fontSize={12}>
                     {String(payload.value ?? "").length > 20 ? `${String(payload.value).slice(0, 19)}\u2026` : payload.value}
                   </text>
                 )} />
-              <Tooltip {...chartTooltipStyle} formatter={(value: number) => fmt(value)} />
+              <Tooltip {...chartTooltipStyle} formatter={(value) => fmt(Number(value))} />
               <Bar dataKey="sales" fill={CHART_COLORS[4]} radius={[0, 4, 4, 0]} name="Sales" />
             </BarChart>
           </ResponsiveContainer>
@@ -449,12 +449,12 @@ function CustomerBalanceReport({ onSelectReport, contextCustomerId }: { onSelect
               <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
               <XAxis type="number" tick={{ fontSize: 12, fill: "#64748b" }} tickFormatter={(v: number) => fmt(v)} />
               <YAxis dataKey="name" type="category" width={160}
-                tick={({ x, y, payload }: { x: number; y: number; payload: { value: string } }) => (
+                tick={({ x, y, payload }: any) => (
                   <text x={x} y={y} dy={4} textAnchor="end" fill="#64748b" fontSize={12}>
                     {String(payload.value ?? "").length > 20 ? `${String(payload.value).slice(0, 19)}\u2026` : payload.value}
                   </text>
                 )} />
-              <Tooltip {...chartTooltipStyle} formatter={(value: number) => fmt(value)} />
+              <Tooltip {...chartTooltipStyle} formatter={(value) => fmt(Number(value))} />
               <Legend />
               <Bar dataKey="outstanding" fill={CHART_COLORS[0]} radius={[0, 4, 4, 0]} name="Outstanding" />
               <Bar dataKey="overdue" fill={CHART_COLORS[3]} radius={[0, 4, 4, 0]} name="Overdue" />
@@ -752,7 +752,7 @@ function TimeToGetPaidReport({ from, to }: { from?: string; to?: string }) {
               <YAxis tick={{ fontSize: 12, fill: "#64748b" }} allowDecimals={false} />
               <Tooltip {...chartTooltipStyle} />
               <Bar dataKey="count" fill={CHART_COLORS[6]} radius={[4, 4, 0, 0]} name="Invoice Count">
-                <LabelList dataKey="pct" position="top" formatter={(v: string) => `${v}%`} />
+                <LabelList dataKey="pct" position="top" formatter={(v: any) => `${v}%`} />
               </Bar>
             </BarChart>
           </ResponsiveContainer>
@@ -843,14 +843,14 @@ function ExpensesByCategoryReport({ from, to, onSelectReport }: { from?: string;
                 outerRadius={110}
                 dataKey="total"
                 nameKey="name"
-                label={({ percent }: { percent: number }) => percent > 0.06 ? `${(percent * 100).toFixed(0)}%` : ""}
+                label={({ percent }: any) => (percent ?? 0) > 0.06 ? `${((percent ?? 0) * 100).toFixed(0)}%` : ""}
                 labelLine={false}
               >
                 {chartData.map((_, idx) => (
                   <Cell key={idx} fill={CHART_COLORS[idx % CHART_COLORS.length]} />
                 ))}
               </Pie>
-              <Tooltip {...chartTooltipStyle} formatter={(value: number) => fmt(value)} />
+              <Tooltip {...chartTooltipStyle} formatter={(value) => fmt(Number(value))} />
               <Legend />
             </PieChart>
           </ResponsiveContainer>
@@ -910,12 +910,12 @@ function ExpensesByCustomerReport({ from, to }: { from?: string; to?: string }) 
               <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
               <XAxis type="number" tick={{ fontSize: 12, fill: "#64748b" }} tickFormatter={(v: number) => fmt(v)} />
               <YAxis dataKey="name" type="category" width={160}
-                tick={({ x, y, payload }: { x: number; y: number; payload: { value: string } }) => (
+                tick={({ x, y, payload }: any) => (
                   <text x={x} y={y} dy={4} textAnchor="end" fill="#64748b" fontSize={12}>
                     {String(payload.value ?? "").length > 20 ? `${String(payload.value).slice(0, 19)}\u2026` : payload.value}
                   </text>
                 )} />
-              <Tooltip {...chartTooltipStyle} formatter={(value: number) => fmt(value)} />
+              <Tooltip {...chartTooltipStyle} formatter={(value) => fmt(Number(value))} />
               <Bar dataKey="totalAmount" fill={CHART_COLORS[3]} radius={[0, 4, 4, 0]} name="Total Amount" />
             </BarChart>
           </ResponsiveContainer>

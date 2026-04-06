@@ -142,6 +142,9 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
       );
       if (skuMatch) {
         addLineItem(skuMatch);
+      } else if (matches.length === 1) {
+        // Only one result from the search — treat it as the scanned item
+        addLineItem(matches[0]);
       } else {
         toast({ title: `No product found for: ${code}`, variant: "error" });
       }

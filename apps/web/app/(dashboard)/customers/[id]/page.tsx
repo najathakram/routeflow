@@ -1654,7 +1654,7 @@ export default function CustomerDetailPage({
                         }
                       />
                       <Tooltip
-                        formatter={(value: number) => fmt(value)}
+                        formatter={(value) => fmt(Number(value))}
                         contentStyle={{
                           borderRadius: "8px",
                           border: "1px solid #e5e7eb",

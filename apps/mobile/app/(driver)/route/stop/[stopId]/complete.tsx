@@ -11,14 +11,16 @@ import {
 } from "react-native";
 import { useState } from "react";
 import { router, Stack, useLocalSearchParams } from "expo-router";
+import { useQuery } from "@tanstack/react-query";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, borderRadius, shadows } from "@routeflow/ui/tokens";
 import { useRouteRun, useCompleteStop, useUpdateRunStatus, type CompleteStopItemDto } from "../../../../../lib/api/routes";
-import { useRouteStore, selectStopResolutions } from "../../../../../store/routeStore";
+import { useRouteStore } from "../../../../../store/routeStore";
 import { useRecordInvoicePayment } from "../../../../../lib/api/invoices";
 import { apiClient } from "../../../../../lib/api-client";
 import * as Haptics from "expo-haptics";
 import { PhotoCapture } from "../../../../../components/PhotoCapture";
+import { SignaturePad } from "../../../../../components/SignaturePad";
 import { showToast } from "../../../../../lib/toast";
 
 type PaymentMethod = "CASH" | "CHECK" | "ACH" | "OTHER";
@@ -35,6 +37,9 @@ const STATUS_CONFIG = {
   REFUSED: { label: "Refused", icon: "close-circle", color: colors.danger.DEFAULT, bg: colors.danger.bg },
   UNRESOLVED: { label: "Unresolved", icon: "help-circle", color: "#94a3b8", bg: colors.surface.raised },
 } as const;
+
+const fmt = (n: number) =>
+  new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
 
 export default function StopCompleteScreen() {
   const { stopId, runId } = useLocalSearchParams<{ stopId: string; runId: string }>();
@@ -55,8 +60,29 @@ export default function StopCompleteScreen() {
   const [cashReference, setCashReference] = useState("");
   const [podPhotos, setPodPhotos] = useState<string[]>([]);
   const [safeDropEnabled, setSafeDropEnabled] = useState(false);
+  const [signatureCaptured, setSignatureCaptured] = useState(false);
+
+  // Attempted delivery mode (customer not present)
+  const [isAttempted, setIsAttempted] = useState(false);
+  const [attemptedNote, setAttemptedNote] = useState("");
+  const [attemptedPhotos, setAttemptedPhotos] = useState<string[]>([]);
 
   const stop = run?.stops?.find((s) => s.id === stopId) ?? null;
+  const customerId = stop?.customer?.id;
+
+  // Pre-fetch customer's outstanding invoice to show balance before completion
+  const { data: invoiceData } = useQuery({
+    queryKey: ["invoices", "stop-preview", customerId],
+    queryFn: () =>
+      apiClient
+        .get("/invoices", { params: { customerId, status: "SENT,PARTIAL,OVERDUE", limit: 5 } })
+        .then((r) => r.data),
+    enabled: !!customerId,
+    staleTime: 30_000,
+  });
+  const openInvoices: any[] = invoiceData?.data ?? [];
+  const totalOutstanding = openInvoices.reduce((sum: number, inv: any) => sum + (inv.balanceDue ?? inv.total ?? 0), 0);
+  const firstInvoice = openInvoices[0];
 
   if (!stop) {
     return (
@@ -69,7 +95,6 @@ export default function StopCompleteScreen() {
   // Flatten all items across orders
   const allOrderItems = (stop.orders ?? []).flatMap((o) => o.lineItems ?? []);
 
-  // Build item summary list
   type SummaryItem = {
     id: string;
     name: string;
@@ -102,22 +127,75 @@ export default function StopCompleteScreen() {
   const partial = allItems.filter((i) => i.resolution?.status === "PARTIAL");
   const refused = allItems.filter((i) => i.resolution?.status === "REFUSED");
 
-  // Find the next pending stop for navigation
   const stops = run?.stops ?? [];
   const nextStop = stops.find(
     (s) => s.stopNumber > stop.stopNumber && (s.status === "PENDING" || s.status === "IN_PROGRESS"),
   );
 
+  const cashAmountNum = parseFloat(cashAmount);
+  const cashIsValid = !isNaN(cashAmountNum) && cashAmountNum > 0;
+  const changeAmount = cashIsValid && totalOutstanding > 0 ? cashAmountNum - totalOutstanding : null;
+
   const handleConfirm = () => {
     if (!runId) return;
 
-    // Safe drop requires at least one POD photo
+    // ── Attempted delivery path ──────────────────────────────────────────────
+    if (isAttempted) {
+      if (!attemptedNote.trim()) {
+        Alert.alert("Note Required", "Please add a note explaining the attempted delivery (e.g. customer not present).");
+        return;
+      }
+      if (attemptedPhotos.length === 0) {
+        Alert.alert("Photo Required", "Please capture at least one photo for the attempted delivery.");
+        return;
+      }
+
+      // Mark all items as REFUSED with an attempted note
+      const items: CompleteStopItemDto[] = allItems.map((i) => ({
+        orderItemId: i.orderItemId,
+        productId: i.productId,
+        type: "REFUSED" as const,
+        qty: i.orderedQty,
+        driverNote: `Attempted delivery: ${attemptedNote}`,
+      }));
+
+      completeStop(
+        {
+          runId,
+          stopId,
+          driverNote: `ATTEMPTED DELIVERY: ${attemptedNote}`,
+          items,
+          podPhotoUrls: attemptedPhotos,
+          safeDropEnabled: false,
+        },
+        {
+          onSuccess: () => {
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+            showToast("Attempted delivery recorded.");
+            clearStop(stopId);
+            if (nextStop) {
+              router.replace(`/(driver)/route/stop/${nextStop.id}?runId=${runId}` as any);
+            } else {
+              updateRunStatus(
+                { id: runId, status: "COMPLETED" },
+                { onSettled: () => router.replace("/(driver)/route") },
+              );
+            }
+          },
+          onError: (err) => {
+            Alert.alert("Error", "Failed to record attempted delivery.\n" + (err.message || ""));
+          },
+        },
+      );
+      return;
+    }
+
+    // ── Normal delivery path ─────────────────────────────────────────────────
     if (safeDropEnabled && podPhotos.length === 0) {
       Alert.alert("Photo Required", "Please capture at least one proof of delivery photo when safe drop is enabled.");
       return;
     }
 
-    // CRIT-03: All items must be resolved before completing the stop
     const unresolvedItems = allItems.filter((i) => !i.resolution || i.resolution.status === "UNRESOLVED");
     if (unresolvedItems.length > 0) {
       Alert.alert(
@@ -127,7 +205,6 @@ export default function StopCompleteScreen() {
       return;
     }
 
-    // Build DTO items
     const items: CompleteStopItemDto[] = allItems
       .filter((i) => i.resolution && i.resolution.status !== "UNRESOLVED")
       .map((i) => ({
@@ -141,14 +218,12 @@ export default function StopCompleteScreen() {
         driverNote: stopNote || undefined,
       }));
 
-    // HIGH-01: Partial qty must be at least 1
     const zeroPartialItem = items.find((i) => i.type === "PARTIAL" && i.qty < 1);
     if (zeroPartialItem) {
-      Alert.alert("Invalid Quantity", "Partial delivery quantity must be at least 1. Please update the quantity and try again.");
+      Alert.alert("Invalid Quantity", "Partial delivery quantity must be at least 1.");
       return;
     }
 
-    // Add ADD_ON items from addedItems that weren't in original orders
     addedItems.forEach((added) => {
       if (!allOrderItems.find((oi) => oi.id === added.id)) {
         items.push({
@@ -173,31 +248,41 @@ export default function StopCompleteScreen() {
     };
 
     completeStop(
-      { runId, stopId, driverNote: stopNote || undefined, items, podPhotoUrls: podPhotos, safeDropEnabled },
+      {
+        runId,
+        stopId,
+        driverNote: stopNote || undefined,
+        items,
+        podPhotoUrls: podPhotos,
+        signatureUrl: signatureCaptured ? "signed" : undefined,
+        safeDropEnabled,
+      },
       {
         onSuccess: async () => {
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
           showToast("Delivery confirmed!");
-          // If cash was collected, look up the customer's unpaid invoice and record payment
-          const amount = parseFloat(cashAmount);
-          const customerId = stop.customer?.id;
-          if (!isNaN(amount) && amount > 0 && customerId) {
-            let invoiceId: string | undefined;
+
+          if (cashIsValid && customerId) {
+            // Use the pre-fetched invoice id, or look up again
+            let invoiceId: string | undefined = firstInvoice?.id;
             let lookupFailed = false;
-            try {
-              const resp = await apiClient.get("/invoices", {
-                params: { customerId, status: "SENT", limit: 1 },
-              });
-              invoiceId = resp.data?.data?.[0]?.id;
-            } catch (_) {
-              lookupFailed = true;
+
+            if (!invoiceId) {
+              try {
+                const resp = await apiClient.get("/invoices", {
+                  params: { customerId, status: "SENT", limit: 1 },
+                });
+                invoiceId = resp.data?.data?.[0]?.id;
+              } catch (_) {
+                lookupFailed = true;
+              }
             }
 
             if (invoiceId) {
               recordPayment(
                 {
                   invoiceId,
-                  amount,
+                  amount: cashAmountNum,
                   method: paymentMethod,
                   reference: cashReference || undefined,
                 },
@@ -206,7 +291,6 @@ export default function StopCompleteScreen() {
               return;
             }
 
-            // CRIT-02: Warn driver when payment could not be auto-recorded
             Alert.alert(
               "Payment Not Recorded",
               lookupFailed
@@ -219,10 +303,7 @@ export default function StopCompleteScreen() {
           navigateAfterComplete();
         },
         onError: (err) => {
-          Alert.alert(
-            "Error",
-            "Failed to complete stop. Please try again.\n" + (err.message || ""),
-          );
+          Alert.alert("Error", "Failed to complete stop. Please try again.\n" + (err.message || ""));
         },
       },
     );
@@ -230,9 +311,7 @@ export default function StopCompleteScreen() {
 
   return (
     <>
-      <Stack.Screen
-        options={{ title: "Confirm Stop", headerBackTitle: "Back" }}
-      />
+      <Stack.Screen options={{ title: "Confirm Stop", headerBackTitle: "Back" }} />
       <View style={styles.container}>
         <ScrollView
           contentContainerStyle={styles.scroll}
@@ -255,162 +334,247 @@ export default function StopCompleteScreen() {
             )}
           </View>
 
-          {/* Delivery summary */}
-          <Text style={styles.sectionTitle}>Delivery Summary</Text>
-          <View style={styles.summaryRow}>
-            {(
-              [
-                { key: "delivered", items: delivered, cfg: STATUS_CONFIG.DELIVERED },
-                { key: "partial", items: partial, cfg: STATUS_CONFIG.PARTIAL },
-                { key: "refused", items: refused, cfg: STATUS_CONFIG.REFUSED },
-              ] as const
-            ).map(({ key, items: list, cfg }) => (
-              <View key={key} style={[styles.summaryChip, { backgroundColor: cfg.bg }]}>
-                <Ionicons name={cfg.icon as any} size={22} color={cfg.color} />
-                <Text style={[styles.summaryCount, { color: cfg.color }]}>
-                  {list.length}
-                </Text>
-                <Text style={[styles.summaryLabel, { color: cfg.color }]}>
-                  {cfg.label}
-                </Text>
-              </View>
-            ))}
-          </View>
+          {/* Attempted delivery toggle */}
+          <Pressable
+            style={[styles.attemptedToggle, isAttempted && styles.attemptedToggleActive]}
+            onPress={() => setIsAttempted((v) => !v)}
+          >
+            <Ionicons
+              name={isAttempted ? "close-circle" : "alert-circle-outline"}
+              size={20}
+              color={isAttempted ? colors.danger.DEFAULT : "#64748b"}
+            />
+            <Text style={[styles.attemptedToggleText, isAttempted && styles.attemptedToggleTextActive]}>
+              {isAttempted ? "Attempted Delivery (tap to cancel)" : "Mark as Attempted Delivery"}
+            </Text>
+          </Pressable>
 
-          {/* Per-item breakdown */}
-          {allItems.length > 0 && (
-            <View style={styles.itemsCard}>
-              {allItems.map((item, idx) => {
-                const res = item.resolution;
-                const cfg = res?.status ? STATUS_CONFIG[res.status] : STATUS_CONFIG.UNRESOLVED;
-                const isLast = idx === allItems.length - 1;
-                return (
-                  <View key={item.id} style={[styles.itemRow, isLast && styles.itemRowLast]}>
-                    <View style={styles.itemLeft}>
-                      <Text style={styles.itemName}>{item.name}</Text>
-                      <Text style={styles.itemQty}>
-                        {res?.status === "PARTIAL"
-                          ? `${res.partialQty ?? 0} of ${item.orderedQty} delivered`
-                          : `${item.orderedQty} ordered`}
-                      </Text>
-                    </View>
-                    <View style={[styles.itemStatus, { backgroundColor: cfg.bg }]}>
-                      <Ionicons name={cfg.icon as any} size={16} color={cfg.color} />
-                      <Text style={[styles.itemStatusText, { color: cfg.color }]}>
-                        {cfg.label}
-                      </Text>
+          {/* ── ATTEMPTED DELIVERY FORM ─────────────────────────────────────── */}
+          {isAttempted ? (
+            <View style={styles.attemptedCard}>
+              <Text style={styles.attemptedCardTitle}>
+                <Ionicons name="person-remove-outline" size={15} color={colors.danger.DEFAULT} />{" "}
+                Attempted Delivery
+              </Text>
+              <Text style={styles.attemptedCardSub}>
+                Customer was not present. All items will be marked as undelivered.
+              </Text>
+              <TextInput
+                style={styles.attemptedNoteInput}
+                placeholder="Reason (e.g. no answer, premises closed…)"
+                placeholderTextColor="#94a3b8"
+                value={attemptedNote}
+                onChangeText={setAttemptedNote}
+                multiline
+                numberOfLines={2}
+                textAlignVertical="top"
+              />
+              <Text style={styles.attemptedPhotoLabel}>Photo evidence (required)</Text>
+              <PhotoCapture
+                photos={attemptedPhotos}
+                onAdd={(uri) => setAttemptedPhotos((prev) => [...prev, uri])}
+                onRemove={(uri) => setAttemptedPhotos((prev) => prev.filter((p) => p !== uri))}
+                maxPhotos={3}
+                label="Add Photo"
+              />
+            </View>
+          ) : (
+            <>
+              {/* ── NORMAL DELIVERY SECTIONS ─────────────────────────────────── */}
+
+              {/* Delivery summary */}
+              <Text style={styles.sectionTitle}>Delivery Summary</Text>
+              <View style={styles.summaryRow}>
+                {(
+                  [
+                    { key: "delivered", items: delivered, cfg: STATUS_CONFIG.DELIVERED },
+                    { key: "partial", items: partial, cfg: STATUS_CONFIG.PARTIAL },
+                    { key: "refused", items: refused, cfg: STATUS_CONFIG.REFUSED },
+                  ] as const
+                ).map(({ key, items: list, cfg }) => (
+                  <View key={key} style={[styles.summaryChip, { backgroundColor: cfg.bg }]}>
+                    <Ionicons name={cfg.icon as any} size={22} color={cfg.color} />
+                    <Text style={[styles.summaryCount, { color: cfg.color }]}>{list.length}</Text>
+                    <Text style={[styles.summaryLabel, { color: cfg.color }]}>{cfg.label}</Text>
+                  </View>
+                ))}
+              </View>
+
+              {/* Per-item breakdown */}
+              {allItems.length > 0 && (
+                <View style={styles.itemsCard}>
+                  {allItems.map((item, idx) => {
+                    const res = item.resolution;
+                    const cfg = res?.status ? STATUS_CONFIG[res.status] : STATUS_CONFIG.UNRESOLVED;
+                    const isLast = idx === allItems.length - 1;
+                    return (
+                      <View key={item.id} style={[styles.itemRow, isLast && styles.itemRowLast]}>
+                        <View style={styles.itemLeft}>
+                          <Text style={styles.itemName}>{item.name}</Text>
+                          <Text style={styles.itemQty}>
+                            {res?.status === "PARTIAL"
+                              ? `${res.partialQty ?? 0} of ${item.orderedQty} delivered`
+                              : `${item.orderedQty} ordered`}
+                          </Text>
+                        </View>
+                        <View style={[styles.itemStatus, { backgroundColor: cfg.bg }]}>
+                          <Ionicons name={cfg.icon as any} size={16} color={cfg.color} />
+                          <Text style={[styles.itemStatusText, { color: cfg.color }]}>{cfg.label}</Text>
+                        </View>
+                      </View>
+                    );
+                  })}
+                </View>
+              )}
+
+              {/* Proof of Delivery */}
+              <Text style={styles.sectionTitle}>Proof of Delivery</Text>
+              <View style={styles.podCard}>
+                <PhotoCapture
+                  photos={podPhotos}
+                  onAdd={(uri) => setPodPhotos((prev) => [...prev, uri])}
+                  onRemove={(uri) => setPodPhotos((prev) => prev.filter((p) => p !== uri))}
+                  maxPhotos={3}
+                  label="Add Photo"
+                />
+                <View style={styles.safeDropRow}>
+                  <View style={styles.safeDropLeft}>
+                    <Ionicons name="home-outline" size={18} color="#64748b" />
+                    <View>
+                      <Text style={styles.safeDropTitle}>Safe Drop</Text>
+                      <Text style={styles.safeDropSub}>Left at door — unattended delivery</Text>
                     </View>
                   </View>
-                );
-              })}
-            </View>
-          )}
-
-          {/* Proof of Delivery */}
-          <Text style={styles.sectionTitle}>Proof of Delivery</Text>
-          <View style={styles.podCard}>
-            <PhotoCapture
-              photos={podPhotos}
-              onAdd={(uri) => setPodPhotos((prev) => [...prev, uri])}
-              onRemove={(uri) => setPodPhotos((prev) => prev.filter((p) => p !== uri))}
-              maxPhotos={3}
-              label="Add Photo"
-            />
-            <View style={styles.safeDropRow}>
-              <View style={styles.safeDropLeft}>
-                <Ionicons name="home-outline" size={18} color="#64748b" />
-                <View>
-                  <Text style={styles.safeDropTitle}>Safe Drop</Text>
-                  <Text style={styles.safeDropSub}>Left at door — unattended delivery</Text>
+                  <Switch
+                    value={safeDropEnabled}
+                    onValueChange={setSafeDropEnabled}
+                    trackColor={{ false: colors.surface.border, true: colors.brand[500] }}
+                  />
                 </View>
               </View>
-              <Switch
-                value={safeDropEnabled}
-                onValueChange={setSafeDropEnabled}
-                trackColor={{ false: colors.surface.border, true: colors.brand[500] }}
-              />
-            </View>
-          </View>
 
-          {/* Cash collection */}
-          <Text style={styles.sectionTitle}>Payment Collected</Text>
-          <View style={styles.cashCard}>
-            <View style={styles.cashAmountRow}>
-              <Text style={styles.cashDollar}>$</Text>
-              <TextInput
-                style={styles.cashInput}
-                placeholder="0.00"
-                placeholderTextColor="#94a3b8"
-                value={cashAmount}
-                onChangeText={(v) => setCashAmount(v.replace(/[^0-9.]/g, ""))}
-                keyboardType="decimal-pad"
-                returnKeyType="done"
-              />
-              <Text style={styles.cashOptional}>optional</Text>
-            </View>
-            <View style={styles.paymentMethodRow}>
-              {PAYMENT_METHODS.map(({ key, label, icon }) => (
-                <Pressable
-                  key={key}
-                  style={[
-                    styles.methodBtn,
-                    paymentMethod === key && styles.methodBtnActive,
-                  ]}
-                  onPress={() => setPaymentMethod(key)}
-                >
-                  <Ionicons
-                    name={icon as any}
-                    size={16}
-                    color={paymentMethod === key ? colors.brand[500] : "#94a3b8"}
+              {/* Customer Signature */}
+              <Text style={styles.sectionTitle}>Customer Signature</Text>
+              <View style={styles.signatureCard}>
+                <SignaturePad onCapture={setSignatureCaptured} />
+              </View>
+
+              {/* Payment Collected */}
+              <Text style={styles.sectionTitle}>Payment Collected</Text>
+              <View style={styles.cashCard}>
+                {/* Outstanding balance display */}
+                {totalOutstanding > 0 && (
+                  <View style={styles.balanceRow}>
+                    <View style={styles.balanceItem}>
+                      <Text style={styles.balanceLabel}>
+                        {openInvoices.length === 1
+                          ? `Invoice ${firstInvoice?.invoiceNumber ?? ""}`
+                          : `${openInvoices.length} open invoices`}
+                      </Text>
+                      <Text style={styles.balanceAmount}>{fmt(totalOutstanding)}</Text>
+                    </View>
+                    {cashIsValid && changeAmount !== null && (
+                      <View
+                        style={[
+                          styles.changeRow,
+                          changeAmount >= 0 ? styles.changeRowPositive : styles.changeRowNegative,
+                        ]}
+                      >
+                        <Ionicons
+                          name={changeAmount >= 0 ? "arrow-up-circle-outline" : "arrow-down-circle-outline"}
+                          size={15}
+                          color={changeAmount >= 0 ? colors.success.DEFAULT : colors.warning.DEFAULT}
+                        />
+                        <Text
+                          style={[
+                            styles.changeText,
+                            { color: changeAmount >= 0 ? colors.success.DEFAULT : colors.warning.DEFAULT },
+                          ]}
+                        >
+                          {changeAmount >= 0
+                            ? `Change to give: ${fmt(changeAmount)}`
+                            : `Remaining balance: ${fmt(Math.abs(changeAmount))}`}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                )}
+
+                <View style={styles.cashAmountRow}>
+                  <Text style={styles.cashDollar}>$</Text>
+                  <TextInput
+                    style={styles.cashInput}
+                    placeholder="0.00"
+                    placeholderTextColor="#94a3b8"
+                    value={cashAmount}
+                    onChangeText={(v) => setCashAmount(v.replace(/[^0-9.]/g, ""))}
+                    keyboardType="decimal-pad"
+                    returnKeyType="done"
                   />
-                  <Text
-                    style={[
-                      styles.methodBtnText,
-                      paymentMethod === key && styles.methodBtnTextActive,
-                    ]}
-                  >
-                    {label}
-                  </Text>
-                </Pressable>
-              ))}
-            </View>
-            {(paymentMethod === "CHECK" || paymentMethod === "OTHER") && (
-              <TextInput
-                style={styles.referenceInput}
-                placeholder="Reference / cheque number…"
-                placeholderTextColor="#94a3b8"
-                value={cashReference}
-                onChangeText={setCashReference}
-                returnKeyType="done"
-              />
-            )}
-          </View>
+                  <Text style={styles.cashOptional}>optional</Text>
+                </View>
+                <View style={styles.paymentMethodRow}>
+                  {PAYMENT_METHODS.map(({ key, label, icon }) => (
+                    <Pressable
+                      key={key}
+                      style={[styles.methodBtn, paymentMethod === key && styles.methodBtnActive]}
+                      onPress={() => setPaymentMethod(key)}
+                    >
+                      <Ionicons
+                        name={icon as any}
+                        size={16}
+                        color={paymentMethod === key ? colors.brand[500] : "#94a3b8"}
+                      />
+                      <Text
+                        style={[
+                          styles.methodBtnText,
+                          paymentMethod === key && styles.methodBtnTextActive,
+                        ]}
+                      >
+                        {label}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+                {(paymentMethod === "CHECK" || paymentMethod === "OTHER") && (
+                  <TextInput
+                    style={styles.referenceInput}
+                    placeholder="Reference / cheque number…"
+                    placeholderTextColor="#94a3b8"
+                    value={cashReference}
+                    onChangeText={setCashReference}
+                    returnKeyType="done"
+                  />
+                )}
+              </View>
 
-          {/* Notes */}
-          <Text style={styles.sectionTitle}>Driver Notes</Text>
-          <TextInput
-            style={styles.notesInput}
-            placeholder="Add or edit your note for this stop…"
-            placeholderTextColor="#94a3b8"
-            value={stopNote}
-            onChangeText={(v) => setStopNote(stopId, v)}
-            multiline
-            numberOfLines={3}
-            textAlignVertical="top"
-          />
+              {/* Notes */}
+              <Text style={styles.sectionTitle}>Driver Notes</Text>
+              <TextInput
+                style={styles.notesInput}
+                placeholder="Add or edit your note for this stop…"
+                placeholderTextColor="#94a3b8"
+                value={stopNote}
+                onChangeText={(v) => setStopNote(stopId, v)}
+                multiline
+                numberOfLines={3}
+                textAlignVertical="top"
+              />
+            </>
+          )}
         </ScrollView>
 
-        {/* Footer: Back + Confirm */}
+        {/* Footer */}
         <View style={styles.footer}>
-          <Pressable
-            style={styles.backBtn}
-            onPress={() => router.back()}
-            accessibilityRole="button"
-          >
+          <Pressable style={styles.backBtn} onPress={() => router.back()} accessibilityRole="button">
             <Text style={styles.backBtnText}>Back</Text>
           </Pressable>
           <Pressable
-            style={[styles.confirmBtn, isPending && { opacity: 0.7 }]}
+            style={[
+              styles.confirmBtn,
+              (isPending || (isAttempted && (!attemptedNote.trim() || attemptedPhotos.length === 0))) && { opacity: 0.7 },
+              isAttempted && styles.confirmBtnAttempted,
+            ]}
             onPress={handleConfirm}
             disabled={isPending}
             accessibilityRole="button"
@@ -419,14 +583,18 @@ export default function StopCompleteScreen() {
               <ActivityIndicator size="small" color="#fff" style={{ marginRight: 8 }} />
             ) : (
               <Ionicons
-                name={nextStop ? "arrow-forward-circle" : "checkmark-done-circle"}
+                name={isAttempted ? "alert-circle" : nextStop ? "arrow-forward-circle" : "checkmark-done-circle"}
                 size={22}
                 color="#fff"
                 style={{ marginRight: 8 }}
               />
             )}
             <Text style={styles.confirmBtnText}>
-              {nextStop ? "Confirm & Next Stop" : "Confirm & Finish Route"}
+              {isAttempted
+                ? "Record Attempted Delivery"
+                : nextStop
+                ? "Confirm & Next Stop"
+                : "Confirm & Finish Route"}
             </Text>
           </Pressable>
         </View>
@@ -437,12 +605,7 @@ export default function StopCompleteScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.surface.raised },
-  scroll: {
-    paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 24,
-    gap: 14,
-  },
+  scroll: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 24, gap: 14 },
   identityCard: {
     backgroundColor: "#fff",
     borderRadius: borderRadius.lg,
@@ -457,22 +620,72 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
     letterSpacing: 0.5,
   },
-  businessName: {
-    fontSize: 22,
-    fontFamily: "Inter_700Bold",
-    color: colors.navy.DEFAULT,
-  },
-  address: {
-    fontSize: 15,
-    fontFamily: "Inter_400Regular",
-    color: "#64748b",
-  },
+  businessName: { fontSize: 22, fontFamily: "Inter_700Bold", color: colors.navy.DEFAULT },
+  address: { fontSize: 15, fontFamily: "Inter_400Regular", color: "#64748b" },
   sectionTitle: {
     fontSize: 13,
     fontFamily: "Inter_600SemiBold",
     color: "#94a3b8",
     textTransform: "uppercase",
     letterSpacing: 0.6,
+  },
+  attemptedToggle: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: borderRadius.DEFAULT,
+    borderWidth: 1.5,
+    borderColor: colors.surface.border,
+    backgroundColor: "#fff",
+  },
+  attemptedToggleActive: {
+    borderColor: colors.danger.DEFAULT,
+    backgroundColor: colors.danger.bg,
+  },
+  attemptedToggleText: {
+    fontSize: 14,
+    fontFamily: "Inter_600SemiBold",
+    color: "#64748b",
+    flex: 1,
+  },
+  attemptedToggleTextActive: { color: colors.danger.DEFAULT },
+  attemptedCard: {
+    backgroundColor: "#fff",
+    borderRadius: borderRadius.lg,
+    padding: 16,
+    gap: 12,
+    borderWidth: 1.5,
+    borderColor: colors.danger.DEFAULT,
+    ...shadows.card,
+  },
+  attemptedCardTitle: {
+    fontSize: 15,
+    fontFamily: "Inter_700Bold",
+    color: colors.danger.DEFAULT,
+  },
+  attemptedCardSub: {
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    color: "#64748b",
+  },
+  attemptedNoteInput: {
+    borderWidth: 1,
+    borderColor: colors.surface.border,
+    borderRadius: borderRadius.DEFAULT,
+    padding: 12,
+    fontSize: 15,
+    fontFamily: "Inter_400Regular",
+    color: colors.navy.DEFAULT,
+    minHeight: 72,
+    textAlignVertical: "top",
+    backgroundColor: colors.surface.raised,
+  },
+  attemptedPhotoLabel: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+    color: "#64748b",
   },
   summaryRow: { flexDirection: "row", gap: 10 },
   summaryChip: {
@@ -500,16 +713,8 @@ const styles = StyleSheet.create({
   },
   itemRowLast: { borderBottomWidth: 0 },
   itemLeft: { flex: 1, gap: 2, paddingRight: 10 },
-  itemName: {
-    fontSize: 16,
-    fontFamily: "Inter_600SemiBold",
-    color: colors.navy.DEFAULT,
-  },
-  itemQty: {
-    fontSize: 13,
-    fontFamily: "Inter_400Regular",
-    color: "#64748b",
-  },
+  itemName: { fontSize: 16, fontFamily: "Inter_600SemiBold", color: colors.navy.DEFAULT },
+  itemQty: { fontSize: 13, fontFamily: "Inter_400Regular", color: "#64748b" },
   itemStatus: {
     flexDirection: "row",
     alignItems: "center",
@@ -519,65 +724,6 @@ const styles = StyleSheet.create({
     borderRadius: borderRadius.full,
   },
   itemStatusText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
-  cashCard: {
-    backgroundColor: "#fff",
-    borderRadius: borderRadius.lg,
-    padding: 16,
-    gap: 12,
-    ...shadows.card,
-  },
-  cashAmountRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-  },
-  cashDollar: {
-    fontSize: 28,
-    fontFamily: "Inter_700Bold",
-    color: "#64748b",
-  },
-  cashInput: {
-    flex: 1,
-    fontSize: 32,
-    fontFamily: "Inter_700Bold",
-    color: colors.navy.DEFAULT,
-    paddingVertical: 4,
-  },
-  cashOptional: {
-    fontSize: 12,
-    fontFamily: "Inter_400Regular",
-    color: "#94a3b8",
-    alignSelf: "flex-end",
-    paddingBottom: 6,
-  },
-  paymentMethodRow: {
-    flexDirection: "row",
-    gap: 8,
-    flexWrap: "wrap",
-  },
-  methodBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: borderRadius.full,
-    borderWidth: 1.5,
-    borderColor: colors.surface.border,
-    backgroundColor: colors.surface.raised,
-  },
-  methodBtnActive: {
-    borderColor: colors.brand[500],
-    backgroundColor: colors.brand[50],
-  },
-  methodBtnText: {
-    fontSize: 13,
-    fontFamily: "Inter_600SemiBold",
-    color: "#94a3b8",
-  },
-  methodBtnTextActive: {
-    color: colors.brand[500],
-  },
   podCard: {
     backgroundColor: "#fff",
     borderRadius: borderRadius.lg,
@@ -593,22 +739,85 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: colors.surface.border,
   },
-  safeDropLeft: {
+  safeDropLeft: { flexDirection: "row", alignItems: "center", gap: 10, flex: 1 },
+  safeDropTitle: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: colors.navy.DEFAULT },
+  safeDropSub: { fontSize: 12, fontFamily: "Inter_400Regular", color: "#94a3b8" },
+  signatureCard: {
+    backgroundColor: "#fff",
+    borderRadius: borderRadius.lg,
+    padding: 16,
+    ...shadows.card,
+  },
+  cashCard: {
+    backgroundColor: "#fff",
+    borderRadius: borderRadius.lg,
+    padding: 16,
+    gap: 12,
+    ...shadows.card,
+  },
+  balanceRow: {
+    gap: 6,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.surface.border,
+  },
+  balanceItem: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
-    flex: 1,
+    justifyContent: "space-between",
   },
-  safeDropTitle: {
-    fontSize: 15,
-    fontFamily: "Inter_600SemiBold",
+  balanceLabel: {
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    color: "#64748b",
+  },
+  balanceAmount: {
+    fontSize: 16,
+    fontFamily: "Inter_700Bold",
     color: colors.navy.DEFAULT,
   },
-  safeDropSub: {
+  changeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: borderRadius.DEFAULT,
+  },
+  changeRowPositive: { backgroundColor: colors.success.bg },
+  changeRowNegative: { backgroundColor: colors.warning.bg },
+  changeText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  cashAmountRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  cashDollar: { fontSize: 28, fontFamily: "Inter_700Bold", color: "#64748b" },
+  cashInput: {
+    flex: 1,
+    fontSize: 32,
+    fontFamily: "Inter_700Bold",
+    color: colors.navy.DEFAULT,
+    paddingVertical: 4,
+  },
+  cashOptional: {
     fontSize: 12,
     fontFamily: "Inter_400Regular",
     color: "#94a3b8",
+    alignSelf: "flex-end",
+    paddingBottom: 6,
   },
+  paymentMethodRow: { flexDirection: "row", gap: 8, flexWrap: "wrap" },
+  methodBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: borderRadius.full,
+    borderWidth: 1.5,
+    borderColor: colors.surface.border,
+    backgroundColor: colors.surface.raised,
+  },
+  methodBtnActive: { borderColor: colors.brand[500], backgroundColor: colors.brand[50] },
+  methodBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: "#94a3b8" },
+  methodBtnTextActive: { color: colors.brand[500] },
   referenceInput: {
     height: 44,
     borderWidth: 1,
@@ -649,11 +858,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  backBtnText: {
-    fontSize: 16,
-    fontFamily: "Inter_600SemiBold",
-    color: colors.navy.DEFAULT,
-  },
+  backBtnText: { fontSize: 16, fontFamily: "Inter_600SemiBold", color: colors.navy.DEFAULT },
   confirmBtn: {
     height: 56,
     backgroundColor: colors.brand[500],
@@ -662,15 +867,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  confirmBtnText: {
-    fontSize: 17,
-    fontFamily: "Inter_700Bold",
-    color: "#fff",
-  },
+  confirmBtnAttempted: { backgroundColor: colors.danger.DEFAULT },
+  confirmBtnText: { fontSize: 17, fontFamily: "Inter_700Bold", color: "#fff" },
   notFound: { flex: 1, alignItems: "center", justifyContent: "center" },
-  notFoundText: {
-    fontSize: 16,
-    fontFamily: "Inter_400Regular",
-    color: "#94a3b8",
-  },
+  notFoundText: { fontSize: 16, fontFamily: "Inter_400Regular", color: "#94a3b8" },
 });

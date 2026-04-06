@@ -61,14 +61,14 @@ export function ReportChart({
               outerRadius={Math.floor(height * 0.3)}
               dataKey={dataKeys[0]}
               nameKey={nameKey}
-              label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+              label={({ name, percent }: any) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`}
               labelLine={false}
             >
               {data.map((_, idx) => (
                 <Cell key={idx} fill={colors[idx % colors.length]} />
               ))}
             </Pie>
-            <Tooltip {...tooltipStyle} formatter={(value: number) => formatValue(value)} />
+            <Tooltip {...tooltipStyle} formatter={(value) => formatValue(Number(value))} />
             <Legend />
           </PieChart>
         </ResponsiveContainer>
@@ -84,7 +84,7 @@ export function ReportChart({
             <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
             <XAxis dataKey={nameKey} tick={{ fontSize: 12, fill: "#64748b" }} />
             <YAxis tick={{ fontSize: 12, fill: "#64748b" }} tickFormatter={formatValue} />
-            <Tooltip {...tooltipStyle} formatter={(value: number) => formatValue(value)} />
+            <Tooltip {...tooltipStyle} formatter={(value) => formatValue(Number(value))} />
             <Legend />
             {dataKeys.map((key, idx) => (
               <Line key={key} type="monotone" dataKey={key} stroke={colors[idx % colors.length]} strokeWidth={2} dot={{ r: 3 }} />
@@ -113,7 +113,7 @@ export function ReportChart({
               <YAxis tick={{ fontSize: 12, fill: "#64748b" }} tickFormatter={formatValue} />
             </>
           )}
-          <Tooltip {...tooltipStyle} formatter={(value: number) => formatValue(value)} />
+          <Tooltip {...tooltipStyle} formatter={(value) => formatValue(Number(value))} />
           <Legend />
           {dataKeys.map((key, idx) => (
             <Bar
