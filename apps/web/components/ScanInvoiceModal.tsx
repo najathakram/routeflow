@@ -415,22 +415,17 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
 
           {/* Review Step */}
           {step === "review" && (
-            <div className="flex h-full min-h-0 flex-1 flex-col">
-              {/* Collapsible Invoice Preview */}
-              {previewUrl && showPreview && (
-                <div className="flex h-72 shrink-0 flex-col border-b border-surface-border bg-surface-raised">
-                  <div className="flex items-center justify-between border-b border-surface-border px-4 py-2">
-                    <div className="flex items-center gap-2">
-                      <FileText className="h-4 w-4 text-brand-500" />
-                      <span className="text-xs font-semibold uppercase tracking-wide text-navy/60">Invoice Preview</span>
-                    </div>
-                    <button onClick={() => setShowPreview(false)} className="rounded p-1 text-navy/40 hover:text-navy transition-colors">
-                      <X className="h-4 w-4" />
-                    </button>
+            <div className="flex h-full min-h-0 flex-1">
+              {/* Left: Invoice Preview */}
+              {previewUrl && (
+                <div className="flex w-1/3 shrink-0 flex-col border-r border-surface-border bg-surface-raised">
+                  <div className="flex items-center gap-2 border-b border-surface-border px-4 py-2.5">
+                    <FileText className="h-4 w-4 text-brand-500" />
+                    <span className="text-xs font-semibold uppercase tracking-wide text-navy/60">Invoice Preview</span>
                   </div>
                   <div className="flex-1 overflow-hidden">
                     {previewType === "pdf" ? (
-                      <iframe src={previewUrl} className="h-full w-full" title="Invoice PDF" />
+                      <iframe src={previewUrl} className="h-full w-full" style={{ minHeight: "500px" }} title="Invoice PDF" />
                     ) : (
                       <div className="flex h-full items-start justify-center overflow-auto p-2">
                         <img src={previewUrl} alt="Invoice" className="max-w-full rounded object-contain" />
@@ -439,8 +434,8 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                   </div>
                 </div>
               )}
-              {/* Full-width Form */}
-              <div className="flex-1 overflow-y-auto w-full">
+              {/* Right: Form — takes remaining width */}
+              <div className={previewUrl ? "flex-1 overflow-y-auto" : "w-full overflow-y-auto"}>
             <div className="space-y-4 p-6">
               {scanResult?.notes && (
                 <div className="flex items-start gap-2 rounded-lg border border-yellow-200 bg-yellow-50 p-3">
@@ -604,40 +599,25 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                         {reviewItems.length}
                       </span>
                     </h3>
-                    <div className="flex items-center gap-3">
-                      {previewUrl && (
-                        <button
-                          type="button"
-                          onClick={() => setShowPreview((v) => !v)}
-                          className="flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium text-brand-500 hover:bg-brand-50 transition-colors"
-                        >
-                          <FileText className="h-3.5 w-3.5" />
-                          {showPreview ? "Hide Invoice" : "View Invoice"}
-                        </button>
-                      )}
-                      <p className="text-xs text-navy/40">Review and correct AI-extracted data below</p>
-                    </div>
+                    <p className="text-xs text-navy/40">Review and correct AI-extracted data below</p>
                   </div>
                   <div className="overflow-x-auto rounded-xl border border-surface-border">
-                    <table className="min-w-[700px] w-full text-sm">
+                    <table className="w-full text-sm">
                       <thead>
                         <tr className="border-b border-surface-border bg-surface-raised">
-                          <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-navy">
+                          <th className="px-2 py-2 text-left text-xs font-semibold uppercase tracking-wide text-navy">
                             Product
                           </th>
-                          <th className="w-32 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-navy">
+                          <th className="w-24 px-2 py-2 text-left text-xs font-semibold uppercase tracking-wide text-navy">
                             Qty
                           </th>
-                          <th className="w-40 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-navy">
+                          <th className="w-32 px-2 py-2 text-left text-xs font-semibold uppercase tracking-wide text-navy">
                             Unit Price
                           </th>
-                          <th className="w-28 px-3 py-2 text-right text-xs font-semibold uppercase tracking-wide text-navy">
-                            Calculated
+                          <th className="w-24 px-2 py-2 text-right text-xs font-semibold uppercase tracking-wide text-navy">
+                            Line Total
                           </th>
-                          <th className="w-28 px-3 py-2 text-right text-xs font-semibold uppercase tracking-wide text-navy">
-                            Invoice Total
-                          </th>
-                          <th className="w-8 px-3 py-2" />
+                          <th className="w-8 px-2 py-2" />
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-surface-border">
@@ -651,7 +631,7 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                           const costChanged = item.unitCost !== item.extractedUnitCost && item.extractedUnitCost;
                           return (
                             <tr key={i} className="group align-top">
-                              <td className="px-3 py-2">
+                              <td className="px-2 py-2">
                                 <div className="space-y-1">
                                   {item.extractedName && item.extractedName !== item.description && (
                                     <p className="text-[10px] italic text-navy/40 flex items-center gap-1">
@@ -666,7 +646,6 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                                       className="flex-1 rounded border border-surface-border bg-white px-2 py-1 text-xs text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
                                     >
                                       <option value="">— Custom item —</option>
-                                      {/* Ensure matched product always appears as an option even if not in the list */}
                                       {item.productId && !products.find((p) => p.id === item.productId) && (
                                         <option value={item.productId}>{item.description}</option>
                                       )}
@@ -687,7 +666,7 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                                   )}
                                 </div>
                               </td>
-                              <td className="px-3 py-2">
+                              <td className="px-2 py-2">
                                 <input
                                   type="number"
                                   min="0.001"
@@ -703,18 +682,16 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                                   </p>
                                 )}
                               </td>
-                              <td className="px-3 py-2">
+                              <td className="px-2 py-2">
                                 <div className="relative">
-                                  <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-navy/40">
-                                    $
-                                  </span>
+                                  <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-navy/40">$</span>
                                   <input
                                     type="number"
                                     min="0"
                                     step="0.0001"
                                     value={item.unitCost}
                                     onChange={(e) => updateItem(i, { unitCost: e.target.value })}
-                                    className="w-full rounded border border-surface-border py-1.5 pl-5 pr-2 text-right text-sm text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
+                                    className="w-full rounded border border-surface-border py-1.5 pl-4 pr-2 text-right text-sm text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
                                   />
                                   {costChanged && (
                                     <p className="mt-0.5 text-right text-[10px] text-navy/40 flex items-center justify-end gap-0.5">
@@ -724,24 +701,23 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                                   )}
                                 </div>
                               </td>
-                              <td className="px-3 py-2 text-right text-xs font-medium text-navy">
-                                {calculated != null ? fmt(calculated) : <span className="text-navy/30">—</span>}
-                              </td>
-                              <td className="px-3 py-2 text-right text-xs">
+                              <td className="px-2 py-2 text-right text-xs font-medium text-navy">
                                 {invoiceTotal != null ? (
                                   <span className={cn(
                                     "font-medium",
                                     calculated != null && Math.abs(calculated - invoiceTotal) > 0.01
-                                      ? "text-amber-600"  // mismatch — might be tax/rounding
+                                      ? "text-amber-600"
                                       : "text-navy"
                                   )}>
                                     {fmt(invoiceTotal)}
                                   </span>
+                                ) : calculated != null ? (
+                                  fmt(calculated)
                                 ) : (
                                   <span className="text-navy/30">—</span>
                                 )}
                               </td>
-                              <td className="px-3 py-2">
+                              <td className="px-2 py-2">
                                 <button
                                   onClick={() => removeItem(i)}
                                   className="rounded p-1 text-navy/20 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-red-50 hover:text-red-500"
