@@ -85,8 +85,6 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
   const [lineItemsError, setLineItemsError] = React.useState("");
   const [expandedParentId, setExpandedParentId] = React.useState<string | null>(null);
   const productSearchRef = React.useRef<HTMLInputElement>(null);
-  // Tracks the current dropdown list so the barcode handler can read it (stale-closure safe)
-  const filteredProductsRef = React.useRef<any[]>([]);
 
   // Debounce customer search
   React.useEffect(() => {
@@ -122,21 +120,20 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
       .slice(0, 10);
   }, [productsData, debouncedProductSearch]);
 
-  // Keep ref in sync so the barcode handler always sees the latest dropdown list
-  filteredProductsRef.current = filteredProducts;
-
   // Barcode scan handler — kept in a ref so the keydown listener never goes stale
   const barcodeScanHandlerRef = React.useRef<(code: string) => void>(() => {});
   barcodeScanHandlerRef.current = async (code: string) => {
-    // 1. Try dedicated barcode field lookup
+    // 1. Try dedicated barcode field lookup (product.barcode == scanned code)
     try {
-      const product = await apiClient.get(`/products/barcode/${encodeURIComponent(code)}`).then((r) => r.data);
-      addLineItem(product);
+      const product = await apiClient
+        .get(`/products/barcode/${encodeURIComponent(code)}`)
+        .then((r) => r.data);
+      addLineItem(product); // addLineItem clears search + refocuses
       return;
     } catch {
-      // not found by barcode — fall through
+      // not found by barcode field — fall through to SKU
     }
-    // 2. Try exact SKU match via search API
+    // 2. Search by code and pick exact SKU match first, then any result
     try {
       const res = await apiClient
         .get("/products", { params: { search: code, limit: 10, isActive: true, includeVariants: true } })
@@ -145,31 +142,17 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
       const skuMatch = matches.find(
         (p) => (p.sku ?? "").toLowerCase() === code.toLowerCase(),
       );
-      if (skuMatch) {
-        addLineItem(skuMatch);
-        return;
-      }
-      if (matches.length === 1) {
-        // Unambiguous single result — add it
-        addLineItem(matches[0]);
-        return;
-      }
-      if (matches.length > 1) {
-        // Multiple API results — pick the first one (scan is unambiguous intent)
-        addLineItem(matches[0]);
+      const toAdd = skuMatch ?? matches[0]; // exact SKU first; first search result as fallback
+      if (toAdd) {
+        addLineItem(toAdd);
         return;
       }
     } catch {
-      // fall through to dropdown fallback
+      // fall through to not-found
     }
-    // 3. Last resort: use whatever is already showing in the dropdown
-    //    (the characters typed during the scan triggered the search in parallel)
-    const dropdownResults = filteredProductsRef.current;
-    if (dropdownResults.length > 0) {
-      addLineItem(dropdownResults[0]);
-      return;
-    }
-    toast({ title: `No product found for: ${code}`, variant: "error" });
+    // Nothing found — show clear error and stay focused for the next scan
+    toast({ title: "Item not found", variant: "error" });
+    setTimeout(() => productSearchRef.current?.focus(), 50);
   };
 
   // USB/physical scanner detection
@@ -187,6 +170,10 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
       if (e.key === "Enter") {
         e.preventDefault(); // always block form submit from this input
         if (sequence.length >= 4) {
+          // Clear the controlled input immediately so the debounced search
+          // doesn't fire in parallel and interfere with the lookup
+          setProductSearch("");
+          setDebouncedProductSearch("");
           barcodeScanHandlerRef.current(sequence);
         }
         sequence = "";
