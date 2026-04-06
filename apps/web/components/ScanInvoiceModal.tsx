@@ -80,6 +80,7 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const [previewUrl, setPreviewUrl] = React.useState<string | null>(null);
   const [previewType, setPreviewType] = React.useState<"pdf" | "image" | null>(null);
+  const [showPreview, setShowPreview] = React.useState(false);
 
   // Bill fields
   const [supplierId, setSupplierId] = React.useState("");
@@ -125,6 +126,7 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
       setExpenseNotes("");
       setPreviewUrl(null);
       setPreviewType(null);
+      setShowPreview(false);
     }
   }, [open]);
 
@@ -413,22 +415,22 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
 
           {/* Review Step */}
           {step === "review" && (
-            <div className="flex h-full min-h-0 flex-1">
-              {/* Left: Invoice Preview */}
-              {previewUrl && (
-                <div className="flex w-2/5 shrink-0 flex-col border-r border-surface-border bg-surface-raised">
-                  <div className="flex items-center gap-2 border-b border-surface-border px-4 py-2.5">
-                    <FileText className="h-4 w-4 text-brand-500" />
-                    <span className="text-xs font-semibold uppercase tracking-wide text-navy/60">Invoice Preview</span>
+            <div className="flex h-full min-h-0 flex-1 flex-col">
+              {/* Collapsible Invoice Preview */}
+              {previewUrl && showPreview && (
+                <div className="flex h-72 shrink-0 flex-col border-b border-surface-border bg-surface-raised">
+                  <div className="flex items-center justify-between border-b border-surface-border px-4 py-2">
+                    <div className="flex items-center gap-2">
+                      <FileText className="h-4 w-4 text-brand-500" />
+                      <span className="text-xs font-semibold uppercase tracking-wide text-navy/60">Invoice Preview</span>
+                    </div>
+                    <button onClick={() => setShowPreview(false)} className="rounded p-1 text-navy/40 hover:text-navy transition-colors">
+                      <X className="h-4 w-4" />
+                    </button>
                   </div>
                   <div className="flex-1 overflow-hidden">
                     {previewType === "pdf" ? (
-                      <iframe
-                        src={previewUrl}
-                        className="h-full w-full"
-                        style={{ minHeight: "500px" }}
-                        title="Invoice PDF"
-                      />
+                      <iframe src={previewUrl} className="h-full w-full" title="Invoice PDF" />
                     ) : (
                       <div className="flex h-full items-start justify-center overflow-auto p-2">
                         <img src={previewUrl} alt="Invoice" className="max-w-full rounded object-contain" />
@@ -437,8 +439,8 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                   </div>
                 </div>
               )}
-              {/* Right: Form */}
-              <div className={previewUrl ? "flex-1 overflow-y-auto" : "w-full overflow-y-auto"}>
+              {/* Full-width Form */}
+              <div className="flex-1 overflow-y-auto w-full">
             <div className="space-y-4 p-6">
               {scanResult?.notes && (
                 <div className="flex items-start gap-2 rounded-lg border border-yellow-200 bg-yellow-50 p-3">
@@ -602,7 +604,19 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                         {reviewItems.length}
                       </span>
                     </h3>
-                    <p className="text-xs text-navy/40">Review and correct AI-extracted data below</p>
+                    <div className="flex items-center gap-3">
+                      {previewUrl && (
+                        <button
+                          type="button"
+                          onClick={() => setShowPreview((v) => !v)}
+                          className="flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium text-brand-500 hover:bg-brand-50 transition-colors"
+                        >
+                          <FileText className="h-3.5 w-3.5" />
+                          {showPreview ? "Hide Invoice" : "View Invoice"}
+                        </button>
+                      )}
+                      <p className="text-xs text-navy/40">Review and correct AI-extracted data below</p>
+                    </div>
                   </div>
                   <div className="overflow-x-auto rounded-xl border border-surface-border">
                     <table className="min-w-[700px] w-full text-sm">
