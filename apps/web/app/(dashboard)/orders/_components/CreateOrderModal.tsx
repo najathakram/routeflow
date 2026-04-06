@@ -85,6 +85,8 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
   const [lineItemsError, setLineItemsError] = React.useState("");
   const [expandedParentId, setExpandedParentId] = React.useState<string | null>(null);
   const productSearchRef = React.useRef<HTMLInputElement>(null);
+  // Tracks the current dropdown list so the barcode handler can read it (stale-closure safe)
+  const filteredProductsRef = React.useRef<any[]>([]);
 
   // Debounce customer search
   React.useEffect(() => {
@@ -120,18 +122,21 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
       .slice(0, 10);
   }, [productsData, debouncedProductSearch]);
 
+  // Keep ref in sync so the barcode handler always sees the latest dropdown list
+  filteredProductsRef.current = filteredProducts;
+
   // Barcode scan handler — kept in a ref so the keydown listener never goes stale
   const barcodeScanHandlerRef = React.useRef<(code: string) => void>(() => {});
   barcodeScanHandlerRef.current = async (code: string) => {
-    // 1. Try barcode field lookup
+    // 1. Try dedicated barcode field lookup
     try {
       const product = await apiClient.get(`/products/barcode/${encodeURIComponent(code)}`).then((r) => r.data);
       addLineItem(product);
       return;
     } catch {
-      // not found by barcode — fall through to SKU lookup
+      // not found by barcode — fall through
     }
-    // 2. Fall back to exact SKU match
+    // 2. Try exact SKU match via search API
     try {
       const res = await apiClient
         .get("/products", { params: { search: code, limit: 10, isActive: true, includeVariants: true } })
@@ -142,15 +147,29 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
       );
       if (skuMatch) {
         addLineItem(skuMatch);
-      } else if (matches.length === 1) {
-        // Only one result from the search — treat it as the scanned item
+        return;
+      }
+      if (matches.length === 1) {
+        // Unambiguous single result — add it
         addLineItem(matches[0]);
-      } else {
-        toast({ title: `No product found for: ${code}`, variant: "error" });
+        return;
+      }
+      if (matches.length > 1) {
+        // Multiple API results — pick the first one (scan is unambiguous intent)
+        addLineItem(matches[0]);
+        return;
       }
     } catch {
-      toast({ title: `No product found for: ${code}`, variant: "error" });
+      // fall through to dropdown fallback
     }
+    // 3. Last resort: use whatever is already showing in the dropdown
+    //    (the characters typed during the scan triggered the search in parallel)
+    const dropdownResults = filteredProductsRef.current;
+    if (dropdownResults.length > 0) {
+      addLineItem(dropdownResults[0]);
+      return;
+    }
+    toast({ title: `No product found for: ${code}`, variant: "error" });
   };
 
   // USB/physical scanner detection
