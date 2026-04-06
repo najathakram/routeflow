@@ -155,43 +155,16 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
     setTimeout(() => productSearchRef.current?.focus(), 50);
   };
 
-  // USB/physical scanner detection
-  // A barcode scan = rapid keystrokes (chars arrive < 200 ms apart) followed by Enter.
-  // We track the accumulated sequence; when Enter fires we use the sequence if it's ≥ 4
-  // chars long — the inter-character timing (not the Enter timing) is the discriminator
-  // between human typing and a scanner.
-  React.useEffect(() => {
-    const input = productSearchRef.current;
-    if (!input) return;
-    let lastKeyTime = 0;
-    let sequence = "";
-    const handleKeyDown = (e: KeyboardEvent) => {
-      const now = Date.now();
-      if (e.key === "Enter") {
-        e.preventDefault(); // always block form submit from this input
-        if (sequence.length >= 4) {
-          // Clear the controlled input immediately so the debounced search
-          // doesn't fire in parallel and interfere with the lookup
-          setProductSearch("");
-          setDebouncedProductSearch("");
-          barcodeScanHandlerRef.current(sequence);
-        }
-        sequence = "";
-        return;
-      }
-      if (e.key.length === 1) {
-        if (now - lastKeyTime > 200) {
-          sequence = e.key;
-        } else {
-          sequence += e.key;
-        }
-        lastKeyTime = now;
-      }
-    };
-    input.addEventListener("keydown", handleKeyDown);
-    return () => input.removeEventListener("keydown", handleKeyDown);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // handleProductSearchEnter — called when Enter is pressed in the product search input.
+  // Works for keyboard-emulation scanners AND paste-mode scanners (where no individual
+  // keydown events fire for each character, so sequence-accumulation approaches fail).
+  const handleProductSearchEnter = () => {
+    const code = productSearch.trim();
+    if (!code) return;
+    setProductSearch("");
+    setDebouncedProductSearch("");
+    barcodeScanHandlerRef.current(code);
+  };
 
   const { register, handleSubmit, reset, watch } = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -493,6 +466,13 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
                   setProductSearch(e.target.value);
                   setLineItemsError("");
                   setExpandedParentId(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    handleProductSearchEnter();
+                  }
                 }}
                 className={cn(
                   "h-10 w-full rounded border bg-white px-3 text-sm text-navy placeholder:text-navy/40 focus:outline-none focus:ring-2 focus:ring-brand-500",
