@@ -96,7 +96,7 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
   const { data: suppliersData } = useSuppliers();
   const suppliers = (suppliersData as { id: string; name: string }[] | undefined) ?? [];
 
-  const { data: productsData } = useProducts({ limit: 500, isActive: true });
+  const { data: productsData } = useProducts({ limit: 1000 });
   const products =
     (productsData as { data: { id: string; name: string; unit: string; averageCost?: string }[] } | undefined)
       ?.data ?? [];
@@ -652,6 +652,10 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                                       className="flex-1 rounded border border-surface-border bg-white px-2 py-1 text-xs text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
                                     >
                                       <option value="">— Custom item —</option>
+                                      {/* Ensure matched product always appears as an option even if not in the list */}
+                                      {item.productId && !products.find((p) => p.id === item.productId) && (
+                                        <option value={item.productId}>{item.description}</option>
+                                      )}
                                       {products.map((p) => (
                                         <option key={p.id} value={p.id}>{p.name}</option>
                                       ))}

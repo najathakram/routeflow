@@ -46,6 +46,7 @@ import { InlineCreateProductModal } from "@/components/InlineCreateProductModal"
 import { ScanInvoiceModal } from "@/components/ScanInvoiceModal";
 import Link from "next/link";
 import { fmt, fmtDate, todayIso } from "@/lib/formatting";
+import { apiClient } from "@/lib/api-client";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -172,10 +173,20 @@ function ProductCombobox({
     setOpen(false);
   };
 
-  const handleBarcodeScanned = (code: string) => {
-    const match = products.find((p) => p.barcode === code);
-    if (match) handleSelect(match);
-    else { setSearch(code); setOpen(true); }
+  const handleBarcodeScanned = async (code: string) => {
+    // 1. Try barcode endpoint
+    try {
+      const res = await apiClient.get(`/products/barcode/${encodeURIComponent(code)}`);
+      if (res.data?.id) { handleSelect(res.data as ProductOption); return; }
+    } catch { /* not found */ }
+    // 2. Try exact SKU match from current results
+    const skuMatch = products.find((p) => p.sku === code);
+    if (skuMatch) { handleSelect(skuMatch); return; }
+    // 3. Fall back to first search result
+    if (products.length === 1) { handleSelect(products[0]); return; }
+    // 4. Open dropdown with code pre-filled
+    setSearch(code);
+    setOpen(true);
   };
 
   return (
@@ -252,6 +263,53 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
   const [createProductOpen, setCreateProductOpen] = React.useState(false);
   const [createProductForIndex, setCreateProductForIndex] = React.useState<number>(-1);
   const [createProductSearch, setCreateProductSearch] = React.useState("");
+  const [scanInput, setScanInput] = React.useState("");
+  const scanInputRef = React.useRef<HTMLInputElement>(null);
+  const lineItemsRef = React.useRef(lineItems);
+  React.useEffect(() => { lineItemsRef.current = lineItems; }, [lineItems]);
+
+  const handleBillScan = React.useCallback(async (code: string) => {
+    if (!code.trim()) return;
+    let product: ProductOption | null = null;
+    // 1. barcode endpoint
+    try {
+      const res = await apiClient.get(`/products/barcode/${encodeURIComponent(code.trim())}`);
+      if (res.data?.id) product = res.data as ProductOption;
+    } catch { /* not found */ }
+    // 2. search by SKU
+    if (!product) {
+      try {
+        const res = await apiClient.get("/products", { params: { search: code.trim(), limit: 5, isActive: true } });
+        const results: ProductOption[] = res.data?.data ?? [];
+        product = results.find((p) => p.sku === code.trim()) ?? results[0] ?? null;
+      } catch { /* ignore */ }
+    }
+    if (!product) {
+      toast({ title: `Item not found: ${code.trim()}`, variant: "error" });
+      setScanInput("");
+      setTimeout(() => scanInputRef.current?.focus(), 50);
+      return;
+    }
+    const existing = lineItemsRef.current.findIndex((li) => li.productId === product!.id);
+    if (existing >= 0) {
+      setLineItems((prev) => prev.map((li, i) => i === existing ? { ...li, qty: String(parseFloat(li.qty || "1") + 1) } : li));
+    } else {
+      const newItem: LineItemRow = {
+        productId: product.id,
+        description: product.name,
+        unit: product.unit,
+        qty: "1",
+        unitCost: product.averageCost ? String(parseFloat(product.averageCost).toFixed(4)) : "",
+      };
+      setLineItems((prev) => {
+        // Replace a single empty item if present
+        if (prev.length === 1 && !prev[0].productId && !prev[0].description) return [newItem];
+        return [...prev, newItem];
+      });
+    }
+    setScanInput("");
+    setTimeout(() => scanInputRef.current?.focus(), 50);
+  }, [toast]);
 
   const { data: posData } = usePurchaseOrders(supplierId ? { supplierId } : undefined);
   const purchaseOrders: Array<{ id: string; poNumber: string }> = (posData as any)?.data ?? [];
@@ -328,6 +386,25 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
         }
       >
         <form id="create-bill-form" onSubmit={handleSubmit} noValidate className="space-y-4">
+          {/* ── Barcode scan strip ── */}
+          <div className="flex items-center gap-2 rounded-lg border border-dashed border-brand-300 bg-brand-50 px-3 py-2">
+            <span className="text-xs font-medium text-brand-600 shrink-0">Scan item:</span>
+            <input
+              ref={scanInputRef}
+              type="text"
+              placeholder="Scan barcode or enter SKU then Enter…"
+              value={scanInput}
+              onChange={(e) => setScanInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  handleBillScan(scanInput);
+                }
+              }}
+              className="flex-1 bg-transparent text-sm text-navy placeholder:text-navy/30 outline-none"
+            />
+          </div>
           <div>
             <label className="mb-1.5 block text-sm font-medium text-navy/80">Supplier</label>
             <select value={supplierId} onChange={(e) => setSupplierId(e.target.value)}
