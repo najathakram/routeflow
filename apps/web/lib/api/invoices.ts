@@ -90,6 +90,7 @@ interface PaginatedResponse<T> {
 // ─── Queries ──────────────────────────────────────────────────────────────────
 
 export function useInvoices(params?: {
+  customerId?: string;
   status?: string;
   search?: string;
   dateFrom?: string;

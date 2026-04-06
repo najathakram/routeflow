@@ -80,6 +80,7 @@ import {
   type CustomerComment,
 } from "@/lib/api/customers";
 import { useProducts } from "@/lib/api/products";
+import { useInvoices } from "@/lib/api/invoices";
 import { useRoutes, useAddStopToRoute } from "@/lib/api/routes";
 import {
   useOrderTemplates,
@@ -151,6 +152,94 @@ function TabTrigger({
     >
       {children}
     </Tabs.Trigger>
+  );
+}
+
+// ── Invoice status badge ──────────────────────────────────────────────────────
+
+function renderInvoiceStatus(
+  status: string,
+  dueDate?: string | null,
+): React.ReactNode {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  if (status === "PAID")
+    return <span className="text-xs font-semibold text-green-600">Paid</span>;
+  if (status === "VOID")
+    return <span className="text-xs font-semibold text-gray-400">Void</span>;
+  if (status === "WRITTEN_OFF")
+    return (
+      <span className="text-xs font-semibold text-stone-500">Written Off</span>
+    );
+  if (status === "DRAFT")
+    return (
+      <span className="text-xs font-semibold text-gray-500">Draft</span>
+    );
+
+  if (dueDate) {
+    const due = new Date(dueDate);
+    due.setHours(0, 0, 0, 0);
+    const diffDays = Math.round(
+      (due.getTime() - today.getTime()) / (1000 * 60 * 60 * 24),
+    );
+
+    if (status === "OVERDUE" || diffDays < 0) {
+      const days = Math.abs(diffDays);
+      if (status === "PARTIAL")
+        return (
+          <span className="text-xs font-semibold text-orange-500">
+            Partial · Overdue{days > 0 ? ` by ${days}d` : ""}
+          </span>
+        );
+      return (
+        <span className="text-xs font-semibold text-red-600">
+          Overdue{days > 0 ? ` by ${days}d` : ""}
+        </span>
+      );
+    }
+    if (diffDays === 0) {
+      if (status === "PARTIAL")
+        return (
+          <span className="text-xs font-semibold text-yellow-600">
+            Partial · Due Today
+          </span>
+        );
+      return (
+        <span className="text-xs font-semibold text-orange-500">
+          Due Today
+        </span>
+      );
+    }
+    if (status === "PARTIAL")
+      return (
+        <span className="text-xs font-semibold text-yellow-600">
+          Partial · Due in {diffDays}d
+        </span>
+      );
+  }
+
+  const colors: Record<string, string> = {
+    SENT: "text-blue-600",
+    VIEWED: "text-purple-600",
+    PARTIAL: "text-yellow-600",
+    OVERDUE: "text-red-600",
+  };
+  const labels: Record<string, string> = {
+    SENT: "Sent",
+    VIEWED: "Viewed",
+    PARTIAL: "Partial",
+    OVERDUE: "Overdue",
+  };
+  return (
+    <span
+      className={cn(
+        "text-xs font-semibold",
+        colors[status] ?? "text-gray-500",
+      )}
+    >
+      {labels[status] ?? status}
+    </span>
   );
 }
 
@@ -1067,6 +1156,23 @@ export default function CustomerDetailPage({
   const { data: advancePayments } = useCustomerAdvancePayments(params.id);
   const createAdvance = useCreateAdvancePayment();
 
+  const [invoiceFilter, setInvoiceFilter] = React.useState<
+    "all" | "outstanding" | "paid" | "void"
+  >("all");
+  const { data: invoicesData, isLoading: invoicesLoading } = useInvoices({
+    customerId: params.id,
+    status:
+      invoiceFilter === "outstanding"
+        ? "SENT,VIEWED,PARTIAL,OVERDUE"
+        : invoiceFilter === "paid"
+          ? "PAID"
+          : invoiceFilter === "void"
+            ? "VOID"
+            : undefined,
+    limit: 50,
+  });
+  const customerInvoices = invoicesData?.data ?? [];
+
   // New hooks
   const { data: contactPersons, isLoading: contactsLoading } =
     useContactPersons(params.id);
@@ -1306,6 +1412,10 @@ export default function CustomerDetailPage({
           <TabTrigger value="standing-orders">
             Standing Orders
             {templates.length > 0 ? ` (${templates.length})` : ""}
+          </TabTrigger>
+          <TabTrigger value="invoices">
+            Invoices
+            {customerInvoices.length > 0 ? ` (${customerInvoices.length})` : ""}
           </TabTrigger>
           <TabTrigger value="billing">Billing</TabTrigger>
           <TabTrigger value="special-prices">Special Prices</TabTrigger>
@@ -2109,6 +2219,167 @@ export default function CustomerDetailPage({
                   </li>
                 ))}
               </ul>
+            )}
+          </Card>
+        </Tabs.Content>
+
+        {/* ── Invoices tab ───────────────────────────────────────── */}
+        <Tabs.Content value="invoices" className="mt-5 focus:outline-none">
+          {/* Summary bar */}
+          {(() => {
+            const allInvoices = invoicesData?.data ?? [];
+            const outstanding = allInvoices.filter((inv) =>
+              ["SENT", "VIEWED", "PARTIAL", "OVERDUE"].includes(inv.status),
+            );
+            const overdueCount = allInvoices.filter(
+              (inv) => inv.status === "OVERDUE",
+            ).length;
+            const outstandingTotal = outstanding.reduce(
+              (sum, inv) => sum + (inv.balanceDue ?? inv.total),
+              0,
+            );
+            return (
+              <div className="mb-5 grid grid-cols-2 gap-4 sm:grid-cols-3">
+                <Card>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-navy/40">
+                    Outstanding
+                  </p>
+                  <p
+                    className={`mt-1 text-xl font-bold ${outstandingTotal > 0 ? "text-danger" : "text-success"}`}
+                  >
+                    {fmt(outstandingTotal)}
+                  </p>
+                </Card>
+                <Card>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-navy/40">
+                    Overdue
+                  </p>
+                  <p
+                    className={`mt-1 text-xl font-bold ${overdueCount > 0 ? "text-danger" : "text-navy"}`}
+                  >
+                    {overdueCount} invoice{overdueCount !== 1 ? "s" : ""}
+                  </p>
+                </Card>
+                <Card>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-navy/40">
+                    Total Invoices
+                  </p>
+                  <p className="mt-1 text-xl font-bold text-navy">
+                    {invoicesData?.meta?.total ?? allInvoices.length}
+                  </p>
+                </Card>
+              </div>
+            );
+          })()}
+
+          <Card>
+            {/* Header row */}
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex gap-2">
+                {(
+                  [
+                    { key: "all", label: "All" },
+                    { key: "outstanding", label: "Outstanding" },
+                    { key: "paid", label: "Paid" },
+                    { key: "void", label: "Void" },
+                  ] as const
+                ).map(({ key, label }) => (
+                  <button
+                    key={key}
+                    onClick={() => setInvoiceFilter(key)}
+                    className={`rounded-full px-3 py-1 text-xs font-semibold transition-colors ${
+                      invoiceFilter === key
+                        ? "bg-brand text-white"
+                        : "bg-surface-secondary text-navy/60 hover:bg-surface-border"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <Link
+                href={`/invoices/new?customerId=${params.id}`}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand/90"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                New Invoice
+              </Link>
+            </div>
+
+            {/* Invoice table */}
+            {invoicesLoading ? (
+              <p className="py-8 text-center text-sm text-navy/40">
+                Loading invoices…
+              </p>
+            ) : customerInvoices.length === 0 ? (
+              <div className="py-10 text-center">
+                <FileText className="mx-auto mb-3 h-8 w-8 text-navy/20" />
+                <p className="text-sm font-medium text-navy/50">
+                  No invoices found
+                </p>
+                <Link
+                  href={`/invoices/new?customerId=${params.id}`}
+                  className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand/90"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Create Invoice
+                </Link>
+              </div>
+            ) : (
+              <div className="-mx-6 -mb-6 overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-surface-border bg-surface-secondary text-left text-xs font-semibold uppercase tracking-wider text-navy/40">
+                      <th className="px-6 py-3">Invoice #</th>
+                      <th className="px-4 py-3">Date</th>
+                      <th className="px-4 py-3">Due Date</th>
+                      <th className="px-4 py-3 text-right">Total</th>
+                      <th className="px-4 py-3 text-right">Balance Due</th>
+                      <th className="px-6 py-3">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-surface-border">
+                    {customerInvoices.map((inv) => {
+                      const isOverdue = inv.status === "OVERDUE";
+                      const balanceDue = inv.balanceDue ?? 0;
+                      return (
+                        <tr
+                          key={inv.id}
+                          className="transition-colors hover:bg-surface-secondary/40"
+                        >
+                          <td className="px-6 py-3">
+                            <Link
+                              href={`/invoices/${inv.id}`}
+                              className="font-semibold text-brand hover:underline"
+                            >
+                              {inv.invoiceNumber}
+                            </Link>
+                          </td>
+                          <td className="px-4 py-3 text-navy/60">
+                            {inv.issueDate ? fmtDate(inv.issueDate) : "—"}
+                          </td>
+                          <td
+                            className={`px-4 py-3 ${isOverdue ? "font-semibold text-danger" : "text-navy/60"}`}
+                          >
+                            {inv.dueDate ? fmtDate(inv.dueDate) : "—"}
+                          </td>
+                          <td className="px-4 py-3 text-right text-navy">
+                            {fmt(inv.total)}
+                          </td>
+                          <td
+                            className={`px-4 py-3 text-right font-semibold ${balanceDue > 0 ? "text-danger" : "text-success"}`}
+                          >
+                            {fmt(balanceDue)}
+                          </td>
+                          <td className="px-6 py-3">
+                            {renderInvoiceStatus(inv.status, inv.dueDate)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             )}
           </Card>
         </Tabs.Content>
