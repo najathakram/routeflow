@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from "@nestjs/common";
 import { InjectQueue } from "@nestjs/bull";
@@ -31,6 +32,7 @@ import { InvoicesService } from "../invoices/invoices.service";
 
 @Injectable()
 export class OrdersService {
+  private readonly logger = new Logger(OrdersService.name);
   private readonly taxRate: number;
 
   constructor(
@@ -292,7 +294,7 @@ export class OrdersService {
 
     const allowed: Record<string, string[]> = {
       PENDING: ["CONFIRMED", "CANCELLED"],
-      CONFIRMED: ["OUT_FOR_DELIVERY", "PENDING", "CANCELLED"],
+      CONFIRMED: ["OUT_FOR_DELIVERY", "DELIVERED", "PENDING", "CANCELLED"],
       OUT_FOR_DELIVERY: ["DELIVERED", "CONFIRMED", "CANCELLED"],
       DELIVERED: ["CONFIRMED"],
     };
@@ -331,7 +333,9 @@ export class OrdersService {
 
     // Auto-create invoice when operator manually marks order as delivered
     if (dto.status === OrderStatus.DELIVERED) {
-      this.invoicesService.createInvoiceFromOrder(id).catch(() => {});
+      this.invoicesService.createInvoiceFromOrder(id).catch((err) => {
+        this.logger.error(`Failed to auto-create invoice for order ${id}: ${err?.message ?? err}`);
+      });
     }
 
     // Fire-and-forget push notifications for key status transitions
