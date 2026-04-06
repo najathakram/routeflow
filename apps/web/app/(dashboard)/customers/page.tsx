@@ -3,12 +3,13 @@
 import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Pencil, ToggleLeft, ToggleRight, Eye, CheckSquare, X, Trash2, Download, ArrowUpDown, Merge } from "lucide-react";
+import { Pencil, ToggleLeft, ToggleRight, Eye, CheckSquare, X, Trash2, Download, Upload, ArrowUpDown, Merge, AlertCircle } from "lucide-react";
 import { PageHeader, Table, Badge, Button, Select, cn, type BadgeStatus } from "@routeflow/ui/web";
 import { useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { CustomerFormModal } from "./_components/CustomerFormModal";
 import { useCustomers, useUpdateCustomerStatus, useDeleteCustomer, useCustomerTags, useExportCustomers, useMergeCustomers } from "@/lib/api/customers";
+import { apiClient } from "@/lib/api-client";
 import { useCustomerRouteAssignments } from "@/lib/api/routes";
 import { useDebounce } from "@/lib/hooks/useDebounce";
 import { fmt } from "@/lib/formatting";
@@ -29,6 +30,132 @@ interface Customer {
   addresses: any[];
 }
 
+// ─── Import Modal ─────────────────────────────────────────────────────────────
+
+function ImportCustomersModal({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
+  const { toast } = useToast();
+  const [file, setFile] = React.useState<File | null>(null);
+  const [loading, setLoading] = React.useState(false);
+  const [result, setResult] = React.useState<{ created: number; updated: number; skipped: number; errors: string[] } | null>(null);
+  const inputRef = React.useRef<HTMLInputElement>(null);
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    const f = e.dataTransfer.files?.[0];
+    if (f && f.name.endsWith(".csv")) { setFile(f); setResult(null); }
+  };
+
+  const handleImport = async () => {
+    if (!file) return;
+    setLoading(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await apiClient.post("/import/contacts", formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+        timeout: 300_000,
+      });
+      setResult(res.data);
+      toast({
+        title: "Customers imported",
+        description: `${res.data.created} created, ${res.data.updated} updated, ${res.data.skipped} skipped`,
+        variant: "success",
+      });
+      onDone();
+    } catch (err: any) {
+      toast({
+        title: "Import failed",
+        description: err?.response?.data?.message ?? "Please check your file format and try again",
+        variant: "error",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-md rounded-xl bg-white shadow-xl">
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-surface-border px-6 py-4">
+          <h2 className="text-base font-semibold text-navy">Import Customers</h2>
+          <button onClick={onClose} className="rounded p-1 text-navy/40 hover:text-navy transition-colors">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="space-y-4 px-6 py-5">
+          {/* How-to hint */}
+          <div className="flex items-start gap-2 rounded-lg bg-surface-raised px-3 py-2.5 text-xs text-navy/60">
+            <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0 text-navy/40" />
+            <span>
+              <strong className="text-navy/70">How to export from Zoho:</strong>{" "}
+              Zoho Invoices → Contacts → ⋮ → Export Contacts (CSV)
+            </span>
+          </div>
+
+          {/* Drop zone */}
+          <div
+            onDrop={handleDrop}
+            onDragOver={(e) => e.preventDefault()}
+            onClick={() => inputRef.current?.click()}
+            className={cn(
+              "flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-8 transition-colors",
+              file
+                ? "border-brand-300 bg-brand-50"
+                : "border-surface-border hover:border-brand-300 hover:bg-brand-50/30",
+            )}
+          >
+            <input ref={inputRef} type="file" accept=".csv" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) { setFile(f); setResult(null); } }} />
+            <Upload className={cn("h-6 w-6", file ? "text-brand-500" : "text-navy/30")} />
+            {file ? (
+              <div className="text-center">
+                <p className="text-sm font-medium text-brand-600">{file.name}</p>
+                <p className="text-xs text-navy/40">{(file.size / 1024).toFixed(1)} KB · Click to change</p>
+              </div>
+            ) : (
+              <div className="text-center">
+                <p className="text-sm text-navy/60">Drop CSV file here or <span className="text-brand-500">browse</span></p>
+                <p className="text-xs text-navy/40 mt-0.5">Zoho Contacts CSV format</p>
+              </div>
+            )}
+          </div>
+
+          {/* Result */}
+          {result && (
+            <div className="rounded-lg border border-success/30 bg-success-bg/50 px-3 py-2.5 text-sm">
+              <p className="font-medium text-success">Import complete</p>
+              <p className="text-xs text-navy/60 mt-0.5">
+                {result.created} created · {result.updated} updated · {result.skipped} skipped
+                {result.errors.length > 0 && ` · ${result.errors.length} error${result.errors.length !== 1 ? "s" : ""}`}
+              </p>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex justify-end gap-2 border-t border-surface-border px-6 py-4">
+          <button onClick={onClose} className="rounded-lg border border-surface-border px-4 py-2 text-sm text-navy hover:bg-surface-raised transition-colors">
+            {result ? "Close" : "Cancel"}
+          </button>
+          <button
+            onClick={handleImport}
+            disabled={!file || loading}
+            className="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-40 transition-colors"
+          >
+            {loading ? (
+              <span className="flex items-center gap-2">
+                <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                Importing…
+              </span>
+            ) : "Import Customers"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function CustomersPage() {
@@ -47,6 +174,7 @@ export default function CustomersPage() {
   const [tagFilter, setTagFilter] = React.useState("");
   const [unassignedOnly, setUnassignedOnly] = React.useState(false);
   const [isAddOpen, setIsAddOpen] = React.useState(false);
+  const [isImportOpen, setIsImportOpen] = React.useState(false);
   const [editingCustomer, setEditingCustomer] = React.useState<any>(null);
   const [selectMode, setSelectMode] = React.useState(false);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
@@ -73,7 +201,7 @@ export default function CustomersPage() {
   React.useEffect(() => { setPage(1); }, [debouncedSearch, statusFilter, typeFilter, tagFilter]);
 
   // ── API data ─────────────────────────────────────────────────────────────
-  const { data: result, isLoading, isError } = useCustomers({
+  const { data: result, isLoading, isError, refetch } = useCustomers({
     search: debouncedSearch || undefined,
     status: statusFilter || undefined,
     page,
@@ -334,6 +462,13 @@ export default function CustomersPage() {
           <div className="flex items-center gap-2">
             <Button
               variant="secondary"
+              leftIcon={<Upload className="h-4 w-4" />}
+              onClick={() => setIsImportOpen(true)}
+            >
+              Import
+            </Button>
+            <Button
+              variant="secondary"
               leftIcon={<Download className="h-4 w-4" />}
               onClick={() => exportCustomers.mutate({})}
               loading={exportCustomers.isPending}
@@ -546,6 +681,14 @@ export default function CustomersPage() {
             </div>
           )}
         </>
+      )}
+
+      {/* Import modal */}
+      {isImportOpen && (
+        <ImportCustomersModal
+          onClose={() => setIsImportOpen(false)}
+          onDone={() => { setIsImportOpen(false); refetch?.(); }}
+        />
       )}
 
       {/* Add modal */}
