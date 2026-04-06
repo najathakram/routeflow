@@ -14,14 +14,13 @@ import {
 } from "lucide-react";
 import { Button, Card, Input, useToast, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { useQuery } from "@tanstack/react-query";
 import { useCreateInvoice, type CreateInvoiceItem } from "@/lib/api/invoices";
 import { useCustomers, useCustomerPrices, type Customer } from "@/lib/api/customers";
 import { useProducts } from "@/lib/api/products";
 import { apiClient } from "@/lib/api-client";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { fmt } from "@/lib/formatting";
-
-const TAX_RATE = 0.1; // 10% – adjust as needed
 
 // ─── Terms options ─────────────────────────────────────────────────────────────
 
@@ -343,6 +342,13 @@ export default function NewInvoicePage() {
   const [errors, setErrors] = React.useState<Record<string, string>>({});
   const [showAvgCost, setShowAvgCost] = React.useState(false);
 
+  const { data: settings } = useQuery<{ taxRate?: number }>({
+    queryKey: ["settings"],
+    queryFn: () => apiClient.get("/settings").then((r) => r.data),
+    staleTime: 60_000,
+  });
+  const taxRate = (settings?.taxRate ?? 10) / 100;
+
   const { data: customerPricesData } = useCustomerPrices(customer?.id);
   const priceMap = React.useMemo(() => {
     const map: Record<string, number> = {};
@@ -383,7 +389,7 @@ export default function NewInvoicePage() {
   const subtotal = items.reduce((s, it) => s + lineTotal(it), 0);
   const tax = items
     .filter((it) => it.taxable)
-    .reduce((s, it) => s + lineTotal(it) * TAX_RATE, 0);
+    .reduce((s, it) => s + lineTotal(it) * taxRate, 0);
   const total = subtotal + tax + adjustment;
   const totalQty = items.reduce((s, it) => s + Number(it.qty), 0);
 
@@ -440,7 +446,7 @@ export default function NewInvoicePage() {
         unitPrice: Number(it.unitPrice),
         discount: Number(it.discount) || undefined,
         // Map the taxable checkbox to an actual tax rate sent to the API
-        taxRate: it.taxable ? TAX_RATE : 0,
+        taxRate: it.taxable ? taxRate : 0,
         ...(it.unitsPerBox ? { boxes: it.boxes ?? 0, pieces: it.pieces ?? 0 } : {}),
       })),
       notes: notes.trim() || undefined,
@@ -797,7 +803,7 @@ export default function NewInvoicePage() {
                   </div>
                   {tax > 0 && (
                     <div className="flex justify-between text-navy/70">
-                      <span>Tax ({(TAX_RATE * 100).toFixed(0)}%)</span>
+                      <span>Tax ({(taxRate * 100).toFixed(0)}%)</span>
                       <span>{fmt(tax)}</span>
                     </div>
                   )}
@@ -854,7 +860,7 @@ export default function NewInvoicePage() {
                 </div>
                 {tax > 0 && (
                   <div className="flex justify-between">
-                    <dt className="text-navy/60">Tax ({(TAX_RATE * 100).toFixed(0)}%)</dt>
+                    <dt className="text-navy/60">Tax ({(taxRate * 100).toFixed(0)}%)</dt>
                     <dd className="font-medium text-navy">{fmt(tax)}</dd>
                   </div>
                 )}

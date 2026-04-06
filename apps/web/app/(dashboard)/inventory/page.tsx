@@ -370,6 +370,43 @@ function AdjustStockModal({
   });
   const [productSearch, setProductSearch] = React.useState("");
 
+  // ── Barcode scan support ────────────────────────────────────────────────────
+  const barcodeInputRef = React.useRef<HTMLInputElement>(null);
+  const barcodeScanHandlerRef = React.useRef<(code: string) => void>(() => {});
+  barcodeScanHandlerRef.current = (code: string) => {
+    const match = products.find(
+      (p) => (p.sku ?? "").toLowerCase() === code.toLowerCase(),
+    );
+    if (match) {
+      setForm((f) => ({ ...f, productId: match.id }));
+      setProductSearch("");
+    }
+  };
+  React.useEffect(() => {
+    const input = barcodeInputRef.current;
+    if (!input) return;
+    let lastKeyTime = 0;
+    let sequence = "";
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const now = Date.now();
+      if (e.key === "Enter") {
+        e.preventDefault(); // never submit the form from the search field
+        if (sequence.length >= 6 && now - lastKeyTime < 150) {
+          barcodeScanHandlerRef.current(sequence);
+          sequence = "";
+        }
+        return;
+      }
+      if (e.key.length === 1) {
+        sequence = now - lastKeyTime > 200 ? e.key : sequence + e.key;
+        lastKeyTime = now;
+      }
+    };
+    input.addEventListener("keydown", handleKeyDown);
+    return () => input.removeEventListener("keydown", handleKeyDown);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const filteredProducts = productSearch.trim()
     ? products.filter((p) =>
         p.name.toLowerCase().includes(productSearch.toLowerCase()) ||
@@ -404,10 +441,11 @@ function AdjustStockModal({
           <div>
             <label className="mb-1 block text-xs text-navy">Search product</label>
             <input
+              ref={barcodeInputRef}
               type="text"
               value={productSearch}
               onChange={(e) => setProductSearch(e.target.value)}
-              placeholder="Type name or SKU to filter…"
+              placeholder="Type name or SKU, or scan barcode…"
               className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
             />
           </div>

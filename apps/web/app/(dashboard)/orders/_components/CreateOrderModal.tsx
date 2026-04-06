@@ -6,6 +6,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { X, AlertTriangle, ChevronRight } from "lucide-react";
 import { Modal, Textarea, Button, cn, useToast } from "@routeflow/ui/web";
+import { useQuery } from "@tanstack/react-query";
 import { useCustomers, useCustomerPrices } from "@/lib/api/customers";
 import { useProducts } from "@/lib/api/products";
 import { useCreateOrder } from "@/lib/api/orders";
@@ -54,6 +55,14 @@ export interface CreateOrderModalProps {
 export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
   const { toast } = useToast();
   const createOrder = useCreateOrder();
+
+  // Fetch default tax rate from settings
+  const { data: settings } = useQuery<{ taxRate?: number }>({
+    queryKey: ["settings"],
+    queryFn: () => apiClient.get("/settings").then((r) => r.data),
+    staleTime: 60_000,
+  });
+  const taxRate = (settings?.taxRate ?? 10) / 100;
 
   // Customer search state
   const [customerSearch, setCustomerSearch] = React.useState("");
@@ -114,11 +123,30 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
   // Barcode scan handler — kept in a ref so the keydown listener never goes stale
   const barcodeScanHandlerRef = React.useRef<(code: string) => void>(() => {});
   barcodeScanHandlerRef.current = async (code: string) => {
+    // 1. Try barcode field lookup
     try {
       const product = await apiClient.get(`/products/barcode/${encodeURIComponent(code)}`).then((r) => r.data);
       addLineItem(product);
+      return;
     } catch {
-      toast({ title: `No product found for barcode: ${code}`, variant: "error" });
+      // not found by barcode — fall through to SKU lookup
+    }
+    // 2. Fall back to exact SKU match
+    try {
+      const res = await apiClient
+        .get("/products", { params: { search: code, limit: 10, isActive: true, includeVariants: true } })
+        .then((r) => r.data);
+      const matches: any[] = res?.data ?? [];
+      const skuMatch = matches.find(
+        (p) => (p.sku ?? "").toLowerCase() === code.toLowerCase(),
+      );
+      if (skuMatch) {
+        addLineItem(skuMatch);
+      } else {
+        toast({ title: `No product found for: ${code}`, variant: "error" });
+      }
+    } catch {
+      toast({ title: `No product found for: ${code}`, variant: "error" });
     }
   };
 
@@ -183,7 +211,7 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
   // ── Derived totals ────────────────────────────────────────────────────────
 
   const subtotal = lineItems.reduce((sum, li) => sum + li.unitPrice * li.qty, 0);
-  const tax = subtotal * 0.1;
+  const tax = subtotal * taxRate;
   const discountAmt = parseFloat(orderDiscount) || 0;
   const total = subtotal + tax - discountAmt;
 
@@ -350,6 +378,7 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
         id="create-order-form"
         onSubmit={handleSubmit(onSubmit)}
         noValidate
+        onKeyDown={(e) => { if (e.key === "Enter") e.preventDefault(); }}
         className="max-h-[65vh] overflow-y-auto pr-1"
       >
         <div className="space-y-5">
@@ -670,7 +699,7 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
                 <span>${subtotal.toFixed(2)}</span>
               </div>
               <div className="flex justify-between text-navy/70">
-                <span>Tax (10%)</span>
+                <span>Tax ({settings?.taxRate ?? 10}%)</span>
                 <span>${tax.toFixed(2)}</span>
               </div>
               {/* Order-level discount */}
