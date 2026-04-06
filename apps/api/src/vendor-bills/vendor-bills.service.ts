@@ -363,55 +363,15 @@ export class VendorBillsService {
       );
     }
 
-    // Fetch all active products for matching
-    const products = await this.prisma.product.findMany({
-      where: { isActive: true },
-      select: { id: true, name: true, sku: true, unit: true, averageCost: true, barcode: true },
-      take: 500,
-    });
-
-    // Fetch all stored product mappings (all suppliers, we'll filter later by supplier name once known)
-    const allMappings = await this.prisma.productMapping.findMany({
-      include: { product: { select: { id: true, name: true } } },
-    });
-    const mappingIndex: Record<string, Record<string, { productId: string | null; productName: string | null }>> = {};
-    for (const m of allMappings) {
-      if (!mappingIndex[m.supplierName]) mappingIndex[m.supplierName] = {};
-      mappingIndex[m.supplierName][m.rawDescription.toLowerCase()] = {
-        productId: m.productId,
-        productName: m.product?.name ?? null,
-      };
-    }
-
-    const productList = products
-      .map(
-        (p) =>
-          `ID: ${p.id} | Name: ${p.name}${p.sku ? ` | SKU: ${p.sku}` : ""}${p.barcode ? ` | Barcode: ${p.barcode}` : ""}`,
-      )
-      .join("\n");
-
-    // Build a summary of known mappings for the prompt
-    const mappingSummary = allMappings.length > 0
-      ? `\nKnown item mappings from previous invoices (use these as high-confidence matches):\n` +
-        allMappings
-          .filter((m) => m.productId && m.product)
-          .map((m) => `"${m.rawDescription}" (from ${m.supplierName}) → Product ID: ${m.productId} (${m.product?.name})`)
-          .join("\n")
-      : "";
-
+    // ── Phase 1: AI extraction (raw text only — no product catalog in prompt) ──
     const anthropic = new Anthropic({ apiKey });
     const base64Data = imageBuffer.toString("base64");
     const isPdf = mimeType === "application/pdf";
 
-    // Build the file content block — PDFs use "document" type, images use "image" type
     const fileContentBlock = isPdf
       ? ({
           type: "document" as const,
-          source: {
-            type: "base64" as const,
-            media_type: "application/pdf" as const,
-            data: base64Data,
-          },
+          source: { type: "base64" as const, media_type: "application/pdf" as const, data: base64Data },
         } as any)
       : {
           type: "image" as const,
@@ -422,56 +382,17 @@ export class VendorBillsService {
           },
         };
 
-    const promptText = `You are analyzing a vendor/supplier invoice${isPdf ? " (PDF document)" : " image"}. Extract all information and return valid JSON only (no markdown, no explanation).
+    const promptText = `Extract data from this supplier invoice and return JSON only (no markdown, no explanation).
 
-Here are the existing products in our system:
-${productList || "(no products configured yet)"}
-${mappingSummary}
+Return exactly:
+{"supplier":string|null,"invoiceNumber":string|null,"invoiceDate":"YYYY-MM-DD"|null,"expenseDescription":string|null,"expenseCategory":"Food & Beverage"|"Supplies"|"Utilities"|"Transport"|"Marketing"|"Equipment"|"Maintenance"|"Professional Services"|"Other","items":[{"extractedName":string,"qty":number,"unitCost":number,"lineTotal":number|null}],"subtotal":number|null,"tax":number|null,"total":number|null,"notes":string|null}
 
-Return this exact JSON structure:
-{
-  "supplier": "supplier name or null",
-  "invoiceNumber": "invoice number or null",
-  "invoiceDate": "YYYY-MM-DD or null",
-  "expenseDescription": "one-line summary of what was purchased (e.g., 'Office supplies from Acme Corp') or null",
-  "expenseCategory": "best-fit category: Food & Beverage, Supplies, Utilities, Transport, Marketing, Equipment, Maintenance, Professional Services, or Other",
-  "items": [
-    {
-      "extractedName": "exact name from invoice",
-      "qty": numeric quantity (required, default 1 if not shown),
-      "unitCost": numeric unit price (required, calculate from line total / qty if not shown directly),
-      "lineTotal": numeric line total or null,
-      "matchedProductId": "product ID from list or null",
-      "matchedProductName": "product name or null",
-      "confidence": "high|medium|low|none"
-    }
-  ],
-  "subtotal": numeric or null,
-  "tax": numeric or null,
-  "total": numeric or null,
-  "notes": "any issues, ambiguities, or unreadable text"
-}
-
-Matching rules:
-- If a known mapping exists for this supplier + item name, use that product ID with "high" confidence
-- "high" confidence: name clearly matches (same or very similar, e.g., abbreviations, plural forms)
-- "medium" confidence: likely match but name differs somewhat
-- "low" confidence: possible match but unsure
-- "none": no matching product found
-
-IMPORTANT: Always extract qty and unitCost for every item. If qty is not shown, default to 1. If unitCost is not shown but lineTotal is, calculate unitCost = lineTotal / qty.
-
-If you cannot read a value clearly, use null. Return ONLY the JSON object.`;
+Rules: qty defaults to 1 if not shown; unitCost = lineTotal/qty if not shown directly. Return ONLY the JSON object.`;
 
     const message = await anthropic.messages.create({
-      model: "claude-opus-4-5",
-      max_tokens: 8192,
-      messages: [
-        {
-          role: "user",
-          content: [fileContentBlock, { type: "text", text: promptText }],
-        },
-      ],
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 4096,
+      messages: [{ role: "user", content: [fileContentBlock, { type: "text", text: promptText }] }],
     });
 
     const content = message.content[0];
@@ -479,11 +400,8 @@ If you cannot read a value clearly, use null. Return ONLY the JSON object.`;
 
     let parsed: Record<string, unknown>;
     try {
-      // Strip markdown code fences (``` or ```json) and try to extract the JSON object
       let text = content.text.trim();
-      // Remove leading ```json or ``` fence
       text = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/i, "").trim();
-      // If still can't parse, extract the first {...} block (handles extra prose around JSON)
       if (!text.startsWith("{")) {
         const match = text.match(/\{[\s\S]*\}/);
         if (match) text = match[0];
@@ -494,23 +412,86 @@ If you cannot read a value clearly, use null. Return ONLY the JSON object.`;
       throw new Error("Failed to parse AI response as JSON");
     }
 
-    // Post-process: apply known mappings that AI might have missed
-    const supplierName = (parsed.supplier as string) ?? "";
-    if (supplierName && mappingIndex[supplierName]) {
-      const supplierMappings = mappingIndex[supplierName];
-      const items = parsed.items as any[] ?? [];
-      for (const item of items) {
-        const key = (item.extractedName as string ?? "").toLowerCase();
-        const mapping = supplierMappings[key];
-        if (mapping && mapping.productId && !item.matchedProductId) {
-          item.matchedProductId = mapping.productId;
-          item.matchedProductName = mapping.productName;
-          item.confidence = "high";
-        }
-      }
+    // ── Phase 2: Server-side product matching (free, instant, no tokens) ──
+    const [products, allMappings] = await Promise.all([
+      this.prisma.product.findMany({
+        select: { id: true, name: true, sku: true, barcode: true },
+      }),
+      this.prisma.productMapping.findMany({
+        include: { product: { select: { id: true, name: true } } },
+      }),
+    ]);
+
+    // Build mapping index keyed by supplierName → rawDescription (lowercase)
+    const mappingIndex: Record<string, Record<string, { productId: string | null; productName: string | null }>> = {};
+    for (const m of allMappings) {
+      if (!mappingIndex[m.supplierName]) mappingIndex[m.supplierName] = {};
+      mappingIndex[m.supplierName][m.rawDescription.toLowerCase()] = {
+        productId: m.productId,
+        productName: m.product?.name ?? null,
+      };
     }
 
-    return parsed;
+    // Normalise a string for fuzzy comparison
+    const norm = (s: string) =>
+      s.toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+
+    // Word-overlap score (ignores words ≤ 2 chars)
+    const overlap = (a: string, b: string): number => {
+      const wa = new Set(norm(a).split(" ").filter((w) => w.length > 2));
+      const wb = new Set(norm(b).split(" ").filter((w) => w.length > 2));
+      if (wa.size === 0 || wb.size === 0) return 0;
+      let hits = 0;
+      for (const w of wa) if (wb.has(w)) hits++;
+      return hits / Math.max(wa.size, wb.size);
+    };
+
+    const supplierName = (parsed.supplier as string) ?? "";
+    const supplierMappings = supplierName ? (mappingIndex[supplierName] ?? {}) : {};
+
+    const items = (parsed.items as any[] ?? []).map((item: any) => {
+      const raw: string = item.extractedName ?? "";
+      const rawLower = raw.toLowerCase();
+
+      // 1. Exact mapping hit (learned from previous corrections)
+      if (supplierMappings[rawLower]?.productId) {
+        const m = supplierMappings[rawLower];
+        return { ...item, matchedProductId: m.productId, matchedProductName: m.productName, confidence: "high" };
+      }
+
+      // 2. Exact name match (case-insensitive)
+      const exactName = products.find((p) => p.name.toLowerCase() === rawLower);
+      if (exactName) {
+        return { ...item, matchedProductId: exactName.id, matchedProductName: exactName.name, confidence: "high" };
+      }
+
+      // 3. Exact SKU / barcode match
+      const exactCode = products.find(
+        (p) => (p.sku && p.sku.toLowerCase() === rawLower) || (p.barcode && p.barcode === raw),
+      );
+      if (exactCode) {
+        return { ...item, matchedProductId: exactCode.id, matchedProductName: exactCode.name, confidence: "high" };
+      }
+
+      // 4. Fuzzy word-overlap match
+      let bestId: string | null = null;
+      let bestName: string | null = null;
+      let bestScore = 0;
+      for (const p of products) {
+        const score = overlap(raw, p.name);
+        if (score > bestScore) { bestScore = score; bestId = p.id; bestName = p.name; }
+      }
+      if (bestScore >= 0.6) {
+        return { ...item, matchedProductId: bestId, matchedProductName: bestName, confidence: bestScore >= 0.8 ? "high" : "medium" };
+      }
+      if (bestScore >= 0.35) {
+        return { ...item, matchedProductId: bestId, matchedProductName: bestName, confidence: "low" };
+      }
+
+      return { ...item, matchedProductId: null, matchedProductName: null, confidence: "none" };
+    });
+
+    return { ...parsed, items };
   }
 
   async recordPayment(id: string, dto: { amount: number; method: string; reference?: string }) {
