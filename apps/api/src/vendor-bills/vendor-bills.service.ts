@@ -384,10 +384,28 @@ export class VendorBillsService {
 
     const promptText = `Extract data from this supplier invoice and return JSON only (no markdown, no explanation).
 
-Return exactly:
-{"supplier":string|null,"invoiceNumber":string|null,"invoiceDate":"YYYY-MM-DD"|null,"expenseDescription":string|null,"expenseCategory":"Food & Beverage"|"Supplies"|"Utilities"|"Transport"|"Marketing"|"Equipment"|"Maintenance"|"Professional Services"|"Other","items":[{"extractedName":string,"qty":number,"unitCost":number,"lineTotal":number|null}],"subtotal":number|null,"tax":number|null,"total":number|null,"notes":string|null}
+Return exactly this structure:
+{
+  "supplier": string or null,
+  "invoiceNumber": string or null,
+  "invoiceDate": "YYYY-MM-DD" or null,
+  "expenseDescription": one-line summary or null,
+  "expenseCategory": one of: "Food & Beverage", "Supplies", "Utilities", "Transport", "Marketing", "Equipment", "Maintenance", "Professional Services", "Other",
+  "items": [
+    {
+      "extractedName": "exact product name as written on invoice",
+      "qty": quantity as a number (REQUIRED — read directly from invoice; default 1 only if completely absent),
+      "unitCost": unit price as a number (if not shown, calculate lineTotal / qty),
+      "lineTotal": line total as a number or null
+    }
+  ],
+  "subtotal": number or null,
+  "tax": number or null,
+  "total": number or null,
+  "notes": any issues or null
+}
 
-Rules: qty defaults to 1 if not shown; unitCost = lineTotal/qty if not shown directly. Return ONLY the JSON object.`;
+IMPORTANT: Always read the actual quantity from each line item. Do not default to 1 unless the invoice truly shows no quantity. Return ONLY the JSON object.`;
 
     const message = await anthropic.messages.create({
       model: "claude-haiku-4-5-20251001",
