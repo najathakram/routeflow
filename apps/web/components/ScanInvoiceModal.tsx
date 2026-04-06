@@ -611,10 +611,10 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                           <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-navy">
                             Product
                           </th>
-                          <th className="w-20 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-navy">
+                          <th className="w-28 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-navy">
                             Qty
                           </th>
-                          <th className="w-28 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-navy">
+                          <th className="w-36 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-navy">
                             Unit Price
                           </th>
                           <th className="w-24 px-3 py-2 text-right text-xs font-semibold uppercase tracking-wide text-navy">
@@ -680,7 +680,7 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                                   step="0.001"
                                   value={item.qty}
                                   onChange={(e) => updateItem(i, { qty: e.target.value })}
-                                  className="w-full rounded border border-surface-border px-2 py-1 text-right text-xs text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
+                                  className="w-full rounded border border-surface-border px-2 py-1.5 text-right text-sm text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
                                 />
                                 {qtyChanged && (
                                   <p className="mt-0.5 text-right text-[10px] text-navy/40 flex items-center justify-end gap-0.5">
@@ -700,7 +700,7 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                                     step="0.0001"
                                     value={item.unitCost}
                                     onChange={(e) => updateItem(i, { unitCost: e.target.value })}
-                                    className="w-full rounded border border-surface-border py-1 pl-5 pr-2 text-right text-xs text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
+                                    className="w-full rounded border border-surface-border py-1.5 pl-5 pr-2 text-right text-sm text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
                                   />
                                   {costChanged && (
                                     <p className="mt-0.5 text-right text-[10px] text-navy/40 flex items-center justify-end gap-0.5">
