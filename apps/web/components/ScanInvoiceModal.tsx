@@ -604,23 +604,23 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                     </h3>
                     <p className="text-xs text-navy/40">Review and correct AI-extracted data below</p>
                   </div>
-                  <div className="overflow-x-auto overflow-hidden rounded-xl border border-surface-border">
-                    <table className="w-full text-sm">
+                  <div className="overflow-x-auto rounded-xl border border-surface-border">
+                    <table className="min-w-[700px] w-full text-sm">
                       <thead>
                         <tr className="border-b border-surface-border bg-surface-raised">
                           <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-navy">
                             Product
                           </th>
-                          <th className="w-28 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-navy">
+                          <th className="w-32 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-navy">
                             Qty
                           </th>
-                          <th className="w-36 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-navy">
+                          <th className="w-40 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-navy">
                             Unit Price
                           </th>
-                          <th className="w-24 px-3 py-2 text-right text-xs font-semibold uppercase tracking-wide text-navy">
+                          <th className="w-28 px-3 py-2 text-right text-xs font-semibold uppercase tracking-wide text-navy">
                             Calculated
                           </th>
-                          <th className="w-24 px-3 py-2 text-right text-xs font-semibold uppercase tracking-wide text-navy">
+                          <th className="w-28 px-3 py-2 text-right text-xs font-semibold uppercase tracking-wide text-navy">
                             Invoice Total
                           </th>
                           <th className="w-8 px-3 py-2" />
