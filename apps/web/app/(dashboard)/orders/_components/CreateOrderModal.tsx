@@ -150,7 +150,11 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
     }
   };
 
-  // USB/physical scanner detection — rapid keystrokes (≥6 chars in <150ms gaps + Enter = barcode)
+  // USB/physical scanner detection
+  // A barcode scan = rapid keystrokes (chars arrive < 200 ms apart) followed by Enter.
+  // We track the accumulated sequence; when Enter fires we use the sequence if it's ≥ 4
+  // chars long — the inter-character timing (not the Enter timing) is the discriminator
+  // between human typing and a scanner.
   React.useEffect(() => {
     const input = productSearchRef.current;
     if (!input) return;
@@ -159,11 +163,11 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
     const handleKeyDown = (e: KeyboardEvent) => {
       const now = Date.now();
       if (e.key === "Enter") {
-        if (sequence.length >= 6 && now - lastKeyTime < 150) {
-          e.preventDefault();
+        e.preventDefault(); // always block form submit from this input
+        if (sequence.length >= 4) {
           barcodeScanHandlerRef.current(sequence);
-          sequence = "";
         }
+        sequence = "";
         return;
       }
       if (e.key.length === 1) {
@@ -245,6 +249,8 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
     setProductSearch("");
     setDebouncedProductSearch("");
     setLineItemsError("");
+    // Re-focus the product search so the scanner is ready for the next item
+    setTimeout(() => productSearchRef.current?.focus(), 50);
   };
 
   const removeLineItem = (tempId: string) => {
