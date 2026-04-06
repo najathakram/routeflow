@@ -205,7 +205,18 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
 
 
   const addLineItem = (product: any) => {
-    if (lineItems.some((li) => li.productId === product.id)) return;
+    // If already in the list, increment qty by 1 (supports repeated scans of the same item)
+    if (lineItems.some((li) => li.productId === product.id)) {
+      setLineItems((prev) =>
+        prev.map((li) =>
+          li.productId === product.id ? { ...li, qty: li.qty + 1 } : li,
+        ),
+      );
+      setProductSearch("");
+      setDebouncedProductSearch("");
+      setTimeout(() => productSearchRef.current?.focus(), 50);
+      return;
+    }
     const upb: number | undefined = product.unitsPerBox ? Number(product.unitsPerBox) : undefined;
     const listPrice = Number(product.pricePerUnit ?? 0);
     const specialPrice = cpMap.get(product.id);
