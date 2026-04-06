@@ -24,6 +24,7 @@ export class BookkeepingService implements OnModuleInit {
 
   async onModuleInit() {
     await this.ensureInventoryPurchaseCategory();
+    await this.backfillInventoryPurchaseExpenses();
   }
 
   async findAll(query: ListTransactionsDto) {
@@ -196,7 +197,13 @@ export class BookkeepingService implements OnModuleInit {
     const { categoryId, supplierId, customerId, from, to, type, page = 1, limit = 20 } = query;
     const skip = (page - 1) * limit;
     const where: any = { deletedAt: null };
-    if (categoryId) where.categoryId = categoryId;
+    if (categoryId) {
+      where.categoryId = categoryId;
+    } else {
+      // Exclude inventory-purchase expenses from the general list — they belong in vendor bills
+      const invCat = await this.prisma.expenseCategory.findUnique({ where: { code: "INVENTORY_PURCHASE" } });
+      if (invCat) where.category = { code: { not: "INVENTORY_PURCHASE" } };
+    }
     if (supplierId) where.supplierId = supplierId;
     if (customerId) where.customerId = customerId;
     if (type === "mileage") where.isMileage = true;
@@ -495,6 +502,18 @@ export class BookkeepingService implements OnModuleInit {
       await this.prisma.expenseCategory.create({
         data: { name: "Inventory Purchase", code: "INVENTORY_PURCHASE", isCustom: false },
       });
+    }
+  }
+
+  /** Convert any pre-existing INVENTORY_PURCHASE expenses that were never turned into vendor bills. */
+  async backfillInventoryPurchaseExpenses(): Promise<void> {
+    const category = await this.prisma.expenseCategory.findUnique({ where: { code: "INVENTORY_PURCHASE" } });
+    if (!category) return;
+    const unconverted = await this.prisma.expense.findMany({
+      where: { categoryId: category.id, vendorBillId: null, deletedAt: null },
+    });
+    for (const expense of unconverted) {
+      await this.maybeConvertToVendorBill(expense).catch(() => {});
     }
   }
 
