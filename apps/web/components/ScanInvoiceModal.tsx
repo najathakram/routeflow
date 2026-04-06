@@ -182,6 +182,7 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
         if (catMatch) setExpenseCategoryId(catMatch.id);
       }
       setStep("review");
+      setShowPreview(true);
     } catch (err: any) {
       console.error(err);
       const msg = err?.response?.data?.message ?? "";
