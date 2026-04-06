@@ -80,7 +80,7 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const [previewUrl, setPreviewUrl] = React.useState<string | null>(null);
   const [previewType, setPreviewType] = React.useState<"pdf" | "image" | null>(null);
-  const [showPreview, setShowPreview] = React.useState(false);
+  const [showPreview, setShowPreview] = React.useState(true);
 
   // Bill fields
   const [supplierId, setSupplierId] = React.useState("");
@@ -266,6 +266,10 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
     const createVendorBill = createMode === "bill" || createMode === "both";
     const createExpenseRecord = createMode === "expense" || createMode === "both";
 
+    if (createVendorBill && !supplierId) {
+      toast({ title: "Please select a supplier before creating the bill.", variant: "error" });
+      return;
+    }
     if (createVendorBill && validItems.length === 0) {
       toast({ title: "Add at least one valid line item for the vendor bill", variant: "error" });
       return;
@@ -279,8 +283,8 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
       const results: string[] = [];
 
       if (createVendorBill) {
-        await createBill.mutateAsync({
-          supplierId: supplierId || "",
+        const bill = await createBill.mutateAsync({
+          supplierId,
           billDate,
           dueDate: dueDate || "",
           items: validItems.map((item) => ({
@@ -290,6 +294,17 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
             unitCost: parseFloat(item.unitCost) || 0,
           })),
         });
+        // Attach scanned invoice image to the bill record
+        if (previewUrl && (bill as any)?.id) {
+          try {
+            const blob = await fetch(previewUrl).then((r) => r.blob());
+            const ext = previewType === "pdf" ? "pdf" : "jpg";
+            const file = new File([blob], `invoice-scan.${ext}`, { type: blob.type });
+            const fd = new FormData();
+            fd.append("file", file);
+            await fetch(`/api/vendor-bills/${(bill as any).id}/receipt`, { method: "POST", body: fd });
+          } catch { /* non-critical — bill already created */ }
+        }
         results.push("Vendor bill created");
       }
 
@@ -313,8 +328,9 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
       });
       onCreated?.();
       onClose();
-    } catch {
-      toast({ title: "Failed to create records. Please try again.", variant: "error" });
+    } catch (err: any) {
+      const msg = err?.response?.data?.message || err?.message || "Failed to create records. Please try again.";
+      toast({ title: msg, variant: "error" });
     }
   };
 
@@ -417,11 +433,16 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
           {step === "review" && (
             <div className="flex h-full min-h-0 flex-1">
               {/* Left: Invoice Preview */}
-              {previewUrl && (
+              {previewUrl && showPreview && (
                 <div className="flex w-1/3 shrink-0 flex-col border-r border-surface-border bg-surface-raised">
-                  <div className="flex items-center gap-2 border-b border-surface-border px-4 py-2.5">
-                    <FileText className="h-4 w-4 text-brand-500" />
-                    <span className="text-xs font-semibold uppercase tracking-wide text-navy/60">Invoice Preview</span>
+                  <div className="flex items-center justify-between border-b border-surface-border px-4 py-2.5">
+                    <div className="flex items-center gap-2">
+                      <FileText className="h-4 w-4 text-brand-500" />
+                      <span className="text-xs font-semibold uppercase tracking-wide text-navy/60">Invoice Preview</span>
+                    </div>
+                    <button onClick={() => setShowPreview(false)} className="rounded p-1 text-navy/30 hover:text-navy transition-colors" title="Hide preview">
+                      <X className="h-3.5 w-3.5" />
+                    </button>
                   </div>
                   <div className="flex-1 overflow-hidden">
                     {previewType === "pdf" ? (
@@ -434,8 +455,8 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                   </div>
                 </div>
               )}
-              {/* Right: Form — takes remaining width */}
-              <div className={previewUrl ? "flex-1 overflow-y-auto" : "w-full overflow-y-auto"}>
+              {/* Right: Form — full width when preview hidden */}
+              <div className={previewUrl && showPreview ? "flex-1 overflow-y-auto" : "w-full overflow-y-auto"}>
             <div className="space-y-4 p-6">
               {scanResult?.notes && (
                 <div className="flex items-start gap-2 rounded-lg border border-yellow-200 bg-yellow-50 p-3">
@@ -599,7 +620,16 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                         {reviewItems.length}
                       </span>
                     </h3>
-                    <p className="text-xs text-navy/40">Review and correct AI-extracted data below</p>
+                    <div className="flex items-center gap-3">
+                      {previewUrl && (
+                        <button type="button" onClick={() => setShowPreview((v) => !v)}
+                          className="flex items-center gap-1 rounded px-2 py-1 text-xs font-medium text-brand-500 hover:bg-brand-50 transition-colors">
+                          <FileText className="h-3 w-3" />
+                          {showPreview ? "Hide invoice" : "View invoice"}
+                        </button>
+                      )}
+                      <p className="text-xs text-navy/40">Review and correct AI-extracted data below</p>
+                    </div>
                   </div>
                   <div className="overflow-x-auto rounded-xl border border-surface-border">
                     <table className="w-full text-sm">

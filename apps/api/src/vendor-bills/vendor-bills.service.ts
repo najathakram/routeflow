@@ -27,6 +27,9 @@ export class VendorBillsService {
   }
 
   async create(dto: any) {
+    if (!dto.supplierId || typeof dto.supplierId !== "string" || dto.supplierId.trim() === "") {
+      throw new BadRequestException("Please select a supplier before creating the bill.");
+    }
     // Calculate totalOwed from line items if provided, otherwise use dto.totalOwed
     let totalOwed = dto.totalOwed ?? 0;
     if (dto.items && Array.isArray(dto.items) && dto.items.length > 0) {
