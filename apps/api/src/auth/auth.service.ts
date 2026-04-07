@@ -21,6 +21,8 @@ export class AuthService {
     const user = await this.usersService.findByUsername(username);
     if (!user || user.deletedAt !== null) return null;
     if (user.status !== "ACTIVE") return null;
+    // Google-only accounts have no password
+    if (!user.password) return null;
     const valid = await bcrypt.compare(password, user.password);
     if (!valid) return null;
     const { password: _pw, ...result } = user;
@@ -128,9 +130,49 @@ export class AuthService {
     return { message: "Logged out successfully" };
   }
 
+  async findOrCreateGoogleUser(profile: any) {
+    const email = profile.emails?.[0]?.value;
+    if (!email) throw new Error("No email from Google");
+
+    // Try find by googleId first, then by email
+    let user = await this.prisma.user.findFirst({
+      where: { OR: [{ googleId: profile.id }, { email }] },
+    });
+
+    if (!user) {
+      // Create new OPERATOR user
+      user = await this.prisma.user.create({
+        data: {
+          email,
+          username:
+            email
+              .split("@")[0]
+              .replace(/[^a-z0-9_]/gi, "_")
+              .toLowerCase() +
+            "_" +
+            Date.now(),
+          password: null,
+          role: "OPERATOR",
+          googleId: profile.id,
+          status: "ACTIVE",
+        },
+      });
+    } else if (!user.googleId) {
+      // Link existing user to Google
+      user = await this.prisma.user.update({
+        where: { id: user.id },
+        data: { googleId: profile.id },
+      });
+    }
+
+    return user;
+  }
+
   async changePassword(userId: string, currentPassword: string, newPassword: string) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new UnauthorizedException();
+
+    if (!user.password) throw new BadRequestException("This account uses Google sign-in and has no password");
 
     const valid = await bcrypt.compare(currentPassword, user.password);
     if (!valid) throw new BadRequestException("Current password is incorrect");

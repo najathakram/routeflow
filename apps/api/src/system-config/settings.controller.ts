@@ -1,4 +1,14 @@
-import { Body, Controller, Delete, Get, Patch, UseGuards } from "@nestjs/common";
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Patch,
+  Post,
+  UseGuards,
+} from "@nestjs/common";
 import { UserRole } from "@prisma/client";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
@@ -6,6 +16,7 @@ import { Roles } from "../auth/decorators/roles.decorator";
 import { SystemConfigService } from "./system-config.service";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
+import { EmailService } from "../email/email.service";
 
 @Controller("settings")
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -15,6 +26,7 @@ export class SettingsController {
     private readonly svc: SystemConfigService,
     private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
+    private readonly emailService: EmailService,
   ) {}
 
   @Get()
@@ -77,6 +89,48 @@ export class SettingsController {
       }
     }
     return this.getAnthropicSettings();
+  }
+
+  // ─── Email Settings ──────────────────────────────────────────────────────────
+
+  @Get("email")
+  async getEmailSettings() {
+    const all = await this.svc.getAll("email.");
+    return {
+      fromName: all["email.fromName"] ?? "",
+      fromEmail: all["email.fromEmail"] ?? "",
+      smtpHost: all["email.smtpHost"] ?? "",
+      smtpPort: all["email.smtpPort"] ? parseInt(all["email.smtpPort"]) : 587,
+      smtpUser: all["email.smtpUser"] ?? "",
+      smtpPassword: all["email.smtpPassword"] ? "••••••••" : "", // mask password in response
+      smtpSecure: all["email.smtpSecure"] === "true",
+      configured: !!(all["email.smtpHost"] && all["email.smtpUser"] && all["email.smtpPassword"]),
+    };
+  }
+
+  @Post("email")
+  async updateEmailSettings(@Body() dto: Record<string, unknown>) {
+    const allowed = [
+      "fromName",
+      "fromEmail",
+      "smtpHost",
+      "smtpPort",
+      "smtpUser",
+      "smtpPassword",
+      "smtpSecure",
+    ];
+    await Promise.all(
+      allowed
+        .filter((k) => dto[k] !== undefined && dto[k] !== "••••••••") // don't overwrite with masked password
+        .map((k) => this.svc.set(`email.${k}`, String(dto[k]))),
+    );
+    return this.getEmailSettings();
+  }
+
+  @Post("email/test")
+  @HttpCode(HttpStatus.OK)
+  async testEmailSettings(@Body() dto: { toEmail: string }) {
+    return this.emailService.sendTestEmail(dto.toEmail);
   }
 
   // ─── Clear Financial Data ────────────────────────────────────────────────────

@@ -23,6 +23,8 @@ import {
   ExternalLink,
   Trash2,
   BarChart3,
+  Mail,
+  Send,
 } from "lucide-react";
 import {
   Input,
@@ -1065,6 +1067,243 @@ function AIIntegrationsTab() {
   );
 }
 
+// ─── TAB: Email Settings ──────────────────────────────────────────────────────
+
+const emailSchema = z.object({
+  fromName: z.string().min(1, "Required"),
+  fromEmail: z.string().email("Enter a valid email"),
+  smtpHost: z.string().min(1, "Required"),
+  smtpPort: z.coerce.number().min(1).max(65535),
+  smtpUser: z.string().min(1, "Required"),
+  smtpPassword: z.string().optional(),
+  smtpSecure: z.boolean(),
+});
+type EmailFormValues = z.infer<typeof emailSchema>;
+
+function EmailSettingsTab() {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const [showPassword, setShowPassword] = React.useState(false);
+  const [isTesting, setIsTesting] = React.useState(false);
+
+  const { data: savedSettings } = useQuery({
+    queryKey: ["settings", "email"],
+    queryFn: () => apiClient.get("/settings/email").then((r) => r.data),
+  });
+
+  const saveSettings = useMutation({
+    mutationFn: (data: EmailFormValues) =>
+      apiClient.post("/settings/email", data).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["settings", "email"] });
+      toast({ title: "Email settings saved", variant: "success" });
+    },
+    onError: () => toast({ title: "Failed to save email settings", variant: "error" }),
+  });
+
+  const {
+    register,
+    handleSubmit,
+    reset,
+    setValue,
+    watch,
+    formState: { errors, isSubmitting },
+  } = useForm<EmailFormValues>({
+    resolver: zodResolver(emailSchema),
+    defaultValues: {
+      fromName: "",
+      fromEmail: "",
+      smtpHost: "",
+      smtpPort: 587,
+      smtpUser: "",
+      smtpPassword: "",
+      smtpSecure: false,
+    },
+  });
+
+  React.useEffect(() => {
+    if (savedSettings) {
+      reset({
+        fromName: savedSettings.fromName ?? "",
+        fromEmail: savedSettings.fromEmail ?? "",
+        smtpHost: savedSettings.smtpHost ?? "",
+        smtpPort: savedSettings.smtpPort ?? 587,
+        smtpUser: savedSettings.smtpUser ?? "",
+        smtpPassword: savedSettings.smtpPassword ?? "",
+        smtpSecure: savedSettings.smtpSecure ?? false,
+      });
+    }
+  }, [savedSettings, reset]);
+
+  const onSubmit = async (data: EmailFormValues) => {
+    await saveSettings.mutateAsync(data);
+  };
+
+  const applyPreset = (preset: "gmail" | "godaddy") => {
+    if (preset === "gmail") {
+      setValue("smtpHost", "smtp.gmail.com");
+      setValue("smtpPort", 587);
+      setValue("smtpSecure", false);
+    } else {
+      setValue("smtpHost", "smtpout.secureserver.net");
+      setValue("smtpPort", 465);
+      setValue("smtpSecure", true);
+    }
+  };
+
+  const fromEmail = watch("fromEmail");
+
+  const handleTestConnection = async () => {
+    const toEmail = fromEmail;
+    if (!toEmail) {
+      toast({ title: "Set a From Email first", variant: "error" });
+      return;
+    }
+    setIsTesting(true);
+    try {
+      const { data } = await apiClient.post("/settings/email/test", { toEmail });
+      if (data.success) {
+        toast({ title: "Test email sent!", description: `Check ${toEmail} for the test message.`, variant: "success" });
+      } else {
+        toast({ title: "Test failed", description: data.message, variant: "error" });
+      }
+    } catch {
+      toast({ title: "Test failed", description: "Could not send test email.", variant: "error" });
+    } finally {
+      setIsTesting(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-6">
+      <Card title="Sender Identity">
+        <div className="grid grid-cols-2 gap-4">
+          <Input
+            label="From Name"
+            placeholder="RouteFlow Business"
+            register={register("fromName")}
+            error={errors.fromName?.message}
+          />
+          <Input
+            label="From Email"
+            type="email"
+            placeholder="orders@mybusiness.com"
+            register={register("fromEmail")}
+            error={errors.fromEmail?.message}
+          />
+        </div>
+      </Card>
+
+      <Card title="SMTP Configuration">
+        {/* Presets */}
+        <div className="mb-4 flex items-center gap-2">
+          <span className="text-xs font-medium text-navy/60">Quick presets:</span>
+          <button
+            type="button"
+            onClick={() => applyPreset("gmail")}
+            className="rounded border border-surface-border bg-white px-3 py-1 text-xs font-medium text-navy hover:bg-surface-raised transition-colors"
+          >
+            Gmail
+          </button>
+          <button
+            type="button"
+            onClick={() => applyPreset("godaddy")}
+            className="rounded border border-surface-border bg-white px-3 py-1 text-xs font-medium text-navy hover:bg-surface-raised transition-colors"
+          >
+            GoDaddy
+          </button>
+        </div>
+
+        <div className="grid grid-cols-3 gap-4">
+          <div className="col-span-2">
+            <Input
+              label="SMTP Host"
+              placeholder="smtp.gmail.com"
+              register={register("smtpHost")}
+              error={errors.smtpHost?.message}
+            />
+          </div>
+          <Input
+            label="SMTP Port"
+            type="number"
+            placeholder="587"
+            register={register("smtpPort")}
+            error={errors.smtpPort?.message}
+          />
+        </div>
+
+        <div className="mt-4 grid grid-cols-2 gap-4">
+          <Input
+            label="Username"
+            placeholder="user@gmail.com"
+            autoComplete="off"
+            register={register("smtpUser")}
+            error={errors.smtpUser?.message}
+          />
+          <div className="flex flex-col gap-1">
+            <label className="text-sm font-medium text-navy">Password</label>
+            <div className="relative">
+              <input
+                type={showPassword ? "text" : "password"}
+                placeholder="App password or SMTP password"
+                autoComplete="new-password"
+                className="h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 text-sm text-navy placeholder:text-navy/40 transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent"
+                {...register("smtpPassword")}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((v) => !v)}
+                className="absolute inset-y-0 right-0 flex items-center pr-3 text-navy/40 hover:text-navy transition-colors"
+                tabIndex={-1}
+                aria-label={showPassword ? "Hide password" : "Show password"}
+              >
+                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-4 flex items-center gap-2">
+          <input
+            id="smtpSecure"
+            type="checkbox"
+            className="h-4 w-4 rounded border-surface-border accent-brand-500"
+            {...register("smtpSecure")}
+          />
+          <label htmlFor="smtpSecure" className="text-sm text-navy">
+            Use SSL/TLS (port 465)
+          </label>
+        </div>
+      </Card>
+
+      {/* Helper note for Gmail */}
+      <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 space-y-1">
+        <p className="font-medium">Using Gmail?</p>
+        <p className="text-amber-700">
+          Use an App Password — not your regular Google password. Enable 2-step verification in
+          your Google Account, then go to <strong>Security → App Passwords</strong> and create one
+          for &quot;Mail&quot;.
+        </p>
+      </div>
+
+      <div className="flex items-center gap-3">
+        <Button type="submit" loading={isSubmitting} leftIcon={<CheckCircle2 className="h-4 w-4" />}>
+          Save Settings
+        </Button>
+        <Button
+          type="button"
+          variant="secondary"
+          loading={isTesting}
+          leftIcon={<Send className="h-4 w-4" />}
+          onClick={handleTestConnection}
+        >
+          Test Connection
+        </Button>
+      </div>
+    </form>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function SettingsPage() {
@@ -1092,6 +1331,9 @@ export default function SettingsPage() {
           <TabTrigger value="import" icon={<Download className="h-4 w-4" />}>
             Import
           </TabTrigger>
+          <TabTrigger value="email" icon={<Mail className="h-4 w-4" />}>
+            Email
+          </TabTrigger>
         </Tabs.List>
 
         <Tabs.Content value="profile" className="mt-6 max-w-2xl focus:outline-none">
@@ -1112,6 +1354,10 @@ export default function SettingsPage() {
 
         <Tabs.Content value="import" className="mt-0 focus:outline-none">
           <ImportTab />
+        </Tabs.Content>
+
+        <Tabs.Content value="email" className="mt-6 max-w-2xl focus:outline-none">
+          <EmailSettingsTab />
         </Tabs.Content>
       </Tabs.Root>
     </div>

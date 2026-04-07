@@ -1,9 +1,22 @@
-import { Body, Controller, HttpCode, HttpStatus, Post, UseGuards } from "@nestjs/common";
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Post,
+  Req,
+  Res,
+  UseGuards,
+} from "@nestjs/common";
 import { ApiTags, ApiOperation, ApiBearerAuth } from "@nestjs/swagger";
 import { Throttle, ThrottlerGuard } from "@nestjs/throttler";
+import { ConfigService } from "@nestjs/config";
+import type { Response } from "express";
 import { AuthService } from "./auth.service";
 import { LocalAuthGuard } from "./guards/local-auth.guard";
 import { JwtAuthGuard } from "./guards/jwt-auth.guard";
+import { GoogleAuthGuard } from "./guards/google-auth.guard";
 import { CurrentUser } from "./decorators/current-user.decorator";
 import { LoginDto } from "./dto/login.dto";
 import { RefreshDto } from "./dto/refresh.dto";
@@ -12,7 +25,10 @@ import { ChangePasswordDto } from "./dto/change-password.dto";
 @ApiTags("auth")
 @Controller("auth")
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly configService: ConfigService,
+  ) {}
 
   @Post("login")
   @HttpCode(HttpStatus.OK)
@@ -48,5 +64,31 @@ export class AuthController {
   @ApiOperation({ summary: "Change password" })
   changePassword(@CurrentUser() user: { id: string }, @Body() dto: ChangePasswordDto) {
     return this.authService.changePassword(user.id, dto.currentPassword, dto.newPassword);
+  }
+
+  // ─── Google OAuth ──────────────────────────────────────────────────────────
+  // NOTE: Set these env vars in Railway before enabling Google OAuth:
+  //   GOOGLE_CLIENT_ID     — from Google Cloud Console OAuth 2.0 credentials
+  //   GOOGLE_CLIENT_SECRET — from Google Cloud Console OAuth 2.0 credentials
+  //   GOOGLE_CALLBACK_URL  — e.g. https://your-api.railway.app/auth/google/callback
+  //   WEB_URL              — e.g. https://your-web-app.vercel.app
+
+  @Get("google")
+  @UseGuards(GoogleAuthGuard)
+  @ApiOperation({ summary: "Initiate Google OAuth login" })
+  googleLogin() {
+    // Passport redirects to Google — no body needed
+  }
+
+  @Get("google/callback")
+  @UseGuards(GoogleAuthGuard)
+  @ApiOperation({ summary: "Google OAuth callback" })
+  async googleCallback(@Req() req: any, @Res() res: Response) {
+    const tokens = await this.authService.login(req.user);
+    const webUrl =
+      this.configService.get<string>("WEB_URL") ?? "http://localhost:3001";
+    res.redirect(
+      `${webUrl}/auth/callback?accessToken=${tokens.accessToken}&refreshToken=${tokens.refreshToken}&role=${tokens.user.role}`,
+    );
   }
 }

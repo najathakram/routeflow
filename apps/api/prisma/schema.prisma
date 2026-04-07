@@ -195,7 +195,8 @@ model User {
   id                  String     @id @default(uuid())
   email               String     @unique
   username            String     @unique
-  password            String
+  password            String?
+  googleId            String?    @unique
   role                UserRole
   status              UserStatus @default(ACTIVE)
   forcePasswordChange Boolean    @default(false)

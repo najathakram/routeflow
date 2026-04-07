@@ -1,6 +1,8 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Resend } from "resend";
+import * as nodemailer from "nodemailer";
+import { SystemConfigService } from "../system-config/system-config.service";
 
 @Injectable()
 export class EmailService {
@@ -8,7 +10,10 @@ export class EmailService {
   private readonly resend: Resend | null;
   private readonly fromAddress: string;
 
-  constructor(private readonly config: ConfigService) {
+  constructor(
+    private readonly config: ConfigService,
+    private readonly systemConfig: SystemConfigService,
+  ) {
     const apiKey = this.config.get<string>("RESEND_API_KEY");
     this.fromAddress =
       this.config.get<string>("EMAIL_FROM") ?? "RouteFlow <noreply@routeflow.app>";
@@ -21,6 +26,49 @@ export class EmailService {
       this.logger.warn(
         "RESEND_API_KEY not set — emails will be logged only. Set the key to enable real delivery.",
       );
+    }
+  }
+
+  // ─── SMTP helpers ──────────────────────────────────────────────────────────
+
+  private async getSmtpTransport(): Promise<nodemailer.Transporter | null> {
+    const all = await this.systemConfig.getAll("email.");
+    const host = all["email.smtpHost"];
+    const user = all["email.smtpUser"];
+    const pass = all["email.smtpPassword"];
+
+    if (!host || !user || !pass) return null;
+
+    const port = all["email.smtpPort"] ? parseInt(all["email.smtpPort"]) : 587;
+    const secure = all["email.smtpSecure"] === "true";
+
+    return nodemailer.createTransport({
+      host,
+      port,
+      secure,
+      auth: { user, pass },
+    });
+  }
+
+  private async getSmtpFromAddress(): Promise<string> {
+    const all = await this.systemConfig.getAll("email.");
+    const fromName = all["email.fromName"];
+    const fromEmail = all["email.fromEmail"];
+    if (fromEmail) {
+      return fromName ? `${fromName} <${fromEmail}>` : fromEmail;
+    }
+    return this.fromAddress;
+  }
+
+  // ─── Send test email ───────────────────────────────────────────────────────
+
+  async sendTestEmail(toEmail: string): Promise<{ success: boolean; message: string }> {
+    const html = `<p>This is a test email from RouteFlow. Your SMTP configuration is working correctly.</p>`;
+    try {
+      await this.send({ to: toEmail, subject: "RouteFlow — Test Email", html });
+      return { success: true, message: "Test email sent successfully" };
+    } catch (err: any) {
+      return { success: false, message: err?.message ?? "Failed to send test email" };
     }
   }
 
@@ -49,27 +97,45 @@ export class EmailService {
 
   // ─── Internal send ─────────────────────────────────────────────────────────
 
-  private async send(params: { to: string; subject: string; html: string }) {
-    if (!this.resend) {
-      this.logger.log(
-        `[EMAIL MOCK] To: ${params.to} | Subject: ${params.subject}`,
-      );
-      return { id: "mock" };
+  async send(params: { to: string; subject: string; html: string }) {
+    // 1. Try SMTP if configured
+    const smtpTransport = await this.getSmtpTransport();
+    if (smtpTransport) {
+      const from = await this.getSmtpFromAddress();
+      try {
+        const info = await smtpTransport.sendMail({
+          from,
+          to: params.to,
+          subject: params.subject,
+          html: params.html,
+        });
+        this.logger.log(`Email sent via SMTP to ${params.to} — messageId: ${info.messageId}`);
+        return { id: info.messageId };
+      } catch (err: any) {
+        this.logger.error(`SMTP send failed: ${err?.message}. Falling back to Resend.`);
+      }
     }
 
-    try {
-      const result = await this.resend.emails.send({
-        from: this.fromAddress,
-        to: params.to,
-        subject: params.subject,
-        html: params.html,
-      });
-      this.logger.log(`Email sent to ${params.to} — id: ${(result.data as any)?.id}`);
-      return result;
-    } catch (err: any) {
-      this.logger.error(`Failed to send email to ${params.to}: ${err?.message}`);
-      throw err;
+    // 2. Try Resend
+    if (this.resend) {
+      try {
+        const result = await this.resend.emails.send({
+          from: this.fromAddress,
+          to: params.to,
+          subject: params.subject,
+          html: params.html,
+        });
+        this.logger.log(`Email sent via Resend to ${params.to} — id: ${(result.data as any)?.id}`);
+        return result;
+      } catch (err: any) {
+        this.logger.error(`Failed to send email to ${params.to}: ${err?.message}`);
+        throw err;
+      }
     }
+
+    // 3. Log only
+    this.logger.log(`[EMAIL MOCK] To: ${params.to} | Subject: ${params.subject}`);
+    return { id: "mock" };
   }
 
   // ─── Email template ────────────────────────────────────────────────────────
@@ -107,7 +173,7 @@ export class EmailService {
       : "";
 
     const pdfButton = params.pdfUrl
-      ? `<a href="${params.pdfUrl}" style="display:inline-block;margin-top:8px;background:#f3f4f6;color:#374151;padding:8px 20px;border-radius:6px;font-size:13px;text-decoration:none;font-weight:500;">⬇ Download PDF</a>`
+      ? `<a href="${params.pdfUrl}" style="display:inline-block;margin-top:8px;background:#f3f4f6;color:#374151;padding:8px 20px;border-radius:6px;font-size:13px;text-decoration:none;font-weight:500;">Download PDF</a>`
       : "";
 
     return `<!DOCTYPE html>
