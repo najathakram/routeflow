@@ -29,7 +29,7 @@ import {
 import { Badge, Button, Card, cn, useToast, type BadgeStatus } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useOrder, useUpdateOrderStatus, useUpdateOrderItems, useReopenOrder, useDeleteOrder, type OrderItem, type ItemUpdate } from "@/lib/api/orders";
-import { useCreateInvoiceFromOrder, useSendInvoice } from "@/lib/api/invoices";
+import { useCreateInvoiceFromOrder, useSendInvoice, useSendInvoiceEmail } from "@/lib/api/invoices";
 import { useProducts } from "@/lib/api/products";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { apiClient } from "@/lib/api-client";
@@ -55,8 +55,10 @@ function SendInvoiceModal({
 }) {
   const { toast } = useToast();
   const sendInvoice = useSendInvoice();
+  const sendInvoiceEmail = useSendInvoiceEmail();
   const [pdfLoading, setPdfLoading] = React.useState(false);
   const [sent, setSent] = React.useState(false);
+  const [emailSent, setEmailSent] = React.useState(false);
 
   const phone = data.customerMobile || data.customerPhone;
   const totalFmt = `$${Number(data.total).toFixed(2)}`;
@@ -72,6 +74,20 @@ function SendInvoiceModal({
       },
       onError: (e) => toast({ title: e.message, variant: "error" }),
     });
+  }
+
+  function handleSendEmail() {
+    sendInvoiceEmail.mutate(
+      { id: data.invoiceId, email: data.customerEmail! },
+      {
+        onSuccess: (res) => {
+          setEmailSent(true);
+          setSent(true);
+          toast({ title: "Invoice emailed", description: `Sent to ${res.sentTo}`, variant: "success" });
+        },
+        onError: (e: any) => toast({ title: "Failed to send email", description: e?.response?.data?.message || e.message, variant: "error" }),
+      },
+    );
   }
 
   async function handleDownload() {
@@ -145,18 +161,26 @@ function SendInvoiceModal({
 
           {/* Email */}
           {data.customerEmail && (
-            <a
-              href={`mailto:${data.customerEmail}?subject=${encodeURIComponent(`Invoice ${data.invoiceNumber}`)}&body=${invoiceMsg}`}
-              className="flex w-full items-center gap-3 rounded-xl border border-surface-border bg-white px-4 py-3 text-left transition-colors hover:bg-surface-raised"
-            >
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface-raised">
-                <Mail className="h-4 w-4 text-navy/60" />
+            emailSent ? (
+              <div className="flex items-center gap-2 rounded-lg bg-success-bg px-4 py-3 text-sm font-medium text-success">
+                <CheckCircle2 className="h-4 w-4 shrink-0" />
+                Email sent to {data.customerEmail}
               </div>
-              <div>
-                <p className="text-sm font-medium text-navy">Send via Email</p>
-                <p className="text-xs text-navy/50">{data.customerEmail}</p>
-              </div>
-            </a>
+            ) : (
+              <button
+                onClick={handleSendEmail}
+                disabled={sendInvoiceEmail.isPending}
+                className="flex w-full items-center gap-3 rounded-xl border border-surface-border bg-white px-4 py-3 text-left transition-colors hover:bg-surface-raised disabled:opacity-50"
+              >
+                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface-raised">
+                  {sendInvoiceEmail.isPending ? <Loader2 className="h-4 w-4 animate-spin text-navy/60" /> : <Mail className="h-4 w-4 text-navy/60" />}
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-navy">Send via Email</p>
+                  <p className="text-xs text-navy/50">{data.customerEmail}</p>
+                </div>
+              </button>
+            )
           )}
 
           {/* SMS */}
