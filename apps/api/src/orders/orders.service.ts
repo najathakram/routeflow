@@ -144,25 +144,37 @@ export class OrdersService {
       customerId = customer.id;
     }
 
-    const products = await this.prisma.product.findMany({
-      where: { id: { in: dto.items.map((i) => i.productId) } },
-    });
+    const isDraft = dto.status === "DRAFT";
+    const items = dto.items ?? [];
+
+    // Non-draft orders require at least one item
+    if (!isDraft && items.length === 0) {
+      throw new BadRequestException("At least one item is required");
+    }
+
+    const products = items.length > 0
+      ? await this.prisma.product.findMany({
+          where: { id: { in: items.map((i) => i.productId) } },
+        })
+      : [];
 
     const productMap = new Map(products.map((p) => [p.id, p]));
 
     // Load any permanent customer-specific prices for this order
-    const customerPrices = await this.prisma.customerPrice.findMany({
-      where: {
-        customerId,
-        productId: { in: dto.items.map((i) => i.productId) },
-      },
-    });
+    const customerPrices = items.length > 0
+      ? await this.prisma.customerPrice.findMany({
+          where: {
+            customerId,
+            productId: { in: items.map((i) => i.productId) },
+          },
+        })
+      : [];
     const cpMap = new Map(customerPrices.map((cp) => [cp.productId, Number(cp.specialPrice)]));
 
     const orderNumber = `ORD-${Date.now()}`;
 
     let subtotal = 0;
-    const lineItemsData = dto.items.map((item) => {
+    const lineItemsData = items.map((item) => {
       const product = productMap.get(item.productId);
       if (!product) throw new BadRequestException(`Product ${item.productId} not found`);
 
@@ -218,6 +230,7 @@ export class OrdersService {
       data: {
         customerId,
         orderNumber,
+        status: isDraft ? OrderStatus.DRAFT : OrderStatus.PENDING,
         subtotal,
         tax,
         total,
@@ -250,24 +263,27 @@ export class OrdersService {
       }
     }
 
-    this.gateway.emitOrderCreated({
-      orderId: order.id,
-      orderNumber: order.orderNumber ?? "",
-      customerId: order.customerId,
-      customerName: order.customer.businessName,
-      total: Number(order.total),
-      urgent: order.urgent,
-      createdAt: order.createdAt.toISOString(),
-    });
-
-    if (order.urgent) {
-      this.gateway.emitUrgentOrder({
+    // Don't emit real-time events for draft orders
+    if (!isDraft) {
+      this.gateway.emitOrderCreated({
         orderId: order.id,
         orderNumber: order.orderNumber ?? "",
         customerId: order.customerId,
         customerName: order.customer.businessName,
-        placedAt: order.createdAt.toISOString(),
+        total: Number(order.total),
+        urgent: order.urgent,
+        createdAt: order.createdAt.toISOString(),
       });
+
+      if (order.urgent) {
+        this.gateway.emitUrgentOrder({
+          orderId: order.id,
+          orderNumber: order.orderNumber ?? "",
+          customerId: order.customerId,
+          customerName: order.customer.businessName,
+          placedAt: order.createdAt.toISOString(),
+        });
+      }
     }
 
     return order;
@@ -279,8 +295,8 @@ export class OrdersService {
     if (user.role === UserRole.CUSTOMER) {
       const customer = await this.prisma.customer.findFirst({ where: { userId: user.sub } });
       if (!customer || order.customerId !== customer.id) throw new ForbiddenException();
-      // Customers may only cancel their own PENDING orders
-      if (dto.status !== OrderStatus.CANCELLED || order.status !== OrderStatus.PENDING) {
+      // Customers may only cancel their own PENDING or DRAFT orders
+      if (dto.status !== OrderStatus.CANCELLED || (order.status !== OrderStatus.PENDING && order.status !== OrderStatus.DRAFT)) {
         throw new ForbiddenException("Customers can only cancel their own pending orders");
       }
     } else if (user.role === UserRole.DRIVER) {
@@ -293,6 +309,7 @@ export class OrdersService {
     }
 
     const allowed: Record<string, string[]> = {
+      DRAFT: ["PENDING", "CANCELLED"],
       PENDING: ["CONFIRMED", "CANCELLED"],
       CONFIRMED: ["OUT_FOR_DELIVERY", "DELIVERED", "PENDING", "CANCELLED"],
       OUT_FOR_DELIVERY: ["DELIVERED", "CONFIRMED", "CANCELLED"],

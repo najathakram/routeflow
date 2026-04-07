@@ -30,7 +30,7 @@ import { apiClient } from "@/lib/api-client";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type ApiOrderStatus = "PENDING" | "CONFIRMED" | "OUT_FOR_DELIVERY" | "DELIVERED" | "CANCELLED";
+type ApiOrderStatus = "DRAFT" | "PENDING" | "CONFIRMED" | "OUT_FOR_DELIVERY" | "DELIVERED" | "CANCELLED";
 
 interface EditItemState {
   id: string;          // real DB id for existing items; temp "new-{uuid}" for new items
@@ -440,6 +440,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
   // Item editing
   const [isEditing, setIsEditing] = React.useState(false);
   const [editItems, setEditItems] = React.useState<EditItemState[]>([]);
+  const [draftAutoEntered, setDraftAutoEntered] = React.useState(false);
 
   // Demotion modal
   const [demoteTarget, setDemoteTarget] = React.useState<ApiOrderStatus | null>(null);
@@ -455,9 +456,30 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
   React.useEffect(() => {
     if (order) {
       setTitle(order.orderNumber);
-      setLocalStatus(order.status);
+      setLocalStatus(order.status as ApiOrderStatus);
+      // Auto-enter edit mode for draft orders so the user can immediately add items
+      if (order.status === "DRAFT" && !draftAutoEntered) {
+        setDraftAutoEntered(true);
+        setEditItems(
+          order.lineItems
+            .filter((li) => li.status !== "CANCELLED")
+            .map((li) => ({
+              id: li.id,
+              originalProductId: li.productId,
+              originalProductName: li.product?.name ?? li.productId,
+              originalQty: Math.round(Number(li.qty)),
+              productId: li.productId,
+              productName: li.product?.name ?? li.productId,
+              qty: Math.round(Number(li.qty)),
+              unitPrice: Number(li.unitPrice),
+              cancelled: false,
+              notes: li.notes,
+            })),
+        );
+        setIsEditing(true);
+      }
     }
-  }, [order, setTitle]);
+  }, [order, setTitle, draftAutoEntered]);
 
   if (isLoading) {
     return (
@@ -477,7 +499,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
   }
 
   const total = Number(order.total);
-  const canEdit = localStatus === "PENDING" || localStatus === "CONFIRMED";
+  const canEdit = localStatus === "DRAFT" || localStatus === "PENDING" || localStatus === "CONFIRMED";
 
   // ── Edit mode ──────────────────────────────────────────────────────────────
 
@@ -666,6 +688,48 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
             >
               Edit Items
             </Button>
+          )}
+
+          {/* DRAFT actions */}
+          {localStatus === "DRAFT" && !isEditing && (
+            <>
+              <Button
+                size="sm"
+                leftIcon={<CheckCircle2 className="h-4 w-4" />}
+                onClick={() => {
+                  updateStatus.mutate(
+                    { id: order.id, status: "PENDING" as any },
+                    { onSuccess: () => setLocalStatus("PENDING") },
+                  );
+                }}
+                loading={updateStatus.isPending}
+              >
+                Publish Order
+              </Button>
+              {showDeleteConfirm ? (
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-danger font-medium">Delete order?</span>
+                  <Button
+                    size="sm"
+                    variant="danger"
+                    loading={deleteOrder.isPending}
+                    onClick={() => {
+                      deleteOrder.mutate(order.id, {
+                        onSuccess: () => { toast({ title: "Draft deleted", variant: "success" }); router.push("/orders"); },
+                        onError: (e) => { toast({ title: e.message, variant: "error" }); setShowDeleteConfirm(false); },
+                      });
+                    }}
+                  >
+                    Confirm Delete
+                  </Button>
+                  <button onClick={() => setShowDeleteConfirm(false)} className="text-sm text-navy/50 hover:text-navy transition-colors">No</button>
+                </div>
+              ) : (
+                <Button size="sm" variant="ghost" leftIcon={<Trash2 className="h-4 w-4" />} onClick={() => setShowDeleteConfirm(true)}>
+                  Delete Draft
+                </Button>
+              )}
+            </>
           )}
 
           {/* PENDING actions */}
@@ -882,22 +946,74 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                   </div>
                 </div>
 
-                <div className="flex gap-2">
-                  <Button
-                    size="sm"
-                    onClick={handleSaveItems}
-                    loading={updateItems.isPending}
-                  >
-                    Save Changes
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={cancelEditMode}
-                    disabled={updateItems.isPending}
-                  >
-                    Cancel
-                  </Button>
+                <div className="flex gap-2 flex-wrap">
+                  {localStatus === "DRAFT" ? (
+                    <>
+                      <Button
+                        size="sm"
+                        className="bg-amber-500 text-white hover:bg-amber-600"
+                        onClick={handleSaveItems}
+                        loading={updateItems.isPending}
+                      >
+                        Save Draft
+                      </Button>
+                      <Button
+                        size="sm"
+                        leftIcon={<CheckCircle2 className="h-4 w-4" />}
+                        onClick={() => {
+                          // Save items first, then publish
+                          const original = order!.lineItems;
+                          const updates: any[] = [];
+                          for (const edited of editItems) {
+                            if (edited.isNew) { updates.push({ productId: edited.productId, qty: edited.qty }); continue; }
+                            const orig = original.find((li) => li.id === edited.id);
+                            if (!orig) continue;
+                            if (edited.cancelled) { updates.push({ id: edited.id, action: "CANCEL" }); }
+                            else if (edited.substituteProductId) { updates.push({ id: edited.id, substituteProductId: edited.substituteProductId, qty: edited.qty }); }
+                            else if (Math.abs(edited.qty - Number(orig.qty)) > 0.0001) { updates.push({ id: edited.id, action: "UPDATE", qty: edited.qty }); }
+                          }
+                          const doPublish = () => updateStatus.mutate(
+                            { id: order!.id, status: "PENDING" as any },
+                            { onSuccess: () => { setLocalStatus("PENDING"); setIsEditing(false); setEditItems([]); } },
+                          );
+                          if (updates.length > 0) {
+                            updateItems.mutate({ id: order!.id, items: updates }, { onSuccess: doPublish });
+                          } else {
+                            doPublish();
+                          }
+                        }}
+                        loading={updateItems.isPending || updateStatus.isPending}
+                      >
+                        Publish Order
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={cancelEditMode}
+                        disabled={updateItems.isPending || updateStatus.isPending}
+                      >
+                        Cancel
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <Button
+                        size="sm"
+                        onClick={handleSaveItems}
+                        loading={updateItems.isPending}
+                      >
+                        Save Changes
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={cancelEditMode}
+                        disabled={updateItems.isPending}
+                      >
+                        Cancel
+                      </Button>
+                    </>
+                  )}
                 </div>
               </div>
             ) : (

@@ -12,6 +12,7 @@ import { CreateOrderModal } from "./_components/CreateOrderModal";
 
 const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: "", label: "All Statuses" },
+  { value: "DRAFT", label: "Draft" },
   { value: "PENDING", label: "Pending" },
   { value: "CONFIRMED", label: "Confirmed" },
   { value: "OUT_FOR_DELIVERY", label: "Out for Delivery" },

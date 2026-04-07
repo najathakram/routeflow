@@ -3,6 +3,7 @@ import {
   IsArray,
   IsBoolean,
   IsDateString,
+  IsEnum,
   IsInt,
   IsNumber,
   IsOptional,
@@ -26,11 +27,12 @@ class OrderItemDto {
 
 export class CreateOrderDto {
   @IsOptional() @IsString() customerId?: string;
+  @IsOptional() @IsEnum(["DRAFT", "PENDING"]) status?: "DRAFT" | "PENDING";
   @IsArray()
-  @ArrayMinSize(1)
+  @IsOptional()
   @ValidateNested({ each: true })
   @Type(() => OrderItemDto)
-  items: OrderItemDto[];
+  items?: OrderItemDto[];
   @IsOptional() @IsString() notes?: string;
   @IsOptional() @IsBoolean() urgent?: boolean;
   @IsOptional() @IsDateString() requestedDeliveryDate?: string;

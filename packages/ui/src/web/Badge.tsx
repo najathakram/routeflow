@@ -4,6 +4,7 @@ import { cn } from "./utils";
 export type BadgeVariant = "success" | "warning" | "danger" | "info" | "neutral";
 
 export type BadgeStatus =
+  | "DRAFT"
   | "ACTIVE"
   | "INACTIVE"
   | "SUSPENDED"
@@ -17,6 +18,7 @@ export type BadgeStatus =
   | "COMPLETED";
 
 const STATUS_MAP: Record<BadgeStatus, { variant: BadgeVariant; label: string }> = {
+  DRAFT: { variant: "neutral", label: "Draft" },
   ACTIVE: { variant: "success", label: "Active" },
   INACTIVE: { variant: "neutral", label: "Inactive" },
   SUSPENDED: { variant: "danger", label: "Suspended" },
