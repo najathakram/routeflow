@@ -47,7 +47,10 @@
       "Bash(Remove-Item -Recurse -Force \"C:\\\\ClaudeCode\\\\routeflow\\\\apps\\\\mobile\\\\.expo\")",
       "Bash(curl -s http://localhost:3000/health)",
       "Bash(xargs cat:*)",
-      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3000/api/v1/products)"
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3000/api/v1/products)",
+      "Bash(npx serve:*)",
+      "Bash(ls -la /c/ClaudeCode/routeflow/apps/web/app/\\\\\\(dashboard\\\\\\)/)",
+      "Bash(powershell -Command \"Stop-Process -Id 26340 -Force\")"
     ]
   }
 }

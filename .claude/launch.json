@@ -23,6 +23,20 @@
       "cwd": "apps/mobile",
       "port": 8081,
       "autoPort": false
+    },
+    {
+      "name": "design",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["serve", "--listen", "4000", "."],
+      "cwd": "apps/operator-app-design",
+      "port": 4000
+    },
+    {
+      "name": "mockups",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["serve", "--listen", "4500", "--no-clipboard", "."],
+      "cwd": "mockups",
+      "port": 4500
     }
   ]
 }

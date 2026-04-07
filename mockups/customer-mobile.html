@@ -1,0 +1,786 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow — Customer</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+* { margin: 0; padding: 0; box-sizing: border-box; -webkit-font-smoothing: antialiased; }
+
+body {
+  background: #1C1C1E;
+  font-family: -apple-system, 'SF Pro Display', 'SF Pro Text', 'Inter', sans-serif;
+  padding: 60px 40px 60px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 48px;
+  align-items: flex-start;
+}
+
+.phone {
+  width: 393px; height: 852px;
+  background: #F2F2F7;
+  border-radius: 54px;
+  overflow: hidden;
+  position: relative;
+  flex-shrink: 0;
+  box-shadow:
+    0 0 0 1px rgba(255,255,255,0.08),
+    0 0 0 10px #1A1A1A,
+    0 0 0 11px rgba(255,255,255,0.06),
+    0 40px 100px rgba(0,0,0,0.8);
+}
+
+.label {
+  color: #48484A; font-size: 11px; font-weight: 600;
+  letter-spacing: 0.1em; text-transform: uppercase;
+  margin-bottom: 12px;
+}
+.group { display: flex; flex-direction: column; }
+
+.dynamic-island {
+  position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+  width: 120px; height: 36px; background: #000; border-radius: 20px; z-index: 100;
+}
+
+.statusbar {
+  height: 59px; display: flex; align-items: flex-end;
+  justify-content: space-between; padding: 0 28px 10px;
+  flex-shrink: 0; position: relative;
+}
+.statusbar.white { background: #fff; }
+.statusbar.gray { background: #F2F2F7; }
+.sb-time { font-size: 15px; font-weight: 600; color: #000; letter-spacing: -0.3px; }
+.sb-icons { display: flex; align-items: center; gap: 7px; }
+
+.screen { display: flex; flex-direction: column; height: 100%; background: #F2F2F7; }
+.screen.white { background: #fff; }
+.content { flex: 1; overflow: hidden; display: flex; flex-direction: column; min-height: 0; }
+.scroll { flex: 1; overflow-y: auto; }
+.scroll::-webkit-scrollbar { display: none; }
+
+.navbar {
+  backdrop-filter: blur(20px); padding: 0 20px 12px;
+  border-bottom: 0.5px solid rgba(60,60,67,0.12); flex-shrink: 0;
+  background: rgba(242,242,247,0.85);
+}
+.navbar.white { background: rgba(255,255,255,0.85); }
+.navbar-inline { display: flex; align-items: center; justify-content: space-between; padding-bottom: 10px; }
+.navbar-inline .nav-title { font-size: 17px; font-weight: 600; color: #000; }
+.nav-back { font-size: 17px; color: #1741A6; display: flex; align-items: center; gap: 4px; font-weight: 400; }
+.nav-action { font-size: 17px; color: #1741A6; font-weight: 400; }
+
+.tabbar {
+  background: rgba(249,249,249,0.94); backdrop-filter: blur(20px);
+  border-top: 0.5px solid rgba(60,60,67,0.2);
+  display: flex; padding: 8px 0 28px; flex-shrink: 0;
+}
+.tab { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 2px 0; }
+.tab-icon { width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; }
+.tab-icon svg { width: 24px; height: 24px; }
+.tab-label { font-size: 10px; font-weight: 500; color: #8E8E93; }
+.tab.active .tab-label { color: #1741A6; }
+
+:root {
+  --blue: #1741A6; --green: #34C759; --red: #FF3B30; --orange: #FF9500;
+  --gray: #8E8E93; --gray3: #C7C7CC; --gray4: #D1D1D6; --gray5: #E5E5EA; --gray6: #F2F2F7;
+  --label: #000; --label2: rgba(60,60,67,0.6); --separator: rgba(60,60,67,0.12);
+  --fill: rgba(120,120,128,0.2); --fill2: rgba(120,120,128,0.16);
+}
+
+.list-group { background: #fff; border-radius: 12px; overflow: hidden; }
+.list-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 11px 16px; background: #fff; min-height: 44px; position: relative;
+}
+.list-row + .list-row::before {
+  content: ''; position: absolute; top: 0; left: 60px; right: 0;
+  height: 0.5px; background: var(--separator);
+}
+.list-row-icon { width: 30px; height: 30px; border-radius: 7px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.list-row-icon svg { width: 16px; height: 16px; }
+.row-title { font-size: 17px; color: var(--label); flex: 1; }
+.chevron-right { color: var(--gray3); font-size: 18px; font-weight: 300; margin-right: -4px; }
+
+.card { background: #fff; border-radius: 16px; overflow: hidden; }
+.card-inset { padding: 16px; }
+
+.pill {
+  display: inline-flex; align-items: center;
+  padding: 3px 10px; border-radius: 999px;
+  font-size: 13px; font-weight: 600;
+}
+.pill-blue { background: rgba(23,65,166,0.1); color: #1741A6; }
+.pill-green { background: rgba(52,199,89,0.12); color: #248A3D; }
+.pill-red { background: rgba(255,59,48,0.1); color: #D70015; }
+.pill-orange { background: rgba(255,149,0,0.12); color: #C93400; }
+.pill-gray { background: rgba(142,142,147,0.12); color: #636366; }
+.pill-yellow { background: rgba(255,204,0,0.15); color: #7D5800; }
+
+.btn-primary {
+  background: #1741A6; color: #fff; font-size: 17px; font-weight: 600;
+  border-radius: 14px; padding: 15px 20px; text-align: center; letter-spacing: -0.2px;
+}
+.btn-secondary {
+  background: var(--fill2); color: #1741A6; font-size: 17px; font-weight: 600;
+  border-radius: 14px; padding: 15px 20px; text-align: center;
+}
+.btn-row { display: flex; gap: 10px; }
+.btn-row > * { flex: 1; }
+
+.detail-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 11px 16px; background: #fff; min-height: 44px; position: relative;
+}
+.detail-row + .detail-row::before {
+  content: ''; position: absolute; top: 0; left: 16px; right: 0;
+  height: 0.5px; background: var(--separator);
+}
+.detail-label { font-size: 16px; color: #000; }
+.detail-value { font-size: 16px; color: var(--label2); text-align: right; }
+.detail-value.green { color: #248A3D; }
+.detail-value.bold { font-weight: 600; color: #000; }
+
+.section-inline {
+  display: flex; justify-content: space-between; align-items: baseline; padding: 20px 16px 8px;
+}
+.section-inline-title { font-size: 20px; font-weight: 700; color: #000; letter-spacing: -0.3px; }
+.section-inline-link { font-size: 15px; color: #1741A6; }
+
+.inline-stats { display: flex; background: #fff; border-radius: 16px; overflow: hidden; margin: 0 16px; }
+.inline-stat { flex: 1; padding: 14px 10px; text-align: center; }
+.inline-stat + .inline-stat { border-left: 0.5px solid var(--separator); }
+.inline-stat-val { font-size: 22px; font-weight: 700; color: #000; letter-spacing: -0.5px; }
+.inline-stat-lbl { font-size: 12px; color: var(--label2); margin-top: 2px; }
+
+/* Product grid */
+.product-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 0 16px; }
+.product-card { background: #fff; border-radius: 16px; overflow: hidden; }
+.product-img { height: 110px; display: flex; align-items: center; justify-content: center; }
+.product-body { padding: 10px 12px 12px; }
+.product-name { font-size: 14px; font-weight: 600; color: #000; line-height: 1.2; }
+.product-price { font-size: 16px; font-weight: 700; color: #1741A6; margin-top: 4px; }
+.product-unit { font-size: 12px; color: var(--label2); font-weight: 400; }
+.add-btn { margin-top: 8px; background: #1741A6; border-radius: 10px; padding: 8px; text-align: center; color: #fff; font-size: 14px; font-weight: 600; }
+
+/* Cart item */
+.cart-item { display: flex; align-items: center; gap: 12px; padding: 12px 16px; background: #fff; position: relative; }
+.cart-item + .cart-item::before { content: ''; position: absolute; top: 0; left: 68px; right: 0; height: 0.5px; background: var(--separator); }
+.cart-thumb { width: 44px; height: 44px; border-radius: 10px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.cart-body { flex: 1; }
+.cart-name { font-size: 15px; font-weight: 600; color: #000; }
+.cart-price { font-size: 13px; color: var(--label2); margin-top: 1px; }
+.qty-control { display: flex; align-items: center; gap: 10px; }
+.qty-btn { width: 28px; height: 28px; border-radius: 999px; background: rgba(23,65,166,0.1); display: flex; align-items: center; justify-content: center; }
+.qty-btn svg { width: 14px; height: 14px; }
+.qty-num { font-size: 16px; font-weight: 600; color: #000; min-width: 20px; text-align: center; }
+
+/* Order row */
+.order-row { display: flex; align-items: center; gap: 12px; padding: 12px 16px; background: #fff; position: relative; }
+.order-row + .order-row::before { content: ''; position: absolute; top: 0; left: 76px; right: 0; height: 0.5px; background: var(--separator); }
+.order-avatar { width: 42px; height: 42px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 700; color: #fff; flex-shrink: 0; }
+.order-body { flex: 1; min-width: 0; }
+.order-name { font-size: 16px; font-weight: 600; color: #000; }
+.order-sub { font-size: 13px; color: var(--label2); margin-top: 1px; }
+.order-right { text-align: right; flex-shrink: 0; }
+.order-amount { font-size: 16px; font-weight: 600; color: #000; }
+.order-date { font-size: 13px; color: var(--label2); margin-top: 2px; }
+
+/* Search bar */
+.search-bar {
+  margin: 10px 16px; background: rgba(118,118,128,0.12); border-radius: 10px;
+  padding: 7px 12px; display: flex; align-items: center; gap: 6px;
+}
+.search-bar svg { width: 16px; height: 16px; color: var(--gray); flex-shrink: 0; }
+.search-bar span { font-size: 17px; color: var(--gray); }
+
+/* Invoice row */
+.inv-row { display: flex; align-items: center; gap: 12px; padding: 12px 16px; background: #fff; position: relative; }
+.inv-row + .inv-row::before { content: ''; position: absolute; top: 0; left: 16px; right: 0; height: 0.5px; background: var(--separator); }
+.inv-num { font-size: 15px; font-weight: 600; color: #000; }
+.inv-sub { font-size: 13px; color: var(--label2); margin-top: 1px; }
+.inv-right { text-align: right; margin-left: auto; flex-shrink: 0; }
+.inv-amount { font-size: 15px; font-weight: 600; color: #000; }
+.inv-date { font-size: 13px; color: var(--label2); margin-top: 2px; }
+
+/* Statement row */
+.stmt-row { display: flex; align-items: flex-start; gap: 10px; padding: 12px 16px; background: #fff; position: relative; }
+.stmt-row + .stmt-row::before { content: ''; position: absolute; top: 0; left: 16px; right: 0; height: 0.5px; background: var(--separator); }
+.stmt-dot { width: 8px; height: 8px; border-radius: 999px; margin-top: 5px; flex-shrink: 0; }
+.stmt-body { flex: 1; }
+.stmt-desc { font-size: 15px; color: #000; }
+.stmt-date { font-size: 13px; color: var(--label2); margin-top: 1px; }
+.stmt-amount { font-size: 15px; font-weight: 600; text-align: right; flex-shrink: 0; }
+
+/* Category chips */
+.cat-scroll { display: flex; gap: 8px; overflow-x: auto; padding: 12px 16px 4px; }
+.cat-scroll::-webkit-scrollbar { display: none; }
+.cat-chip { padding: 6px 14px; border-radius: 999px; font-size: 14px; font-weight: 500; white-space: nowrap; }
+.cat-active { background: #1741A6; color: #fff; }
+.cat-inactive { background: rgba(118,118,128,0.12); color: #3C3C43; }
+
+/* Status bar SVGs shorthand */
+.sb-signal { display:flex;align-items:center; }
+</style>
+</head>
+<body>
+
+<!-- ══ STATUS BAR MACRO ══ -->
+<!-- reused across all screens inline -->
+
+<!-- ══ SCREEN 1 — SHOP (Product Catalog) ══ -->
+<div class="group">
+  <div class="label">Shop</div>
+  <div class="phone">
+    <div class="dynamic-island"></div>
+    <div class="screen">
+      <div class="statusbar gray"><span class="sb-time">9:41</span><div class="sb-icons"><svg width="17" height="12" viewBox="0 0 17 12" fill="none"><rect x="0" y="3" width="3" height="9" rx="0.8" fill="#000"/><rect x="4.5" y="2" width="3" height="10" rx="0.8" fill="#000"/><rect x="9" y="0.5" width="3" height="11.5" rx="0.8" fill="#000"/><rect x="13.5" y="0" width="3" height="12" rx="0.8" fill="#000" opacity="0.3"/></svg><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M8 2.5C5.5 2.5 3.3 3.5 1.8 5.2L0 3.4C2 1.3 4.8 0 8 0s6 1.3 8 3.4L14.2 5.2C12.7 3.5 10.5 2.5 8 2.5z" fill="#000"/><path d="M8 6c-1.6 0-3 .7-4 1.7L2.4 6.1C3.8 4.8 5.8 4 8 4s4.2.8 5.6 2.1L12 7.7C11 6.7 9.6 6 8 6z" fill="#000"/><circle cx="8" cy="10" r="2" fill="#000"/></svg><svg width="25" height="12" viewBox="0 0 25 12" fill="none"><rect x="0.5" y="0.5" width="21" height="11" rx="3.5" stroke="#000" stroke-opacity="0.35"/><rect x="2" y="2" width="16" height="8" rx="2" fill="#000"/><path d="M23 4v4a2 2 0 000-4z" fill="#000" fill-opacity="0.4"/></svg></div></div>
+
+      <div class="navbar">
+        <div class="navbar-inline">
+          <div style="font-size:34px;font-weight:700;color:#000;letter-spacing:0.35px;line-height:1.1">Shop</div>
+          <div style="position:relative">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z" stroke="#1741A6" stroke-width="1.8"/><line x1="3" y1="6" x2="21" y2="6" stroke="#1741A6" stroke-width="1.8"/><path d="M16 10a4 4 0 01-8 0" stroke="#1741A6" stroke-width="1.8"/></svg>
+            <div style="position:absolute;top:-4px;right:-4px;width:16px;height:16px;background:#FF3B30;border-radius:999px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#fff;border:2px solid #F2F2F7">3</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="content">
+        <div class="scroll">
+          <div class="search-bar"><svg viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="#8E8E93" stroke-width="1.8"/><path d="M16.5 16.5L21 21" stroke="#8E8E93" stroke-width="1.8" stroke-linecap="round"/></svg><span>Search products</span></div>
+
+          <div class="cat-scroll">
+            <div class="cat-chip cat-active">All</div>
+            <div class="cat-chip cat-inactive">Bakery</div>
+            <div class="cat-chip cat-inactive">Dairy</div>
+            <div class="cat-chip cat-inactive">Beverages</div>
+            <div class="cat-chip cat-inactive">Snacks</div>
+          </div>
+
+          <!-- Your pricing notice -->
+          <div style="margin:12px 16px 0;background:rgba(52,199,89,0.08);border-radius:12px;padding:10px 14px;display:flex;align-items:center;gap:8px">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 000-7.78z" fill="#34C759"/></svg>
+            <span style="font-size:13px;color:#248A3D;font-weight:500">Your special pricing applied</span>
+          </div>
+
+          <div class="section-inline"><span class="section-inline-title">Products</span></div>
+
+          <div class="product-grid">
+            <div class="product-card">
+              <div class="product-img" style="background:rgba(255,149,0,0.08)">
+                <svg width="52" height="52" viewBox="0 0 64 64" fill="none"><ellipse cx="32" cy="46" rx="22" ry="8" fill="rgba(255,149,0,0.15)"/><path d="M12 40c0-12 8-28 20-34 12 6 20 22 20 34H12z" fill="#FF9500" opacity="0.8"/><path d="M20 40c0-8 5-18 12-22 7 4 12 14 12 22H20z" fill="#FFCC00" opacity="0.7"/></svg>
+              </div>
+              <div class="product-body">
+                <div class="product-name">Sourdough Loaf</div>
+                <div class="product-price">$4.20 <span class="product-unit">/ each</span></div>
+                <div class="add-btn">Add to Order</div>
+              </div>
+            </div>
+            <div class="product-card">
+              <div class="product-img" style="background:rgba(23,65,166,0.06)">
+                <svg width="52" height="52" viewBox="0 0 64 64" fill="none"><rect x="14" y="26" width="36" height="20" rx="4" fill="#1741A6" opacity="0.25"/><rect x="20" y="20" width="24" height="10" rx="3" fill="#1741A6" opacity="0.4"/><rect x="16" y="44" width="32" height="4" rx="2" fill="#1741A6" opacity="0.2"/></svg>
+              </div>
+              <div class="product-body">
+                <div class="product-name">Butter 500g</div>
+                <div class="product-price">$5.80 <span class="product-unit">/ block</span></div>
+                <div class="add-btn">Add to Order</div>
+              </div>
+            </div>
+            <div class="product-card">
+              <div class="product-img" style="background:rgba(52,199,89,0.08)">
+                <svg width="52" height="52" viewBox="0 0 64 64" fill="none"><rect x="16" y="28" width="32" height="22" rx="4" fill="#34C759" opacity="0.3"/><path d="M20 28c0-8 4-14 12-16 8 2 12 8 12 16H20z" fill="#34C759" opacity="0.5"/></svg>
+              </div>
+              <div class="product-body">
+                <div class="product-name">Croissants 6pk</div>
+                <div class="product-price">$8.50 <span class="product-unit">/ pack</span></div>
+                <div class="add-btn">Add to Order</div>
+              </div>
+            </div>
+            <div class="product-card">
+              <div class="product-img" style="background:rgba(255,204,0,0.1)">
+                <svg width="52" height="52" viewBox="0 0 64 64" fill="none"><ellipse cx="32" cy="42" rx="10" ry="14" fill="#FFCC00" opacity="0.6"/><ellipse cx="32" cy="28" rx="10" ry="14" fill="#FF9500" opacity="0.5"/></svg>
+              </div>
+              <div class="product-body">
+                <div class="product-name">OJ 1L</div>
+                <div class="product-price">$3.90 <span class="product-unit">/ bottle</span></div>
+                <div class="add-btn">Add to Order</div>
+              </div>
+            </div>
+          </div>
+          <div style="height:20px"></div>
+        </div>
+      </div>
+
+      <div class="tabbar">
+        <div class="tab active"><div class="tab-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z" stroke="#1741A6" stroke-width="1.8" fill="rgba(23,65,166,0.12)"/><line x1="3" y1="6" x2="21" y2="6" stroke="#1741A6" stroke-width="1.8"/></svg></div><span class="tab-label" style="color:#1741A6">Shop</span></div>
+        <div class="tab"><div class="tab-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><rect x="3" y="6" width="18" height="14" rx="2" stroke="#8E8E93" stroke-width="1.8"/><path d="M7 4v4M17 4v4M3 11h18" stroke="#8E8E93" stroke-width="1.8" stroke-linecap="round"/></svg></div><span class="tab-label">Orders</span></div>
+        <div class="tab"><div class="tab-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" stroke="#8E8E93" stroke-width="1.8"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8" stroke="#8E8E93" stroke-width="1.8" stroke-linecap="round"/></svg></div><span class="tab-label">Invoices</span></div>
+        <div class="tab"><div class="tab-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="4" stroke="#8E8E93" stroke-width="1.8"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7" stroke="#8E8E93" stroke-width="1.8" stroke-linecap="round"/></svg></div><span class="tab-label">Account</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ SCREEN 2 — CART / ORDER REVIEW ══ -->
+<div class="group">
+  <div class="label">Cart &amp; Order</div>
+  <div class="phone">
+    <div class="dynamic-island"></div>
+    <div class="screen white">
+      <div class="statusbar white"><span class="sb-time">9:41</span><div class="sb-icons"><svg width="17" height="12" viewBox="0 0 17 12" fill="none"><rect x="0" y="3" width="3" height="9" rx="0.8" fill="#000"/><rect x="4.5" y="2" width="3" height="10" rx="0.8" fill="#000"/><rect x="9" y="0.5" width="3" height="11.5" rx="0.8" fill="#000"/></svg></div></div>
+
+      <div class="navbar white">
+        <div class="navbar-inline">
+          <div class="nav-back"><svg width="10" height="17" viewBox="0 0 24 24" fill="none"><path d="M15 19l-7-7 7-7" stroke="#1741A6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> Shop</div>
+          <span class="navbar-inline nav-title">Review Order</span>
+          <span></span>
+        </div>
+      </div>
+
+      <div class="content">
+        <div class="scroll">
+          <!-- Delivery info -->
+          <div style="background:#fff;padding:16px;border-bottom:0.5px solid var(--separator)">
+            <div style="font-size:13px;color:var(--label2);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:8px">Delivery Address</div>
+            <div style="font-size:16px;font-weight:600;color:#000">Harbor Café</div>
+            <div style="font-size:14px;color:var(--label2);margin-top:2px">42 Harbour St, Sydney NSW 2000</div>
+            <div style="margin-top:8px;display:flex;align-items:center;gap:8px">
+              <div class="pill pill-blue">Next available run</div>
+              <span style="font-size:13px;color:var(--label2)">Fri Apr 5</span>
+            </div>
+          </div>
+
+          <div class="section-inline" style="background:#F2F2F7"><span class="section-inline-title" style="font-size:17px;font-weight:600">Items (3)</span><span class="section-inline-link">+ Add More</span></div>
+
+          <div>
+            <div class="cart-item">
+              <div class="cart-thumb" style="background:rgba(255,149,0,0.1)"><svg width="24" height="24" viewBox="0 0 64 64" fill="none"><path d="M12 40c0-12 8-28 20-34 12 6 20 22 20 34H12z" fill="#FF9500" opacity="0.7"/></svg></div>
+              <div class="cart-body"><div class="cart-name">Sourdough Loaf</div><div class="cart-price">$4.20 each</div></div>
+              <div class="qty-control">
+                <div class="qty-btn"><svg viewBox="0 0 24 24" fill="none" width="14" height="14"><path d="M5 12h14" stroke="#1741A6" stroke-width="2" stroke-linecap="round"/></svg></div>
+                <div class="qty-num">6</div>
+                <div class="qty-btn"><svg viewBox="0 0 24 24" fill="none" width="14" height="14"><path d="M12 5v14M5 12h14" stroke="#1741A6" stroke-width="2" stroke-linecap="round"/></svg></div>
+              </div>
+            </div>
+            <div class="cart-item">
+              <div class="cart-thumb" style="background:rgba(23,65,166,0.08)"><svg width="24" height="24" viewBox="0 0 64 64" fill="none"><rect x="14" y="26" width="36" height="20" rx="4" fill="#1741A6" opacity="0.3"/></svg></div>
+              <div class="cart-body"><div class="cart-name">Butter 500g</div><div class="cart-price">$5.80 each</div></div>
+              <div class="qty-control">
+                <div class="qty-btn"><svg viewBox="0 0 24 24" fill="none" width="14" height="14"><path d="M5 12h14" stroke="#1741A6" stroke-width="2" stroke-linecap="round"/></svg></div>
+                <div class="qty-num">4</div>
+                <div class="qty-btn"><svg viewBox="0 0 24 24" fill="none" width="14" height="14"><path d="M12 5v14M5 12h14" stroke="#1741A6" stroke-width="2" stroke-linecap="round"/></svg></div>
+              </div>
+            </div>
+            <div class="cart-item">
+              <div class="cart-thumb" style="background:rgba(52,199,89,0.1)"><svg width="24" height="24" viewBox="0 0 64 64" fill="none"><rect x="16" y="28" width="32" height="22" rx="4" fill="#34C759" opacity="0.4"/></svg></div>
+              <div class="cart-body"><div class="cart-name">Croissants 6pk</div><div class="cart-price">$8.50 each</div></div>
+              <div class="qty-control">
+                <div class="qty-btn"><svg viewBox="0 0 24 24" fill="none" width="14" height="14"><path d="M5 12h14" stroke="#1741A6" stroke-width="2" stroke-linecap="round"/></svg></div>
+                <div class="qty-num">2</div>
+                <div class="qty-btn"><svg viewBox="0 0 24 24" fill="none" width="14" height="14"><path d="M12 5v14M5 12h14" stroke="#1741A6" stroke-width="2" stroke-linecap="round"/></svg></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Delivery note -->
+          <div style="margin:16px 16px 0">
+            <div class="list-group">
+              <div class="list-row">
+                <div class="list-row-icon" style="background:rgba(88,86,214,0.1)"><svg viewBox="0 0 24 24" fill="none" width="16" height="16"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" stroke="#5856D6" stroke-width="1.8"/></svg></div>
+                <span class="row-title">Add delivery note</span><span class="chevron-right">›</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Order total -->
+          <div style="margin:16px 16px 0">
+            <div class="card card-inset">
+              <div class="detail-row" style="padding:6px 0"><span class="detail-label" style="font-size:15px">Sourdough ×6</span><span class="detail-value" style="font-size:15px">$25.20</span></div>
+              <div class="detail-row" style="padding:6px 0"><span class="detail-label" style="font-size:15px">Butter ×4</span><span class="detail-value" style="font-size:15px">$23.20</span></div>
+              <div class="detail-row" style="padding:6px 0"><span class="detail-label" style="font-size:15px">Croissants ×2</span><span class="detail-value" style="font-size:15px">$17.00</span></div>
+              <div class="detail-row" style="padding:10px 0;border-top:0.5px solid var(--separator)"><span class="detail-label" style="font-size:17px;font-weight:700">Total</span><span class="detail-value bold" style="font-size:17px">$65.40</span></div>
+            </div>
+          </div>
+
+          <div style="padding:16px"><div class="btn-primary">Place Order</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ SCREEN 3 — ORDER HISTORY ══ -->
+<div class="group">
+  <div class="label">Order History</div>
+  <div class="phone">
+    <div class="dynamic-island"></div>
+    <div class="screen">
+      <div class="statusbar gray"><span class="sb-time">9:41</span><div class="sb-icons"><svg width="17" height="12" viewBox="0 0 17 12" fill="none"><rect x="0" y="3" width="3" height="9" rx="0.8" fill="#000"/><rect x="4.5" y="2" width="3" height="10" rx="0.8" fill="#000"/><rect x="9" y="0.5" width="3" height="11.5" rx="0.8" fill="#000"/></svg></div></div>
+
+      <div class="navbar">
+        <div class="navbar-inline" style="padding-bottom:0"><span style="font-size:34px;font-weight:700;color:#000;letter-spacing:0.35px">Orders</span><span></span></div>
+      </div>
+
+      <div class="content">
+        <div class="scroll">
+          <!-- Filter -->
+          <div class="cat-scroll">
+            <div class="cat-chip cat-active">All</div>
+            <div class="cat-chip cat-inactive">Pending</div>
+            <div class="cat-chip cat-inactive">Delivered</div>
+            <div class="cat-chip cat-inactive">Cancelled</div>
+          </div>
+
+          <div class="section-inline"><span class="section-inline-title">Recent</span></div>
+
+          <div class="card" style="margin:0 16px">
+            <div class="order-row">
+              <div class="order-avatar" style="background:#1741A6">HC</div>
+              <div class="order-body"><div class="order-name">Order #1842</div><div class="order-sub">3 items · Sourdough, Butter, Croissants</div></div>
+              <div class="order-right"><div class="order-amount">$65.40</div><div class="order-date"><span class="pill pill-blue" style="font-size:11px;padding:2px 8px">Pending</span></div></div>
+            </div>
+            <div class="order-row">
+              <div class="order-avatar" style="background:#34C759">HC</div>
+              <div class="order-body"><div class="order-name">Order #1798</div><div class="order-sub">4 items · Mar 31</div></div>
+              <div class="order-right"><div class="order-amount">$128.00</div><div class="order-date"><span class="pill pill-green" style="font-size:11px;padding:2px 8px">Delivered</span></div></div>
+            </div>
+            <div class="order-row">
+              <div class="order-avatar" style="background:#34C759">HC</div>
+              <div class="order-body"><div class="order-name">Order #1751</div><div class="order-sub">6 items · Mar 28</div></div>
+              <div class="order-right"><div class="order-amount">$184.00</div><div class="order-date"><span class="pill pill-green" style="font-size:11px;padding:2px 8px">Delivered</span></div></div>
+            </div>
+            <div class="order-row">
+              <div class="order-avatar" style="background:#34C759">HC</div>
+              <div class="order-body"><div class="order-name">Order #1712</div><div class="order-sub">2 items · Mar 24</div></div>
+              <div class="order-right"><div class="order-amount">$42.00</div><div class="order-date"><span class="pill pill-green" style="font-size:11px;padding:2px 8px">Delivered</span></div></div>
+            </div>
+            <div class="order-row">
+              <div class="order-avatar" style="background:#8E8E93">HC</div>
+              <div class="order-body"><div class="order-name">Order #1680</div><div class="order-sub">1 item · Mar 20</div></div>
+              <div class="order-right"><div class="order-amount">$25.00</div><div class="order-date"><span class="pill pill-gray" style="font-size:11px;padding:2px 8px">Cancelled</span></div></div>
+            </div>
+          </div>
+
+          <div style="height:20px"></div>
+        </div>
+      </div>
+
+      <div class="tabbar">
+        <div class="tab"><div class="tab-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z" stroke="#8E8E93" stroke-width="1.8"/><line x1="3" y1="6" x2="21" y2="6" stroke="#8E8E93" stroke-width="1.8"/></svg></div><span class="tab-label">Shop</span></div>
+        <div class="tab active"><div class="tab-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><rect x="3" y="6" width="18" height="14" rx="2" stroke="#1741A6" stroke-width="1.8" fill="rgba(23,65,166,0.12)"/><path d="M7 4v4M17 4v4M3 11h18" stroke="#1741A6" stroke-width="1.8" stroke-linecap="round"/></svg></div><span class="tab-label" style="color:#1741A6">Orders</span></div>
+        <div class="tab"><div class="tab-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" stroke="#8E8E93" stroke-width="1.8"/><path d="M14 2v6h6M16 13H8M16 17H8" stroke="#8E8E93" stroke-width="1.8" stroke-linecap="round"/></svg></div><span class="tab-label">Invoices</span></div>
+        <div class="tab"><div class="tab-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="4" stroke="#8E8E93" stroke-width="1.8"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7" stroke="#8E8E93" stroke-width="1.8" stroke-linecap="round"/></svg></div><span class="tab-label">Account</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ SCREEN 4 — INVOICES ══ -->
+<div class="group">
+  <div class="label">Invoices</div>
+  <div class="phone">
+    <div class="dynamic-island"></div>
+    <div class="screen">
+      <div class="statusbar gray"><span class="sb-time">9:41</span><div class="sb-icons"><svg width="17" height="12" viewBox="0 0 17 12" fill="none"><rect x="0" y="3" width="3" height="9" rx="0.8" fill="#000"/><rect x="4.5" y="2" width="3" height="10" rx="0.8" fill="#000"/><rect x="9" y="0.5" width="3" height="11.5" rx="0.8" fill="#000"/></svg></div></div>
+
+      <div class="navbar">
+        <div style="font-size:34px;font-weight:700;color:#000;letter-spacing:0.35px;padding-top:4px">Invoices</div>
+      </div>
+
+      <div class="content">
+        <div class="scroll">
+          <!-- Balance summary -->
+          <div style="padding:12px 16px 0">
+            <div class="inline-stats">
+              <div class="inline-stat"><div class="inline-stat-val" style="color:#D70015">$164</div><div class="inline-stat-lbl">Outstanding</div></div>
+              <div class="inline-stat"><div class="inline-stat-val" style="color:#248A3D">$1,842</div><div class="inline-stat-lbl">Paid YTD</div></div>
+              <div class="inline-stat"><div class="inline-stat-val">12</div><div class="inline-stat-lbl">Total</div></div>
+            </div>
+          </div>
+
+          <div class="cat-scroll" style="padding-top:14px">
+            <div class="cat-chip cat-active">All</div>
+            <div class="cat-chip cat-inactive">Overdue</div>
+            <div class="cat-chip cat-inactive">Sent</div>
+            <div class="cat-chip cat-inactive">Paid</div>
+          </div>
+
+          <div class="section-inline"><span class="section-inline-title">Recent</span></div>
+
+          <div class="card" style="margin:0 16px">
+            <div class="inv-row">
+              <div style="flex:1"><div class="inv-num">INV-1042</div><div class="inv-sub">Apr 3 · Order #1798</div></div>
+              <div class="inv-right"><div class="inv-amount" style="color:#D70015">$164.00</div><div class="inv-date"><span class="pill pill-red" style="font-size:11px;padding:2px 8px">Overdue</span></div></div>
+              <span class="chevron-right" style="margin-left:8px">›</span>
+            </div>
+            <div class="inv-row">
+              <div style="flex:1"><div class="inv-num">INV-1028</div><div class="inv-sub">Mar 28 · Order #1751</div></div>
+              <div class="inv-right"><div class="inv-amount">$128.00</div><div class="inv-date"><span class="pill pill-green" style="font-size:11px;padding:2px 8px">Paid</span></div></div>
+              <span class="chevron-right" style="margin-left:8px">›</span>
+            </div>
+            <div class="inv-row">
+              <div style="flex:1"><div class="inv-num">INV-1014</div><div class="inv-sub">Mar 24 · Order #1712</div></div>
+              <div class="inv-right"><div class="inv-amount">$42.00</div><div class="inv-date"><span class="pill pill-green" style="font-size:11px;padding:2px 8px">Paid</span></div></div>
+              <span class="chevron-right" style="margin-left:8px">›</span>
+            </div>
+            <div class="inv-row">
+              <div style="flex:1"><div class="inv-num">INV-0998</div><div class="inv-sub">Mar 18 · Order #1680</div></div>
+              <div class="inv-right"><div class="inv-amount">$96.00</div><div class="inv-date"><span class="pill pill-yellow" style="font-size:11px;padding:2px 8px">Partial</span></div></div>
+              <span class="chevron-right" style="margin-left:8px">›</span>
+            </div>
+          </div>
+
+          <!-- Overdue invoice card -->
+          <div class="section-inline" style="padding-top:20px"><span class="section-inline-title">Action Required</span></div>
+          <div style="margin:0 16px;background:#fff;border-radius:16px;overflow:hidden;border-left:4px solid #FF3B30">
+            <div style="padding:16px">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+                <div style="font-size:16px;font-weight:600;color:#000">INV-1042 Overdue</div>
+                <div class="pill pill-red">7 days late</div>
+              </div>
+              <div style="font-size:22px;font-weight:700;color:#D70015;margin-bottom:12px">$164.00</div>
+              <div class="btn-row">
+                <div class="btn-primary" style="font-size:15px;padding:11px 16px;border-radius:10px;background:#FF3B30">Pay Now</div>
+                <div class="btn-secondary" style="font-size:15px;padding:11px 16px;border-radius:10px">Download PDF</div>
+              </div>
+            </div>
+          </div>
+
+          <div style="height:20px"></div>
+        </div>
+      </div>
+
+      <div class="tabbar">
+        <div class="tab"><div class="tab-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z" stroke="#8E8E93" stroke-width="1.8"/><line x1="3" y1="6" x2="21" y2="6" stroke="#8E8E93" stroke-width="1.8"/></svg></div><span class="tab-label">Shop</span></div>
+        <div class="tab"><div class="tab-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><rect x="3" y="6" width="18" height="14" rx="2" stroke="#8E8E93" stroke-width="1.8"/><path d="M7 4v4M17 4v4M3 11h18" stroke="#8E8E93" stroke-width="1.8" stroke-linecap="round"/></svg></div><span class="tab-label">Orders</span></div>
+        <div class="tab active"><div class="tab-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" stroke="#1741A6" stroke-width="1.8" fill="rgba(23,65,166,0.1)"/><path d="M14 2v6h6M16 13H8M16 17H8" stroke="#1741A6" stroke-width="1.8" stroke-linecap="round"/></svg></div><span class="tab-label" style="color:#1741A6">Invoices</span></div>
+        <div class="tab"><div class="tab-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="4" stroke="#8E8E93" stroke-width="1.8"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7" stroke="#8E8E93" stroke-width="1.8" stroke-linecap="round"/></svg></div><span class="tab-label">Account</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ SCREEN 5 — ACCOUNT STATEMENT ══ -->
+<div class="group">
+  <div class="label">Account Statement</div>
+  <div class="phone">
+    <div class="dynamic-island"></div>
+    <div class="screen">
+      <div class="statusbar gray"><span class="sb-time">9:41</span><div class="sb-icons"><svg width="17" height="12" viewBox="0 0 17 12" fill="none"><rect x="0" y="3" width="3" height="9" rx="0.8" fill="#000"/><rect x="4.5" y="2" width="3" height="10" rx="0.8" fill="#000"/><rect x="9" y="0.5" width="3" height="11.5" rx="0.8" fill="#000"/></svg></div></div>
+
+      <div class="navbar">
+        <div class="navbar-inline">
+          <div class="nav-back"><svg width="10" height="17" viewBox="0 0 24 24" fill="none"><path d="M15 19l-7-7 7-7" stroke="#1741A6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> Account</div>
+          <span class="navbar-inline nav-title">Statement</span>
+          <span></span>
+        </div>
+      </div>
+
+      <div class="content">
+        <div class="scroll">
+          <!-- Balance hero -->
+          <div style="background:#fff;padding:20px 16px;border-bottom:0.5px solid var(--separator);text-align:center">
+            <div style="font-size:13px;color:var(--label2);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:8px">Current Balance</div>
+            <div style="font-size:48px;font-weight:700;color:#D70015;letter-spacing:-2px;line-height:1">$164<span style="font-size:26px;color:var(--label2);font-weight:400">.00</span></div>
+            <div style="font-size:14px;color:var(--label2);margin-top:6px">Outstanding</div>
+            <div style="display:flex;justify-content:center;gap:16px;margin-top:16px">
+              <div style="text-align:center"><div style="font-size:18px;font-weight:700;color:#248A3D">$1,842</div><div style="font-size:12px;color:var(--label2)">Paid YTD</div></div>
+              <div style="width:1px;background:var(--separator)"></div>
+              <div style="text-align:center"><div style="font-size:18px;font-weight:700;color:#000">$2,006</div><div style="font-size:12px;color:var(--label2)">Invoiced YTD</div></div>
+            </div>
+          </div>
+
+          <div class="section-inline"><span class="section-inline-title">Transactions</span></div>
+
+          <div class="card" style="margin:0 16px">
+            <div class="stmt-row">
+              <div class="stmt-dot" style="background:#FF3B30"></div>
+              <div class="stmt-body"><div class="stmt-desc">Invoice #1042 issued</div><div class="stmt-date">Apr 3, 2026</div></div>
+              <div class="stmt-amount" style="color:#D70015">−$184.00</div>
+            </div>
+            <div class="stmt-row">
+              <div class="stmt-dot" style="background:#34C759"></div>
+              <div class="stmt-body"><div class="stmt-desc">Credit note applied</div><div class="stmt-date">Apr 3, 2026</div></div>
+              <div class="stmt-amount" style="color:#248A3D">+$20.00</div>
+            </div>
+            <div class="stmt-row">
+              <div class="stmt-dot" style="background:#34C759"></div>
+              <div class="stmt-body"><div class="stmt-desc">Payment received — Cash</div><div class="stmt-date">Mar 28, 2026</div></div>
+              <div class="stmt-amount" style="color:#248A3D">+$128.00</div>
+            </div>
+            <div class="stmt-row">
+              <div class="stmt-dot" style="background:#FF3B30"></div>
+              <div class="stmt-body"><div class="stmt-desc">Invoice #1028 issued</div><div class="stmt-date">Mar 26, 2026</div></div>
+              <div class="stmt-amount" style="color:#D70015">−$128.00</div>
+            </div>
+            <div class="stmt-row">
+              <div class="stmt-dot" style="background:#34C759"></div>
+              <div class="stmt-body"><div class="stmt-desc">Payment received — Cash</div><div class="stmt-date">Mar 24, 2026</div></div>
+              <div class="stmt-amount" style="color:#248A3D">+$42.00</div>
+            </div>
+            <div class="stmt-row">
+              <div class="stmt-dot" style="background:#FF3B30"></div>
+              <div class="stmt-body"><div class="stmt-desc">Invoice #1014 issued</div><div class="stmt-date">Mar 22, 2026</div></div>
+              <div class="stmt-amount" style="color:#D70015">−$42.00</div>
+            </div>
+          </div>
+
+          <div style="height:20px"></div>
+        </div>
+      </div>
+
+      <div class="tabbar">
+        <div class="tab"><div class="tab-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z" stroke="#8E8E93" stroke-width="1.8"/><line x1="3" y1="6" x2="21" y2="6" stroke="#8E8E93" stroke-width="1.8"/></svg></div><span class="tab-label">Shop</span></div>
+        <div class="tab"><div class="tab-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><rect x="3" y="6" width="18" height="14" rx="2" stroke="#8E8E93" stroke-width="1.8"/><path d="M7 4v4M17 4v4M3 11h18" stroke="#8E8E93" stroke-width="1.8" stroke-linecap="round"/></svg></div><span class="tab-label">Orders</span></div>
+        <div class="tab"><div class="tab-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" stroke="#8E8E93" stroke-width="1.8"/><path d="M14 2v6h6M16 13H8M16 17H8" stroke="#8E8E93" stroke-width="1.8" stroke-linecap="round"/></svg></div><span class="tab-label">Invoices</span></div>
+        <div class="tab active"><div class="tab-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="4" stroke="#1741A6" stroke-width="1.8" fill="rgba(23,65,166,0.12)"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7" stroke="#1741A6" stroke-width="1.8" stroke-linecap="round"/></svg></div><span class="tab-label" style="color:#1741A6">Account</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ SCREEN 6 — STANDING ORDERS (NTH) ══ -->
+<div class="group">
+  <div class="label">My Standing Orders</div>
+  <div class="phone">
+    <div class="dynamic-island"></div>
+    <div class="screen">
+      <div class="statusbar gray"><span class="sb-time">9:41</span><div class="sb-icons"><svg width="17" height="12" viewBox="0 0 17 12" fill="none"><rect x="0" y="3" width="3" height="9" rx="0.8" fill="#000"/><rect x="4.5" y="2" width="3" height="10" rx="0.8" fill="#000"/><rect x="9" y="0.5" width="3" height="11.5" rx="0.8" fill="#000"/></svg></div></div>
+
+      <div class="navbar">
+        <div class="navbar-inline">
+          <div class="nav-back"><svg width="10" height="17" viewBox="0 0 24 24" fill="none"><path d="M15 19l-7-7 7-7" stroke="#1741A6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> Account</div>
+          <span class="navbar-inline nav-title">Standing Orders</span>
+          <span class="nav-action">+ New</span>
+        </div>
+      </div>
+
+      <div class="content">
+        <div class="scroll">
+          <div style="padding:12px 16px 0">
+            <div style="background:rgba(23,65,166,0.08);border-radius:12px;padding:12px 14px">
+              <div style="font-size:15px;font-weight:600;color:#1741A6">Auto-ordering made easy</div>
+              <div style="font-size:13px;color:var(--label2);margin-top:3px">Set up recurring orders and we'll generate them automatically</div>
+            </div>
+          </div>
+
+          <div class="section-inline"><span class="section-inline-title">Active</span><span class="section-inline-link">2 templates</span></div>
+
+          <div style="background:#fff;border-radius:16px;margin:0 16px;overflow:hidden">
+            <div style="padding:16px;border-bottom:0.5px solid var(--separator)">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+                <div style="font-size:16px;font-weight:600;color:#000">Bread &amp; Butter Weekly</div>
+                <div class="pill pill-green">Active</div>
+              </div>
+              <div style="font-size:14px;color:var(--label2);margin-bottom:8px">Mon · Wed · Fri · Next: Mon Apr 7</div>
+              <div style="font-size:13px;color:#000">Sourdough ×6, Butter ×4</div>
+              <div style="display:flex;gap:8px;margin-top:12px">
+                <div style="background:var(--fill2);border-radius:10px;padding:7px 14px;font-size:13px;font-weight:600;color:#1741A6">Edit</div>
+                <div style="background:rgba(255,59,48,0.1);border-radius:10px;padding:7px 14px;font-size:13px;font-weight:600;color:#D70015">Pause</div>
+              </div>
+            </div>
+            <div style="padding:16px">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+                <div style="font-size:16px;font-weight:600;color:#000">Friday Pastries</div>
+                <div class="pill pill-yellow">Paused</div>
+              </div>
+              <div style="font-size:14px;color:var(--label2);margin-bottom:8px">Friday only · Paused by you</div>
+              <div style="font-size:13px;color:#000">Croissants ×4, Danish ×2</div>
+              <div style="display:flex;gap:8px;margin-top:12px">
+                <div style="background:var(--fill2);border-radius:10px;padding:7px 14px;font-size:13px;font-weight:600;color:#1741A6">Edit</div>
+                <div style="background:rgba(52,199,89,0.12);border-radius:10px;padding:7px 14px;font-size:13px;font-weight:600;color:#248A3D">Resume</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="section-inline" style="padding-top:20px"><span class="section-inline-title">Next Generation</span></div>
+          <div class="inline-stats">
+            <div class="inline-stat"><div class="inline-stat-val">Mon</div><div class="inline-stat-lbl">Apr 7</div></div>
+            <div class="inline-stat"><div class="inline-stat-val" style="color:#1741A6">$25.40</div><div class="inline-stat-lbl">Est. value</div></div>
+            <div class="inline-stat"><div class="inline-stat-val">10</div><div class="inline-stat-lbl">items</div></div>
+          </div>
+
+          <div style="padding:20px 16px 8px"><div class="btn-primary">+ Create New Template</div></div>
+          <div style="height:20px"></div>
+        </div>
+      </div>
+
+      <div class="tabbar">
+        <div class="tab"><div class="tab-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z" stroke="#8E8E93" stroke-width="1.8"/><line x1="3" y1="6" x2="21" y2="6" stroke="#8E8E93" stroke-width="1.8"/></svg></div><span class="tab-label">Shop</span></div>
+        <div class="tab"><div class="tab-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><rect x="3" y="6" width="18" height="14" rx="2" stroke="#8E8E93" stroke-width="1.8"/><path d="M7 4v4M17 4v4M3 11h18" stroke="#8E8E93" stroke-width="1.8" stroke-linecap="round"/></svg></div><span class="tab-label">Orders</span></div>
+        <div class="tab"><div class="tab-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" stroke="#8E8E93" stroke-width="1.8"/><path d="M14 2v6h6M16 13H8M16 17H8" stroke="#8E8E93" stroke-width="1.8" stroke-linecap="round"/></svg></div><span class="tab-label">Invoices</span></div>
+        <div class="tab active"><div class="tab-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="4" stroke="#1741A6" stroke-width="1.8" fill="rgba(23,65,166,0.12)"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7" stroke="#1741A6" stroke-width="1.8" stroke-linecap="round"/></svg></div><span class="tab-label" style="color:#1741A6">Account</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ SCREEN 7 — OFFLINE MODE ══ -->
+<div class="group">
+  <div class="label">Offline Mode</div>
+  <div class="phone">
+    <div class="dynamic-island"></div>
+    <div class="screen">
+      <div class="statusbar gray"><span class="sb-time">9:41</span><div class="sb-icons"><svg width="17" height="12" viewBox="0 0 17 12" fill="none"><rect x="0" y="3" width="3" height="9" rx="0.8" fill="#000"/><rect x="4.5" y="2" width="3" height="10" rx="0.8" fill="#000" opacity="0.3"/><rect x="9" y="0.5" width="3" height="11.5" rx="0.8" fill="#000" opacity="0.1"/></svg></div></div>
+
+      <!-- Offline banner -->
+      <div style="background:#FF9500;padding:10px 20px;display:flex;align-items:center;justify-content:space-between">
+        <div style="display:flex;align-items:center;gap:8px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="#fff" stroke-width="1.8"/><path d="M12 8v5M12 16v.5" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg><span style="font-size:14px;font-weight:600;color:#fff">You're offline</span></div>
+        <span style="font-size:13px;color:rgba(255,255,255,0.85)">1 order queued</span>
+      </div>
+
+      <div class="navbar">
+        <div style="font-size:34px;font-weight:700;color:#000;letter-spacing:0.35px;padding-top:4px">Shop</div>
+      </div>
+
+      <div class="content">
+        <div class="scroll">
+          <!-- Queued order notice -->
+          <div style="margin:12px 16px 0;background:#fff;border-radius:16px;padding:16px;border-left:4px solid #FF9500">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="#FF9500" stroke-width="1.8"/><path d="M12 7v5l3 3" stroke="#FF9500" stroke-width="1.8" stroke-linecap="round"/></svg>
+              <div style="font-size:15px;font-weight:600;color:#C93400">Order queued for sync</div>
+            </div>
+            <div style="font-size:14px;color:var(--label2)">Order #1843 · $65.40 will be submitted when you reconnect</div>
+          </div>
+
+          <div class="section-inline"><span class="section-inline-title">Cached Catalog</span><span style="font-size:15px;color:var(--gray)">Last synced: 8:12 AM</span></div>
+
+          <!-- Products still browsable offline -->
+          <div class="product-grid">
+            <div class="product-card" style="opacity:0.85">
+              <div class="product-img" style="background:rgba(255,149,0,0.08)"><svg width="52" height="52" viewBox="0 0 64 64" fill="none"><path d="M12 40c0-12 8-28 20-34 12 6 20 22 20 34H12z" fill="#FF9500" opacity="0.7"/></svg></div>
+              <div class="product-body"><div class="product-name">Sourdough Loaf</div><div class="product-price">$4.20 <span class="product-unit">/ each</span></div><div class="add-btn" style="background:#8E8E93">Add (offline)</div></div>
+            </div>
+            <div class="product-card" style="opacity:0.85">
+              <div class="product-img" style="background:rgba(23,65,166,0.06)"><svg width="52" height="52" viewBox="0 0 64 64" fill="none"><rect x="14" y="26" width="36" height="20" rx="4" fill="#1741A6" opacity="0.3"/></svg></div>
+              <div class="product-body"><div class="product-name">Butter 500g</div><div class="product-price">$5.80 <span class="product-unit">/ block</span></div><div class="add-btn" style="background:#8E8E93">Add (offline)</div></div>
+            </div>
+          </div>
+
+          <div class="section-inline" style="padding-top:20px"><span class="section-inline-title">Available Offline</span></div>
+          <div class="list-group" style="margin:0 16px">
+            <div class="list-row"><div class="list-row-icon" style="background:rgba(52,199,89,0.1)"><svg viewBox="0 0 24 24" fill="none" width="16" height="16"><path d="M5 13l4 4L19 7" stroke="#34C759" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div><span class="row-title">Browse product catalog</span></div>
+            <div class="list-row"><div class="list-row-icon" style="background:rgba(52,199,89,0.1)"><svg viewBox="0 0 24 24" fill="none" width="16" height="16"><path d="M5 13l4 4L19 7" stroke="#34C759" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div><span class="row-title">Place orders (queued for sync)</span></div>
+            <div class="list-row"><div class="list-row-icon" style="background:rgba(52,199,89,0.1)"><svg viewBox="0 0 24 24" fill="none" width="16" height="16"><path d="M5 13l4 4L19 7" stroke="#34C759" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div><span class="row-title">View order history</span></div>
+            <div class="list-row"><div class="list-row-icon" style="background:rgba(52,199,89,0.1)"><svg viewBox="0 0 24 24" fill="none" width="16" height="16"><path d="M5 13l4 4L19 7" stroke="#34C759" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div><span class="row-title">View invoices &amp; statements</span></div>
+          </div>
+
+          <div style="height:20px"></div>
+        </div>
+      </div>
+
+      <div class="tabbar">
+        <div class="tab active"><div class="tab-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z" stroke="#1741A6" stroke-width="1.8" fill="rgba(23,65,166,0.12)"/><line x1="3" y1="6" x2="21" y2="6" stroke="#1741A6" stroke-width="1.8"/></svg></div><span class="tab-label" style="color:#1741A6">Shop</span></div>
+        <div class="tab"><div class="tab-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><rect x="3" y="6" width="18" height="14" rx="2" stroke="#8E8E93" stroke-width="1.8"/><path d="M7 4v4M17 4v4M3 11h18" stroke="#8E8E93" stroke-width="1.8" stroke-linecap="round"/></svg></div><span class="tab-label">Orders</span></div>
+        <div class="tab"><div class="tab-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" stroke="#8E8E93" stroke-width="1.8"/><path d="M14 2v6h6M16 13H8M16 17H8" stroke="#8E8E93" stroke-width="1.8" stroke-linecap="round"/></svg></div><span class="tab-label">Invoices</span></div>
+        <div class="tab"><div class="tab-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="4" stroke="#8E8E93" stroke-width="1.8"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7" stroke="#8E8E93" stroke-width="1.8" stroke-linecap="round"/></svg></div><span class="tab-label">Account</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,1102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow — Operator</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+* { margin: 0; padding: 0; box-sizing: border-box; -webkit-font-smoothing: antialiased; }
+
+body {
+  background: #1C1C1E;
+  font-family: -apple-system, 'SF Pro Display', 'SF Pro Text', 'Inter', sans-serif;
+  padding: 60px 40px 60px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 48px;
+  align-items: flex-start;
+}
+
+/* ── PHONE SHELL ── */
+.phone {
+  width: 393px;
+  height: 852px;
+  background: #F2F2F7;
+  border-radius: 54px;
+  overflow: hidden;
+  position: relative;
+  flex-shrink: 0;
+  box-shadow:
+    0 0 0 1px rgba(255,255,255,0.08),
+    0 0 0 10px #1A1A1A,
+    0 0 0 11px rgba(255,255,255,0.06),
+    0 40px 100px rgba(0,0,0,0.8);
+}
+
+.label {
+  color: #48484A;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin-bottom: 12px;
+  font-family: -apple-system, sans-serif;
+}
+
+.group { display: flex; flex-direction: column; }
+
+/* ── DYNAMIC ISLAND ── */
+.dynamic-island {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 120px;
+  height: 36px;
+  background: #000;
+  border-radius: 20px;
+  z-index: 100;
+}
+
+/* ── STATUS BAR ── */
+.statusbar {
+  height: 59px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  padding: 0 28px 10px;
+  flex-shrink: 0;
+  position: relative;
+  background: transparent;
+}
+.statusbar.opaque { background: #fff; }
+.statusbar.colored { background: #F2F2F7; }
+.sb-time { font-size: 15px; font-weight: 600; color: #000; letter-spacing: -0.3px; }
+.sb-icons { display: flex; align-items: center; gap: 7px; }
+.sb-icons svg { width: 17px; height: 12px; }
+
+/* ── SCREEN ── */
+.screen { display: flex; flex-direction: column; height: 100%; background: #F2F2F7; }
+.screen.white { background: #fff; }
+.content { flex: 1; overflow: hidden; display: flex; flex-direction: column; min-height: 0; }
+.scroll { flex: 1; overflow-y: auto; }
+.scroll::-webkit-scrollbar { display: none; }
+
+/* ── NAVIGATION BAR ── */
+.navbar {
+  background: rgba(242,242,247,0.85);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  padding: 0 20px 12px;
+  border-bottom: 0.5px solid rgba(60,60,67,0.12);
+  flex-shrink: 0;
+}
+.navbar.white {
+  background: rgba(255,255,255,0.85);
+}
+.navbar-large { padding-bottom: 8px; }
+.navbar-large .nav-title { font-size: 34px; font-weight: 700; color: #000; letter-spacing: 0.35px; line-height: 1.1; padding-top: 4px; }
+.navbar-inline { display: flex; align-items: center; justify-content: space-between; padding-bottom: 10px; }
+.navbar-inline .nav-title { font-size: 17px; font-weight: 600; color: #000; }
+.nav-back { font-size: 17px; color: #1741A6; display: flex; align-items: center; gap: 4px; font-weight: 400; }
+.nav-action { font-size: 17px; color: #1741A6; font-weight: 400; }
+.nav-action.bold { font-weight: 600; }
+
+/* ── TAB BAR ── */
+.tabbar {
+  background: rgba(249,249,249,0.94);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-top: 0.5px solid rgba(60,60,67,0.2);
+  display: flex;
+  padding: 8px 0 28px;
+  flex-shrink: 0;
+}
+.tab { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 2px 0; }
+.tab-icon { width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; }
+.tab-icon svg { width: 24px; height: 24px; }
+.tab-label { font-size: 10px; font-weight: 500; color: #8E8E93; letter-spacing: 0.01em; }
+.tab.active .tab-label { color: #1741A6; }
+
+/* ── IOS COLORS ── */
+:root {
+  --blue: #1741A6;
+  --green: #34C759;
+  --red: #FF3B30;
+  --orange: #FF9500;
+  --yellow: #FFCC00;
+  --purple: #AF52DE;
+  --indigo: #5856D6;
+  --teal: #5AC8FA;
+  --gray: #8E8E93;
+  --gray2: #AEAEB2;
+  --gray3: #C7C7CC;
+  --gray4: #D1D1D6;
+  --gray5: #E5E5EA;
+  --gray6: #F2F2F7;
+  --label: #000000;
+  --label2: rgba(60,60,67,0.6);
+  --label3: rgba(60,60,67,0.3);
+  --separator: rgba(60,60,67,0.12);
+  --fill: rgba(120,120,128,0.2);
+  --fill2: rgba(120,120,128,0.16);
+}
+
+/* ── GROUPED LIST ── */
+.grouped-section { margin: 0 16px 20px; }
+.section-header-text {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--label2);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 0 4px 6px;
+}
+.section-footer-text {
+  font-size: 13px;
+  color: var(--label2);
+  padding: 6px 4px 0;
+  line-height: 1.4;
+}
+.list-group {
+  background: #fff;
+  border-radius: 12px;
+  overflow: hidden;
+}
+.list-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 16px;
+  background: #fff;
+  min-height: 44px;
+  position: relative;
+}
+.list-row + .list-row::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 60px; right: 0;
+  height: 0.5px;
+  background: var(--separator);
+}
+.list-row-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.list-row-icon svg { width: 16px; height: 16px; }
+.row-title { font-size: 17px; color: var(--label); flex: 1; }
+.row-value { font-size: 17px; color: var(--label2); }
+.row-detail { font-size: 15px; color: var(--label2); }
+.chevron-right {
+  color: var(--gray3);
+  font-size: 18px;
+  font-weight: 300;
+  line-height: 1;
+  margin-right: -4px;
+}
+
+/* ── CARDS ── */
+.card {
+  background: #fff;
+  border-radius: 16px;
+  overflow: hidden;
+}
+.card-inset { padding: 16px; }
+
+/* ── BADGE / PILL ── */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.pill-blue { background: rgba(23,65,166,0.1); color: #1741A6; }
+.pill-green { background: rgba(52,199,89,0.12); color: #248A3D; }
+.pill-red { background: rgba(255,59,48,0.1); color: #D70015; }
+.pill-orange { background: rgba(255,149,0,0.12); color: #C93400; }
+.pill-gray { background: rgba(142,142,147,0.12); color: #636366; }
+.pill-purple { background: rgba(88,86,214,0.1); color: #3634A3; }
+
+/* ── BUTTON ── */
+.btn-primary {
+  background: #1741A6;
+  color: #fff;
+  font-size: 17px;
+  font-weight: 600;
+  border-radius: 14px;
+  padding: 15px 20px;
+  text-align: center;
+  letter-spacing: -0.2px;
+}
+.btn-secondary {
+  background: var(--fill2);
+  color: #1741A6;
+  font-size: 17px;
+  font-weight: 600;
+  border-radius: 14px;
+  padding: 15px 20px;
+  text-align: center;
+}
+.btn-destructive {
+  background: rgba(255,59,48,0.1);
+  color: #FF3B30;
+  font-size: 17px;
+  font-weight: 600;
+  border-radius: 14px;
+  padding: 15px 20px;
+  text-align: center;
+}
+.btn-row { display: flex; gap: 10px; }
+.btn-row > * { flex: 1; }
+
+/* ── AMOUNT ── */
+.amount-large { font-size: 34px; font-weight: 700; color: #000; letter-spacing: -1px; }
+.amount-currency { font-size: 22px; font-weight: 400; color: var(--label2); vertical-align: top; margin-top: 4px; display: inline-block; }
+
+/* ── KPI CARD ── */
+.kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 0 16px; }
+.kpi-card { background: #fff; border-radius: 16px; padding: 16px; }
+.kpi-icon-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.kpi-icon { width: 34px; height: 34px; border-radius: 10px; display: flex; align-items: center; justify-content: center; }
+.kpi-icon svg { width: 18px; height: 18px; }
+.kpi-value { font-size: 26px; font-weight: 700; color: #000; letter-spacing: -0.5px; line-height: 1; }
+.kpi-label { font-size: 13px; color: var(--label2); margin-top: 3px; font-weight: 400; }
+.kpi-delta { font-size: 12px; font-weight: 600; margin-top: 6px; }
+.kpi-delta.up { color: #248A3D; }
+.kpi-delta.down { color: #D70015; }
+.kpi-delta.neutral { color: var(--gray); }
+
+/* ── FILTER CHIPS ── */
+.filter-scroll { display: flex; gap: 8px; overflow-x: auto; padding: 12px 16px 0; }
+.filter-scroll::-webkit-scrollbar { display: none; }
+.filter-chip {
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 500;
+  white-space: nowrap;
+  letter-spacing: -0.1px;
+}
+.fc-active { background: #1741A6; color: #fff; }
+.fc-inactive { background: rgba(118,118,128,0.12); color: #3C3C43; }
+
+/* ── SEARCH ── */
+.search-bar {
+  margin: 10px 16px;
+  background: rgba(118,118,128,0.12);
+  border-radius: 10px;
+  padding: 7px 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.search-bar svg { width: 16px; height: 16px; color: var(--gray); flex-shrink: 0; }
+.search-bar span { font-size: 17px; color: var(--gray); }
+
+/* ── ORDER ROW ── */
+.order-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: #fff;
+  position: relative;
+}
+.order-row + .order-row::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 76px; right: 0;
+  height: 0.5px;
+  background: var(--separator);
+}
+.order-avatar {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  font-weight: 700;
+  color: #fff;
+  flex-shrink: 0;
+  letter-spacing: -0.5px;
+}
+.order-body { flex: 1; min-width: 0; }
+.order-name { font-size: 16px; font-weight: 600; color: #000; }
+.order-sub { font-size: 13px; color: var(--label2); margin-top: 1px; }
+.order-right { text-align: right; flex-shrink: 0; }
+.order-amount { font-size: 16px; font-weight: 600; color: #000; }
+.order-date { font-size: 13px; color: var(--label2); margin-top: 2px; }
+
+/* ── URGENT STRIPE ── */
+.urgent-stripe { width: 3px; height: 100%; position: absolute; left: 0; top: 0; background: #FF3B30; border-radius: 0 2px 2px 0; }
+
+/* ── INLINE STAT ROW ── */
+.inline-stats { display: flex; background: #fff; border-radius: 16px; overflow: hidden; margin: 0 16px; }
+.inline-stat { flex: 1; padding: 14px 10px; text-align: center; }
+.inline-stat + .inline-stat { border-left: 0.5px solid var(--separator); }
+.inline-stat-val { font-size: 22px; font-weight: 700; color: #000; letter-spacing: -0.5px; }
+.inline-stat-lbl { font-size: 12px; color: var(--label2); margin-top: 2px; }
+
+/* ── ROUTE CARD ── */
+.route-card { background: #fff; border-radius: 16px; overflow: hidden; margin: 0 16px; }
+.route-card + .route-card { margin-top: 10px; }
+.route-header { padding: 14px 16px 10px; border-bottom: 0.5px solid var(--separator); }
+.route-name { font-size: 16px; font-weight: 600; color: #000; }
+.route-meta { font-size: 13px; color: var(--label2); margin-top: 2px; }
+.route-body { padding: 10px 16px 14px; }
+.progress-track { height: 4px; background: var(--gray5); border-radius: 999px; overflow: hidden; margin: 10px 0 6px; }
+.progress-fill { height: 100%; border-radius: 999px; }
+.progress-fill.blue { background: #1741A6; }
+.progress-fill.green { background: #34C759; }
+.progress-meta { display: flex; justify-content: space-between; }
+.progress-meta span { font-size: 13px; color: var(--label2); }
+.progress-meta .accent { color: #1741A6; font-weight: 600; }
+.progress-meta .green { color: #248A3D; font-weight: 600; }
+
+/* ── FINANCE CHART ── */
+.chart-bars { display: flex; align-items: flex-end; gap: 5px; height: 60px; margin: 16px 0 4px; }
+.chart-bar { flex: 1; border-radius: 4px 4px 0 0; background: rgba(23,65,166,0.15); }
+.chart-bar.active { background: #1741A6; }
+.chart-labels { display: flex; gap: 5px; }
+.chart-label { flex: 1; text-align: center; font-size: 11px; color: var(--gray); }
+.chart-label.active { color: #1741A6; font-weight: 600; }
+
+/* ── SECTION HEADER INLINE ── */
+.section-inline {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 20px 16px 8px;
+}
+.section-inline-title { font-size: 20px; font-weight: 700; color: #000; letter-spacing: -0.3px; }
+.section-inline-link { font-size: 15px; color: #1741A6; font-weight: 400; }
+
+/* ── ALERT ROW ── */
+.alert-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 16px;
+  background: #fff;
+  position: relative;
+}
+.alert-row + .alert-row::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 42px; right: 0;
+  height: 0.5px;
+  background: var(--separator);
+}
+.alert-dot { width: 10px; height: 10px; border-radius: 999px; margin-top: 4px; flex-shrink: 0; }
+.alert-text { flex: 1; font-size: 15px; color: #000; line-height: 1.4; }
+.alert-time { font-size: 13px; color: var(--label2); white-space: nowrap; }
+
+/* ── DETAIL ROW ── */
+.detail-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 11px 16px;
+  background: #fff;
+  min-height: 44px;
+  position: relative;
+}
+.detail-row + .detail-row::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 16px; right: 0;
+  height: 0.5px;
+  background: var(--separator);
+}
+.detail-label { font-size: 16px; color: #000; }
+.detail-value { font-size: 16px; color: var(--label2); text-align: right; max-width: 200px; }
+.detail-value.accent { color: #1741A6; }
+.detail-value.red { color: #D70015; }
+.detail-value.green { color: #248A3D; }
+
+/* ── QUICK ACTION GRID ── */
+.quick-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; padding: 0 16px; }
+.quick-action { background: #fff; border-radius: 14px; padding: 13px 8px 11px; display: flex; flex-direction: column; align-items: center; gap: 5px; }
+.quick-action-icon { width: 42px; height: 42px; border-radius: 12px; display: flex; align-items: center; justify-content: center; }
+.quick-action-icon svg { width: 22px; height: 22px; }
+.quick-action-label { font-size: 11px; color: #000; text-align: center; line-height: 1.2; font-weight: 500; }
+
+/* ── INVOICE LINE ── */
+.invoice-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 10px 0;
+  border-bottom: 0.5px solid var(--separator);
+}
+.invoice-line:last-child { border-bottom: none; }
+.il-name { font-size: 15px; color: #000; }
+.il-qty { font-size: 13px; color: var(--label2); margin-top: 2px; }
+.il-amount { font-size: 15px; font-weight: 600; color: #000; }
+
+/* ── BOTTOM SAFE AREA ── */
+.bottom-bar { padding: 12px 16px 8px; flex-shrink: 0; background: #F2F2F7; }
+.bottom-bar.white { background: #fff; border-top: 0.5px solid var(--separator); }
+
+/* ── DRIVER CARD ── */
+.driver-row { display: flex; align-items: center; gap: 12px; padding: 12px 16px; background: #fff; position: relative; }
+.driver-row + .driver-row::before { content: ''; position: absolute; top: 0; left: 70px; right: 0; height: 0.5px; background: var(--separator); }
+.driver-avatar { width: 44px; height: 44px; border-radius: 22px; display: flex; align-items: center; justify-content: center; font-size: 17px; font-weight: 600; color: #fff; flex-shrink: 0; }
+.driver-info { flex: 1; }
+.driver-name { font-size: 16px; font-weight: 600; color: #000; }
+.driver-status { font-size: 13px; color: var(--label2); margin-top: 2px; }
+
+/* ── SEGMENTED CONTROL ── */
+.seg-control { background: rgba(118,118,128,0.12); border-radius: 9px; padding: 2px; display: flex; margin: 10px 16px 0; }
+.seg-item { flex: 1; text-align: center; padding: 6px 4px; border-radius: 7px; font-size: 13px; font-weight: 500; color: var(--label2); }
+.seg-item.active { background: #fff; color: #000; font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,0.12), 0 0.5px 1px rgba(0,0,0,0.08); }
+
+/* ── CUSTOMER LIST ROW ── */
+.cust-row { display: flex; align-items: center; gap: 12px; padding: 10px 16px; background: #fff; position: relative; }
+.cust-row + .cust-row::before { content: ''; position: absolute; top: 0; left: 62px; right: 0; height: 0.5px; background: var(--separator); }
+.cust-avatar { width: 38px; height: 38px; border-radius: 19px; display: flex; align-items: center; justify-content: center; font-size: 15px; font-weight: 600; color: #fff; flex-shrink: 0; }
+.cust-body { flex: 1; }
+.cust-name { font-size: 16px; color: #000; font-weight: 500; }
+.cust-sub { font-size: 13px; color: var(--label2); margin-top: 1px; }
+.cust-right { text-align: right; }
+.cust-amount { font-size: 15px; font-weight: 600; }
+.cust-label { font-size: 12px; color: var(--gray); margin-top: 1px; }
+</style>
+</head>
+<body>
+
+<!-- ══════ SCREEN 1: DASHBOARD ══════ -->
+<div class="group">
+  <div class="label">01 · Operator — Dashboard</div>
+  <div class="phone">
+    <div class="dynamic-island"></div>
+    <div class="screen">
+      <div class="statusbar colored">
+        <span class="sb-time">9:41</span>
+        <div class="sb-icons">
+          <svg viewBox="0 0 17 12" fill="none"><rect x="0" y="3" width="3" height="9" rx="1" fill="#000"/><rect x="4.5" y="2" width="3" height="10" rx="1" fill="#000"/><rect x="9" y="0.5" width="3" height="11.5" rx="1" fill="#000"/><rect x="13.5" y="0" width="3.5" height="12" rx="1" fill="#000" opacity="0.35"/></svg>
+          <svg viewBox="0 0 16 12" fill="none"><path d="M8 2.4C10.6 2.4 12.9 3.5 14.5 5.3L16 3.7C14 1.4 11.2 0 8 0C4.8 0 2 1.4 0 3.7L1.5 5.3C3.1 3.5 5.4 2.4 8 2.4Z" fill="#000"/><path d="M8 5.6C9.8 5.6 11.4 6.4 12.5 7.6L14 6C12.5 4.4 10.4 3.4 8 3.4C5.6 3.4 3.5 4.4 2 6L3.5 7.6C4.6 6.4 6.2 5.6 8 5.6Z" fill="#000"/><circle cx="8" cy="10" r="2" fill="#000"/></svg>
+          <svg viewBox="0 0 25 12" fill="none"><rect x="0.5" y="0.5" width="21" height="11" rx="3.5" stroke="#000" stroke-opacity="0.35"/><rect x="1.5" y="1.5" width="16" height="9" rx="2.5" fill="#000"/><path d="M23 4.5V7.5C23.8 7.2 24.5 6.7 24.5 6C24.5 5.3 23.8 4.8 23 4.5Z" fill="#000" opacity="0.4"/></svg>
+        </div>
+      </div>
+      <!-- Large Title Nav -->
+      <div class="navbar navbar-large colored">
+        <div style="display:flex;justify-content:space-between;align-items:flex-end;">
+          <div>
+            <div style="font-size:13px;color:var(--label2);font-weight:400;margin-bottom:1px;">Good morning</div>
+            <div class="nav-title">Najath</div>
+          </div>
+          <div style="width:36px;height:36px;border-radius:18px;background:rgba(23,65,166,0.12);display:flex;align-items:center;justify-content:center;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#1741A6" stroke-width="2" stroke-linecap="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+          </div>
+        </div>
+      </div>
+
+      <div class="scroll" style="padding-bottom:8px;">
+        <!-- KPIs -->
+        <div style="height:16px;"></div>
+        <div class="kpi-grid">
+          <div class="kpi-card">
+            <div class="kpi-icon-row">
+              <div class="kpi-icon" style="background:rgba(23,65,166,0.1);">
+                <svg viewBox="0 0 24 24" fill="none" stroke="#1741A6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+              </div>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--gray3)" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+            </div>
+            <div class="kpi-value">$4,820</div>
+            <div class="kpi-label">Today's Revenue</div>
+            <div class="kpi-delta up">↑ 12% vs yesterday</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-icon-row">
+              <div class="kpi-icon" style="background:rgba(255,149,0,0.1);">
+                <svg viewBox="0 0 24 24" fill="none" stroke="#FF9500" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2z"/><line x1="9" y1="7" x2="9" y2="3"/><line x1="15" y1="7" x2="15" y2="3"/></svg>
+              </div>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--gray3)" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+            </div>
+            <div class="kpi-value">23</div>
+            <div class="kpi-label">Pending Orders</div>
+            <div class="kpi-delta down">↑ 3 since 8 AM</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-icon-row">
+              <div class="kpi-icon" style="background:rgba(255,59,48,0.1);">
+                <svg viewBox="0 0 24 24" fill="none" stroke="#FF3B30" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+              </div>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--gray3)" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+            </div>
+            <div class="kpi-value">$6,140</div>
+            <div class="kpi-label">Overdue</div>
+            <div class="kpi-delta down">4 invoices</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-icon-row">
+              <div class="kpi-icon" style="background:rgba(52,199,89,0.1);">
+                <svg viewBox="0 0 24 24" fill="none" stroke="#34C759" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+              </div>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--gray3)" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+            </div>
+            <div class="kpi-value">3</div>
+            <div class="kpi-label">Low Stock</div>
+            <div class="kpi-delta neutral">Action needed</div>
+          </div>
+        </div>
+
+        <!-- Quick Actions -->
+        <div class="section-inline">
+          <span class="section-inline-title">Quick Actions</span>
+        </div>
+        <div class="quick-grid">
+          <div class="quick-action">
+            <div class="quick-action-icon" style="background:rgba(23,65,166,0.1);">
+              <svg viewBox="0 0 24 24" fill="none" stroke="#1741A6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            </div>
+            <div class="quick-action-label">New Order</div>
+          </div>
+          <div class="quick-action">
+            <div class="quick-action-icon" style="background:rgba(52,199,89,0.1);">
+              <svg viewBox="0 0 24 24" fill="none" stroke="#34C759" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="3 11 22 2 13 21 11 13 3 11"/></svg>
+            </div>
+            <div class="quick-action-label">Dispatch Route</div>
+          </div>
+          <div class="quick-action">
+            <div class="quick-action-icon" style="background:rgba(255,149,0,0.1);">
+              <svg viewBox="0 0 24 24" fill="none" stroke="#FF9500" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            </div>
+            <div class="quick-action-label">New Invoice</div>
+          </div>
+          <div class="quick-action">
+            <div class="quick-action-icon" style="background:rgba(88,86,214,0.1);">
+              <svg viewBox="0 0 24 24" fill="none" stroke="#5856D6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            </div>
+            <div class="quick-action-label">Add Customer</div>
+          </div>
+        </div>
+
+        <!-- Alerts -->
+        <div class="section-inline">
+          <span class="section-inline-title">Alerts</span>
+          <span class="section-inline-link">See All</span>
+        </div>
+        <div class="list-group" style="margin:0 16px;">
+          <div class="alert-row">
+            <div class="alert-dot" style="background:#FF3B30;"></div>
+            <div class="alert-text">Harbor Cafe invoice #1042 overdue by 14 days — $320.00</div>
+            <span class="alert-time">2h ago</span>
+          </div>
+          <div class="alert-row">
+            <div class="alert-dot" style="background:#FF9500;"></div>
+            <div class="alert-text">Sourdough Bread below reorder point (4 units remaining)</div>
+            <span class="alert-time">5h ago</span>
+          </div>
+          <div class="alert-row">
+            <div class="alert-dot" style="background:#1741A6;"></div>
+            <div class="alert-text">Route B completed — $1,240 collected by Sara</div>
+            <span class="alert-time">8:32</span>
+          </div>
+        </div>
+
+        <!-- Route Progress -->
+        <div class="section-inline">
+          <span class="section-inline-title">Routes Today</span>
+          <span class="section-inline-link">Map View</span>
+        </div>
+        <div class="route-card">
+          <div class="route-header">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <div>
+                <div class="route-name">Route A — Tom</div>
+                <div class="route-meta">8 stops · departed 7:00 AM</div>
+              </div>
+              <div class="pill pill-blue">Active</div>
+            </div>
+          </div>
+          <div class="route-body">
+            <div class="progress-track"><div class="progress-fill blue" style="width:62%;"></div></div>
+            <div class="progress-meta">
+              <span>5 of 8 stops done</span>
+              <span class="accent">ETA 12:30 PM</span>
+            </div>
+            <div style="margin-top:8px;font-size:13px;color:var(--label2);">$640 collected of $1,240</div>
+          </div>
+        </div>
+        <div class="route-card" style="margin-top:10px;">
+          <div class="route-header">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <div>
+                <div class="route-name">Route B — Sara</div>
+                <div class="route-meta">8 stops · completed</div>
+              </div>
+              <div class="pill pill-green">Done</div>
+            </div>
+          </div>
+          <div class="route-body">
+            <div class="progress-track"><div class="progress-fill green" style="width:100%;"></div></div>
+            <div class="progress-meta"><span>8 of 8 stops done</span><span class="green">$1,240 collected</span></div>
+          </div>
+        </div>
+        <div style="height:16px;"></div>
+      </div>
+
+      <div class="tabbar">
+        <div class="tab active">
+          <div class="tab-icon"><svg viewBox="0 0 24 24" fill="#1741A6"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg></div>
+          <span class="tab-label" style="color:#1741A6;">Home</span>
+        </div>
+        <div class="tab">
+          <div class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="#8E8E93" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></div>
+          <span class="tab-label">Orders</span>
+        </div>
+        <div class="tab">
+          <div class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="#8E8E93" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="3 11 22 2 13 21 11 13 3 11"/></svg></div>
+          <span class="tab-label">Routes</span>
+        </div>
+        <div class="tab">
+          <div class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="#8E8E93" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></div>
+          <span class="tab-label">Finance</span>
+        </div>
+        <div class="tab">
+          <div class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="#8E8E93" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg></div>
+          <span class="tab-label">More</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════ SCREEN 2: ORDERS ══════ -->
+<div class="group">
+  <div class="label">02 · Operator — Orders</div>
+  <div class="phone">
+    <div class="dynamic-island"></div>
+    <div class="screen white">
+      <div class="statusbar opaque"><span class="sb-time">9:41</span><div class="sb-icons"><svg viewBox="0 0 17 12" fill="none"><rect x="0" y="3" width="3" height="9" rx="1" fill="#000"/><rect x="4.5" y="2" width="3" height="10" rx="1" fill="#000"/><rect x="9" y="0.5" width="3" height="11.5" rx="1" fill="#000"/><rect x="13.5" y="0" width="3.5" height="12" rx="1" fill="#000" opacity="0.35"/></svg><svg viewBox="0 0 16 12" fill="none"><path d="M8 2.4C10.6 2.4 12.9 3.5 14.5 5.3L16 3.7C14 1.4 11.2 0 8 0C4.8 0 2 1.4 0 3.7L1.5 5.3C3.1 3.5 5.4 2.4 8 2.4Z" fill="#000"/><path d="M8 5.6C9.8 5.6 11.4 6.4 12.5 7.6L14 6C12.5 4.4 10.4 3.4 8 3.4C5.6 3.4 3.5 4.4 2 6L3.5 7.6C4.6 6.4 6.2 5.6 8 5.6Z" fill="#000"/><circle cx="8" cy="10" r="2" fill="#000"/></svg><svg viewBox="0 0 25 12" fill="none"><rect x="0.5" y="0.5" width="21" height="11" rx="3.5" stroke="#000" stroke-opacity="0.35"/><rect x="1.5" y="1.5" width="16" height="9" rx="2.5" fill="#000"/><path d="M23 4.5V7.5C23.8 7.2 24.5 6.7 24.5 6C24.5 5.3 23.8 4.8 23 4.5Z" fill="#000" opacity="0.4"/></svg></div></div>
+      <div class="navbar white navbar-large">
+        <div class="navbar-inline" style="padding-bottom:0;margin-bottom:8px;">
+          <div style="width:20px;"></div>
+          <span style="font-size:17px;font-weight:600;color:#000;">Orders</span>
+          <div style="background:rgba(23,65,166,0.12);width:32px;height:32px;border-radius:16px;display:flex;align-items:center;justify-content:center;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#1741A6" stroke-width="2.5" stroke-linecap="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="14" y2="12"/><line x1="4" y1="18" x2="11" y2="18"/></svg>
+          </div>
+        </div>
+      </div>
+      <div class="filter-scroll" style="padding-bottom:12px;">
+        <div class="filter-chip fc-active">All &nbsp;47</div>
+        <div class="filter-chip fc-inactive">Pending &nbsp;23</div>
+        <div class="filter-chip fc-inactive">Confirmed &nbsp;12</div>
+        <div class="filter-chip fc-inactive">Delivered &nbsp;8</div>
+        <div class="filter-chip fc-inactive">Urgent</div>
+      </div>
+      <div style="height:0.5px;background:var(--separator);flex-shrink:0;"></div>
+      <div class="scroll">
+        <div style="margin:12px 16px 0;" class="list-group">
+          <!-- urgent order -->
+          <div class="order-row" style="position:relative;">
+            <div class="urgent-stripe"></div>
+            <div class="order-avatar" style="background:linear-gradient(135deg,#FF6B6B,#FF3B30);">HC</div>
+            <div class="order-body">
+              <div class="order-name">Harbor Cafe</div>
+              <div class="order-sub">Order #1048 · 4 items · Today</div>
+            </div>
+            <div class="order-right">
+              <div class="pill pill-red" style="font-size:12px;">Urgent</div>
+              <div class="order-date" style="margin-top:4px;">$194</div>
+            </div>
+          </div>
+          <div class="order-row">
+            <div class="order-avatar" style="background:linear-gradient(135deg,#5AC8FA,#1741A6);">ND</div>
+            <div class="order-body"><div class="order-name">North Deli</div><div class="order-sub">Order #1047 · 6 items · Today</div></div>
+            <div class="order-right"><div class="pill pill-orange" style="font-size:12px;">Pending</div><div class="order-date" style="margin-top:4px;">$186</div></div>
+          </div>
+          <div class="order-row">
+            <div class="order-avatar" style="background:linear-gradient(135deg,#30D158,#34C759);">BB</div>
+            <div class="order-body"><div class="order-name">Bayside Bistro</div><div class="order-sub">Order #1046 · 3 items · Today</div></div>
+            <div class="order-right"><div class="pill pill-blue" style="font-size:12px;">Confirmed</div><div class="order-date" style="margin-top:4px;">$142</div></div>
+          </div>
+          <div class="order-row">
+            <div class="order-avatar" style="background:linear-gradient(135deg,#FF9F0A,#FF9500);">WG</div>
+            <div class="order-body"><div class="order-name">Westpark Grill</div><div class="order-sub">Order #1045 · 8 items · Yesterday</div></div>
+            <div class="order-right"><div class="pill pill-green" style="font-size:12px;">Delivered</div><div class="order-date" style="margin-top:4px;">$440</div></div>
+          </div>
+          <div class="order-row">
+            <div class="order-avatar" style="background:linear-gradient(135deg,#BF5AF2,#AF52DE);">CK</div>
+            <div class="order-body"><div class="order-name">Central Kitchen</div><div class="order-sub">Order #1044 · 2 items · Yesterday</div></div>
+            <div class="order-right"><div class="pill pill-blue" style="font-size:12px;">Confirmed</div><div class="order-date" style="margin-top:4px;">$88</div></div>
+          </div>
+          <div class="order-row">
+            <div class="order-avatar" style="background:linear-gradient(135deg,#64D2FF,#5AC8FA);">SF</div>
+            <div class="order-body"><div class="order-name">Summit Foods</div><div class="order-sub">Order #1043 · 5 items · Yesterday</div></div>
+            <div class="order-right"><div class="pill pill-green" style="font-size:12px;">Delivered</div><div class="order-date" style="margin-top:4px;">$212</div></div>
+          </div>
+          <div class="order-row">
+            <div class="order-avatar" style="background:linear-gradient(135deg,#6E6E73,#48484A);">OB</div>
+            <div class="order-body"><div class="order-name">Ocean Bakes</div><div class="order-sub">Order #1042 · 7 items · Apr 3</div></div>
+            <div class="order-right"><div class="pill pill-green" style="font-size:12px;">Delivered</div><div class="order-date" style="margin-top:4px;">$330</div></div>
+          </div>
+        </div>
+        <div style="height:16px;"></div>
+      </div>
+      <!-- FAB -->
+      <div style="position:absolute;bottom:92px;right:20px;width:54px;height:54px;border-radius:27px;background:#1741A6;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 20px rgba(23,65,166,0.4);">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      </div>
+      <div class="tabbar">
+        <div class="tab"><div class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="#8E8E93" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg></div><span class="tab-label">Home</span></div>
+        <div class="tab active"><div class="tab-icon"><svg viewBox="0 0 24 24" fill="#1741A6"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8" fill="none" stroke="#fff" stroke-width="1.5"/><line x1="16" y1="13" x2="8" y2="13" stroke="#fff" stroke-width="1.5"/><line x1="16" y1="17" x2="8" y2="17" stroke="#fff" stroke-width="1.5"/></svg></div><span class="tab-label" style="color:#1741A6;">Orders</span></div>
+        <div class="tab"><div class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="#8E8E93" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="3 11 22 2 13 21 11 13 3 11"/></svg></div><span class="tab-label">Routes</span></div>
+        <div class="tab"><div class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="#8E8E93" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></div><span class="tab-label">Finance</span></div>
+        <div class="tab"><div class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="#8E8E93" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg></div><span class="tab-label">More</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════ SCREEN 3: ORDER DETAIL ══════ -->
+<div class="group">
+  <div class="label">03 · Operator — Order Detail</div>
+  <div class="phone">
+    <div class="dynamic-island"></div>
+    <div class="screen">
+      <div class="statusbar colored"><span class="sb-time">9:41</span><div class="sb-icons"><svg viewBox="0 0 17 12" fill="none"><rect x="0" y="3" width="3" height="9" rx="1" fill="#000"/><rect x="4.5" y="2" width="3" height="10" rx="1" fill="#000"/><rect x="9" y="0.5" width="3" height="11.5" rx="1" fill="#000"/></svg><svg viewBox="0 0 25 12" fill="none"><rect x="0.5" y="0.5" width="21" height="11" rx="3.5" stroke="#000" stroke-opacity="0.35"/><rect x="1.5" y="1.5" width="16" height="9" rx="2.5" fill="#000"/></svg></div></div>
+      <div class="navbar colored">
+        <div class="navbar-inline">
+          <span class="nav-back">‹&nbsp;Orders</span>
+          <span style="font-size:17px;font-weight:600;">Order #1048</span>
+          <span class="nav-action">Edit</span>
+        </div>
+      </div>
+      <div class="scroll">
+        <!-- Customer card -->
+        <div style="padding:16px 16px 0;">
+          <div class="card card-inset">
+            <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
+              <div style="width:52px;height:52px;border-radius:14px;background:linear-gradient(135deg,#FF6B6B,#FF3B30);display:flex;align-items:center;justify-content:center;font-size:19px;font-weight:700;color:#fff;">HC</div>
+              <div>
+                <div style="font-size:20px;font-weight:700;color:#000;letter-spacing:-0.3px;">Harbor Cafe</div>
+                <div style="font-size:14px;color:var(--label2);margin-top:2px;">Requested delivery: Today</div>
+              </div>
+              <div class="pill pill-red" style="margin-left:auto;">Urgent</div>
+            </div>
+            <div style="height:0.5px;background:var(--separator);"></div>
+            <div style="margin-top:12px;">
+              <div class="detail-row" style="padding:8px 0;"><span class="detail-label" style="font-size:15px;">Status</span><div class="pill pill-orange">Pending</div></div>
+              <div class="detail-row" style="padding:8px 0;"><span class="detail-label" style="font-size:15px;">Driver</span><span class="detail-value" style="font-size:15px;">Tom — Route A</span></div>
+              <div class="detail-row" style="padding:8px 0;border:none;"><span class="detail-label" style="font-size:15px;">Payment Terms</span><span class="detail-value" style="font-size:15px;">Net 30</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Items -->
+        <div style="padding:16px 16px 0;">
+          <div class="card card-inset">
+            <div style="font-size:13px;font-weight:600;color:var(--label2);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:12px;">Items</div>
+            <div class="invoice-line"><div><div class="il-name">Sourdough Bread</div><div class="il-qty">12 × $4.50</div></div><div class="il-amount">$54.00</div></div>
+            <div class="invoice-line"><div><div class="il-name">Butter Croissant</div><div class="il-qty">24 × $2.80</div></div><div class="il-amount">$67.20</div></div>
+            <div class="invoice-line"><div><div class="il-name">Filter Coffee 1kg</div><div class="il-qty">2 × $28.00</div></div><div class="il-amount">$56.00</div></div>
+            <div style="margin-top:12px;padding-top:12px;border-top:0.5px solid var(--separator);">
+              <div style="display:flex;justify-content:space-between;margin-bottom:6px;"><span style="font-size:15px;color:var(--label2);">Subtotal</span><span style="font-size:15px;font-weight:500;color:#000;">$177.20</span></div>
+              <div style="display:flex;justify-content:space-between;margin-bottom:10px;"><span style="font-size:15px;color:var(--label2);">Tax (10%)</span><span style="font-size:15px;font-weight:500;color:#000;">$17.72</span></div>
+              <div style="display:flex;justify-content:space-between;"><span style="font-size:17px;font-weight:700;color:#000;">Total</span><span style="font-size:22px;font-weight:700;color:#000;letter-spacing:-0.5px;">$194.92</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Balance -->
+        <div style="padding:12px 16px 0;">
+          <div class="card card-inset">
+            <div style="font-size:13px;font-weight:600;color:var(--label2);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:12px;">Customer Balance</div>
+            <div style="display:flex;justify-content:space-between;margin-bottom:8px;"><span style="font-size:15px;color:var(--label2);">Outstanding</span><span style="font-size:15px;font-weight:600;color:#D70015;">$320.00</span></div>
+            <div style="display:flex;justify-content:space-between;margin-bottom:8px;"><span style="font-size:15px;color:var(--label2);">Credit Limit</span><span style="font-size:15px;font-weight:500;color:#000;">$2,000</span></div>
+            <div style="display:flex;justify-content:space-between;"><span style="font-size:15px;color:var(--label2);">Last Payment</span><span style="font-size:15px;font-weight:500;color:#000;">Mar 28</span></div>
+          </div>
+        </div>
+
+        <!-- Actions -->
+        <div style="padding:16px 16px 8px;" class="btn-row">
+          <div class="btn-destructive" style="font-size:15px;padding:12px;">Cancel Order</div>
+          <div class="btn-primary" style="font-size:15px;padding:12px;">Confirm</div>
+        </div>
+        <div style="padding:0 16px 20px;">
+          <div class="btn-secondary" style="font-size:15px;padding:12px;text-align:center;">Create Invoice</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════ SCREEN 4: ROUTES ══════ -->
+<div class="group">
+  <div class="label">04 · Operator — Routes</div>
+  <div class="phone">
+    <div class="dynamic-island"></div>
+    <div class="screen">
+      <div class="statusbar colored"><span class="sb-time">9:41</span><div class="sb-icons"><svg viewBox="0 0 17 12" fill="none"><rect x="0" y="3" width="3" height="9" rx="1" fill="#000"/><rect x="4.5" y="2" width="3" height="10" rx="1" fill="#000"/><rect x="9" y="0.5" width="3" height="11.5" rx="1" fill="#000"/></svg><svg viewBox="0 0 25 12" fill="none"><rect x="0.5" y="0.5" width="21" height="11" rx="3.5" stroke="#000" stroke-opacity="0.35"/><rect x="1.5" y="1.5" width="16" height="9" rx="2.5" fill="#000"/></svg></div></div>
+      <div class="navbar colored navbar-large">
+        <div class="navbar-inline" style="margin-bottom:6px;">
+          <div style="width:20px;"></div>
+          <span style="font-size:17px;font-weight:600;">Routes</span>
+          <span class="nav-action bold">+ Dispatch</span>
+        </div>
+        <div class="seg-control" style="margin:0;">
+          <div class="seg-item active">Today</div>
+          <div class="seg-item">Templates</div>
+          <div class="seg-item">History</div>
+        </div>
+      </div>
+      <div class="scroll" style="padding:16px 0;">
+        <!-- Inline stats -->
+        <div class="inline-stats">
+          <div class="inline-stat"><div class="inline-stat-val">8</div><div class="inline-stat-lbl">Routes</div></div>
+          <div class="inline-stat"><div class="inline-stat-val">5</div><div class="inline-stat-lbl">Active</div></div>
+          <div class="inline-stat"><div class="inline-stat-val" style="color:#248A3D;">2</div><div class="inline-stat-lbl">Complete</div></div>
+          <div class="inline-stat"><div class="inline-stat-val" style="color:var(--gray);">1</div><div class="inline-stat-lbl">Scheduled</div></div>
+        </div>
+        <div style="height:16px;"></div>
+        <div class="route-card">
+          <div class="route-header">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <div>
+                <div class="route-name">Route A — Tom</div>
+                <div class="route-meta">8 stops · departed 7:00 AM</div>
+              </div>
+              <div class="pill pill-blue">Active</div>
+            </div>
+          </div>
+          <div class="route-body">
+            <div class="progress-track"><div class="progress-fill blue" style="width:62%;"></div></div>
+            <div class="progress-meta"><span>5 of 8 stops</span><span class="accent">ETA 12:30 PM</span></div>
+            <div style="margin-top:8px;font-size:13px;color:var(--label2);">$640 of $1,240 collected</div>
+          </div>
+        </div>
+        <div class="route-card" style="margin-top:10px;">
+          <div class="route-header">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <div>
+                <div class="route-name">Route B — Sara</div>
+                <div class="route-meta">8 stops · completed 11:15 AM</div>
+              </div>
+              <div class="pill pill-green">Done</div>
+            </div>
+          </div>
+          <div class="route-body">
+            <div class="progress-track"><div class="progress-fill green" style="width:100%;"></div></div>
+            <div class="progress-meta"><span>8 of 8 stops</span><span class="green">$1,240 collected</span></div>
+          </div>
+        </div>
+        <div class="route-card" style="margin-top:10px;">
+          <div class="route-header">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <div>
+                <div class="route-name">Route C — Mia</div>
+                <div class="route-meta">6 stops · departs 9:00 AM</div>
+              </div>
+              <div class="pill pill-gray">Scheduled</div>
+            </div>
+          </div>
+          <div class="route-body">
+            <div style="font-size:13px;color:var(--label2);">Not started yet</div>
+          </div>
+        </div>
+        <div class="section-inline" style="padding-top:24px;">
+          <span class="section-inline-title">Templates</span>
+          <span class="section-inline-link">Manage</span>
+        </div>
+        <div class="list-group" style="margin:0 16px;">
+          <div class="list-row">
+            <div class="list-row-icon" style="background:rgba(23,65,166,0.1);"><svg viewBox="0 0 24 24" fill="none" stroke="#1741A6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="3 11 22 2 13 21 11 13 3 11"/></svg></div>
+            <div style="flex:1;"><div class="row-title">Route Template A</div><div style="font-size:13px;color:var(--label2);">8 stops · North district</div></div>
+            <svg width="8" height="14" viewBox="0 0 8 14" fill="none"><path d="M1 1l6 6-6 6" stroke="var(--gray3)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </div>
+          <div class="list-row">
+            <div class="list-row-icon" style="background:rgba(52,199,89,0.1);"><svg viewBox="0 0 24 24" fill="none" stroke="#34C759" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="3 11 22 2 13 21 11 13 3 11"/></svg></div>
+            <div style="flex:1;"><div class="row-title">Route Template B</div><div style="font-size:13px;color:var(--label2);">8 stops · South district</div></div>
+            <svg width="8" height="14" viewBox="0 0 8 14" fill="none"><path d="M1 1l6 6-6 6" stroke="var(--gray3)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </div>
+        </div>
+        <div style="height:16px;"></div>
+      </div>
+      <div class="tabbar">
+        <div class="tab"><div class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="#8E8E93" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg></div><span class="tab-label">Home</span></div>
+        <div class="tab"><div class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="#8E8E93" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div><span class="tab-label">Orders</span></div>
+        <div class="tab active"><div class="tab-icon"><svg viewBox="0 0 24 24" fill="#1741A6"><polygon points="3 11 22 2 13 21 11 13 3 11"/></svg></div><span class="tab-label" style="color:#1741A6;">Routes</span></div>
+        <div class="tab"><div class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="#8E8E93" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></div><span class="tab-label">Finance</span></div>
+        <div class="tab"><div class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="#8E8E93" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg></div><span class="tab-label">More</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════ SCREEN 5: FINANCE ══════ -->
+<div class="group">
+  <div class="label">05 · Operator — Finance</div>
+  <div class="phone">
+    <div class="dynamic-island"></div>
+    <div class="screen">
+      <div class="statusbar colored"><span class="sb-time">9:41</span><div class="sb-icons"><svg viewBox="0 0 17 12" fill="none"><rect x="0" y="3" width="3" height="9" rx="1" fill="#000"/><rect x="4.5" y="2" width="3" height="10" rx="1" fill="#000"/><rect x="9" y="0.5" width="3" height="11.5" rx="1" fill="#000"/></svg><svg viewBox="0 0 25 12" fill="none"><rect x="0.5" y="0.5" width="21" height="11" rx="3.5" stroke="#000" stroke-opacity="0.35"/><rect x="1.5" y="1.5" width="16" height="9" rx="2.5" fill="#000"/></svg></div></div>
+      <div class="navbar colored navbar-large">
+        <div style="display:flex;justify-content:space-between;align-items:flex-end;">
+          <div class="nav-title">Finance</div>
+          <div style="display:flex;gap:10px;">
+            <div style="width:32px;height:32px;border-radius:16px;background:rgba(23,65,166,0.12);display:flex;align-items:center;justify-content:center;">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#1741A6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="scroll" style="padding:16px 0 8px;">
+        <div class="seg-control" style="margin:0 16px 16px;">
+          <div class="seg-item active">Week</div>
+          <div class="seg-item">Month</div>
+          <div class="seg-item">Year</div>
+        </div>
+        <!-- Revenue card -->
+        <div style="margin:0 16px;" class="card card-inset">
+          <div style="font-size:13px;color:var(--label2);text-transform:uppercase;letter-spacing:0.06em;font-weight:600;margin-bottom:4px;">Revenue</div>
+          <div style="display:flex;align-items:baseline;gap:4px;"><span style="font-size:13px;color:var(--label2);font-weight:400;margin-bottom:2px;">$</span><span class="amount-large" style="font-size:38px;">24,860</span></div>
+          <div style="font-size:13px;color:#248A3D;font-weight:600;margin-top:2px;">↑ 8.4% vs last week</div>
+          <div class="chart-bars">
+            <div class="chart-bar" style="height:55%;"></div>
+            <div class="chart-bar" style="height:72%;"></div>
+            <div class="chart-bar" style="height:44%;"></div>
+            <div class="chart-bar" style="height:88%;"></div>
+            <div class="chart-bar" style="height:61%;"></div>
+            <div class="chart-bar active" style="height:95%;"></div>
+            <div class="chart-bar" style="height:78%;"></div>
+          </div>
+          <div class="chart-labels">
+            <span class="chart-label">Mon</span><span class="chart-label">Tue</span><span class="chart-label">Wed</span><span class="chart-label">Thu</span><span class="chart-label">Fri</span><span class="chart-label active">Sat</span><span class="chart-label">Sun</span>
+          </div>
+        </div>
+        <!-- KPI row -->
+        <div class="kpi-grid" style="padding:12px 16px 0;">
+          <div class="kpi-card" style="border-radius:12px;"><div class="kpi-value" style="font-size:20px;">$18,240</div><div class="kpi-label">Invoiced</div><div class="kpi-delta up">↑ 5%</div></div>
+          <div class="kpi-card" style="border-radius:12px;"><div class="kpi-value" style="font-size:20px;color:#D70015;">$6,620</div><div class="kpi-label">Outstanding</div><div class="kpi-delta down">4 overdue</div></div>
+          <div class="kpi-card" style="border-radius:12px;"><div class="kpi-value" style="font-size:20px;">$3,210</div><div class="kpi-label">Expenses</div><div class="kpi-delta up">↓ 2%</div></div>
+          <div class="kpi-card" style="border-radius:12px;"><div class="kpi-value" style="font-size:20px;">74%</div><div class="kpi-label">Gross Margin</div><div class="kpi-delta up">↑ 1.2pt</div></div>
+        </div>
+        <div class="section-inline" style="padding-top:20px;">
+          <span class="section-inline-title">Recent Invoices</span>
+          <span class="section-inline-link">See All</span>
+        </div>
+        <div class="list-group" style="margin:0 16px 16px;">
+          <div class="order-row">
+            <div class="order-avatar" style="background:linear-gradient(135deg,#FF6B6B,#FF3B30);width:38px;height:38px;font-size:13px;">HC</div>
+            <div class="order-body"><div class="order-name" style="font-size:15px;">Harbor Cafe</div><div class="order-sub">Inv #1042 · Due Apr 3</div></div>
+            <div class="order-right"><div style="font-size:15px;font-weight:600;color:#D70015;">$320.00</div><div class="pill pill-red" style="font-size:11px;margin-top:4px;">Overdue</div></div>
+          </div>
+          <div class="order-row">
+            <div class="order-avatar" style="background:linear-gradient(135deg,#30D158,#34C759);width:38px;height:38px;font-size:13px;">BB</div>
+            <div class="order-body"><div class="order-name" style="font-size:15px;">Bayside Bistro</div><div class="order-sub">Inv #1041 · Due Apr 10</div></div>
+            <div class="order-right"><div style="font-size:15px;font-weight:600;">$194.92</div><div class="pill pill-orange" style="font-size:11px;margin-top:4px;">Sent</div></div>
+          </div>
+          <div class="order-row">
+            <div class="order-avatar" style="background:linear-gradient(135deg,#FF9F0A,#FF9500);width:38px;height:38px;font-size:13px;">WG</div>
+            <div class="order-body"><div class="order-name" style="font-size:15px;">Westpark Grill</div><div class="order-sub">Inv #1040 · Paid Apr 2</div></div>
+            <div class="order-right"><div style="font-size:15px;font-weight:600;">$440.00</div><div class="pill pill-green" style="font-size:11px;margin-top:4px;">Paid</div></div>
+          </div>
+        </div>
+      </div>
+      <div class="tabbar">
+        <div class="tab"><div class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="#8E8E93" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></div><span class="tab-label">Home</span></div>
+        <div class="tab"><div class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="#8E8E93" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg></div><span class="tab-label">Orders</span></div>
+        <div class="tab"><div class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="#8E8E93" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="3 11 22 2 13 21 11 13 3 11"/></svg></div><span class="tab-label">Routes</span></div>
+        <div class="tab active"><div class="tab-icon"><svg viewBox="0 0 24 24" fill="#1741A6"><line x1="12" y1="1" x2="12" y2="23" stroke="#fff" stroke-width="2"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" stroke="#fff" stroke-width="2" fill="none"/></svg></div><span class="tab-label" style="color:#1741A6;">Finance</span></div>
+        <div class="tab"><div class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="#8E8E93" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg></div><span class="tab-label">More</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════ SCREEN 6: CUSTOMERS ══════ -->
+<div class="group">
+  <div class="label">06 · Operator — Customers</div>
+  <div class="phone">
+    <div class="dynamic-island"></div>
+    <div class="screen">
+      <div class="statusbar colored"><span class="sb-time">9:41</span><div class="sb-icons"><svg viewBox="0 0 17 12" fill="none"><rect x="0" y="3" width="3" height="9" rx="1" fill="#000"/><rect x="4.5" y="2" width="3" height="10" rx="1" fill="#000"/><rect x="9" y="0.5" width="3" height="11.5" rx="1" fill="#000"/></svg><svg viewBox="0 0 25 12" fill="none"><rect x="0.5" y="0.5" width="21" height="11" rx="3.5" stroke="#000" stroke-opacity="0.35"/><rect x="1.5" y="1.5" width="16" height="9" rx="2.5" fill="#000"/></svg></div></div>
+      <div class="navbar colored navbar-large">
+        <div style="display:flex;justify-content:space-between;align-items:flex-end;">
+          <div class="nav-title">Customers</div>
+          <span class="nav-action bold">+ Add</span>
+        </div>
+      </div>
+      <div class="search-bar" style="margin-top:8px;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="var(--gray)" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <span>Search customers</span>
+      </div>
+      <div class="filter-scroll" style="padding-bottom:8px;">
+        <div class="filter-chip fc-active">All</div>
+        <div class="filter-chip fc-inactive">Overdue</div>
+        <div class="filter-chip fc-inactive">Active</div>
+        <div class="filter-chip fc-inactive">High Value</div>
+      </div>
+      <div style="height:0.5px;background:var(--separator);flex-shrink:0;"></div>
+      <div class="scroll">
+        <div style="margin:12px 16px 0;" class="list-group">
+          <div class="cust-row">
+            <div class="cust-avatar" style="background:linear-gradient(135deg,#FF6B6B,#FF3B30);">HC</div>
+            <div class="cust-body"><div class="cust-name">Harbor Cafe</div><div class="cust-sub">Net 30 · Route A</div></div>
+            <div class="cust-right"><div class="cust-amount" style="color:#D70015;">−$320</div><div class="cust-label">Overdue</div></div>
+          </div>
+          <div class="cust-row">
+            <div class="cust-avatar" style="background:linear-gradient(135deg,#30D158,#34C759);">BB</div>
+            <div class="cust-body"><div class="cust-name">Bayside Bistro</div><div class="cust-sub">Net 14 · Route B</div></div>
+            <div class="cust-right"><div class="cust-amount" style="color:#D70015;">−$194</div><div class="cust-label">Owed</div></div>
+          </div>
+          <div class="cust-row">
+            <div class="cust-avatar" style="background:linear-gradient(135deg,#FF9F0A,#FF9500);">WG</div>
+            <div class="cust-body"><div class="cust-name">Westpark Grill</div><div class="cust-sub">COD · Route B</div></div>
+            <div class="cust-right"><div class="cust-amount" style="color:#248A3D;">$0</div><div class="cust-label">Clear</div></div>
+          </div>
+          <div class="cust-row">
+            <div class="cust-avatar" style="background:linear-gradient(135deg,#BF5AF2,#AF52DE);">CK</div>
+            <div class="cust-body"><div class="cust-name">Central Kitchen</div><div class="cust-sub">Net 30 · Route C</div></div>
+            <div class="cust-right"><div class="cust-amount" style="color:#D70015;">−$88</div><div class="cust-label">Owed</div></div>
+          </div>
+          <div class="cust-row">
+            <div class="cust-avatar" style="background:linear-gradient(135deg,#5AC8FA,#1741A6);">ND</div>
+            <div class="cust-body"><div class="cust-name">North Deli</div><div class="cust-sub">Net 7 · Route A</div></div>
+            <div class="cust-right"><div class="cust-amount" style="color:#248A3D;">$0</div><div class="cust-label">Clear</div></div>
+          </div>
+          <div class="cust-row">
+            <div class="cust-avatar" style="background:linear-gradient(135deg,#64D2FF,#5AC8FA);">SF</div>
+            <div class="cust-body"><div class="cust-name">Summit Foods</div><div class="cust-sub">Net 30 · Route D</div></div>
+            <div class="cust-right"><div class="cust-amount" style="color:#D70015;">−$212</div><div class="cust-label">Owed</div></div>
+          </div>
+          <div class="cust-row">
+            <div class="cust-avatar" style="background:linear-gradient(135deg,#6E6E73,#48484A);">OB</div>
+            <div class="cust-body"><div class="cust-name">Ocean Bakes</div><div class="cust-sub">Net 14 · Route A</div></div>
+            <div class="cust-right"><div class="cust-amount" style="color:#248A3D;">$0</div><div class="cust-label">Clear</div></div>
+          </div>
+          <div class="cust-row">
+            <div class="cust-avatar" style="background:linear-gradient(135deg,#30D158,#248A3D);">GM</div>
+            <div class="cust-body"><div class="cust-name">Grove Market</div><div class="cust-sub">Net 30 · Route C</div></div>
+            <div class="cust-right"><div class="cust-amount" style="color:#D70015;">−$144</div><div class="cust-label">Owed</div></div>
+          </div>
+        </div>
+        <div style="height:16px;"></div>
+      </div>
+      <div class="tabbar">
+        <div class="tab"><div class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="#8E8E93" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></div><span class="tab-label">Home</span></div>
+        <div class="tab"><div class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="#8E8E93" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg></div><span class="tab-label">Orders</span></div>
+        <div class="tab"><div class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="#8E8E93" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="3 11 22 2 13 21 11 13 3 11"/></svg></div><span class="tab-label">Routes</span></div>
+        <div class="tab"><div class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="#8E8E93" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></div><span class="tab-label">Finance</span></div>
+        <div class="tab active"><div class="tab-icon"><svg viewBox="0 0 24 24" fill="#1741A6"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg></div><span class="tab-label" style="color:#1741A6;">More</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
