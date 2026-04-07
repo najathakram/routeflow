@@ -26,6 +26,7 @@ import { useOrder, useUpdateOrderStatus, useUpdateOrderItems, useReopenOrder, us
 import { useCreateInvoiceFromOrder } from "@/lib/api/invoices";
 import { useProducts } from "@/lib/api/products";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { apiClient } from "@/lib/api-client";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -188,7 +189,9 @@ function EditableLineItems({
   const [substituteOpenId, setSubstituteOpenId] = React.useState<string | null>(null);
   const [addSearch, setAddSearch] = React.useState("");
   const [addOpen, setAddOpen] = React.useState(false);
+  const [addLoading, setAddLoading] = React.useState(false);
   const addRef = React.useRef<HTMLDivElement>(null);
+  const addInputRef = React.useRef<HTMLInputElement>(null);
   const { data: productsData } = useProducts({ search: addSearch || undefined, limit: 20, isActive: true });
   const products: any[] = (productsData as any)?.data ?? [];
 
@@ -199,6 +202,46 @@ function EditableLineItems({
     document.addEventListener("mousedown", onClickOutside);
     return () => document.removeEventListener("mousedown", onClickOutside);
   }, []);
+
+  function addProduct(p: any) {
+    onAdd({
+      id: `new-${Date.now()}-${Math.random()}`,
+      isNew: true,
+      originalProductId: p.id,
+      originalProductName: p.name,
+      originalQty: 1,
+      productId: p.id,
+      productName: p.name,
+      qty: 1,
+      unitPrice: Number(p.pricePerUnit ?? 0),
+      cancelled: false,
+    });
+    setAddSearch("");
+    setAddOpen(false);
+    setTimeout(() => addInputRef.current?.focus(), 50);
+  }
+
+  async function handleScanEnter() {
+    const code = addSearch.trim();
+    if (!code) return;
+    setAddLoading(true);
+    try {
+      // 1. Barcode endpoint
+      try {
+        const res = await apiClient.get(`/products/barcode/${encodeURIComponent(code)}`);
+        if (res.data?.id) { addProduct(res.data); return; }
+      } catch { /* not found */ }
+      // 2. Exact SKU match in current results
+      const skuMatch = products.find((p) => p.sku === code);
+      if (skuMatch) { addProduct(skuMatch); return; }
+      // 3. First search result
+      if (products.length === 1) { addProduct(products[0]); return; }
+      // 4. Not found — keep dropdown open
+      setAddOpen(true);
+    } finally {
+      setAddLoading(false);
+    }
+  }
 
   function update(id: string, patch: Partial<EditItemState>) {
     onChange(items.map((it) => (it.id === id ? { ...it, ...patch } : it)));
@@ -333,16 +376,26 @@ function EditableLineItems({
         </div>
       ))}
 
-      {/* ── Add Item row ── */}
+      {/* ── Add Item / Scan row ── */}
       <div ref={addRef} className="relative">
         <div className="flex items-center gap-2 rounded-lg border border-dashed border-brand-300 bg-brand-50 px-3 py-2">
-          <Search className="h-4 w-4 shrink-0 text-brand-400" />
+          {addLoading
+            ? <Loader2 className="h-4 w-4 shrink-0 animate-spin text-brand-400" />
+            : <Search className="h-4 w-4 shrink-0 text-brand-400" />}
           <input
+            ref={addInputRef}
             type="text"
-            placeholder="Search product to add…"
+            placeholder="Search or scan SKU/barcode then Enter…"
             value={addSearch}
             onChange={(e) => { setAddSearch(e.target.value); setAddOpen(true); }}
             onFocus={() => setAddOpen(true)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                e.stopPropagation();
+                handleScanEnter();
+              }
+            }}
             className="flex-1 bg-transparent text-sm text-navy placeholder:text-navy/40 outline-none"
           />
         </div>
@@ -353,22 +406,7 @@ function EditableLineItems({
                 <li key={p.id}>
                   <button
                     type="button"
-                    onMouseDown={() => {
-                      onAdd({
-                        id: `new-${Date.now()}-${Math.random()}`,
-                        isNew: true,
-                        originalProductId: p.id,
-                        originalProductName: p.name,
-                        originalQty: 1,
-                        productId: p.id,
-                        productName: p.name,
-                        qty: 1,
-                        unitPrice: Number(p.pricePerUnit ?? 0),
-                        cancelled: false,
-                      });
-                      setAddSearch("");
-                      setAddOpen(false);
-                    }}
+                    onMouseDown={() => addProduct(p)}
                     className="w-full px-3 py-2 text-left text-sm hover:bg-brand-50 flex items-center justify-between gap-2"
                   >
                     <span className="font-medium text-navy">{p.name}</span>
