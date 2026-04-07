@@ -367,6 +367,27 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
           <Button variant="secondary" type="button" onClick={onClose}>
             Cancel
           </Button>
+          <Button variant="outline" type="button" loading={createOrder.isPending}
+            onClick={() => {
+              // Validate customer only (items optional for draft)
+              if (!selectedCustomer) { setCustomerError("Select a customer"); return; }
+              createOrder.mutate(
+                {
+                  customerId: selectedCustomer.id,
+                  items: lineItems.filter((li) => li.productId && li.qty > 0).map((li) => ({
+                    productId: li.productId,
+                    qty: li.qty,
+                    ...(li.unitsPerBox ? { boxes: li.boxes ?? 0, pieces: li.pieces ?? 0 } : {}),
+                    ...(li.priceType === 'DISCOUNTED' && li.discountedPrice != null ? { unitPrice: li.discountedPrice } : {}),
+                  })),
+                  notes: (document.getElementById("order-notes") as HTMLTextAreaElement)?.value || undefined,
+                },
+                { onSuccess: () => { toast({ title: "Order saved as draft", variant: "success" }); onClose(); } },
+              );
+            }}
+          >
+            Save as Draft
+          </Button>
           <Button type="submit" form="create-order-form" loading={createOrder.isPending}>
             Create Order
           </Button>

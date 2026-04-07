@@ -439,8 +439,26 @@ export class OrdersService {
         });
       }
     } else {
-      // Operator path: update by line item id
+      // Operator path: update by line item id, or add new item if no id
       for (const item of dto.items) {
+        // New item (no id, has productId + qty)
+        if (!item.id && item.productId && item.qty) {
+          const product = await this.prisma.product.findUnique({ where: { id: item.productId } });
+          if (!product) continue;
+          const unitPrice = Number(product.pricePerUnit);
+          await this.prisma.orderItem.create({
+            data: {
+              orderId,
+              productId: item.productId,
+              qty: item.qty,
+              unitPrice,
+              subtotal: item.qty * unitPrice,
+              status: "PENDING",
+              notes: item.notes,
+            },
+          });
+          continue;
+        }
         if (item.action === "CANCEL") {
           await this.prisma.orderItem.update({
             where: { id: item.id },

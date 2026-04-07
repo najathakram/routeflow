@@ -32,7 +32,8 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 type ApiOrderStatus = "PENDING" | "CONFIRMED" | "OUT_FOR_DELIVERY" | "DELIVERED" | "CANCELLED";
 
 interface EditItemState {
-  id: string;
+  id: string;          // real DB id for existing items; temp "new-{uuid}" for new items
+  isNew?: boolean;
   originalProductId: string;
   originalProductName: string;
   originalQty: number;
@@ -178,11 +179,26 @@ function SubstitutePicker({
 function EditableLineItems({
   items,
   onChange,
+  onAdd,
 }: {
   items: EditItemState[];
   onChange: (items: EditItemState[]) => void;
+  onAdd: (item: EditItemState) => void;
 }) {
   const [substituteOpenId, setSubstituteOpenId] = React.useState<string | null>(null);
+  const [addSearch, setAddSearch] = React.useState("");
+  const [addOpen, setAddOpen] = React.useState(false);
+  const addRef = React.useRef<HTMLDivElement>(null);
+  const { data: productsData } = useProducts({ search: addSearch || undefined, limit: 20, isActive: true });
+  const products: any[] = (productsData as any)?.data ?? [];
+
+  React.useEffect(() => {
+    function onClickOutside(e: MouseEvent) {
+      if (addRef.current && !addRef.current.contains(e.target as Node)) setAddOpen(false);
+    }
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, []);
 
   function update(id: string, patch: Partial<EditItemState>) {
     onChange(items.map((it) => (it.id === id ? { ...it, ...patch } : it)));
@@ -316,6 +332,54 @@ function EditableLineItems({
           )}
         </div>
       ))}
+
+      {/* ── Add Item row ── */}
+      <div ref={addRef} className="relative">
+        <div className="flex items-center gap-2 rounded-lg border border-dashed border-brand-300 bg-brand-50 px-3 py-2">
+          <Search className="h-4 w-4 shrink-0 text-brand-400" />
+          <input
+            type="text"
+            placeholder="Search product to add…"
+            value={addSearch}
+            onChange={(e) => { setAddSearch(e.target.value); setAddOpen(true); }}
+            onFocus={() => setAddOpen(true)}
+            className="flex-1 bg-transparent text-sm text-navy placeholder:text-navy/40 outline-none"
+          />
+        </div>
+        {addOpen && products.length > 0 && (
+          <div className="absolute left-0 top-full z-50 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg">
+            <ul className="max-h-52 overflow-y-auto py-1">
+              {products.map((p: any) => (
+                <li key={p.id}>
+                  <button
+                    type="button"
+                    onMouseDown={() => {
+                      onAdd({
+                        id: `new-${Date.now()}-${Math.random()}`,
+                        isNew: true,
+                        originalProductId: p.id,
+                        originalProductName: p.name,
+                        originalQty: 1,
+                        productId: p.id,
+                        productName: p.name,
+                        qty: 1,
+                        unitPrice: Number(p.pricePerUnit ?? 0),
+                        cancelled: false,
+                      });
+                      setAddSearch("");
+                      setAddOpen(false);
+                    }}
+                    className="w-full px-3 py-2 text-left text-sm hover:bg-brand-50 flex items-center justify-between gap-2"
+                  >
+                    <span className="font-medium text-navy">{p.name}</span>
+                    <span className="text-xs text-navy/40">{p.unit}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -409,6 +473,11 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
     const updates: ItemUpdate[] = [];
 
     for (const edited of editItems) {
+      if (edited.isNew) {
+        // New item: no id — API will create it
+        updates.push({ productId: edited.productId, qty: edited.qty } as any);
+        continue;
+      }
       const orig = original.find((li) => li.id === edited.id);
       if (!orig) continue;
 
@@ -750,10 +819,14 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
             {isEditing ? (
               <div className="space-y-4">
                 <p className="text-sm text-navy/60">
-                  Mark items as unavailable, adjust quantities, or substitute products.
+                  Add new items, adjust quantities, substitute or mark as unavailable.
                   Changes are applied when you save.
                 </p>
-                <EditableLineItems items={editItems} onChange={setEditItems} />
+                <EditableLineItems
+                  items={editItems}
+                  onChange={setEditItems}
+                  onAdd={(item) => setEditItems((prev) => [...prev, item])}
+                />
 
                 {/* Live total preview */}
                 <div className="rounded-lg border border-surface-border bg-surface-raised px-4 py-3">
