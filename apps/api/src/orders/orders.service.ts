@@ -29,11 +29,11 @@ import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { ConfigService } from "@nestjs/config";
 import { NotificationsService } from "../notifications/notifications.service";
 import { InvoicesService } from "../invoices/invoices.service";
+import { SystemConfigService } from "../system-config/system-config.service";
 
 @Injectable()
 export class OrdersService {
   private readonly logger = new Logger(OrdersService.name);
-  private readonly taxRate: number;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -42,8 +42,17 @@ export class OrdersService {
     private readonly config: ConfigService,
     private readonly notifications: NotificationsService,
     private readonly invoicesService: InvoicesService,
-  ) {
-    this.taxRate = this.config.get<number>("taxRate") ?? 0.1;
+    private readonly systemConfig: SystemConfigService,
+  ) {}
+
+  /** Read tax rate from DB settings at runtime so operator changes take effect immediately. */
+  private async getTaxRate(): Promise<number> {
+    const raw = await this.systemConfig.get("settings.taxRate");
+    if (raw !== undefined && raw !== null) {
+      const parsed = parseFloat(raw);
+      if (!isNaN(parsed)) return parsed / 100; // stored as percentage (e.g. "10"), used as decimal (0.1)
+    }
+    return 0.1; // default 10% if not configured
   }
 
   async findAll(query: ListOrdersDto, user: JwtPayload) {
@@ -223,7 +232,8 @@ export class OrdersService {
     });
 
     const orderDiscount = dto.discountAmount ?? 0;
-    const tax = subtotal * this.taxRate;
+    const taxRate = await this.getTaxRate();
+    const tax = subtotal * taxRate;
     const total = subtotal + tax - orderDiscount;
 
     const order = await this.prisma.order.create({
@@ -520,7 +530,7 @@ export class OrdersService {
       where: { orderId, status: { not: "CANCELLED" } },
     });
     const subtotal = activeItems.reduce((s, li) => s + Number(li.subtotal), 0);
-    const tax = subtotal * this.taxRate;
+    const tax = subtotal * (await this.getTaxRate());
     await this.prisma.order.update({
       where: { id: orderId },
       data: {

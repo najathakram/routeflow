@@ -40,7 +40,7 @@ export class SettingsController {
       street: all["settings.street"] ?? "",
       city: all["settings.city"] ?? "",
       zip: all["settings.zip"] ?? "",
-      taxRate: all["settings.taxRate"] ? parseFloat(all["settings.taxRate"]) : 10,
+      taxRate: all["settings.taxRate"] != null ? parseFloat(all["settings.taxRate"]) : 10,
       logoUrl: all["settings.logoUrl"] ?? null,
     };
   }
