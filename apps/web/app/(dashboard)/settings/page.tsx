@@ -1069,238 +1069,273 @@ function AIIntegrationsTab() {
 
 // ─── TAB: Email Settings ──────────────────────────────────────────────────────
 
-const emailSchema = z.object({
-  fromName: z.string().min(1, "Required"),
-  fromEmail: z.string().email("Enter a valid email"),
-  smtpHost: z.string().min(1, "Required"),
-  smtpPort: z.coerce.number().min(1).max(65535),
-  smtpUser: z.string().min(1, "Required"),
-  smtpPassword: z.string().optional(),
-  smtpSecure: z.boolean(),
-});
-type EmailFormValues = z.infer<typeof emailSchema>;
+const EMAIL_PROVIDERS = [
+  {
+    id: "gmail",
+    label: "Gmail",
+    description: "Send from your Gmail or Google Workspace address",
+    logo: (
+      <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
+        <path d="M24 5.457v13.909c0 .904-.732 1.636-1.636 1.636h-3.819V11.73L12 16.64l-6.545-4.91v9.273H1.636A1.636 1.636 0 0 1 0 19.366V5.457c0-2.023 2.309-3.178 3.927-1.964L5.455 4.64 12 9.548l6.545-4.910 1.528-1.145C21.69 2.28 24 3.434 24 5.457z" fill="#EA4335"/>
+      </svg>
+    ),
+    smtpHost: "smtp.gmail.com",
+    smtpPort: 587,
+    smtpSecure: false,
+    userLabel: "Gmail address",
+    userPlaceholder: "you@gmail.com",
+    passwordLabel: "App Password",
+    passwordPlaceholder: "xxxx xxxx xxxx xxxx",
+    helpTitle: "You need a Google App Password",
+    helpSteps: [
+      "Go to myaccount.google.com → Security",
+      "Turn on 2-Step Verification if not already on",
+      'Under "How you sign in to Google", click App Passwords',
+      'Select "Mail" and your device, then click Generate',
+      "Copy the 16-character password and paste it here",
+    ],
+    helpLink: "https://myaccount.google.com/apppasswords",
+    helpLinkLabel: "Open App Passwords →",
+  },
+  {
+    id: "godaddy",
+    label: "GoDaddy",
+    description: "Send from your GoDaddy-hosted business email",
+    logo: (
+      <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
+        <path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm0 2.4c5.302 0 9.6 4.298 9.6 9.6S17.302 21.6 12 21.6 2.4 17.302 2.4 12 6.698 2.4 12 2.4z" fill="#1BDBDB"/>
+      </svg>
+    ),
+    smtpHost: "smtpout.secureserver.net",
+    smtpPort: 465,
+    smtpSecure: true,
+    userLabel: "GoDaddy email address",
+    userPlaceholder: "you@yourbusiness.com",
+    passwordLabel: "Email password",
+    passwordPlaceholder: "Your GoDaddy email password",
+    helpTitle: "Use your GoDaddy email credentials",
+    helpSteps: [
+      "Use the full email address you created in GoDaddy",
+      "Use the password you set for that email account",
+      'If you forgot it, reset it in GoDaddy → Email & Office → Manage',
+    ],
+    helpLink: "https://email.godaddy.com",
+    helpLinkLabel: "Open GoDaddy Email →",
+  },
+] as const;
+
+type ProviderId = typeof EMAIL_PROVIDERS[number]["id"];
 
 function EmailSettingsTab() {
   const { toast } = useToast();
   const qc = useQueryClient();
   const [showPassword, setShowPassword] = React.useState(false);
   const [isTesting, setIsTesting] = React.useState(false);
+  const [isSaving, setIsSaving] = React.useState(false);
+  const [selectedProvider, setSelectedProvider] = React.useState<ProviderId | "">("");
+  const [emailAddress, setEmailAddress] = React.useState("");
+  const [password, setPassword] = React.useState("");
+  const [fromName, setFromName] = React.useState("");
 
   const { data: savedSettings } = useQuery({
     queryKey: ["settings", "email"],
     queryFn: () => apiClient.get("/settings/email").then((r) => r.data),
   });
 
-  const saveSettings = useMutation({
-    mutationFn: (data: EmailFormValues) =>
-      apiClient.post("/settings/email", data).then((r) => r.data),
-    onSuccess: () => {
+  // Detect provider from saved SMTP host
+  React.useEffect(() => {
+    if (!savedSettings) return;
+    const host = savedSettings.smtpHost ?? "";
+    if (host.includes("gmail")) setSelectedProvider("gmail");
+    else if (host.includes("secureserver")) setSelectedProvider("godaddy");
+    setEmailAddress(savedSettings.smtpUser ?? "");
+    setFromName(savedSettings.fromName ?? "");
+    // Don't pre-fill password — it's masked server-side
+  }, [savedSettings]);
+
+  const provider = EMAIL_PROVIDERS.find((p) => p.id === selectedProvider);
+
+  const handleSave = async () => {
+    if (!provider) { toast({ title: "Select an email provider first", variant: "error" }); return; }
+    if (!emailAddress) { toast({ title: "Enter your email address", variant: "error" }); return; }
+    if (!password && !savedSettings?.configured) { toast({ title: "Enter your password", variant: "error" }); return; }
+
+    setIsSaving(true);
+    try {
+      await apiClient.post("/settings/email", {
+        fromName: fromName || emailAddress,
+        fromEmail: emailAddress,
+        smtpHost: provider.smtpHost,
+        smtpPort: provider.smtpPort,
+        smtpUser: emailAddress,
+        smtpPassword: password || undefined, // don't overwrite if blank
+        smtpSecure: provider.smtpSecure,
+      });
       qc.invalidateQueries({ queryKey: ["settings", "email"] });
       toast({ title: "Email settings saved", variant: "success" });
-    },
-    onError: () => toast({ title: "Failed to save email settings", variant: "error" }),
-  });
-
-  const {
-    register,
-    handleSubmit,
-    reset,
-    setValue,
-    watch,
-    formState: { errors, isSubmitting },
-  } = useForm<EmailFormValues>({
-    resolver: zodResolver(emailSchema),
-    defaultValues: {
-      fromName: "",
-      fromEmail: "",
-      smtpHost: "",
-      smtpPort: 587,
-      smtpUser: "",
-      smtpPassword: "",
-      smtpSecure: false,
-    },
-  });
-
-  React.useEffect(() => {
-    if (savedSettings) {
-      reset({
-        fromName: savedSettings.fromName ?? "",
-        fromEmail: savedSettings.fromEmail ?? "",
-        smtpHost: savedSettings.smtpHost ?? "",
-        smtpPort: savedSettings.smtpPort ?? 587,
-        smtpUser: savedSettings.smtpUser ?? "",
-        smtpPassword: savedSettings.smtpPassword ?? "",
-        smtpSecure: savedSettings.smtpSecure ?? false,
-      });
-    }
-  }, [savedSettings, reset]);
-
-  const onSubmit = async (data: EmailFormValues) => {
-    await saveSettings.mutateAsync(data);
-  };
-
-  const applyPreset = (preset: "gmail" | "godaddy") => {
-    if (preset === "gmail") {
-      setValue("smtpHost", "smtp.gmail.com");
-      setValue("smtpPort", 587);
-      setValue("smtpSecure", false);
-    } else {
-      setValue("smtpHost", "smtpout.secureserver.net");
-      setValue("smtpPort", 465);
-      setValue("smtpSecure", true);
+    } catch {
+      toast({ title: "Failed to save settings", variant: "error" });
+    } finally {
+      setIsSaving(false);
     }
   };
 
-  const fromEmail = watch("fromEmail");
-
-  const handleTestConnection = async () => {
-    const toEmail = fromEmail;
-    if (!toEmail) {
-      toast({ title: "Set a From Email first", variant: "error" });
-      return;
-    }
+  const handleTest = async () => {
+    if (!emailAddress) { toast({ title: "Save your settings first", variant: "error" }); return; }
     setIsTesting(true);
     try {
-      const { data } = await apiClient.post("/settings/email/test", { toEmail });
+      const { data } = await apiClient.post("/settings/email/test", { toEmail: emailAddress });
       if (data.success) {
-        toast({ title: "Test email sent!", description: `Check ${toEmail} for the test message.`, variant: "success" });
+        toast({ title: "Test email sent!", description: `Check ${emailAddress} for the test message.`, variant: "success" });
       } else {
         toast({ title: "Test failed", description: data.message, variant: "error" });
       }
     } catch {
-      toast({ title: "Test failed", description: "Could not send test email.", variant: "error" });
+      toast({ title: "Test failed", description: "Could not connect. Check your credentials.", variant: "error" });
     } finally {
       setIsTesting(false);
     }
   };
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-6">
-      <Card title="Sender Identity">
-        <div className="grid grid-cols-2 gap-4">
-          <Input
-            label="From Name"
-            placeholder="RouteFlow Business"
-            register={register("fromName")}
-            error={errors.fromName?.message}
-          />
-          <Input
-            label="From Email"
-            type="email"
-            placeholder="orders@mybusiness.com"
-            register={register("fromEmail")}
-            error={errors.fromEmail?.message}
-          />
-        </div>
-      </Card>
+    <div className="space-y-6 max-w-xl">
 
-      <Card title="SMTP Configuration">
-        {/* Presets */}
-        <div className="mb-4 flex items-center gap-2">
-          <span className="text-xs font-medium text-navy/60">Quick presets:</span>
-          <button
-            type="button"
-            onClick={() => applyPreset("gmail")}
-            className="rounded border border-surface-border bg-white px-3 py-1 text-xs font-medium text-navy hover:bg-surface-raised transition-colors"
-          >
-            Gmail
-          </button>
-          <button
-            type="button"
-            onClick={() => applyPreset("godaddy")}
-            className="rounded border border-surface-border bg-white px-3 py-1 text-xs font-medium text-navy hover:bg-surface-raised transition-colors"
-          >
-            GoDaddy
-          </button>
+      {/* Step 1 — Pick provider */}
+      <div className="space-y-2">
+        <p className="text-sm font-semibold text-navy">Step 1 — Choose your email provider</p>
+        <div className="grid grid-cols-2 gap-3">
+          {EMAIL_PROVIDERS.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              onClick={() => setSelectedProvider(p.id)}
+              className={cn(
+                "flex items-center gap-3 rounded-xl border-2 px-4 py-3.5 text-left transition-all",
+                selectedProvider === p.id
+                  ? "border-brand-500 bg-brand-50 shadow-sm"
+                  : "border-surface-border bg-white hover:border-brand-300 hover:bg-surface-raised",
+              )}
+            >
+              <span className="shrink-0">{p.logo}</span>
+              <div>
+                <p className="text-sm font-semibold text-navy">{p.label}</p>
+                <p className="text-xs text-navy/50 leading-tight mt-0.5">{p.description}</p>
+              </div>
+            </button>
+          ))}
         </div>
+      </div>
 
-        <div className="grid grid-cols-3 gap-4">
-          <div className="col-span-2">
-            <Input
-              label="SMTP Host"
-              placeholder="smtp.gmail.com"
-              register={register("smtpHost")}
-              error={errors.smtpHost?.message}
-            />
-          </div>
-          <Input
-            label="SMTP Port"
-            type="number"
-            placeholder="587"
-            register={register("smtpPort")}
-            error={errors.smtpPort?.message}
-          />
-        </div>
+      {/* Step 2 — Credentials (only once provider is chosen) */}
+      {provider && (
+        <>
+          <div className="space-y-4">
+            <p className="text-sm font-semibold text-navy">Step 2 — Enter your credentials</p>
 
-        <div className="mt-4 grid grid-cols-2 gap-4">
-          <Input
-            label="Username"
-            placeholder="user@gmail.com"
-            autoComplete="off"
-            register={register("smtpUser")}
-            error={errors.smtpUser?.message}
-          />
-          <div className="flex flex-col gap-1">
-            <label className="text-sm font-medium text-navy">Password</label>
-            <div className="relative">
+            {/* Display name */}
+            <div className="space-y-1">
+              <label className="block text-sm font-medium text-navy">Your name / business name</label>
               <input
-                type={showPassword ? "text" : "password"}
-                placeholder="App password or SMTP password"
-                autoComplete="new-password"
-                className="h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 text-sm text-navy placeholder:text-navy/40 transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent"
-                {...register("smtpPassword")}
+                type="text"
+                placeholder="e.g. Acme Foods"
+                value={fromName}
+                onChange={(e) => setFromName(e.target.value)}
+                className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/40 focus:outline-none focus:ring-2 focus:ring-brand-500"
               />
-              <button
-                type="button"
-                onClick={() => setShowPassword((v) => !v)}
-                className="absolute inset-y-0 right-0 flex items-center pr-3 text-navy/40 hover:text-navy transition-colors"
-                tabIndex={-1}
-                aria-label={showPassword ? "Hide password" : "Show password"}
-              >
-                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-              </button>
+              <p className="text-xs text-navy/40">This is what customers see as the sender name</p>
+            </div>
+
+            {/* Email address */}
+            <div className="space-y-1">
+              <label className="block text-sm font-medium text-navy">{provider.userLabel}</label>
+              <input
+                type="email"
+                placeholder={provider.userPlaceholder}
+                value={emailAddress}
+                onChange={(e) => setEmailAddress(e.target.value)}
+                autoComplete="off"
+                className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/40 focus:outline-none focus:ring-2 focus:ring-brand-500"
+              />
+            </div>
+
+            {/* Password */}
+            <div className="space-y-1">
+              <label className="block text-sm font-medium text-navy">{provider.passwordLabel}</label>
+              <div className="relative">
+                <input
+                  type={showPassword ? "text" : "password"}
+                  placeholder={savedSettings?.configured ? "Leave blank to keep current password" : provider.passwordPlaceholder}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  autoComplete="new-password"
+                  className="h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 text-sm text-navy placeholder:text-navy/40 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((v) => !v)}
+                  className="absolute inset-y-0 right-0 flex items-center pr-3 text-navy/40 hover:text-navy"
+                  tabIndex={-1}
+                >
+                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
             </div>
           </div>
+
+          {/* Help box */}
+          <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-4 space-y-2">
+            <p className="text-sm font-semibold text-blue-900">{provider.helpTitle}</p>
+            <ol className="space-y-1 pl-1">
+              {provider.helpSteps.map((step, i) => (
+                <li key={i} className="flex items-start gap-2 text-sm text-blue-800">
+                  <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-blue-200 text-[10px] font-bold text-blue-800">{i + 1}</span>
+                  {step}
+                </li>
+              ))}
+            </ol>
+            <a
+              href={provider.helpLink}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-block mt-1 text-xs font-medium text-blue-700 underline underline-offset-2 hover:text-blue-900"
+            >
+              {provider.helpLinkLabel}
+            </a>
+          </div>
+
+          {/* Actions */}
+          <div className="flex items-center gap-3">
+            <Button
+              type="button"
+              onClick={handleSave}
+              loading={isSaving}
+              leftIcon={<CheckCircle2 className="h-4 w-4" />}
+            >
+              Save
+            </Button>
+            {savedSettings?.configured && (
+              <Button
+                type="button"
+                variant="secondary"
+                loading={isTesting}
+                leftIcon={<Send className="h-4 w-4" />}
+                onClick={handleTest}
+              >
+                Send Test Email
+              </Button>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* Configured indicator */}
+      {savedSettings?.configured && !provider && (
+        <div className="flex items-center gap-2 rounded-lg bg-success-bg px-4 py-3 text-sm font-medium text-success">
+          <CheckCircle2 className="h-4 w-4 shrink-0" />
+          Email is configured and ready to send
         </div>
-
-        <div className="mt-4 flex items-center gap-2">
-          <input
-            id="smtpSecure"
-            type="checkbox"
-            className="h-4 w-4 rounded border-surface-border accent-brand-500"
-            {...register("smtpSecure")}
-          />
-          <label htmlFor="smtpSecure" className="text-sm text-navy">
-            Use SSL/TLS (port 465)
-          </label>
-        </div>
-      </Card>
-
-      {/* Helper note for Gmail */}
-      <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 space-y-1">
-        <p className="font-medium">Using Gmail?</p>
-        <p className="text-amber-700">
-          Use an App Password — not your regular Google password. Enable 2-step verification in
-          your Google Account, then go to <strong>Security → App Passwords</strong> and create one
-          for &quot;Mail&quot;.
-        </p>
-      </div>
-
-      <div className="flex items-center gap-3">
-        <Button type="submit" loading={isSubmitting} leftIcon={<CheckCircle2 className="h-4 w-4" />}>
-          Save Settings
-        </Button>
-        <Button
-          type="button"
-          variant="secondary"
-          loading={isTesting}
-          leftIcon={<Send className="h-4 w-4" />}
-          onClick={handleTestConnection}
-        >
-          Test Connection
-        </Button>
-      </div>
-    </form>
+      )}
+    </div>
   );
 }
 
