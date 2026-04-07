@@ -7,8 +7,8 @@ export interface Order {
   id: string;
   orderNumber: string;
   customerId: string;
-  customer?: { id: string; businessName: string; contactName?: string };
-  status: 'PENDING' | 'CONFIRMED' | 'OUT_FOR_DELIVERY' | 'DELIVERED' | 'CANCELLED';
+  customer?: { id: string; businessName: string; contactName?: string; phone?: string | null; mobile?: string | null; email?: string | null };
+  status: 'DRAFT' | 'PENDING' | 'CONFIRMED' | 'OUT_FOR_DELIVERY' | 'DELIVERED' | 'CANCELLED';
   urgent: boolean;
   subtotal: number;
   tax: number;
