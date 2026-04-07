@@ -30,6 +30,8 @@ import { usePageTitle } from "@/lib/page-title-context";
 import {
   useInvoice,
   useSendInvoice,
+  useSendInvoiceEmail,
+  useSendInvoiceReminder,
   useVoidInvoice,
   useReopenInvoice,
   useRecordInvoicePayment,
@@ -828,6 +830,8 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
 
   const { data: invoice, isLoading, isError } = useInvoice(params.id);
   const sendInvoice = useSendInvoice();
+  const sendInvoiceEmail = useSendInvoiceEmail();
+  const sendInvoiceReminder = useSendInvoiceReminder();
   const voidInvoice = useVoidInvoice();
   const reopenInvoice = useReopenInvoice();
   const recordPayment = useRecordInvoicePayment();
@@ -888,14 +892,37 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
   // ── Action handlers ─────────────────────────────────────────────────────────
 
   const handleSend = () => {
-    sendInvoice.mutate(invoice.id, {
-      onSuccess: () => {
-        toast({ title: "Invoice sent", description: `Invoice ${invoice.invoiceNumber} has been sent.`, variant: "success" });
+    const customerEmail = invoice.customer?.email;
+    if (!customerEmail) {
+      // No email on file — just mark as sent without emailing
+      sendInvoice.mutate(invoice.id, {
+        onSuccess: () => toast({ title: "Invoice marked as sent", description: "No customer email on file — status updated only.", variant: "success" }),
+        onError: (e) => toast({ title: "Failed", description: e.message, variant: "error" }),
+      });
+      return;
+    }
+    sendInvoiceEmail.mutate(
+      { id: invoice.id, email: customerEmail },
+      {
+        onSuccess: (res) => toast({ title: "Invoice emailed", description: `Sent to ${res.sentTo}`, variant: "success" }),
+        onError: (e: any) => toast({ title: "Failed to send email", description: e?.response?.data?.message || e.message, variant: "error" }),
       },
-      onError: () => {
-        toast({ title: "Failed to send invoice", description: "Please try again.", variant: "error" });
+    );
+  };
+
+  const handleReminder = () => {
+    const customerEmail = invoice.customer?.email;
+    if (!customerEmail) {
+      toast({ title: "No email on file", description: "Add an email address to this customer first.", variant: "error" });
+      return;
+    }
+    sendInvoiceReminder.mutate(
+      { id: invoice.id, email: customerEmail },
+      {
+        onSuccess: (res) => toast({ title: "Reminder sent", description: `Reminder emailed to ${res.sentTo}`, variant: "success" }),
+        onError: (e: any) => toast({ title: "Failed to send reminder", description: e?.response?.data?.message || e.message, variant: "error" }),
       },
-    });
+    );
   };
 
   const handleVoid = () => {
@@ -1047,16 +1074,27 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
             </Button>
           )}
 
-          {/* Send (DRAFT) / Send Reminder (SENT/VIEWED) */}
-          {(status === "DRAFT" || status === "SENT" || status === "VIEWED") && (
+          {/* Send (DRAFT) / Send Reminder (SENT/VIEWED/OVERDUE) */}
+          {status === "DRAFT" && (
             <Button
               size="sm"
-              variant={status === "DRAFT" ? "primary" : "secondary"}
+              variant="primary"
               leftIcon={<Send className="h-3.5 w-3.5" />}
               onClick={handleSend}
-              loading={sendInvoice.isPending}
+              loading={sendInvoiceEmail.isPending || sendInvoice.isPending}
             >
-              {status === "DRAFT" ? "Send" : "Send Reminder"}
+              Send
+            </Button>
+          )}
+          {(status === "SENT" || status === "VIEWED" || status === "OVERDUE") && (
+            <Button
+              size="sm"
+              variant="secondary"
+              leftIcon={<Send className="h-3.5 w-3.5" />}
+              onClick={handleReminder}
+              loading={sendInvoiceReminder.isPending}
+            >
+              Send Reminder
             </Button>
           )}
 

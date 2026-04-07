@@ -575,7 +575,6 @@ export default function StopCompleteScreen() {
                         <Text style={styles.netOutstandingAmount}>{fmt(netOutstanding)}</Text>
                       </View>
                     )}
-                  </View>
                     {cashIsValid && changeAmount !== null && (
                       <View
                         style={[

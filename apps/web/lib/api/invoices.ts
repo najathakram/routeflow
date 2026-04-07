@@ -45,7 +45,7 @@ export interface Invoice {
   id: string;
   invoiceNumber: string;
   customerId: string;
-  customer?: { id: string; businessName: string; contactName?: string; phone?: string; address?: string };
+  customer?: { id: string; businessName: string; contactName?: string; phone?: string; mobile?: string; email?: string; address?: string };
   status: InvoiceStatus;
   dueDate?: string;
   issueDate?: string;
@@ -213,6 +213,24 @@ export function useSendInvoice() {
       qc.invalidateQueries({ queryKey: ['invoices'] });
       qc.invalidateQueries({ queryKey: ['invoices', id] });
     },
+  });
+}
+
+export function useSendInvoiceEmail() {
+  const qc = useQueryClient();
+  return useMutation<{ success: boolean; sentTo: string }, Error, { id: string; email?: string }>({
+    mutationFn: ({ id, email }) => apiClient.post(`/invoices/${id}/send-email`, { email }).then((r) => r.data),
+    onSuccess: (_, { id }) => {
+      qc.invalidateQueries({ queryKey: ['invoices'] });
+      qc.invalidateQueries({ queryKey: ['invoices', id] });
+    },
+  });
+}
+
+export function useSendInvoiceReminder() {
+  const qc = useQueryClient();
+  return useMutation<{ success: boolean; sentTo: string }, Error, { id: string; email?: string }>({
+    mutationFn: ({ id, email }) => apiClient.post(`/invoices/${id}/send-reminder`, { email }).then((r) => r.data),
   });
 }
 

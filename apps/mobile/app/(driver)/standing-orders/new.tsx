@@ -121,7 +121,7 @@ function ProductPickerModal({
   onSelect: (id: string, name: string, unit: string) => void;
 }) {
   const [search, setSearch] = useState("");
-  const { data } = useProducts(search);
+  const { data } = useProducts({ search });
   const products = data?.data ?? [];
 
   return (

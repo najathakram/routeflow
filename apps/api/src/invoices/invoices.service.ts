@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from "@nestjs/common";
 import { randomUUID } from "crypto";
@@ -17,12 +18,18 @@ import {
 import { ListInvoicesDto } from "./dto/list-invoices.dto";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
+import { EmailService } from "../email/email.service";
+import { InvoicePdfService } from "./invoice-pdf.service";
 
 @Injectable()
 export class InvoicesService {
+  private readonly logger = new Logger(InvoicesService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly gateway: RouteFlowGateway,
+    private readonly emailService: EmailService,
+    private readonly pdfService: InvoicePdfService,
   ) {}
 
   // ─── Helpers ──────────────────────────────────────────────────────────────
@@ -286,7 +293,7 @@ export class InvoicesService {
     const inv = await this.prisma.invoice.findUnique({
       where: { id },
       include: {
-        customer: { select: { id: true, businessName: true, contactName: true, phone: true } },
+        customer: { select: { id: true, businessName: true, contactName: true, phone: true, mobile: true, email: true } },
         items: { include: { product: { select: { id: true, name: true, unit: true } } } },
         payments: { orderBy: { createdAt: "desc" } },
       },
@@ -402,6 +409,107 @@ export class InvoicesService {
       total: Number(updated.total),
     });
     return updated;
+  }
+
+  /** Send the invoice as an actual email and mark as SENT. */
+  async sendEmail(id: string, overrideEmail?: string) {
+    const inv = await this.prisma.invoice.findUnique({
+      where: { id },
+      include: {
+        customer: { select: { id: true, businessName: true, contactName: true, email: true } },
+        items: true,
+      },
+    });
+    if (!inv) throw new NotFoundException("Invoice not found");
+    if (inv.status === InvoiceStatus.VOID)
+      throw new BadRequestException("Cannot send a voided invoice");
+
+    const recipientEmail = overrideEmail || inv.customer?.email;
+    if (!recipientEmail)
+      throw new BadRequestException("No email address on file for this customer. Provide an email address.");
+
+    // Get PDF URL (non-blocking — include in email if available)
+    let pdfUrl: string | undefined;
+    try {
+      pdfUrl = await this.pdfService.getOrGenerate(id);
+    } catch {
+      this.logger.warn(`Could not generate PDF for invoice ${id} — email will be sent without PDF link`);
+    }
+
+    await this.emailService.sendInvoice({
+      to: recipientEmail,
+      customerName: inv.customer?.businessName ?? "Customer",
+      invoiceNumber: inv.invoiceNumber,
+      invoiceId: inv.id,
+      issueDate: inv.issueDate ? new Date(inv.issueDate).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }) : "",
+      dueDate: inv.dueDate ? new Date(inv.dueDate).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }) : "",
+      total: Number(inv.total),
+      items: inv.items.map((it: any) => ({
+        description: it.description,
+        qty: Number(it.qty),
+        unitPrice: Number(it.unitPrice),
+        subtotal: Number(it.subtotal),
+      })),
+      pdfUrl,
+      isReminder: false,
+    });
+
+    // Mark as SENT
+    const updated = await this.prisma.invoice.update({
+      where: { id },
+      data: { status: InvoiceStatus.SENT, sentAt: new Date() },
+    });
+    this.gateway.emitInvoiceUpdated({
+      invoiceId: updated.id,
+      invoiceNumber: updated.invoiceNumber,
+      customerId: updated.customerId,
+      status: InvoiceStatus.SENT,
+      total: Number(updated.total),
+    });
+    return { success: true, sentTo: recipientEmail };
+  }
+
+  /** Send a payment reminder email without changing the invoice status. */
+  async sendReminder(id: string, overrideEmail?: string) {
+    const inv = await this.prisma.invoice.findUnique({
+      where: { id },
+      include: {
+        customer: { select: { id: true, businessName: true, contactName: true, email: true } },
+        items: true,
+      },
+    });
+    if (!inv) throw new NotFoundException("Invoice not found");
+    if (inv.status === InvoiceStatus.VOID || inv.status === InvoiceStatus.PAID)
+      throw new BadRequestException("Cannot send reminder for a VOID or PAID invoice");
+
+    const recipientEmail = overrideEmail || inv.customer?.email;
+    if (!recipientEmail)
+      throw new BadRequestException("No email address on file for this customer. Provide an email address.");
+
+    let pdfUrl: string | undefined;
+    try {
+      pdfUrl = await this.pdfService.getOrGenerate(id);
+    } catch { /* non-critical */ }
+
+    await this.emailService.sendInvoice({
+      to: recipientEmail,
+      customerName: inv.customer?.businessName ?? "Customer",
+      invoiceNumber: inv.invoiceNumber,
+      invoiceId: inv.id,
+      issueDate: inv.issueDate ? new Date(inv.issueDate).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }) : "",
+      dueDate: inv.dueDate ? new Date(inv.dueDate).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }) : "",
+      total: Number(inv.total),
+      items: inv.items.map((it: any) => ({
+        description: it.description,
+        qty: Number(it.qty),
+        unitPrice: Number(it.unitPrice),
+        subtotal: Number(it.subtotal),
+      })),
+      pdfUrl,
+      isReminder: true,
+    });
+
+    return { success: true, sentTo: recipientEmail };
   }
 
   async voidInvoice(id: string) {

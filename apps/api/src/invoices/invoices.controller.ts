@@ -114,6 +114,18 @@ export class InvoicesController {
   @Post(":id/send") send(@Param("id") id: string) {
     return this.invoicesService.send(id);
   }
+
+  /** Send the invoice as an actual email (marks as SENT). */
+  @Post(":id/send-email")
+  sendEmail(@Param("id") id: string, @Body() body: { email?: string }) {
+    return this.invoicesService.sendEmail(id, body?.email);
+  }
+
+  /** Send a payment reminder email (does not change invoice status). */
+  @Post(":id/send-reminder")
+  sendReminder(@Param("id") id: string, @Body() body: { email?: string }) {
+    return this.invoicesService.sendReminder(id, body?.email);
+  }
   @Post(":id/void") void(@Param("id") id: string) {
     return this.invoicesService.voidInvoice(id);
   }
