@@ -19,14 +19,191 @@ import {
   Trash2,
   Truck,
   Calendar,
+  Download,
+  Mail,
+  MessageCircle,
+  Phone,
+  Send,
+  X,
 } from "lucide-react";
 import { Badge, Button, Card, cn, useToast, type BadgeStatus } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useOrder, useUpdateOrderStatus, useUpdateOrderItems, useReopenOrder, useDeleteOrder, type OrderItem, type ItemUpdate } from "@/lib/api/orders";
-import { useCreateInvoiceFromOrder } from "@/lib/api/invoices";
+import { useCreateInvoiceFromOrder, useSendInvoice } from "@/lib/api/invoices";
 import { useProducts } from "@/lib/api/products";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { apiClient } from "@/lib/api-client";
+
+// ─── Send Invoice Modal ────────────────────────────────────────────────────────
+
+interface InvoiceModalData {
+  invoiceId: string;
+  invoiceNumber: string;
+  total: number;
+  customerName: string;
+  customerPhone?: string | null;
+  customerMobile?: string | null;
+  customerEmail?: string | null;
+}
+
+function SendInvoiceModal({
+  data,
+  onClose,
+}: {
+  data: InvoiceModalData;
+  onClose: () => void;
+}) {
+  const { toast } = useToast();
+  const sendInvoice = useSendInvoice();
+  const [pdfLoading, setPdfLoading] = React.useState(false);
+  const [sent, setSent] = React.useState(false);
+
+  const phone = data.customerMobile || data.customerPhone;
+  const totalFmt = `$${Number(data.total).toFixed(2)}`;
+  const invoiceMsg = encodeURIComponent(
+    `Hi ${data.customerName}, your invoice ${data.invoiceNumber} for ${totalFmt} is ready. Please let us know if you have any questions.`,
+  );
+
+  async function handleSend() {
+    sendInvoice.mutate(data.invoiceId, {
+      onSuccess: () => {
+        setSent(true);
+        toast({ title: "Invoice marked as sent", variant: "success" });
+      },
+      onError: (e) => toast({ title: e.message, variant: "error" }),
+    });
+  }
+
+  async function handleDownload() {
+    setPdfLoading(true);
+    try {
+      const res = await apiClient.get(`/invoices/${data.invoiceId}/pdf`);
+      if (res.data?.url) window.open(res.data.url, "_blank");
+    } catch {
+      toast({ title: "Could not generate PDF", variant: "error" });
+    } finally {
+      setPdfLoading(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 backdrop-blur-sm sm:items-center">
+      <div className="w-full max-w-sm rounded-2xl bg-white shadow-xl">
+        {/* Header */}
+        <div className="flex items-start justify-between border-b border-surface-border px-5 py-4">
+          <div>
+            <h2 className="text-base font-semibold text-navy">Invoice Ready</h2>
+            <p className="mt-0.5 text-sm text-navy/60">
+              {data.invoiceNumber} · {totalFmt} · {data.customerName}
+            </p>
+          </div>
+          <button onClick={onClose} className="rounded p-1 text-navy/40 hover:text-navy transition-colors">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* Options */}
+        <div className="px-5 py-4 space-y-2">
+          {sent ? (
+            <div className="flex items-center gap-2 rounded-lg bg-success-bg px-4 py-3 text-sm font-medium text-success">
+              <CheckCircle2 className="h-4 w-4 shrink-0" />
+              Invoice marked as sent
+            </div>
+          ) : (
+            <button
+              onClick={handleSend}
+              disabled={sendInvoice.isPending}
+              className="flex w-full items-center gap-3 rounded-xl border border-surface-border bg-white px-4 py-3 text-left transition-colors hover:bg-brand-50 hover:border-brand-300 disabled:opacity-50"
+            >
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-100">
+                {sendInvoice.isPending ? <Loader2 className="h-4 w-4 animate-spin text-brand-600" /> : <Send className="h-4 w-4 text-brand-600" />}
+              </div>
+              <div>
+                <p className="text-sm font-medium text-navy">Mark as Sent</p>
+                <p className="text-xs text-navy/50">Record invoice as sent to customer</p>
+              </div>
+            </button>
+          )}
+
+          {/* WhatsApp */}
+          {phone && (
+            <a
+              href={`https://wa.me/${phone.replace(/\D/g, "")}?text=${invoiceMsg}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex w-full items-center gap-3 rounded-xl border border-surface-border bg-white px-4 py-3 text-left transition-colors hover:bg-[#e7f9e7] hover:border-[#25D366]/40"
+            >
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#e7f9e7]">
+                <MessageCircle className="h-4 w-4 text-[#25D366]" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-navy">Send via WhatsApp</p>
+                <p className="text-xs text-navy/50">{phone}</p>
+              </div>
+            </a>
+          )}
+
+          {/* Email */}
+          {data.customerEmail && (
+            <a
+              href={`mailto:${data.customerEmail}?subject=${encodeURIComponent(`Invoice ${data.invoiceNumber}`)}&body=${invoiceMsg}`}
+              className="flex w-full items-center gap-3 rounded-xl border border-surface-border bg-white px-4 py-3 text-left transition-colors hover:bg-surface-raised"
+            >
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface-raised">
+                <Mail className="h-4 w-4 text-navy/60" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-navy">Send via Email</p>
+                <p className="text-xs text-navy/50">{data.customerEmail}</p>
+              </div>
+            </a>
+          )}
+
+          {/* SMS */}
+          {phone && (
+            <a
+              href={`sms:${phone}?body=${invoiceMsg}`}
+              className="flex w-full items-center gap-3 rounded-xl border border-surface-border bg-white px-4 py-3 text-left transition-colors hover:bg-surface-raised"
+            >
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface-raised">
+                <Phone className="h-4 w-4 text-navy/60" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-navy">Send via Text</p>
+                <p className="text-xs text-navy/50">{phone}</p>
+              </div>
+            </a>
+          )}
+
+          {/* Download PDF */}
+          <button
+            onClick={handleDownload}
+            disabled={pdfLoading}
+            className="flex w-full items-center gap-3 rounded-xl border border-surface-border bg-white px-4 py-3 text-left transition-colors hover:bg-surface-raised disabled:opacity-50"
+          >
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface-raised">
+              {pdfLoading ? <Loader2 className="h-4 w-4 animate-spin text-navy/60" /> : <Download className="h-4 w-4 text-navy/60" />}
+            </div>
+            <div>
+              <p className="text-sm font-medium text-navy">Download PDF</p>
+              <p className="text-xs text-navy/50">Save a copy to your device</p>
+            </div>
+          </button>
+        </div>
+
+        {/* Footer */}
+        <div className="border-t border-surface-border px-5 py-3">
+          <button
+            onClick={onClose}
+            className="w-full rounded-lg px-4 py-2 text-sm text-navy/50 hover:text-navy hover:bg-surface-raised transition-colors"
+          >
+            Skip — I'll send it later
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -449,7 +626,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
   const updateItems = useUpdateOrderItems();
   const reopenOrder = useReopenOrder();
   const deleteOrder = useDeleteOrder();
-  const generateInvoice = useCreateInvoiceFromOrder();
+  const createInvoiceFromOrder = useCreateInvoiceFromOrder();
 
   // Status tracking — use actual API status directly
   const [localStatus, setLocalStatus] = React.useState<ApiOrderStatus>("PENDING");
@@ -467,6 +644,9 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
 
   // Delete confirmation
   const [showDeleteConfirm, setShowDeleteConfirm] = React.useState(false);
+
+  // Invoice send modal (shown after marking delivered)
+  const [invoiceModal, setInvoiceModal] = React.useState<InvoiceModalData | null>(null);
 
   const { toast } = useToast();
 
@@ -620,7 +800,30 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
   const handleDeliver = () => {
     updateStatus.mutate(
       { id: order.id, status: "DELIVERED" },
-      { onSuccess: () => setLocalStatus("DELIVERED") },
+      {
+        onSuccess: () => {
+          setLocalStatus("DELIVERED");
+          // Create the invoice (idempotent — returns existing if already there)
+          // then show the send-invoice prompt
+          createInvoiceFromOrder.mutate(order.id, {
+            onSuccess: (invoice: any) => {
+              setInvoiceModal({
+                invoiceId: invoice.id,
+                invoiceNumber: invoice.invoiceNumber,
+                total: Number(invoice.total),
+                customerName: order.customer?.businessName ?? "Customer",
+                customerPhone: order.customer?.phone,
+                customerMobile: order.customer?.mobile,
+                customerEmail: order.customer?.email,
+              });
+            },
+            onError: () => {
+              // Non-critical — invoice can be created manually
+              toast({ title: "Order delivered. Create the invoice manually from the Invoices page.", variant: "warning" });
+            },
+          });
+        },
+      },
     );
   };
 
@@ -1252,6 +1455,14 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
         loading={updateStatus.isPending}
         targetStatus={demoteTarget ?? ""}
       />
+
+      {/* Send invoice modal — shown after marking order as delivered */}
+      {invoiceModal && (
+        <SendInvoiceModal
+          data={invoiceModal}
+          onClose={() => setInvoiceModal(null)}
+        />
+      )}
     </div>
   );
 }

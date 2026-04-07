@@ -100,7 +100,7 @@ export class OrdersService {
     const order = await this.prisma.order.findUnique({
       where: { id },
       include: {
-        customer: { select: { id: true, businessName: true, contactName: true } },
+        customer: { select: { id: true, businessName: true, contactName: true, phone: true, mobile: true, email: true } },
         lineItems: { include: { product: { select: { id: true, name: true, unit: true } } } },
         transaction: true,
         invoice: { select: { id: true, invoiceNumber: true, status: true, total: true } },

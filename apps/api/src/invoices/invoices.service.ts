@@ -178,8 +178,7 @@ export class InvoicesService {
         invoiceNumber,
         customerId: order.customerId,
         orderId: order.id,
-        status: InvoiceStatus.SENT,
-        sentAt: new Date(),
+        status: InvoiceStatus.DRAFT,
         subtotal,
         taxAmount,
         discount: 0,
@@ -191,7 +190,7 @@ export class InvoicesService {
         items: { create: itemsData },
       },
       include: {
-        customer: { select: { id: true, businessName: true } },
+        customer: { select: { id: true, businessName: true, email: true, phone: true, mobile: true } },
         items: true,
         payments: true,
       },
