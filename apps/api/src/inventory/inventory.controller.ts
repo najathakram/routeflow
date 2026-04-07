@@ -58,16 +58,19 @@ export class InventoryController {
 
   // ── Purchase Orders ──
   @Post("purchase-orders")
+  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   createPO(@Body() dto: any, @CurrentUser() user: { id: string }) {
     return this.inventoryService.createPurchaseOrder(dto, user.id);
   }
 
   @Get("purchase-orders")
+  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   listPOs(@Query() query: any) {
     return this.inventoryService.listPurchaseOrders(query);
   }
 
   @Get("purchase-orders/:id")
+  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   getPO(@Param("id") id: string) {
     return this.inventoryService.getPurchaseOrder(id);
   }
@@ -78,6 +81,7 @@ export class InventoryController {
   }
 
   @Post("purchase-orders/:id/receive")
+  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   receivePO(@Param("id") id: string, @Body() dto: any, @CurrentUser() user: { id: string }) {
     return this.inventoryService.receivePurchaseOrder(id, dto, user.id);
   }

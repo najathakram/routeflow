@@ -101,10 +101,12 @@ export default function DriverLayout() {
           }}
         />
         {/* ── Hidden sub-stack screens — Stack owns the header ─ */}
-        <Tabs.Screen name="customers" options={{ href: null, title: "Customers",     headerShown: false }} />
-        <Tabs.Screen name="inventory" options={{ href: null, title: "Stock",          headerShown: false }} />
-        <Tabs.Screen name="history"   options={{ href: null, title: "History",        headerShown: false }} />
-        <Tabs.Screen name="orders"    options={{ href: null, title: "Create Order",   headerShown: false }} />
+        <Tabs.Screen name="customers"       options={{ href: null, title: "Customers",        headerShown: false }} />
+        <Tabs.Screen name="inventory"       options={{ href: null, title: "Stock",             headerShown: false }} />
+        <Tabs.Screen name="history"         options={{ href: null, title: "History",           headerShown: false }} />
+        <Tabs.Screen name="orders"          options={{ href: null, title: "Create Order",      headerShown: false }} />
+        <Tabs.Screen name="standing-orders"  options={{ href: null, title: "Standing Orders",   headerShown: false }} />
+        <Tabs.Screen name="purchase-orders"  options={{ href: null, title: "Purchase Orders",   headerShown: false }} />
         {/* ── Hidden direct screen — Tabs owns the header ────── */}
         <Tabs.Screen name="change-password" options={{ href: null, title: "Change Password", headerLeft: () => <HeaderBackButton /> }} />
       </Tabs>

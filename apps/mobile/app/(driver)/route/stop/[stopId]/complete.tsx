@@ -67,6 +67,10 @@ export default function StopCompleteScreen() {
   const [attemptedNote, setAttemptedNote] = useState("");
   const [attemptedPhotos, setAttemptedPhotos] = useState<string[]>([]);
 
+  // Credits to apply before cash payment
+  const [selectedCreditNoteId, setSelectedCreditNoteId] = useState<string | null>(null);
+  const [applyAdvance, setApplyAdvance] = useState(false);
+
   const stop = run?.stops?.find((s) => s.id === stopId) ?? null;
   const customerId = stop?.customer?.id;
 
@@ -82,6 +86,34 @@ export default function StopCompleteScreen() {
   });
   const openInvoices: any[] = invoiceData?.data ?? [];
   const totalOutstanding = openInvoices.reduce((sum: number, inv: any) => sum + (inv.balanceDue ?? inv.total ?? 0), 0);
+
+  // Fetch available credit notes (ISSUED status) for this customer
+  const { data: creditNotesData } = useQuery({
+    queryKey: ["credit-notes", "stop", customerId],
+    queryFn: () =>
+      apiClient
+        .get("/credit-notes", { params: { customerId, status: "ISSUED", limit: 10 } })
+        .then((r) => r.data),
+    enabled: !!customerId,
+    staleTime: 30_000,
+  });
+  const availableCreditNotes: any[] = creditNotesData?.data ?? [];
+  const selectedCreditNote = availableCreditNotes.find((cn) => cn.id === selectedCreditNoteId) ?? null;
+  const creditNoteAmount = selectedCreditNote ? Number(selectedCreditNote.amount ?? 0) : 0;
+
+  // Fetch advance balance for this customer
+  const { data: paymentStats } = useQuery({
+    queryKey: ["payment-stats", customerId],
+    queryFn: () =>
+      apiClient.get("/invoices/payment-summary", { params: { customerId } }).then((r) => r.data),
+    enabled: !!customerId,
+    staleTime: 30_000,
+  });
+  const advanceBalance = Number(paymentStats?.summary?.advanceBalance ?? 0);
+
+  // Net outstanding after credits
+  const creditsApplied = creditNoteAmount + (applyAdvance ? advanceBalance : 0);
+  const netOutstanding = Math.max(0, totalOutstanding - creditsApplied);
   const firstInvoice = openInvoices[0];
 
   if (!stop) {
@@ -134,7 +166,7 @@ export default function StopCompleteScreen() {
 
   const cashAmountNum = parseFloat(cashAmount);
   const cashIsValid = !isNaN(cashAmountNum) && cashAmountNum > 0;
-  const changeAmount = cashIsValid && totalOutstanding > 0 ? cashAmountNum - totalOutstanding : null;
+  const changeAmount = cashIsValid && netOutstanding > 0 ? cashAmountNum - netOutstanding : null;
 
   const handleConfirm = () => {
     if (!runId) return;
@@ -262,43 +294,62 @@ export default function StopCompleteScreen() {
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
           showToast("Delivery confirmed!");
 
-          if (cashIsValid && customerId) {
-            // Use the pre-fetched invoice id, or look up again
-            let invoiceId: string | undefined = firstInvoice?.id;
-            let lookupFailed = false;
+          const hasCredits = creditNoteAmount > 0 || applyAdvance;
+          const hasCashPayment = cashIsValid;
 
+          if ((hasCredits || hasCashPayment) && customerId) {
+            // Resolve the invoice ID to post payments against
+            let invoiceId: string | undefined = firstInvoice?.id;
             if (!invoiceId) {
               try {
                 const resp = await apiClient.get("/invoices", {
-                  params: { customerId, status: "SENT", limit: 1 },
+                  params: { customerId, status: "SENT,PARTIAL,OVERDUE", limit: 1 },
                 });
                 invoiceId = resp.data?.data?.[0]?.id;
               } catch (_) {
-                lookupFailed = true;
+                // ignore — fall through to navigate
               }
             }
 
             if (invoiceId) {
-              recordPayment(
-                {
-                  invoiceId,
-                  amount: cashAmountNum,
-                  method: paymentMethod,
-                  reference: cashReference || undefined,
-                },
-                { onSettled: navigateAfterComplete },
-              );
-              return;
+              // Apply credit note first (if selected)
+              if (creditNoteAmount > 0) {
+                try {
+                  await apiClient.post(`/invoices/${invoiceId}/payments`, {
+                    amount: Math.min(creditNoteAmount, totalOutstanding),
+                    method: "CREDIT_NOTE",
+                    reference: selectedCreditNote?.creditNoteNumber,
+                    notes: `Credit note ${selectedCreditNote?.creditNoteNumber ?? ""} applied at stop`,
+                  });
+                } catch (_) { /* non-fatal */ }
+              }
+              // Apply advance balance (if toggled)
+              if (applyAdvance && advanceBalance > 0) {
+                const advanceToApply = Math.min(advanceBalance, totalOutstanding - creditNoteAmount);
+                if (advanceToApply > 0) {
+                  try {
+                    await apiClient.post(`/invoices/${invoiceId}/payments`, {
+                      amount: advanceToApply,
+                      method: "ADVANCE",
+                      notes: "Advance payment applied at stop",
+                    });
+                  } catch (_) { /* non-fatal */ }
+                }
+              }
+              // Record cash / card payment
+              if (hasCashPayment) {
+                recordPayment(
+                  {
+                    invoiceId,
+                    amount: cashAmountNum,
+                    method: paymentMethod,
+                    reference: cashReference || undefined,
+                  },
+                  { onSettled: navigateAfterComplete },
+                );
+                return;
+              }
             }
-
-            Alert.alert(
-              "Payment Not Recorded",
-              lookupFailed
-                ? "Stop completed, but the payment could not be recorded (invoice lookup failed). Please record it manually."
-                : "Stop completed, but no unpaid invoice was found for this customer. Please record the payment manually.",
-              [{ text: "OK", onPress: navigateAfterComplete }],
-            );
-            return;
           }
           navigateAfterComplete();
         },
@@ -473,6 +524,58 @@ export default function StopCompleteScreen() {
                       </Text>
                       <Text style={styles.balanceAmount}>{fmt(totalOutstanding)}</Text>
                     </View>
+
+                    {/* ── Credit Notes ── */}
+                    {availableCreditNotes.length > 0 && (
+                      <View style={styles.creditsSection}>
+                        <Text style={styles.creditsSectionTitle}>Apply Credit Note</Text>
+                        {availableCreditNotes.map((cn: any) => (
+                          <Pressable
+                            key={cn.id}
+                            style={[
+                              styles.creditRow,
+                              selectedCreditNoteId === cn.id && styles.creditRowSelected,
+                            ]}
+                            onPress={() =>
+                              setSelectedCreditNoteId((prev) => (prev === cn.id ? null : cn.id))
+                            }
+                          >
+                            <Ionicons
+                              name={selectedCreditNoteId === cn.id ? "checkmark-circle" : "ellipse-outline"}
+                              size={18}
+                              color={selectedCreditNoteId === cn.id ? colors.success.DEFAULT : "#94a3b8"}
+                            />
+                            <Text style={styles.creditLabel}>{cn.creditNoteNumber}</Text>
+                            <Text style={styles.creditAmount}>{fmt(Number(cn.amount))}</Text>
+                          </Pressable>
+                        ))}
+                      </View>
+                    )}
+
+                    {/* ── Advance Balance ── */}
+                    {advanceBalance > 0 && (
+                      <Pressable
+                        style={[styles.creditRow, applyAdvance && styles.creditRowSelected]}
+                        onPress={() => setApplyAdvance((v) => !v)}
+                      >
+                        <Ionicons
+                          name={applyAdvance ? "checkmark-circle" : "ellipse-outline"}
+                          size={18}
+                          color={applyAdvance ? colors.success.DEFAULT : "#94a3b8"}
+                        />
+                        <Text style={styles.creditLabel}>Advance Balance</Text>
+                        <Text style={styles.creditAmount}>{fmt(advanceBalance)}</Text>
+                      </Pressable>
+                    )}
+
+                    {/* Net outstanding after credits */}
+                    {creditsApplied > 0 && (
+                      <View style={styles.netOutstandingRow}>
+                        <Text style={styles.netOutstandingLabel}>Net Due After Credits</Text>
+                        <Text style={styles.netOutstandingAmount}>{fmt(netOutstanding)}</Text>
+                      </View>
+                    )}
+                  </View>
                     {cashIsValid && changeAmount !== null && (
                       <View
                         style={[
@@ -776,6 +879,41 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_700Bold",
     color: colors.navy.DEFAULT,
   },
+  creditsSection: { marginTop: 10, gap: 6 },
+  creditsSectionTitle: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    color: "#64748b",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginBottom: 2,
+  },
+  creditRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: borderRadius.DEFAULT,
+    borderWidth: 1.5,
+    borderColor: colors.surface.border,
+    backgroundColor: colors.surface.raised,
+  },
+  creditRowSelected: { borderColor: colors.success.DEFAULT, backgroundColor: colors.success.bg },
+  creditLabel: { flex: 1, fontSize: 14, fontFamily: "Inter_600SemiBold", color: colors.navy.DEFAULT },
+  creditAmount: { fontSize: 14, fontFamily: "Inter_700Bold", color: colors.success.DEFAULT },
+  netOutstandingRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: borderRadius.DEFAULT,
+    backgroundColor: colors.brand[50],
+    marginTop: 4,
+  },
+  netOutstandingLabel: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: colors.brand[600] },
+  netOutstandingAmount: { fontSize: 16, fontFamily: "Inter_700Bold", color: colors.brand[600] },
   changeRow: {
     flexDirection: "row",
     alignItems: "center",

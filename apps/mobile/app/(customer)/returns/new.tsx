@@ -1,6 +1,7 @@
 import {
   ActivityIndicator,
   Alert,
+  Image,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -11,6 +12,7 @@ import {
 import { useState } from "react";
 import { router, Stack, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import * as ImagePicker from "expo-image-picker";
 import { colors, borderRadius, shadows } from "@routeflow/ui/tokens";
 import { useOrder } from "../../../lib/api/orders";
 import {
@@ -45,6 +47,40 @@ export default function RequestReturnScreen() {
   const [reason, setReason] = useState<ReturnReason>("DAMAGED");
   const [notes, setNotes] = useState("");
   const [lines, setLines] = useState<ReturnLine[]>([]);
+  const [photo, setPhoto] = useState<string | null>(null);
+
+  async function pickPhoto() {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== "granted") {
+      Alert.alert("Permission needed", "Allow access to your photo library to attach a photo.");
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 0.8,
+      allowsEditing: true,
+      aspect: [4, 3],
+    });
+    if (!result.canceled && result.assets[0]) {
+      setPhoto(result.assets[0].uri);
+    }
+  }
+
+  async function takePhoto() {
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== "granted") {
+      Alert.alert("Permission needed", "Allow camera access to take a photo.");
+      return;
+    }
+    const result = await ImagePicker.launchCameraAsync({
+      quality: 0.8,
+      allowsEditing: true,
+      aspect: [4, 3],
+    });
+    if (!result.canceled && result.assets[0]) {
+      setPhoto(result.assets[0].uri);
+    }
+  }
 
   // Initialise lines from order when it loads
   if (order && lines.length === 0 && order.lineItems.length > 0) {
@@ -221,6 +257,34 @@ export default function RequestReturnScreen() {
                 )}
               </View>
             ))}
+          </View>
+
+          {/* Photo */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Photo (optional)</Text>
+            {photo ? (
+              <View style={styles.photoPreviewWrap}>
+                <Image source={{ uri: photo }} style={styles.photoPreview} resizeMode="cover" />
+                <Pressable
+                  style={styles.removePhotoBtn}
+                  onPress={() => setPhoto(null)}
+                  accessibilityLabel="Remove photo"
+                >
+                  <Ionicons name="close-circle" size={24} color="#fff" />
+                </Pressable>
+              </View>
+            ) : (
+              <View style={styles.photoActions}>
+                <Pressable style={styles.photoBtn} onPress={takePhoto}>
+                  <Ionicons name="camera-outline" size={22} color={colors.brand[600]} />
+                  <Text style={styles.photoBtnText}>Take Photo</Text>
+                </Pressable>
+                <Pressable style={styles.photoBtn} onPress={pickPhoto}>
+                  <Ionicons name="image-outline" size={22} color={colors.brand[600]} />
+                  <Text style={styles.photoBtnText}>Choose from Library</Text>
+                </Pressable>
+              </View>
+            )}
           </View>
 
           {/* Notes */}
@@ -477,5 +541,46 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontFamily: "Inter_700Bold",
     color: "#fff",
+  },
+
+  photoActions: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  photoBtn: {
+    flex: 1,
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 16,
+    borderRadius: borderRadius.DEFAULT,
+    borderWidth: 1.5,
+    borderColor: colors.brand[100],
+    borderStyle: "dashed",
+    backgroundColor: colors.brand[50],
+  },
+  photoBtnText: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    color: colors.brand[600],
+    textAlign: "center",
+  },
+  photoPreviewWrap: {
+    position: "relative",
+    borderRadius: borderRadius.DEFAULT,
+    overflow: "hidden",
+  },
+  photoPreview: {
+    width: "100%",
+    height: 200,
+    borderRadius: borderRadius.DEFAULT,
+  },
+  removePhotoBtn: {
+    position: "absolute",
+    top: 8,
+    right: 8,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    borderRadius: 12,
   },
 });

@@ -40,14 +40,14 @@ export class OrderTemplatesController {
 
   @Post()
   @UseGuards(RolesGuard)
-  @Roles(UserRole.OPERATOR, UserRole.CUSTOMER)
+  @Roles(UserRole.OPERATOR, UserRole.CUSTOMER, UserRole.DRIVER)
   create(@Body() dto: CreateOrderTemplateDto, @CurrentUser() user: JwtPayload) {
     return this.service.createForUser(dto, user);
   }
 
   @Patch(":id")
   @UseGuards(RolesGuard)
-  @Roles(UserRole.OPERATOR, UserRole.CUSTOMER)
+  @Roles(UserRole.OPERATOR, UserRole.CUSTOMER, UserRole.DRIVER)
   update(
     @Param("id") id: string,
     @Body() dto: UpdateOrderTemplateDto,
@@ -65,7 +65,7 @@ export class OrderTemplatesController {
 
   @Post(":id/items")
   @UseGuards(RolesGuard)
-  @Roles(UserRole.OPERATOR)
+  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   addItem(@Param("id") templateId: string, @Body() dto: AddTemplateItemDto) {
     return this.service.addItem(templateId, dto);
   }

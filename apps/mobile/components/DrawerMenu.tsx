@@ -28,6 +28,8 @@ const NAV_ITEMS: Array<{
   { id: "customers", label: "My Customers", icon: "people-outline", path: "/(driver)/customers" },
   { id: "stock", label: "Stock Check", icon: "cube-outline", path: "/(driver)/inventory" },
   { id: "history", label: "Delivery History", icon: "time-outline", path: "/(driver)/history" },
+  { id: "standing-orders", label: "Standing Orders", icon: "repeat-outline", path: "/(driver)/standing-orders" },
+  { id: "purchase-orders", label: "Purchase Orders", icon: "document-text-outline", path: "/(driver)/purchase-orders" },
   { id: "schedule", label: "Schedule Run", icon: "calendar-outline", path: "/(driver)/route/new-run" },
   { id: "performance", label: "Performance", icon: "stats-chart-outline", path: "/(driver)/history/performance" },
 ];

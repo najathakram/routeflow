@@ -14,6 +14,9 @@ import {
   ArrowRight,
   TrendingUp,
   Package,
+  DollarSign,
+  FileMinus,
+  Plus,
 } from "lucide-react";
 import { StatCard, Badge, Table, Button, Card, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
@@ -21,6 +24,8 @@ import { useOrders, type Order } from "@/lib/api/orders";
 import { useRouteRuns, type RouteRun } from "@/lib/api/routes";
 import { useDrivers, type Driver } from "@/lib/api/drivers";
 import { useProducts } from "@/lib/api/products";
+import { useFinanceDashboard } from "@/lib/api/finance";
+import { useInvoices } from "@/lib/api/invoices";
 
 // ─── Column definitions (stable refs, defined outside component) ───────────────
 
@@ -172,6 +177,8 @@ export default function DashboardPage() {
   const { data: routeRunsData, isLoading: runsLoading, isError: runsError } = useRouteRuns({ status: "SCHEDULED" });
   const { data: driversData, isLoading: driversLoading, isError: driversError } = useDrivers({ page: 1, limit: 20 });
   const { data: lowStockData, isLoading: lowStockLoading, isError: lowStockError } = useProducts({ isActive: true, stockStatus: "LOW", limit: 1 });
+  const { data: financeData, isLoading: financeLoading, isError: financeError } = useFinanceDashboard();
+  const { data: overdueData, isLoading: overdueLoading, isError: overdueError } = useInvoices({ status: "OVERDUE", limit: 1 });
 
   // ── KPI calculations ──
   const activeOrders = React.useMemo(() => {
@@ -197,6 +204,8 @@ export default function DashboardPage() {
     [driversData]
   );
   const lowStockItems = lowStockData?.meta?.total ?? 0;
+  const todayRevenue = financeData?.summaryTable?.today?.sales ?? 0;
+  const overdueCount = overdueData?.meta?.total ?? 0;
 
   const isLoading = ordersLoading || runsLoading || driversLoading || lowStockLoading;
 
@@ -208,8 +217,56 @@ export default function DashboardPage() {
   return (
     <div className="space-y-6 p-6">
 
+      {/* ── Quick-create shortcuts ── */}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="mr-1 text-sm font-medium text-navy/50">Quick create:</span>
+        <Button href="/orders?action=new" size="sm" variant="secondary">
+          <Plus className="mr-1.5 h-3.5 w-3.5" />
+          New Order
+        </Button>
+        <Button href="/routes?action=new" size="sm" variant="secondary">
+          <Plus className="mr-1.5 h-3.5 w-3.5" />
+          New Route
+        </Button>
+        <Button href="/invoices/new" size="sm" variant="secondary">
+          <Plus className="mr-1.5 h-3.5 w-3.5" />
+          New Invoice
+        </Button>
+      </div>
+
       {/* ── KPI stat cards ── */}
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-6">
+        {financeLoading ? <StatSkeleton /> : financeError ? (
+          <div className="rounded-lg border border-danger/20 bg-danger/5 p-4 text-center text-xs text-danger">Revenue unavailable</div>
+        ) : (
+          <Link href="/finance" className="block">
+            <StatCard
+              label="Today's Revenue"
+              value={`$${Number(todayRevenue).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+              icon={<DollarSign className="h-5 w-5 text-success" />}
+              className="cursor-pointer transition-shadow hover:shadow-md ring-1 ring-inset ring-success/20"
+            />
+          </Link>
+        )}
+        {overdueLoading ? <StatSkeleton /> : overdueError ? (
+          <div className="rounded-lg border border-danger/20 bg-danger/5 p-4 text-center text-xs text-danger">Could not load invoices</div>
+        ) : (
+          <Link href="/invoices?status=OVERDUE" className="block">
+            <StatCard
+              label="Overdue Invoices"
+              value={overdueCount}
+              icon={
+                <FileMinus
+                  className={cn("h-5 w-5", overdueCount > 0 ? "text-danger" : "")}
+                />
+              }
+              className={cn(
+                "cursor-pointer transition-shadow hover:shadow-md",
+                overdueCount > 0 ? "ring-1 ring-inset ring-danger/20" : ""
+              )}
+            />
+          </Link>
+        )}
         {ordersLoading ? <StatSkeleton /> : ordersError ? (
           <div className="rounded-lg border border-danger/20 bg-danger/5 p-4 text-center text-xs text-danger">Could not load orders</div>
         ) : (

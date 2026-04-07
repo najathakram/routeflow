@@ -1,10 +1,14 @@
-import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from "react-native";
+import React from "react";
+import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { Stack, useLocalSearchParams } from "expo-router";
 import { format, parseISO } from "date-fns";
 import { Ionicons } from "@expo/vector-icons";
+import * as FileSystem from "expo-file-system";
+import * as Sharing from "expo-sharing";
 import { colors, borderRadius, shadows } from "@routeflow/ui/tokens";
 import { useMyInvoice, type InvoiceStatus, type InvoicePayment } from "../../../lib/api/invoices";
 import { NetworkError } from "../../../components/NetworkError";
+import { apiClient } from "../../../lib/api-client";
 
 const STATUS_CONFIG: Record<InvoiceStatus, { label: string; color: string; bg: string }> = {
   DRAFT:   { label: "Draft",   color: "#64748b",              bg: colors.surface.raised },
@@ -26,6 +30,32 @@ const PAYMENT_METHOD_LABELS: Record<InvoicePayment["method"], string> = {
 export default function InvoiceDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data: invoice, isLoading, isError, refetch } = useMyInvoice(id ?? "");
+  const [downloading, setDownloading] = React.useState(false);
+
+  async function handleDownloadPDF() {
+    if (!invoice || downloading) return;
+    setDownloading(true);
+    try {
+      const token = (apiClient.defaults.headers.common["Authorization"] as string)?.replace("Bearer ", "") ?? "";
+      const fileUri = `${FileSystem.cacheDirectory}${invoice.invoiceNumber}.pdf`;
+      const result = await FileSystem.downloadAsync(
+        `${apiClient.defaults.baseURL}/invoices/${invoice.id}/pdf`,
+        fileUri,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (result.status !== 200) throw new Error("Download failed");
+      const canShare = await Sharing.isAvailableAsync();
+      if (canShare) {
+        await Sharing.shareAsync(result.uri, { mimeType: "application/pdf", UTI: "com.adobe.pdf" });
+      } else {
+        Alert.alert("Saved", `Invoice saved to ${result.uri}`);
+      }
+    } catch (e: any) {
+      Alert.alert("Error", e.message ?? "Failed to download PDF.");
+    } finally {
+      setDownloading(false);
+    }
+  }
 
   if (isLoading) {
     return (
@@ -103,6 +133,24 @@ export default function InvoiceDetailScreen() {
               </View>
             ) : null}
           </View>
+
+          {/* PDF download */}
+          <Pressable
+            style={[styles.downloadBtn, downloading && { opacity: 0.6 }]}
+            onPress={handleDownloadPDF}
+            disabled={downloading}
+            accessibilityRole="button"
+            accessibilityLabel="Download invoice as PDF"
+          >
+            {downloading ? (
+              <ActivityIndicator size="small" color={colors.brand[600]} />
+            ) : (
+              <Ionicons name="download-outline" size={16} color={colors.brand[600]} />
+            )}
+            <Text style={styles.downloadBtnText}>
+              {downloading ? "Downloading…" : "Download PDF"}
+            </Text>
+          </Pressable>
         </View>
 
         {/* Line items */}
@@ -403,5 +451,21 @@ const styles = StyleSheet.create({
     color: "#64748b",
     lineHeight: 20,
     paddingVertical: 12,
+  },
+  downloadBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    backgroundColor: colors.brand[50],
+    borderRadius: borderRadius.DEFAULT,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: colors.brand[100],
+  },
+  downloadBtnText: {
+    fontSize: 14,
+    fontFamily: "Inter_600SemiBold",
+    color: colors.brand[600],
   },
 });

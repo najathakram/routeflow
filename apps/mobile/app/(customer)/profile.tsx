@@ -1,9 +1,12 @@
 import {
   ActivityIndicator,
+  Alert,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { router, Stack } from "expo-router";
@@ -66,6 +69,36 @@ export default function ProfileScreen() {
   const queryClient = useQueryClient();
   const [savingSlot, setSavingSlot] = useState(false);
 
+  // Edit profile state
+  const [showEdit, setShowEdit] = useState(false);
+  const [editName, setEditName] = useState("");
+  const [editPhone, setEditPhone] = useState("");
+  const [editAddress, setEditAddress] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  function openEdit() {
+    setEditName(profile?.contactName ?? "");
+    setEditPhone(profile?.phone ?? "");
+    setEditAddress(profile?.addresses?.[0]?.line1 ?? "");
+    setShowEdit(true);
+  }
+
+  async function saveProfile() {
+    setSaving(true);
+    try {
+      await apiClient.patch("/customers/me", {
+        ...(editName.trim() ? { contactName: editName.trim() } : {}),
+        ...(editPhone.trim() ? { phone: editPhone.trim() } : {}),
+      });
+      queryClient.invalidateQueries({ queryKey: ["customers", "me"] });
+      setShowEdit(false);
+    } catch (e: any) {
+      Alert.alert("Error", e?.response?.data?.message ?? e.message ?? "Failed to save.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   const initials = profile?.businessName
     ? profile.businessName.split(" ").slice(0, 2).map((w) => w[0]).join("")
     : "?";
@@ -112,7 +145,72 @@ export default function ProfileScreen() {
             </View>
             <Text style={styles.businessName}>{profile?.businessName ?? "—"}</Text>
             <Text style={styles.contactName}>{profile?.contactName ?? ""}</Text>
+            <Pressable style={styles.editProfileBtn} onPress={openEdit} accessibilityRole="button">
+              <Ionicons name="pencil-outline" size={14} color={colors.brand[600]} />
+              <Text style={styles.editProfileBtnText}>Edit Profile</Text>
+            </Pressable>
           </View>
+
+          {/* Edit profile modal */}
+          <Modal visible={showEdit} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setShowEdit(false)}>
+            <View style={styles.editModal}>
+              <View style={styles.editModalHeader}>
+                <Pressable onPress={() => setShowEdit(false)} style={styles.editModalClose}>
+                  <Text style={styles.editModalCancelText}>Cancel</Text>
+                </Pressable>
+                <Text style={styles.editModalTitle}>Edit Profile</Text>
+                <Pressable onPress={saveProfile} disabled={saving} style={styles.editModalSave}>
+                  {saving ? (
+                    <ActivityIndicator size="small" color={colors.brand[600]} />
+                  ) : (
+                    <Text style={styles.editModalSaveText}>Save</Text>
+                  )}
+                </Pressable>
+              </View>
+
+              <ScrollView style={styles.editModalBody} contentContainerStyle={{ gap: 20, paddingBottom: 40 }}>
+                <View style={styles.editField}>
+                  <Text style={styles.editLabel}>Contact Name</Text>
+                  <TextInput
+                    style={styles.editInput}
+                    value={editName}
+                    onChangeText={setEditName}
+                    placeholder="Your name"
+                    placeholderTextColor="#94a3b8"
+                    returnKeyType="next"
+                  />
+                </View>
+
+                <View style={styles.editField}>
+                  <Text style={styles.editLabel}>Phone</Text>
+                  <TextInput
+                    style={styles.editInput}
+                    value={editPhone}
+                    onChangeText={setEditPhone}
+                    placeholder="Phone number"
+                    placeholderTextColor="#94a3b8"
+                    keyboardType="phone-pad"
+                    returnKeyType="done"
+                  />
+                </View>
+
+                <View style={styles.editField}>
+                  <Text style={styles.editLabel}>Primary Address</Text>
+                  <TextInput
+                    style={styles.editInput}
+                    value={editAddress}
+                    onChangeText={setEditAddress}
+                    placeholder="Street address"
+                    placeholderTextColor="#94a3b8"
+                    returnKeyType="done"
+                  />
+                  <Text style={styles.editHint}>
+                    Contact your account manager to change delivery addresses.
+                  </Text>
+                </View>
+              </ScrollView>
+            </View>
+          </Modal>
 
           {/* Account Balance card */}
           {accountSummary ? (
@@ -390,6 +488,79 @@ const styles = StyleSheet.create({
   actionChevron: { marginLeft: "auto" },
   signOutSection: { marginTop: 4 },
   version: { textAlign: "center", fontSize: 12, fontFamily: "Inter_400Regular", color: "#cbd5e1", marginTop: 8 },
+
+  editProfileBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    marginTop: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    backgroundColor: colors.brand[50],
+    borderRadius: borderRadius.full,
+    borderWidth: 1,
+    borderColor: colors.brand[100],
+  },
+  editProfileBtnText: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+    color: colors.brand[600],
+  },
+
+  editModal: { flex: 1, backgroundColor: colors.surface.raised },
+  editModalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingTop: 56,
+    paddingBottom: 16,
+    backgroundColor: "#fff",
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.surface.border,
+  },
+  editModalClose: { minWidth: 60 },
+  editModalCancelText: {
+    fontSize: 16,
+    fontFamily: "Inter_400Regular",
+    color: "#64748b",
+  },
+  editModalTitle: {
+    fontSize: 17,
+    fontFamily: "Inter_700Bold",
+    color: colors.navy.DEFAULT,
+  },
+  editModalSave: { minWidth: 60, alignItems: "flex-end" },
+  editModalSaveText: {
+    fontSize: 16,
+    fontFamily: "Inter_600SemiBold",
+    color: colors.brand[600],
+  },
+  editModalBody: { flex: 1, padding: 16 },
+  editField: { gap: 6 },
+  editLabel: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+    color: "#94a3b8",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  editInput: {
+    backgroundColor: "#fff",
+    borderRadius: borderRadius.DEFAULT,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    fontSize: 16,
+    fontFamily: "Inter_400Regular",
+    color: colors.navy.DEFAULT,
+    borderWidth: 1,
+    borderColor: colors.surface.border,
+  },
+  editHint: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    color: "#94a3b8",
+  },
   balanceCard: {
     backgroundColor: "#fff",
     marginHorizontal: 16,
