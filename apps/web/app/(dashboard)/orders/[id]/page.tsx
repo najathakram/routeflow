@@ -195,6 +195,12 @@ function EditableLineItems({
   const { data: productsData } = useProducts({ search: addSearch || undefined, limit: 20, isActive: true });
   const products: any[] = (productsData as any)?.data ?? [];
 
+  // Auto-focus the scan input when the component mounts (edit mode opened)
+  React.useEffect(() => {
+    const t = setTimeout(() => addInputRef.current?.focus(), 100);
+    return () => clearTimeout(t);
+  }, []);
+
   React.useEffect(() => {
     function onClickOutside(e: MouseEvent) {
       if (addRef.current && !addRef.current.contains(e.target as Node)) setAddOpen(false);
@@ -204,21 +210,29 @@ function EditableLineItems({
   }, []);
 
   function addProduct(p: any) {
-    onAdd({
-      id: `new-${Date.now()}-${Math.random()}`,
-      isNew: true,
-      originalProductId: p.id,
-      originalProductName: p.name,
-      originalQty: 1,
-      productId: p.id,
-      productName: p.name,
-      qty: 1,
-      unitPrice: Number(p.pricePerUnit ?? 0),
-      cancelled: false,
-    });
+    // If this product is already in the list (not cancelled), increment qty instead of adding duplicate
+    const existing = items.find((it) => it.productId === p.id && !it.cancelled);
+    if (existing) {
+      onChange(items.map((it) => it.id === existing.id ? { ...it, qty: it.qty + 1 } : it));
+    } else {
+      onAdd({
+        id: `new-${Date.now()}-${Math.random()}`,
+        isNew: true,
+        originalProductId: p.id,
+        originalProductName: p.name,
+        originalQty: 1,
+        productId: p.id,
+        productName: p.name,
+        qty: 1,
+        unitPrice: Number(p.pricePerUnit ?? 0),
+        cancelled: false,
+      });
+    }
     setAddSearch("");
     setAddOpen(false);
-    setTimeout(() => addInputRef.current?.focus(), 50);
+    // Refocus for next scan — use two timeouts: first after state settles, second as fallback
+    setTimeout(() => addInputRef.current?.focus(), 80);
+    setTimeout(() => addInputRef.current?.focus(), 200);
   }
 
   async function handleScanEnter() {
@@ -234,9 +248,9 @@ function EditableLineItems({
       // 2. Exact SKU match in current results
       const skuMatch = products.find((p) => p.sku === code);
       if (skuMatch) { addProduct(skuMatch); return; }
-      // 3. First search result
+      // 3. Only one search result — add it directly
       if (products.length === 1) { addProduct(products[0]); return; }
-      // 4. Not found — keep dropdown open
+      // 4. Not found — open dropdown for manual selection
       setAddOpen(true);
     } finally {
       setAddLoading(false);
@@ -385,15 +399,18 @@ function EditableLineItems({
           <input
             ref={addInputRef}
             type="text"
-            placeholder="Search or scan SKU/barcode then Enter…"
+            placeholder="Scan barcode or type name…"
             value={addSearch}
-            onChange={(e) => { setAddSearch(e.target.value); setAddOpen(true); }}
-            onFocus={() => setAddOpen(true)}
+            onChange={(e) => { setAddSearch(e.target.value); if (e.target.value) setAddOpen(true); else setAddOpen(false); }}
+            onFocus={() => { if (addSearch) setAddOpen(true); }}
             onKeyDown={(e) => {
               if (e.key === "Enter") {
                 e.preventDefault();
                 e.stopPropagation();
                 handleScanEnter();
+              } else if (e.key === "Escape") {
+                setAddSearch("");
+                setAddOpen(false);
               }
             }}
             className="flex-1 bg-transparent text-sm text-navy placeholder:text-navy/40 outline-none"
