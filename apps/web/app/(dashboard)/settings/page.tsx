@@ -42,6 +42,7 @@ import { useUsers, useCreateOperator, useUpdateUser, useChangeUserStatus, useRes
 import { useNotificationsStatus, useSendTestNotification } from "@/lib/api/notifications";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api-client";
+import { AddressAutocomplete } from "@/components/AddressAutocomplete";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -78,6 +79,7 @@ const profileSchema = z.object({
   email: z.string().email("Enter a valid email"),
   street: z.string().min(1, "Required"),
   city: z.string().min(1, "Required"),
+  state: z.string().optional(),
   zip: z.string().regex(/^\d{5}(-\d{4})?$/, "Enter a valid ZIP code"),
   taxRate: z.coerce.number().min(0).max(100),
 });
@@ -103,7 +105,7 @@ function BusinessProfileTab() {
     onError: () => toast({ title: "Failed to save settings", variant: "error" }),
   });
 
-  const { register, handleSubmit, reset, formState: { errors, isSubmitting } } = useForm<ProfileFormValues>({
+  const { register, handleSubmit, reset, watch, setValue, formState: { errors, isSubmitting } } = useForm<ProfileFormValues>({
     resolver: zodResolver(profileSchema),
     defaultValues: {
       businessName: "",
@@ -112,6 +114,7 @@ function BusinessProfileTab() {
       email: "",
       street: "",
       city: "",
+      state: "",
       zip: "",
       taxRate: 10,
     },
@@ -126,6 +129,7 @@ function BusinessProfileTab() {
         email: savedSettings.email ?? "",
         street: savedSettings.street ?? "",
         city: savedSettings.city ?? "",
+        state: savedSettings.state ?? "",
         zip: savedSettings.zip ?? "",
         taxRate: savedSettings.taxRate ?? 10,
       });
@@ -156,14 +160,25 @@ function BusinessProfileTab() {
 
       <Card title="Business Address">
         <div className="space-y-3">
-          <Input label="Street" register={register("street")} error={errors.street?.message} />
+          <AddressAutocomplete
+            label="Street"
+            placeholder="123 Main St — start typing for suggestions"
+            value={watch("street") ?? ""}
+            onChange={(v) => setValue("street", v, { shouldDirty: true })}
+            onAddressSelect={({ street, city, state, zip }) => {
+              setValue("street", street, { shouldDirty: true });
+              setValue("city", city, { shouldDirty: true });
+              setValue("state", state, { shouldDirty: true });
+              setValue("zip", zip, { shouldDirty: true });
+            }}
+            error={errors.street?.message}
+          />
           <div className="grid grid-cols-3 gap-3">
             <div className="col-span-2">
               <Input label="City" register={register("city")} error={errors.city?.message} />
             </div>
             <div>
-              <label className="mb-1 block text-sm font-medium text-navy">State</label>
-              <div className="flex h-10 items-center rounded border border-surface-border bg-surface-raised px-3 text-sm text-navy/60">TX</div>
+              <Input label="State" placeholder="TX" register={register("state")} error={errors.state?.message} />
             </div>
           </div>
           <div className="w-40">

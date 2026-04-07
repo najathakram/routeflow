@@ -6,6 +6,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Modal, Input, Textarea, Select, Button, useToast, cn } from "@routeflow/ui/web";
 import { useCreateCustomer, useUpdateCustomer } from "@/lib/api/customers";
+import { AddressAutocomplete } from "@/components/AddressAutocomplete";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -32,6 +33,7 @@ const customerSchema = z.object({
   notes: z.string().optional(),
   street: z.string().optional(),
   city: z.string().optional(),
+  state: z.string().optional(),
   zip: z.string().optional(),
   addressType: z.enum(["BILLING", "SHIPPING"]).optional(),
 });
@@ -89,6 +91,7 @@ function buildDefaultValues(initialData?: CustomerFormModalProps["initialData"])
       notes: "",
       street: "",
       city: "",
+      state: "",
       zip: "",
       addressType: "BILLING",
     };
@@ -112,6 +115,7 @@ function buildDefaultValues(initialData?: CustomerFormModalProps["initialData"])
     notes: initialData.notes ?? "",
     street: initialData.addresses?.[0]?.line1 ?? initialData.addresses?.[0]?.street ?? "",
     city: initialData.addresses?.[0]?.city ?? "",
+    state: "",
     zip: initialData.addresses?.[0]?.zip ?? "",
     addressType: (initialData.addresses?.[0]?.addressType as "BILLING" | "SHIPPING") ?? "BILLING",
   };
@@ -221,7 +225,7 @@ export function CustomerFormModal({
             {
               line1: data.street!,
               city: data.city!,
-              state: "TX",
+              state: data.state?.trim() || "TX",
               zip: data.zip!,
               isDefault: true,
               label: "Main",
@@ -477,10 +481,20 @@ export function CustomerFormModal({
                 </button>
               ))}
             </div>
-            <Input
+            <AddressAutocomplete
               label="Street"
-              placeholder="123 Main St"
-              register={register("street")}
+              placeholder="123 Main St — start typing for suggestions"
+              value={watch("street") ?? ""}
+              onChange={(v) => setValue("street", v, { shouldDirty: true })}
+              onAddressSelect={({ street, city, state, zip }) => {
+                setValue("street", street, { shouldDirty: true });
+                setValue("city", city, { shouldDirty: true });
+                setValue("state", state, { shouldDirty: true });
+                setValue("zip", zip, { shouldDirty: true });
+                setStreetError("");
+                setCityError("");
+                setZipError("");
+              }}
               error={errors.street?.message || streetError}
             />
             <div className="grid grid-cols-3 gap-3">
@@ -493,10 +507,12 @@ export function CustomerFormModal({
                 />
               </div>
               <div>
-                <label className="mb-1 block text-sm font-medium text-navy">State</label>
-                <div className="flex h-10 items-center rounded border border-surface-border bg-surface-raised px-3 text-sm text-navy/60">
-                  TX
-                </div>
+                <Input
+                  label="State"
+                  placeholder="TX"
+                  register={register("state")}
+                  error={errors.state?.message}
+                />
               </div>
             </div>
             <Input

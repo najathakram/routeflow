@@ -109,6 +109,12 @@ export default function LoginPage() {
               autoComplete="username"
               register={register("username")}
               error={errors.username?.message}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  document.getElementById("password")?.focus();
+                }
+              }}
             />
             <div className="flex flex-col gap-1">
               <label htmlFor="password" className="text-sm font-medium text-navy">
@@ -121,6 +127,12 @@ export default function LoginPage() {
                   placeholder="Enter your password"
                   autoComplete="current-password"
                   className="h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 text-sm text-navy placeholder:text-navy/40 transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      handleSubmit(onSubmit)();
+                    }
+                  }}
                   {...register("password")}
                 />
                 <button
