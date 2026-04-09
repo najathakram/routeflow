@@ -50,10 +50,14 @@ async function bootstrap() {
     rawBody: true,
   });
 
-  // ─── Proxy trust (Railway / Heroku / etc. sit behind a load balancer) ────────
-  // Without this, ThrottlerGuard sees the proxy's IP for every request instead
-  // of the real client IP, making per-IP rate limiting ineffective.
-  app.getHttpAdapter().getInstance().set("trust proxy", 1);
+  // ─── Proxy trust ──────────────────────────────────────────────────────────────
+  // Railway sits behind two proxy hops: Railway's own load balancer (hop 1)
+  // and the Fastly CDN edge (hop 2). Without trusting both hops, Express uses
+  // the rotating Fastly edge IP as req.ip, which makes per-IP rate limiting
+  // useless (each request from the same client appears to come from a
+  // different Fastly node and gets its own counter).
+  // trust proxy = 2 skips both hops → req.ip = real client IP from XFF.
+  app.getHttpAdapter().getInstance().set("trust proxy", 2);
 
   // ─── Body size limit (default 100kb is too small for bulk imports) ───────────
   app.use(json({ limit: "10mb" }));
