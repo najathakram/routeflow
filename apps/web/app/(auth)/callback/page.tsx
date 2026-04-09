@@ -9,8 +9,11 @@ import { useRouter, useSearchParams } from "next/navigation";
 // The API redirects here with ?accessToken=...&refreshToken=...&role=...
 // We store the tokens in localStorage (same as the regular login flow) and
 // redirect to the dashboard.
+//
+// useSearchParams() requires a Suspense boundary to prevent static generation
+// failures during next build (Next.js 14 requirement).
 
-export default function AuthCallbackPage() {
+function AuthCallbackInner() {
   const router = useRouter();
   const params = useSearchParams();
   const [error, setError] = React.useState<string | null>(null);
@@ -42,5 +45,22 @@ export default function AuthCallbackPage() {
         <p className="text-sm text-navy/60">Signing you in...</p>
       )}
     </div>
+  );
+}
+
+export default function AuthCallbackPage() {
+  return (
+    <React.Suspense
+      fallback={
+        <div className="flex h-screen flex-col items-center justify-center gap-4 bg-surface-raised">
+          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-brand-500 text-lg font-bold text-white">
+            RF
+          </div>
+          <p className="text-sm text-navy/60">Signing you in...</p>
+        </div>
+      }
+    >
+      <AuthCallbackInner />
+    </React.Suspense>
   );
 }
