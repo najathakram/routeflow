@@ -1132,8 +1132,8 @@ export class ImportService {
     const errors: string[] = [];
     let created = 0,
       updated = 0,
-      removedFromCustomers = 0,
       skipped = 0;
+    const removedFromCustomers = 0;
 
     // Group rows by vendor name — checks Merchant Name / Vendor Name / Customer Name / etc.
     const vendorRowMap: Record<string, any> = {};
