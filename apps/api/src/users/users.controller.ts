@@ -43,6 +43,11 @@ export class UsersController {
     return this.usersService.createOperator(dto);
   }
 
+  @Get("me")
+  getMe(@CurrentUser() user: JwtPayload) {
+    return this.usersService.findById(user.sub);
+  }
+
   @Get("me/preferences")
   getMyPreferences(@CurrentUser() user: JwtPayload) {
     return this.usersService.getPreferences(user.sub);
