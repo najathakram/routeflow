@@ -50,6 +50,11 @@ async function bootstrap() {
     rawBody: true,
   });
 
+  // ─── Proxy trust (Railway / Heroku / etc. sit behind a load balancer) ────────
+  // Without this, ThrottlerGuard sees the proxy's IP for every request instead
+  // of the real client IP, making per-IP rate limiting ineffective.
+  app.getHttpAdapter().getInstance().set("trust proxy", 1);
+
   // ─── Body size limit (default 100kb is too small for bulk imports) ───────────
   app.use(json({ limit: "10mb" }));
 
