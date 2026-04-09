@@ -530,13 +530,13 @@ async function createReturnsAndTemplates(orders, products) {
   const orderByUsername = {};
   for (const o of orders) orderByUsername[o.customerUsername] = o;
 
-  // Returns: 5 customers
+  // Returns: only for customers on Routes A & B (driver_tom + driver_sara delivered them)
   const returnDefs = [
-    { username: "harbor_cafe",     productName: "Full Cream Milk 2L", qty: 1, reason: "DAMAGED",        restock: false },
-    { username: "bayside_bistro",  productName: "Mozzarella 12oz",    qty: 1, reason: "QUALITY_ISSUE",  restock: false },
-    { username: "central_kitchen", productName: "Mineral Water 24pk", qty: 2, reason: "EXCESS_ORDER",   restock: true  },
-    { username: "ocean_bakes",     productName: "Butter 500g",        qty: 1, reason: "WRONG_ITEM",     restock: true  },
-    { username: "tide_eats",       productName: "Mozzarella 12oz",    qty: 1, reason: "DAMAGED",        restock: false },
+    { username: "harbor_cafe",    productName: "Full Cream Milk 2L", qty: 1, reason: "DAMAGED",       restock: false },
+    { username: "bayside_bistro", productName: "Mozzarella 12oz",    qty: 1, reason: "QUALITY_ISSUE", restock: false },
+    { username: "north_deli",     productName: "Multigrain Bread",   qty: 1, reason: "EXCESS_ORDER",  restock: true  },
+    { username: "westpark_grill", productName: "Protein Bars 10pk",  qty: 1, reason: "WRONG_ITEM",    restock: true  },
+    { username: "harbor_cafe",    productName: "Apple Juice 1L",     qty: 1, reason: "DAMAGED",       restock: false },
   ];
 
   for (const rd of returnDefs) {

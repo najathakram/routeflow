@@ -98,6 +98,7 @@ export class InvoicesService {
         subtotal: lineSub,
         boxes: boxes ?? null,
         pieces: pieces ?? null,
+        tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
       };
     });
 
@@ -165,6 +166,7 @@ export class InvoicesService {
     if (!order) throw new NotFoundException("Order not found");
 
     // Build invoice items from order items, carrying price type info
+    const tenantId = this.prisma.getTenantId();
     const itemsData = order.lineItems.map((li: any) => ({
       description: li.product?.name ?? `Product`,
       productId: li.productId,
@@ -175,6 +177,7 @@ export class InvoicesService {
       priceType: li.priceType ?? "STANDARD",
       taxRate: 0,
       subtotal: Number(li.subtotal),
+      tenantId, // nested creates bypass forTenant() extension
     }));
 
     const subtotal = Number(order.subtotal);
@@ -394,6 +397,7 @@ export class InvoicesService {
           subtotal: lineSub,
           boxes: boxes ?? null,
           pieces: pieces ?? null,
+          tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
         };
       });
       const taxTotal = dto.items.reduce(
@@ -684,6 +688,7 @@ export class InvoicesService {
             discount: i.discount,
             taxRate: i.taxRate,
             subtotal: i.subtotal,
+            tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
           })),
         },
       },
