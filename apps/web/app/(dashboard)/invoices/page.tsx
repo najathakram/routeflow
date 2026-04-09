@@ -213,13 +213,14 @@ function PaymentSummaryBar({
           <button
             onClick={() => item.filter && onFilter(item.filter === activeFilter ? "" : item.filter)}
             className={cn(
-              "flex flex-1 flex-col items-start gap-0.5 px-5 py-4 transition-colors hover:bg-surface-raised",
-              item.filter && item.filter === activeFilter && "bg-brand-50",
-              !item.filter && "cursor-default",
+              "flex flex-1 flex-col items-start gap-0.5 px-5 py-4 transition-all hover:bg-surface-raised",
+              item.filter ? "cursor-pointer hover:shadow-inner" : "cursor-default",
+              item.filter && item.filter === activeFilter && "bg-brand-50 ring-1 ring-inset ring-brand-200",
             )}
           >
-            <span className="text-xs font-semibold uppercase tracking-wider text-navy/50">
+            <span className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-navy/50">
               {item.label}
+              {item.filter && <span className="text-navy/30">↓</span>}
             </span>
             <span className={cn("text-xl", item.valueClass)}>{item.value}</span>
           </button>
@@ -526,7 +527,7 @@ export default function InvoicesPage() {
                           </button>
                         </div>
                       ) : (
-                        <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-0.5">
+                        <div className="flex items-center gap-0.5">
                           <button
                             title="View invoice"
                             onClick={() => router.push(`/invoices/${inv.id}`)}

@@ -37,7 +37,7 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Badge, Button, cn, useToast } from "@routeflow/ui/web";
+import { Badge, Button, Modal, cn, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useAuth } from "@/lib/auth-context";
 import {
@@ -339,8 +339,10 @@ export default function RouteRunDetailPage({ params }: { params: { id: string } 
     optimizeRoute(params.id, {
       onSuccess: (result) => {
         toast({
-          title: result.usedFallback ? "Route optimized (local fallback)" : "Route optimized",
-          description: `${result.reorderedCount} stops reordered${result.usedFallback ? " using nearest-neighbor heuristic." : " for the most efficient sequence."}`,
+          title: "Route reordered",
+          description: result.usedFallback
+            ? `${result.reorderedCount} stops reordered by estimated distance. For AI-powered optimization, enable route intelligence in Settings.`
+            : `${result.reorderedCount} stops reordered for the most efficient sequence.`,
         });
       },
       onError: (err) => toast({ title: "Optimization failed", description: err.message, variant: "error" }),
@@ -403,6 +405,27 @@ export default function RouteRunDetailPage({ params }: { params: { id: string } 
         <EditRunModal run={run} onClose={() => setShowEditModal(false)} />
       )}
 
+      <Modal
+        open={confirmDelete}
+        onClose={() => setConfirmDelete(false)}
+        title="Delete Route Run?"
+        description={`Delete this route run for ${run.route?.name ?? "this route"}? This cannot be undone.`}
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setConfirmDelete(false)} disabled={isDeleting}>
+              Cancel
+            </Button>
+            <Button variant="danger" onClick={handleDelete} loading={isDeleting}>
+              Delete Route Run
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-navy/70">
+          This will permanently remove this scheduled run. Stops and delivery records will be lost.
+        </p>
+      </Modal>
+
       {/* Top bar */}
       <div className="shrink-0 border-b border-surface-border bg-white px-6 py-4">
         <div className="flex items-center gap-4">
@@ -446,34 +469,15 @@ export default function RouteRunDetailPage({ params }: { params: { id: string } 
               </Button>
             )}
 
-            {/* Delete — SCHEDULED only, with confirm */}
+            {/* Delete — SCHEDULED only, with confirm modal */}
             {canDelete && (
-              confirmDelete ? (
-                <div className="flex items-center gap-1">
-                  <span className="text-xs text-danger">Delete?</span>
-                  <button
-                    onClick={handleDelete}
-                    disabled={isDeleting}
-                    className="rounded bg-danger px-2 py-1 text-xs font-semibold text-white hover:bg-danger/90 disabled:opacity-50"
-                  >
-                    {isDeleting ? "…" : "Yes"}
-                  </button>
-                  <button
-                    onClick={() => setConfirmDelete(false)}
-                    className="rounded border border-surface-border px-2 py-1 text-xs font-semibold text-navy hover:bg-surface-raised"
-                  >
-                    No
-                  </button>
-                </div>
-              ) : (
-                <button
-                  onClick={() => setConfirmDelete(true)}
-                  className="flex items-center gap-1 rounded border border-surface-border px-2.5 py-1.5 text-xs font-medium text-danger hover:border-danger/40 hover:bg-danger/5 transition-colors"
-                  title="Delete run"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />Delete
-                </button>
-              )
+              <button
+                onClick={() => setConfirmDelete(true)}
+                className="flex items-center gap-1 rounded border border-surface-border px-2.5 py-1.5 text-xs font-medium text-danger hover:border-danger/40 hover:bg-danger/5 transition-colors"
+                title="Delete run"
+              >
+                <Trash2 className="h-3.5 w-3.5" />Delete
+              </button>
             )}
 
             {/* Optimize */}

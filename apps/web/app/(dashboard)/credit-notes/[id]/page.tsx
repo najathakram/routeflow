@@ -47,6 +47,45 @@ function CreditNoteStatusBadge({ status }: { status: CreditNoteStatus }) {
   );
 }
 
+// ─── Issue confirm modal ──────────────────────────────────────────────────────
+
+function IssueConfirmModal({
+  isOpen,
+  onClose,
+  onConfirm,
+  cnNumber,
+  isPending,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+  cnNumber: string;
+  isPending: boolean;
+}) {
+  return (
+    <Modal
+      open={isOpen}
+      onClose={onClose}
+      title="Issue Credit Note?"
+      description={`Issue credit note ${cnNumber}?`}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={isPending}>
+            Cancel
+          </Button>
+          <Button onClick={onConfirm} loading={isPending}>
+            Issue Credit Note
+          </Button>
+        </>
+      }
+    >
+      <p className="text-sm text-navy/70">
+        Once issued, this credit note can be applied to an open invoice or voided. It can no longer be edited.
+      </p>
+    </Modal>
+  );
+}
+
 // ─── Void confirm modal ───────────────────────────────────────────────────────
 
 function VoidConfirmModal({
@@ -186,6 +225,7 @@ export default function CreditNoteDetailPage({ params }: { params: { id: string 
   const applyCreditNote = useApplyCreditNote();
   const voidCreditNote = useVoidCreditNote();
 
+  const [isIssueOpen, setIsIssueOpen] = React.useState(false);
   const [isVoidOpen, setIsVoidOpen] = React.useState(false);
   const [isApplyOpen, setIsApplyOpen] = React.useState(false);
 
@@ -217,6 +257,7 @@ export default function CreditNoteDetailPage({ params }: { params: { id: string 
   // ── Action handlers ──────────────────────────────────────────────────────────
 
   const handleIssue = () => {
+    setIsIssueOpen(false);
     issueCreditNote.mutate(cn.id, {
       onSuccess: () => {
         toast({
@@ -291,7 +332,7 @@ export default function CreditNoteDetailPage({ params }: { params: { id: string 
               <Button
                 size="sm"
                 leftIcon={<Send className="h-4 w-4" />}
-                onClick={handleIssue}
+                onClick={() => setIsIssueOpen(true)}
                 loading={issueCreditNote.isPending}
               >
                 Issue
@@ -470,7 +511,7 @@ export default function CreditNoteDetailPage({ params }: { params: { id: string 
                   size="sm"
                   className="w-full"
                   leftIcon={<Send className="h-4 w-4" />}
-                  onClick={handleIssue}
+                  onClick={() => setIsIssueOpen(true)}
                   loading={issueCreditNote.isPending}
                 >
                   Issue Credit Note
@@ -508,6 +549,14 @@ export default function CreditNoteDetailPage({ params }: { params: { id: string 
       </div>
 
       {/* Modals */}
+      <IssueConfirmModal
+        isOpen={isIssueOpen}
+        onClose={() => setIsIssueOpen(false)}
+        onConfirm={handleIssue}
+        cnNumber={cn.creditNoteNumber}
+        isPending={issueCreditNote.isPending}
+      />
+
       <VoidConfirmModal
         isOpen={isVoidOpen}
         onClose={() => setIsVoidOpen(false)}

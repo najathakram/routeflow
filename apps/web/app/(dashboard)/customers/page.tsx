@@ -4,7 +4,7 @@ import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Pencil, ToggleLeft, ToggleRight, Eye, CheckSquare, X, Trash2, Download, Upload, ArrowUpDown, Merge, AlertCircle } from "lucide-react";
-import { PageHeader, Table, Badge, Button, Select, cn, type BadgeStatus } from "@routeflow/ui/web";
+import { PageHeader, Table, Badge, Button, Select, Modal, cn, type BadgeStatus } from "@routeflow/ui/web";
 import { useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { CustomerFormModal } from "./_components/CustomerFormModal";
@@ -179,6 +179,7 @@ export default function CustomersPage() {
   const [selectMode, setSelectMode] = React.useState(false);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [isDeleting, setIsDeleting] = React.useState(false);
+  const [deactivatingCustomer, setDeactivatingCustomer] = React.useState<{ id: string; name: string } | null>(null);
   const [page, setPage] = React.useState(1);
   const [limit, setLimit] = React.useState(20);
   const [sortBy, setSortBy] = React.useState("");
@@ -277,11 +278,14 @@ export default function CustomersPage() {
   );
 
   // ── Status toggle ────────────────────────────────────────────────────────
-  const toggleStatus = React.useCallback((id: string, currentStatus: string) => {
-    updateStatus.mutate({
-      id,
-      status: currentStatus === "ACTIVE" ? "INACTIVE" : "ACTIVE",
-    });
+  const toggleStatus = React.useCallback((id: string, currentStatus: string, businessName: string) => {
+    if (currentStatus === "ACTIVE") {
+      // Deactivating requires confirmation
+      setDeactivatingCustomer({ id, name: businessName });
+    } else {
+      // Reactivating is safe — no confirmation needed
+      updateStatus.mutate({ id, status: "ACTIVE" });
+    }
   }, [updateStatus]);
 
   // ── Column definitions ───────────────────────────────────────────────────
@@ -424,7 +428,7 @@ export default function CustomersPage() {
               </button>
               <button
                 title={status === "ACTIVE" ? "Deactivate" : "Activate"}
-                onClick={() => toggleStatus(row.original.id, status)}
+                onClick={() => toggleStatus(row.original.id, status, row.original.businessName)}
                 className={cn(
                   "rounded p-1.5 transition-colors",
                   status === "ACTIVE"
@@ -682,6 +686,38 @@ export default function CustomersPage() {
           )}
         </>
       )}
+
+      {/* Deactivate confirmation modal */}
+      <Modal
+        open={deactivatingCustomer !== null}
+        onClose={() => setDeactivatingCustomer(null)}
+        title="Deactivate Customer?"
+        description={`Deactivate ${deactivatingCustomer?.name ?? "this customer"}?`}
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setDeactivatingCustomer(null)} disabled={updateStatus.isPending}>
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              loading={updateStatus.isPending}
+              onClick={() => {
+                if (!deactivatingCustomer) return;
+                updateStatus.mutate(
+                  { id: deactivatingCustomer.id, status: "INACTIVE" },
+                  { onSettled: () => setDeactivatingCustomer(null) },
+                );
+              }}
+            >
+              Deactivate
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-navy/70">
+          Deactivating <strong>{deactivatingCustomer?.name}</strong> will hide them from route assignment and they will no longer be able to log in.
+        </p>
+      </Modal>
 
       {/* Import modal */}
       {isImportOpen && (
