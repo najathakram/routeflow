@@ -1,4 +1,5 @@
 import { Injectable, Logger, OnModuleDestroy } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { ThrottlerStorage } from "@nestjs/throttler";
 import Redis from "ioredis";
 
@@ -17,13 +18,15 @@ export class RedisThrottlerStorage implements ThrottlerStorage, OnModuleDestroy 
   private readonly logger = new Logger(RedisThrottlerStorage.name);
   private readonly redis: Redis;
 
-  constructor() {
-    const url = process.env.REDIS_URL ?? "redis://localhost:6379";
-    // Auto-connect (no lazyConnect) so the client is ready before the first request.
+  constructor(private readonly config: ConfigService) {
+    const url      = config.get<string>("redis.url")      ?? "redis://localhost:6379";
+    const password = config.get<string>("redis.password") || undefined;
+
     this.redis = new Redis(url, {
+      password,
       maxRetriesPerRequest: 3,
       connectTimeout: 5_000,
-      enableOfflineQueue: true,  // queue commands while connecting
+      enableOfflineQueue: true,
     });
     this.redis.on("error", (err) =>
       this.logger.error("Redis throttler client error", err),
