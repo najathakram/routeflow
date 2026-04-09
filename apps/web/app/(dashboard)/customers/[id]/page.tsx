@@ -91,6 +91,7 @@ import {
 } from "@/lib/api/order-templates";
 import { StandingOrderModal } from "./StandingOrderModal";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { AddressAutocomplete } from "@/components/AddressAutocomplete";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -363,11 +364,14 @@ function AddAddressModal({
               onChange={handleChange("label")}
             />
           </div>
-          <Input
+          <AddressAutocomplete
             label="Street"
-            placeholder="123 Main St"
+            placeholder="123 Main St — start typing for suggestions"
             value={form.line1}
-            onChange={handleChange("line1")}
+            onChange={(v) => setForm((prev) => ({ ...prev, line1: v }))}
+            onAddressSelect={({ street, city, state, zip }) =>
+              setForm((prev) => ({ ...prev, line1: street, city, state, zip }))
+            }
           />
           <div className="grid grid-cols-3 gap-3">
             <div className="col-span-2">
