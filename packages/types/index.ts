@@ -2,8 +2,10 @@
 
 export enum UserRole {
   OPERATOR = "OPERATOR",
+  TENANT_ADMIN = "TENANT_ADMIN",
   CUSTOMER = "CUSTOMER",
   DRIVER = "DRIVER",
+  SUPER_ADMIN = "SUPER_ADMIN",
 }
 
 export enum UserStatus {

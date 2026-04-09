@@ -25,7 +25,7 @@ const storage = {
 export interface AuthUser {
   id: string;
   username: string;
-  role: "OPERATOR" | "DRIVER" | "CUSTOMER";
+  role: "OPERATOR" | "TENANT_ADMIN" | "DRIVER" | "CUSTOMER" | "SUPER_ADMIN";
   status: "ACTIVE" | "INACTIVE" | "SUSPENDED";
   forcePasswordChange: boolean;
 }
