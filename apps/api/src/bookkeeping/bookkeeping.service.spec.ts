@@ -1,8 +1,8 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { NotFoundException } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 
-// Manual mock factory prevents Jest from parsing invoice.service.ts
-// which would trigger the @react-pdf/renderer ESM import error
+// Mock invoice.service.ts to avoid loading @react-pdf/renderer (ESM-only)
 jest.mock("./invoice.service", () => ({
   InvoiceService: jest.fn().mockImplementation(() => ({
     generateInvoice: jest.fn(),
@@ -10,8 +10,16 @@ jest.mock("./invoice.service", () => ({
   })),
 }));
 
+// Mock VendorBillsService to prevent deep dependency chain
+jest.mock("../vendor-bills/vendor-bills.service", () => ({
+  VendorBillsService: jest.fn().mockImplementation(() => ({})),
+}));
+
 import { BookkeepingService } from "./bookkeeping.service";
 import { InvoiceService } from "./invoice.service";
+import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
+import { StorageService } from "../storage/storage.service";
+import { SystemConfigService } from "../system-config/system-config.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
@@ -44,6 +52,32 @@ describe("BookkeepingService", () => {
         BookkeepingService,
         { provide: PrismaService, useValue: prisma },
         { provide: InvoiceService, useValue: invoiceService },
+        {
+          provide: StorageService,
+          useValue: {
+            upload: jest.fn().mockResolvedValue("https://example.com/file"),
+            getSignedUrl: jest.fn().mockResolvedValue("https://example.com/signed"),
+            delete: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        {
+          provide: VendorBillsService,
+          useValue: {
+            createFromExpense: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        {
+          provide: ConfigService,
+          useValue: { get: jest.fn().mockReturnValue(null) },
+        },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            set: jest.fn().mockResolvedValue(undefined),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
       ],
     }).compile();
 
@@ -132,9 +166,12 @@ describe("BookkeepingService", () => {
 
   describe("recordPayment", () => {
     it("should throw NotFoundException when transaction does not exist", async () => {
-      prisma.$transaction.mockImplementation(async (fn: any) => {
+      // recordPayment uses tenantTransaction (not $transaction)
+      prisma.tenantTransaction.mockImplementation(async (fn: any) => {
         const tx = {
+          invoice: { findUnique: jest.fn().mockResolvedValue(null) },
           transaction: { findUnique: jest.fn().mockResolvedValue(null) },
+          invoicePayment: { create: jest.fn() },
           payment: { create: jest.fn() },
         };
         return fn(tx);
@@ -166,13 +203,14 @@ describe("BookkeepingService", () => {
 
   describe("getSummary", () => {
     it("should return aggregated financial summary", async () => {
-      prisma.transaction.aggregate.mockResolvedValue({ _sum: { totalOwed: 5000 } });
-      prisma.transaction.findMany.mockResolvedValue([
-        { totalOwed: 200, totalPaid: 50 },
-        { totalOwed: 300, totalPaid: 100 },
+      // getSummary now uses invoice/invoicePayment, not transaction/payment
+      prisma.invoice.aggregate.mockResolvedValue({ _sum: { total: 5000 } });
+      prisma.invoice.findMany.mockResolvedValue([
+        { total: 200, payments: [{ amount: 50 }] },
+        { total: 300, payments: [{ amount: 100 }] },
       ]);
-      prisma.payment.aggregate.mockResolvedValue({ _sum: { amount: 1500 } });
-      prisma.transaction.count.mockResolvedValue(3);
+      prisma.invoicePayment.aggregate.mockResolvedValue({ _sum: { amount: 1500 } });
+      prisma.invoice.count.mockResolvedValue(3);
 
       const result = await service.getSummary();
 
@@ -185,10 +223,10 @@ describe("BookkeepingService", () => {
     });
 
     it("should handle empty data gracefully", async () => {
-      prisma.transaction.aggregate.mockResolvedValue({ _sum: { totalOwed: null } });
-      prisma.transaction.findMany.mockResolvedValue([]);
-      prisma.payment.aggregate.mockResolvedValue({ _sum: { amount: null } });
-      prisma.transaction.count.mockResolvedValue(0);
+      prisma.invoice.aggregate.mockResolvedValue({ _sum: { total: null } });
+      prisma.invoice.findMany.mockResolvedValue([]);
+      prisma.invoicePayment.aggregate.mockResolvedValue({ _sum: { amount: null } });
+      prisma.invoice.count.mockResolvedValue(0);
 
       const result = await service.getSummary();
 

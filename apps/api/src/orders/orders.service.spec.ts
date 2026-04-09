@@ -2,7 +2,19 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { NotFoundException, ForbiddenException, BadRequestException } from "@nestjs/common";
 import { getQueueToken } from "@nestjs/bull";
 import { ConfigService } from "@nestjs/config";
+
+// Mock InvoicesService before it's imported — prevents Jest from traversing
+// invoice-pdf.service.ts which imports @react-pdf/renderer (ESM-only module)
+jest.mock("../invoices/invoices.service", () => ({
+  InvoicesService: jest.fn().mockImplementation(() => ({
+    createFromOrder: jest.fn().mockResolvedValue({ id: "inv-1" }),
+    findAll: jest.fn().mockResolvedValue({ data: [], meta: {} }),
+  })),
+}));
+
 import { OrdersService } from "./orders.service";
+import { InvoicesService } from "../invoices/invoices.service";
+import { SystemConfigService } from "../system-config/system-config.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { createMockPrisma } from "../testing/prisma-mock";
@@ -83,6 +95,20 @@ describe("OrdersService", () => {
         {
           provide: ConfigService,
           useValue: { get: jest.fn().mockReturnValue(0.1) },
+        },
+        {
+          provide: InvoicesService,
+          useValue: {
+            createFromOrder: jest.fn().mockResolvedValue({ id: "inv-1" }),
+          },
+        },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            set: jest.fn().mockResolvedValue(undefined),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
         },
         {
           provide: NotificationsService,

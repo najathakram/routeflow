@@ -106,7 +106,7 @@ describe("ProductsService", () => {
 
   describe("create", () => {
     it("should create a product with explicit field mapping", async () => {
-      prisma.product.findUnique.mockResolvedValue(null); // SKU check
+      prisma.product.findFirst.mockResolvedValue(null); // SKU check — service uses findFirst
       prisma.product.create.mockResolvedValue(MOCK_PRODUCT);
 
       const result = await service.create({
@@ -119,17 +119,19 @@ describe("ProductsService", () => {
       } as any);
 
       expect(result).toEqual(MOCK_PRODUCT);
-      expect(prisma.product.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({
-          name: "Cherry Tomatoes",
-          sku: "TOM-001",
-          pricePerUnit: 4.99,
+      expect(prisma.product.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            name: "Cherry Tomatoes",
+            sku: "TOM-001",
+            pricePerUnit: 4.99,
+          }),
         }),
-      });
+      );
     });
 
     it("should throw BadRequestException when SKU is duplicate", async () => {
-      prisma.product.findUnique.mockResolvedValue(MOCK_PRODUCT); // SKU exists
+      prisma.product.findFirst.mockResolvedValue(MOCK_PRODUCT); // SKU exists — service uses findFirst
 
       await expect(
         service.create({ name: "Test", sku: "TOM-001", unit: "kg", pricePerUnit: 1 } as any),

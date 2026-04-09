@@ -24,9 +24,32 @@ export function createMockPrisma(): jest.Mocked<PrismaService> {
     "upsert",
   ];
 
-  const modelProxy = () => Object.fromEntries(modelMethods.map((m) => [m, jest.fn()]));
+  // Sensible defaults so services don't crash when a mock isn't explicitly set up
+  const defaultReturnValues: Record<string, unknown> = {
+    findMany: [],
+    findUnique: null,
+    findFirst: null,
+    create: {},
+    createMany: { count: 0 },
+    update: {},
+    updateMany: { count: 0 },
+    delete: {},
+    deleteMany: { count: 0 },
+    count: 0,
+    aggregate: { _sum: {}, _count: {}, _avg: {} },
+    upsert: {},
+  };
 
-  return {
+  const modelProxy = () =>
+    Object.fromEntries(
+      modelMethods.map((m) => {
+        const fn = jest.fn();
+        fn.mockResolvedValue(defaultReturnValues[m] ?? null);
+        return [m, fn];
+      }),
+    );
+
+  const allModels = () => ({
     user: modelProxy(),
     customer: modelProxy(),
     customerAddress: modelProxy(),
@@ -43,28 +66,68 @@ export function createMockPrisma(): jest.Mocked<PrismaService> {
     transaction: modelProxy(),
     transactionItem: modelProxy(),
     payment: modelProxy(),
+    invoice: modelProxy(),
+    invoiceItem: modelProxy(),
+    invoicePayment: modelProxy(),
+    creditNote: modelProxy(),
+    advancePayment: modelProxy(),
+    vendorBill: modelProxy(),
+    vendorBillItem: modelProxy(),
+    billPayment: modelProxy(),
+    expense: modelProxy(),
+    expenseCategory: modelProxy(),
+    mileageRate: modelProxy(),
     deviceToken: modelProxy(),
     syncLog: modelProxy(),
     refreshToken: modelProxy(),
-    $transaction: jest.fn((fn: any) =>
-      fn({
-        user: modelProxy(),
-        customer: modelProxy(),
-        customerAddress: modelProxy(),
-        driver: modelProxy(),
-        product: modelProxy(),
-        order: modelProxy(),
-        orderItem: modelProxy(),
-        deliveryMutation: modelProxy(),
-        routeRun: modelProxy(),
-        routeRunStop: modelProxy(),
-        routeStop: modelProxy(),
-        transaction: modelProxy(),
-        payment: modelProxy(),
-        refreshToken: modelProxy(),
-      }),
-    ),
+    systemConfig: modelProxy(),
+    standingOrderTemplate: modelProxy(),
+    standingOrderItem: modelProxy(),
+    customerPrice: modelProxy(),
+    contactPerson: modelProxy(),
+    customerTag: modelProxy(),
+    customerComment: modelProxy(),
+  });
+
+  const txModels = () => ({
+    user: modelProxy(),
+    customer: modelProxy(),
+    customerAddress: modelProxy(),
+    driver: modelProxy(),
+    product: modelProxy(),
+    order: modelProxy(),
+    orderItem: modelProxy(),
+    deliveryMutation: modelProxy(),
+    routeRun: modelProxy(),
+    routeRunStop: modelProxy(),
+    routeStop: modelProxy(),
+    transaction: modelProxy(),
+    payment: modelProxy(),
+    invoice: modelProxy(),
+    invoiceItem: modelProxy(),
+    invoicePayment: modelProxy(),
+    creditNote: modelProxy(),
+    vendorBill: modelProxy(),
+    vendorBillItem: modelProxy(),
+    billPayment: modelProxy(),
+    refreshToken: modelProxy(),
+  });
+
+  const models = allModels();
+
+  return {
+    ...models,
+    // forTenant() returns the same model surface — tests can stub individual methods
+    // using prisma.customer.findMany.mockResolvedValue(...) and it will work
+    // whether the service calls prisma.customer directly or prisma.forTenant().customer
+    forTenant: jest.fn().mockReturnValue(models),
+    getTenantId: jest.fn().mockReturnValue("test-tenant"),
+    // tenantTransaction wraps $transaction with tenant context — behaves the same in tests
+    tenantTransaction: jest.fn((fn: any) => fn(txModels())),
+    $transaction: jest.fn((fn: any) => fn(txModels())),
     $connect: jest.fn(),
     $disconnect: jest.fn(),
+    $queryRaw: jest.fn().mockResolvedValue([]),
+    $executeRaw: jest.fn().mockResolvedValue(0),
   } as any;
 }
