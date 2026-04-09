@@ -285,3 +285,43 @@ All 23 bugs fixed, API rebuilt and running:
 | BUG-021 | `apps/api/src/invoices/invoices.service.ts` | Already had `VOID` check in `sendInvoice()` |
 | BUG-022 | `apps/api/src/invoices/invoices.service.ts` | Already had `VOID` check in `recordPayment()` |
 | BUG-023 | `apps/api/src/routes/routes.service.ts` | Added `IN_PROGRESS`/`COMPLETED` guard in `reorderRunStops()` |
+
+## QA Run — 2026-04-09T03:04:31.328Z
+
+**API:** https://routeflowapi-production-d504.up.railway.app/api/v1
+**Result:** 0/0 passed (0%) — 0 failed, 0 skipped
+
+| # | Description | Status | Notes |
+|---|-------------|--------|-------|
+
+## QA Run — 2026-04-09T03:05:58.807Z
+
+**API:** https://routeflowapi-production-d504.up.railway.app/api/v1
+**Result:** 0/0 passed (0%) — 0 failed, 0 skipped
+
+| # | Description | Status | Notes |
+|---|-------------|--------|-------|
+
+## QA Run — 2026-04-09T03:06:36.836Z
+
+**API:** https://routeflowapi-production-d504.up.railway.app/api/v1
+**Result:** 0/0 passed (0%) — 0 failed, 0 skipped
+
+| # | Description | Status | Notes |
+|---|-------------|--------|-------|
+
+## QA Run — 2026-04-09T03:07:24.247Z
+
+**API:** https://routeflowapi-production-d504.up.railway.app/api/v1
+**Result:** 0/0 passed (0%) — 0 failed, 0 skipped
+
+| # | Description | Status | Notes |
+|---|-------------|--------|-------|
+
+## QA Run — 2026-04-09T03:08:05.257Z
+
+**API:** https://routeflowapi-production-d504.up.railway.app/api/v1
+**Result:** 0/0 passed (0%) — 0 failed, 0 skipped
+
+| # | Description | Status | Notes |
+|---|-------------|--------|-------|
