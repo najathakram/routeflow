@@ -4,19 +4,19 @@ import { ThrottlerStorage } from "@nestjs/throttler";
 import Redis from "ioredis";
 
 /**
- * Redis-backed ThrottlerStorage — shared across all Railway instances.
+ * Redis-backed ThrottlerStorage using a fixed-window INCR counter.
  *
- * Uses a sliding-window sorted-set per (throttlerName, key):
- *   ZADD current-timestamp into the set, ZREMRANGEBYSCORE to evict
- *   expired entries, ZCARD to get the live hit count.
+ * On the first hit within a window, SET the key with EX (TTL in seconds)
+ * and a value of 1. On subsequent hits, INCR atomically. This is simpler
+ * than a sliding-window sorted set and avoids race conditions.
  *
- * Without this, each Node.js process maintains its own in-memory hit
- * counters, making per-IP throttling unreliable in multi-instance deploys.
+ * Shared across all Railway instances so per-IP rate limits are enforced
+ * cluster-wide rather than being isolated per-process.
  */
 @Injectable()
 export class RedisThrottlerStorage implements ThrottlerStorage, OnModuleDestroy {
   private readonly logger = new Logger(RedisThrottlerStorage.name);
-  private readonly redis: Redis;
+  readonly redis: Redis;   // `readonly` (not private) so controller can PING it
 
   constructor(private readonly config: ConfigService) {
     const url      = config.get<string>("redis.url")      ?? "redis://localhost:6379";
@@ -29,10 +29,10 @@ export class RedisThrottlerStorage implements ThrottlerStorage, OnModuleDestroy 
       enableOfflineQueue: true,
     });
     this.redis.on("error", (err) =>
-      this.logger.error("Redis throttler client error", err),
+      this.logger.error("Redis throttler error", err),
     );
     this.redis.on("connect", () =>
-      this.logger.log("Redis throttler client connected"),
+      this.logger.log("Redis throttler connected"),
     );
   }
 
@@ -52,8 +52,9 @@ export class RedisThrottlerStorage implements ThrottlerStorage, OnModuleDestroy 
     isBlocked: boolean;
     timeToBlockExpire: number;
   }> {
-    const hitKey   = `throttle:hit:${throttlerName}:${key}`;
-    const blockKey = `throttle:blk:${throttlerName}:${key}`;
+    const ttlSeconds   = Math.ceil(ttl / 1000);
+    const hitKey       = `throttle:hit2:${throttlerName}:${key}`;
+    const blockKey     = `throttle:blk2:${throttlerName}:${key}`;
 
     // ── 1. Check existing block ─────────────────────────────────────────────
     const blockPttl = await this.redis.pttl(blockKey).catch(() => -1);
@@ -66,43 +67,40 @@ export class RedisThrottlerStorage implements ThrottlerStorage, OnModuleDestroy 
       };
     }
 
-    // ── 2. Sliding-window hit counter ───────────────────────────────────────
-    const now         = Date.now();
-    const windowStart = now - ttl;
-    const member      = `${now}:${Math.random().toString(36).slice(2)}`;
-
+    // ── 2. Fixed-window INCR counter ────────────────────────────────────────
     let totalHits = 1;
     try {
-      const pipe = this.redis.pipeline();
-      pipe.zadd(hitKey, now, member);                      // record this hit
-      pipe.zremrangebyscore(hitKey, "-inf", windowStart);  // evict old hits
-      pipe.zcard(hitKey);                                  // live count
-      pipe.pexpire(hitKey, ttl);                           // auto-expiry
+      // SET NX with expiry creates the key on first hit
+      // INCR atomically increments on every hit; GET TTL for timeToExpire
+      const lua = `
+        local current = redis.call('INCR', KEYS[1])
+        if current == 1 then
+          redis.call('EXPIRE', KEYS[1], ARGV[1])
+        end
+        local ttl = redis.call('TTL', KEYS[1])
+        return {current, ttl}
+      `;
+      const result = await this.redis.eval(lua, 1, hitKey, ttlSeconds) as [number, number];
+      totalHits = result[0];
+      const ttlRemaining = result[1] > 0 ? result[1] : ttlSeconds;
+      const timeToExpire = ttlRemaining;
 
-      const results = await pipe.exec();
-      if (results && results[2] && results[2][1] != null) {
-        totalHits = results[2][1] as number;
+      // ── 3. Enforce block when limit exceeded ──────────────────────────────
+      let isBlocked         = false;
+      let timeToBlockExpire = 0;
+      if (totalHits > limit) {
+        isBlocked = true;
+        if (blockDuration) {
+          const blockSec = Math.ceil(blockDuration / 1000);
+          await this.redis.set(blockKey, "1", "EX", blockSec).catch(() => {});
+          timeToBlockExpire = blockSec;
+        }
       }
+
+      return { totalHits, timeToExpire, isBlocked, timeToBlockExpire };
     } catch (err) {
-      // Redis unavailable — fail open (count as 1, do not block)
       this.logger.warn("Redis throttler increment failed, failing open", err);
+      return { totalHits: 1, timeToExpire: ttlSeconds, isBlocked: false, timeToBlockExpire: 0 };
     }
-
-    const timeToExpire = Math.ceil(ttl / 1000);
-
-    // ── 3. Enforce block when limit exceeded ────────────────────────────────
-    let isBlocked         = false;
-    let timeToBlockExpire = 0;
-    if (totalHits > limit) {
-      isBlocked = true;
-      if (blockDuration) {
-        await this.redis
-          .set(blockKey, "1", "PX", blockDuration)
-          .catch(() => {});
-        timeToBlockExpire = Math.ceil(blockDuration / 1000);
-      }
-    }
-
-    return { totalHits, timeToExpire, isBlocked, timeToBlockExpire };
   }
 }

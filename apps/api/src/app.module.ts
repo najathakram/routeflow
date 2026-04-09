@@ -140,6 +140,7 @@ import { AppService } from "./app.service";
   controllers: [AppController],
   providers: [
     AppService,
+    RedisThrottlerStorage,
     // Global throttle: 100 req / 60 s per IP on every endpoint
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     // Block SUSPENDED / CANCELLED tenants from making any API calls.
