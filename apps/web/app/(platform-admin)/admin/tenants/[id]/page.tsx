@@ -3,16 +3,20 @@
 import * as React from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { superAdminClient } from "../../../layout";
+import { superAdminClient } from "@/lib/admin-api";
+import { AdminTabs } from "../../../_components/AdminTabs";
+import { AdminBadge } from "../../../_components/AdminBadge";
+import { AdminCard } from "../../../_components/AdminCard";
+import { AdminModal } from "../../../_components/AdminModal";
+import {
+  LayoutDashboard,
+  CreditCard,
+  Puzzle,
+  Settings,
+  ScrollText,
+} from "lucide-react";
 
-const STATUS_COLORS: Record<string, string> = {
-  ACTIVE: "bg-green-900/40 text-green-400 ring-green-600/30",
-  TRIAL: "bg-yellow-900/40 text-yellow-400 ring-yellow-600/30",
-  SUSPENDED: "bg-red-900/40 text-red-400 ring-red-600/30",
-  CANCELLED: "bg-slate-700 text-slate-400 ring-slate-600/30",
-};
-
-const PLANS = ["STARTER", "PROFESSIONAL", "ENTERPRISE"] as const;
+// ─── Types ─────────────────────────────────────────────────────────────────────
 
 interface TenantDetail {
   id: string;
@@ -30,6 +34,7 @@ interface TenantDetail {
     currentPlan: string;
     periodEnd: string | null;
     cancelAtPeriodEnd: boolean;
+    stripeCustomerId?: string | null;
   } | null;
   counts: {
     users: number;
@@ -50,19 +55,618 @@ interface AuditLogEntry {
   createdAt: string;
 }
 
+interface Addon {
+  id: string;
+  addonKey: string;
+  active: boolean;
+  stripePriceId: string | null;
+  createdAt: string;
+}
+
+const PLANS = ["STARTER", "PROFESSIONAL", "ENTERPRISE"] as const;
+
+const AVAILABLE_ADDONS = [
+  { key: "ai_scanning", name: "AI Receipt Scanning", description: "Automatically extract data from receipt images using AI" },
+  { key: "advanced_routes", name: "Advanced Route Optimization", description: "AI-powered route optimization and real-time rerouting" },
+  { key: "api_access", name: "API Access", description: "Full REST API access for third-party integrations" },
+  { key: "custom_branding", name: "Custom Branding", description: "White-label branding with custom logo, colors, and domain" },
+  { key: "priority_support", name: "Priority Support", description: "Dedicated support channel with 4-hour SLA" },
+  { key: "advanced_reporting", name: "Advanced Reporting", description: "Custom report builder with export and scheduling" },
+];
+
+const TABS = [
+  { key: "overview", label: "Overview", icon: <LayoutDashboard className="h-4 w-4" /> },
+  { key: "billing", label: "Billing & Subscription", icon: <CreditCard className="h-4 w-4" /> },
+  { key: "addons", label: "Addons & Features", icon: <Puzzle className="h-4 w-4" /> },
+  { key: "config", label: "Configuration", icon: <Settings className="h-4 w-4" /> },
+  { key: "audit", label: "Audit Log", icon: <ScrollText className="h-4 w-4" /> },
+];
+
+// ─── Helper ────────────────────────────────────────────────────────────────────
+
 function TrialEndsBadge({ trialEndsAt }: { trialEndsAt: string }) {
   const end = new Date(trialEndsAt);
-  const now = Date.now();
-  const diffDays = Math.ceil((end.getTime() - now) / (1000 * 60 * 60 * 24));
-
-  if (diffDays > 7) {
-    return <dd className="text-green-400">{end.toLocaleString()} <span className="text-xs">({diffDays}d left)</span></dd>;
-  } else if (diffDays >= 1) {
-    return <dd className="text-yellow-400">{end.toLocaleString()} <span className="text-xs">({diffDays}d left)</span></dd>;
-  } else {
-    return <dd className="text-red-400">{end.toLocaleString()} <span className="text-xs">(expired)</span></dd>;
-  }
+  const diffDays = Math.ceil((end.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+  const color = diffDays > 7 ? "text-green-400" : diffDays >= 1 ? "text-yellow-400" : "text-red-400";
+  return (
+    <span className={color}>
+      {end.toLocaleDateString()} <span className="text-xs">({diffDays > 0 ? `${diffDays}d left` : "expired"})</span>
+    </span>
+  );
 }
+
+// ─── Overview Tab ──────────────────────────────────────────────────────────────
+
+function OverviewTab({
+  tenant,
+  onAction,
+  actionLoading,
+  statusMsg,
+}: {
+  tenant: TenantDetail;
+  onAction: (action: string, payload?: unknown) => Promise<void>;
+  actionLoading: string | null;
+  statusMsg: string | null;
+}) {
+  const [showDeleteConfirm, setShowDeleteConfirm] = React.useState(false);
+  const [showResetConfirm, setShowResetConfirm] = React.useState(false);
+  const [resetResult, setResetResult] = React.useState<{ username: string; tempPassword: string } | null>(null);
+  const [copied, setCopied] = React.useState(false);
+  const [trialDays, setTrialDays] = React.useState(14);
+  const [selectedPlan, setSelectedPlan] = React.useState(tenant.plan);
+
+  const [recentLogs, setRecentLogs] = React.useState<AuditLogEntry[]>([]);
+  React.useEffect(() => {
+    superAdminClient
+      .get(`/platform-admin/audit-logs?tenantId=${tenant.id}&limit=5`)
+      .then((res) => setRecentLogs(res.data.data))
+      .catch(() => {});
+  }, [tenant.id]);
+
+  return (
+    <div className="grid gap-6 lg:grid-cols-2">
+      {/* Tenant Info */}
+      <AdminCard title="Tenant Info">
+        <dl className="flex flex-col gap-2.5 text-sm">
+          {[
+            ["ID", <span key="id" className="font-mono text-xs text-slate-300">{tenant.id}</span>],
+            ["Slug", <span key="slug" className="font-mono text-slate-300">{tenant.slug}</span>],
+            ["Business Name", <span key="bn" className="text-white">{tenant.businessName ?? "—"}</span>],
+            ["Plan", <AdminBadge key="plan" variant="plan">{tenant.plan}</AdminBadge>],
+            ["Status", <AdminBadge key="status">{tenant.status}</AdminBadge>],
+            ["Created", <span key="created" className="text-slate-300">{new Date(tenant.createdAt).toLocaleString()}</span>],
+          ].map(([label, value]) => (
+            <div key={String(label)} className="flex justify-between items-center">
+              <dt className="text-slate-500">{label}</dt>
+              <dd>{value}</dd>
+            </div>
+          ))}
+          {tenant.trialEndsAt && (
+            <div className="flex justify-between items-center">
+              <dt className="text-slate-500">Trial Ends</dt>
+              <dd><TrialEndsBadge trialEndsAt={tenant.trialEndsAt} /></dd>
+            </div>
+          )}
+        </dl>
+      </AdminCard>
+
+      {/* Usage Stats */}
+      {tenant.counts && (
+        <AdminCard title="Usage Stats">
+          <div className="grid grid-cols-3 gap-3">
+            {(
+              [
+                ["Users", tenant.counts.users],
+                ["Customers", tenant.counts.customers],
+                ["Orders", tenant.counts.orders],
+                ["Drivers", tenant.counts.drivers],
+                ["Routes", tenant.counts.routes],
+              ] as [string, number][]
+            ).map(([label, count]) => (
+              <div key={label} className="rounded-lg bg-slate-700/50 p-3 text-center">
+                <p className="text-lg font-bold text-white">{count}</p>
+                <p className="text-xs text-slate-500">{label}</p>
+              </div>
+            ))}
+          </div>
+        </AdminCard>
+      )}
+
+      {/* Quick Actions */}
+      <AdminCard title="Quick Actions" className="lg:col-span-2">
+        {statusMsg && (
+          <div className="mb-4 rounded-lg bg-indigo-900/40 px-4 py-2 text-sm text-indigo-300 ring-1 ring-indigo-700">
+            {statusMsg}
+          </div>
+        )}
+        <div className="flex flex-wrap gap-3">
+          {tenant.status !== "CANCELLED" && (
+            <button
+              disabled={actionLoading === "status"}
+              onClick={() => onAction("toggle-status")}
+              className={`rounded-lg px-4 py-2 text-sm font-semibold transition-colors disabled:opacity-50 ${
+                tenant.status === "SUSPENDED"
+                  ? "bg-green-700 text-white hover:bg-green-600"
+                  : "bg-yellow-700 text-white hover:bg-yellow-600"
+              }`}
+            >
+              {tenant.status === "SUSPENDED" ? "Reactivate" : "Suspend"}
+            </button>
+          )}
+
+          <div className="flex items-center gap-2">
+            <select
+              value={selectedPlan}
+              onChange={(e) => setSelectedPlan(e.target.value)}
+              className="h-9 rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
+            >
+              {PLANS.map((p) => <option key={p} value={p}>{p}</option>)}
+            </select>
+            <button
+              disabled={actionLoading === "plan" || selectedPlan === tenant.plan}
+              onClick={() => onAction("change-plan", { plan: selectedPlan })}
+              className="rounded-lg bg-slate-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-slate-500 disabled:opacity-50"
+            >
+              Change Plan
+            </button>
+          </div>
+
+          {tenant.status !== "CANCELLED" && (
+            <button
+              disabled={actionLoading === "impersonate"}
+              onClick={() => onAction("impersonate")}
+              className="rounded-lg bg-indigo-700 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-indigo-600 disabled:opacity-50"
+            >
+              Impersonate
+            </button>
+          )}
+
+          {!showDeleteConfirm ? (
+            <button
+              onClick={() => setShowDeleteConfirm(true)}
+              className="ml-auto rounded-lg bg-red-900/40 px-4 py-2 text-sm font-semibold text-red-400 ring-1 ring-red-700 transition-colors hover:bg-red-900/70"
+            >
+              Delete Tenant
+            </button>
+          ) : (
+            <div className="ml-auto flex items-center gap-2 rounded-lg bg-red-900/40 px-4 py-2 ring-1 ring-red-700">
+              <span className="text-sm text-red-300">Confirm delete?</span>
+              <button disabled={actionLoading === "delete"} onClick={() => onAction("delete")} className="rounded px-3 py-1 text-xs font-bold text-red-400 hover:bg-red-800">Yes, delete</button>
+              <button onClick={() => setShowDeleteConfirm(false)} className="rounded px-3 py-1 text-xs text-slate-400 hover:bg-slate-700">Cancel</button>
+            </div>
+          )}
+        </div>
+
+        {/* Extend Trial */}
+        <div className="mt-5 border-t border-slate-700 pt-4">
+          <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">Extend Trial</h3>
+          <div className="flex items-center gap-3">
+            <label className="text-sm text-slate-400">Days</label>
+            <input
+              type="number" min={1} max={365} value={trialDays}
+              onChange={(e) => setTrialDays(Number(e.target.value))}
+              className="h-9 w-20 rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
+            />
+            <button
+              disabled={actionLoading === "extend-trial"}
+              onClick={() => onAction("extend-trial", { days: trialDays })}
+              className="rounded-lg bg-slate-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-slate-500 disabled:opacity-50"
+            >
+              {actionLoading === "extend-trial" ? "Extending..." : "Extend Trial"}
+            </button>
+          </div>
+        </div>
+
+        {/* Reset Admin Password */}
+        <div className="mt-4 border-t border-slate-700 pt-4">
+          <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">Admin Password Reset</h3>
+          {!showResetConfirm ? (
+            <button
+              disabled={actionLoading === "reset-pwd"}
+              onClick={() => setShowResetConfirm(true)}
+              className="rounded-lg bg-orange-700/60 px-4 py-2 text-sm font-semibold text-orange-300 ring-1 ring-orange-600/40 transition-colors hover:bg-orange-700 disabled:opacity-50"
+            >
+              Reset Admin Password
+            </button>
+          ) : (
+            <div className="flex items-center gap-2 rounded-lg bg-orange-900/40 px-4 py-2 ring-1 ring-orange-700">
+              <span className="text-sm text-orange-300">Force password reset?</span>
+              <button
+                disabled={actionLoading === "reset-pwd"}
+                onClick={async () => {
+                  setShowResetConfirm(false);
+                  try {
+                    const res = await superAdminClient.post(`/platform-admin/tenants/${tenant.id}/reset-admin-password`);
+                    setResetResult(res.data);
+                    setCopied(false);
+                  } catch {}
+                }}
+                className="rounded px-3 py-1 text-xs font-bold text-orange-400 hover:bg-orange-800"
+              >Yes, reset</button>
+              <button onClick={() => setShowResetConfirm(false)} className="rounded px-3 py-1 text-xs text-slate-400 hover:bg-slate-700">Cancel</button>
+            </div>
+          )}
+          {resetResult && (
+            <div className="mt-3 rounded-lg bg-slate-700/60 p-4 ring-1 ring-slate-600">
+              <p className="mb-2 text-sm text-slate-300">
+                Temporary password for <span className="font-mono text-white">{resetResult.username}</span>:
+              </p>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 rounded bg-slate-900 px-3 py-2 font-mono text-sm text-green-400">{resetResult.tempPassword}</code>
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(resetResult.tempPassword).then(() => {
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 2000);
+                    });
+                  }}
+                  className="rounded px-3 py-2 text-xs font-medium text-slate-400 hover:bg-slate-600 hover:text-white"
+                >
+                  {copied ? "Copied!" : "Copy"}
+                </button>
+              </div>
+              <p className="mt-2 text-xs text-yellow-500">Share this securely. The user will be forced to change it on next login.</p>
+            </div>
+          )}
+        </div>
+      </AdminCard>
+
+      {/* Recent Audit Logs */}
+      <AdminCard
+        title="Recent Audit Logs"
+        className="lg:col-span-2"
+        actions={<Link href={`/admin/audit-logs?tenantId=${tenant.id}`} className="text-xs text-indigo-400 hover:text-indigo-300">View all</Link>}
+        noPadding
+      >
+        {recentLogs.length === 0 ? (
+          <p className="px-5 py-6 text-sm text-slate-500">No audit log entries for this tenant.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-500">
+                  <th className="px-4 py-2.5 text-left">Action</th>
+                  <th className="px-4 py-2.5 text-left">Entity</th>
+                  <th className="px-4 py-2.5 text-left">User</th>
+                  <th className="px-4 py-2.5 text-left">Time</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-700/50">
+                {recentLogs.map((log) => (
+                  <tr key={log.id} className="hover:bg-slate-700/20">
+                    <td className="px-4 py-2 font-mono text-slate-300">{log.action}</td>
+                    <td className="px-4 py-2 text-slate-400">{log.entityType}</td>
+                    <td className="px-4 py-2 font-mono text-slate-500">{log.userId?.slice(0, 8) ?? "—"}</td>
+                    <td className="px-4 py-2 text-slate-500">{new Date(log.createdAt).toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </AdminCard>
+    </div>
+  );
+}
+
+// ─── Billing Tab ───────────────────────────────────────────────────────────────
+
+function BillingTab({ tenant }: { tenant: TenantDetail }) {
+  const [portalLoading, setPortalLoading] = React.useState(false);
+  const [checkoutLoading, setCheckoutLoading] = React.useState(false);
+  const [msg, setMsg] = React.useState<string | null>(null);
+
+  const sub = tenant.subscription;
+  const daysLeft = tenant.trialEndsAt
+    ? Math.ceil((new Date(tenant.trialEndsAt).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+    : null;
+
+  const openBillingPortal = async () => {
+    setPortalLoading(true);
+    try {
+      const res = await superAdminClient.post(`/platform-admin/tenants/${tenant.id}/billing/portal`);
+      window.open(res.data.url, "_blank");
+    } catch (err: unknown) {
+      setMsg((err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Failed to open billing portal");
+    } finally {
+      setPortalLoading(false);
+    }
+  };
+
+  const createCheckout = async () => {
+    setCheckoutLoading(true);
+    try {
+      const res = await superAdminClient.post(`/platform-admin/tenants/${tenant.id}/billing/checkout`);
+      setMsg(`Checkout URL created: ${res.data.checkoutUrl}`);
+    } catch (err: unknown) {
+      setMsg((err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Failed to create checkout session");
+    } finally {
+      setCheckoutLoading(false);
+    }
+  };
+
+  return (
+    <div className="grid gap-6 lg:grid-cols-2">
+      {/* Current Plan */}
+      <AdminCard title="Current Plan">
+        <div className="flex items-center gap-4 mb-4">
+          <AdminBadge variant="plan">{tenant.plan}</AdminBadge>
+          <AdminBadge>{tenant.status}</AdminBadge>
+        </div>
+        {daysLeft !== null && (
+          <p className={`text-sm ${daysLeft > 7 ? "text-green-400" : daysLeft > 0 ? "text-yellow-400" : "text-red-400"}`}>
+            {daysLeft > 0 ? `${daysLeft} days remaining on trial` : "Trial expired"}
+          </p>
+        )}
+      </AdminCard>
+
+      {/* Subscription Details */}
+      <AdminCard title="Subscription">
+        {sub ? (
+          <dl className="flex flex-col gap-2 text-sm">
+            <div className="flex justify-between">
+              <dt className="text-slate-500">Plan</dt>
+              <dd className="text-white">{sub.currentPlan}</dd>
+            </div>
+            {sub.periodEnd && (
+              <div className="flex justify-between">
+                <dt className="text-slate-500">Period End</dt>
+                <dd className="text-slate-300">{new Date(sub.periodEnd).toLocaleDateString()}</dd>
+              </div>
+            )}
+            <div className="flex justify-between">
+              <dt className="text-slate-500">Cancel Pending</dt>
+              <dd className={sub.cancelAtPeriodEnd ? "text-red-400" : "text-green-400"}>
+                {sub.cancelAtPeriodEnd ? "Yes" : "No"}
+              </dd>
+            </div>
+            {sub.stripeCustomerId && (
+              <div className="flex justify-between">
+                <dt className="text-slate-500">Stripe ID</dt>
+                <dd className="font-mono text-xs text-slate-400">{sub.stripeCustomerId}</dd>
+              </div>
+            )}
+          </dl>
+        ) : (
+          <p className="text-sm text-slate-500">No subscription record yet.</p>
+        )}
+      </AdminCard>
+
+      {/* Stripe Actions */}
+      <AdminCard title="Stripe Actions" className="lg:col-span-2">
+        {msg && (
+          <div className="mb-4 rounded-lg bg-indigo-900/40 px-4 py-2 text-sm text-indigo-300 ring-1 ring-indigo-700 break-all">
+            {msg}
+          </div>
+        )}
+        <div className="flex flex-wrap gap-3">
+          <button
+            disabled={portalLoading}
+            onClick={openBillingPortal}
+            className="rounded-lg bg-indigo-700 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-indigo-600 disabled:opacity-50"
+          >
+            {portalLoading ? "Opening..." : "Open Billing Portal"}
+          </button>
+          <button
+            disabled={checkoutLoading}
+            onClick={createCheckout}
+            className="rounded-lg bg-slate-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-slate-500 disabled:opacity-50"
+          >
+            {checkoutLoading ? "Creating..." : "Create Checkout Session"}
+          </button>
+        </div>
+      </AdminCard>
+    </div>
+  );
+}
+
+// ─── Addons Tab ────────────────────────────────────────────────────────────────
+
+function AddonsTab({ tenant }: { tenant: TenantDetail }) {
+  const [addons, setAddons] = React.useState<Addon[]>([]);
+  const [loading, setLoading] = React.useState(true);
+  const [toggling, setToggling] = React.useState<string | null>(null);
+  const [showEnableModal, setShowEnableModal] = React.useState<string | null>(null);
+
+  const fetchAddons = React.useCallback(() => {
+    setLoading(true);
+    superAdminClient
+      .get(`/platform-admin/tenants/${tenant.id}/addons`)
+      .then((res) => setAddons(res.data))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [tenant.id]);
+
+  React.useEffect(() => { fetchAddons(); }, [fetchAddons]);
+
+  const toggleAddon = async (key: string, currentlyActive: boolean) => {
+    setToggling(key);
+    try {
+      if (currentlyActive) {
+        await superAdminClient.post(`/platform-admin/tenants/${tenant.id}/addons/disable`, { addonKey: key });
+      } else {
+        await superAdminClient.post(`/platform-admin/tenants/${tenant.id}/addons/enable`, { addonKey: key });
+      }
+      fetchAddons();
+    } catch {}
+    setToggling(null);
+    setShowEnableModal(null);
+  };
+
+  const activeKeys = new Set(addons.filter((a) => a.active).map((a) => a.addonKey));
+
+  return (
+    <>
+      <AdminModal
+        open={!!showEnableModal}
+        onClose={() => setShowEnableModal(null)}
+        title={`Enable ${AVAILABLE_ADDONS.find((a) => a.key === showEnableModal)?.name ?? showEnableModal}`}
+        footer={
+          <>
+            <button onClick={() => setShowEnableModal(null)} className="rounded-lg px-4 py-2 text-sm text-slate-400 hover:bg-slate-700">Cancel</button>
+            <button
+              disabled={toggling === showEnableModal}
+              onClick={() => showEnableModal && toggleAddon(showEnableModal, false)}
+              className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+            >
+              {toggling === showEnableModal ? "Enabling..." : "Enable Addon"}
+            </button>
+          </>
+        }
+      >
+        <p className="text-sm text-slate-300">
+          This will enable <strong>{AVAILABLE_ADDONS.find((a) => a.key === showEnableModal)?.name}</strong> for tenant <strong>{tenant.businessName ?? tenant.slug}</strong>.
+        </p>
+        <p className="mt-2 text-xs text-slate-500">If Stripe is configured, a subscription item will be created for billing.</p>
+      </AdminModal>
+
+      {loading ? (
+        <div className="py-8 text-center text-slate-500">Loading addons...</div>
+      ) : (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {AVAILABLE_ADDONS.map((addon) => {
+            const isActive = activeKeys.has(addon.key);
+            return (
+              <div
+                key={addon.key}
+                className={`rounded-xl p-4 ring-1 transition-colors ${
+                  isActive
+                    ? "bg-indigo-900/20 ring-indigo-600/30"
+                    : "bg-slate-800 ring-white/5"
+                }`}
+              >
+                <div className="flex items-start justify-between mb-2">
+                  <h3 className="text-sm font-semibold text-white">{addon.name}</h3>
+                  <button
+                    disabled={toggling === addon.key}
+                    onClick={() => {
+                      if (isActive) {
+                        toggleAddon(addon.key, true);
+                      } else {
+                        setShowEnableModal(addon.key);
+                      }
+                    }}
+                    className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors disabled:opacity-50 ${
+                      isActive ? "bg-indigo-600" : "bg-slate-600"
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                        isActive ? "translate-x-4" : "translate-x-0.5"
+                      }`}
+                    />
+                  </button>
+                </div>
+                <p className="text-xs text-slate-400">{addon.description}</p>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </>
+  );
+}
+
+// ─── Configuration Tab ─────────────────────────────────────────────────────────
+
+function ConfigTab({ tenant }: { tenant: TenantDetail }) {
+  const configFields: [string, string | null][] = [
+    ["Business Name", tenant.businessName],
+    ["Primary Color", tenant.primaryColor],
+    ["Logo Key", tenant.logoKey],
+  ];
+
+  return (
+    <AdminCard title="Tenant Configuration">
+      <dl className="flex flex-col gap-3 text-sm">
+        {configFields.map(([label, value]) => (
+          <div key={label} className="flex justify-between items-center">
+            <dt className="text-slate-500">{label}</dt>
+            <dd className="text-white">
+              {label === "Primary Color" && value ? (
+                <span className="flex items-center gap-2">
+                  <span className="inline-block h-4 w-4 rounded-full ring-1 ring-white/20" style={{ backgroundColor: value }} />
+                  {value}
+                </span>
+              ) : (
+                value ?? <span className="text-slate-600">Not set</span>
+              )}
+            </dd>
+          </div>
+        ))}
+      </dl>
+      <p className="mt-4 text-xs text-slate-600">Configuration editing coming soon.</p>
+    </AdminCard>
+  );
+}
+
+// ─── Audit Log Tab ─────────────────────────────────────────────────────────────
+
+function AuditLogTab({ tenantId }: { tenantId: string }) {
+  const [logs, setLogs] = React.useState<AuditLogEntry[]>([]);
+  const [loading, setLoading] = React.useState(true);
+  const [page, setPage] = React.useState(1);
+  const [meta, setMeta] = React.useState({ total: 0, pages: 1 });
+
+  React.useEffect(() => {
+    setLoading(true);
+    superAdminClient
+      .get(`/platform-admin/audit-logs?tenantId=${tenantId}&page=${page}&limit=20`)
+      .then((res) => {
+        setLogs(res.data.data);
+        setMeta(res.data.meta);
+      })
+      .catch(() => setLogs([]))
+      .finally(() => setLoading(false));
+  }, [tenantId, page]);
+
+  if (loading) return <div className="py-8 text-center text-slate-500">Loading audit logs...</div>;
+
+  return (
+    <div>
+      <div className="rounded-xl bg-slate-800 ring-1 ring-white/5 overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-500">
+                <th className="px-4 py-3 text-left">Action</th>
+                <th className="px-4 py-3 text-left">Entity Type</th>
+                <th className="px-4 py-3 text-left">Entity ID</th>
+                <th className="px-4 py-3 text-left">User</th>
+                <th className="px-4 py-3 text-left">Timestamp</th>
+                <th className="px-4 py-3 text-left">IP</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-700/50">
+              {logs.map((log) => (
+                <tr key={log.id} className="hover:bg-slate-700/20">
+                  <td className="px-4 py-2 font-mono text-slate-300">{log.action}</td>
+                  <td className="px-4 py-2 text-slate-400">{log.entityType}</td>
+                  <td className="px-4 py-2 font-mono text-slate-500">{log.entityId?.slice(0, 8) ?? "—"}</td>
+                  <td className="px-4 py-2 font-mono text-slate-500">{log.userId?.slice(0, 8) ?? "—"}</td>
+                  <td className="px-4 py-2 text-slate-500">{new Date(log.createdAt).toLocaleString()}</td>
+                  <td className="px-4 py-2 text-slate-500">{log.ip ?? "—"}</td>
+                </tr>
+              ))}
+              {logs.length === 0 && (
+                <tr><td colSpan={6} className="px-4 py-10 text-center text-slate-500">No audit log entries.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {meta.pages > 1 && (
+        <div className="mt-4 flex items-center justify-center gap-2">
+          <button disabled={page <= 1} onClick={() => setPage((p) => p - 1)} className="rounded-lg px-3 py-1.5 text-sm text-slate-400 hover:bg-slate-800 disabled:opacity-40">Prev</button>
+          <span className="text-sm text-slate-500">Page {page} of {meta.pages}</span>
+          <button disabled={page >= meta.pages} onClick={() => setPage((p) => p + 1)} className="rounded-lg px-3 py-1.5 text-sm text-slate-400 hover:bg-slate-800 disabled:opacity-40">Next</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function AdminTenantDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -72,155 +676,71 @@ export default function AdminTenantDetailPage() {
   const [error, setError] = React.useState<string | null>(null);
   const [actionLoading, setActionLoading] = React.useState<string | null>(null);
   const [statusMsg, setStatusMsg] = React.useState<string | null>(null);
-  const [selectedPlan, setSelectedPlan] = React.useState("");
-  const [showDeleteConfirm, setShowDeleteConfirm] = React.useState(false);
-
-  // Extend trial state
-  const [trialDays, setTrialDays] = React.useState(14);
-
-  // Reset password state
-  const [showResetConfirm, setShowResetConfirm] = React.useState(false);
-  const [resetResult, setResetResult] = React.useState<{ username: string; tempPassword: string } | null>(null);
-  const [copied, setCopied] = React.useState(false);
-
-  // Audit logs state
-  const [auditLogs, setAuditLogs] = React.useState<AuditLogEntry[] | null>(null);
-  const [auditLoading, setAuditLoading] = React.useState(false);
+  const [activeTab, setActiveTab] = React.useState("overview");
 
   const fetchTenant = React.useCallback(() => {
     setLoading(true);
     superAdminClient
       .get<TenantDetail>(`/platform-admin/tenants/${id}`)
-      .then((res) => {
-        setTenant(res.data);
-        setSelectedPlan(res.data.plan);
-      })
+      .then((res) => setTenant(res.data))
       .catch((err) => setError(err?.response?.data?.message ?? "Failed to load tenant"))
       .finally(() => setLoading(false));
   }, [id]);
 
-  const fetchAuditLogs = React.useCallback(() => {
-    setAuditLoading(true);
-    superAdminClient
-      .get<{ data: AuditLogEntry[] }>(`/platform-admin/audit-logs?tenantId=${id}&limit=20`)
-      .then((res) => setAuditLogs(res.data.data))
-      .catch(() => setAuditLogs([]))
-      .finally(() => setAuditLoading(false));
-  }, [id]);
+  React.useEffect(() => { fetchTenant(); }, [fetchTenant]);
 
-  React.useEffect(() => {
-    fetchTenant();
-    fetchAuditLogs();
-  }, [fetchTenant, fetchAuditLogs]);
-
-  const handleStatusToggle = async () => {
+  const handleAction = async (action: string, payload?: unknown) => {
     if (!tenant) return;
-    const newStatus = tenant.status === "SUSPENDED" ? "ACTIVE" : "SUSPENDED";
-    setActionLoading("status");
+    setActionLoading(action);
+    setStatusMsg(null);
     try {
-      await superAdminClient.patch(`/platform-admin/tenants/${id}/status`, { status: newStatus });
-      setStatusMsg(`Status changed to ${newStatus}`);
+      switch (action) {
+        case "toggle-status": {
+          const newStatus = tenant.status === "SUSPENDED" ? "ACTIVE" : "SUSPENDED";
+          await superAdminClient.patch(`/platform-admin/tenants/${id}/status`, { status: newStatus });
+          setStatusMsg(`Status changed to ${newStatus}`);
+          break;
+        }
+        case "change-plan": {
+          const { plan } = payload as { plan: string };
+          await superAdminClient.patch(`/platform-admin/tenants/${id}/plan`, { plan });
+          setStatusMsg(`Plan changed to ${plan}`);
+          break;
+        }
+        case "impersonate": {
+          const res = await superAdminClient.post(`/platform-admin/tenants/${id}/impersonate`);
+          localStorage.setItem("impersonationToken", res.data.accessToken);
+          localStorage.setItem("impersonationTenantSlug", tenant.slug);
+          window.location.href = "/dashboard";
+          return;
+        }
+        case "extend-trial": {
+          const { days } = payload as { days: number };
+          const res = await superAdminClient.post(`/platform-admin/tenants/${id}/extend-trial`, { days });
+          setStatusMsg(`Trial extended — new end: ${new Date(res.data.trialEndsAt).toLocaleString()}`);
+          break;
+        }
+        case "delete": {
+          await superAdminClient.delete(`/platform-admin/tenants/${id}`);
+          router.push("/admin/tenants");
+          return;
+        }
+      }
       fetchTenant();
     } catch (err: unknown) {
-      setStatusMsg((err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Failed");
+      setStatusMsg((err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Action failed");
     } finally {
       setActionLoading(null);
     }
   };
 
-  const handlePlanChange = async () => {
-    setActionLoading("plan");
-    try {
-      await superAdminClient.patch(`/platform-admin/tenants/${id}/plan`, { plan: selectedPlan });
-      setStatusMsg(`Plan changed to ${selectedPlan}`);
-      fetchTenant();
-    } catch (err: unknown) {
-      setStatusMsg((err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Failed");
-    } finally {
-      setActionLoading(null);
-    }
-  };
-
-  const handleImpersonate = async () => {
-    if (!tenant) return;
-    setActionLoading("impersonate");
-    try {
-      const res = await superAdminClient.post(`/platform-admin/tenants/${id}/impersonate`);
-      localStorage.setItem("impersonationToken", res.data.accessToken);
-      localStorage.setItem("impersonationTenantSlug", tenant.slug);
-      // Full page reload so AuthProvider re-initialises from localStorage
-      // and picks up the new impersonation token (router.push is client-side
-      // navigation and doesn't re-mount providers).
-      window.location.href = "/dashboard";
-    } catch (err: unknown) {
-      setStatusMsg((err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Impersonation failed");
-    } finally {
-      setActionLoading(null);
-    }
-  };
-
-  const handleExtendTrial = async () => {
-    setActionLoading("extend-trial");
-    try {
-      const res = await superAdminClient.post(`/platform-admin/tenants/${id}/extend-trial`, { days: trialDays });
-      setStatusMsg(`Trial extended — new end: ${new Date(res.data.trialEndsAt).toLocaleString()}`);
-      fetchTenant();
-    } catch (err: unknown) {
-      setStatusMsg((err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Failed to extend trial");
-    } finally {
-      setActionLoading(null);
-    }
-  };
-
-  const handleResetPassword = async () => {
-    setActionLoading("reset-pwd");
-    setShowResetConfirm(false);
-    try {
-      const res = await superAdminClient.post(`/platform-admin/tenants/${id}/reset-admin-password`);
-      setResetResult(res.data);
-      setCopied(false);
-    } catch (err: unknown) {
-      setStatusMsg((err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Failed to reset password");
-    } finally {
-      setActionLoading(null);
-    }
-  };
-
-  const handleDelete = async () => {
-    setActionLoading("delete");
-    try {
-      await superAdminClient.delete(`/platform-admin/tenants/${id}`);
-      router.push("/admin/tenants");
-    } catch (err: unknown) {
-      setStatusMsg((err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Delete failed");
-    } finally {
-      setActionLoading(null);
-      setShowDeleteConfirm(false);
-    }
-  };
-
-  const copyToClipboard = () => {
-    if (resetResult) {
-      navigator.clipboard.writeText(resetResult.tempPassword).then(() => {
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-      });
-    }
-  };
-
-  if (loading) {
-    return <div className="p-6 text-center text-slate-500">Loading tenant…</div>;
-  }
+  if (loading) return <div className="p-6 text-center text-slate-500">Loading tenant...</div>;
 
   if (error || !tenant) {
     return (
       <div className="p-6">
-        <div className="rounded-lg bg-red-900/40 px-4 py-3 text-sm text-red-400 ring-1 ring-red-700">
-          {error ?? "Tenant not found"}
-        </div>
-        <Link href="/admin/tenants" className="mt-4 inline-block text-sm text-indigo-400 hover:underline">
-          ← Back to Tenants
-        </Link>
+        <div className="rounded-lg bg-red-900/40 px-4 py-3 text-sm text-red-400 ring-1 ring-red-700">{error ?? "Tenant not found"}</div>
+        <Link href="/admin/tenants" className="mt-4 inline-block text-sm text-indigo-400 hover:underline">Back to Tenants</Link>
       </div>
     );
   }
@@ -228,268 +748,25 @@ export default function AdminTenantDetailPage() {
   return (
     <div className="p-6">
       {/* Header */}
-      <div className="mb-6 flex items-center gap-4">
-        <Link href="/admin/tenants" className="text-sm text-slate-400 hover:text-slate-300">
-          ← Tenants
-        </Link>
-        <h1 className="text-2xl font-bold text-white">{tenant.businessName ?? tenant.name}</h1>
-        <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ${STATUS_COLORS[tenant.status] ?? "bg-slate-700 text-slate-400"}`}>
-          {tenant.status}
-        </span>
+      <div className="mb-4 flex items-center gap-4">
+        <Link href="/admin/tenants" className="text-sm text-slate-400 hover:text-slate-300">Tenants</Link>
+        <span className="text-slate-600">/</span>
+        <h1 className="text-xl font-bold text-white">{tenant.businessName ?? tenant.name}</h1>
+        <AdminBadge>{tenant.status}</AdminBadge>
+        <AdminBadge variant="plan">{tenant.plan}</AdminBadge>
       </div>
 
-      {statusMsg && (
-        <div className="mb-4 rounded-lg bg-indigo-900/40 px-4 py-2 text-sm text-indigo-300 ring-1 ring-indigo-700">
-          {statusMsg}
-        </div>
+      {/* Tabs */}
+      <AdminTabs tabs={TABS} active={activeTab} onChange={setActiveTab} />
+
+      {/* Tab Content */}
+      {activeTab === "overview" && (
+        <OverviewTab tenant={tenant} onAction={handleAction} actionLoading={actionLoading} statusMsg={statusMsg} />
       )}
-
-      <div className="grid gap-6 lg:grid-cols-2">
-        {/* Tenant Info */}
-        <div className="rounded-xl bg-slate-800 p-5 ring-1 ring-white/5">
-          <h2 className="mb-4 text-sm font-semibold uppercase tracking-wider text-slate-400">Tenant Info</h2>
-          <dl className="flex flex-col gap-2 text-sm">
-            <div className="flex justify-between">
-              <dt className="text-slate-500">ID</dt>
-              <dd className="font-mono text-xs text-slate-300">{tenant.id}</dd>
-            </div>
-            <div className="flex justify-between">
-              <dt className="text-slate-500">Slug</dt>
-              <dd className="font-mono text-slate-300">{tenant.slug}</dd>
-            </div>
-            <div className="flex justify-between">
-              <dt className="text-slate-500">Business Name</dt>
-              <dd className="text-white">{tenant.businessName ?? "—"}</dd>
-            </div>
-            <div className="flex justify-between">
-              <dt className="text-slate-500">Plan</dt>
-              <dd className="text-white">{tenant.plan}</dd>
-            </div>
-            <div className="flex justify-between">
-              <dt className="text-slate-500">Created</dt>
-              <dd className="text-slate-300">{new Date(tenant.createdAt).toLocaleString()}</dd>
-            </div>
-            {tenant.trialEndsAt && (
-              <div className="flex justify-between items-center">
-                <dt className="text-slate-500">Trial Ends</dt>
-                <TrialEndsBadge trialEndsAt={tenant.trialEndsAt} />
-              </div>
-            )}
-          </dl>
-        </div>
-
-        {/* Usage Stats */}
-        {tenant.counts && (
-          <div className="rounded-xl bg-slate-800 p-5 ring-1 ring-white/5">
-            <h2 className="mb-4 text-sm font-semibold uppercase tracking-wider text-slate-400">Usage</h2>
-            <div className="grid grid-cols-3 gap-3">
-              {[
-                ["Users", tenant.counts.users],
-                ["Customers", tenant.counts.customers],
-                ["Orders", tenant.counts.orders],
-                ["Drivers", tenant.counts.drivers],
-                ["Routes", tenant.counts.routes],
-              ].map(([label, count]) => (
-                <div key={String(label)} className="rounded-lg bg-slate-700/50 p-3 text-center">
-                  <p className="text-lg font-bold text-white">{count}</p>
-                  <p className="text-xs text-slate-500">{label}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Actions */}
-        <div className="rounded-xl bg-slate-800 p-5 ring-1 ring-white/5 lg:col-span-2">
-          <h2 className="mb-4 text-sm font-semibold uppercase tracking-wider text-slate-400">Actions</h2>
-          <div className="flex flex-wrap gap-3">
-            {/* Suspend / Reactivate */}
-            {tenant.status !== "CANCELLED" && (
-              <button
-                disabled={actionLoading === "status"}
-                onClick={handleStatusToggle}
-                className={`rounded-lg px-4 py-2 text-sm font-semibold transition-colors disabled:opacity-50 ${
-                  tenant.status === "SUSPENDED"
-                    ? "bg-green-700 text-white hover:bg-green-600"
-                    : "bg-yellow-700 text-white hover:bg-yellow-600"
-                }`}
-              >
-                {tenant.status === "SUSPENDED" ? "Reactivate" : "Suspend"}
-              </button>
-            )}
-
-            {/* Change Plan */}
-            <div className="flex items-center gap-2">
-              <select
-                value={selectedPlan}
-                onChange={(e) => setSelectedPlan(e.target.value)}
-                className="h-9 rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
-              >
-                {PLANS.map((p) => (
-                  <option key={p} value={p}>{p}</option>
-                ))}
-              </select>
-              <button
-                disabled={actionLoading === "plan" || selectedPlan === tenant.plan}
-                onClick={handlePlanChange}
-                className="rounded-lg bg-slate-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-slate-500 disabled:opacity-50"
-              >
-                Change Plan
-              </button>
-            </div>
-
-            {/* Impersonate */}
-            {tenant.status !== "CANCELLED" && (
-              <button
-                disabled={actionLoading === "impersonate"}
-                onClick={handleImpersonate}
-                className="rounded-lg bg-indigo-700 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-indigo-600 disabled:opacity-50"
-              >
-                Impersonate
-              </button>
-            )}
-
-            {/* Delete */}
-            {!showDeleteConfirm ? (
-              <button
-                onClick={() => setShowDeleteConfirm(true)}
-                className="ml-auto rounded-lg bg-red-900/40 px-4 py-2 text-sm font-semibold text-red-400 ring-1 ring-red-700 transition-colors hover:bg-red-900/70"
-              >
-                Delete Tenant
-              </button>
-            ) : (
-              <div className="ml-auto flex items-center gap-2 rounded-lg bg-red-900/40 px-4 py-2 ring-1 ring-red-700">
-                <span className="text-sm text-red-300">Confirm delete?</span>
-                <button
-                  disabled={actionLoading === "delete"}
-                  onClick={handleDelete}
-                  className="rounded px-3 py-1 text-xs font-bold text-red-400 hover:bg-red-800"
-                >
-                  Yes, delete
-                </button>
-                <button
-                  onClick={() => setShowDeleteConfirm(false)}
-                  className="rounded px-3 py-1 text-xs text-slate-400 hover:bg-slate-700"
-                >
-                  Cancel
-                </button>
-              </div>
-            )}
-          </div>
-
-          {/* Extend Trial */}
-          <div className="mt-5 border-t border-slate-700 pt-4">
-            <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">Extend Trial</h3>
-            <div className="flex items-center gap-3">
-              <label className="text-sm text-slate-400">Days</label>
-              <input
-                type="number"
-                min={1}
-                max={365}
-                value={trialDays}
-                onChange={(e) => setTrialDays(Number(e.target.value))}
-                className="h-9 w-20 rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
-              />
-              <button
-                disabled={actionLoading === "extend-trial"}
-                onClick={handleExtendTrial}
-                className="rounded-lg bg-slate-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-slate-500 disabled:opacity-50"
-              >
-                {actionLoading === "extend-trial" ? "Extending…" : "Extend Trial"}
-              </button>
-            </div>
-          </div>
-
-          {/* Reset Admin Password */}
-          <div className="mt-4 border-t border-slate-700 pt-4">
-            <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">Admin Password Reset</h3>
-            {!showResetConfirm ? (
-              <button
-                disabled={actionLoading === "reset-pwd"}
-                onClick={() => setShowResetConfirm(true)}
-                className="rounded-lg bg-orange-700/60 px-4 py-2 text-sm font-semibold text-orange-300 ring-1 ring-orange-600/40 transition-colors hover:bg-orange-700 disabled:opacity-50"
-              >
-                {actionLoading === "reset-pwd" ? "Resetting…" : "Reset Admin Password"}
-              </button>
-            ) : (
-              <div className="flex items-center gap-2 rounded-lg bg-orange-900/40 px-4 py-2 ring-1 ring-orange-700">
-                <span className="text-sm text-orange-300">Force password reset?</span>
-                <button
-                  disabled={actionLoading === "reset-pwd"}
-                  onClick={handleResetPassword}
-                  className="rounded px-3 py-1 text-xs font-bold text-orange-400 hover:bg-orange-800"
-                >
-                  Yes, reset
-                </button>
-                <button
-                  onClick={() => setShowResetConfirm(false)}
-                  className="rounded px-3 py-1 text-xs text-slate-400 hover:bg-slate-700"
-                >
-                  Cancel
-                </button>
-              </div>
-            )}
-
-            {resetResult && (
-              <div className="mt-3 rounded-lg bg-slate-700/60 p-4 ring-1 ring-slate-600">
-                <p className="mb-2 text-sm text-slate-300">
-                  Temporary password for <span className="font-mono text-white">{resetResult.username}</span>:
-                </p>
-                <div className="flex items-center gap-2">
-                  <code className="flex-1 rounded bg-slate-900 px-3 py-2 font-mono text-sm text-green-400">
-                    {resetResult.tempPassword}
-                  </code>
-                  <button
-                    onClick={copyToClipboard}
-                    className="rounded px-3 py-2 text-xs font-medium text-slate-400 hover:bg-slate-600 hover:text-white"
-                  >
-                    {copied ? "Copied!" : "Copy"}
-                  </button>
-                </div>
-                <p className="mt-2 text-xs text-yellow-500">
-                  Share this securely — it won&apos;t be shown again. The user will be forced to change it on next login.
-                </p>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Audit Logs */}
-        <div className="rounded-xl bg-slate-800 p-5 ring-1 ring-white/5 lg:col-span-2">
-          <h2 className="mb-4 text-sm font-semibold uppercase tracking-wider text-slate-400">Recent Audit Logs</h2>
-          {auditLoading && <p className="text-sm text-slate-500">Loading logs…</p>}
-          {!auditLoading && auditLogs !== null && (
-            auditLogs.length === 0 ? (
-              <p className="text-sm text-slate-500">No audit log entries for this tenant.</p>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-500">
-                      <th className="px-3 py-2 text-left">Action</th>
-                      <th className="px-3 py-2 text-left">Entity Type</th>
-                      <th className="px-3 py-2 text-left">User ID</th>
-                      <th className="px-3 py-2 text-left">Timestamp</th>
-                      <th className="px-3 py-2 text-left">IP</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-700/50">
-                    {auditLogs.map((log) => (
-                      <tr key={log.id} className="hover:bg-slate-700/20">
-                        <td className="px-3 py-2 font-mono text-slate-300">{log.action}</td>
-                        <td className="px-3 py-2 text-slate-400">{log.entityType}</td>
-                        <td className="px-3 py-2 font-mono text-slate-500">{log.userId ?? "—"}</td>
-                        <td className="px-3 py-2 text-slate-500">{new Date(log.createdAt).toLocaleString()}</td>
-                        <td className="px-3 py-2 text-slate-500">{log.ip ?? "—"}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )
-          )}
-        </div>
-      </div>
+      {activeTab === "billing" && <BillingTab tenant={tenant} />}
+      {activeTab === "addons" && <AddonsTab tenant={tenant} />}
+      {activeTab === "config" && <ConfigTab tenant={tenant} />}
+      {activeTab === "audit" && <AuditLogTab tenantId={tenant.id} />}
     </div>
   );
 }

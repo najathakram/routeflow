@@ -270,6 +270,9 @@ ${paymentSection}
   // ─── Platform stats ───────────────────────────────────────────────────────────
 
   async getStats() {
+    const now = new Date();
+    const sevenDaysFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+
     const [
       totalTenants,
       activeTenants,
@@ -279,6 +282,8 @@ ${paymentSection}
       superAdminCount,
       planBreakdown,
       recentTenants,
+      trialsExpiringSoon,
+      atRiskTenants,
     ] = await Promise.all([
       this.prisma.tenant.count(),
       this.prisma.tenant.count({ where: { status: TenantStatus.ACTIVE } }),
@@ -295,6 +300,27 @@ ${paymentSection}
         orderBy: { createdAt: "desc" },
         select: { id: true, slug: true, name: true, status: true, plan: true, createdAt: true },
       }),
+      // Trials expiring within 7 days
+      this.prisma.tenant.findMany({
+        where: {
+          status: TenantStatus.TRIAL,
+          trialEndsAt: { lte: sevenDaysFromNow, gte: now },
+        },
+        orderBy: { trialEndsAt: "asc" },
+        select: { id: true, slug: true, name: true, plan: true, trialEndsAt: true, createdAt: true },
+      }),
+      // At-risk: suspended or expired trials
+      this.prisma.tenant.findMany({
+        where: {
+          OR: [
+            { status: TenantStatus.SUSPENDED },
+            { status: TenantStatus.TRIAL, trialEndsAt: { lt: now } },
+          ],
+        },
+        orderBy: { createdAt: "desc" },
+        take: 10,
+        select: { id: true, slug: true, name: true, status: true, plan: true, trialEndsAt: true },
+      }),
     ]);
 
     return {
@@ -310,6 +336,66 @@ ${paymentSection}
         planBreakdown.map(({ plan, _count }) => [plan, _count.plan]),
       ),
       recentTenants,
+      trialsExpiringSoon,
+      atRiskTenants,
+    };
+  }
+
+  // ─── Growth stats ─────────────────────────────────────────────────────────────
+
+  async getGrowthStats(months = 12) {
+    const results: { month: string; count: number }[] = [];
+    const now = new Date();
+    for (let i = months - 1; i >= 0; i--) {
+      const start = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const end = new Date(now.getFullYear(), now.getMonth() - i + 1, 1);
+      const count = await this.prisma.tenant.count({
+        where: { createdAt: { gte: start, lt: end } },
+      });
+      results.push({
+        month: start.toISOString().slice(0, 7), // "2026-01"
+        count,
+      });
+    }
+    return results;
+  }
+
+  // ─── Billing overview ─────────────────────────────────────────────────────────
+
+  async getBillingOverview() {
+    const [subscriptions, totalTenants, trialTenants] = await Promise.all([
+      this.prisma.tenantSubscription.findMany({
+        include: {
+          tenant: {
+            select: { id: true, slug: true, name: true, status: true, plan: true },
+          },
+        },
+        orderBy: { updatedAt: "desc" },
+      }),
+      this.prisma.tenant.count(),
+      this.prisma.tenant.count({ where: { status: TenantStatus.TRIAL } }),
+    ]);
+
+    const activeSubscriptions = subscriptions.filter(
+      (s) => s.tenant.status === "ACTIVE" && !s.cancelAtPeriodEnd,
+    );
+    const cancelPending = subscriptions.filter((s) => s.cancelAtPeriodEnd);
+
+    return {
+      activeSubscriptions: activeSubscriptions.length,
+      cancelPending: cancelPending.length,
+      totalTenants,
+      trialTenants,
+      subscriptions: subscriptions.map((s) => ({
+        tenantId: s.tenantId,
+        tenantSlug: s.tenant.slug,
+        tenantName: s.tenant.name,
+        tenantStatus: s.tenant.status,
+        currentPlan: s.currentPlan,
+        periodEnd: s.periodEnd,
+        cancelAtPeriodEnd: s.cancelAtPeriodEnd,
+        stripeCustomerId: s.stripeCustomerId,
+      })),
     };
   }
 
@@ -350,9 +436,30 @@ ${paymentSection}
 
   // ─── Audit logs ───────────────────────────────────────────────────────────────
 
-  async getAuditLogs(tenantId: string | null, page = 1, limit = 50) {
+  async getAuditLogs(
+    filters: {
+      tenantId?: string | null;
+      action?: string | null;
+      entityType?: string | null;
+      userId?: string | null;
+      from?: string | null;
+      to?: string | null;
+    },
+    page = 1,
+    limit = 50,
+  ) {
     const skip = (page - 1) * limit;
-    const where = tenantId ? { tenantId } : {};
+    const where: Record<string, unknown> = {};
+    if (filters.tenantId) where.tenantId = filters.tenantId;
+    if (filters.action) where.action = filters.action;
+    if (filters.entityType) where.entityType = filters.entityType;
+    if (filters.userId) where.userId = filters.userId;
+    if (filters.from || filters.to) {
+      where.createdAt = {
+        ...(filters.from ? { gte: new Date(filters.from) } : {}),
+        ...(filters.to ? { lte: new Date(filters.to) } : {}),
+      };
+    }
     const [logs, total] = await Promise.all([
       this.prisma.auditLog.findMany({
         where,

@@ -3,36 +3,18 @@
 import * as React from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Shield, LayoutDashboard, Building2, LogOut, ScrollText } from "lucide-react";
-import axios from "axios";
+import {
+  Shield,
+  LayoutDashboard,
+  Building2,
+  LogOut,
+  ScrollText,
+  CreditCard,
+  Layers,
+} from "lucide-react";
 
-// ─── Super admin axios client (no X-Tenant-Slug) ──────────────────────────────
-
-const BASE_URL =
-  typeof window !== "undefined"
-    ? (process.env.NEXT_PUBLIC_API_URL ?? `${window.location.protocol}//${window.location.hostname}:3000/api/v1`)
-    : "http://localhost:3000/api/v1";
-
-export const superAdminClient = axios.create({ baseURL: BASE_URL });
-
-superAdminClient.interceptors.request.use((config) => {
-  if (typeof window !== "undefined") {
-    const token = localStorage.getItem("superAdminToken");
-    if (token) config.headers.Authorization = `Bearer ${token}`;
-  }
-  return config;
-});
-
-superAdminClient.interceptors.response.use(
-  (r) => r,
-  (error) => {
-    if (error.response?.status === 401 && typeof window !== "undefined") {
-      localStorage.removeItem("superAdminToken");
-      window.location.href = "/admin/login";
-    }
-    return Promise.reject(error);
-  },
-);
+// Re-export for backwards compat (existing pages import from layout)
+export { superAdminClient } from "@/lib/admin-api";
 
 // ─── Auth guard ────────────────────────────────────────────────────────────────
 
@@ -61,7 +43,6 @@ function SuperAdminGuard({ children }: { children: React.ReactNode }) {
       router.replace("/admin/login");
       return;
     }
-    // Check expiry
     if (typeof payload.exp === "number" && payload.exp * 1000 < Date.now()) {
       localStorage.removeItem("superAdminToken");
       router.replace("/admin/login");
@@ -79,6 +60,8 @@ function SuperAdminGuard({ children }: { children: React.ReactNode }) {
 const NAV_ITEMS = [
   { label: "Dashboard", href: "/admin/dashboard", icon: LayoutDashboard },
   { label: "Tenants", href: "/admin/tenants", icon: Building2 },
+  { label: "Plans & Features", href: "/admin/plans", icon: Layers },
+  { label: "Billing", href: "/admin/billing", icon: CreditCard },
   { label: "Audit Logs", href: "/admin/audit-logs", icon: ScrollText },
 ];
 

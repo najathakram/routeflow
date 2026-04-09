@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { superAdminClient } from "../../../layout";
+import { superAdminClient } from "@/lib/admin-api";
 
 const PLANS = ["STARTER", "PROFESSIONAL", "ENTERPRISE"] as const;
 

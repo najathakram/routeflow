@@ -105,17 +105,51 @@ export class PlatformAdminController {
     return this.svc.resetTenantAdminPassword(id);
   }
 
+  @Get("stats/growth")
+  @ApiOperation({ summary: "Monthly tenant creation counts for charts" })
+  @ApiQuery({ name: "months", required: false, type: Number })
+  getGrowthStats(@Query("months") months = "12") {
+    return this.svc.getGrowthStats(Number(months));
+  }
+
+  @Get("billing/overview")
+  @ApiOperation({ summary: "Aggregated billing/subscription overview" })
+  getBillingOverview() {
+    return this.svc.getBillingOverview();
+  }
+
   @Get("audit-logs")
-  @ApiOperation({ summary: "Platform-wide audit log" })
+  @ApiOperation({ summary: "Platform-wide audit log with filters" })
   @ApiQuery({ name: "tenantId", required: false })
+  @ApiQuery({ name: "action", required: false })
+  @ApiQuery({ name: "entityType", required: false })
+  @ApiQuery({ name: "userId", required: false })
+  @ApiQuery({ name: "from", required: false })
+  @ApiQuery({ name: "to", required: false })
   @ApiQuery({ name: "page", required: false, type: Number })
   @ApiQuery({ name: "limit", required: false, type: Number })
   getAuditLogs(
     @Query("tenantId") tenantId?: string,
+    @Query("action") action?: string,
+    @Query("entityType") entityType?: string,
+    @Query("userId") userId?: string,
+    @Query("from") from?: string,
+    @Query("to") to?: string,
     @Query("page") page = "1",
     @Query("limit") limit = "50",
   ) {
-    return this.svc.getAuditLogs(tenantId || null, Number(page), Number(limit));
+    return this.svc.getAuditLogs(
+      {
+        tenantId: tenantId || null,
+        action: action || null,
+        entityType: entityType || null,
+        userId: userId || null,
+        from: from || null,
+        to: to || null,
+      },
+      Number(page),
+      Number(limit),
+    );
   }
 
   // ─── Billing ──────────────────────────────────────────────────────────────
