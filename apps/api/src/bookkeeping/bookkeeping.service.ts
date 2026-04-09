@@ -45,7 +45,7 @@ export class BookkeepingService implements OnModuleInit {
     }
 
     const [data, total] = await Promise.all([
-      this.prisma.transaction.findMany({
+      this.prisma.forTenant().transaction.findMany({
         where,
         include: {
           customer: { select: { id: true, businessName: true } },
@@ -55,14 +55,14 @@ export class BookkeepingService implements OnModuleInit {
         take: limit,
         orderBy: { createdAt: "desc" },
       }),
-      this.prisma.transaction.count({ where }),
+      this.prisma.forTenant().transaction.count({ where }),
     ]);
 
     return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
   }
 
   async findOne(id: string) {
-    const txn = await this.prisma.transaction.findUnique({
+    const txn = await this.prisma.forTenant().transaction.findUnique({
       where: { id },
       include: {
         customer: { select: { id: true, businessName: true, contactName: true } },
@@ -78,7 +78,7 @@ export class BookkeepingService implements OnModuleInit {
   }
 
   async recordPayment(id: string, dto: RecordPaymentDto) {
-    return this.prisma.$transaction(async (tx) => {
+    return this.prisma.tenantTransaction(async (tx) => {
       const txn = await tx.transaction.findUnique({ where: { id }, include: { payments: true } });
       if (!txn) throw new NotFoundException("Transaction not found");
 
@@ -136,22 +136,22 @@ export class BookkeepingService implements OnModuleInit {
 
   // ── Expense Categories ──
   async listExpenseCategories() {
-    return this.prisma.expenseCategory.findMany({ orderBy: { name: "asc" } });
+    return this.prisma.forTenant().expenseCategory.findMany({ orderBy: { name: "asc" } });
   }
 
   async createExpenseCategory(dto: { name: string; code: string }) {
-    return this.prisma.expenseCategory.create({
+    return this.prisma.forTenant().expenseCategory.create({
       data: { name: dto.name, code: dto.code, isCustom: true },
     });
   }
 
   // ── Mileage Rates ──
   async listMileageRates() {
-    return this.prisma.mileageRate.findMany({ orderBy: { startDate: "desc" } });
+    return this.prisma.forTenant().mileageRate.findMany({ orderBy: { startDate: "desc" } });
   }
 
   async createMileageRate(dto: { startDate: string; ratePerUnit: number; unit?: string }) {
-    return this.prisma.mileageRate.create({
+    return this.prisma.forTenant().mileageRate.create({
       data: {
         startDate: new Date(dto.startDate),
         ratePerUnit: dto.ratePerUnit,
@@ -161,14 +161,14 @@ export class BookkeepingService implements OnModuleInit {
   }
 
   async deleteMileageRate(id: string) {
-    const rate = await this.prisma.mileageRate.findUnique({ where: { id } });
+    const rate = await this.prisma.forTenant().mileageRate.findUnique({ where: { id } });
     if (!rate) throw new NotFoundException("Mileage rate not found");
-    return this.prisma.mileageRate.delete({ where: { id } });
+    return this.prisma.forTenant().mileageRate.delete({ where: { id } });
   }
 
   /** Find the applicable mileage rate for a given date: the most recent rate with startDate <= expenseDate */
   async getApplicableMileageRate(expenseDate: Date, unit = "MILE") {
-    return this.prisma.mileageRate.findFirst({
+    return this.prisma.forTenant().mileageRate.findFirst({
       where: { unit, startDate: { lte: expenseDate } },
       orderBy: { startDate: "desc" },
     });
@@ -201,7 +201,7 @@ export class BookkeepingService implements OnModuleInit {
       where.categoryId = categoryId;
     } else {
       // Exclude inventory-purchase expenses from the general list — they belong in vendor bills
-      const invCat = await this.prisma.expenseCategory.findUnique({ where: { code: "INVENTORY_PURCHASE" } });
+      const invCat = await this.prisma.forTenant().expenseCategory.findFirst({ where: { code: "INVENTORY_PURCHASE" } });
       if (invCat) where.category = { code: { not: "INVENTORY_PURCHASE" } };
     }
     if (supplierId) where.supplierId = supplierId;
@@ -218,14 +218,14 @@ export class BookkeepingService implements OnModuleInit {
       }
     }
     const [data, total] = await Promise.all([
-      this.prisma.expense.findMany({
+      this.prisma.forTenant().expense.findMany({
         where,
         include: this.expenseInclude,
         skip,
         take: limit,
         orderBy: { date: "desc" },
       }),
-      this.prisma.expense.count({ where }),
+      this.prisma.forTenant().expense.count({ where }),
     ]);
     return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
   }
@@ -250,7 +250,7 @@ export class BookkeepingService implements OnModuleInit {
       computedAmount = lineItems.reduce((s: number, li: any) => s + Number(li.amount), 0);
     }
 
-    const expense = await this.prisma.expense.create({
+    const expense = await this.prisma.forTenant().expense.create({
       data: {
         categoryId: rest.categoryId ?? null,
         supplierId: rest.supplierId ?? null,
@@ -299,7 +299,7 @@ export class BookkeepingService implements OnModuleInit {
   }
 
   async updateExpense(id: string, dto: any) {
-    const updated = await this.prisma.expense.update({
+    const updated = await this.prisma.forTenant().expense.update({
       where: { id },
       data: {
         ...(dto.amount !== undefined && { amount: dto.amount }),
@@ -318,13 +318,13 @@ export class BookkeepingService implements OnModuleInit {
   }
 
   async deleteExpense(id: string) {
-    return this.prisma.expense.update({ where: { id }, data: { deletedAt: new Date() } });
+    return this.prisma.forTenant().expense.update({ where: { id }, data: { deletedAt: new Date() } });
   }
 
   // ── Expense Receipt Management ─────────────────────────────────────────────
 
   private async findExpenseOrThrow(id: string) {
-    const expense = await this.prisma.expense.findFirst({
+    const expense = await this.prisma.forTenant().expense.findFirst({
       where: { id, deletedAt: null },
       include: this.expenseInclude,
     });
@@ -357,7 +357,7 @@ export class BookkeepingService implements OnModuleInit {
     const key = `expenses/${id}/receipt.${ext}`;
     await this.storage.upload(key, finalBuffer, finalMime);
 
-    await this.prisma.expense.update({
+    await this.prisma.forTenant().expense.update({
       where: { id },
       data: {
         receiptKey: key,
@@ -381,7 +381,7 @@ export class BookkeepingService implements OnModuleInit {
     const expense = await this.findExpenseOrThrow(id);
     if (!expense.receiptKey) throw new NotFoundException("No receipt to delete");
     await this.storage.delete(expense.receiptKey);
-    await this.prisma.expense.update({
+    await this.prisma.forTenant().expense.update({
       where: { id },
       data: { receiptKey: null, receiptOriginalName: null, receiptMimeType: null },
     });
@@ -438,9 +438,9 @@ export class BookkeepingService implements OnModuleInit {
     const items: any[] = parsed.items ?? [];
 
     // Replace existing line items with extracted ones
-    await this.prisma.expenseLineItem.deleteMany({ where: { expenseId: id } });
+    await this.prisma.forTenant().expenseLineItem.deleteMany({ where: { expenseId: id } });
     if (items.length > 0) {
-      await this.prisma.expenseLineItem.createMany({
+      await this.prisma.forTenant().expenseLineItem.createMany({
         data: items.map((item: any) => ({
           expenseId: id,
           account: item.description ?? "Item",
@@ -454,7 +454,7 @@ export class BookkeepingService implements OnModuleInit {
 
     const totalFromItems = items.reduce((s: number, i: any) => s + Number(i.amount ?? 0), 0);
 
-    const updated = await this.prisma.expense.update({
+    const updated = await this.prisma.forTenant().expense.update({
       where: { id },
       data: {
         isItemized: items.length > 0,
@@ -471,11 +471,11 @@ export class BookkeepingService implements OnModuleInit {
 
   private async maybeConvertToVendorBill(expense: any): Promise<void> {
     if (!expense.categoryId) return;
-    const category = await this.prisma.expenseCategory.findUnique({ where: { id: expense.categoryId } });
+    const category = await this.prisma.forTenant().expenseCategory.findUnique({ where: { id: expense.categoryId } });
     if (!category || category.code !== "INVENTORY_PURCHASE") return;
     if (expense.vendorBillId) return; // already converted
 
-    const lineItems = await this.prisma.expenseLineItem.findMany({ where: { expenseId: expense.id } });
+    const lineItems = await this.prisma.forTenant().expenseLineItem.findMany({ where: { expenseId: expense.id } });
 
     const bill = await this.vendorBillsService.create({
       supplierId: expense.supplierId ?? undefined,
@@ -490,16 +490,16 @@ export class BookkeepingService implements OnModuleInit {
       })),
     });
 
-    await this.prisma.expense.update({
+    await this.prisma.forTenant().expense.update({
       where: { id: expense.id },
       data: { vendorBillId: bill.id },
     });
   }
 
   async ensureInventoryPurchaseCategory(): Promise<void> {
-    const existing = await this.prisma.expenseCategory.findUnique({ where: { code: "INVENTORY_PURCHASE" } });
+    const existing = await this.prisma.forTenant().expenseCategory.findFirst({ where: { code: "INVENTORY_PURCHASE" } });
     if (!existing) {
-      await this.prisma.expenseCategory.create({
+      await this.prisma.forTenant().expenseCategory.create({
         data: { name: "Inventory Purchase", code: "INVENTORY_PURCHASE", isCustom: false },
       });
     }
@@ -507,9 +507,9 @@ export class BookkeepingService implements OnModuleInit {
 
   /** Convert any pre-existing INVENTORY_PURCHASE expenses that were never turned into vendor bills. */
   async backfillInventoryPurchaseExpenses(): Promise<void> {
-    const category = await this.prisma.expenseCategory.findUnique({ where: { code: "INVENTORY_PURCHASE" } });
+    const category = await this.prisma.forTenant().expenseCategory.findFirst({ where: { code: "INVENTORY_PURCHASE" } });
     if (!category) return;
-    const unconverted = await this.prisma.expense.findMany({
+    const unconverted = await this.prisma.forTenant().expense.findMany({
       where: { categoryId: category.id, vendorBillId: null, deletedAt: null },
     });
     for (const expense of unconverted) {
@@ -529,15 +529,15 @@ export class BookkeepingService implements OnModuleInit {
       : new Date();
 
     const [revenueAgg, cogsMovements, expenses] = await Promise.all([
-      this.prisma.invoice.aggregate({
+      this.prisma.forTenant().invoice.aggregate({
         where: { status: InvoiceStatus.PAID, paidAt: { gte: fromDate, lte: toDate } },
         _sum: { total: true },
       }),
-      this.prisma.stockMovement.findMany({
+      this.prisma.forTenant().stockMovement.findMany({
         where: { type: "SALE", createdAt: { gte: fromDate, lte: toDate } },
         select: { quantity: true, unitCost: true },
       }),
-      this.prisma.expense.findMany({
+      this.prisma.forTenant().expense.findMany({
         where: { deletedAt: null, date: { gte: fromDate, lte: toDate } },
         include: { category: true },
       }),
@@ -588,15 +588,15 @@ export class BookkeepingService implements OnModuleInit {
       : new Date();
 
     const [payments, expenses, bills] = await Promise.all([
-      this.prisma.invoicePayment.findMany({
+      this.prisma.forTenant().invoicePayment.findMany({
         where: { paidAt: { gte: fromDate, lte: toDate } },
         orderBy: { paidAt: "asc" },
       }),
-      this.prisma.expense.findMany({
+      this.prisma.forTenant().expense.findMany({
         where: { deletedAt: null, date: { gte: fromDate, lte: toDate } },
         orderBy: { date: "asc" },
       }),
-      this.prisma.billPayment.findMany({
+      this.prisma.forTenant().billPayment.findMany({
         where: { paidAt: { gte: fromDate, lte: toDate } },
         orderBy: { paidAt: "asc" },
       }),
@@ -622,21 +622,21 @@ export class BookkeepingService implements OnModuleInit {
 
     const [totalRevenueResult, outstandingInvoices, paymentsThisWeekResult, overdueCount] =
       await Promise.all([
-        this.prisma.invoice.aggregate({
+        this.prisma.forTenant().invoice.aggregate({
           where: { status: InvoiceStatus.PAID, paidAt: { gte: startOfMonth } },
           _sum: { total: true },
         }),
-        this.prisma.invoice.findMany({
+        this.prisma.forTenant().invoice.findMany({
           where: {
             status: { in: [InvoiceStatus.SENT, InvoiceStatus.VIEWED, InvoiceStatus.PARTIAL, InvoiceStatus.OVERDUE] },
           },
           select: { total: true, payments: { select: { amount: true } } },
         }),
-        this.prisma.invoicePayment.aggregate({
+        this.prisma.forTenant().invoicePayment.aggregate({
           where: { createdAt: { gte: sevenDaysAgo } },
           _sum: { amount: true },
         }),
-        this.prisma.invoice.count({
+        this.prisma.forTenant().invoice.count({
           where: {
             status: { in: [InvoiceStatus.SENT, InvoiceStatus.VIEWED, InvoiceStatus.PARTIAL, InvoiceStatus.OVERDUE] },
             dueDate: { lt: now },
@@ -670,7 +670,7 @@ export class BookkeepingService implements OnModuleInit {
     const startOfQuarter = new Date(now.getFullYear(), Math.floor(now.getMonth() / 3) * 3, 1);
     const startOfYear = new Date(now.getFullYear(), 0, 1);
 
-    const unpaidInvoices = await this.prisma.invoice.findMany({
+    const unpaidInvoices = await this.prisma.forTenant().invoice.findMany({
       where: {
         status: {
           in: [
@@ -711,7 +711,7 @@ export class BookkeepingService implements OnModuleInit {
       const mStart = new Date(now.getFullYear(), m, 1);
       const mEnd = new Date(now.getFullYear(), m + 1, 0, 23, 59, 59, 999);
       const [salesAgg, receiptsAgg, expensesAgg] = await Promise.all([
-        this.prisma.invoice.aggregate({
+        this.prisma.forTenant().invoice.aggregate({
           where: {
             status: {
               notIn: [InvoiceStatus.DRAFT, InvoiceStatus.VOID, InvoiceStatus.WRITTEN_OFF],
@@ -720,11 +720,11 @@ export class BookkeepingService implements OnModuleInit {
           },
           _sum: { total: true },
         }),
-        this.prisma.invoicePayment.aggregate({
+        this.prisma.forTenant().invoicePayment.aggregate({
           where: { createdAt: { gte: mStart, lte: mEnd } },
           _sum: { amount: true },
         }),
-        this.prisma.expense.aggregate({
+        this.prisma.forTenant().expense.aggregate({
           where: { deletedAt: null, date: { gte: mStart, lte: mEnd } },
           _sum: { amount: true },
         }),
@@ -740,7 +740,7 @@ export class BookkeepingService implements OnModuleInit {
     const totalReceipts = monthlyData.reduce((s, m) => s + m.receipts, 0);
     const totalExpenses = monthlyData.reduce((s, m) => s + m.expenses, 0);
 
-    const expenses = await this.prisma.expense.findMany({
+    const expenses = await this.prisma.forTenant().expense.findMany({
       where: { deletedAt: null, date: { gte: startOfYear } },
       include: { category: true },
     });
@@ -756,7 +756,7 @@ export class BookkeepingService implements OnModuleInit {
 
     const getPeriodSummary = async (from: Date) => {
       const [s, r] = await Promise.all([
-        this.prisma.invoice.aggregate({
+        this.prisma.forTenant().invoice.aggregate({
           where: {
             status: {
               notIn: [InvoiceStatus.DRAFT, InvoiceStatus.VOID, InvoiceStatus.WRITTEN_OFF],
@@ -765,12 +765,12 @@ export class BookkeepingService implements OnModuleInit {
           },
           _sum: { total: true },
         }),
-        this.prisma.invoicePayment.aggregate({
+        this.prisma.forTenant().invoicePayment.aggregate({
           where: { createdAt: { gte: from } },
           _sum: { amount: true },
         }),
       ]);
-      const dueInvoices = await this.prisma.invoice.findMany({
+      const dueInvoices = await this.prisma.forTenant().invoice.findMany({
         where: {
           status: {
             in: [
@@ -817,7 +817,7 @@ export class BookkeepingService implements OnModuleInit {
     const { InvoiceStatus } = await import("@prisma/client");
     const now = new Date();
     const interval = Math.max(1, intervalDays);
-    const invoices = await this.prisma.invoice.findMany({
+    const invoices = await this.prisma.forTenant().invoice.findMany({
       where: {
         status: {
           in: [
@@ -887,7 +887,7 @@ export class BookkeepingService implements OnModuleInit {
           return d;
         })()
       : new Date();
-    const invoices = await this.prisma.invoice.findMany({
+    const invoices = await this.prisma.forTenant().invoice.findMany({
       where: {
         status: { notIn: [InvoiceStatus.DRAFT, InvoiceStatus.VOID, 'WRITTEN_OFF' as any] },
         issueDate: { gte: fromDate, lte: toDate },
@@ -926,7 +926,7 @@ export class BookkeepingService implements OnModuleInit {
           return d;
         })()
       : new Date();
-    const items = await this.prisma.invoiceItem.findMany({
+    const items = await this.prisma.forTenant().invoiceItem.findMany({
       where: {
         invoice: {
           status: { notIn: [InvoiceStatus.DRAFT, InvoiceStatus.VOID, 'WRITTEN_OFF' as any] },
@@ -956,7 +956,7 @@ export class BookkeepingService implements OnModuleInit {
     const { InvoiceStatus } = await import("@prisma/client");
 
     // Get all non-draft/non-void invoices for full invoiced + received calculation
-    const allInvoices = await this.prisma.invoice.findMany({
+    const allInvoices = await this.prisma.forTenant().invoice.findMany({
       where: {
         status: { notIn: [InvoiceStatus.DRAFT, InvoiceStatus.VOID] },
       },
@@ -1043,7 +1043,7 @@ export class BookkeepingService implements OnModuleInit {
     const where: any = { issueDate: { gte: fromDate, lte: toDate } };
     if (status) where.status = status as (typeof InvoiceStatus)[keyof typeof InvoiceStatus];
     if (customerId) where.customerId = customerId;
-    const invoices = await this.prisma.invoice.findMany({
+    const invoices = await this.prisma.forTenant().invoice.findMany({
       where,
       include: { customer: { select: { id: true, businessName: true } }, payments: true },
       orderBy: { issueDate: "desc" },
@@ -1069,7 +1069,7 @@ export class BookkeepingService implements OnModuleInit {
 
   async getBadDebtsReport() {
     const { InvoiceStatus } = await import("@prisma/client");
-    const invoices = await this.prisma.invoice.findMany({
+    const invoices = await this.prisma.forTenant().invoice.findMany({
       where: { status: InvoiceStatus.WRITTEN_OFF },
       include: { customer: { select: { id: true, businessName: true } }, payments: true },
       orderBy: { writtenOffAt: "desc" },
@@ -1107,7 +1107,7 @@ export class BookkeepingService implements OnModuleInit {
           return d;
         })()
       : new Date();
-    const payments = await this.prisma.invoicePayment.findMany({
+    const payments = await this.prisma.forTenant().invoicePayment.findMany({
       where: { createdAt: { gte: fromDate, lte: toDate } },
       include: {
         invoice: {
@@ -1147,7 +1147,7 @@ export class BookkeepingService implements OnModuleInit {
           return d;
         })()
       : new Date();
-    const invoices = await this.prisma.invoice.findMany({
+    const invoices = await this.prisma.forTenant().invoice.findMany({
       where: { status: InvoiceStatus.PAID, paidAt: { gte: fromDate, lte: toDate } },
       select: {
         id: true,
@@ -1204,7 +1204,7 @@ export class BookkeepingService implements OnModuleInit {
       : new Date();
     const where: any = { deletedAt: null, date: { gte: fromDate, lte: toDate } };
     if (categoryId) where.categoryId = categoryId;
-    const expenses = await this.prisma.expense.findMany({
+    const expenses = await this.prisma.forTenant().expense.findMany({
       where,
       include: { category: true, supplier: { select: { id: true, name: true } } },
       orderBy: { date: "desc" },
@@ -1234,7 +1234,7 @@ export class BookkeepingService implements OnModuleInit {
           return d;
         })()
       : new Date();
-    const expenses = await this.prisma.expense.findMany({
+    const expenses = await this.prisma.forTenant().expense.findMany({
       where: { deletedAt: null, date: { gte: fromDate, lte: toDate } },
       include: { category: true },
     });
@@ -1265,7 +1265,7 @@ export class BookkeepingService implements OnModuleInit {
           return d;
         })()
       : new Date();
-    const expenses = await this.prisma.expense.findMany({
+    const expenses = await this.prisma.forTenant().expense.findMany({
       where: {
         deletedAt: null,
         date: { gte: fromDate, lte: toDate },
@@ -1307,7 +1307,7 @@ export class BookkeepingService implements OnModuleInit {
         })()
       : new Date();
 
-    const invoices = await this.prisma.invoice.findMany({
+    const invoices = await this.prisma.forTenant().invoice.findMany({
       where: {
         status: { notIn: [InvoiceStatus.VOID, InvoiceStatus.DRAFT] },
         issueDate: { gte: fromDate, lte: toDate },
@@ -1373,7 +1373,7 @@ export class BookkeepingService implements OnModuleInit {
     }
     if (customerId) where.customerId = customerId;
 
-    const invoices = await this.prisma.invoice.findMany({
+    const invoices = await this.prisma.forTenant().invoice.findMany({
       where,
       include: {
         customer: { select: { id: true, businessName: true } },
@@ -1417,7 +1417,7 @@ export class BookkeepingService implements OnModuleInit {
     const where: any = { createdAt: { gte: fromDate, lte: toDate } };
     if (status) where.status = status;
 
-    const estimates = await this.prisma.estimate.findMany({
+    const estimates = await this.prisma.forTenant().estimate.findMany({
       where,
       include: { customer: { select: { id: true, businessName: true } } },
       orderBy: { createdAt: "desc" },
@@ -1451,7 +1451,7 @@ export class BookkeepingService implements OnModuleInit {
       : new Date();
 
     const [voidPayments, appliedCreditNotes] = await Promise.all([
-      this.prisma.invoicePayment.findMany({
+      this.prisma.forTenant().invoicePayment.findMany({
         where: { status: PaymentStatus.VOID, createdAt: { gte: fromDate, lte: toDate } },
         include: {
           invoice: {
@@ -1463,7 +1463,7 @@ export class BookkeepingService implements OnModuleInit {
         },
         orderBy: { createdAt: "desc" },
       }),
-      this.prisma.creditNote.findMany({
+      this.prisma.forTenant().creditNote.findMany({
         where: { status: CreditNoteStatus.APPLIED, createdAt: { gte: fromDate, lte: toDate } },
         include: {
           customer: { select: { id: true, businessName: true } },
@@ -1527,7 +1527,7 @@ export class BookkeepingService implements OnModuleInit {
       : new Date();
 
     const [invoices, creditNotes, payments] = await Promise.all([
-      this.prisma.invoice.findMany({
+      this.prisma.forTenant().invoice.findMany({
         where: {
           status: { notIn: [InvoiceStatus.DRAFT, InvoiceStatus.VOID] },
           issueDate: { gte: fromDate, lte: toDate },
@@ -1537,11 +1537,11 @@ export class BookkeepingService implements OnModuleInit {
           payments: true,
         },
       }),
-      this.prisma.creditNote.findMany({
+      this.prisma.forTenant().creditNote.findMany({
         where: { createdAt: { gte: fromDate, lte: toDate } },
         include: { customer: { select: { id: true, businessName: true } } },
       }),
-      this.prisma.invoicePayment.findMany({
+      this.prisma.forTenant().invoicePayment.findMany({
         where: { createdAt: { gte: fromDate, lte: toDate } },
         include: {
           invoice: {

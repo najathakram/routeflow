@@ -19,7 +19,7 @@ export class AnalyticsService {
 
   async getRevenueTrend(from?: string, to?: string, groupBy = "month") {
     const { fromDate, toDate } = this.dateRange(from, to);
-    const invoices = await this.prisma.invoice.findMany({
+    const invoices = await this.prisma.forTenant().invoice.findMany({
       where: {
         issueDate: { gte: fromDate, lte: toDate },
         status: { notIn: ["DRAFT", "VOID", "WRITTEN_OFF"] },
@@ -42,7 +42,7 @@ export class AnalyticsService {
 
   async getTopProducts(metric = "revenue", limit = 10) {
     if (metric === "revenue") {
-      const items = await this.prisma.transactionItem.findMany({
+      const items = await this.prisma.forTenant().transactionItem.findMany({
         include: { orderItem: { include: { product: { select: { id: true, name: true } } } } },
       });
       const map: Record<string, { name: string; value: number }> = {};
@@ -58,7 +58,7 @@ export class AnalyticsService {
         .slice(0, limit);
     }
     // units sold
-    const movements = await this.prisma.stockMovement.findMany({
+    const movements = await this.prisma.forTenant().stockMovement.findMany({
       where: { type: "SALE" },
       include: { product: { select: { id: true, name: true } } },
     });
@@ -80,7 +80,7 @@ export class AnalyticsService {
       if (from) where.createdAt.gte = new Date(from);
       if (to) where.createdAt.lte = new Date(to + "T23:59:59.999Z");
     }
-    const invoices = await this.prisma.invoice.findMany({
+    const invoices = await this.prisma.forTenant().invoice.findMany({
       where,
       include: { customer: { select: { id: true, businessName: true } } },
     });
@@ -98,7 +98,7 @@ export class AnalyticsService {
   }
 
   async getRoutePerformance() {
-    const runs = await this.prisma.routeRun.findMany({
+    const runs = await this.prisma.forTenant().routeRun.findMany({
       include: {
         route: { select: { id: true, name: true } },
         orders: { select: { id: true } },
@@ -121,7 +121,7 @@ export class AnalyticsService {
   }
 
   async getDriverPerformance() {
-    const runs = await this.prisma.routeRun.findMany({
+    const runs = await this.prisma.forTenant().routeRun.findMany({
       where: { driverId: { not: null } },
       include: {
         driver: { include: { user: { select: { username: true } } } },
@@ -155,8 +155,8 @@ export class AnalyticsService {
 
   async getInventoryTurnover(from?: string, to?: string) {
     const { fromDate, toDate } = this.dateRange(from, to);
-    const products = await this.prisma.product.findMany({ where: { isActive: true } });
-    const sales = await this.prisma.stockMovement.findMany({
+    const products = await this.prisma.forTenant().product.findMany({ where: { isActive: true } });
+    const sales = await this.prisma.forTenant().stockMovement.findMany({
       where: { type: "SALE", createdAt: { gte: fromDate, lte: toDate } },
       select: { productId: true, quantity: true },
     });
@@ -175,7 +175,7 @@ export class AnalyticsService {
   async getDeadStock(daysInactive = 30) {
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - daysInactive);
-    const activeProducts = await this.prisma.product.findMany({
+    const activeProducts = await this.prisma.forTenant().product.findMany({
       where: { isActive: true, currentStock: { gt: 0 } },
     });
     const result: {
@@ -186,7 +186,7 @@ export class AnalyticsService {
       daysInactive: number | null;
     }[] = [];
     for (const p of activeProducts) {
-      const lastMovement = await this.prisma.stockMovement.findFirst({
+      const lastMovement = await this.prisma.forTenant().stockMovement.findFirst({
         where: { productId: p.id },
         orderBy: { createdAt: "desc" },
       });
@@ -206,7 +206,7 @@ export class AnalyticsService {
   }
 
   async getMarginAlerts() {
-    const products = await this.prisma.product.findMany({ where: { isActive: true } });
+    const products = await this.prisma.forTenant().product.findMany({ where: { isActive: true } });
     const alerts: { id: string; name: string; price: number; cost: number; marginPct: number }[] =
       [];
     for (const p of products) {
@@ -227,7 +227,7 @@ export class AnalyticsService {
   }
 
   async getDso() {
-    const paidInvoices = await this.prisma.invoice.findMany({
+    const paidInvoices = await this.prisma.forTenant().invoice.findMany({
       where: { status: "PAID", paidAt: { not: null } },
       select: { issueDate: true, paidAt: true },
     });
@@ -243,7 +243,7 @@ export class AnalyticsService {
   }
 
   async getPriceHistory(productId: string) {
-    const items = await this.prisma.orderItem.findMany({
+    const items = await this.prisma.forTenant().orderItem.findMany({
       where: { productId },
       include: { order: { select: { createdAt: true } } },
       orderBy: { createdAt: "asc" },
@@ -253,7 +253,7 @@ export class AnalyticsService {
   }
 
   async getCostHistory(productId: string) {
-    const movements = await this.prisma.stockMovement.findMany({
+    const movements = await this.prisma.forTenant().stockMovement.findMany({
       where: { productId, type: "PURCHASE" },
       orderBy: { createdAt: "asc" },
       take: 100,
@@ -263,7 +263,7 @@ export class AnalyticsService {
 
   async getSalesByCategory(from?: string, to?: string) {
     const { fromDate, toDate } = this.dateRange(from, to);
-    const items = await this.prisma.orderItem.findMany({
+    const items = await this.prisma.forTenant().orderItem.findMany({
       where: { order: { createdAt: { gte: fromDate, lte: toDate }, status: "DELIVERED" } },
       include: { product: { select: { category: true } } },
     });
@@ -279,14 +279,14 @@ export class AnalyticsService {
 
   async getGrossMarginTrend(from?: string, to?: string) {
     const { fromDate, toDate } = this.dateRange(from, to);
-    const invoices = await this.prisma.invoice.findMany({
+    const invoices = await this.prisma.forTenant().invoice.findMany({
       where: {
         issueDate: { gte: fromDate, lte: toDate },
         status: { notIn: ["DRAFT", "VOID", "WRITTEN_OFF"] },
       },
       select: { total: true },
     });
-    const movements = await this.prisma.stockMovement.findMany({
+    const movements = await this.prisma.forTenant().stockMovement.findMany({
       where: { type: "SALE", createdAt: { gte: fromDate, lte: toDate } },
     });
     const revenue = invoices.reduce((s, inv) => s + Number(inv.total), 0);
@@ -306,7 +306,7 @@ export class AnalyticsService {
 
   async getAverageOrderValue(from?: string, to?: string) {
     const { fromDate, toDate } = this.dateRange(from, to);
-    const invoices = await this.prisma.invoice.findMany({
+    const invoices = await this.prisma.forTenant().invoice.findMany({
       where: {
         issueDate: { gte: fromDate, lte: toDate },
         status: { notIn: ["DRAFT", "VOID", "WRITTEN_OFF"] },

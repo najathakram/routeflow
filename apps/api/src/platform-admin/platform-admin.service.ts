@@ -1,0 +1,332 @@
+import { Injectable, NotFoundException, ConflictException, BadRequestException } from "@nestjs/common";
+import { JwtService } from "@nestjs/jwt";
+import { ConfigService } from "@nestjs/config";
+import { TenantStatus, TenantPlan } from "@prisma/client";
+import * as bcrypt from "bcrypt";
+import * as crypto from "crypto";
+import { PrismaService } from "../prisma/prisma.service";
+import { EmailService } from "../email/email.service";
+import { AppConfig } from "../config/configuration";
+import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { UpdateTenantStatusDto } from "./dto/update-tenant-status.dto";
+import { UpdateTenantPlanDto } from "./dto/update-tenant-plan.dto";
+import { CreateTenantDto } from "./dto/create-tenant.dto";
+
+@Injectable()
+export class PlatformAdminService {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly jwtService: JwtService,
+    private readonly config: ConfigService<AppConfig>,
+    private readonly emailService: EmailService,
+  ) {}
+
+  // ─── Tenant list ─────────────────────────────────────────────────────────────
+
+  async listTenants(page = 1, limit = 20) {
+    const skip = (page - 1) * limit;
+
+    const [tenants, total] = await Promise.all([
+      this.prisma.tenant.findMany({
+        skip,
+        take: limit,
+        orderBy: { createdAt: "desc" },
+        include: {
+          config: {
+            select: { businessName: true, primaryColor: true, logoKey: true },
+          },
+          subscription: {
+            select: { currentPlan: true, periodEnd: true, cancelAtPeriodEnd: true },
+          },
+          _count: {
+            select: { users: true, customers: true, orders: true },
+          },
+        },
+      }),
+      this.prisma.tenant.count(),
+    ]);
+
+    return {
+      data: tenants.map((t) => this._formatTenant(t)),
+      meta: { total, page, limit, pages: Math.ceil(total / limit) },
+    };
+  }
+
+  async getTenant(id: string) {
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id },
+      include: {
+        config: true,
+        subscription: true,
+        _count: {
+          select: { users: true, customers: true, orders: true, drivers: true, routes: true },
+        },
+      },
+    });
+    if (!tenant) throw new NotFoundException(`Tenant ${id} not found`);
+    return this._formatTenant(tenant);
+  }
+
+  // ─── Create / Delete Tenant ───────────────────────────────────────────────────
+
+  async createTenant(dto: CreateTenantDto) {
+    const { slug, businessName, adminEmail, adminUsername, adminPassword, plan } = dto;
+
+    const slugTaken = await this.prisma.tenant.findUnique({ where: { slug } });
+    if (slugTaken) throw new ConflictException(`Slug "${slug}" is already taken`);
+
+    const hashedPassword = await bcrypt.hash(adminPassword, 10);
+    const tenantPlan = (plan as TenantPlan) ?? TenantPlan.STARTER;
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const tenant = await tx.tenant.create({
+        data: { slug, name: businessName, status: "ACTIVE", plan: tenantPlan },
+      });
+
+      await tx.tenantConfig.create({ data: { tenantId: tenant.id, businessName } });
+
+      const existingUser = await tx.user.findFirst({
+        where: { tenantId: tenant.id, OR: [{ email: adminEmail }, { username: adminUsername }] },
+      });
+      if (existingUser) throw new BadRequestException("Email or username already in use");
+
+      const user = await tx.user.create({
+        data: {
+          email: adminEmail,
+          username: adminUsername,
+          password: hashedPassword,
+          role: "TENANT_ADMIN",
+          status: "ACTIVE",
+          forcePasswordChange: false,
+          tenantId: tenant.id,
+        },
+      });
+
+      return { tenant, user };
+    });
+
+    // Send welcome email (best-effort)
+    try {
+      await this.emailService.send({
+        to: adminEmail,
+        subject: `Welcome to RouteFlow — Your ${businessName} account is ready`,
+        html: `<p>Hello ${adminUsername},</p>
+<p>Your RouteFlow account for <strong>${businessName}</strong> has been created.</p>
+<p><strong>Username:</strong> ${adminUsername}<br/>
+<strong>Temporary Password:</strong> ${adminPassword}</p>
+<p>Please log in and change your password immediately.</p>
+<p>RouteFlow Platform</p>`,
+      });
+    } catch { /* best-effort — don't fail tenant creation over email */ }
+
+    return {
+      id: result.tenant.id,
+      slug: result.tenant.slug,
+      name: result.tenant.name,
+      status: result.tenant.status,
+      plan: result.tenant.plan,
+      adminUserId: result.user.id,
+      adminUsername: result.user.username,
+    };
+  }
+
+  async deleteTenant(id: string) {
+    await this._findOrThrow(id);
+    const tenant = await this.prisma.tenant.update({
+      where: { id },
+      data: { deletedAt: new Date(), status: "CANCELLED" },
+    });
+    return { id: tenant.id, slug: tenant.slug, status: tenant.status, deletedAt: tenant.deletedAt };
+  }
+
+  // ─── Mutations ────────────────────────────────────────────────────────────────
+
+  async updateStatus(id: string, dto: UpdateTenantStatusDto) {
+    await this._findOrThrow(id);
+    const tenant = await this.prisma.tenant.update({
+      where: { id },
+      data: { status: dto.status },
+    });
+    return { id: tenant.id, slug: tenant.slug, status: tenant.status };
+  }
+
+  async updatePlan(id: string, dto: UpdateTenantPlanDto) {
+    await this._findOrThrow(id);
+    const tenant = await this.prisma.tenant.update({
+      where: { id },
+      data: { plan: dto.plan },
+    });
+    // Upsert subscription record to reflect plan change
+    await this.prisma.tenantSubscription.upsert({
+      where: { tenantId: id },
+      create: { tenantId: id, currentPlan: dto.plan },
+      update: { currentPlan: dto.plan },
+    });
+    return { id: tenant.id, slug: tenant.slug, plan: tenant.plan };
+  }
+
+  // ─── Impersonation ────────────────────────────────────────────────────────────
+
+  /**
+   * Issues a short-lived (15-min) access token with the target tenant-admin
+   * user's claims plus `impersonatedBy: superAdminId`.
+   * Tokens with `impersonatedBy` are rejected by ImpersonationGuard on all
+   * mutation (POST/PATCH/PUT/DELETE) endpoints.
+   */
+  async impersonate(tenantId: string, superAdminId: string) {
+    const tenant = await this._findOrThrow(tenantId);
+
+    // Find the TENANT_ADMIN user for this tenant
+    const adminUser = await this.prisma.user.findFirst({
+      where: { tenantId, role: "TENANT_ADMIN", status: "ACTIVE", deletedAt: null },
+    });
+    if (!adminUser) throw new NotFoundException("No active TENANT_ADMIN found for this tenant");
+
+    const jwtConfig = this.config.get<AppConfig["jwt"]>("jwt")!;
+
+    const payload: JwtPayload & { impersonatedBy: string } = {
+      sub: adminUser.id,
+      username: adminUser.username,
+      role: adminUser.role,
+      status: adminUser.status,
+      forcePasswordChange: false,
+      tenantId,
+      tenantSlug: tenant.slug,
+      impersonatedBy: superAdminId,
+    };
+
+    const accessToken = this.jwtService.sign(payload, {
+      secret: jwtConfig.secret,
+      expiresIn: "15m",
+    });
+
+    return {
+      accessToken,
+      expiresIn: 900,
+      impersonatedTenant: { id: tenantId, slug: tenant.slug },
+      impersonatedUser: { id: adminUser.id, username: adminUser.username },
+    };
+  }
+
+  // ─── Platform stats ───────────────────────────────────────────────────────────
+
+  async getStats() {
+    const [
+      totalTenants,
+      activeTenants,
+      trialTenants,
+      suspendedTenants,
+      totalUsers,
+      superAdminCount,
+      planBreakdown,
+      recentTenants,
+    ] = await Promise.all([
+      this.prisma.tenant.count(),
+      this.prisma.tenant.count({ where: { status: TenantStatus.ACTIVE } }),
+      this.prisma.tenant.count({ where: { status: TenantStatus.TRIAL } }),
+      this.prisma.tenant.count({ where: { status: TenantStatus.SUSPENDED } }),
+      this.prisma.user.count({ where: { tenantId: { not: null } } }),
+      this.prisma.user.count({ where: { role: "SUPER_ADMIN" } }),
+      this.prisma.tenant.groupBy({
+        by: ["plan"],
+        _count: { plan: true },
+      }),
+      this.prisma.tenant.findMany({
+        take: 5,
+        orderBy: { createdAt: "desc" },
+        select: { id: true, slug: true, name: true, status: true, plan: true, createdAt: true },
+      }),
+    ]);
+
+    return {
+      tenants: {
+        total: totalTenants,
+        active: activeTenants,
+        trial: trialTenants,
+        suspended: suspendedTenants,
+      },
+      totalUsers,
+      superAdminCount,
+      planBreakdown: Object.fromEntries(
+        planBreakdown.map(({ plan, _count }) => [plan, _count.plan]),
+      ),
+      recentTenants,
+    };
+  }
+
+  // ─── Trial extension ─────────────────────────────────────────────────────────
+
+  async extendTrial(id: string, days: number) {
+    await this._findOrThrow(id);
+    const updated = await this.prisma.tenant.update({
+      where: { id },
+      data: {
+        trialEndsAt: new Date(Date.now() + days * 24 * 60 * 60 * 1000),
+        status: "TRIAL",
+      },
+      select: { id: true, slug: true, trialEndsAt: true, status: true },
+    });
+    return updated;
+  }
+
+  // ─── Reset tenant admin password ─────────────────────────────────────────────
+
+  async resetTenantAdminPassword(tenantId: string) {
+    await this._findOrThrow(tenantId);
+    const adminUser = await this.prisma.user.findFirst({
+      where: { tenantId, role: "TENANT_ADMIN", status: "ACTIVE", deletedAt: null },
+    });
+    if (!adminUser) throw new NotFoundException("No active TENANT_ADMIN found for this tenant");
+
+    const tempPassword = `${crypto.randomBytes(3).toString("hex").toUpperCase()}-${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
+    const hashedPassword = await bcrypt.hash(tempPassword, 10);
+    await this.prisma.user.update({
+      where: { id: adminUser.id },
+      data: { password: hashedPassword, forcePasswordChange: true },
+    });
+    return { username: adminUser.username, tempPassword };
+  }
+
+  // ─── Audit logs ───────────────────────────────────────────────────────────────
+
+  async getAuditLogs(tenantId: string | null, page = 1, limit = 50) {
+    const skip = (page - 1) * limit;
+    const where = tenantId ? { tenantId } : {};
+    const [logs, total] = await Promise.all([
+      this.prisma.auditLog.findMany({
+        where,
+        orderBy: { createdAt: "desc" },
+        skip,
+        take: limit,
+      }),
+      this.prisma.auditLog.count({ where }),
+    ]);
+    return { data: logs, meta: { total, page, limit, pages: Math.ceil(total / limit) } };
+  }
+
+  // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+  private async _findOrThrow(id: string) {
+    const tenant = await this.prisma.tenant.findUnique({ where: { id }, select: { id: true, slug: true } });
+    if (!tenant) throw new NotFoundException(`Tenant ${id} not found`);
+    return tenant;
+  }
+
+  private _formatTenant(t: any) {
+    return {
+      id: t.id,
+      slug: t.slug,
+      name: t.name,
+      status: t.status,
+      plan: t.plan,
+      trialEndsAt: t.trialEndsAt,
+      createdAt: t.createdAt,
+      deletedAt: t.deletedAt,
+      businessName: t.config?.businessName ?? null,
+      primaryColor: t.config?.primaryColor ?? null,
+      logoKey: t.config?.logoKey ?? null,
+      subscription: t.subscription ?? null,
+      counts: t._count ?? null,
+    };
+  }
+}

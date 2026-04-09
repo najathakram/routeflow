@@ -19,7 +19,7 @@ export class CreditNotesService {
   private async nextCnNumber() {
     const year = new Date().getFullYear();
     const prefix = `CN-${year}-`;
-    const last = await this.prisma.creditNote.findFirst({
+    const last = await this.prisma.forTenant().creditNote.findFirst({
       where: { creditNoteNumber: { startsWith: prefix } },
       orderBy: { creditNoteNumber: "desc" },
     });
@@ -37,7 +37,7 @@ export class CreditNotesService {
   async create(dto: { customerId: string; invoiceId?: string; amount: number; reason?: string }) {
     if (!dto.amount || dto.amount <= 0)
       throw new BadRequestException("Amount must be greater than 0");
-    const cn = await this.prisma.creditNote.create({
+    const cn = await this.prisma.forTenant().creditNote.create({
       data: {
         creditNoteNumber: await this.nextCnNumber(),
         customerId: dto.customerId,
@@ -49,7 +49,7 @@ export class CreditNotesService {
       include: { customer: { select: { id: true, businessName: true } } },
     });
 
-    this.gateway.emitCreditNoteCreated({
+    this.gateway.emitCreditNoteCreated(this.prisma.getTenantId(), {
       creditNoteId: cn.id,
       creditNoteNumber: cn.creditNoteNumber,
       customerId: cn.customerId,
@@ -85,14 +85,14 @@ export class CreditNotesService {
       ];
     }
     const [data, total] = await Promise.all([
-      this.prisma.creditNote.findMany({
+      this.prisma.forTenant().creditNote.findMany({
         where,
         include: { customer: { select: { id: true, businessName: true } } },
         orderBy: { createdAt: "desc" },
         skip,
         take: limit,
       }),
-      this.prisma.creditNote.count({ where }),
+      this.prisma.forTenant().creditNote.count({ where }),
     ]);
     return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
   }
@@ -108,7 +108,7 @@ export class CreditNotesService {
     limit = 20,
   ) {
     if (user.role === "CUSTOMER") {
-      const customer = await this.prisma.customer.findFirst({ where: { userId: user.sub } });
+      const customer = await this.prisma.forTenant().customer.findFirst({ where: { userId: user.sub } });
       if (!customer) return { data: [], meta: { total: 0, page, limit, totalPages: 0 } };
       return this.findAll(customer.id, status, search, dateFrom, dateTo, page, limit);
     }
@@ -120,7 +120,7 @@ export class CreditNotesService {
   }
 
   async findOne(id: string) {
-    const cn = await this.prisma.creditNote.findUnique({
+    const cn = await this.prisma.forTenant().creditNote.findUnique({
       where: { id },
       include: {
         customer: { select: { id: true, businessName: true } },
@@ -134,7 +134,7 @@ export class CreditNotesService {
   async findOneForUser(id: string, user: JwtPayload) {
     const cn = await this.findOne(id);
     if (user.role === "CUSTOMER") {
-      const customer = await this.prisma.customer.findFirst({ where: { userId: user.sub } });
+      const customer = await this.prisma.forTenant().customer.findFirst({ where: { userId: user.sub } });
       if (!customer || cn.customerId !== customer.id) throw new ForbiddenException();
     }
     return cn;
@@ -145,7 +145,7 @@ export class CreditNotesService {
   }
 
   async applyToInvoice(creditNoteId: string, invoiceId: string, amount?: number) {
-    return this.prisma.$transaction(
+    return this.prisma.tenantTransaction(
       async (tx) => {
         const cn = await tx.creditNote.findUnique({ where: { id: creditNoteId } });
         if (!cn || cn.status === "APPLIED" || cn.status === "VOID")
@@ -223,6 +223,6 @@ export class CreditNotesService {
   }
 
   async voidCreditNote(id: string) {
-    return this.prisma.creditNote.update({ where: { id }, data: { status: "VOID" } });
+    return this.prisma.forTenant().creditNote.update({ where: { id }, data: { status: "VOID" } });
   }
 }

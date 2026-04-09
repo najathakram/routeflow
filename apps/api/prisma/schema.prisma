@@ -12,9 +12,24 @@ datasource db {
 // ─── Enums ────────────────────────────────────────────────────────────────────
 
 enum UserRole {
+  SUPER_ADMIN
+  TENANT_ADMIN
   OPERATOR
   DRIVER
   CUSTOMER
+}
+
+enum TenantStatus {
+  TRIAL
+  ACTIVE
+  SUSPENDED
+  CANCELLED
+}
+
+enum TenantPlan {
+  STARTER
+  PROFESSIONAL
+  ENTERPRISE
 }
 
 enum UserStatus {
@@ -189,12 +204,144 @@ enum PriceType {
   DISCOUNTED
 }
 
+// ─── Tenant Models ────────────────────────────────────────────────────────────
+
+model Tenant {
+  id          String       @id @default(uuid())
+  slug        String       @unique
+  name        String
+  status      TenantStatus @default(TRIAL)
+  plan        TenantPlan   @default(STARTER)
+  trialEndsAt DateTime?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  deletedAt   DateTime?
+
+  users        User[]
+  config       TenantConfig?
+  googleOAuth  TenantGoogleOAuth?
+  subscription TenantSubscription?
+
+  userPreferences      UserPreference[]
+  customers            Customer[]
+  customerAddresses    CustomerAddress[]
+  drivers              Driver[]
+  products             Product[]
+  routes               Route[]
+  routeStops           RouteStop[]
+  routeCustomers       RouteCustomer[]
+  routeRuns            RouteRun[]
+  routeRunStops        RouteRunStop[]
+  orders               Order[]
+  orderItems           OrderItem[]
+  deliveryMutations    DeliveryMutation[]
+  transactions         Transaction[]
+  transactionItems     TransactionItem[]
+  payments             Payment[]
+  deviceTokens         DeviceToken[]
+  orderTemplates       OrderTemplate[]
+  orderTemplateItems   OrderTemplateItem[]
+  refreshTokens        RefreshToken[]
+  suppliers            Supplier[]
+  stockLots            StockLot[]
+  stockMovements       StockMovement[]
+  invoices             Invoice[]
+  invoiceItems         InvoiceItem[]
+  invoicePayments      InvoicePayment[]
+  paymentCounters      PaymentCounter[]
+  expenseCategories    ExpenseCategory[]
+  expenses             Expense[]
+  expenseLineItems     ExpenseLineItem[]
+  mileageRates         MileageRate[]
+  contactPersons       ContactPerson[]
+  customerTags         CustomerTag[]
+  customerTagAssignments CustomerTagAssignment[]
+  customerComments     CustomerComment[]
+  purchaseOrders       PurchaseOrder[]
+  purchaseOrderItems   PurchaseOrderItem[]
+  creditNotes          CreditNote[]
+  estimates            Estimate[]
+  estimateItems        EstimateItem[]
+  vendorBills          VendorBill[]
+  vendorBillItems      VendorBillItem[]
+  billPayments         BillPayment[]
+  productMappings      ProductMapping[]
+  returns              Return[]
+  returnItems          ReturnItem[]
+  advancePayments      AdvancePayment[]
+  recurringInvoices    RecurringInvoice[]
+  recurringInvoiceItems RecurringInvoiceItem[]
+  messages             Message[]
+  customerPrices       CustomerPrice[]
+
+  @@index([slug])
+  @@index([status])
+  @@index([deletedAt])
+}
+
+model TenantConfig {
+  id            String   @id @default(uuid())
+  tenantId      String   @unique
+  businessName  String?
+  logoKey       String?
+  primaryColor  String?
+  timezone      String   @default("America/New_York")
+  currency      String   @default("USD")
+  taxRate       Decimal? @db.Decimal(5, 4)
+  addressLine1  String?
+  addressLine2  String?
+  city          String?
+  state         String?
+  zip           String?
+  country       String?
+  phone         String?
+  website       String?
+  smtpHost      String?
+  smtpPort      Int?
+  smtpSecure    Boolean  @default(true)
+  smtpUser      String?
+  smtpPassword  String?
+  smtpFromName  String?
+  smtpFromEmail String?
+  updatedAt     DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+}
+
+model TenantGoogleOAuth {
+  id           String   @id @default(uuid())
+  tenantId     String   @unique
+  clientId     String
+  clientSecret String
+  callbackUrl  String
+  enabled      Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+}
+
+model TenantSubscription {
+  id                String     @id @default(uuid())
+  tenantId          String     @unique
+  stripeCustomerId  String?
+  stripeSubId       String?
+  currentPlan       TenantPlan @default(STARTER)
+  periodStart       DateTime?
+  periodEnd         DateTime?
+  cancelAtPeriodEnd Boolean    @default(false)
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+}
+
 // ─── Models ───────────────────────────────────────────────────────────────────
 
 model User {
   id                  String     @id @default(uuid())
-  email               String     @unique
-  username            String     @unique
+  email               String
+  username            String
   password            String?
   googleId            String?    @unique
   role                UserRole
@@ -203,7 +350,9 @@ model User {
   createdAt           DateTime   @default(now())
   updatedAt           DateTime   @updatedAt
   deletedAt           DateTime?
+  tenantId            String?
 
+  tenant          Tenant?          @relation(fields: [tenantId], references: [id])
   customer        Customer?
   driver          Driver?
   deviceTokens    DeviceToken[]
@@ -213,6 +362,9 @@ model User {
   messages        Message[]
   preferences     UserPreference[]
 
+  @@unique([tenantId, email])
+  @@unique([tenantId, username])
+  @@index([tenantId])
   @@index([role])
   @@index([status])
   @@index([deletedAt])
@@ -224,11 +376,14 @@ model UserPreference {
   key       String
   value     String
   updatedAt DateTime @updatedAt
+  tenantId  String?
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant Tenant? @relation(fields: [tenantId], references: [id])
 
   @@unique([userId, key])
   @@index([userId])
+  @@index([tenantId])
 }
 
 model Customer {
@@ -255,8 +410,10 @@ model Customer {
   currency            String      @default("USD")
   createdAt           DateTime    @default(now())
   updatedAt           DateTime    @updatedAt
+  tenantId            String?
 
   user           User              @relation(fields: [userId], references: [id])
+  tenant         Tenant?           @relation(fields: [tenantId], references: [id])
   addresses      CustomerAddress[]
   routes         RouteCustomer[]
   routeStops     RouteStop[]
@@ -279,6 +436,7 @@ model Customer {
   @@index([zohoContactId])
   @@index([businessName])
   @@index([customerType])
+  @@index([tenantId])
 }
 
 model CustomerAddress {
@@ -296,12 +454,15 @@ model CustomerAddress {
   addressType String   @default("BILLING")
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  tenantId    String?
 
   customer      Customer       @relation(fields: [customerId], references: [id])
+  tenant        Tenant?        @relation(fields: [tenantId], references: [id])
   routeStops    RouteStop[]
   routeRunStops RouteRunStop[]
 
   @@index([customerId])
+  @@index([tenantId])
 }
 
 model Driver {
@@ -316,26 +477,29 @@ model Driver {
   vehiclePlate  String?
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
+  tenantId      String?
 
   user              User               @relation(fields: [userId], references: [id])
+  tenant            Tenant?            @relation(fields: [tenantId], references: [id])
   routes            Route[]
   routeRuns         RouteRun[]
   deliveryMutations DeliveryMutation[]
 
   @@index([status])
+  @@index([tenantId])
 }
 
 model Product {
   id               String   @id @default(uuid())
   name             String
   description      String?
-  sku              String?  @unique
+  sku              String?
   unit             String
   pricePerUnit     Decimal  @db.Decimal(10, 2)
   category         String?
   imageKeys        String[] @default([])
   isActive         Boolean  @default(true)
-  barcode          String?  @unique
+  barcode          String?
   currentStock     Decimal  @default(0) @db.Decimal(10, 3)
   averageCost      Decimal? @db.Decimal(10, 4)
   costingMethod    CostingMethod @default(FIFO)
@@ -347,7 +511,9 @@ model Product {
   variantName      String?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
+  tenantId         String?
 
+  tenant                  Tenant?   @relation(fields: [tenantId], references: [id])
   orderItems              OrderItem[]
   deliveryMutations       DeliveryMutation[]
   templateItems           OrderTemplateItem[]
@@ -364,10 +530,13 @@ model Product {
   parent                  Product?  @relation("ProductVariants", fields: [parentProductId], references: [id])
   variants                Product[] @relation("ProductVariants")
 
+  @@unique([tenantId, sku])
+  @@unique([tenantId, barcode])
   @@index([category])
   @@index([isActive])
   @@index([barcode])
   @@index([parentProductId])
+  @@index([tenantId])
 }
 
 model Route {
@@ -377,14 +546,17 @@ model Route {
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  tenantId  String?
 
   driver    Driver?         @relation(fields: [driverId], references: [id])
+  tenant    Tenant?         @relation(fields: [tenantId], references: [id])
   stops     RouteStop[]
   customers RouteCustomer[]
   runs      RouteRun[]
 
   @@index([driverId])
   @@index([isActive])
+  @@index([tenantId])
 }
 
 model RouteStop {
@@ -396,8 +568,10 @@ model RouteStop {
   notes             String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
+  tenantId          String?
 
   route           Route            @relation(fields: [routeId], references: [id])
+  tenant          Tenant?          @relation(fields: [tenantId], references: [id])
   customer        Customer?        @relation(fields: [customerId], references: [id])
   customerAddress CustomerAddress? @relation(fields: [customerAddressId], references: [id])
   routeRunStops   RouteRunStop[]
@@ -406,6 +580,7 @@ model RouteStop {
   @@index([routeId])
   @@index([customerId])
   @@index([customerAddressId])
+  @@index([tenantId])
 }
 
 model RouteCustomer {
@@ -414,13 +589,16 @@ model RouteCustomer {
   customerId String
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+  tenantId   String?
 
   route    Route    @relation(fields: [routeId], references: [id])
+  tenant   Tenant?  @relation(fields: [tenantId], references: [id])
   customer Customer @relation(fields: [customerId], references: [id])
 
   @@unique([routeId, customerId])
   @@index([routeId])
   @@index([customerId])
+  @@index([tenantId])
 }
 
 model RouteRun {
@@ -435,8 +613,10 @@ model RouteRun {
   notes             String?
   createdAt         DateTime       @default(now())
   updatedAt         DateTime       @updatedAt
+  tenantId          String?
 
   route  Route          @relation(fields: [routeId], references: [id])
+  tenant Tenant?        @relation(fields: [tenantId], references: [id])
   driver Driver?        @relation(fields: [driverId], references: [id])
   stops  RouteRunStop[]
   orders Order[]
@@ -445,6 +625,7 @@ model RouteRun {
   @@index([driverId])
   @@index([status])
   @@index([scheduledDate])
+  @@index([tenantId])
 }
 
 model RouteRunStop {
@@ -464,8 +645,10 @@ model RouteRunStop {
   safeDropEnabled   Boolean          @default(false)
   createdAt         DateTime          @default(now())
   updatedAt         DateTime          @updatedAt
+  tenantId          String?
 
   routeRun        RouteRun         @relation(fields: [routeRunId], references: [id])
+  tenant          Tenant?          @relation(fields: [tenantId], references: [id])
   routeStop       RouteStop        @relation(fields: [routeStopId], references: [id])
   customer        Customer?        @relation(fields: [customerId], references: [id])
   customerAddress CustomerAddress? @relation(fields: [customerAddressId], references: [id])
@@ -477,6 +660,7 @@ model RouteRunStop {
   @@index([routeStopId])
   @@index([customerId])
   @@index([customerAddressId])
+  @@index([tenantId])
 }
 
 model Order {
@@ -499,8 +683,10 @@ model Order {
   deliveredAt           DateTime?
   createdAt             DateTime    @default(now())
   updatedAt             DateTime    @updatedAt
+  tenantId              String?
 
   customer          Customer           @relation(fields: [customerId], references: [id])
+  tenant            Tenant?            @relation(fields: [tenantId], references: [id])
   routeRun          RouteRun?          @relation(fields: [routeRunId], references: [id])
   routeRunStop      RouteRunStop?      @relation(fields: [routeRunStopId], references: [id])
   orderTemplate     OrderTemplate?     @relation(fields: [templateId], references: [id])
@@ -518,6 +704,7 @@ model Order {
   @@index([urgent])
   @@index([createdAt])
   @@index([requestedDeliveryDate])
+  @@index([tenantId])
 }
 
 model OrderItem {
@@ -535,8 +722,10 @@ model OrderItem {
   notes         String?
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
+  tenantId  String?
 
   order             Order              @relation(fields: [orderId], references: [id])
+  tenant            Tenant?            @relation(fields: [tenantId], references: [id])
   product           Product            @relation(fields: [productId], references: [id])
   deliveryMutations DeliveryMutation[]
   transactionItems  TransactionItem[]
@@ -544,6 +733,7 @@ model OrderItem {
   @@index([orderId])
   @@index([productId])
   @@index([status])
+  @@index([tenantId])
 }
 
 model DeliveryMutation {
@@ -561,8 +751,10 @@ model DeliveryMutation {
   driverNote        String?
   createdAt         DateTime     @default(now())
   updatedAt         DateTime     @updatedAt
+  tenantId          String?
 
   order        Order         @relation(fields: [orderId], references: [id])
+  tenant       Tenant?       @relation(fields: [tenantId], references: [id])
   orderItem    OrderItem?    @relation(fields: [orderItemId], references: [id])
   product      Product?      @relation(fields: [productId], references: [id])
   routeRunStop RouteRunStop? @relation(fields: [routeRunStopId], references: [id])
@@ -574,6 +766,7 @@ model DeliveryMutation {
   @@index([routeRunStopId])
   @@index([driverId])
   @@index([type])
+  @@index([tenantId])
 }
 
 model Transaction {
@@ -589,8 +782,10 @@ model Transaction {
   pdfUrl     String?
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
+  tenantId   String?
 
   customer Customer          @relation(fields: [customerId], references: [id])
+  tenant   Tenant?           @relation(fields: [tenantId], references: [id])
   order    Order?            @relation(fields: [orderId], references: [id])
   items    TransactionItem[]
   payments Payment[]
@@ -598,6 +793,7 @@ model Transaction {
   @@index([customerId])
   @@index([status])
   @@index([dueDate])
+  @@index([tenantId])
 }
 
 model TransactionItem {
@@ -610,12 +806,15 @@ model TransactionItem {
   subtotal      Decimal  @db.Decimal(10, 2)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
+  tenantId      String?
 
   transaction Transaction @relation(fields: [transactionId], references: [id])
+  tenant      Tenant?     @relation(fields: [tenantId], references: [id])
   orderItem   OrderItem?  @relation(fields: [orderItemId], references: [id])
 
   @@index([transactionId])
   @@index([orderItemId])
+  @@index([tenantId])
 }
 
 model Payment {
@@ -628,12 +827,15 @@ model Payment {
   paidAt        DateTime      @default(now())
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
+  tenantId      String?
 
   transaction Transaction @relation(fields: [transactionId], references: [id])
+  tenant      Tenant?     @relation(fields: [tenantId], references: [id])
 
   @@index([transactionId])
   @@index([method])
   @@index([paidAt])
+  @@index([tenantId])
 }
 
 model DeviceToken {
@@ -643,10 +845,13 @@ model DeviceToken {
   platform  Platform
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  tenantId  String?
 
-  user User @relation(fields: [userId], references: [id])
+  user   User    @relation(fields: [userId], references: [id])
+  tenant Tenant? @relation(fields: [tenantId], references: [id])
 
   @@index([userId])
+  @@index([tenantId])
 }
 
 model SystemConfig {
@@ -664,13 +869,16 @@ model OrderTemplate {
   notes      String?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+  tenantId   String?
 
   customer Customer             @relation(fields: [customerId], references: [id])
+  tenant   Tenant?              @relation(fields: [tenantId], references: [id])
   items    OrderTemplateItem[]
   orders   Order[]
 
   @@index([customerId])
   @@index([isActive])
+  @@index([tenantId])
 }
 
 model OrderTemplateItem {
@@ -681,11 +889,14 @@ model OrderTemplateItem {
   notes      String?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+  tenantId   String?
 
   template OrderTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  tenant   Tenant?       @relation(fields: [tenantId], references: [id])
   product  Product       @relation(fields: [productId], references: [id])
 
   @@index([templateId])
+  @@index([tenantId])
 }
 
 model RefreshToken {
@@ -694,11 +905,14 @@ model RefreshToken {
   tokenHash String   @unique
   expiresAt DateTime
   createdAt DateTime @default(now())
+  tenantId  String?
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant Tenant? @relation(fields: [tenantId], references: [id])
 
   @@index([userId])
   @@index([expiresAt])
+  @@index([tenantId])
 }
 
 model Supplier {
@@ -720,13 +934,16 @@ model Supplier {
   country        String?
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
+  tenantId       String?
 
+  tenant         Tenant?         @relation(fields: [tenantId], references: [id])
   stockMovements StockMovement[]
   purchaseOrders PurchaseOrder[]
   vendorBills    VendorBill[]
   expenses       Expense[]
 
   @@index([isActive])
+  @@index([tenantId])
 }
 
 model StockLot {
@@ -739,11 +956,14 @@ model StockLot {
   reference    String?
   notes        String?
   createdAt    DateTime @default(now())
+  tenantId     String?
 
   product Product @relation(fields: [productId], references: [id])
+  tenant  Tenant? @relation(fields: [tenantId], references: [id])
 
   @@index([productId])
   @@index([purchaseDate])
+  @@index([tenantId])
 }
 
 model StockMovement {
@@ -757,8 +977,10 @@ model StockMovement {
   notes         String?
   performedById String?
   createdAt     DateTime     @default(now())
+  tenantId      String?
 
   product     Product   @relation(fields: [productId], references: [id])
+  tenant      Tenant?   @relation(fields: [tenantId], references: [id])
   supplier    Supplier? @relation(fields: [supplierId], references: [id])
   performedBy User?     @relation(fields: [performedById], references: [id])
 
@@ -766,13 +988,14 @@ model StockMovement {
   @@index([type])
   @@index([createdAt])
   @@index([supplierId])
+  @@index([tenantId])
 }
 
 // ─── Sprint 1: Standalone Invoicing ──────────────────────────────────────────
 
 model Invoice {
   id            String        @id @default(uuid())
-  invoiceNumber String        @unique
+  invoiceNumber String
   customerId    String
   status        InvoiceStatus @default(DRAFT)
   subtotal      Decimal       @db.Decimal(10, 2)
@@ -794,18 +1017,22 @@ model Invoice {
   recurringInvoiceId String?
   createdAt          DateTime      @default(now())
   updatedAt          DateTime      @updatedAt
+  tenantId           String?
 
   customer         Customer         @relation(fields: [customerId], references: [id])
+  tenant           Tenant?          @relation(fields: [tenantId], references: [id])
   order            Order?           @relation(fields: [orderId], references: [id])
   items            InvoiceItem[]
   payments         InvoicePayment[]
   creditNotes      CreditNote[]
   recurringInvoice RecurringInvoice? @relation(fields: [recurringInvoiceId], references: [id])
 
+  @@unique([tenantId, invoiceNumber])
   @@index([customerId])
   @@index([status])
   @@index([dueDate])
   @@index([createdAt])
+  @@index([tenantId])
 }
 
 model InvoiceItem {
@@ -824,12 +1051,15 @@ model InvoiceItem {
   pieces        Int?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  tenantId    String?
 
   invoice Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  tenant  Tenant?  @relation(fields: [tenantId], references: [id])
   product Product? @relation(fields: [productId], references: [id])
 
   @@index([invoiceId])
   @@index([productId])
+  @@index([tenantId])
 }
 
 model InvoicePayment {
@@ -847,30 +1077,44 @@ model InvoicePayment {
   bankCharges      Decimal?        @db.Decimal(10, 2)
   status           PaymentStatus   @default(PAID)
   paymentGroupId   String?
+  tenantId         String?
 
   invoice       Invoice        @relation(fields: [invoiceId], references: [id])
+  tenant        Tenant?        @relation(fields: [tenantId], references: [id])
   creditNote    CreditNote?    @relation(fields: [creditNoteId], references: [id])
   advancePayment AdvancePayment? @relation(fields: [advancePaymentId], references: [id])
 
   @@index([invoiceId])
   @@index([paymentGroupId])
   @@index([status])
+  @@index([tenantId])
 }
 
 model PaymentCounter {
-  id    String @id @default("singleton")
-  next  Int    @default(1)
+  id       String  @id @default("singleton")
+  next     Int     @default(1)
+  tenantId String?
+
+  tenant Tenant? @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId])
 }
 
 // ─── Sprint 2: Expense Tracking ───────────────────────────────────────────────
 
 model ExpenseCategory {
   id       String    @id @default(uuid())
-  name     String    @unique
-  code     String    @unique
+  name     String
+  code     String
   isCustom Boolean   @default(false)
+  tenantId String?
 
+  tenant   Tenant?   @relation(fields: [tenantId], references: [id])
   expenses Expense[]
+
+  @@unique([tenantId, name])
+  @@unique([tenantId, code])
+  @@index([tenantId])
 }
 
 model Expense {
@@ -899,8 +1143,10 @@ model Expense {
   deletedAt           DateTime?
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
+  tenantId            String?
 
   category    ExpenseCategory? @relation(fields: [categoryId], references: [id])
+  tenant      Tenant?          @relation(fields: [tenantId], references: [id])
   supplier    Supplier?        @relation(fields: [supplierId], references: [id])
   customer    Customer?        @relation(fields: [customerId], references: [id])
   performedBy User?            @relation(fields: [performedById], references: [id])
@@ -911,6 +1157,7 @@ model Expense {
   @@index([customerId])
   @@index([date])
   @@index([deletedAt])
+  @@index([tenantId])
 }
 
 model ExpenseLineItem {
@@ -923,10 +1170,13 @@ model ExpenseLineItem {
   unitCost  Decimal? @db.Decimal(10, 4)
   qty       Decimal? @db.Decimal(10, 3)
   createdAt DateTime @default(now())
+  tenantId  String?
 
   expense Expense @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  tenant  Tenant? @relation(fields: [tenantId], references: [id])
 
   @@index([expenseId])
+  @@index([tenantId])
 }
 
 model MileageRate {
@@ -935,8 +1185,12 @@ model MileageRate {
   ratePerUnit Decimal  @db.Decimal(10, 4)
   unit        String   @default("MILE")
   createdAt   DateTime @default(now())
+  tenantId    String?
+
+  tenant Tenant? @relation(fields: [tenantId], references: [id])
 
   @@index([startDate])
+  @@index([tenantId])
 }
 
 // ─── Customer Extensions (Zoho Parity) ──────────────────────────────────────
@@ -952,32 +1206,43 @@ model ContactPerson {
   mobile     String?
   isPrimary  Boolean  @default(false)
   createdAt  DateTime @default(now())
+  tenantId   String?
 
   customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  tenant   Tenant?  @relation(fields: [tenantId], references: [id])
 
   @@index([customerId])
+  @@index([tenantId])
 }
 
 model CustomerTag {
   id        String                  @id @default(uuid())
-  name      String                  @unique
+  name      String
   color     String                  @default("#3b82f6")
   createdAt DateTime                @default(now())
+  tenantId  String?
 
+  tenant      Tenant?                 @relation(fields: [tenantId], references: [id])
   assignments CustomerTagAssignment[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
 }
 
 model CustomerTagAssignment {
-  id         String @id @default(uuid())
+  id         String  @id @default(uuid())
   customerId String
   tagId      String
+  tenantId   String?
 
   customer Customer    @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  tenant   Tenant?     @relation(fields: [tenantId], references: [id])
   tag      CustomerTag @relation(fields: [tagId], references: [id], onDelete: Cascade)
 
   @@unique([customerId, tagId])
   @@index([customerId])
   @@index([tagId])
+  @@index([tenantId])
 }
 
 model CustomerComment {
@@ -986,17 +1251,20 @@ model CustomerComment {
   userId     String
   content    String
   createdAt  DateTime @default(now())
+  tenantId   String?
 
   customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  tenant   Tenant?  @relation(fields: [tenantId], references: [id])
 
   @@index([customerId])
+  @@index([tenantId])
 }
 
 // ─── Sprint 4: Purchase Orders ────────────────────────────────────────────────
 
 model PurchaseOrder {
   id           String              @id @default(uuid())
-  poNumber     String              @unique
+  poNumber     String
   supplierId   String
   status       PurchaseOrderStatus @default(DRAFT)
   expectedDate DateTime?
@@ -1004,13 +1272,17 @@ model PurchaseOrder {
   totalAmount  Decimal             @db.Decimal(10, 2)
   createdAt    DateTime            @default(now())
   updatedAt    DateTime            @updatedAt
+  tenantId     String?
 
   supplier Supplier            @relation(fields: [supplierId], references: [id])
+  tenant   Tenant?             @relation(fields: [tenantId], references: [id])
   items    PurchaseOrderItem[]
 
+  @@unique([tenantId, poNumber])
   @@index([supplierId])
   @@index([status])
   @@index([createdAt])
+  @@index([tenantId])
 }
 
 model PurchaseOrderItem {
@@ -1021,19 +1293,22 @@ model PurchaseOrderItem {
   qtyReceived Decimal @default(0) @db.Decimal(10, 3)
   unitCost    Decimal @db.Decimal(10, 4)
   totalCost   Decimal @db.Decimal(10, 2)
+  tenantId    String?
 
   po      PurchaseOrder @relation(fields: [poId], references: [id], onDelete: Cascade)
+  tenant  Tenant?       @relation(fields: [tenantId], references: [id])
   product Product       @relation(fields: [productId], references: [id])
 
   @@index([poId])
   @@index([productId])
+  @@index([tenantId])
 }
 
 // ─── Sprint 6: Credit Notes & Estimates ──────────────────────────────────────
 
 model CreditNote {
   id               String           @id @default(uuid())
-  creditNoteNumber String           @unique
+  creditNoteNumber String
   customerId       String
   invoiceId        String?
   amount           Decimal          @db.Decimal(10, 2)
@@ -1043,18 +1318,22 @@ model CreditNote {
   appliedToInvoiceId String?
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
+  tenantId         String?
 
   customer        Customer         @relation(fields: [customerId], references: [id])
+  tenant          Tenant?          @relation(fields: [tenantId], references: [id])
   invoice         Invoice?         @relation(fields: [invoiceId], references: [id])
   invoicePayments InvoicePayment[]
 
+  @@unique([tenantId, creditNoteNumber])
   @@index([customerId])
   @@index([status])
+  @@index([tenantId])
 }
 
 model Estimate {
   id             String         @id @default(uuid())
-  estimateNumber String         @unique
+  estimateNumber String
   customerId     String
   status         EstimateStatus @default(DRAFT)
   subtotal       Decimal        @db.Decimal(10, 2)
@@ -1066,12 +1345,16 @@ model Estimate {
   terms          String?
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
+  tenantId       String?
 
   customer Customer      @relation(fields: [customerId], references: [id])
+  tenant   Tenant?       @relation(fields: [tenantId], references: [id])
   items    EstimateItem[]
 
+  @@unique([tenantId, estimateNumber])
   @@index([customerId])
   @@index([status])
+  @@index([tenantId])
 }
 
 model EstimateItem {
@@ -1084,19 +1367,22 @@ model EstimateItem {
   subtotal    Decimal  @db.Decimal(10, 2)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  tenantId    String?
 
   estimate Estimate @relation(fields: [estimateId], references: [id], onDelete: Cascade)
+  tenant   Tenant?  @relation(fields: [tenantId], references: [id])
   product  Product? @relation(fields: [productId], references: [id])
 
   @@index([estimateId])
   @@index([productId])
+  @@index([tenantId])
 }
 
 // ─── Sprint 7: Vendor Bills (Accounts Payable) ───────────────────────────────
 
 model VendorBill {
   id           String           @id @default(uuid())
-  billNumber   String           @unique
+  billNumber   String
   supplierId   String
   status       VendorBillStatus @default(RECEIVED)
   totalOwed    Decimal          @db.Decimal(10, 2)
@@ -1107,14 +1393,18 @@ model VendorBill {
   notes        String?
   createdAt    DateTime         @default(now())
   updatedAt    DateTime         @updatedAt
+  tenantId     String?
 
   supplier Supplier        @relation(fields: [supplierId], references: [id])
+  tenant   Tenant?         @relation(fields: [tenantId], references: [id])
   payments BillPayment[]
   items    VendorBillItem[]
 
+  @@unique([tenantId, billNumber])
   @@index([supplierId])
   @@index([status])
   @@index([dueDate])
+  @@index([tenantId])
 }
 
 model VendorBillItem {
@@ -1125,12 +1415,15 @@ model VendorBillItem {
   qty          Decimal    @db.Decimal(10, 3)
   unitCost     Decimal    @db.Decimal(10, 4)
   createdAt    DateTime   @default(now())
+  tenantId     String?
 
   vendorBill VendorBill @relation(fields: [vendorBillId], references: [id], onDelete: Cascade)
+  tenant     Tenant?    @relation(fields: [tenantId], references: [id])
   product    Product?   @relation(fields: [productId], references: [id])
 
   @@index([vendorBillId])
   @@index([productId])
+  @@index([tenantId])
 }
 
 model BillPayment {
@@ -1142,10 +1435,13 @@ model BillPayment {
   notes        String?
   paidAt       DateTime      @default(now())
   createdAt    DateTime      @default(now())
+  tenantId     String?
 
   vendorBill VendorBill @relation(fields: [vendorBillId], references: [id])
+  tenant     Tenant?    @relation(fields: [tenantId], references: [id])
 
   @@index([vendorBillId])
+  @@index([tenantId])
 }
 
 // ─── AI Product Mapping Memory ────────────────────────────────────────────────
@@ -1155,19 +1451,23 @@ model ProductMapping {
   supplierName   String
   rawDescription String
   productId      String?
-  product        Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
+  tenantId       String?
+
+  product Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  tenant  Tenant?  @relation(fields: [tenantId], references: [id])
 
   @@unique([supplierName, rawDescription])
   @@index([supplierName])
+  @@index([tenantId])
 }
 
 // ─── Sprint 8: Returns / RMA ──────────────────────────────────────────────────
 
 model Return {
   id           String       @id @default(uuid())
-  returnNumber String?      @unique
+  returnNumber String?
   orderId      String
   customerId   String
   reason       ReturnReason
@@ -1177,14 +1477,18 @@ model Return {
   creditNoteId String?
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
+  tenantId     String?
 
   order    Order        @relation(fields: [orderId], references: [id])
+  tenant   Tenant?      @relation(fields: [tenantId], references: [id])
   customer Customer     @relation(fields: [customerId], references: [id])
   items    ReturnItem[]
 
+  @@unique([tenantId, returnNumber])
   @@index([orderId])
   @@index([customerId])
   @@index([status])
+  @@index([tenantId])
 }
 
 model ReturnItem {
@@ -1194,12 +1498,15 @@ model ReturnItem {
   qty       Decimal @db.Decimal(10, 3)
   reason    String?
   restock   Boolean @default(true)
+  tenantId  String?
 
   return  Return  @relation(fields: [returnId], references: [id], onDelete: Cascade)
+  tenant  Tenant? @relation(fields: [tenantId], references: [id])
   product Product @relation(fields: [productId], references: [id])
 
   @@index([returnId])
   @@index([productId])
+  @@index([tenantId])
 }
 
 // ─── Advance Payments ─────────────────────────────────────────────────────────
@@ -1215,11 +1522,14 @@ model AdvancePayment {
   receivedAt   DateTime      @default(now())
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
+  tenantId     String?
 
   customer      Customer         @relation(fields: [customerId], references: [id])
+  tenant        Tenant?          @relation(fields: [tenantId], references: [id])
   applications  InvoicePayment[]
 
   @@index([customerId])
+  @@index([tenantId])
 }
 
 // ─── Recurring Invoices ───────────────────────────────────────────────────────
@@ -1246,13 +1556,16 @@ model RecurringInvoice {
   lastRunAt   DateTime?
   createdAt   DateTime           @default(now())
   updatedAt   DateTime           @updatedAt
+  tenantId    String?
 
   customer    Customer              @relation(fields: [customerId], references: [id])
+  tenant      Tenant?               @relation(fields: [tenantId], references: [id])
   items       RecurringInvoiceItem[]
   invoices    Invoice[]
 
   @@index([customerId])
   @@index([isActive, nextRunAt])
+  @@index([tenantId])
 }
 
 model RecurringInvoiceItem {
@@ -1264,9 +1577,14 @@ model RecurringInvoiceItem {
   unitPrice          Decimal          @db.Decimal(10, 2)
   discount           Decimal          @db.Decimal(10, 2) @default(0)
   taxRate            Decimal          @db.Decimal(5, 4)  @default(0)
+  tenantId           String?
 
   recurringInvoice   RecurringInvoice @relation(fields: [recurringInvoiceId], references: [id], onDelete: Cascade)
+  tenant             Tenant?          @relation(fields: [tenantId], references: [id])
   product            Product?         @relation(fields: [productId], references: [id])
+
+  @@index([recurringInvoiceId])
+  @@index([tenantId])
 }
 
 // ─── Driver-to-Dispatcher Messaging ──────────────────────────────────────────
@@ -1278,11 +1596,14 @@ model Message {
   senderId   String
   senderRole String   // "DRIVER" | "OPERATOR"
   createdAt  DateTime @default(now())
+  tenantId   String?
 
-  sender User @relation(fields: [senderId], references: [id])
+  sender User    @relation(fields: [senderId], references: [id])
+  tenant Tenant? @relation(fields: [tenantId], references: [id])
 
   @@index([runId])
   @@index([senderId])
+  @@index([tenantId])
 }
 
 // ─── Customer Special Prices ──────────────────────────────────────────────────
@@ -1295,8 +1616,13 @@ model CustomerPrice {
   notes        String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+  tenantId     String?
+
   customer     Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  tenant       Tenant?  @relation(fields: [tenantId], references: [id])
   product      Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
   @@unique([customerId, productId])
   @@index([customerId])
+  @@index([tenantId])
 }

@@ -56,7 +56,7 @@ export class CustomersService {
 
   /** Geocode all CustomerAddress records that are missing lat/lng. Returns counts. */
   async geocodeAllAddresses(): Promise<{ total: number; geocoded: number; failed: number }> {
-    const addresses = await this.prisma.customerAddress.findMany({
+    const addresses = await this.prisma.forTenant().customerAddress.findMany({
       where: { OR: [{ lat: null }, { lng: null }] },
     });
     let geocoded = 0;
@@ -64,7 +64,7 @@ export class CustomersService {
     for (const addr of addresses) {
       const coords = await this.geocodeAddress(addr);
       if (coords) {
-        await this.prisma.customerAddress.update({
+        await this.prisma.forTenant().customerAddress.update({
           where: { id: addr.id },
           data: coords,
         });
@@ -112,7 +112,7 @@ export class CustomersService {
     }
 
     const [data, total] = await Promise.all([
-      this.prisma.customer.findMany({
+      this.prisma.forTenant().customer.findMany({
         where,
         include: {
           user: { select: { id: true, email: true, username: true, status: true } },
@@ -123,14 +123,14 @@ export class CustomersService {
         take: limit,
         orderBy,
       }),
-      this.prisma.customer.count({ where }),
+      this.prisma.forTenant().customer.count({ where }),
     ]);
 
     // Compute receivables and unusedCredits for each customer
     const customerIds = data.map((c) => c.id);
 
     const [invoices, advancePayments] = await Promise.all([
-      this.prisma.invoice.findMany({
+      this.prisma.forTenant().invoice.findMany({
         where: {
           customerId: { in: customerIds },
           status: { notIn: ["PAID", "VOID", "WRITTEN_OFF"] },
@@ -141,7 +141,7 @@ export class CustomersService {
           payments: { select: { amount: true } },
         },
       }),
-      this.prisma.advancePayment.findMany({
+      this.prisma.forTenant().advancePayment.findMany({
         where: {
           customerId: { in: customerIds },
           balance: { gt: 0 },
@@ -172,7 +172,7 @@ export class CustomersService {
   }
 
   async findMyProfile(user: JwtPayload) {
-    const customer = await this.prisma.customer.findFirst({
+    const customer = await this.prisma.forTenant().customer.findFirst({
       where: { userId: user.sub },
       include: {
         user: { select: { id: true, email: true, username: true, status: true } },
@@ -184,17 +184,17 @@ export class CustomersService {
   }
 
   async updateMyProfile(user: JwtPayload, dto: UpdateCustomerDto) {
-    const customer = await this.prisma.customer.findFirst({ where: { userId: user.sub } });
+    const customer = await this.prisma.forTenant().customer.findFirst({ where: { userId: user.sub } });
     if (!customer) throw new NotFoundException("Customer profile not found");
     return this.update(customer.id, dto);
   }
 
   async getMyStatement(user: JwtPayload) {
-    const customer = await this.prisma.customer.findFirst({ where: { userId: user.sub } });
+    const customer = await this.prisma.forTenant().customer.findFirst({ where: { userId: user.sub } });
     if (!customer) throw new NotFoundException("Customer profile not found");
 
     const [invoices, creditNotes] = await Promise.all([
-      this.prisma.invoice.findMany({
+      this.prisma.forTenant().invoice.findMany({
         where: { customerId: customer.id },
         orderBy: { createdAt: "desc" },
         take: 50,
@@ -208,7 +208,7 @@ export class CustomersService {
           payments: { select: { amount: true } },
         },
       }),
-      this.prisma.creditNote.findMany({
+      this.prisma.forTenant().creditNote.findMany({
         where: { customerId: customer.id },
         orderBy: { createdAt: "desc" },
         take: 50,
@@ -269,7 +269,7 @@ export class CustomersService {
   }
 
   async findOne(id: string, user: JwtPayload) {
-    const customer = await this.prisma.customer.findUnique({
+    const customer = await this.prisma.forTenant().customer.findUnique({
       where: { id },
       include: {
         user: { select: { id: true, email: true, username: true, status: true } },
@@ -289,7 +289,7 @@ export class CustomersService {
   }
 
   async create(dto: CreateCustomerDto) {
-    const existingUser = await this.prisma.user.findFirst({
+    const existingUser = await this.prisma.forTenant().user.findFirst({
       where: { OR: [{ email: dto.email }, { username: dto.username }] },
     });
     if (existingUser) throw new BadRequestException("Email or username already taken");
@@ -297,7 +297,7 @@ export class CustomersService {
     const tempPassword = this.generateTempPassword();
     const hashedPassword = await bcrypt.hash(tempPassword, 10);
 
-    return this.prisma.$transaction(async (tx) => {
+    return this.prisma.tenantTransaction(async (tx) => {
       const user = await tx.user.create({
         data: {
           email: dto.email,
@@ -354,7 +354,7 @@ export class CustomersService {
 
   async update(id: string, dto: UpdateCustomerDto) {
     await this.findCustomerOrThrow(id);
-    return this.prisma.customer.update({
+    return this.prisma.forTenant().customer.update({
       where: { id },
       data: {
         ...(dto.businessName && { businessName: dto.businessName }),
@@ -385,7 +385,7 @@ export class CustomersService {
 
   async changeStatus(id: string, dto: ChangeCustomerStatusDto) {
     const customer = await this.findCustomerOrThrow(id);
-    return this.prisma.user.update({
+    return this.prisma.forTenant().user.update({
       where: { id: customer.userId },
       data: { status: dto.status },
       select: { id: true, status: true },
@@ -394,7 +394,7 @@ export class CustomersService {
 
   async findRoutes(id: string) {
     await this.findCustomerOrThrow(id);
-    const stops = await this.prisma.routeStop.findMany({
+    const stops = await this.prisma.forTenant().routeStop.findMany({
       where: { customerId: id },
       include: {
         route: {
@@ -434,12 +434,12 @@ export class CustomersService {
       throw new ForbiddenException();
     }
     const [data, total] = await Promise.all([
-      this.prisma.order.findMany({
+      this.prisma.forTenant().order.findMany({
         where: { customerId: id },
         orderBy: { createdAt: "desc" },
         take: 50,
       }),
-      this.prisma.order.count({ where: { customerId: id } }),
+      this.prisma.forTenant().order.count({ where: { customerId: id } }),
     ]);
     return { data, meta: { total, page: 1, limit: 50, totalPages: Math.ceil(total / 50) } };
   }
@@ -448,7 +448,7 @@ export class CustomersService {
     await this.findCustomerOrThrow(id);
     // Geocode before creating so lat/lng are set from the start
     const coords = await this.geocodeAddress(dto);
-    return this.prisma.$transaction(async (tx) => {
+    return this.prisma.tenantTransaction(async (tx) => {
       if (dto.isDefault) {
         await tx.customerAddress.updateMany({
           where: { customerId: id },
@@ -474,7 +474,7 @@ export class CustomersService {
 
   async updateAddress(id: string, addrId: string, dto: UpdateAddressDto) {
     await this.findCustomerOrThrow(id);
-    const updated = await this.prisma.$transaction(async (tx) => {
+    const updated = await this.prisma.tenantTransaction(async (tx) => {
       if (dto.isDefault) {
         await tx.customerAddress.updateMany({
           where: { customerId: id, id: { not: addrId } },
@@ -490,7 +490,7 @@ export class CustomersService {
     this.geocodeAddress(updated)
       .then((coords) => {
         if (coords) {
-          this.prisma.customerAddress.update({ where: { id: addrId }, data: coords }).catch(() => {
+          this.prisma.forTenant().customerAddress.update({ where: { id: addrId }, data: coords }).catch(() => {
             /* ignore */
           });
         }
@@ -502,7 +502,7 @@ export class CustomersService {
   }
 
   private async findCustomerOrThrow(id: string) {
-    const customer = await this.prisma.customer.findUnique({ where: { id } });
+    const customer = await this.prisma.forTenant().customer.findUnique({ where: { id } });
     if (!customer) throw new NotFoundException("Customer not found");
     return customer;
   }
@@ -521,7 +521,7 @@ export class CustomersService {
     await this.findCustomerOrThrow(customerId);
 
     const [invoices, creditNotes, advancePayments] = await Promise.all([
-      this.prisma.invoice.findMany({
+      this.prisma.forTenant().invoice.findMany({
         where: { customerId },
         orderBy: { createdAt: "desc" },
         take: 100,
@@ -535,13 +535,13 @@ export class CustomersService {
           payments: { select: { amount: true } },
         },
       }),
-      this.prisma.creditNote.findMany({
+      this.prisma.forTenant().creditNote.findMany({
         where: { customerId },
         orderBy: { createdAt: "desc" },
         take: 50,
         select: { id: true, creditNoteNumber: true, amount: true, status: true, createdAt: true },
       }),
-      this.prisma.advancePayment.findMany({
+      this.prisma.forTenant().advancePayment.findMany({
         where: { customerId },
         orderBy: { receivedAt: "desc" },
         take: 50,
@@ -633,7 +633,7 @@ export class CustomersService {
   ) {
     await this.findCustomerOrThrow(customerId);
     if (dto.amount <= 0) throw new BadRequestException("Amount must be greater than 0");
-    return this.prisma.advancePayment.create({
+    return this.prisma.forTenant().advancePayment.create({
       data: {
         customerId,
         amount: dto.amount,
@@ -648,7 +648,7 @@ export class CustomersService {
 
   async getAdvancePayments(customerId: string) {
     await this.findCustomerOrThrow(customerId);
-    return this.prisma.advancePayment.findMany({
+    return this.prisma.forTenant().advancePayment.findMany({
       where: { customerId },
       orderBy: { receivedAt: "desc" },
     });
@@ -657,7 +657,7 @@ export class CustomersService {
   // ─── Customer Prices ───────────────────────────────────────────────────────
 
   async getCustomerPrices(customerId: string) {
-    return this.prisma.customerPrice.findMany({
+    return this.prisma.forTenant().customerPrice.findMany({
       where: { customerId },
       include: {
         product: {
@@ -669,7 +669,7 @@ export class CustomersService {
   }
 
   async upsertCustomerPrice(customerId: string, dto: UpsertCustomerPriceDto) {
-    return this.prisma.customerPrice.upsert({
+    return this.prisma.forTenant().customerPrice.upsert({
       where: {
         customerId_productId: { customerId, productId: dto.productId },
       },
@@ -692,18 +692,18 @@ export class CustomersService {
   }
 
   async deleteCustomerPrice(customerId: string, priceId: string) {
-    const cp = await this.prisma.customerPrice.findUnique({ where: { id: priceId } });
+    const cp = await this.prisma.forTenant().customerPrice.findUnique({ where: { id: priceId } });
     if (!cp || cp.customerId !== customerId) {
       throw new NotFoundException("Customer price not found");
     }
-    await this.prisma.customerPrice.delete({ where: { id: priceId } });
+    await this.prisma.forTenant().customerPrice.delete({ where: { id: priceId } });
   }
 
   async applyAdvancePaymentToInvoice(
     advancePaymentId: string,
     dto: { invoiceId: string; amount?: number },
   ) {
-    return this.prisma.$transaction(async (tx) => {
+    return this.prisma.tenantTransaction(async (tx) => {
       const ap = await tx.advancePayment.findUnique({ where: { id: advancePaymentId } });
       if (!ap) throw new NotFoundException("Advance payment not found");
       if (Number(ap.balance) <= 0)
@@ -764,7 +764,7 @@ export class CustomersService {
 
   async listContactPersons(customerId: string) {
     await this.findCustomerOrThrow(customerId);
-    return this.prisma.contactPerson.findMany({
+    return this.prisma.forTenant().contactPerson.findMany({
       where: { customerId },
       orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
     });
@@ -783,7 +783,7 @@ export class CustomersService {
     },
   ) {
     await this.findCustomerOrThrow(customerId);
-    return this.prisma.$transaction(async (tx) => {
+    return this.prisma.tenantTransaction(async (tx) => {
       if (dto.isPrimary) {
         await tx.contactPerson.updateMany({
           where: { customerId },
@@ -819,12 +819,12 @@ export class CustomersService {
     },
   ) {
     await this.findCustomerOrThrow(customerId);
-    const existing = await this.prisma.contactPerson.findFirst({
+    const existing = await this.prisma.forTenant().contactPerson.findFirst({
       where: { id: contactId, customerId },
     });
     if (!existing) throw new NotFoundException("Contact person not found");
 
-    return this.prisma.$transaction(async (tx) => {
+    return this.prisma.tenantTransaction(async (tx) => {
       if (dto.isPrimary) {
         await tx.contactPerson.updateMany({
           where: { customerId, id: { not: contactId } },
@@ -848,25 +848,25 @@ export class CustomersService {
 
   async deleteContactPerson(customerId: string, contactId: string) {
     await this.findCustomerOrThrow(customerId);
-    const existing = await this.prisma.contactPerson.findFirst({
+    const existing = await this.prisma.forTenant().contactPerson.findFirst({
       where: { id: contactId, customerId },
     });
     if (!existing) throw new NotFoundException("Contact person not found");
-    await this.prisma.contactPerson.delete({ where: { id: contactId } });
+    await this.prisma.forTenant().contactPerson.delete({ where: { id: contactId } });
     return { success: true };
   }
 
   // ─── Tags ─────────────────────────────────────────────────────────────────
 
   async listTags() {
-    return this.prisma.customerTag.findMany({
+    return this.prisma.forTenant().customerTag.findMany({
       orderBy: { name: "asc" },
       include: { _count: { select: { assignments: true } } },
     });
   }
 
   async createTag(dto: { name: string; color?: string }) {
-    return this.prisma.customerTag.create({
+    return this.prisma.forTenant().customerTag.create({
       data: {
         name: dto.name,
         ...(dto.color && { color: dto.color }),
@@ -875,19 +875,19 @@ export class CustomersService {
   }
 
   async deleteTag(tagId: string) {
-    const tag = await this.prisma.customerTag.findUnique({ where: { id: tagId } });
+    const tag = await this.prisma.forTenant().customerTag.findUnique({ where: { id: tagId } });
     if (!tag) throw new NotFoundException("Tag not found");
-    await this.prisma.customerTag.delete({ where: { id: tagId } });
+    await this.prisma.forTenant().customerTag.delete({ where: { id: tagId } });
     return { success: true };
   }
 
   async assignTag(customerId: string, tagId: string) {
     await this.findCustomerOrThrow(customerId);
-    const tag = await this.prisma.customerTag.findUnique({ where: { id: tagId } });
+    const tag = await this.prisma.forTenant().customerTag.findUnique({ where: { id: tagId } });
     if (!tag) throw new NotFoundException("Tag not found");
 
     // Upsert to avoid duplicate constraint errors
-    return this.prisma.customerTagAssignment.upsert({
+    return this.prisma.forTenant().customerTagAssignment.upsert({
       where: { customerId_tagId: { customerId, tagId } },
       create: { customerId, tagId },
       update: {},
@@ -897,11 +897,11 @@ export class CustomersService {
 
   async removeTag(customerId: string, tagId: string) {
     await this.findCustomerOrThrow(customerId);
-    const assignment = await this.prisma.customerTagAssignment.findUnique({
+    const assignment = await this.prisma.forTenant().customerTagAssignment.findUnique({
       where: { customerId_tagId: { customerId, tagId } },
     });
     if (!assignment) throw new NotFoundException("Tag assignment not found");
-    await this.prisma.customerTagAssignment.delete({
+    await this.prisma.forTenant().customerTagAssignment.delete({
       where: { customerId_tagId: { customerId, tagId } },
     });
     return { success: true };
@@ -911,7 +911,7 @@ export class CustomersService {
 
   async listComments(customerId: string) {
     await this.findCustomerOrThrow(customerId);
-    return this.prisma.customerComment.findMany({
+    return this.prisma.forTenant().customerComment.findMany({
       where: { customerId },
       orderBy: { createdAt: "desc" },
     });
@@ -922,18 +922,18 @@ export class CustomersService {
     if (!content || content.trim().length === 0) {
       throw new BadRequestException("Comment content cannot be empty");
     }
-    return this.prisma.customerComment.create({
+    return this.prisma.forTenant().customerComment.create({
       data: { customerId, userId, content: content.trim() },
     });
   }
 
   async deleteComment(customerId: string, commentId: string) {
     await this.findCustomerOrThrow(customerId);
-    const comment = await this.prisma.customerComment.findFirst({
+    const comment = await this.prisma.forTenant().customerComment.findFirst({
       where: { id: commentId, customerId },
     });
     if (!comment) throw new NotFoundException("Comment not found");
-    await this.prisma.customerComment.delete({ where: { id: commentId } });
+    await this.prisma.forTenant().customerComment.delete({ where: { id: commentId } });
     return { success: true };
   }
 
@@ -956,7 +956,7 @@ export class CustomersService {
     const sixMonthsAgo = months[0].start;
 
     // Get all invoice payments for this customer's invoices in the last 6 months
-    const payments = await this.prisma.invoicePayment.findMany({
+    const payments = await this.prisma.forTenant().invoicePayment.findMany({
       where: {
         invoice: { customerId },
         paidAt: { gte: sixMonthsAgo },
@@ -965,7 +965,7 @@ export class CustomersService {
     });
 
     // Get all expenses for this customer in the last 6 months
-    const expenses = await this.prisma.expense.findMany({
+    const expenses = await this.prisma.forTenant().expense.findMany({
       where: {
         customerId,
         date: { gte: sixMonthsAgo },
@@ -1013,7 +1013,7 @@ export class CustomersService {
       };
     }
 
-    const customers = await this.prisma.customer.findMany({
+    const customers = await this.prisma.forTenant().customer.findMany({
       where,
       include: {
         user: { select: { status: true } },
@@ -1070,7 +1070,7 @@ export class CustomersService {
     const primary = await this.findCustomerOrThrow(primaryId);
     const secondary = await this.findCustomerOrThrow(secondaryId);
 
-    return this.prisma.$transaction(async (tx) => {
+    return this.prisma.tenantTransaction(async (tx) => {
       // Move invoices
       await tx.invoice.updateMany({
         where: { customerId: secondaryId },
@@ -1156,11 +1156,11 @@ export class CustomersService {
   // ─── Delete ────────────────────────────────────────────────────────────────
 
   async deleteCustomer(id: string) {
-    const customer = await this.prisma.customer.findUnique({ where: { id } });
+    const customer = await this.prisma.forTenant().customer.findUnique({ where: { id } });
     if (!customer) throw new NotFoundException("Customer not found");
 
     // Delete all dependent records in correct order before removing the customer
-    await this.prisma.$transaction(async (tx) => {
+    await this.prisma.tenantTransaction(async (tx) => {
       // Payments on invoices
       const invoices = await tx.invoice.findMany({ where: { customerId: id }, select: { id: true } });
       const invoiceIds = invoices.map((i) => i.id);
@@ -1253,13 +1253,13 @@ export class CustomersService {
   }
 
   async deleteAllCustomers(): Promise<{ deleted: number }> {
-    const customers = await this.prisma.customer.findMany({ select: { id: true, userId: true } });
+    const customers = await this.prisma.forTenant().customer.findMany({ select: { id: true, userId: true } });
     if (customers.length === 0) return { deleted: 0 };
 
     const customerIds = customers.map((c) => c.id);
     const userIds = customers.map((c) => c.userId);
 
-    await this.prisma.$transaction(async (tx) => {
+    await this.prisma.tenantTransaction(async (tx) => {
       const invoices = await tx.invoice.findMany({ where: { customerId: { in: customerIds } }, select: { id: true } });
       const invoiceIds = invoices.map((i) => i.id);
       if (invoiceIds.length) {

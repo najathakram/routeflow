@@ -14,6 +14,11 @@ const config: Config = {
       colors: {
         background: "var(--background)",
         foreground: "var(--foreground)",
+        // Tenant-branded primary — overridden at runtime by TenantProvider
+        primary: {
+          DEFAULT: "var(--primary, #3B82F6)",
+          foreground: "var(--primary-foreground, #ffffff)",
+        },
       },
     },
   },

@@ -12,10 +12,39 @@ const DEFAULT_CORS_ORIGINS = [
   "http://localhost:19006", // Expo web (legacy)
 ];
 
-// In production CORS_ORIGINS env var overrides defaults:
-//   CORS_ORIGINS=https://routeflow.up.railway.app,https://your-custom-domain.com
+// In production set these env vars:
+//   CORS_ORIGINS=https://app.routeflow.io,https://routeflow.up.railway.app
+//   CORS_WILDCARD_DOMAINS=routeflow.io,routeflow.app
+// Any subdomain of CORS_WILDCARD_DOMAINS is then allowed automatically.
+
+function buildWildcardPatterns(): RegExp[] {
+  const raw = process.env.CORS_WILDCARD_DOMAINS ?? "";
+  return raw
+    .split(",")
+    .map((d) => d.trim())
+    .filter(Boolean)
+    .map((domain) => {
+      const escaped = domain.replace(/\./g, "\\.");
+      return new RegExp(`^https?:\\/\\/[a-z0-9][a-z0-9-]*\\.${escaped}$`);
+    });
+}
+
+function assertSecrets() {
+  const isProd = process.env.NODE_ENV === "production";
+  const missing: string[] = [];
+  if (!process.env.JWT_SECRET) missing.push("JWT_SECRET");
+  if (!process.env.JWT_REFRESH_SECRET) missing.push("JWT_REFRESH_SECRET");
+  if (isProd && missing.length > 0) {
+    console.error(`\n❌ FATAL: Missing required environment variables: ${missing.join(", ")}`);
+    console.error("   Refusing to start in production with empty JWT secrets.\n");
+    process.exit(1);
+  } else if (missing.length > 0) {
+    console.warn(`\n⚠️  WARNING: ${missing.join(", ")} not set — using empty string (dev only).\n`);
+  }
+}
 
 async function bootstrap() {
+  assertSecrets();
   const app = await NestFactory.create(AppModule);
 
   // ─── Body size limit (default 100kb is too small for bulk imports) ───────────
@@ -32,8 +61,18 @@ async function bootstrap() {
     ? process.env.CORS_ORIGINS.split(",").map((o) => o.trim())
     : DEFAULT_CORS_ORIGINS;
 
+  const wildcardPatterns = buildWildcardPatterns();
+
   app.enableCors({
-    origin: corsOrigins,
+    origin: (origin, callback) => {
+      // Allow server-to-server calls (no Origin) and same-origin requests
+      if (!origin) return callback(null, true);
+      // Exact allow-list (explicit origins + localhost defaults)
+      if (corsOrigins.includes(origin)) return callback(null, true);
+      // Wildcard subdomain patterns — e.g. *.routeflow.io, *.routeflow.app
+      if (wildcardPatterns.some((p) => p.test(origin))) return callback(null, true);
+      callback(new Error(`CORS: origin '${origin}' not allowed`));
+    },
     credentials: true,
   });
 

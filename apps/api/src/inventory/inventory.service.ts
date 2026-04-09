@@ -14,7 +14,7 @@ export class InventoryService {
   // ─── Stock overview ──────────────────────────────────────────────────────────
 
   async getStockOverview() {
-    const products = await this.prisma.product.findMany({
+    const products = await this.prisma.forTenant().product.findMany({
       orderBy: { name: "asc" },
       select: {
         id: true,
@@ -70,7 +70,7 @@ export class InventoryService {
     }
 
     const [data, total] = await Promise.all([
-      this.prisma.stockMovement.findMany({
+      this.prisma.forTenant().stockMovement.findMany({
         where,
         skip,
         take: limit,
@@ -81,18 +81,18 @@ export class InventoryService {
           performedBy: { select: { id: true, username: true } },
         },
       }),
-      this.prisma.stockMovement.count({ where }),
+      this.prisma.forTenant().stockMovement.count({ where }),
     ]);
 
     return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
   }
 
   async recordPurchase(dto: RecordPurchaseDto, performedById: string) {
-    const product = await this.prisma.product.findUnique({ where: { id: dto.productId } });
+    const product = await this.prisma.forTenant().product.findUnique({ where: { id: dto.productId } });
     if (!product) throw new NotFoundException("Product not found");
 
     if (dto.supplierId) {
-      const supplier = await this.prisma.supplier.findUnique({ where: { id: dto.supplierId } });
+      const supplier = await this.prisma.forTenant().supplier.findUnique({ where: { id: dto.supplierId } });
       if (!supplier) throw new NotFoundException("Supplier not found");
     }
 
@@ -113,7 +113,7 @@ export class InventoryService {
         .div(currentStock.add(qty));
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    return this.prisma.tenantTransaction(async (tx) => {
       // Always create a StockLot for lot-tracking (used by FIFO/LIFO)
       await tx.stockLot.create({
         data: {
@@ -163,13 +163,13 @@ export class InventoryService {
   }
 
   async recordAdjustment(dto: RecordAdjustmentDto, performedById: string) {
-    const product = await this.prisma.product.findUnique({ where: { id: dto.productId } });
+    const product = await this.prisma.forTenant().product.findUnique({ where: { id: dto.productId } });
     if (!product) throw new NotFoundException("Product not found");
 
     const qty = new Prisma.Decimal(dto.quantity);
     const effectiveDate = dto.effectiveDate ? new Date(dto.effectiveDate) : new Date();
 
-    return this.prisma.$transaction(async (tx) => {
+    return this.prisma.tenantTransaction(async (tx) => {
       const movement = await tx.stockMovement.create({
         data: {
           productId: dto.productId,
@@ -272,24 +272,24 @@ export class InventoryService {
   // ─── Suppliers ───────────────────────────────────────────────────────────────
 
   async listSuppliers() {
-    return this.prisma.supplier.findMany({ orderBy: { name: "asc" } });
+    return this.prisma.forTenant().supplier.findMany({ orderBy: { name: "asc" } });
   }
 
   async createSupplier(dto: CreateSupplierDto) {
-    return this.prisma.supplier.create({ data: dto });
+    return this.prisma.forTenant().supplier.create({ data: dto });
   }
 
   async updateSupplier(id: string, dto: UpdateSupplierDto) {
-    const supplier = await this.prisma.supplier.findUnique({ where: { id } });
+    const supplier = await this.prisma.forTenant().supplier.findUnique({ where: { id } });
     if (!supplier) throw new NotFoundException("Supplier not found");
-    return this.prisma.supplier.update({ where: { id }, data: dto });
+    return this.prisma.forTenant().supplier.update({ where: { id }, data: dto });
   }
 
   // ── Purchase Orders ──
   private async nextPoNumber(): Promise<string> {
     const year = new Date().getFullYear();
     const prefix = `PO-${year}-`;
-    const last = await this.prisma.purchaseOrder.findFirst({
+    const last = await this.prisma.forTenant().purchaseOrder.findFirst({
       where: { poNumber: { startsWith: prefix } },
       orderBy: { poNumber: "desc" },
     });
@@ -301,9 +301,9 @@ export class InventoryService {
     if (!dto.supplierId) throw new BadRequestException("supplierId is required");
     if (!dto.items || dto.items.length === 0)
       throw new BadRequestException("At least one item is required");
-    const supplier = await this.prisma.supplier.findUnique({ where: { id: dto.supplierId } });
+    const supplier = await this.prisma.forTenant().supplier.findUnique({ where: { id: dto.supplierId } });
     if (!supplier) throw new NotFoundException("Supplier not found");
-    const products = await this.prisma.product.findMany({
+    const products = await this.prisma.forTenant().product.findMany({
       where: { id: { in: dto.items.map((i: any) => i.productId) } },
     });
     const productMap = new Map(products.map((p) => [p.id, p]));
@@ -324,7 +324,7 @@ export class InventoryService {
         totalCost,
       };
     });
-    return this.prisma.purchaseOrder.create({
+    return this.prisma.forTenant().purchaseOrder.create({
       data: {
         poNumber: await this.nextPoNumber(),
         supplierId: dto.supplierId,
@@ -348,20 +348,20 @@ export class InventoryService {
     if (supplierId) where.supplierId = supplierId;
     if (status) where.status = status;
     const [data, total] = await Promise.all([
-      this.prisma.purchaseOrder.findMany({
+      this.prisma.forTenant().purchaseOrder.findMany({
         where,
         include: { supplier: { select: { id: true, name: true } }, items: true },
         skip,
         take: limit,
         orderBy: { createdAt: "desc" },
       }),
-      this.prisma.purchaseOrder.count({ where }),
+      this.prisma.forTenant().purchaseOrder.count({ where }),
     ]);
     return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
   }
 
   async getPurchaseOrder(id: string) {
-    const po = await this.prisma.purchaseOrder.findUnique({
+    const po = await this.prisma.forTenant().purchaseOrder.findUnique({
       where: { id },
       include: {
         supplier: true,
@@ -373,15 +373,15 @@ export class InventoryService {
   }
 
   async sendPurchaseOrder(id: string) {
-    const po = await this.prisma.purchaseOrder.findUnique({ where: { id } });
+    const po = await this.prisma.forTenant().purchaseOrder.findUnique({ where: { id } });
     if (!po) throw new NotFoundException("PO not found");
     if (po.status !== "DRAFT")
       throw new BadRequestException("Only DRAFT purchase orders can be sent");
-    return this.prisma.purchaseOrder.update({ where: { id }, data: { status: "SENT" } });
+    return this.prisma.forTenant().purchaseOrder.update({ where: { id }, data: { status: "SENT" } });
   }
 
   async receivePurchaseOrder(id: string, dto: any, userId: string) {
-    return this.prisma.$transaction(async (tx) => {
+    return this.prisma.tenantTransaction(async (tx) => {
       const po = await tx.purchaseOrder.findUnique({ where: { id }, include: { items: true } });
       if (!po) throw new NotFoundException("PO not found");
       if (po.status === "CLOSED")
@@ -464,15 +464,15 @@ export class InventoryService {
   }
 
   async closePurchaseOrder(id: string) {
-    return this.prisma.purchaseOrder.update({ where: { id }, data: { status: "CLOSED" } });
+    return this.prisma.forTenant().purchaseOrder.update({ where: { id }, data: { status: "CLOSED" } });
   }
 
   // ── Forecasting ──
   async getForecasting() {
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    const products = await this.prisma.product.findMany({ where: { isActive: true } });
-    const movements = await this.prisma.stockMovement.findMany({
+    const products = await this.prisma.forTenant().product.findMany({ where: { isActive: true } });
+    const movements = await this.prisma.forTenant().stockMovement.findMany({
       where: { type: "SALE", createdAt: { gte: thirtyDaysAgo } },
       select: { productId: true, quantity: true },
     });
@@ -504,7 +504,7 @@ export class InventoryService {
   }
 
   async setReorderPoint(productId: string, reorderPoint: number, reorderQty: number) {
-    return this.prisma.product.update({
+    return this.prisma.forTenant().product.update({
       where: { id: productId },
       data: { reorderPoint, reorderQty },
     });

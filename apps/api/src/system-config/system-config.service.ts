@@ -6,12 +6,12 @@ export class SystemConfigService {
   constructor(private readonly prisma: PrismaService) {}
 
   async get(key: string): Promise<string | null> {
-    const record = await this.prisma.systemConfig.findUnique({ where: { key } });
+    const record = await this.prisma.forTenant().systemConfig.findUnique({ where: { key } });
     return record?.value ?? null;
   }
 
   async set(key: string, value: string): Promise<void> {
-    await this.prisma.systemConfig.upsert({
+    await this.prisma.forTenant().systemConfig.upsert({
       where: { key },
       create: { key, value },
       update: { value },
@@ -19,7 +19,7 @@ export class SystemConfigService {
   }
 
   async getAll(prefix: string): Promise<Record<string, string>> {
-    const records = await this.prisma.systemConfig.findMany({
+    const records = await this.prisma.forTenant().systemConfig.findMany({
       where: { key: { startsWith: prefix } },
     });
     return Object.fromEntries(records.map((r) => [r.key, r.value]));

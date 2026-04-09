@@ -8,7 +8,7 @@ export class EstimatesService {
   private async nextEstNumber() {
     const year = new Date().getFullYear();
     const prefix = `EST-${year}-`;
-    const last = await this.prisma.estimate.findFirst({
+    const last = await this.prisma.forTenant().estimate.findFirst({
       where: { estimateNumber: { startsWith: prefix } },
       orderBy: { estimateNumber: "desc" },
     });
@@ -17,7 +17,7 @@ export class EstimatesService {
   }
 
   async create(dto: any) {
-    const customer = await this.prisma.customer.findUnique({ where: { id: dto.customerId } });
+    const customer = await this.prisma.forTenant().customer.findUnique({ where: { id: dto.customerId } });
     if (!customer) throw new NotFoundException("Customer not found");
 
     let subtotal = 0;
@@ -36,7 +36,7 @@ export class EstimatesService {
     const tax = dto.taxAmount ?? 0;
     const total = subtotal - discount + tax;
 
-    return this.prisma.estimate.create({
+    return this.prisma.forTenant().estimate.create({
       data: {
         estimateNumber: await this.nextEstNumber(),
         customerId: dto.customerId,
@@ -83,20 +83,20 @@ export class EstimatesService {
       ];
     }
     const [data, total] = await Promise.all([
-      this.prisma.estimate.findMany({
+      this.prisma.forTenant().estimate.findMany({
         where,
         include: { customer: { select: { id: true, businessName: true } }, items: true },
         orderBy: { createdAt: "desc" },
         skip,
         take: limit,
       }),
-      this.prisma.estimate.count({ where }),
+      this.prisma.forTenant().estimate.count({ where }),
     ]);
     return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
   }
 
   async findOne(id: string) {
-    const est = await this.prisma.estimate.findUnique({
+    const est = await this.prisma.forTenant().estimate.findUnique({
       where: { id },
       include: {
         customer: { select: { id: true, businessName: true, contactName: true } },
@@ -108,38 +108,38 @@ export class EstimatesService {
   }
 
   async send(id: string) {
-    return this.prisma.estimate.update({ where: { id }, data: { status: "SENT" } });
+    return this.prisma.forTenant().estimate.update({ where: { id }, data: { status: "SENT" } });
   }
   async accept(id: string) {
-    return this.prisma.estimate.update({ where: { id }, data: { status: "ACCEPTED" } });
+    return this.prisma.forTenant().estimate.update({ where: { id }, data: { status: "ACCEPTED" } });
   }
   async decline(id: string) {
-    return this.prisma.estimate.update({ where: { id }, data: { status: "DECLINED" } });
+    return this.prisma.forTenant().estimate.update({ where: { id }, data: { status: "DECLINED" } });
   }
   async voidEstimate(id: string) {
-    const est = await this.prisma.estimate.findUnique({ where: { id } });
+    const est = await this.prisma.forTenant().estimate.findUnique({ where: { id } });
     if (!est) throw new NotFoundException("Estimate not found");
     if (est.status === "CONVERTED")
       throw new BadRequestException("Converted estimates cannot be voided");
-    return this.prisma.estimate.update({ where: { id }, data: { status: "DECLINED" } });
+    return this.prisma.forTenant().estimate.update({ where: { id }, data: { status: "DECLINED" } });
   }
 
   async convertToInvoice(id: string) {
-    const est = await this.prisma.estimate.findUnique({ where: { id }, include: { items: true } });
+    const est = await this.prisma.forTenant().estimate.findUnique({ where: { id }, include: { items: true } });
     if (!est) throw new NotFoundException("Estimate not found");
     if (est.status !== "ACCEPTED")
       throw new BadRequestException("Only ACCEPTED estimates can be converted");
 
     const year = new Date().getFullYear();
     const prefix = `INV-${year}-`;
-    const last = await this.prisma.invoice.findFirst({
+    const last = await this.prisma.forTenant().invoice.findFirst({
       where: { invoiceNumber: { startsWith: prefix } },
       orderBy: { invoiceNumber: "desc" },
     });
     const seq = last ? parseInt(last.invoiceNumber.split("-")[2], 10) + 1 : 1;
     const invoiceNumber = `${prefix}${String(seq).padStart(4, "0")}`;
 
-    const inv = await this.prisma.invoice.create({
+    const inv = await this.prisma.forTenant().invoice.create({
       data: {
         invoiceNumber,
         customerId: est.customerId,
@@ -165,7 +165,7 @@ export class EstimatesService {
       },
       include: { customer: { select: { id: true, businessName: true } }, items: true },
     });
-    await this.prisma.estimate.update({ where: { id }, data: { status: "CONVERTED" } });
+    await this.prisma.forTenant().estimate.update({ where: { id }, data: { status: "CONVERTED" } });
     return inv;
   }
 }

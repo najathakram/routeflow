@@ -106,7 +106,7 @@ export class ImportService {
     }
 
     // ── Layer 2: Customer contact match (fills gaps left by CSV) ─────────────
-    const matchingCustomers = await this.prisma.customer.findMany({
+    const matchingCustomers = await this.prisma.forTenant().customer.findMany({
       where: {
         OR: [
           { businessName: { equals: name, mode: "insensitive" } },
@@ -222,14 +222,14 @@ export class ImportService {
 
       // Check if this customer was already imported (by Zoho ID)
       if (zohoContactId) {
-        const existing = await this.prisma.customer.findFirst({
+        const existing = await this.prisma.forTenant().customer.findFirst({
           where: { zohoContactId },
           include: { addresses: true, contactPersons: true },
         });
         if (existing) {
           // Update the existing customer with any missing/new fields
           try {
-            await this.prisma.customer.update({
+            await this.prisma.forTenant().customer.update({
               where: { id: existing.id },
               data: {
                 ...(displayName !== null && { displayName }),
@@ -248,7 +248,7 @@ export class ImportService {
             // Add billing address if not already present
             const existingBilling = existing.addresses.find(a => a.addressType === "BILLING");
             if (!existingBilling && hasBilling) {
-              await this.prisma.customerAddress.create({
+              await this.prisma.forTenant().customerAddress.create({
                 data: {
                   customerId: existing.id,
                   label: "Billing",
@@ -267,7 +267,7 @@ export class ImportService {
             // Add shipping address if not already present and differs from billing
             const existingShipping = existing.addresses.find(a => a.addressType === "SHIPPING");
             if (!existingShipping && hasShipping) {
-              await this.prisma.customerAddress.create({
+              await this.prisma.forTenant().customerAddress.create({
                 data: {
                   customerId: existing.id,
                   label: "Shipping",
@@ -285,7 +285,7 @@ export class ImportService {
 
             // Add contact person if we have a name and none exists yet
             if ((firstName || lastName) && existing.contactPersons.length === 0) {
-              await this.prisma.contactPerson.create({
+              await this.prisma.forTenant().contactPerson.create({
                 data: {
                   customerId: existing.id,
                   salutation: salutation || null,
@@ -311,14 +311,14 @@ export class ImportService {
       const baseUsername = this.slugify(name);
       let username = baseUsername;
       let suffix = 1;
-      while (await this.prisma.user.findFirst({ where: { username } })) {
+      while (await this.prisma.forTenant().user.findFirst({ where: { username } })) {
         username = `${baseUsername}_${suffix++}`;
       }
 
       // Determine user email: use CSV email if not taken, otherwise synthetic
       let userEmail: string;
       if (csvEmail) {
-        const emailTaken = await this.prisma.user.findFirst({ where: { email: csvEmail } });
+        const emailTaken = await this.prisma.forTenant().user.findFirst({ where: { email: csvEmail } });
         userEmail = emailTaken ? `${username}@imported.local` : csvEmail;
       } else {
         userEmail = `${username}@imported.local`;
@@ -327,7 +327,7 @@ export class ImportService {
       try {
         const hashedPassword = await bcrypt.hash(this.generateTempPassword(), 10);
 
-        await this.prisma.$transaction(async (tx) => {
+        await this.prisma.tenantTransaction(async (tx) => {
           const user = await tx.user.create({
             data: {
               email: userEmail,
@@ -448,7 +448,7 @@ export class ImportService {
       }
 
       // Try to find existing customer
-      let customer = await this.prisma.customer.findFirst({
+      let customer = await this.prisma.forTenant().customer.findFirst({
         where: { businessName: { contains: customerName, mode: "insensitive" } },
       });
 
@@ -457,11 +457,11 @@ export class ImportService {
         const baseUsername = this.slugify(customerName);
         let username = baseUsername;
         let usernameSeq = 1;
-        while (await this.prisma.user.findFirst({ where: { username } })) {
+        while (await this.prisma.forTenant().user.findFirst({ where: { username } })) {
           username = `${baseUsername}_${usernameSeq++}`;
         }
         const userEmail = `${username}@imported.local`;
-        const existingUser = await this.prisma.user.findFirst({
+        const existingUser = await this.prisma.forTenant().user.findFirst({
           where: { OR: [{ email: userEmail }, { username }] },
         });
         if (existingUser) {
@@ -477,7 +477,7 @@ export class ImportService {
           const zip = (first["Billing Code"] || "").trim();
           const phone = (first["Billing Phone"] || "").replace(/['+]/g, "").trim();
 
-          await this.prisma.$transaction(async (tx) => {
+          await this.prisma.tenantTransaction(async (tx) => {
             const user = await tx.user.create({
               data: {
                 email: userEmail,
@@ -587,13 +587,13 @@ export class ImportService {
 
         let productId: string | undefined;
         if (sku) {
-          const product = await this.prisma.product.findFirst({
+          const product = await this.prisma.forTenant().product.findFirst({
             where: { sku: { equals: sku, mode: "insensitive" } },
           });
           if (product) productId = product.id;
         }
         if (!productId && description && description !== "Item") {
-          const product = await this.prisma.product.findFirst({
+          const product = await this.prisma.forTenant().product.findFirst({
             where: { name: { equals: description, mode: "insensitive" } },
           });
           if (product) productId = product.id;
@@ -623,14 +623,14 @@ export class ImportService {
 
       try {
         // Skip if invoice number already exists
-        const existing = await this.prisma.invoice.findFirst({ where: { invoiceNumber } });
+        const existing = await this.prisma.forTenant().invoice.findFirst({ where: { invoiceNumber } });
         if (existing) {
           skipped++;
           errors.push(`${invoiceNumber}: already imported`);
           continue;
         }
 
-        const newInvoice = await this.prisma.invoice.create({
+        const newInvoice = await this.prisma.forTenant().invoice.create({
           data: {
             invoiceNumber,
             customerId: customer.id,
@@ -658,7 +658,7 @@ export class ImportService {
               ? total
               : 0;
           if (paidAmount > 0.01) {
-            await this.prisma.invoicePayment.create({
+            await this.prisma.forTenant().invoicePayment.create({
               data: {
                 invoiceId: newInvoice.id,
                 amount: paidAmount,
@@ -696,7 +696,7 @@ export class ImportService {
         continue;
       }
 
-      const invoice = await this.prisma.invoice.findFirst({ where: { invoiceNumber } });
+      const invoice = await this.prisma.forTenant().invoice.findFirst({ where: { invoiceNumber } });
       if (!invoice) {
         skipped++;
         continue;
@@ -723,7 +723,7 @@ export class ImportService {
       try {
         // Skip if already imported (check by zohoId reference, or amount+date combo)
         if (zohoPaymentId) {
-          const dup = await this.prisma.invoicePayment.findFirst({
+          const dup = await this.prisma.forTenant().invoicePayment.findFirst({
             where: { invoiceId: invoice.id, reference: zohoPaymentId },
           });
           if (dup) { skipped++; continue; }
@@ -731,11 +731,11 @@ export class ImportService {
 
         // Also remove any synthetic "zoho-import" placeholder payment for this invoice
         // now that we have the real payment record
-        await this.prisma.invoicePayment.deleteMany({
+        await this.prisma.forTenant().invoicePayment.deleteMany({
           where: { invoiceId: invoice.id, reference: "zoho-import" },
         });
 
-        await this.prisma.invoicePayment.create({
+        await this.prisma.forTenant().invoicePayment.create({
           data: {
             invoiceId: invoice.id,
             amount,
@@ -753,7 +753,7 @@ export class ImportService {
     }
 
     // Update invoice statuses based on total payments — wrapped in a single transaction
-    const allInvoices = await this.prisma.invoice.findMany({ include: { payments: true } });
+    const allInvoices = await this.prisma.forTenant().invoice.findMany({ include: { payments: true } });
     const now = new Date();
     const statusUpdates: Array<{ id: string; status: InvoiceStatus; paidAt: Date | null }> = [];
     for (const inv of allInvoices) {
@@ -771,7 +771,7 @@ export class ImportService {
     if (statusUpdates.length > 0) {
       await this.prisma.$transaction(
         statusUpdates.map((u) =>
-          this.prisma.invoice.update({
+          this.prisma.forTenant().invoice.update({
             where: { id: u.id },
             data: { status: u.status, paidAt: u.paidAt },
           }),
@@ -800,15 +800,15 @@ export class ImportService {
         .toUpperCase()
         .replace(/[^A-Z0-9]/g, "_")
         .slice(0, 20);
-      let cat = await this.prisma.expenseCategory.findFirst({ where: { name: catName } });
+      let cat = await this.prisma.forTenant().expenseCategory.findFirst({ where: { name: catName } });
       if (!cat) {
         try {
-          cat = await this.prisma.expenseCategory.create({
+          cat = await this.prisma.forTenant().expenseCategory.create({
             data: { name: catName, code, isCustom: true },
           });
         } catch {
           try {
-            cat = await this.prisma.expenseCategory.create({
+            cat = await this.prisma.forTenant().expenseCategory.create({
               data: { name: catName, code: code + "_Z", isCustom: true },
             });
           } catch (_e) {
@@ -843,19 +843,19 @@ export class ImportService {
         // Build full supplier profile: CSV columns + customer contact match
         const supplierData = await this.buildSupplierData(name, sampleRow);
 
-        const existing = await this.prisma.supplier.findFirst({
+        const existing = await this.prisma.forTenant().supplier.findFirst({
           where: { name: { equals: name, mode: "insensitive" } },
         });
         if (existing) {
           // Update — remove the 'name' key (not needed in update) and apply the rest
           const { name: _n, ...updateData } = supplierData;
           if (Object.keys(updateData).length > 0) {
-            await this.prisma.supplier.update({ where: { id: existing.id }, data: updateData });
+            await this.prisma.forTenant().supplier.update({ where: { id: existing.id }, data: updateData });
           }
           vendorMap[name.toLowerCase()] = existing.id;
           suppliersUpdated++;
         } else {
-          const created = await this.prisma.supplier.create({ data: supplierData as any });
+          const created = await this.prisma.forTenant().supplier.create({ data: supplierData as any });
           vendorMap[name.toLowerCase()] = created.id;
           suppliersCreated++;
         }
@@ -894,7 +894,7 @@ export class ImportService {
       const supplierId = vendorName ? (vendorMap[vendorName.toLowerCase()] ?? null) : null;
 
       try {
-        await this.prisma.expense.create({
+        await this.prisma.forTenant().expense.create({
           data: {
             categoryId,
             amount,
@@ -937,7 +937,7 @@ export class ImportService {
       const sku = row["SKU"] || null;
 
       try {
-        await this.prisma.product.create({
+        await this.prisma.forTenant().product.create({
           data: {
             name,
             description: description || null,
@@ -997,24 +997,24 @@ export class ImportService {
       try {
         // Try to find existing product by barcode first, then by name
         let product = rawSku
-          ? await this.prisma.product.findFirst({ where: { OR: [{ barcode: rawSku }, { sku: rawSku }] } })
+          ? await this.prisma.forTenant().product.findFirst({ where: { OR: [{ barcode: rawSku }, { sku: rawSku }] } })
           : null;
 
         if (!product) {
-          product = await this.prisma.product.findFirst({
+          product = await this.prisma.forTenant().product.findFirst({
             where: { name: { equals: name, mode: "insensitive" } },
           });
         }
 
         if (product) {
           // Update stock level
-          await this.prisma.product.update({
+          await this.prisma.forTenant().product.update({
             where: { id: product.id },
             data: { currentStock: closingStock },
           });
           // Record the stock adjustment as a stock movement
           if (closingStock !== Number(product.currentStock)) {
-            await this.prisma.stockMovement.create({
+            await this.prisma.forTenant().stockMovement.create({
               data: {
                 productId: product.id,
                 type: "ADJUSTMENT",
@@ -1027,7 +1027,7 @@ export class ImportService {
           updated++;
         } else {
           // Create new product with this stock level
-          await this.prisma.product.create({
+          await this.prisma.forTenant().product.create({
             data: {
               name,
               barcode: rawSku || null,
@@ -1085,18 +1085,18 @@ export class ImportService {
         const supplierData = await this.buildSupplierData(name, sampleRow);
 
         // Upsert supplier (match by name case-insensitive)
-        const existing = await this.prisma.supplier.findFirst({
+        const existing = await this.prisma.forTenant().supplier.findFirst({
           where: { name: { equals: name, mode: "insensitive" } },
         });
 
         if (existing) {
-          await this.prisma.supplier.update({
+          await this.prisma.forTenant().supplier.update({
             where: { id: existing.id },
             data: supplierData,
           });
           updated++;
         } else {
-          await this.prisma.supplier.create({ data: supplierData as any });
+          await this.prisma.forTenant().supplier.create({ data: supplierData as any });
           created++;
         }
 

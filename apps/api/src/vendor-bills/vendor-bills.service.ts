@@ -18,7 +18,7 @@ export class VendorBillsService {
   private async nextBillNumber() {
     const year = new Date().getFullYear();
     const prefix = `BILL-${year}-`;
-    const last = await this.prisma.vendorBill.findFirst({
+    const last = await this.prisma.forTenant().vendorBill.findFirst({
       where: { billNumber: { startsWith: prefix } },
       orderBy: { billNumber: "desc" },
     });
@@ -39,7 +39,7 @@ export class VendorBillsService {
       );
     }
 
-    const bill = await this.prisma.vendorBill.create({
+    const bill = await this.prisma.forTenant().vendorBill.create({
       data: {
         billNumber: await this.nextBillNumber(),
         supplierId: dto.supplierId,
@@ -74,7 +74,7 @@ export class VendorBillsService {
   }
 
   async update(id: string, dto: any) {
-    const bill = await this.prisma.vendorBill.findUnique({ where: { id } });
+    const bill = await this.prisma.forTenant().vendorBill.findUnique({ where: { id } });
     if (!bill) throw new NotFoundException("Bill not found");
     if (bill.status !== "DRAFT") {
       throw new BadRequestException("Only DRAFT bills can be edited. Revert to draft first.");
@@ -89,7 +89,7 @@ export class VendorBillsService {
       );
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    return this.prisma.tenantTransaction(async (tx) => {
       // Delete existing items and recreate if items provided
       if (dto.items !== undefined) {
         await tx.vendorBillItem.deleteMany({ where: { vendorBillId: id } });
@@ -130,7 +130,7 @@ export class VendorBillsService {
   }
 
   async receive(id: string) {
-    const bill = await this.prisma.vendorBill.findUnique({
+    const bill = await this.prisma.forTenant().vendorBill.findUnique({
       where: { id },
       include: {
         items: { include: { product: true } },
@@ -140,7 +140,7 @@ export class VendorBillsService {
     if (!bill) throw new NotFoundException("Bill not found");
 
     // Update bill status
-    const updated = await this.prisma.$transaction(async (tx) => {
+    const updated = await this.prisma.tenantTransaction(async (tx) => {
       const updatedBill = await tx.vendorBill.update({
         where: { id },
         data: { status: "RECEIVED", receivedDate: new Date() },
@@ -201,7 +201,7 @@ export class VendorBillsService {
   }
 
   async revertToDraft(id: string) {
-    const bill = await this.prisma.vendorBill.findUnique({
+    const bill = await this.prisma.forTenant().vendorBill.findUnique({
       where: { id },
       include: {
         items: { include: { product: true } },
@@ -215,7 +215,7 @@ export class VendorBillsService {
       );
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    return this.prisma.tenantTransaction(async (tx) => {
       // Reverse inventory for each product-linked item
       for (const item of bill.items) {
         if (!item.productId) continue;
@@ -275,7 +275,7 @@ export class VendorBillsService {
   }
 
   async voidBill(id: string) {
-    return this.prisma.vendorBill.update({ where: { id }, data: { status: "VOID" as any } });
+    return this.prisma.forTenant().vendorBill.update({ where: { id }, data: { status: "VOID" as any } });
   }
 
   async findAll(
@@ -304,7 +304,7 @@ export class VendorBillsService {
       ];
     }
     const [data, total] = await Promise.all([
-      this.prisma.vendorBill.findMany({
+      this.prisma.forTenant().vendorBill.findMany({
         where,
         include: {
           supplier: { select: { id: true, name: true } },
@@ -317,13 +317,13 @@ export class VendorBillsService {
         skip,
         take: limit,
       }),
-      this.prisma.vendorBill.count({ where }),
+      this.prisma.forTenant().vendorBill.count({ where }),
     ]);
     return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
   }
 
   async findOne(id: string) {
-    const bill = await this.prisma.vendorBill.findUnique({
+    const bill = await this.prisma.forTenant().vendorBill.findUnique({
       where: { id },
       include: {
         supplier: true,
@@ -340,7 +340,7 @@ export class VendorBillsService {
   // ─── Product Mapping Memory ───────────────────────────────────────────────────
 
   async saveProductMapping(supplierName: string, rawDescription: string, productId: string | null) {
-    return this.prisma.productMapping.upsert({
+    return this.prisma.forTenant().productMapping.upsert({
       where: { supplierName_rawDescription: { supplierName, rawDescription } },
       create: { supplierName, rawDescription, productId },
       update: { productId },
@@ -348,7 +348,7 @@ export class VendorBillsService {
   }
 
   async getProductMappings(supplierName: string) {
-    return this.prisma.productMapping.findMany({
+    return this.prisma.forTenant().productMapping.findMany({
       where: { supplierName },
       include: { product: { select: { id: true, name: true, sku: true, unit: true } } },
     });
@@ -435,10 +435,10 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
 
     // ── Phase 2: Server-side product matching (free, instant, no tokens) ──
     const [products, allMappings] = await Promise.all([
-      this.prisma.product.findMany({
+      this.prisma.forTenant().product.findMany({
         select: { id: true, name: true, sku: true, barcode: true },
       }),
-      this.prisma.productMapping.findMany({
+      this.prisma.forTenant().productMapping.findMany({
         include: { product: { select: { id: true, name: true } } },
       }),
     ]);
@@ -516,7 +516,7 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
   }
 
   async recordPayment(id: string, dto: { amount: number; method: string; reference?: string }) {
-    return this.prisma.$transaction(async (tx) => {
+    return this.prisma.tenantTransaction(async (tx) => {
       const bill = await tx.vendorBill.findUnique({ where: { id }, include: { payments: true } });
       if (!bill) throw new NotFoundException("Bill not found");
       const alreadyPaid = bill.payments.reduce((s, p) => s + Number(p.amount), 0);
@@ -547,15 +547,15 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
   }
 
   async delete(id: string) {
-    const bill = await this.prisma.vendorBill.findUnique({ where: { id } });
+    const bill = await this.prisma.forTenant().vendorBill.findUnique({ where: { id } });
     if (!bill) throw new NotFoundException("Bill not found");
     if (bill.status === "RECEIVED" || bill.status === "PAID" || bill.status === "PARTIAL") {
       throw new BadRequestException("Cannot delete a bill that has been received or paid. Void it instead.");
     }
     await this.prisma.$transaction([
-      this.prisma.billPayment.deleteMany({ where: { vendorBillId: id } }),
-      this.prisma.vendorBillItem.deleteMany({ where: { vendorBillId: id } }),
-      this.prisma.vendorBill.delete({ where: { id } }),
+      this.prisma.forTenant().billPayment.deleteMany({ where: { vendorBillId: id } }),
+      this.prisma.forTenant().vendorBillItem.deleteMany({ where: { vendorBillId: id } }),
+      this.prisma.forTenant().vendorBill.delete({ where: { id } }),
     ]);
     return { success: true };
   }
@@ -563,7 +563,7 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
   async bulkDelete(ids: string[]) {
     if (!ids || ids.length === 0) throw new BadRequestException("No IDs provided");
     // Only delete DRAFT or VOID bills
-    const bills = await this.prisma.vendorBill.findMany({
+    const bills = await this.prisma.forTenant().vendorBill.findMany({
       where: { id: { in: ids } },
       select: { id: true, status: true, billNumber: true },
     });
@@ -572,9 +572,9 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
     if (deletable.length > 0) {
       const deletableIds = deletable.map(b => b.id);
       await this.prisma.$transaction([
-        this.prisma.billPayment.deleteMany({ where: { vendorBillId: { in: deletableIds } } }),
-        this.prisma.vendorBillItem.deleteMany({ where: { vendorBillId: { in: deletableIds } } }),
-        this.prisma.vendorBill.deleteMany({ where: { id: { in: deletableIds } } }),
+        this.prisma.forTenant().billPayment.deleteMany({ where: { vendorBillId: { in: deletableIds } } }),
+        this.prisma.forTenant().vendorBillItem.deleteMany({ where: { vendorBillId: { in: deletableIds } } }),
+        this.prisma.forTenant().vendorBill.deleteMany({ where: { id: { in: deletableIds } } }),
       ]);
     }
     return {

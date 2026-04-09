@@ -8,7 +8,6 @@ import {
   ConnectedSocket,
   WsException,
 } from "@nestjs/websockets";
-import { UseGuards } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { Server, Socket } from "socket.io";
 import { JwtPayload } from "../auth/jwt-payload.interface";
@@ -116,7 +115,13 @@ export class RouteFlowGateway implements OnGatewayConnection, OnGatewayDisconnec
 
   constructor(private readonly jwtService: JwtService) {}
 
-  // ─── Connection auth ─────────────────────────────────────────────────────────
+  // ─── Room helpers ─────────────────────────────────────────────────────────────
+
+  private tenantRoom(tenantId: string | null, room: string): string {
+    return tenantId ? `tenant:${tenantId}:${room}` : room;
+  }
+
+  // ─── Connection auth ───────────────────────────────────────────────────────���─
 
   async handleConnection(client: Socket) {
     try {
@@ -129,12 +134,16 @@ export class RouteFlowGateway implements OnGatewayConnection, OnGatewayDisconnec
       const payload = this.jwtService.verify<JwtPayload>(token);
       client.data.user = payload;
 
-      if (payload.role === UserRole.OPERATOR) {
-        await client.join("operators");
+      const tenantId = payload.tenantId ?? null;
+
+      if (payload.role === UserRole.OPERATOR || payload.role === UserRole.TENANT_ADMIN) {
+        await client.join(this.tenantRoom(tenantId, "operators"));
       } else if (payload.role === UserRole.DRIVER) {
-        await client.join(`driver:${payload.sub}`);
+        await client.join(this.tenantRoom(tenantId, `driver:${payload.sub}`));
       } else if (payload.role === UserRole.CUSTOMER) {
-        await client.join(`customer:${payload.sub}`);
+        await client.join(this.tenantRoom(tenantId, `customer:${payload.sub}`));
+      } else if (payload.role === UserRole.SUPER_ADMIN) {
+        await client.join("super-admin");
       }
     } catch {
       client.disconnect(true);
@@ -145,7 +154,7 @@ export class RouteFlowGateway implements OnGatewayConnection, OnGatewayDisconnec
     // cleanup handled automatically by socket.io
   }
 
-  // ─── Client → Server events ──────────────────────────────────────────────────
+  // ─── Client → Server events ───────────────────────────────��──────────────────
 
   @SubscribeMessage("driver.location.update")
   handleDriverLocation(
@@ -155,7 +164,8 @@ export class RouteFlowGateway implements OnGatewayConnection, OnGatewayDisconnec
     const user: JwtPayload | undefined = client.data.user;
     if (!user || user.role !== UserRole.DRIVER) return;
 
-    this.server.to("operators").emit("driver.location.updated", {
+    const tenantId = user.tenantId ?? null;
+    this.server.to(this.tenantRoom(tenantId, "operators")).emit("driver.location.updated", {
       driverId: user.sub,
       ...payload,
       timestamp: new Date().toISOString(),
@@ -164,42 +174,48 @@ export class RouteFlowGateway implements OnGatewayConnection, OnGatewayDisconnec
 
   // ─── Server → Client emitters (called from services) ─────────────────────────
 
-  emitStopCompleted(payload: StopCompletedPayload) {
-    this.server.to("operators").emit("route.stop.completed", payload);
+  emitStopCompleted(tenantId: string | null, payload: StopCompletedPayload) {
+    this.server.to(this.tenantRoom(tenantId, "operators")).emit("route.stop.completed", payload);
   }
 
-  emitUrgentOrder(payload: UrgentOrderPayload) {
-    this.server.to("operators").emit("order.urgent.placed", payload);
+  emitUrgentOrder(tenantId: string | null, payload: UrgentOrderPayload) {
+    this.server.to(this.tenantRoom(tenantId, "operators")).emit("order.urgent.placed", payload);
   }
 
-  emitDriverStatusUpdated(payload: DriverStatusPayload) {
-    this.server.to("operators").emit("driver.status.updated", payload);
+  emitDriverStatusUpdated(tenantId: string | null, payload: DriverStatusPayload) {
+    this.server.to(this.tenantRoom(tenantId, "operators")).emit("driver.status.updated", payload);
   }
 
-  emitLowStock(payload: LowStockPayload) {
-    this.server.to("operators").emit("inventory.low.stock", payload);
+  emitLowStock(tenantId: string | null, payload: LowStockPayload) {
+    this.server.to(this.tenantRoom(tenantId, "operators")).emit("inventory.low.stock", payload);
   }
 
-  emitOrderCreated(payload: OrderCreatedPayload) {
-    this.server.to("operators").emit("order.created", payload);
+  emitOrderCreated(tenantId: string | null, payload: OrderCreatedPayload) {
+    this.server.to(this.tenantRoom(tenantId, "operators")).emit("order.created", payload);
   }
 
-  emitOrderStatusChanged(payload: OrderStatusChangedPayload) {
-    this.server.to("operators").emit("order.statusChanged", payload);
-    this.server.to(`customer:${payload.customerId}`).emit("order.statusChanged", payload);
+  emitOrderStatusChanged(tenantId: string | null, payload: OrderStatusChangedPayload) {
+    this.server.to(this.tenantRoom(tenantId, "operators")).emit("order.statusChanged", payload);
+    this.server
+      .to(this.tenantRoom(tenantId, `customer:${payload.customerId}`))
+      .emit("order.statusChanged", payload);
   }
 
-  emitReturnCreated(payload: ReturnCreatedPayload) {
-    this.server.to("operators").emit("return.created", payload);
+  emitReturnCreated(tenantId: string | null, payload: ReturnCreatedPayload) {
+    this.server.to(this.tenantRoom(tenantId, "operators")).emit("return.created", payload);
   }
 
-  emitInvoiceUpdated(payload: InvoiceUpdatedPayload) {
-    this.server.to("operators").emit("invoice.updated", payload);
-    this.server.to(`customer:${payload.customerId}`).emit("invoice.updated", payload);
+  emitInvoiceUpdated(tenantId: string | null, payload: InvoiceUpdatedPayload) {
+    this.server.to(this.tenantRoom(tenantId, "operators")).emit("invoice.updated", payload);
+    this.server
+      .to(this.tenantRoom(tenantId, `customer:${payload.customerId}`))
+      .emit("invoice.updated", payload);
   }
 
-  emitCreditNoteCreated(payload: CreditNoteCreatedPayload) {
-    this.server.to("operators").emit("creditNote.created", payload);
-    this.server.to(`customer:${payload.customerId}`).emit("creditNote.created", payload);
+  emitCreditNoteCreated(tenantId: string | null, payload: CreditNoteCreatedPayload) {
+    this.server.to(this.tenantRoom(tenantId, "operators")).emit("creditNote.created", payload);
+    this.server
+      .to(this.tenantRoom(tenantId, `customer:${payload.customerId}`))
+      .emit("creditNote.created", payload);
   }
 }

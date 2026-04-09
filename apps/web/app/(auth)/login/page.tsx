@@ -8,6 +8,7 @@ import { useRouter } from "next/navigation";
 import { Eye, EyeOff } from "lucide-react";
 import { Input, Button } from "@routeflow/ui/web";
 import { useAuth } from "@/lib/auth-context";
+import { useTenant } from "@/components/tenant-provider";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -48,6 +49,7 @@ function GoogleIcon({ className }: { className?: string }) {
 export default function LoginPage() {
   const router = useRouter();
   const { login: authLogin } = useAuth();
+  const { branding, slug: tenantSlug } = useTenant();
   const [isLoading, setIsLoading] = React.useState(false);
   const [apiError, setApiError] = React.useState<string | null>(null);
   const [showPassword, setShowPassword] = React.useState(false);
@@ -80,18 +82,45 @@ export default function LoginPage() {
   };
 
   const apiUrl =
-    process.env.NEXT_PUBLIC_API_URL ??
-    (typeof window !== "undefined" ? `${window.location.protocol}//${window.location.hostname}:3000` : "http://localhost:3000");
+    process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") ??
+    (typeof window !== "undefined"
+      ? `${window.location.protocol}//${window.location.hostname}:3000`
+      : "http://localhost:3000");
+
+  // Use tenant-specific Google OAuth if the tenant slug is known,
+  // otherwise fall back to the generic endpoint (middleware resolves tenant
+  // from subdomain on the server side).
+  const googleOAuthUrl = tenantSlug
+    ? `${apiUrl}/api/v1/auth/google/${encodeURIComponent(tenantSlug)}`
+    : `${apiUrl}/api/v1/auth/google`;
+
+  const businessName = branding?.businessName ?? "RouteFlow";
+  const logoKey = branding?.logoKey;
+  const logoUrl = logoKey
+    ? `${apiUrl}/api/v1/uploads/${logoKey}`
+    : null;
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-surface-raised p-4">
       <div className="w-full max-w-sm">
-        {/* Logo */}
+        {/* Logo / Brand */}
         <div className="mb-8 flex flex-col items-center gap-3">
-          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-brand-500 text-lg font-bold text-white">
-            RF
-          </div>
-          <h1 className="text-2xl font-bold text-navy">RouteFlow</h1>
+          {logoUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={logoUrl}
+              alt={businessName}
+              className="h-12 w-12 rounded-xl object-contain"
+            />
+          ) : (
+            <div
+              className="flex h-12 w-12 items-center justify-center rounded-xl text-lg font-bold text-white"
+              style={{ backgroundColor: "var(--primary, #3B82F6)" }}
+            >
+              {businessName.slice(0, 2).toUpperCase()}
+            </div>
+          )}
+          <h1 className="text-2xl font-bold text-navy">{businessName}</h1>
           <p className="text-sm text-navy/60">Sign in to your account</p>
         </div>
 
@@ -109,6 +138,12 @@ export default function LoginPage() {
               autoComplete="username"
               register={register("username")}
               error={errors.username?.message}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  document.getElementById("password")?.focus();
+                }
+              }}
             />
             <div className="flex flex-col gap-1">
               <label htmlFor="password" className="text-sm font-medium text-navy">
@@ -121,6 +156,12 @@ export default function LoginPage() {
                   placeholder="Enter your password"
                   autoComplete="current-password"
                   className="h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 text-sm text-navy placeholder:text-navy/40 transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      handleSubmit(onSubmit)();
+                    }
+                  }}
                   {...register("password")}
                 />
                 <button
@@ -149,9 +190,9 @@ export default function LoginPage() {
             <div className="h-px flex-1 bg-surface-border" />
           </div>
 
-          {/* Google Sign-In */}
+          {/* Google Sign-In — uses tenant-specific OAuth if slug is known */}
           <a
-            href={`${apiUrl}/auth/google`}
+            href={googleOAuthUrl}
             className="flex w-full items-center justify-center gap-3 rounded border border-surface-border bg-white px-4 py-2.5 text-sm font-medium text-navy shadow-sm transition-colors hover:bg-surface-raised focus:outline-none focus:ring-2 focus:ring-brand-500"
           >
             <GoogleIcon className="h-4 w-4" />

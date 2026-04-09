@@ -398,6 +398,43 @@ function Header() {
   );
 }
 
+// ─── Impersonation banner ─────────────────────────────────────────────────────
+
+function ImpersonationBanner() {
+  const router = useRouter();
+  const [tenantSlug, setTenantSlug] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+    const imp = localStorage.getItem("impersonationToken");
+    if (imp) {
+      setTenantSlug(localStorage.getItem("impersonationTenantSlug") ?? "unknown");
+    }
+  }, []);
+
+  if (!tenantSlug) return null;
+
+  const exitImpersonation = () => {
+    localStorage.removeItem("impersonationToken");
+    localStorage.removeItem("impersonationTenantSlug");
+    router.push("/admin/tenants");
+  };
+
+  return (
+    <div className="flex items-center justify-between bg-red-600 px-4 py-2 text-sm text-white">
+      <span>
+        ⚠️ Impersonating <strong>{tenantSlug}</strong> — acting as Tenant Admin
+      </span>
+      <button
+        onClick={exitImpersonation}
+        className="rounded bg-white/20 px-3 py-1 text-xs font-semibold hover:bg-white/30 transition-colors"
+      >
+        Exit impersonation
+      </button>
+    </div>
+  );
+}
+
 // ─── Dashboard shell ──────────────────────────────────────────────────────────
 
 function DashboardShell({ children }: { children: React.ReactNode }) {
@@ -511,6 +548,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
 
       {/* Right column */}
       <div className="flex flex-1 flex-col overflow-hidden">
+        <ImpersonationBanner />
         <Header />
         <main id="main-content" className="flex-1 overflow-x-hidden overflow-y-auto bg-surface-raised">
           {children}

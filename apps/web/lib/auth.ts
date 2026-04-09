@@ -5,7 +5,7 @@ import { apiClient } from "./api-client";
 export interface AuthUser {
   id: string;
   username: string;
-  role: "OPERATOR" | "DRIVER" | "CUSTOMER";
+  role: "OPERATOR" | "DRIVER" | "CUSTOMER" | "SUPER_ADMIN" | "TENANT_ADMIN";
   status: "ACTIVE" | "INACTIVE" | "SUSPENDED";
   forcePasswordChange: boolean;
 }
@@ -29,7 +29,8 @@ function parseJwtPayload(token: string): Record<string, unknown> | null {
 
 export function getStoredUser(): AuthUser | null {
   if (typeof window === "undefined") return null;
-  const token = localStorage.getItem("accessToken");
+  // Prefer impersonation token when active, fall back to regular access token
+  const token = localStorage.getItem("impersonationToken") ?? localStorage.getItem("accessToken");
   if (!token) return null;
   const payload = parseJwtPayload(token);
   if (!payload) return null;

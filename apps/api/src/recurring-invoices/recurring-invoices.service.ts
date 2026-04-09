@@ -48,10 +48,10 @@ export class RecurringInvoicesService {
   // ─── CRUD ─────────────────────────────────────────────────────────────────
 
   async create(dto: CreateRecurringInvoiceDto) {
-    const customer = await this.prisma.customer.findUnique({ where: { id: dto.customerId } });
+    const customer = await this.prisma.forTenant().customer.findUnique({ where: { id: dto.customerId } });
     if (!customer) throw new NotFoundException("Customer not found");
 
-    return this.prisma.recurringInvoice.create({
+    return this.prisma.forTenant().recurringInvoice.create({
       data: {
         customerId: dto.customerId,
         frequency: dto.frequency,
@@ -79,7 +79,7 @@ export class RecurringInvoicesService {
   }
 
   async findAll(customerId?: string) {
-    return this.prisma.recurringInvoice.findMany({
+    return this.prisma.forTenant().recurringInvoice.findMany({
       where: customerId ? { customerId } : {},
       include: { customer: { select: { id: true, businessName: true } }, items: true },
       orderBy: { nextRunAt: "asc" },
@@ -87,7 +87,7 @@ export class RecurringInvoicesService {
   }
 
   async findOne(id: string) {
-    const ri = await this.prisma.recurringInvoice.findUnique({
+    const ri = await this.prisma.forTenant().recurringInvoice.findUnique({
       where: { id },
       include: { customer: { select: { id: true, businessName: true } }, items: true },
     });
@@ -99,10 +99,10 @@ export class RecurringInvoicesService {
     const ri = await this.findOne(id);
 
     if (dto.items) {
-      await this.prisma.recurringInvoiceItem.deleteMany({ where: { recurringInvoiceId: id } });
+      await this.prisma.forTenant().recurringInvoiceItem.deleteMany({ where: { recurringInvoiceId: id } });
     }
 
-    return this.prisma.recurringInvoice.update({
+    return this.prisma.forTenant().recurringInvoice.update({
       where: { id },
       data: {
         ...(dto.frequency && { frequency: dto.frequency }),
@@ -133,11 +133,11 @@ export class RecurringInvoicesService {
 
   async deactivate(id: string) {
     await this.findOne(id);
-    return this.prisma.recurringInvoice.update({ where: { id }, data: { isActive: false } });
+    return this.prisma.forTenant().recurringInvoice.update({ where: { id }, data: { isActive: false } });
   }
 
   async runNow(id: string) {
-    const ri = await this.prisma.recurringInvoice.findUnique({
+    const ri = await this.prisma.forTenant().recurringInvoice.findUnique({
       where: { id },
       include: { items: true, customer: true },
     });
@@ -170,14 +170,14 @@ export class RecurringInvoicesService {
     }
 
     // Update recurringInvoice.recurringInvoiceId on the new invoice
-    await this.prisma.invoice.update({
+    await this.prisma.forTenant().invoice.update({
       where: { id: invoice.id },
       data: { recurringInvoiceId: ri.id },
     });
 
     // Advance nextRunAt
     const nextRunAt = this.calcNextRunAt(ri.frequency, ri.dayOfWeek, ri.dayOfMonth, ri.nextRunAt);
-    await this.prisma.recurringInvoice.update({
+    await this.prisma.forTenant().recurringInvoice.update({
       where: { id: ri.id },
       data: { lastRunAt: new Date(), nextRunAt },
     });
@@ -189,7 +189,7 @@ export class RecurringInvoicesService {
 
   @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
   async generateDueRecurringInvoices() {
-    const due = await this.prisma.recurringInvoice.findMany({
+    const due = await this.prisma.forTenant().recurringInvoice.findMany({
       where: { isActive: true, nextRunAt: { lte: new Date() } },
       include: { items: true, customer: true },
     });
