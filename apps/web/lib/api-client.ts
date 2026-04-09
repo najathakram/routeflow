@@ -14,11 +14,12 @@ export const apiClient = axios.create({ baseURL: BASE_URL });
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-/** Read the tenant-slug cookie set by the Next.js middleware. */
+/** Read the tenant-slug cookie set by the Next.js middleware.
+ *  Falls back to NEXT_PUBLIC_DEFAULT_TENANT for single-tenant deployments. */
 function getTenantSlugFromCookie(): string | null {
   if (typeof document === "undefined") return null;
   const match = document.cookie.match(/(?:^|;\s*)tenant-slug=([^;]+)/);
-  return match ? decodeURIComponent(match[1]) : null;
+  return match ? decodeURIComponent(match[1]) : (process.env.NEXT_PUBLIC_DEFAULT_TENANT ?? null);
 }
 
 // ─── Request interceptor: attach access token + tenant slug ──────────────────

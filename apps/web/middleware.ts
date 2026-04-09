@@ -42,24 +42,38 @@ export function middleware(request: NextRequest) {
 
   // A real subdomain looks like  <slug>.routeflow.io  →  3 parts
   // localhost or bare domain → 1 part → skip
-  // Hosting provider URLs (*.railway.app, *.vercel.app, etc.) → skip
+  // Hosting provider URLs (*.railway.app, *.vercel.app, etc.) → use default
+  let resolvedSlug: string | null = null;
+
   if (parts.length >= 3) {
     // Check against known hosting provider base domains (last 2 or 3 parts)
     const twoPartBase = parts.slice(-2).join(".");
     const threePartBase = parts.slice(-3).join(".");
-    if (HOSTING_PROVIDER_DOMAINS.has(twoPartBase) || HOSTING_PROVIDER_DOMAINS.has(threePartBase)) {
-      return response; // On a hosting provider URL — don't extract tenant slug
-    }
+    const isHostingProvider =
+      HOSTING_PROVIDER_DOMAINS.has(twoPartBase) ||
+      HOSTING_PROVIDER_DOMAINS.has(threePartBase);
 
-    const subdomain = parts[0];
-    if (subdomain && !PLATFORM_HOSTS.has(subdomain)) {
-      response.cookies.set("tenant-slug", subdomain, {
-        httpOnly: false,
-        sameSite: "lax",
-        path: "/",
-        maxAge: 60 * 60 * 24 * 30,
-      });
+    if (!isHostingProvider) {
+      const subdomain = parts[0];
+      if (subdomain && !PLATFORM_HOSTS.has(subdomain)) {
+        resolvedSlug = subdomain;
+      }
     }
+  }
+
+  // For hosting-provider or localhost URLs without a subdomain, fall back to
+  // the DEFAULT_TENANT env var so single-tenant deployments work out of the box.
+  if (!resolvedSlug) {
+    resolvedSlug = process.env.DEFAULT_TENANT ?? null;
+  }
+
+  if (resolvedSlug) {
+    response.cookies.set("tenant-slug", resolvedSlug, {
+      httpOnly: false,
+      sameSite: "lax",
+      path: "/",
+      maxAge: 60 * 60 * 24 * 30,
+    });
   }
 
   return response;

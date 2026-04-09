@@ -22,11 +22,13 @@ const TenantContext = React.createContext<TenantContextValue>({
   isLoading: false,
 });
 
-/** Read the tenant-slug cookie set by middleware (or a manual dev override). */
+/** Read the tenant-slug cookie set by middleware (or a manual dev override).
+ *  Falls back to NEXT_PUBLIC_DEFAULT_TENANT for single-tenant deployments
+ *  (e.g. Railway without custom domains). */
 function getTenantSlugFromCookie(): string | null {
   if (typeof document === "undefined") return null;
   const match = document.cookie.match(/(?:^|;\s*)tenant-slug=([^;]+)/);
-  return match ? decodeURIComponent(match[1]) : null;
+  return match ? decodeURIComponent(match[1]) : (process.env.NEXT_PUBLIC_DEFAULT_TENANT ?? null);
 }
 
 const DEFAULT_PRIMARY = "#3B82F6"; // Tailwind blue-500
@@ -63,8 +65,9 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
         root.style.setProperty("--primary", primary);
         root.style.setProperty("--primary-foreground", "#ffffff");
 
-        // Update tab title
-        document.title = data.businessName;
+        // Store business name for page title composition — don't overwrite
+        // here because individual pages set their own title via usePageTitle.
+        // The <title> in layout.tsx already defaults to "RouteFlow".
       })
       .catch(() => {
         // Branding fetch failure is non-fatal; app works without it

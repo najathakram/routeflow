@@ -34,19 +34,19 @@ async function run() {
 
     if (!tenantRow) {
       if (DRY_RUN) {
-        console.log("[DRY RUN] Would create Tenant { slug: 'legacy', name: 'Legacy (pre-SaaS)' }");
+        console.log("[DRY RUN] Would create Tenant { slug: 'legacy', name: 'Legacy' }");
       } else {
         const id = randomUUID();
         const trialEndsAt = new Date();
         trialEndsAt.setFullYear(trialEndsAt.getFullYear() + 10); // 10-year trial
         await client.query(
           `INSERT INTO "Tenant" (id, slug, name, status, plan, "trialEndsAt", "createdAt", "updatedAt")
-           VALUES ($1, 'legacy', 'Legacy (pre-SaaS)', 'ACTIVE', 'STARTER', $2, NOW(), NOW())`,
+           VALUES ($1, 'legacy', 'Legacy', 'ACTIVE', 'STARTER', $2, NOW(), NOW())`,
           [id, trialEndsAt]
         );
         await client.query(
           `INSERT INTO "TenantConfig" (id, "tenantId", "businessName", "updatedAt")
-           VALUES ($1, $2, 'RouteFlow Legacy', NOW())`,
+           VALUES ($1, $2, 'RouteFlow', NOW())`,
           [randomUUID(), id]
         );
         tenantRow = { id };

@@ -95,10 +95,13 @@ export default function LoginPage() {
     ? `${apiUrl}/auth/google/${encodeURIComponent(tenantSlug)}`
     : `${apiUrl}/auth/google`;
 
-  const businessName = branding?.businessName ?? "RouteFlow";
-  const logoKey = branding?.logoKey;
-  const logoUrl = logoKey
-    ? `${apiUrl}/api/v1/uploads/${logoKey}`
+  // Show the tenant's business name if they have custom branding (logo uploaded),
+  // otherwise show the product name "RouteFlow". This prevents migration artifacts
+  // like "RouteFlow Legacy" from appearing for tenants without custom branding.
+  const hasCustomBranding = branding?.logoKey;
+  const businessName = hasCustomBranding ? (branding?.businessName ?? "RouteFlow") : "RouteFlow";
+  const logoUrl = branding?.logoKey
+    ? `${apiUrl}/api/v1/uploads/${branding.logoKey}`
     : null;
 
   return (
