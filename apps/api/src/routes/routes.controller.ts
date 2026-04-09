@@ -34,7 +34,7 @@ export class RoutesController {
 
   @Get()
   @UseGuards(RolesGuard)
-  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
+  @Roles(UserRole.OPERATOR)
   findAll(@Query() query: ListRoutesDto) {
     return this.routesService.findAllRoutes(query);
   }

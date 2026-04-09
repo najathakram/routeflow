@@ -50,7 +50,7 @@ export class InvoicesController {
   }
 
   @Get()
-  @Roles(UserRole.OPERATOR, UserRole.CUSTOMER, UserRole.DRIVER)
+  @Roles(UserRole.OPERATOR, UserRole.CUSTOMER)
   findAll(@Query() query: ListInvoicesDto, @CurrentUser() user: JwtPayload) {
     return this.invoicesService.findAll(query, user);
   }

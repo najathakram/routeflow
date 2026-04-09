@@ -31,6 +31,8 @@ export class OrdersController {
   constructor(private readonly ordersService: OrdersService) {}
 
   @Get()
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR, UserRole.CUSTOMER)
   findAll(@Query() query: ListOrdersDto, @CurrentUser() user: JwtPayload) {
     return this.ordersService.findAll(query, user);
   }
