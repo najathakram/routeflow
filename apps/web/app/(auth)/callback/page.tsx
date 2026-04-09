@@ -21,11 +21,17 @@ function AuthCallbackInner() {
   React.useEffect(() => {
     const accessToken = params.get("accessToken");
     const refreshToken = params.get("refreshToken");
+    const tenantSlug = params.get("tenantSlug");
 
     if (accessToken && refreshToken) {
       // Store tokens the same way the regular login flow does
       localStorage.setItem("accessToken", accessToken);
       localStorage.setItem("refreshToken", refreshToken);
+      // Restore the tenant cookie so API calls include the right X-Tenant-Slug header
+      if (tenantSlug) {
+        const maxAge = 60 * 60 * 24 * 30; // 30 days
+        document.cookie = `tenant-slug=${encodeURIComponent(tenantSlug)}; path=/; max-age=${maxAge}; samesite=lax`;
+      }
       // Navigate to dashboard — the AuthProvider will pick up the stored token
       router.replace("/");
     } else {

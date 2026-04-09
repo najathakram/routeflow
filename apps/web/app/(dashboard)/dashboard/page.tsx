@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { StatCard, Badge, Table, Button, Card, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { useAuth } from "@/lib/auth-context";
 import { useOrders, type Order } from "@/lib/api/orders";
 import { useRouteRuns, type RouteRun } from "@/lib/api/routes";
 import { useDrivers, type Driver } from "@/lib/api/drivers";
@@ -165,6 +166,11 @@ function ErrorBanner({ message = "Failed to load data" }: { message?: string }) 
 export default function DashboardPage() {
   const router = useRouter();
   const { setTitle } = usePageTitle();
+  const { user } = useAuth();
+
+  const isOperator = !user?.role || user.role === "OPERATOR" || user.role === "SUPER_ADMIN" || user.role === "TENANT_ADMIN";
+  const isCustomer = user?.role === "CUSTOMER";
+  const isDriver   = user?.role === "DRIVER";
 
   React.useEffect(() => {
     setTitle("Dashboard");
@@ -217,59 +223,63 @@ export default function DashboardPage() {
   return (
     <div className="space-y-6 p-6">
 
-      {/* ── Quick-create shortcuts ── */}
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="mr-1 text-sm font-medium text-navy/50">Quick create:</span>
-        <Button href="/orders?action=new" size="sm" variant="secondary">
-          <Plus className="mr-1.5 h-3.5 w-3.5" />
-          New Order
-        </Button>
-        <Button href="/routes?action=new" size="sm" variant="secondary">
-          <Plus className="mr-1.5 h-3.5 w-3.5" />
-          New Route
-        </Button>
-        <Button href="/invoices/new" size="sm" variant="secondary">
-          <Plus className="mr-1.5 h-3.5 w-3.5" />
-          New Invoice
-        </Button>
-      </div>
+      {/* ── Quick-create shortcuts (role-gated) ── */}
+      {!isDriver && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="mr-1 text-sm font-medium text-navy/50">Quick create:</span>
+          <Button href="/orders?action=new" size="sm" variant="secondary">
+            <Plus className="mr-1.5 h-3.5 w-3.5" />
+            New Order
+          </Button>
+          {isOperator && (
+            <>
+              <Button href="/routes?action=new" size="sm" variant="secondary">
+                <Plus className="mr-1.5 h-3.5 w-3.5" />
+                New Route
+              </Button>
+              <Button href="/invoices/new" size="sm" variant="secondary">
+                <Plus className="mr-1.5 h-3.5 w-3.5" />
+                New Invoice
+              </Button>
+            </>
+          )}
+        </div>
+      )}
 
-      {/* ── KPI stat cards ── */}
+      {/* ── KPI stat cards (role-gated) ── */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-6">
-        {financeLoading ? <StatSkeleton /> : financeError ? (
-          <div className="rounded-lg border border-danger/20 bg-danger/5 p-4 text-center text-xs text-danger">Revenue unavailable</div>
-        ) : (
-          <Link href="/finance" className="block">
-            <StatCard
-              label="Today's Revenue"
-              value={`$${Number(todayRevenue).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-              icon={<DollarSign className="h-5 w-5 text-success" />}
-              className="cursor-pointer transition-shadow hover:shadow-md ring-1 ring-inset ring-success/20"
-            />
-          </Link>
+        {isOperator && (
+          financeLoading ? <StatSkeleton /> : (
+            <Link href="/finance" className="block">
+              <StatCard
+                label="Today's Revenue"
+                value={`$${Number(todayRevenue).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                icon={<DollarSign className="h-5 w-5 text-success" />}
+                className="cursor-pointer transition-shadow hover:shadow-md ring-1 ring-inset ring-success/20"
+              />
+            </Link>
+          )
         )}
-        {overdueLoading ? <StatSkeleton /> : overdueError ? (
-          <div className="rounded-lg border border-danger/20 bg-danger/5 p-4 text-center text-xs text-danger">Could not load invoices</div>
-        ) : (
-          <Link href="/invoices?status=OVERDUE" className="block">
-            <StatCard
-              label="Overdue Invoices"
-              value={overdueCount}
-              icon={
-                <FileMinus
-                  className={cn("h-5 w-5", overdueCount > 0 ? "text-danger" : "")}
-                />
-              }
-              className={cn(
-                "cursor-pointer transition-shadow hover:shadow-md",
-                overdueCount > 0 ? "ring-1 ring-inset ring-danger/20" : ""
-              )}
-            />
-          </Link>
+        {(isOperator || isCustomer) && (
+          overdueLoading ? <StatSkeleton /> : (
+            <Link href="/invoices?status=OVERDUE" className="block">
+              <StatCard
+                label="Overdue Invoices"
+                value={overdueCount}
+                icon={
+                  <FileMinus
+                    className={cn("h-5 w-5", overdueCount > 0 ? "text-danger" : "")}
+                  />
+                }
+                className={cn(
+                  "cursor-pointer transition-shadow hover:shadow-md",
+                  overdueCount > 0 ? "ring-1 ring-inset ring-danger/20" : ""
+                )}
+              />
+            </Link>
+          )
         )}
-        {ordersLoading ? <StatSkeleton /> : ordersError ? (
-          <div className="rounded-lg border border-danger/20 bg-danger/5 p-4 text-center text-xs text-danger">Could not load orders</div>
-        ) : (
+        {ordersLoading ? <StatSkeleton /> : (
           <Link href="/orders" className="block">
             <StatCard
               label="Active Orders"
@@ -279,56 +289,56 @@ export default function DashboardPage() {
             />
           </Link>
         )}
-        {runsLoading ? <StatSkeleton /> : runsError ? (
-          <div className="rounded-lg border border-danger/20 bg-danger/5 p-4 text-center text-xs text-danger">Could not load routes</div>
-        ) : (
-          <Link href="/routes" className="block">
-            <StatCard
-              label="Scheduled Routes"
-              value={routesToday}
-              icon={<MapPin className="h-5 w-5" />}
-              className="cursor-pointer transition-shadow hover:shadow-md"
-            />
-          </Link>
+        {(isOperator || isDriver) && (
+          runsLoading ? <StatSkeleton /> : (
+            <Link href="/routes" className="block">
+              <StatCard
+                label="Scheduled Routes"
+                value={routesToday}
+                icon={<MapPin className="h-5 w-5" />}
+                className="cursor-pointer transition-shadow hover:shadow-md"
+              />
+            </Link>
+          )
         )}
-        {driversLoading ? <StatSkeleton /> : driversError ? (
-          <div className="rounded-lg border border-danger/20 bg-danger/5 p-4 text-center text-xs text-danger">Could not load drivers</div>
-        ) : (
-          <Link href="/drivers" className="block">
-            <StatCard
-              label="Active Drivers"
-              value={driversOnRoad}
-              icon={<Truck className={cn("h-5 w-5", driversOnRoad > 0 && "text-success")} />}
-              className={cn(
-                "cursor-pointer transition-shadow hover:shadow-md",
-                driversOnRoad > 0 ? "ring-1 ring-inset ring-success/20" : ""
-              )}
-            />
-          </Link>
+        {isOperator && (
+          driversLoading ? <StatSkeleton /> : (
+            <Link href="/drivers" className="block">
+              <StatCard
+                label="Active Drivers"
+                value={driversOnRoad}
+                icon={<Truck className={cn("h-5 w-5", driversOnRoad > 0 && "text-success")} />}
+                className={cn(
+                  "cursor-pointer transition-shadow hover:shadow-md",
+                  driversOnRoad > 0 ? "ring-1 ring-inset ring-success/20" : ""
+                )}
+              />
+            </Link>
+          )
         )}
-        {lowStockLoading ? <StatSkeleton /> : lowStockError ? (
-          <div className="rounded-lg border border-danger/20 bg-danger/5 p-4 text-center text-xs text-danger">Could not load inventory</div>
-        ) : (
-          <Link href="/products?lowStock=true" className="block">
-            <StatCard
-              label="Low Stock Items"
-              value={lowStockItems}
-              icon={
-                <AlertTriangle
-                  className={cn("h-5 w-5", lowStockItems > 0 ? "text-warning" : "")}
-                />
-              }
-              className={cn(
-                "cursor-pointer transition-shadow hover:shadow-md",
-                lowStockItems > 0 ? "ring-1 ring-inset ring-warning/20" : ""
-              )}
-            />
-          </Link>
+        {isOperator && (
+          lowStockLoading ? <StatSkeleton /> : (
+            <Link href="/products?lowStock=true" className="block">
+              <StatCard
+                label="Low Stock Items"
+                value={lowStockItems}
+                icon={
+                  <AlertTriangle
+                    className={cn("h-5 w-5", lowStockItems > 0 ? "text-warning" : "")}
+                  />
+                }
+                className={cn(
+                  "cursor-pointer transition-shadow hover:shadow-md",
+                  lowStockItems > 0 ? "ring-1 ring-inset ring-warning/20" : ""
+                )}
+              />
+            </Link>
+          )
         )}
       </div>
 
-      {/* ── Order pipeline strip ── */}
-      {!ordersLoading && (
+      {/* ── Order pipeline strip (operator only) ── */}
+      {isOperator && !ordersLoading && (
         <div className="overflow-hidden rounded-lg border border-surface-border bg-white">
           <div className="flex items-center gap-2 border-b border-surface-border px-4 py-2.5">
             <TrendingUp className="h-4 w-4 text-navy/40" />
@@ -360,124 +370,124 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* ── Middle row: Urgent Orders + Driver Status ── */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+      {/* ── Middle row: Urgent Orders + Route Runs + Driver Status (role-gated) ── */}
+      {(isOperator || isDriver) && (
+        <div className={cn("grid grid-cols-1 gap-6", isOperator ? "lg:grid-cols-3" : "")}>
 
-        {/* Left: Urgent Orders + Active Routes stacked */}
-        <div className="flex flex-col gap-6 lg:col-span-2">
+          {/* Left: Urgent Orders (operator only) + Route Runs (operator + driver) */}
+          <div className={cn("flex flex-col gap-6", isOperator ? "lg:col-span-2" : "")}>
 
-          {/* Urgent orders alert panel */}
-          {urgentLoading ? (
-            <div className="animate-pulse rounded-lg border border-surface-border bg-white p-5">
-              <div className="h-4 w-48 rounded bg-navy/10" />
-            </div>
-          ) : urgentError ? (
-            <ErrorBanner message="Could not load urgent orders." />
-          ) : urgentOrders.length > 0 ? (
-            <div className="overflow-hidden rounded-lg border border-danger/30 bg-danger-bg">
-              <div className="flex items-center gap-2 border-b border-danger/20 bg-danger/10 px-4 py-3">
-                <AlertTriangle className="h-4 w-4 shrink-0 text-danger" />
-                <h2 className="text-sm font-semibold text-danger">
-                  {urgentOrders.length} Urgent Order{urgentOrders.length !== 1 ? "s" : ""} Require Attention
-                </h2>
-              </div>
-              <ul className="divide-y divide-danger/10">
-                {urgentOrders.map((order) => (
-                  <li key={order.id} className="flex items-center gap-4 px-4 py-3">
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium text-navy">
-                        {order.customer?.businessName ?? "Unknown Customer"}
-                      </p>
-                      <p className="mt-0.5 flex items-center gap-1 text-xs text-navy/60">
-                        <Clock className="h-3 w-3" />
-                        {order.lineItems?.length ?? 0} items &middot; {timeAgo(order.createdAt)}
-                      </p>
-                    </div>
-                    <Button variant="secondary" size="sm" href={`/orders/${order.id}`}>
-                      View Order
-                    </Button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : (
-            <div className="flex items-center gap-3 rounded-lg border border-success/30 bg-success-bg px-4 py-5">
-              <CheckCircle2 className="h-5 w-5 shrink-0 text-success" />
-              <div>
-                <p className="text-sm font-semibold text-success">All clear</p>
-                <p className="mt-0.5 text-xs text-success/70">No urgent orders at this time.</p>
-              </div>
+            {/* Urgent orders alert panel — operator only */}
+            {isOperator && (
+              urgentLoading ? (
+                <div className="animate-pulse rounded-lg border border-surface-border bg-white p-5">
+                  <div className="h-4 w-48 rounded bg-navy/10" />
+                </div>
+              ) : urgentOrders.length > 0 ? (
+                <div className="overflow-hidden rounded-lg border border-danger/30 bg-danger-bg">
+                  <div className="flex items-center gap-2 border-b border-danger/20 bg-danger/10 px-4 py-3">
+                    <AlertTriangle className="h-4 w-4 shrink-0 text-danger" />
+                    <h2 className="text-sm font-semibold text-danger">
+                      {urgentOrders.length} Urgent Order{urgentOrders.length !== 1 ? "s" : ""} Require Attention
+                    </h2>
+                  </div>
+                  <ul className="divide-y divide-danger/10">
+                    {urgentOrders.map((order) => (
+                      <li key={order.id} className="flex items-center gap-4 px-4 py-3">
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-medium text-navy">
+                            {order.customer?.businessName ?? "Unknown Customer"}
+                          </p>
+                          <p className="mt-0.5 flex items-center gap-1 text-xs text-navy/60">
+                            <Clock className="h-3 w-3" />
+                            {order.lineItems?.length ?? 0} items &middot; {timeAgo(order.createdAt)}
+                          </p>
+                        </div>
+                        <Button variant="secondary" size="sm" href={`/orders/${order.id}`}>
+                          View Order
+                        </Button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : (
+                <div className="flex items-center gap-3 rounded-lg border border-success/30 bg-success-bg px-4 py-5">
+                  <CheckCircle2 className="h-5 w-5 shrink-0 text-success" />
+                  <div>
+                    <p className="text-sm font-semibold text-success">All clear</p>
+                    <p className="mt-0.5 text-xs text-success/70">No urgent orders at this time.</p>
+                  </div>
+                </div>
+              )
+            )}
+
+            {/* Scheduled route runs — operator + driver */}
+            <Card title="Scheduled Route Runs">
+              {runsLoading ? (
+                <div className="animate-pulse space-y-3 py-4">
+                  {[1, 2, 3].map((i) => (
+                    <div key={i} className="h-10 rounded bg-navy/10" />
+                  ))}
+                </div>
+              ) : (
+                <div className="-mx-6 -mb-6">
+                  <Table
+                    data={activeRoutes}
+                    columns={routeColumns}
+                    onRowClick={(row) => router.push(`/routes/${row.original.id}`)}
+                  />
+                </div>
+              )}
+            </Card>
+          </div>
+
+          {/* Right: Driver Status — operator only */}
+          {isOperator && (
+            <div>
+              <Card title="Driver Status">
+                {driversLoading ? (
+                  <div className="animate-pulse space-y-4 py-2">
+                    {[1, 2, 3].map((i) => (
+                      <div key={i} className="flex items-center gap-3">
+                        <div className="h-2 w-2 rounded-full bg-navy/10" />
+                        <div className="flex-1 space-y-1">
+                          <div className="h-3 w-24 rounded bg-navy/10" />
+                          <div className="h-3 w-16 rounded bg-navy/10" />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <ul className="-mx-6 -mb-6 divide-y divide-surface-border">
+                    {drivers.length === 0 ? (
+                      <li className="px-6 py-4 text-sm text-navy/50">No drivers found</li>
+                    ) : (
+                      drivers.map((driver: Driver) => (
+                        <li key={driver.id} className="flex items-start gap-3 px-6 py-4">
+                          <span
+                            className={cn(
+                              "mt-1.5 h-2 w-2 shrink-0 rounded-full",
+                              driver.status === "ACTIVE" ? "bg-success" : "bg-navy/20",
+                            )}
+                          />
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-medium text-navy">{driver.contactName}</p>
+                            <p className="mt-0.5 text-xs text-navy/60">{driver.vehiclePlate ?? driver.user?.username}</p>
+                          </div>
+                          <Badge
+                            variant={driver.status === "ACTIVE" ? "success" : "neutral"}
+                            label={driver.status === "ACTIVE" ? "Active" : "Inactive"}
+                          />
+                        </li>
+                      ))
+                    )}
+                  </ul>
+                )}
+              </Card>
             </div>
           )}
-
-          {/* Scheduled route runs */}
-          <Card title="Scheduled Route Runs">
-            {runsLoading ? (
-              <div className="animate-pulse space-y-3 py-4">
-                {[1, 2, 3].map((i) => (
-                  <div key={i} className="h-10 rounded bg-navy/10" />
-                ))}
-              </div>
-            ) : runsError ? (
-              <ErrorBanner message="Could not load route runs." />
-            ) : (
-              <div className="-mx-6 -mb-6">
-                <Table
-                  data={activeRoutes}
-                  columns={routeColumns}
-                  onRowClick={(row) => router.push(`/routes/${row.original.id}`)}
-                />
-              </div>
-            )}
-          </Card>
         </div>
-
-        {/* Right: Driver Status */}
-        <div>
-          <Card title="Driver Status">
-            {driversLoading ? (
-              <div className="animate-pulse space-y-4 py-2">
-                {[1, 2, 3].map((i) => (
-                  <div key={i} className="flex items-center gap-3">
-                    <div className="h-2 w-2 rounded-full bg-navy/10" />
-                    <div className="flex-1 space-y-1">
-                      <div className="h-3 w-24 rounded bg-navy/10" />
-                      <div className="h-3 w-16 rounded bg-navy/10" />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : driversError ? (
-              <ErrorBanner message="Could not load drivers." />
-            ) : (
-              <ul className="-mx-6 -mb-6 divide-y divide-surface-border">
-                {drivers.length === 0 ? (
-                  <li className="px-6 py-4 text-sm text-navy/50">No drivers found</li>
-                ) : (
-                  drivers.map((driver: Driver) => (
-                    <li key={driver.id} className="flex items-start gap-3 px-6 py-4">
-                      <span
-                        className={cn(
-                          "mt-1.5 h-2 w-2 shrink-0 rounded-full",
-                          driver.status === "ACTIVE" ? "bg-success" : "bg-navy/20",
-                        )}
-                      />
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium text-navy">{driver.contactName}</p>
-                        <p className="mt-0.5 text-xs text-navy/60">{driver.vehiclePlate ?? driver.user?.username}</p>
-                      </div>
-                      <Badge
-                        variant={driver.status === "ACTIVE" ? "success" : "neutral"}
-                        label={driver.status === "ACTIVE" ? "Active" : "Inactive"}
-                      />
-                    </li>
-                  ))
-                )}
-              </ul>
-            )}
-          </Card>
-        </div>
-      </div>
+      )}
 
       {/* ── Recent Orders ── */}
       <Card>

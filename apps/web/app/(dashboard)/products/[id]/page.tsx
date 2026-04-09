@@ -736,6 +736,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
 
           {/* 30-day demand chart */}
           <Card title="30-Day Order Demand">
+            <p className="mb-3 text-xs text-navy/40 italic">Demo data — historical order demand coming soon.</p>
             {isMounted ? (
               <ResponsiveContainer width="100%" height={200}>
                 <BarChart

@@ -298,6 +298,7 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
   const createCreditNote = useCreateCreditNote();
 
   const [isRefundOpen, setIsRefundOpen] = React.useState(false);
+  const [isApproveOpen, setIsApproveOpen] = React.useState(false);
   const [isRejectOpen, setIsRejectOpen] = React.useState(false);
 
   React.useEffect(() => {
@@ -328,6 +329,7 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
   // ── Action handlers ──────────────────────────────────────────────────────────
 
   const handleApprove = () => {
+    setIsApproveOpen(false);
     approveReturn.mutate(ret.id, {
       onSuccess: () => {
         toast({ title: "Return approved", variant: "success" });
@@ -439,7 +441,7 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
               <Button
                 size="sm"
                 leftIcon={<CheckCircle2 className="h-4 w-4" />}
-                onClick={handleApprove}
+                onClick={() => setIsApproveOpen(true)}
                 loading={approveReturn.isPending}
               >
                 Approve
@@ -656,6 +658,17 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
         onClose={() => setIsRefundOpen(false)}
         onConfirm={handleProcessRefund}
         isPending={processRefund.isPending}
+      />
+
+      <ConfirmActionModal
+        isOpen={isApproveOpen}
+        onClose={() => setIsApproveOpen(false)}
+        onConfirm={handleApprove}
+        title="Approve Return?"
+        description={`Approve return ${ret.returnNumber}? The customer will be notified and the return will move to Approved status.`}
+        confirmLabel="Approve Return"
+        variant="primary"
+        isPending={approveReturn.isPending}
       />
 
       <ConfirmActionModal

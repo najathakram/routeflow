@@ -49,7 +49,8 @@ type NavLeaf  = { kind: "leaf";  label: string; href: string; icon: LucideIcon }
 type NavGroup = { kind: "group"; label: string; icon: LucideIcon; children: NavLeaf[] };
 type NavEntry = NavLeaf | NavGroup;
 
-const NAV_STRUCTURE: NavEntry[] = [
+/** Full operator nav — all sections visible */
+const OPERATOR_NAV: NavEntry[] = [
   { kind: "leaf", label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   {
     kind: "group", label: "Orders", icon: ShoppingCart,
@@ -77,18 +78,45 @@ const NAV_STRUCTURE: NavEntry[] = [
   {
     kind: "group", label: "Finance", icon: Wallet,
     children: [
-      { kind: "leaf", label: "Overview",         href: "/finance/dashboard", icon: LayoutDashboard },
-      { kind: "leaf", label: "Invoices",         href: "/invoices",          icon: FileText },
-      { kind: "leaf", label: "Estimates",        href: "/estimates",         icon: FileCheck },
-      { kind: "leaf", label: "Credit Notes",     href: "/credit-notes",      icon: Receipt },
-      { kind: "leaf", label: "Payments",         href: "/finance/payments",  icon: CreditCard },
-      { kind: "leaf", label: "Expenses",         href: "/finance/expenses",  icon: ShoppingBag },
-      { kind: "leaf", label: "Reports",          href: "/finance/reports",   icon: BarChart3 },
-      { kind: "leaf", label: "Analytics",        href: "/analytics",         icon: BarChart2 },
+      { kind: "leaf", label: "Overview",     href: "/finance/dashboard", icon: LayoutDashboard },
+      { kind: "leaf", label: "Invoices",     href: "/invoices",          icon: FileText },
+      { kind: "leaf", label: "Estimates",    href: "/estimates",         icon: FileCheck },
+      { kind: "leaf", label: "Credit Notes", href: "/credit-notes",      icon: Receipt },
+      { kind: "leaf", label: "Payments",     href: "/finance/payments",  icon: CreditCard },
+      { kind: "leaf", label: "Expenses",     href: "/finance/expenses",  icon: ShoppingBag },
+      { kind: "leaf", label: "Reports",      href: "/finance/reports",   icon: BarChart3 },
+      { kind: "leaf", label: "Analytics",    href: "/analytics",         icon: BarChart2 },
     ],
   },
   { kind: "leaf", label: "Settings", href: "/settings", icon: Settings },
 ];
+
+/** Customer nav — orders, invoices, returns, settings only */
+const CUSTOMER_NAV: NavEntry[] = [
+  { kind: "leaf", label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+  {
+    kind: "group", label: "Orders", icon: ShoppingCart,
+    children: [
+      { kind: "leaf", label: "My Orders",  href: "/orders",  icon: ShoppingCart },
+      { kind: "leaf", label: "Returns",    href: "/returns", icon: RotateCcw },
+    ],
+  },
+  { kind: "leaf", label: "Invoices", href: "/invoices", icon: FileText },
+  { kind: "leaf", label: "Settings", href: "/settings", icon: Settings },
+];
+
+/** Driver nav — routes and settings only */
+const DRIVER_NAV: NavEntry[] = [
+  { kind: "leaf", label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+  { kind: "leaf", label: "My Routes",  href: "/routes",   icon: MapPin },
+  { kind: "leaf", label: "Settings",   href: "/settings", icon: Settings },
+];
+
+function getNavForRole(role: string | undefined): NavEntry[] {
+  if (role === "CUSTOMER") return CUSTOMER_NAV;
+  if (role === "DRIVER")   return DRIVER_NAV;
+  return OPERATOR_NAV; // OPERATOR, SUPER_ADMIN, TENANT_ADMIN, unknown
+}
 
 // ─── Auth guard ───────────────────────────────────────────────────────────────
 
@@ -438,6 +466,8 @@ function ImpersonationBanner() {
 // ─── Dashboard shell ──────────────────────────────────────────────────────────
 
 function DashboardShell({ children }: { children: React.ReactNode }) {
+  const { user } = useAuth();
+  const navStructure = getNavForRole(user?.role);
   const [collapsed, setCollapsed] = React.useState(() => {
     if (typeof window !== "undefined") {
       // Auto-collapse on small screens, otherwise respect saved preference
@@ -499,7 +529,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         {/* Nav */}
         <nav className="flex-1 overflow-y-auto px-2 py-3">
           <ul className="flex flex-col gap-0.5">
-            {NAV_STRUCTURE.map((entry) =>
+            {navStructure.map((entry) =>
               entry.kind === "leaf" ? (
                 <li key={entry.href}>
                   <NavLink

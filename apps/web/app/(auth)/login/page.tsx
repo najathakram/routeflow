@@ -81,18 +81,19 @@ export default function LoginPage() {
     }
   };
 
+  // Base URL including /api/v1 prefix — used for constructing OAuth redirect URLs
   const apiUrl =
     process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") ??
     (typeof window !== "undefined"
-      ? `${window.location.protocol}//${window.location.hostname}:3000`
-      : "http://localhost:3000");
+      ? `${window.location.protocol}//${window.location.hostname}:3000/api/v1`
+      : "http://localhost:3000/api/v1");
 
-  // Use tenant-specific Google OAuth if the tenant slug is known,
-  // otherwise fall back to the generic endpoint (middleware resolves tenant
-  // from subdomain on the server side).
-  const googleOAuthUrl = tenantSlug
-    ? `${apiUrl}/api/v1/auth/google/${encodeURIComponent(tenantSlug)}`
-    : `${apiUrl}/api/v1/auth/google`;
+  // Use tenant-specific Google OAuth only when branding has been confirmed loaded
+  // (i.e., the slug resolved to a real tenant). Falls back to the generic endpoint
+  // for platform-level access or when no valid tenant slug is in context.
+  const googleOAuthUrl = (tenantSlug && branding)
+    ? `${apiUrl}/auth/google/${encodeURIComponent(tenantSlug)}`
+    : `${apiUrl}/auth/google`;
 
   const businessName = branding?.businessName ?? "RouteFlow";
   const logoKey = branding?.logoKey;

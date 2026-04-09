@@ -40,6 +40,8 @@ export default function OrdersPage() {
   const [isCancelling, setIsCancelling] = React.useState(false);
   const [isDeleting, setIsDeleting] = React.useState(false);
   const [deleteConfirm, setDeleteConfirm] = React.useState(false);
+  const [page, setPage] = React.useState(1);
+  const [limit, setLimit] = React.useState(20);
   const [sortCol, setSortCol] = React.useState<string>("createdAt");
   const [sortDir, setSortDir] = React.useState<"asc" | "desc">("desc");
 
@@ -96,14 +98,20 @@ export default function OrdersPage() {
     }
   };
 
+  // Reset page when filters change
+  React.useEffect(() => { setPage(1); }, [statusFilter, urgentOnly, dateFrom, dateTo]);
+
   const { data, isLoading, isError } = useOrders({
     status: statusFilter || undefined,
     urgent: urgentOnly || undefined,
     deliveryDateFrom: dateFrom || undefined,
     deliveryDateTo: dateTo || undefined,
+    page,
+    limit,
   });
 
   const orders = data?.data ?? [];
+  const meta = data?.meta;
 
   const filtered = React.useMemo(() => {
     const q = customerSearch.toLowerCase();
@@ -373,6 +381,66 @@ export default function OrdersPage() {
           </tbody>
         </table>
       </div>
+
+      {/* Pagination */}
+      {meta && (
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <div className="flex items-center gap-3">
+            <p className="text-sm text-navy/50">
+              {meta.total > 0
+                ? `Showing ${(page - 1) * limit + 1}–${Math.min(page * limit, meta.total)} of ${meta.total} orders`
+                : "No orders found"}
+            </p>
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-navy/40">Per page:</span>
+              <select
+                value={limit}
+                onChange={(e) => { setLimit(Number(e.target.value)); setPage(1); }}
+                className="h-8 rounded border border-surface-border bg-white px-2 text-xs text-navy focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+              >
+                {[10, 20, 50, 100].map((n) => <option key={n} value={n}>{n}</option>)}
+              </select>
+            </div>
+          </div>
+          {(meta.totalPages ?? 1) > 1 && (
+            <div className="flex items-center gap-1">
+              <button
+                disabled={page <= 1}
+                onClick={() => setPage((p) => p - 1)}
+                className="rounded border border-surface-border bg-white px-3 py-1.5 text-sm font-medium text-navy hover:bg-surface-raised disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                Previous
+              </button>
+              {Array.from({ length: Math.min(meta.totalPages ?? 1, 7) }, (_, i) => {
+                const totalPages = meta.totalPages ?? 1;
+                const p = totalPages <= 7 ? i + 1 : page <= 4 ? i + 1 : page + i - 3;
+                if (p < 1 || p > totalPages) return null;
+                return (
+                  <button
+                    key={p}
+                    onClick={() => setPage(p)}
+                    className={cn(
+                      "rounded border px-3 py-1.5 text-sm font-medium transition-colors",
+                      p === page
+                        ? "border-brand-500 bg-brand-500 text-white"
+                        : "border-surface-border bg-white text-navy hover:bg-surface-raised",
+                    )}
+                  >
+                    {p}
+                  </button>
+                );
+              })}
+              <button
+                disabled={page >= (meta.totalPages ?? 1)}
+                onClick={() => setPage((p) => p + 1)}
+                className="rounded border border-surface-border bg-white px-3 py-1.5 text-sm font-medium text-navy hover:bg-surface-raised disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                Next
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       <CreateOrderModal
         isOpen={isCreateOpen}
