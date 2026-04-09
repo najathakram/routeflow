@@ -33,7 +33,7 @@ export class RoutesService {
     if (search) where.name = { contains: search, mode: "insensitive" };
 
     const [data, total] = await Promise.all([
-      this.prisma.route.findMany({
+      this.prisma.forTenant().route.findMany({
         where,
         include: {
           _count: { select: { stops: true } },
@@ -43,14 +43,14 @@ export class RoutesService {
         take: limit,
         orderBy: { createdAt: "desc" },
       }),
-      this.prisma.route.count({ where }),
+      this.prisma.forTenant().route.count({ where }),
     ]);
 
     return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
   }
 
   async findOneRoute(id: string) {
-    const route = await this.prisma.route.findUnique({
+    const route = await this.prisma.forTenant().route.findUnique({
       where: { id },
       include: {
         stops: {
@@ -67,12 +67,12 @@ export class RoutesService {
   }
 
   async createRoute(dto: CreateRouteDto) {
-    return this.prisma.route.create({ data: { name: dto.name } });
+    return this.prisma.forTenant().route.create({ data: { name: dto.name } });
   }
 
   async updateRoute(id: string, dto: UpdateRouteDto) {
     await this.findRouteOrThrow(id);
-    return this.prisma.route.update({ where: { id }, data: dto });
+    return this.prisma.forTenant().route.update({ where: { id }, data: dto });
   }
 
   async addStop(routeId: string, dto: AddStopDto) {
@@ -80,7 +80,7 @@ export class RoutesService {
 
     let stopNumber = dto.stopNumber;
     if (stopNumber === undefined) {
-      const last = await this.prisma.routeStop.findFirst({
+      const last = await this.prisma.forTenant().routeStop.findFirst({
         where: { routeId },
         orderBy: { stopNumber: "desc" },
         select: { stopNumber: true },
@@ -88,7 +88,7 @@ export class RoutesService {
       stopNumber = (last?.stopNumber ?? 0) + 1;
     }
 
-    return this.prisma.routeStop.create({
+    return this.prisma.forTenant().routeStop.create({
       data: {
         routeId,
         customerId: dto.customerId,
@@ -100,9 +100,11 @@ export class RoutesService {
   }
 
   async removeStop(routeId: string, stopId: string) {
-    const stop = await this.prisma.routeStop.findFirst({ where: { id: stopId, routeId } });
+    const stop = await this.prisma
+      .forTenant()
+      .routeStop.findFirst({ where: { id: stopId, routeId } });
     if (!stop) throw new NotFoundException("Stop not found");
-    await this.prisma.routeStop.delete({ where: { id: stopId } });
+    await this.prisma.forTenant().routeStop.delete({ where: { id: stopId } });
     return { success: true };
   }
 
@@ -110,7 +112,7 @@ export class RoutesService {
     await this.findRouteOrThrow(routeId);
     await this.prisma.$transaction(
       order.map(({ id, stopNumber }) =>
-        this.prisma.routeStop.update({ where: { id }, data: { stopNumber } }),
+        this.prisma.forTenant().routeStop.update({ where: { id }, data: { stopNumber } }),
       ),
     );
     return { success: true };
@@ -120,14 +122,14 @@ export class RoutesService {
     await this.findRouteOrThrow(id);
 
     // Collect all run IDs and run-stop IDs for this route before deleting
-    const runs = await this.prisma.routeRun.findMany({
+    const runs = await this.prisma.forTenant().routeRun.findMany({
       where: { routeId: id },
       include: { stops: { select: { id: true } } },
     });
     const runIds = runs.map((r) => r.id);
     const runStopIds = runs.flatMap((r) => r.stops.map((s) => s.id));
 
-    await this.prisma.$transaction(async (tx) => {
+    await this.prisma.tenantTransaction(async (tx) => {
       // 1. Unlink orders from runs/stops
       if (runIds.length > 0) {
         await tx.order.updateMany({
@@ -159,21 +161,21 @@ export class RoutesService {
   }
 
   async reorderRunStops(runId: string, order: { id: string; stopNumber: number }[]) {
-    const run = await this.prisma.routeRun.findUnique({ where: { id: runId } });
+    const run = await this.prisma.forTenant().routeRun.findUnique({ where: { id: runId } });
     if (!run) throw new NotFoundException("Route run not found");
     if (run.status === "IN_PROGRESS" || run.status === "COMPLETED") {
       throw new BadRequestException("Cannot reorder stops on an active or completed route run");
     }
     await this.prisma.$transaction(
       order.map(({ id, stopNumber }) =>
-        this.prisma.routeRunStop.update({ where: { id }, data: { stopNumber } }),
+        this.prisma.forTenant().routeRunStop.update({ where: { id }, data: { stopNumber } }),
       ),
     );
     return { success: true };
   }
 
   async getPackingList(routeId: string) {
-    const route = await this.prisma.route.findUnique({
+    const route = await this.prisma.forTenant().route.findUnique({
       where: { id: routeId },
       include: {
         stops: {
@@ -187,7 +189,7 @@ export class RoutesService {
     const customerIds = route.stops.map((s) => s.customerId).filter((id): id is string => !!id);
 
     const orders = customerIds.length
-      ? await this.prisma.order.findMany({
+      ? await this.prisma.forTenant().order.findMany({
           where: {
             customerId: { in: customerIds },
             status: { in: ["PENDING", "CONFIRMED"] },
@@ -248,7 +250,7 @@ export class RoutesService {
   async getCustomerRouteAssignments(): Promise<
     Record<string, { routeId: string; routeName: string }[]>
   > {
-    const stops = await this.prisma.routeStop.findMany({
+    const stops = await this.prisma.forTenant().routeStop.findMany({
       where: { customerId: { not: null } },
       select: {
         customerId: true,
@@ -271,7 +273,7 @@ export class RoutesService {
   // ── Route Runs ─────────────────────────────────────────────────────────
 
   async createRun(dto: CreateRouteRunDto, user?: JwtPayload) {
-    const route = await this.prisma.route.findUnique({
+    const route = await this.prisma.forTenant().route.findUnique({
       where: { id: dto.routeId },
       include: { stops: { orderBy: { stopNumber: "asc" } } },
     });
@@ -280,11 +282,13 @@ export class RoutesService {
     // Drivers can only create runs for themselves
     let resolvedDriverId = dto.driverId;
     if (user?.role === UserRole.DRIVER) {
-      const driver = await this.prisma.driver.findFirst({ where: { userId: user.sub } });
+      const driver = await this.prisma
+        .forTenant()
+        .driver.findFirst({ where: { userId: user.sub } });
       resolvedDriverId = driver?.id ?? undefined;
     }
 
-    const run = await this.prisma.routeRun.create({
+    const run = await this.prisma.forTenant().routeRun.create({
       data: {
         routeId: dto.routeId,
         driverId: resolvedDriverId,
@@ -297,6 +301,7 @@ export class RoutesService {
             customerId: s.customerId,
             customerAddressId: s.customerAddressId,
             podPhotoUrls: [],
+            tenantId: this.prisma.getTenantId(),
           })),
         },
       },
@@ -318,7 +323,7 @@ export class RoutesService {
       run.stops
         .filter((s) => s.customerId)
         .map((s) =>
-          this.prisma.order.updateMany({
+          this.prisma.forTenant().order.updateMany({
             where: {
               customerId: s.customerId!,
               status: { notIn: [OrderStatus.DELIVERED, OrderStatus.CANCELLED] },
@@ -346,12 +351,14 @@ export class RoutesService {
     }
 
     if (user.role === UserRole.DRIVER || assignedToMe) {
-      const driver = await this.prisma.driver.findFirst({ where: { userId: user.sub } });
+      const driver = await this.prisma
+        .forTenant()
+        .driver.findFirst({ where: { userId: user.sub } });
       if (driver) where.driverId = driver.id;
     }
 
     const [data, total] = await Promise.all([
-      this.prisma.routeRun.findMany({
+      this.prisma.forTenant().routeRun.findMany({
         where,
         include: {
           route: { select: { id: true, name: true } },
@@ -363,14 +370,14 @@ export class RoutesService {
         take: limit,
         orderBy: { scheduledDate: "desc" },
       }),
-      this.prisma.routeRun.count({ where }),
+      this.prisma.forTenant().routeRun.count({ where }),
     ]);
 
     return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
   }
 
   async findOneRun(id: string, user?: any) {
-    const run = await this.prisma.routeRun.findUnique({
+    const run = await this.prisma.forTenant().routeRun.findUnique({
       where: { id },
       include: {
         route: { select: { id: true, name: true } },
@@ -443,7 +450,9 @@ export class RoutesService {
 
     // Drivers can only access their own assigned run
     if (user?.role === "DRIVER") {
-      const driver = await this.prisma.driver.findFirst({ where: { userId: user.sub } });
+      const driver = await this.prisma
+        .forTenant()
+        .driver.findFirst({ where: { userId: user.sub } });
       if (!driver || run.driverId !== driver.id)
         throw new ForbiddenException("You do not have access to this route run");
     }
@@ -467,7 +476,7 @@ export class RoutesService {
         .map((s: any) => s._resolvedCustomerId)
         .filter((cid: string | null): cid is string => cid !== null);
       if (customerIds.length > 0) {
-        const orders = await this.prisma.order.findMany({
+        const orders = await this.prisma.forTenant().order.findMany({
           where: {
             customerId: { in: customerIds },
             status: { notIn: [OrderStatus.CANCELLED] },
@@ -513,11 +522,13 @@ export class RoutesService {
     dto: { driverId?: string | null; scheduledDate?: string; notes?: string },
     user?: JwtPayload,
   ) {
-    const run = await this.prisma.routeRun.findUnique({ where: { id } });
+    const run = await this.prisma.forTenant().routeRun.findUnique({ where: { id } });
     if (!run) throw new NotFoundException("Route run not found");
 
     if (user?.role === UserRole.DRIVER) {
-      const driver = await this.prisma.driver.findFirst({ where: { userId: user.sub } });
+      const driver = await this.prisma
+        .forTenant()
+        .driver.findFirst({ where: { userId: user.sub } });
       if (!driver || run.driverId !== driver.id) {
         throw new ForbiddenException("You can only manage your own route runs");
       }
@@ -530,11 +541,11 @@ export class RoutesService {
     if (dto.driverId !== undefined) data.driverId = dto.driverId;
     if (dto.scheduledDate) data.scheduledDate = new Date(dto.scheduledDate);
     if (dto.notes !== undefined) data.notes = dto.notes;
-    return this.prisma.routeRun.update({ where: { id }, data });
+    return this.prisma.forTenant().routeRun.update({ where: { id }, data });
   }
 
   async deleteRun(id: string) {
-    const run = await this.prisma.routeRun.findUnique({
+    const run = await this.prisma.forTenant().routeRun.findUnique({
       where: { id },
       include: { stops: { select: { id: true } } },
     });
@@ -542,7 +553,7 @@ export class RoutesService {
 
     const stopIds = run.stops.map((s) => s.id);
 
-    await this.prisma.$transaction(async (tx) => {
+    await this.prisma.tenantTransaction(async (tx) => {
       // 1. Unlink orders from run and stops
       await tx.order.updateMany({
         where: { routeRunId: id },
@@ -570,7 +581,7 @@ export class RoutesService {
   }
 
   async updateRunStatus(id: string, dto: UpdateRunStatusDto, user: JwtPayload) {
-    const run = await this.prisma.routeRun.findUnique({ where: { id } });
+    const run = await this.prisma.forTenant().routeRun.findUnique({ where: { id } });
     if (!run) throw new NotFoundException("Route run not found");
 
     if (user.role === UserRole.DRIVER) {
@@ -587,7 +598,7 @@ export class RoutesService {
     if (dto.status === RouteRunStatus.IN_PROGRESS && !run.startedAt) updates.startedAt = new Date();
     if (dto.status === RouteRunStatus.COMPLETED) updates.completedAt = new Date();
 
-    const updated = await this.prisma.routeRun.update({
+    const updated = await this.prisma.forTenant().routeRun.update({
       where: { id },
       data: updates,
       include: {
@@ -596,7 +607,7 @@ export class RoutesService {
     });
 
     if (updated.driver) {
-      this.gateway.emitDriverStatusUpdated({
+      this.gateway.emitDriverStatusUpdated(this.prisma.getTenantId(), {
         driverId: updated.driver.id,
         driverName: updated.driver.contactName ?? updated.driver.user?.username ?? "Driver",
         status: dto.status,
@@ -612,7 +623,7 @@ export class RoutesService {
     stopId: string,
     dto: { status: "IN_PROGRESS" | "SKIPPED"; driverNote?: string },
   ) {
-    const stop = await this.prisma.routeRunStop.findFirst({
+    const stop = await this.prisma.forTenant().routeRunStop.findFirst({
       where: { id: stopId, routeRunId: runId },
     });
     if (!stop) throw new NotFoundException("Stop not found");
@@ -621,11 +632,11 @@ export class RoutesService {
     if (dto.driverNote !== undefined) updates.driverNote = dto.driverNote;
     if (dto.status === "IN_PROGRESS" && !stop.arrivedAt) updates.arrivedAt = new Date();
 
-    return this.prisma.routeRunStop.update({ where: { id: stopId }, data: updates });
+    return this.prisma.forTenant().routeRunStop.update({ where: { id: stopId }, data: updates });
   }
 
   async getRunPackingList(runId: string) {
-    const run = await this.prisma.routeRun.findUnique({
+    const run = await this.prisma.forTenant().routeRun.findUnique({
       where: { id: runId },
       include: {
         stops: {
@@ -682,7 +693,7 @@ export class RoutesService {
         .map((s: any) => s._resolvedCustomerId)
         .filter((cid: string | null): cid is string => cid !== null);
       if (customerIds.length > 0) {
-        const orders = await this.prisma.order.findMany({
+        const orders = await this.prisma.forTenant().order.findMany({
           where: {
             customerId: { in: customerIds },
             status: { notIn: [OrderStatus.CANCELLED, OrderStatus.DELIVERED] },
@@ -745,7 +756,7 @@ export class RoutesService {
   }
 
   async getMyStats(user: JwtPayload) {
-    const driver = await this.prisma.driver.findFirst({ where: { userId: user.sub } });
+    const driver = await this.prisma.forTenant().driver.findFirst({ where: { userId: user.sub } });
     if (!driver)
       return {
         totalStopsCompleted: 0,
@@ -754,7 +765,7 @@ export class RoutesService {
         returnsRate: 0,
       };
 
-    const runs = await this.prisma.routeRun.findMany({
+    const runs = await this.prisma.forTenant().routeRun.findMany({
       where: { driverId: driver.id, status: "COMPLETED" },
       include: {
         stops: { select: { id: true, status: true, completedAt: true } },
@@ -779,7 +790,7 @@ export class RoutesService {
   }
 
   async reopenStop(runId: string, stopId: string, user: JwtPayload) {
-    const run = await this.prisma.routeRun.findUnique({
+    const run = await this.prisma.forTenant().routeRun.findUnique({
       where: { id: runId },
       include: {
         stops: { where: { id: stopId }, include: { orders: { include: { lineItems: true } } } },
@@ -797,20 +808,22 @@ export class RoutesService {
 
     // Driver isolation
     if (user.role === UserRole.DRIVER) {
-      const driver = await this.prisma.driver.findFirst({ where: { userId: user.sub } });
+      const driver = await this.prisma
+        .forTenant()
+        .driver.findFirst({ where: { userId: user.sub } });
       if (!driver || run.driverId !== driver.id)
         throw new ForbiddenException("You do not have access to this route run");
     }
 
     // Load delivery mutations for this stop
-    const mutations = await this.prisma.deliveryMutation.findMany({
+    const mutations = await this.prisma.forTenant().deliveryMutation.findMany({
       where: { routeRunStopId: stopId },
     });
     const orderIds = [...new Set(stop.orders.map((o) => o.id))];
 
     // Check for recorded payments on any transaction — block reopen if payment exists
     if (orderIds.length > 0) {
-      const transactions = await this.prisma.transaction.findMany({
+      const transactions = await this.prisma.forTenant().transaction.findMany({
         where: { orderId: { in: orderIds } },
         include: { payments: { take: 1 } },
       });
@@ -823,7 +836,7 @@ export class RoutesService {
       }
     }
 
-    await this.prisma.$transaction(async (tx) => {
+    await this.prisma.tenantTransaction(async (tx) => {
       // 1. Reverse stock movements for each SALE created by this stop's mutations
       for (const mutation of mutations) {
         const qty = Number(mutation.quantityDelivered ?? 0);
@@ -892,7 +905,7 @@ export class RoutesService {
   }
 
   private async findRouteOrThrow(id: string) {
-    const route = await this.prisma.route.findUnique({ where: { id } });
+    const route = await this.prisma.forTenant().route.findUnique({ where: { id } });
     if (!route) throw new NotFoundException("Route not found");
     return route;
   }

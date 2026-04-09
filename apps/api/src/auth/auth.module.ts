@@ -11,6 +11,7 @@ import { JwtAuthGuard } from "./guards/jwt-auth.guard";
 import { LocalAuthGuard } from "./guards/local-auth.guard";
 import { GoogleAuthGuard } from "./guards/google-auth.guard";
 import { RolesGuard } from "./guards/roles.guard";
+import { TenantGoogleOAuthService } from "../tenants/tenant-google-oauth.service";
 import { UsersModule } from "../users/users.module";
 import { AppConfig } from "../config/configuration";
 
@@ -39,7 +40,8 @@ import { AppConfig } from "../config/configuration";
     LocalAuthGuard,
     GoogleAuthGuard,
     RolesGuard,
+    TenantGoogleOAuthService,
   ],
-  exports: [AuthService, JwtAuthGuard, RolesGuard],
+  exports: [AuthService, JwtAuthGuard, RolesGuard, TenantGoogleOAuthService],
 })
 export class AuthModule {}

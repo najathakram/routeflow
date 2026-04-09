@@ -25,6 +25,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       role: payload.role,
       status: payload.status,
       forcePasswordChange: payload.forcePasswordChange,
+      tenantId: payload.tenantId ?? null,
+      tenantSlug: payload.tenantSlug ?? null,
     };
   }
 }

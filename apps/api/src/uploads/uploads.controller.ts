@@ -22,22 +22,6 @@ export class UploadsController {
     return configured || path.join(os.tmpdir(), "routeflow-uploads");
   }
 
-  /** Debug endpoint — lists files in uploadDir so you can verify storage is working. */
-  @Get("_debug/ls")
-  debugLs(@Res() res: Response) {
-    const dir = this.uploadDir;
-    const walk = (d: string, base: string): string[] => {
-      if (!fs.existsSync(d)) return [];
-      return fs.readdirSync(d).flatMap((f) => {
-        const full = path.join(d, f);
-        const rel = path.join(base, f);
-        return fs.statSync(full).isDirectory() ? walk(full, rel) : [rel];
-      });
-    };
-    const files = walk(dir, "");
-    res.json({ uploadDir: dir, fileCount: files.length, files: files.slice(0, 100) });
-  }
-
   @Get("*path")
   serveFile(
     @Param() params: Record<string, string | string[]>,

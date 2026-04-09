@@ -23,7 +23,15 @@ export class EstimatesController {
     @Query("page") page?: string,
     @Query("limit") limit?: string,
   ) {
-    return this.estimatesService.findAll(cId, status, search, dateFrom, dateTo, page ? +page : 1, limit ? +limit : 20);
+    return this.estimatesService.findAll(
+      cId,
+      status,
+      search,
+      dateFrom,
+      dateTo,
+      page ? +page : 1,
+      limit ? +limit : 20,
+    );
   }
   @Get(":id") findOne(@Param("id") id: string) {
     return this.estimatesService.findOne(id);

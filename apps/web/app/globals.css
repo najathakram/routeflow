@@ -5,6 +5,9 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  /* Tenant brand color — overridden at runtime by TenantProvider */
+  --primary: #3B82F6;
+  --primary-foreground: #ffffff;
 }
 
 @media (prefers-color-scheme: dark) {

@@ -963,7 +963,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
 
   const handleRecordPayment = (data: PaymentFormState) => {
     recordPayment.mutate(
-      { id: invoice.id, method: data.method, amount: parseFloat(data.amount), reference: data.reference.trim() || undefined, notes: data.notes.trim() || undefined },
+      { id: invoice.id, method: data.method as "CASH" | "CHECK" | "ACH" | "OTHER" | "CREDIT_CARD", amount: parseFloat(data.amount), reference: data.reference.trim() || undefined, notes: data.notes.trim() || undefined },
       {
         onSuccess: () => {
           setIsPaymentOpen(false);
@@ -979,7 +979,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
   const handleSavePayment = (data: PaymentFormState) => {
     if (!editingPayment) return;
     updatePayment.mutate(
-      { invoiceId: invoice.id, paymentId: editingPayment.id, method: data.method, amount: parseFloat(data.amount), reference: data.reference.trim() || undefined, notes: data.notes.trim() || undefined },
+      { invoiceId: invoice.id, paymentId: editingPayment.id, method: data.method as "CASH" | "CHECK" | "ACH" | "OTHER" | "CREDIT_CARD", amount: parseFloat(data.amount), reference: data.reference.trim() || undefined, notes: data.notes.trim() || undefined },
       {
         onSuccess: () => {
           setEditingPayment(null);

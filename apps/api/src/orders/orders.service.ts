@@ -29,11 +29,11 @@ import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { ConfigService } from "@nestjs/config";
 import { NotificationsService } from "../notifications/notifications.service";
 import { InvoicesService } from "../invoices/invoices.service";
-import { SystemConfigService } from "../system-config/system-config.service";
 
 @Injectable()
 export class OrdersService {
   private readonly logger = new Logger(OrdersService.name);
+  private readonly taxRate: number;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -42,17 +42,8 @@ export class OrdersService {
     private readonly config: ConfigService,
     private readonly notifications: NotificationsService,
     private readonly invoicesService: InvoicesService,
-    private readonly systemConfig: SystemConfigService,
-  ) {}
-
-  /** Read tax rate from DB settings at runtime so operator changes take effect immediately. */
-  private async getTaxRate(): Promise<number> {
-    const raw = await this.systemConfig.get("settings.taxRate");
-    if (raw !== undefined && raw !== null) {
-      const parsed = parseFloat(raw);
-      if (!isNaN(parsed)) return parsed / 100; // stored as percentage (e.g. "10"), used as decimal (0.1)
-    }
-    return 0.1; // default 10% if not configured
+  ) {
+    this.taxRate = this.config.get<number>("taxRate") ?? 0.1;
   }
 
   async findAll(query: ListOrdersDto, user: JwtPayload) {
@@ -70,7 +61,9 @@ export class OrdersService {
     const where: any = {};
 
     if (user.role === UserRole.CUSTOMER) {
-      const customer = await this.prisma.customer.findFirst({ where: { userId: user.sub } });
+      const customer = await this.prisma
+        .forTenant()
+        .customer.findFirst({ where: { userId: user.sub } });
       if (!customer) throw new ForbiddenException("Customer record not found");
       where.customerId = customer.id;
     } else if (customerId) {
@@ -89,7 +82,7 @@ export class OrdersService {
     }
 
     const [data, total] = await Promise.all([
-      this.prisma.order.findMany({
+      this.prisma.forTenant().order.findMany({
         where,
         include: {
           customer: { select: { id: true, businessName: true } },
@@ -99,17 +92,26 @@ export class OrdersService {
         take: limit,
         orderBy: { createdAt: "desc" },
       }),
-      this.prisma.order.count({ where }),
+      this.prisma.forTenant().order.count({ where }),
     ]);
 
     return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
   }
 
   async findOne(id: string, user: JwtPayload) {
-    const order = await this.prisma.order.findUnique({
+    const order = await this.prisma.forTenant().order.findUnique({
       where: { id },
       include: {
-        customer: { select: { id: true, businessName: true, contactName: true, phone: true, mobile: true, email: true } },
+        customer: {
+          select: {
+            id: true,
+            businessName: true,
+            contactName: true,
+            phone: true,
+            mobile: true,
+            email: true,
+          },
+        },
         lineItems: { include: { product: { select: { id: true, name: true, unit: true } } } },
         transaction: true,
         invoice: { select: { id: true, invoiceNumber: true, status: true, total: true } },
@@ -118,7 +120,9 @@ export class OrdersService {
     if (!order) throw new NotFoundException("Order not found");
 
     if (user.role === UserRole.CUSTOMER) {
-      const customer = await this.prisma.customer.findFirst({ where: { userId: user.sub } });
+      const customer = await this.prisma
+        .forTenant()
+        .customer.findFirst({ where: { userId: user.sub } });
       if (!customer || customer.id !== order.customerId) throw new ForbiddenException();
     }
 
@@ -132,7 +136,7 @@ export class OrdersService {
     if (user.role === UserRole.OPERATOR) {
       // Operator creates on behalf of a customer — customerId comes from the DTO
       if (!dto.customerId) throw new BadRequestException("customerId is required");
-      const customer = await this.prisma.customer.findUnique({
+      const customer = await this.prisma.forTenant().customer.findUnique({
         where: { id: dto.customerId },
         include: { user: { select: { status: true } } },
       });
@@ -143,12 +147,16 @@ export class OrdersService {
     } else if (user.role === UserRole.DRIVER) {
       // Driver creates on behalf of a customer (e.g. at a stop) — customerId must be supplied
       if (!dto.customerId) throw new BadRequestException("customerId is required");
-      const customer = await this.prisma.customer.findUnique({ where: { id: dto.customerId } });
+      const customer = await this.prisma
+        .forTenant()
+        .customer.findUnique({ where: { id: dto.customerId } });
       if (!customer) throw new BadRequestException("Customer not found");
       customerId = customer.id;
     } else {
       // Customer creates their own order
-      const customer = await this.prisma.customer.findFirst({ where: { userId: user.sub } });
+      const customer = await this.prisma
+        .forTenant()
+        .customer.findFirst({ where: { userId: user.sub } });
       if (!customer) throw new ForbiddenException("Customer record not found");
       customerId = customer.id;
     }
@@ -161,23 +169,25 @@ export class OrdersService {
       throw new BadRequestException("At least one item is required");
     }
 
-    const products = items.length > 0
-      ? await this.prisma.product.findMany({
-          where: { id: { in: items.map((i) => i.productId) } },
-        })
-      : [];
+    const products =
+      items.length > 0
+        ? await this.prisma.forTenant().product.findMany({
+            where: { id: { in: items.map((i) => i.productId) } },
+          })
+        : [];
 
     const productMap = new Map(products.map((p) => [p.id, p]));
 
     // Load any permanent customer-specific prices for this order
-    const customerPrices = items.length > 0
-      ? await this.prisma.customerPrice.findMany({
-          where: {
-            customerId,
-            productId: { in: items.map((i) => i.productId) },
-          },
-        })
-      : [];
+    const customerPrices =
+      items.length > 0
+        ? await this.prisma.forTenant().customerPrice.findMany({
+            where: {
+              customerId,
+              productId: { in: items.map((i) => i.productId) },
+            },
+          })
+        : [];
     const cpMap = new Map(customerPrices.map((cp) => [cp.productId, Number(cp.specialPrice)]));
 
     const orderNumber = `ORD-${Date.now()}`;
@@ -228,15 +238,15 @@ export class OrdersService {
         originalPrice,
         subtotal: itemSubtotal,
         notes: (item as any).itemNote || item.notes,
+        tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
       };
     });
 
     const orderDiscount = dto.discountAmount ?? 0;
-    const taxRate = await this.getTaxRate();
-    const tax = subtotal * taxRate;
+    const tax = subtotal * this.taxRate;
     const total = subtotal + tax - orderDiscount;
 
-    const order = await this.prisma.order.create({
+    const order = await this.prisma.forTenant().order.create({
       data: {
         customerId,
         orderNumber,
@@ -260,7 +270,7 @@ export class OrdersService {
 
     // If driver is creating at a stop, link order to route run and optionally confirm it
     if (dto.routeRunId || dto.routeRunStopId) {
-      await this.prisma.order.update({
+      await this.prisma.forTenant().order.update({
         where: { id: order.id },
         data: {
           routeRunId: dto.routeRunId ?? null,
@@ -275,7 +285,7 @@ export class OrdersService {
 
     // Don't emit real-time events for draft orders
     if (!isDraft) {
-      this.gateway.emitOrderCreated({
+      this.gateway.emitOrderCreated(this.prisma.getTenantId(), {
         orderId: order.id,
         orderNumber: order.orderNumber ?? "",
         customerId: order.customerId,
@@ -286,7 +296,7 @@ export class OrdersService {
       });
 
       if (order.urgent) {
-        this.gateway.emitUrgentOrder({
+        this.gateway.emitUrgentOrder(this.prisma.getTenantId(), {
           orderId: order.id,
           orderNumber: order.orderNumber ?? "",
           customerId: order.customerId,
@@ -303,10 +313,15 @@ export class OrdersService {
     const order = await this.findOneOrThrow(id);
 
     if (user.role === UserRole.CUSTOMER) {
-      const customer = await this.prisma.customer.findFirst({ where: { userId: user.sub } });
+      const customer = await this.prisma
+        .forTenant()
+        .customer.findFirst({ where: { userId: user.sub } });
       if (!customer || order.customerId !== customer.id) throw new ForbiddenException();
       // Customers may only cancel their own PENDING or DRAFT orders
-      if (dto.status !== OrderStatus.CANCELLED || (order.status !== OrderStatus.PENDING && order.status !== OrderStatus.DRAFT)) {
+      if (
+        dto.status !== OrderStatus.CANCELLED ||
+        (order.status !== OrderStatus.PENDING && order.status !== OrderStatus.DRAFT)
+      ) {
         throw new ForbiddenException("Customers can only cancel their own pending orders");
       }
     } else if (user.role === UserRole.DRIVER) {
@@ -342,7 +357,7 @@ export class OrdersService {
       ? `\n[${new Date().toLocaleDateString()} – status changed to ${dto.status}: ${dto.reason}]`
       : undefined;
 
-    const updated = await this.prisma.order.update({
+    const updated = await this.prisma.forTenant().order.update({
       where: { id },
       data: {
         status: dto.status,
@@ -350,7 +365,7 @@ export class OrdersService {
       },
     });
 
-    this.gateway.emitOrderStatusChanged({
+    this.gateway.emitOrderStatusChanged(this.prisma.getTenantId(), {
       orderId: id,
       orderNumber: order.orderNumber ?? "",
       customerId: order.customerId,
@@ -395,15 +410,17 @@ export class OrdersService {
   }
 
   async reopenOrder(id: string) {
-    const order = await this.prisma.order.findUnique({
+    const order = await this.prisma.forTenant().order.findUnique({
       where: { id },
       include: { lineItems: true },
     });
     if (!order) throw new NotFoundException("Order not found");
     if (order.status !== OrderStatus.CANCELLED) {
-      throw new BadRequestException(`Only CANCELLED orders can be reopened. Current status: ${order.status}`);
+      throw new BadRequestException(
+        `Only CANCELLED orders can be reopened. Current status: ${order.status}`,
+      );
     }
-    return this.prisma.$transaction(async (tx) => {
+    return this.prisma.tenantTransaction(async (tx) => {
       // Revert cancelled line items back to PENDING
       await tx.orderItem.updateMany({
         where: { orderId: id, status: ItemStatus.CANCELLED },
@@ -426,7 +443,7 @@ export class OrdersService {
   }
 
   async updateOrderItems(orderId: string, dto: UpdateOrderItemsDto, user?: JwtPayload) {
-    const order = await this.prisma.order.findUnique({
+    const order = await this.prisma.forTenant().order.findUnique({
       where: { id: orderId },
       include: { lineItems: true },
     });
@@ -438,22 +455,26 @@ export class OrdersService {
     // Customer/Driver path: replace items by productId
     if (user?.role === UserRole.CUSTOMER || user?.role === UserRole.DRIVER) {
       if (user.role === UserRole.CUSTOMER) {
-        const customer = await this.prisma.customer.findFirst({ where: { userId: user.sub } });
+        const customer = await this.prisma
+          .forTenant()
+          .customer.findFirst({ where: { userId: user.sub } });
         if (!customer || order.customerId !== customer.id) throw new ForbiddenException();
       }
 
       // Customers send items as { productId, qty } — replace all line items
       const productIds = dto.items.map((i) => i.productId).filter(Boolean) as string[];
-      const products = await this.prisma.product.findMany({ where: { id: { in: productIds } } });
+      const products = await this.prisma
+        .forTenant()
+        .product.findMany({ where: { id: { in: productIds } } });
       const productMap = new Map(products.map((p) => [p.id, p]));
 
-      await this.prisma.orderItem.deleteMany({ where: { orderId } });
+      await this.prisma.forTenant().orderItem.deleteMany({ where: { orderId } });
       for (const item of dto.items) {
         if (!item.productId || !item.qty) continue;
         const product = productMap.get(item.productId);
         if (!product) throw new BadRequestException(`Product ${item.productId} not found`);
         const unitPrice = Number(product.pricePerUnit);
-        await this.prisma.orderItem.create({
+        await this.prisma.forTenant().orderItem.create({
           data: {
             orderId,
             productId: item.productId,
@@ -470,10 +491,12 @@ export class OrdersService {
       for (const item of dto.items) {
         // New item (no id, has productId + qty)
         if (!item.id && item.productId && item.qty) {
-          const product = await this.prisma.product.findUnique({ where: { id: item.productId } });
+          const product = await this.prisma
+            .forTenant()
+            .product.findUnique({ where: { id: item.productId } });
           if (!product) continue;
           const unitPrice = Number(product.pricePerUnit);
-          await this.prisma.orderItem.create({
+          await this.prisma.forTenant().orderItem.create({
             data: {
               orderId,
               productId: item.productId,
@@ -487,18 +510,18 @@ export class OrdersService {
           continue;
         }
         if (item.action === "CANCEL") {
-          await this.prisma.orderItem.update({
+          await this.prisma.forTenant().orderItem.update({
             where: { id: item.id },
             data: { status: "CANCELLED", qty: 0, subtotal: 0 },
           });
         } else if (item.substituteProductId) {
-          const product = await this.prisma.product.findUniqueOrThrow({
+          const product = await this.prisma.forTenant().product.findUniqueOrThrow({
             where: { id: item.substituteProductId },
           });
           const existingQty = order.lineItems.find((li) => li.id === item.id)?.qty ?? 1;
           const qtyVal = item.qty ?? Number(existingQty);
           const unitPrice = Number(product.pricePerUnit);
-          await this.prisma.orderItem.update({
+          await this.prisma.forTenant().orderItem.update({
             where: { id: item.id },
             data: {
               productId: item.substituteProductId,
@@ -513,7 +536,7 @@ export class OrdersService {
           const li = order.lineItems.find((li) => li.id === item.id);
           if (!li) continue;
           const unitPrice = Number(li.unitPrice);
-          await this.prisma.orderItem.update({
+          await this.prisma.forTenant().orderItem.update({
             where: { id: item.id },
             data: {
               qty: item.qty,
@@ -526,12 +549,12 @@ export class OrdersService {
     }
 
     // Recalculate order totals from all non-cancelled items
-    const activeItems = await this.prisma.orderItem.findMany({
+    const activeItems = await this.prisma.forTenant().orderItem.findMany({
       where: { orderId, status: { not: "CANCELLED" } },
     });
     const subtotal = activeItems.reduce((s, li) => s + Number(li.subtotal), 0);
-    const tax = subtotal * (await this.getTaxRate());
-    await this.prisma.order.update({
+    const tax = subtotal * this.taxRate;
+    await this.prisma.forTenant().order.update({
       where: { id: orderId },
       data: {
         subtotal,
@@ -541,7 +564,7 @@ export class OrdersService {
       },
     });
 
-    return this.prisma.order.findUnique({
+    return this.prisma.forTenant().order.findUnique({
       where: { id: orderId },
       include: {
         customer: { select: { id: true, businessName: true, contactName: true } },
@@ -554,17 +577,19 @@ export class OrdersService {
   async toggleUrgent(id: string, user: JwtPayload) {
     const order = await this.findOneOrThrow(id);
     if (user.role === UserRole.CUSTOMER) {
-      const customer = await this.prisma.customer.findFirst({ where: { userId: user.sub } });
+      const customer = await this.prisma
+        .forTenant()
+        .customer.findFirst({ where: { userId: user.sub } });
       if (!customer || customer.id !== order.customerId) throw new ForbiddenException();
     }
-    return this.prisma.order.update({ where: { id }, data: { urgent: !order.urgent } });
+    return this.prisma.forTenant().order.update({ where: { id }, data: { urgent: !order.urgent } });
   }
 
   async completeStop(runId: string, stopId: string, dto: CompleteStopDto, user: JwtPayload) {
     // Capture IDs of transactions created/updated so we can enqueue PDF jobs after commit
     const invoiceTransactionIds: string[] = [];
 
-    await this.prisma.$transaction(async (tx) => {
+    await this.prisma.tenantTransaction(async (tx) => {
       const stop = await tx.routeRunStop.findFirst({
         where: { id: stopId, routeRunId: runId },
         include: { orders: { include: { lineItems: true } } },
@@ -702,7 +727,10 @@ export class OrdersService {
                       productId: li.productId,
                       qty: Number(li.qty),
                       unitPrice: Number(li.unitPrice),
-                      discount: li.originalPrice != null ? Number(li.originalPrice) - Number(li.unitPrice) : 0,
+                      discount:
+                        li.originalPrice != null
+                          ? Number(li.originalPrice) - Number(li.unitPrice)
+                          : 0,
                       originalPrice: li.originalPrice != null ? Number(li.originalPrice) : null,
                       priceType: li.priceType ?? PriceType.STANDARD,
                       taxRate: 0,
@@ -745,7 +773,7 @@ export class OrdersService {
     });
 
     // Emit real-time updates for each affected order/customer + push notifications
-    const stop = await this.prisma.routeRunStop.findFirst({
+    const stop = await this.prisma.forTenant().routeRunStop.findFirst({
       where: { id: stopId, routeRunId: runId },
       include: {
         orders: { select: { id: true, customerId: true, orderNumber: true, status: true } },
@@ -753,7 +781,7 @@ export class OrdersService {
     });
     if (stop) {
       for (const order of stop.orders) {
-        this.gateway.emitStopCompleted({
+        this.gateway.emitStopCompleted(this.prisma.getTenantId(), {
           runId,
           stopId,
           customerId: order.customerId,
@@ -777,7 +805,7 @@ export class OrdersService {
     const deliveredProductIds: string[] = [];
     for (const delivery of dto.deliveries) {
       if (delivery.type === MutationType.DELIVERED || delivery.type === MutationType.PARTIAL) {
-        const item = await this.prisma.orderItem.findUnique({
+        const item = await this.prisma.forTenant().orderItem.findUnique({
           where: { id: delivery.orderItemId },
           select: { productId: true },
         });
@@ -785,13 +813,13 @@ export class OrdersService {
       }
     }
     if (deliveredProductIds.length > 0) {
-      const products = await this.prisma.product.findMany({
+      const products = await this.prisma.forTenant().product.findMany({
         where: { id: { in: deliveredProductIds }, reorderPoint: { not: null } },
         select: { id: true, name: true, sku: true, currentStock: true, reorderPoint: true },
       });
       for (const p of products) {
         if (p.reorderPoint !== null && Number(p.currentStock) <= Number(p.reorderPoint)) {
-          this.gateway.emitLowStock({
+          this.gateway.emitLowStock(this.prisma.getTenantId(), {
             productId: p.id,
             productName: p.name,
             sku: p.sku ?? "",
@@ -815,7 +843,7 @@ export class OrdersService {
   }
 
   async getOrderTracking(orderId: string, user: JwtPayload) {
-    const order = await this.prisma.order.findUnique({
+    const order = await this.prisma.forTenant().order.findUnique({
       where: { id: orderId },
       include: {
         customer: { select: { deliveryWindowStart: true, deliveryWindowEnd: true } },
@@ -867,7 +895,7 @@ export class OrdersService {
   }
 
   async deleteOrder(id: string) {
-    const order = await this.prisma.order.findUnique({
+    const order = await this.prisma.forTenant().order.findUnique({
       where: { id },
       include: { invoice: { select: { id: true } }, transaction: { select: { id: true } } },
     });
@@ -880,7 +908,7 @@ export class OrdersService {
       );
     }
 
-    await this.prisma.$transaction(async (tx) => {
+    await this.prisma.tenantTransaction(async (tx) => {
       if (order.invoice) {
         await tx.invoicePayment.deleteMany({ where: { invoiceId: order.invoice!.id } });
         await tx.invoiceItem.deleteMany({ where: { invoiceId: order.invoice!.id } });
@@ -903,13 +931,17 @@ export class OrdersService {
     const results = await Promise.allSettled(ids.map((id) => this.deleteOrder(id)));
     const deleted = results.filter((r) => r.status === "fulfilled").length;
     const errors = results
-      .map((r, i) => (r.status === "rejected" ? `${ids[i]}: ${(r as PromiseRejectedResult).reason?.message}` : null))
+      .map((r, i) =>
+        r.status === "rejected"
+          ? `${ids[i]}: ${(r as PromiseRejectedResult).reason?.message}`
+          : null,
+      )
       .filter(Boolean) as string[];
     return { deleted, errors };
   }
 
   private async findOneOrThrow(id: string) {
-    const order = await this.prisma.order.findUnique({ where: { id } });
+    const order = await this.prisma.forTenant().order.findUnique({ where: { id } });
     if (!order) throw new NotFoundException("Order not found");
     return order;
   }

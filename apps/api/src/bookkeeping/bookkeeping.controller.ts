@@ -130,13 +130,8 @@ export class BookkeepingController {
   }
 
   @Post("expenses/:id/receipt")
-  @UseInterceptors(
-    FileInterceptor("file", { limits: { fileSize: 10 * 1024 * 1024 } }),
-  )
-  uploadReceipt(
-    @Param("id") id: string,
-    @UploadedFile() file: Express.Multer.File,
-  ) {
+  @UseInterceptors(FileInterceptor("file", { limits: { fileSize: 10 * 1024 * 1024 } }))
+  uploadReceipt(@Param("id") id: string, @UploadedFile() file: Express.Multer.File) {
     if (!file) throw new HttpException("No file uploaded", HttpStatus.BAD_REQUEST);
     return this.bookkeepingService.uploadExpenseReceipt(
       id,

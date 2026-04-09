@@ -1,11 +1,16 @@
-import { Module } from "@nestjs/common";
+import { Module, NestModule, MiddlewareConsumer, RequestMethod } from "@nestjs/common";
+import { APP_GUARD } from "@nestjs/core";
 import { ConfigModule, ConfigService } from "@nestjs/config";
 import { BullModule } from "@nestjs/bull";
 import { ScheduleModule } from "@nestjs/schedule";
-import { ThrottlerModule } from "@nestjs/throttler";
+import { ThrottlerModule, ThrottlerGuard } from "@nestjs/throttler";
 
 import { configuration } from "./config/configuration";
 import { PrismaModule } from "./prisma/prisma.module";
+import { CommonModule } from "./common/common.module";
+import { TenantModule } from "./tenant/tenant.module";
+import { TenantResolutionMiddleware } from "./tenant/tenant-resolution.middleware";
+import { TenantsModule } from "./tenants/tenants.module";
 
 import { AuthModule } from "./auth/auth.module";
 import { UsersModule } from "./users/users.module";
@@ -33,6 +38,11 @@ import { SuppliersModule } from "./suppliers/suppliers.module";
 import { RecurringInvoicesModule } from "./recurring-invoices/recurring-invoices.module";
 import { ImportModule } from "./import/import.module";
 import { EmailModule } from "./email/email.module";
+import { PlatformAdminModule } from "./platform-admin/platform-admin.module";
+import { AuditModule } from "./audit/audit.module";
+import { BillingModule } from "./billing/billing.module";
+
+import { TenantStatusGuard } from "./tenant/tenant-status.guard";
 
 import { AppController } from "./app.controller";
 import { AppService } from "./app.service";
@@ -47,6 +57,13 @@ import { AppService } from "./app.service";
 
     // ─── Prisma (global) ──────────────────────────────────────────────────────
     PrismaModule,
+
+    // ─── Common utilities (global) ────────────────────────────────────────────
+    CommonModule,
+
+    // ─── Tenant isolation (global) ────────────────────────────────────────────
+    TenantModule,
+    TenantsModule,
 
     // ─── Rate limiting (100 req / 60 s per IP) ────────────────────────────────
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 100 }]),
@@ -104,8 +121,25 @@ import { AppService } from "./app.service";
     RecurringInvoicesModule,
     ImportModule,
     EmailModule,
+    // ─── Platform administration + audit (global) ─────────────────────────────
+    PlatformAdminModule,
+    AuditModule,
+    // ─── Billing (Stripe) ──────────────────────────────────────────────────────
+    BillingModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [
+    AppService,
+    // Global throttle: 100 req / 60 s per IP on every endpoint
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    // Block SUSPENDED / CANCELLED tenants from making any API calls.
+    // useExisting ensures the same singleton instance used by PlatformAdminService
+    // (for cache invalidation) is the one that runs as the global guard.
+    { provide: APP_GUARD, useExisting: TenantStatusGuard },
+  ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer.apply(TenantResolutionMiddleware).forRoutes({ path: "*", method: RequestMethod.ALL });
+  }
+}

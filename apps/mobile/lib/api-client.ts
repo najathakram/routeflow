@@ -26,11 +26,15 @@ async function storageDel(key: string): Promise<void> {
   await deleteItemAsync(key);
 }
 
-// ─── Request interceptor: attach access token ────────────────────────────────
+// ─── Request interceptor: attach access token + tenant slug ──────────────────
 
 apiClient.interceptors.request.use(async (config) => {
-  const token = await storageGet("accessToken");
+  const [token, tenantSlug] = await Promise.all([
+    storageGet("accessToken"),
+    storageGet("tenantSlug"),
+  ]);
   if (token) config.headers.Authorization = `Bearer ${token}`;
+  if (tenantSlug) config.headers["X-Tenant-Slug"] = tenantSlug;
   return config;
 });
 

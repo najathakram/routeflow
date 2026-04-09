@@ -17,8 +17,8 @@ export class AuthService {
     private readonly configService: ConfigService<AppConfig>,
   ) {}
 
-  async validateUser(username: string, password: string) {
-    const user = await this.usersService.findByUsername(username);
+  async validateUser(username: string, password: string, tenantId: string | null) {
+    const user = await this.usersService.findByUsername(username, tenantId);
     if (!user || user.deletedAt !== null) return null;
     if (user.status !== "ACTIVE") return null;
     // Google-only accounts have no password
@@ -32,12 +32,24 @@ export class AuthService {
   async login(user: NonNullable<Awaited<ReturnType<AuthService["validateUser"]>>>) {
     const jwtConfig = this.configService.get<AppConfig["jwt"]>("jwt")!;
 
+    // Fetch tenant slug if user belongs to a tenant
+    let tenantSlug: string | null = null;
+    if (user.tenantId) {
+      const tenant = await this.prisma.tenant.findUnique({
+        where: { id: user.tenantId },
+        select: { slug: true },
+      });
+      tenantSlug = tenant?.slug ?? null;
+    }
+
     const payload: JwtPayload = {
       sub: user.id,
       username: user.username,
       role: user.role,
       status: user.status,
       forcePasswordChange: user.forcePasswordChange,
+      tenantId: user.tenantId ?? null,
+      tenantSlug,
     };
 
     const accessToken = this.jwtService.sign(payload, {
@@ -61,6 +73,8 @@ export class AuthService {
         role: user.role,
         status: user.status,
         forcePasswordChange: user.forcePasswordChange,
+        tenantId: user.tenantId ?? null,
+        tenantSlug,
       },
     };
   }
@@ -92,12 +106,23 @@ export class AuthService {
       throw new UnauthorizedException("Account unavailable");
     }
 
+    let tenantSlug: string | null = null;
+    if (user.tenantId) {
+      const tenant = await this.prisma.tenant.findUnique({
+        where: { id: user.tenantId },
+        select: { slug: true },
+      });
+      tenantSlug = tenant?.slug ?? null;
+    }
+
     const newPayload: JwtPayload = {
       sub: user.id,
       username: user.username,
       role: user.role,
       status: user.status,
       forcePasswordChange: user.forcePasswordChange,
+      tenantId: user.tenantId ?? null,
+      tenantSlug,
     };
 
     const accessToken = this.jwtService.sign(newPayload, {
@@ -121,6 +146,8 @@ export class AuthService {
         role: user.role,
         status: user.status,
         forcePasswordChange: user.forcePasswordChange,
+        tenantId: user.tenantId ?? null,
+        tenantSlug,
       },
     };
   }
@@ -130,17 +157,20 @@ export class AuthService {
     return { message: "Logged out successfully" };
   }
 
-  async findOrCreateGoogleUser(profile: any) {
+  async findOrCreateGoogleUser(profile: any, tenantId?: string | null) {
     const email = profile.emails?.[0]?.value;
     if (!email) throw new Error("No email from Google");
 
-    // Try find by googleId first, then by email
+    // Try find by googleId first, then by email — scoped to tenant
     let user = await this.prisma.user.findFirst({
-      where: { OR: [{ googleId: profile.id }, { email }] },
+      where: {
+        tenantId: tenantId ?? null,
+        OR: [{ googleId: profile.id }, { email }],
+      },
     });
 
     if (!user) {
-      // Create new OPERATOR user
+      // Create new OPERATOR user for the tenant
       user = await this.prisma.user.create({
         data: {
           email,
@@ -155,6 +185,7 @@ export class AuthService {
           role: "OPERATOR",
           googleId: profile.id,
           status: "ACTIVE",
+          tenantId: tenantId ?? null,
         },
       });
     } else if (!user.googleId) {
@@ -172,7 +203,8 @@ export class AuthService {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new UnauthorizedException();
 
-    if (!user.password) throw new BadRequestException("This account uses Google sign-in and has no password");
+    if (!user.password)
+      throw new BadRequestException("This account uses Google sign-in and has no password");
 
     const valid = await bcrypt.compare(currentPassword, user.password);
     if (!valid) throw new BadRequestException("Current password is incorrect");

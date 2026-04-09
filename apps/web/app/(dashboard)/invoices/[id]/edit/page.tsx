@@ -212,8 +212,8 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
         description: it.description,
         qty: Number(it.qty),
         unitPrice: Number(it.unitPrice),
-        taxRate: it.taxRate != null && it.taxRate !== "" ? Number(it.taxRate) : undefined,
-        discount: it.discount != null && it.discount !== "" && Number(it.discount) !== 0 ? Number(it.discount) : undefined,
+        taxRate: it.taxRate != null ? Number(it.taxRate) : undefined,
+        discount: it.discount != null && Number(it.discount) !== 0 ? Number(it.discount) : undefined,
       })),
     };
 

@@ -1,9 +1,8 @@
-import { Module, forwardRef } from "@nestjs/common";
+import { Module } from "@nestjs/common";
 import { EmailService } from "./email.service";
-import { SystemConfigModule } from "../system-config/system-config.module";
 
+// PrismaModule and CommonModule (EncryptionService) are global — no explicit imports needed.
 @Module({
-  imports: [forwardRef(() => SystemConfigModule)],
   providers: [EmailService],
   exports: [EmailService],
 })

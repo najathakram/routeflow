@@ -18,7 +18,7 @@ export class VendorBillsService {
   private async nextBillNumber() {
     const year = new Date().getFullYear();
     const prefix = `BILL-${year}-`;
-    const last = await this.prisma.vendorBill.findFirst({
+    const last = await this.prisma.forTenant().vendorBill.findFirst({
       where: { billNumber: { startsWith: prefix } },
       orderBy: { billNumber: "desc" },
     });
@@ -34,12 +34,13 @@ export class VendorBillsService {
     let totalOwed = dto.totalOwed ?? 0;
     if (dto.items && Array.isArray(dto.items) && dto.items.length > 0) {
       totalOwed = dto.items.reduce(
-        (sum: number, item: any) => sum + (Number(item.qty) || 1) * Number(item.unitCost ?? item.unitPrice ?? 0),
+        (sum: number, item: any) =>
+          sum + (Number(item.qty) || 1) * Number(item.unitCost ?? item.unitPrice ?? 0),
         0,
       );
     }
 
-    const bill = await this.prisma.vendorBill.create({
+    const bill = await this.prisma.forTenant().vendorBill.create({
       data: {
         billNumber: await this.nextBillNumber(),
         supplierId: dto.supplierId,
@@ -74,7 +75,7 @@ export class VendorBillsService {
   }
 
   async update(id: string, dto: any) {
-    const bill = await this.prisma.vendorBill.findUnique({ where: { id } });
+    const bill = await this.prisma.forTenant().vendorBill.findUnique({ where: { id } });
     if (!bill) throw new NotFoundException("Bill not found");
     if (bill.status !== "DRAFT") {
       throw new BadRequestException("Only DRAFT bills can be edited. Revert to draft first.");
@@ -84,12 +85,13 @@ export class VendorBillsService {
     let totalOwed: number | undefined;
     if (dto.items && Array.isArray(dto.items)) {
       totalOwed = dto.items.reduce(
-        (sum: number, item: any) => sum + (Number(item.qty) || 1) * Number(item.unitCost ?? item.unitPrice ?? 0),
+        (sum: number, item: any) =>
+          sum + (Number(item.qty) || 1) * Number(item.unitCost ?? item.unitPrice ?? 0),
         0,
       );
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    return this.prisma.tenantTransaction(async (tx) => {
       // Delete existing items and recreate if items provided
       if (dto.items !== undefined) {
         await tx.vendorBillItem.deleteMany({ where: { vendorBillId: id } });
@@ -99,7 +101,9 @@ export class VendorBillsService {
         where: { id },
         data: {
           ...(dto.supplierId !== undefined && { supplierId: dto.supplierId }),
-          ...(dto.billDate !== undefined && { billDate: dto.billDate ? new Date(dto.billDate) : null }),
+          ...(dto.billDate !== undefined && {
+            billDate: dto.billDate ? new Date(dto.billDate) : null,
+          }),
           ...(dto.dueDate !== undefined && { dueDate: dto.dueDate ? new Date(dto.dueDate) : null }),
           ...(dto.notes !== undefined && { notes: dto.notes }),
           ...(totalOwed !== undefined && { totalOwed }),
@@ -130,7 +134,7 @@ export class VendorBillsService {
   }
 
   async receive(id: string) {
-    const bill = await this.prisma.vendorBill.findUnique({
+    const bill = await this.prisma.forTenant().vendorBill.findUnique({
       where: { id },
       include: {
         items: { include: { product: true } },
@@ -140,7 +144,7 @@ export class VendorBillsService {
     if (!bill) throw new NotFoundException("Bill not found");
 
     // Update bill status
-    const updated = await this.prisma.$transaction(async (tx) => {
+    const updated = await this.prisma.tenantTransaction(async (tx) => {
       const updatedBill = await tx.vendorBill.update({
         where: { id },
         data: { status: "RECEIVED", receivedDate: new Date() },
@@ -201,7 +205,7 @@ export class VendorBillsService {
   }
 
   async revertToDraft(id: string) {
-    const bill = await this.prisma.vendorBill.findUnique({
+    const bill = await this.prisma.forTenant().vendorBill.findUnique({
       where: { id },
       include: {
         items: { include: { product: true } },
@@ -215,7 +219,7 @@ export class VendorBillsService {
       );
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    return this.prisma.tenantTransaction(async (tx) => {
       // Reverse inventory for each product-linked item
       for (const item of bill.items) {
         if (!item.productId) continue;
@@ -275,7 +279,9 @@ export class VendorBillsService {
   }
 
   async voidBill(id: string) {
-    return this.prisma.vendorBill.update({ where: { id }, data: { status: "VOID" as any } });
+    return this.prisma
+      .forTenant()
+      .vendorBill.update({ where: { id }, data: { status: "VOID" as any } });
   }
 
   async findAll(
@@ -304,7 +310,7 @@ export class VendorBillsService {
       ];
     }
     const [data, total] = await Promise.all([
-      this.prisma.vendorBill.findMany({
+      this.prisma.forTenant().vendorBill.findMany({
         where,
         include: {
           supplier: { select: { id: true, name: true } },
@@ -317,13 +323,13 @@ export class VendorBillsService {
         skip,
         take: limit,
       }),
-      this.prisma.vendorBill.count({ where }),
+      this.prisma.forTenant().vendorBill.count({ where }),
     ]);
     return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
   }
 
   async findOne(id: string) {
-    const bill = await this.prisma.vendorBill.findUnique({
+    const bill = await this.prisma.forTenant().vendorBill.findUnique({
       where: { id },
       include: {
         supplier: true,
@@ -340,7 +346,7 @@ export class VendorBillsService {
   // ─── Product Mapping Memory ───────────────────────────────────────────────────
 
   async saveProductMapping(supplierName: string, rawDescription: string, productId: string | null) {
-    return this.prisma.productMapping.upsert({
+    return this.prisma.forTenant().productMapping.upsert({
       where: { supplierName_rawDescription: { supplierName, rawDescription } },
       create: { supplierName, rawDescription, productId },
       update: { productId },
@@ -348,7 +354,7 @@ export class VendorBillsService {
   }
 
   async getProductMappings(supplierName: string) {
-    return this.prisma.productMapping.findMany({
+    return this.prisma.forTenant().productMapping.findMany({
       where: { supplierName },
       include: { product: { select: { id: true, name: true, sku: true, unit: true } } },
     });
@@ -357,9 +363,10 @@ export class VendorBillsService {
   async scanInvoice(imageBuffer: Buffer, mimeType: string) {
     // Look up API key: DB-stored key takes precedence over env var
     const storedKey = await this.systemConfig.get("anthropic.apiKey");
-    const apiKey = (storedKey && storedKey.length > 0)
-      ? storedKey
-      : this.configService.get<string>("ANTHROPIC_API_KEY");
+    const apiKey =
+      storedKey && storedKey.length > 0
+        ? storedKey
+        : this.configService.get<string>("ANTHROPIC_API_KEY");
     if (!apiKey || apiKey.length === 0) {
       throw new BadRequestException(
         "Anthropic API key is not configured. Please add your API key in Settings → AI & Integrations.",
@@ -374,7 +381,11 @@ export class VendorBillsService {
     const fileContentBlock = isPdf
       ? ({
           type: "document" as const,
-          source: { type: "base64" as const, media_type: "application/pdf" as const, data: base64Data },
+          source: {
+            type: "base64" as const,
+            media_type: "application/pdf" as const,
+            data: base64Data,
+          },
         } as any)
       : {
           type: "image" as const,
@@ -422,7 +433,10 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
     let parsed: Record<string, unknown>;
     try {
       let text = content.text.trim();
-      text = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/i, "").trim();
+      text = text
+        .replace(/^```(?:json)?\s*/i, "")
+        .replace(/\s*```\s*$/i, "")
+        .trim();
       if (!text.startsWith("{")) {
         const match = text.match(/\{[\s\S]*\}/);
         if (match) text = match[0];
@@ -435,16 +449,19 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
 
     // ── Phase 2: Server-side product matching (free, instant, no tokens) ──
     const [products, allMappings] = await Promise.all([
-      this.prisma.product.findMany({
+      this.prisma.forTenant().product.findMany({
         select: { id: true, name: true, sku: true, barcode: true },
       }),
-      this.prisma.productMapping.findMany({
+      this.prisma.forTenant().productMapping.findMany({
         include: { product: { select: { id: true, name: true } } },
       }),
     ]);
 
     // Build mapping index keyed by supplierName → rawDescription (lowercase)
-    const mappingIndex: Record<string, Record<string, { productId: string | null; productName: string | null }>> = {};
+    const mappingIndex: Record<
+      string,
+      Record<string, { productId: string | null; productName: string | null }>
+    > = {};
     for (const m of allMappings) {
       if (!mappingIndex[m.supplierName]) mappingIndex[m.supplierName] = {};
       mappingIndex[m.supplierName][m.rawDescription.toLowerCase()] = {
@@ -455,12 +472,24 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
 
     // Normalise a string for fuzzy comparison
     const norm = (s: string) =>
-      s.toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+      s
+        .toLowerCase()
+        .replace(/[^a-z0-9 ]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
 
     // Word-overlap score (ignores words ≤ 2 chars)
     const overlap = (a: string, b: string): number => {
-      const wa = new Set(norm(a).split(" ").filter((w) => w.length > 2));
-      const wb = new Set(norm(b).split(" ").filter((w) => w.length > 2));
+      const wa = new Set(
+        norm(a)
+          .split(" ")
+          .filter((w) => w.length > 2),
+      );
+      const wb = new Set(
+        norm(b)
+          .split(" ")
+          .filter((w) => w.length > 2),
+      );
       if (wa.size === 0 || wb.size === 0) return 0;
       let hits = 0;
       for (const w of wa) if (wb.has(w)) hits++;
@@ -470,20 +499,30 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
     const supplierName = (parsed.supplier as string) ?? "";
     const supplierMappings = supplierName ? (mappingIndex[supplierName] ?? {}) : {};
 
-    const items = (parsed.items as any[] ?? []).map((item: any) => {
+    const items = ((parsed.items as any[]) ?? []).map((item: any) => {
       const raw: string = item.extractedName ?? "";
       const rawLower = raw.toLowerCase();
 
       // 1. Exact mapping hit (learned from previous corrections)
       if (supplierMappings[rawLower]?.productId) {
         const m = supplierMappings[rawLower];
-        return { ...item, matchedProductId: m.productId, matchedProductName: m.productName, confidence: "high" };
+        return {
+          ...item,
+          matchedProductId: m.productId,
+          matchedProductName: m.productName,
+          confidence: "high",
+        };
       }
 
       // 2. Exact name match (case-insensitive)
       const exactName = products.find((p) => p.name.toLowerCase() === rawLower);
       if (exactName) {
-        return { ...item, matchedProductId: exactName.id, matchedProductName: exactName.name, confidence: "high" };
+        return {
+          ...item,
+          matchedProductId: exactName.id,
+          matchedProductName: exactName.name,
+          confidence: "high",
+        };
       }
 
       // 3. Exact SKU / barcode match
@@ -491,7 +530,12 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
         (p) => (p.sku && p.sku.toLowerCase() === rawLower) || (p.barcode && p.barcode === raw),
       );
       if (exactCode) {
-        return { ...item, matchedProductId: exactCode.id, matchedProductName: exactCode.name, confidence: "high" };
+        return {
+          ...item,
+          matchedProductId: exactCode.id,
+          matchedProductName: exactCode.name,
+          confidence: "high",
+        };
       }
 
       // 4. Fuzzy word-overlap match
@@ -500,13 +544,27 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
       let bestScore = 0;
       for (const p of products) {
         const score = overlap(raw, p.name);
-        if (score > bestScore) { bestScore = score; bestId = p.id; bestName = p.name; }
+        if (score > bestScore) {
+          bestScore = score;
+          bestId = p.id;
+          bestName = p.name;
+        }
       }
       if (bestScore >= 0.6) {
-        return { ...item, matchedProductId: bestId, matchedProductName: bestName, confidence: bestScore >= 0.8 ? "high" : "medium" };
+        return {
+          ...item,
+          matchedProductId: bestId,
+          matchedProductName: bestName,
+          confidence: bestScore >= 0.8 ? "high" : "medium",
+        };
       }
       if (bestScore >= 0.35) {
-        return { ...item, matchedProductId: bestId, matchedProductName: bestName, confidence: "low" };
+        return {
+          ...item,
+          matchedProductId: bestId,
+          matchedProductName: bestName,
+          confidence: "low",
+        };
       }
 
       return { ...item, matchedProductId: null, matchedProductName: null, confidence: "none" };
@@ -516,7 +574,7 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
   }
 
   async recordPayment(id: string, dto: { amount: number; method: string; reference?: string }) {
-    return this.prisma.$transaction(async (tx) => {
+    return this.prisma.tenantTransaction(async (tx) => {
       const bill = await tx.vendorBill.findUnique({ where: { id }, include: { payments: true } });
       if (!bill) throw new NotFoundException("Bill not found");
       const alreadyPaid = bill.payments.reduce((s, p) => s + Number(p.amount), 0);
@@ -547,15 +605,17 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
   }
 
   async delete(id: string) {
-    const bill = await this.prisma.vendorBill.findUnique({ where: { id } });
+    const bill = await this.prisma.forTenant().vendorBill.findUnique({ where: { id } });
     if (!bill) throw new NotFoundException("Bill not found");
     if (bill.status === "RECEIVED" || bill.status === "PAID" || bill.status === "PARTIAL") {
-      throw new BadRequestException("Cannot delete a bill that has been received or paid. Void it instead.");
+      throw new BadRequestException(
+        "Cannot delete a bill that has been received or paid. Void it instead.",
+      );
     }
     await this.prisma.$transaction([
-      this.prisma.billPayment.deleteMany({ where: { vendorBillId: id } }),
-      this.prisma.vendorBillItem.deleteMany({ where: { vendorBillId: id } }),
-      this.prisma.vendorBill.delete({ where: { id } }),
+      this.prisma.forTenant().billPayment.deleteMany({ where: { vendorBillId: id } }),
+      this.prisma.forTenant().vendorBillItem.deleteMany({ where: { vendorBillId: id } }),
+      this.prisma.forTenant().vendorBill.delete({ where: { id } }),
     ]);
     return { success: true };
   }
@@ -563,23 +623,31 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
   async bulkDelete(ids: string[]) {
     if (!ids || ids.length === 0) throw new BadRequestException("No IDs provided");
     // Only delete DRAFT or VOID bills
-    const bills = await this.prisma.vendorBill.findMany({
+    const bills = await this.prisma.forTenant().vendorBill.findMany({
       where: { id: { in: ids } },
       select: { id: true, status: true, billNumber: true },
     });
-    const deletable = bills.filter(b => b.status === "DRAFT" || b.status === "VOID");
-    const skipped = bills.filter(b => b.status !== "DRAFT" && b.status !== "VOID");
+    const deletable = bills.filter((b) => b.status === "DRAFT" || b.status === "VOID");
+    const skipped = bills.filter((b) => b.status !== "DRAFT" && b.status !== "VOID");
     if (deletable.length > 0) {
-      const deletableIds = deletable.map(b => b.id);
+      const deletableIds = deletable.map((b) => b.id);
       await this.prisma.$transaction([
-        this.prisma.billPayment.deleteMany({ where: { vendorBillId: { in: deletableIds } } }),
-        this.prisma.vendorBillItem.deleteMany({ where: { vendorBillId: { in: deletableIds } } }),
-        this.prisma.vendorBill.deleteMany({ where: { id: { in: deletableIds } } }),
+        this.prisma
+          .forTenant()
+          .billPayment.deleteMany({ where: { vendorBillId: { in: deletableIds } } }),
+        this.prisma
+          .forTenant()
+          .vendorBillItem.deleteMany({ where: { vendorBillId: { in: deletableIds } } }),
+        this.prisma.forTenant().vendorBill.deleteMany({ where: { id: { in: deletableIds } } }),
       ]);
     }
     return {
       deleted: deletable.length,
-      skipped: skipped.map(b => ({ id: b.id, billNumber: b.billNumber, reason: "Cannot delete received/paid/partial bills" })),
+      skipped: skipped.map((b) => ({
+        id: b.id,
+        billNumber: b.billNumber,
+        reason: "Cannot delete received/paid/partial bills",
+      })),
     };
   }
 }

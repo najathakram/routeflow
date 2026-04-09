@@ -1,4 +1,12 @@
-import { IsBoolean, IsEmail, IsEnum, IsOptional, IsString, MinLength, ValidateNested } from "class-validator";
+import {
+  IsBoolean,
+  IsEmail,
+  IsEnum,
+  IsOptional,
+  IsString,
+  MinLength,
+  ValidateNested,
+} from "class-validator";
 import { Type } from "class-transformer";
 import { FulfillPath } from "@prisma/client";
 import { CreateAddressDto } from "./create-address.dto";

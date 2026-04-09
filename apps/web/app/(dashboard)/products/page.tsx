@@ -1243,7 +1243,7 @@ export default function ProductsPage() {
   const totalItems = meta?.total ?? 0;
 
   const categories = Array.from(
-    new Set((allProductsForCategories?.data ?? productList).map((p) => p.category).filter(Boolean))
+    new Set((allProductsForCategories?.data ?? productList).map((p: ApiProduct) => p.category).filter(Boolean))
   ) as string[];
 
   const existingUnits = Array.from(
@@ -1284,7 +1284,7 @@ export default function ProductsPage() {
     }
   };
 
-  const productIdList = (result?.data ?? []).map((p) => p.id);
+  const productIdList = (result?.data ?? []).map((p: ApiProduct) => p.id);
 
   const tableColumns = React.useMemo(
     () => makeTableColumns(

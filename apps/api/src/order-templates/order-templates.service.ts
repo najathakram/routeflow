@@ -34,7 +34,7 @@ export class OrderTemplatesService {
   // ─── CRUD ────────────────────────────────────────────────────────────────────
 
   async findAll(customerId?: string) {
-    return this.prisma.orderTemplate.findMany({
+    return this.prisma.forTenant().orderTemplate.findMany({
       where: { ...(customerId ? { customerId } : {}) },
       include: {
         items: {
@@ -48,7 +48,9 @@ export class OrderTemplatesService {
 
   async findAllForUser(user: JwtPayload, customerId?: string) {
     if (user.role === "CUSTOMER") {
-      const customer = await this.prisma.customer.findFirst({ where: { userId: user.sub } });
+      const customer = await this.prisma
+        .forTenant()
+        .customer.findFirst({ where: { userId: user.sub } });
       if (!customer) return { data: [], meta: { total: 0 } };
       const data = await this.findAll(customer.id);
       return { data, meta: { total: data.length } };
@@ -58,7 +60,7 @@ export class OrderTemplatesService {
   }
 
   async findOne(id: string) {
-    const template = await this.prisma.orderTemplate.findUnique({
+    const template = await this.prisma.forTenant().orderTemplate.findUnique({
       where: { id },
       include: {
         items: {
@@ -74,7 +76,9 @@ export class OrderTemplatesService {
   async findOneForUser(id: string, user: JwtPayload) {
     const template = await this.findOne(id);
     if (user.role === "CUSTOMER") {
-      const customer = await this.prisma.customer.findFirst({ where: { userId: user.sub } });
+      const customer = await this.prisma
+        .forTenant()
+        .customer.findFirst({ where: { userId: user.sub } });
       if (!customer || template.customerId !== customer.id) throw new ForbiddenException();
     }
     return template;
@@ -82,7 +86,9 @@ export class OrderTemplatesService {
 
   async createForUser(dto: CreateOrderTemplateDto, user: JwtPayload) {
     if (user.role === "CUSTOMER") {
-      const customer = await this.prisma.customer.findFirst({ where: { userId: user.sub } });
+      const customer = await this.prisma
+        .forTenant()
+        .customer.findFirst({ where: { userId: user.sub } });
       if (!customer) throw new ForbiddenException();
       dto.customerId = customer.id;
     }
@@ -92,7 +98,9 @@ export class OrderTemplatesService {
   async updateForUser(id: string, dto: UpdateOrderTemplateDto, user: JwtPayload) {
     if (user.role === "CUSTOMER") {
       const template = await this.findOne(id);
-      const customer = await this.prisma.customer.findFirst({ where: { userId: user.sub } });
+      const customer = await this.prisma
+        .forTenant()
+        .customer.findFirst({ where: { userId: user.sub } });
       if (!customer || template.customerId !== customer.id) throw new ForbiddenException();
     }
     return this.update(id, dto);
@@ -101,7 +109,9 @@ export class OrderTemplatesService {
   async removeForUser(id: string, user: JwtPayload) {
     if (user.role === "CUSTOMER") {
       const template = await this.findOne(id);
-      const customer = await this.prisma.customer.findFirst({ where: { userId: user.sub } });
+      const customer = await this.prisma
+        .forTenant()
+        .customer.findFirst({ where: { userId: user.sub } });
       if (!customer || template.customerId !== customer.id) throw new ForbiddenException();
     }
     return this.remove(id);
@@ -109,16 +119,20 @@ export class OrderTemplatesService {
 
   async create(dto: CreateOrderTemplateDto) {
     if (!dto.customerId) throw new BadRequestException("customerId is required");
-    const customer = await this.prisma.customer.findUnique({ where: { id: dto.customerId } });
+    const customer = await this.prisma
+      .forTenant()
+      .customer.findUnique({ where: { id: dto.customerId } });
     if (!customer) throw new BadRequestException("Customer not found");
 
     const productIds = dto.items.map((i) => i.productId);
-    const products = await this.prisma.product.findMany({ where: { id: { in: productIds } } });
+    const products = await this.prisma
+      .forTenant()
+      .product.findMany({ where: { id: { in: productIds } } });
     if (products.length !== productIds.length) {
       throw new BadRequestException("One or more products not found");
     }
 
-    return this.prisma.orderTemplate.create({
+    return this.prisma.forTenant().orderTemplate.create({
       data: {
         customerId: dto.customerId!,
         name: dto.name,
@@ -143,7 +157,7 @@ export class OrderTemplatesService {
 
   async update(id: string, dto: UpdateOrderTemplateDto) {
     await this.findOne(id);
-    return this.prisma.orderTemplate.update({
+    return this.prisma.forTenant().orderTemplate.update({
       where: { id },
       data: {
         ...(dto.name !== undefined ? { name: dto.name } : {}),
@@ -162,7 +176,7 @@ export class OrderTemplatesService {
 
   async remove(id: string) {
     await this.findOne(id);
-    await this.prisma.orderTemplate.delete({ where: { id } });
+    await this.prisma.forTenant().orderTemplate.delete({ where: { id } });
     return { success: true };
   }
 
@@ -170,28 +184,30 @@ export class OrderTemplatesService {
 
   async addItem(templateId: string, dto: AddTemplateItemDto) {
     await this.findOne(templateId);
-    const product = await this.prisma.product.findUnique({ where: { id: dto.productId } });
+    const product = await this.prisma
+      .forTenant()
+      .product.findUnique({ where: { id: dto.productId } });
     if (!product) throw new BadRequestException("Product not found");
 
-    return this.prisma.orderTemplateItem.create({
+    return this.prisma.forTenant().orderTemplateItem.create({
       data: { templateId, productId: dto.productId, qty: dto.qty, notes: dto.notes },
       include: { product: { select: { id: true, name: true, unit: true } } },
     });
   }
 
   async removeItem(templateId: string, itemId: string) {
-    const item = await this.prisma.orderTemplateItem.findFirst({
+    const item = await this.prisma.forTenant().orderTemplateItem.findFirst({
       where: { id: itemId, templateId },
     });
     if (!item) throw new NotFoundException("Template item not found");
-    await this.prisma.orderTemplateItem.delete({ where: { id: itemId } });
+    await this.prisma.forTenant().orderTemplateItem.delete({ where: { id: itemId } });
     return { success: true };
   }
 
   // ─── Order generation ─────────────────────────────────────────────────────────
 
   async generateOrder(templateId: string) {
-    const template = await this.prisma.orderTemplate.findUnique({
+    const template = await this.prisma.forTenant().orderTemplate.findUnique({
       where: { id: templateId },
       include: { items: true },
     });
@@ -208,7 +224,7 @@ export class OrderTemplatesService {
 
     this.logger.log(`Running daily order generation for day ${dayOfWeek}`);
 
-    const templates = await this.prisma.orderTemplate.findMany({
+    const templates = await this.prisma.forTenant().orderTemplate.findMany({
       where: { isActive: true, daysOfWeek: { has: dayOfWeek } },
       include: { items: true },
     });
@@ -218,7 +234,7 @@ export class OrderTemplatesService {
 
     for (const template of templates) {
       // Idempotency: skip if order already generated today for this template
-      const existing = await this.prisma.order.findFirst({
+      const existing = await this.prisma.forTenant().order.findFirst({
         where: {
           templateId: template.id,
           createdAt: { gte: startOfDay(today) },
@@ -250,7 +266,7 @@ export class OrderTemplatesService {
     items: Array<{ productId: string; qty: number; notes?: string | null }>;
   }) {
     const productIds = template.items.map((i) => i.productId);
-    const products = await this.prisma.product.findMany({
+    const products = await this.prisma.forTenant().product.findMany({
       where: { id: { in: productIds } },
     });
     const productMap = new Map(products.map((p) => [p.id, p]));
@@ -276,7 +292,7 @@ export class OrderTemplatesService {
     const orderNumber = `ORD-${Date.now()}`;
     const today = new Date();
 
-    return this.prisma.order.create({
+    return this.prisma.forTenant().order.create({
       data: {
         customerId: template.customerId,
         templateId: template.id,

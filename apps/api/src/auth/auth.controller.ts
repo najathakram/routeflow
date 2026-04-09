@@ -4,6 +4,7 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Param,
   Post,
   Req,
   Res,
@@ -18,6 +19,7 @@ import { LocalAuthGuard } from "./guards/local-auth.guard";
 import { JwtAuthGuard } from "./guards/jwt-auth.guard";
 import { GoogleAuthGuard } from "./guards/google-auth.guard";
 import { CurrentUser } from "./decorators/current-user.decorator";
+import { TenantGoogleOAuthService } from "../tenants/tenant-google-oauth.service";
 import { LoginDto } from "./dto/login.dto";
 import { RefreshDto } from "./dto/refresh.dto";
 import { ChangePasswordDto } from "./dto/change-password.dto";
@@ -28,6 +30,7 @@ export class AuthController {
   constructor(
     private readonly authService: AuthService,
     private readonly configService: ConfigService,
+    private readonly tenantGoogleOAuth: TenantGoogleOAuthService,
   ) {}
 
   @Post("login")
@@ -85,10 +88,38 @@ export class AuthController {
   @ApiOperation({ summary: "Google OAuth callback" })
   async googleCallback(@Req() req: any, @Res() res: Response) {
     const tokens = await this.authService.login(req.user);
-    const webUrl =
-      this.configService.get<string>("WEB_URL") ?? "http://localhost:3001";
+    const webUrl = this.configService.get<string>("WEB_URL") ?? "http://localhost:3001";
     res.redirect(
       `${webUrl}/auth/callback?accessToken=${tokens.accessToken}&refreshToken=${tokens.refreshToken}&role=${tokens.user.role}`,
+    );
+  }
+
+  // ─── Per-tenant Google OAuth ───────────────────────────────────────────────
+
+  @Get("google/:tenantSlug")
+  @ApiOperation({ summary: "Initiate per-tenant Google OAuth login" })
+  async tenantGoogleLogin(@Param("tenantSlug") slug: string, @Res() res: Response) {
+    const url = await this.tenantGoogleOAuth.buildAuthUrl(slug);
+    res.redirect(url);
+  }
+
+  @Get("google/:tenantSlug/callback")
+  @ApiOperation({ summary: "Per-tenant Google OAuth callback" })
+  async tenantGoogleCallback(
+    @Param("tenantSlug") slug: string,
+    @Req() req: any,
+    @Res() res: Response,
+  ) {
+    const code = req.query?.code as string;
+    if (!code) {
+      const webUrl = this.configService.get<string>("WEB_URL") ?? "http://localhost:3001";
+      return res.redirect(`${webUrl}/auth/error?message=oauth_cancelled`);
+    }
+    const user = await this.tenantGoogleOAuth.exchangeCode(code, slug);
+    const tokens = await this.authService.login(user as any);
+    const webUrl = this.configService.get<string>("WEB_URL") ?? "http://localhost:3001";
+    res.redirect(
+      `${webUrl}/auth/callback?accessToken=${tokens.accessToken}&refreshToken=${tokens.refreshToken}&role=${tokens.user.role}&tenantSlug=${slug}`,
     );
   }
 }

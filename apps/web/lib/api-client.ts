@@ -12,12 +12,29 @@ const BASE_URL =
 
 export const apiClient = axios.create({ baseURL: BASE_URL });
 
-// ─── Request interceptor: attach access token ────────────────────────────────
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/** Read the tenant-slug cookie set by the Next.js middleware. */
+function getTenantSlugFromCookie(): string | null {
+  if (typeof document === "undefined") return null;
+  const match = document.cookie.match(/(?:^|;\s*)tenant-slug=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+// ─── Request interceptor: attach access token + tenant slug ──────────────────
 
 apiClient.interceptors.request.use((config) => {
   if (typeof window !== "undefined") {
-    const token = localStorage.getItem("accessToken");
+    // Prefer impersonation token over regular access token when present
+    const impersonationToken = localStorage.getItem("impersonationToken");
+    const token = impersonationToken || localStorage.getItem("accessToken");
     if (token) config.headers.Authorization = `Bearer ${token}`;
+
+    // Tell the API which tenant this request belongs to.
+    // On production the API already knows from the subdomain (Host header),
+    // but in dev (localhost) the header is required.
+    const slug = getTenantSlugFromCookie();
+    if (slug) config.headers["X-Tenant-Slug"] = slug;
   }
   return config;
 });

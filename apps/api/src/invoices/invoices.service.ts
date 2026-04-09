@@ -46,7 +46,7 @@ export class InvoicesService {
   }
 
   private async findOneOrThrow(id: string) {
-    const inv = await this.prisma.invoice.findUnique({ where: { id } });
+    const inv = await this.prisma.forTenant().invoice.findUnique({ where: { id } });
     if (!inv) throw new NotFoundException("Invoice not found");
     return inv;
   }
@@ -54,12 +54,23 @@ export class InvoicesService {
   // ─── CRUD ─────────────────────────────────────────────────────────────────
 
   async create(dto: CreateInvoiceDto) {
-    const customer = await this.prisma.customer.findUnique({ where: { id: dto.customerId } });
+    const customer = await this.prisma
+      .forTenant()
+      .customer.findUnique({ where: { id: dto.customerId } });
     if (!customer) throw new NotFoundException("Customer not found");
 
     // Pre-fetch products for items that specify boxes/pieces so we can resolve qty
-    const productIds = [...new Set(dto.items.filter((i) => i.productId && (i.boxes != null || i.pieces != null)).map((i) => i.productId!))];
-    const products = productIds.length > 0 ? await this.prisma.product.findMany({ where: { id: { in: productIds } } }) : [];
+    const productIds = [
+      ...new Set(
+        dto.items
+          .filter((i) => i.productId && (i.boxes != null || i.pieces != null))
+          .map((i) => i.productId!),
+      ),
+    ];
+    const products =
+      productIds.length > 0
+        ? await this.prisma.forTenant().product.findMany({ where: { id: { in: productIds } } })
+        : [];
     const productMap = new Map(products.map((p) => [p.id, p]));
 
     let subtotal = 0;
@@ -98,7 +109,7 @@ export class InvoicesService {
     }, 0);
     const total = subtotal - invDiscount + shipping + taxTotal;
 
-    const invoice = await this.prisma.invoice.create({
+    const invoice = await this.prisma.forTenant().invoice.create({
       data: {
         invoiceNumber: await this.nextInvoiceNumber(),
         customerId: dto.customerId,
@@ -134,10 +145,7 @@ export class InvoicesService {
    * Accepts an optional Prisma transaction client so it can run
    * inside completeStop()'s $transaction.
    */
-  async createInvoiceFromOrder(
-    orderId: string,
-    txClient?: any,
-  ) {
+  async createInvoiceFromOrder(orderId: string, txClient?: any) {
     const db = txClient ?? this.prisma;
 
     // Idempotency: skip if invoice already exists for this order
@@ -197,7 +205,9 @@ export class InvoicesService {
         items: { create: itemsData },
       },
       include: {
-        customer: { select: { id: true, businessName: true, email: true, phone: true, mobile: true } },
+        customer: {
+          select: { id: true, businessName: true, email: true, phone: true, mobile: true },
+        },
         items: true,
         payments: true,
       },
@@ -223,12 +233,24 @@ export class InvoicesService {
   }
 
   async findAll(query: ListInvoicesDto, user?: JwtPayload) {
-    const { status, customerId, search, dateFrom, dateTo, sortBy, sortOrder, page = 1, limit = 20 } = query;
+    const {
+      status,
+      customerId,
+      search,
+      dateFrom,
+      dateTo,
+      sortBy,
+      sortOrder,
+      page = 1,
+      limit = 20,
+    } = query;
     const skip = (page - 1) * limit;
     const where: any = {};
     if (status) where.status = status;
     if (user?.role === UserRole.CUSTOMER) {
-      const customer = await this.prisma.customer.findFirst({ where: { userId: user.sub } });
+      const customer = await this.prisma
+        .forTenant()
+        .customer.findFirst({ where: { userId: user.sub } });
       if (!customer) return { data: [], meta: { total: 0, page, limit, totalPages: 0 } };
       where.customerId = customer.id;
     } else if (customerId) {
@@ -252,16 +274,21 @@ export class InvoicesService {
 
     // Build orderBy from sortBy/sortOrder params
     const validSortFields: Record<string, string> = {
-      date: "issueDate", issueDate: "issueDate", dueDate: "dueDate",
-      total: "total", amount: "total", createdAt: "createdAt",
-      status: "status", invoiceNumber: "invoiceNumber",
+      date: "issueDate",
+      issueDate: "issueDate",
+      dueDate: "dueDate",
+      total: "total",
+      amount: "total",
+      createdAt: "createdAt",
+      status: "status",
+      invoiceNumber: "invoiceNumber",
     };
     const orderField = validSortFields[sortBy ?? ""] ?? "issueDate";
     const orderDir = sortOrder === "asc" ? "asc" : "desc";
     const orderBy: any = { [orderField]: orderDir };
 
     const [data, total] = await Promise.all([
-      this.prisma.invoice.findMany({
+      this.prisma.forTenant().invoice.findMany({
         where,
         include: {
           customer: { select: { id: true, businessName: true } },
@@ -271,7 +298,7 @@ export class InvoicesService {
         take: limit,
         orderBy,
       }),
-      this.prisma.invoice.count({ where }),
+      this.prisma.forTenant().invoice.count({ where }),
     ]);
 
     // Compute balanceDue server-side so the client always gets the right value
@@ -286,21 +313,35 @@ export class InvoicesService {
       return { ...inv, balanceDue, paidAmount };
     });
 
-    return { data: computedData, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
+    return {
+      data: computedData,
+      meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
+    };
   }
 
   async findOne(id: string, user?: JwtPayload) {
-    const inv = await this.prisma.invoice.findUnique({
+    const inv = await this.prisma.forTenant().invoice.findUnique({
       where: { id },
       include: {
-        customer: { select: { id: true, businessName: true, contactName: true, phone: true, mobile: true, email: true } },
+        customer: {
+          select: {
+            id: true,
+            businessName: true,
+            contactName: true,
+            phone: true,
+            mobile: true,
+            email: true,
+          },
+        },
         items: { include: { product: { select: { id: true, name: true, unit: true } } } },
         payments: { orderBy: { createdAt: "desc" } },
       },
     });
     if (!inv) throw new NotFoundException("Invoice not found");
     if (user?.role === UserRole.CUSTOMER) {
-      const customer = await this.prisma.customer.findFirst({ where: { userId: user.sub } });
+      const customer = await this.prisma
+        .forTenant()
+        .customer.findFirst({ where: { userId: user.sub } });
       if (!customer || inv.customerId !== customer.id) throw new ForbiddenException();
     }
     return inv;
@@ -312,11 +353,20 @@ export class InvoicesService {
       throw new BadRequestException("Only DRAFT invoices can be edited");
 
     if (dto.items) {
-      await this.prisma.invoiceItem.deleteMany({ where: { invoiceId: id } });
+      await this.prisma.forTenant().invoiceItem.deleteMany({ where: { invoiceId: id } });
 
       // Pre-fetch products for boxes/pieces resolution
-      const productIds = [...new Set(dto.items.filter((i) => i.productId && (i.boxes != null || i.pieces != null)).map((i) => i.productId!))];
-      const products = productIds.length > 0 ? await this.prisma.product.findMany({ where: { id: { in: productIds } } }) : [];
+      const productIds = [
+        ...new Set(
+          dto.items
+            .filter((i) => i.productId && (i.boxes != null || i.pieces != null))
+            .map((i) => i.productId!),
+        ),
+      ];
+      const products =
+        productIds.length > 0
+          ? await this.prisma.forTenant().product.findMany({ where: { id: { in: productIds } } })
+          : [];
       const productMap = new Map(products.map((p) => [p.id, p]));
 
       let subtotal = 0;
@@ -353,7 +403,7 @@ export class InvoicesService {
       const invDiscount = dto.discount ?? Number(inv.discount);
       const shipping = dto.shippingFee ?? Number(inv.shippingFee);
       const total = subtotal - invDiscount + shipping + taxTotal;
-      return this.prisma.invoice.update({
+      return this.prisma.forTenant().invoice.update({
         where: { id },
         data: {
           subtotal,
@@ -375,7 +425,7 @@ export class InvoicesService {
       });
     }
 
-    return this.prisma.invoice.update({
+    return this.prisma.forTenant().invoice.update({
       where: { id },
       data: {
         ...(dto.dueDate && { dueDate: new Date(dto.dueDate) }),
@@ -397,11 +447,11 @@ export class InvoicesService {
     const inv = await this.findOneOrThrow(id);
     if (inv.status === InvoiceStatus.VOID)
       throw new BadRequestException("Cannot send a voided invoice");
-    const updated = await this.prisma.invoice.update({
+    const updated = await this.prisma.forTenant().invoice.update({
       where: { id },
       data: { status: InvoiceStatus.SENT, sentAt: new Date() },
     });
-    this.gateway.emitInvoiceUpdated({
+    this.gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
       invoiceId: updated.id,
       invoiceNumber: updated.invoiceNumber,
       customerId: updated.customerId,
@@ -413,7 +463,7 @@ export class InvoicesService {
 
   /** Send the invoice as an actual email and mark as SENT. */
   async sendEmail(id: string, overrideEmail?: string) {
-    const inv = await this.prisma.invoice.findUnique({
+    const inv = await this.prisma.forTenant().invoice.findUnique({
       where: { id },
       include: {
         customer: { select: { id: true, businessName: true, contactName: true, email: true } },
@@ -426,14 +476,18 @@ export class InvoicesService {
 
     const recipientEmail = overrideEmail || inv.customer?.email;
     if (!recipientEmail)
-      throw new BadRequestException("No email address on file for this customer. Provide an email address.");
+      throw new BadRequestException(
+        "No email address on file for this customer. Provide an email address.",
+      );
 
     // Get PDF URL (non-blocking — include in email if available)
     let pdfUrl: string | undefined;
     try {
       pdfUrl = await this.pdfService.getOrGenerate(id);
     } catch {
-      this.logger.warn(`Could not generate PDF for invoice ${id} — email will be sent without PDF link`);
+      this.logger.warn(
+        `Could not generate PDF for invoice ${id} — email will be sent without PDF link`,
+      );
     }
 
     await this.emailService.sendInvoice({
@@ -441,8 +495,20 @@ export class InvoicesService {
       customerName: inv.customer?.businessName ?? "Customer",
       invoiceNumber: inv.invoiceNumber,
       invoiceId: inv.id,
-      issueDate: inv.issueDate ? new Date(inv.issueDate).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }) : "",
-      dueDate: inv.dueDate ? new Date(inv.dueDate).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }) : "",
+      issueDate: inv.issueDate
+        ? new Date(inv.issueDate).toLocaleDateString("en-US", {
+            year: "numeric",
+            month: "long",
+            day: "numeric",
+          })
+        : "",
+      dueDate: inv.dueDate
+        ? new Date(inv.dueDate).toLocaleDateString("en-US", {
+            year: "numeric",
+            month: "long",
+            day: "numeric",
+          })
+        : "",
       total: Number(inv.total),
       items: inv.items.map((it: any) => ({
         description: it.description,
@@ -455,11 +521,11 @@ export class InvoicesService {
     });
 
     // Mark as SENT
-    const updated = await this.prisma.invoice.update({
+    const updated = await this.prisma.forTenant().invoice.update({
       where: { id },
       data: { status: InvoiceStatus.SENT, sentAt: new Date() },
     });
-    this.gateway.emitInvoiceUpdated({
+    this.gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
       invoiceId: updated.id,
       invoiceNumber: updated.invoiceNumber,
       customerId: updated.customerId,
@@ -471,7 +537,7 @@ export class InvoicesService {
 
   /** Send a payment reminder email without changing the invoice status. */
   async sendReminder(id: string, overrideEmail?: string) {
-    const inv = await this.prisma.invoice.findUnique({
+    const inv = await this.prisma.forTenant().invoice.findUnique({
       where: { id },
       include: {
         customer: { select: { id: true, businessName: true, contactName: true, email: true } },
@@ -484,20 +550,36 @@ export class InvoicesService {
 
     const recipientEmail = overrideEmail || inv.customer?.email;
     if (!recipientEmail)
-      throw new BadRequestException("No email address on file for this customer. Provide an email address.");
+      throw new BadRequestException(
+        "No email address on file for this customer. Provide an email address.",
+      );
 
     let pdfUrl: string | undefined;
     try {
       pdfUrl = await this.pdfService.getOrGenerate(id);
-    } catch { /* non-critical */ }
+    } catch {
+      /* non-critical */
+    }
 
     await this.emailService.sendInvoice({
       to: recipientEmail,
       customerName: inv.customer?.businessName ?? "Customer",
       invoiceNumber: inv.invoiceNumber,
       invoiceId: inv.id,
-      issueDate: inv.issueDate ? new Date(inv.issueDate).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }) : "",
-      dueDate: inv.dueDate ? new Date(inv.dueDate).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }) : "",
+      issueDate: inv.issueDate
+        ? new Date(inv.issueDate).toLocaleDateString("en-US", {
+            year: "numeric",
+            month: "long",
+            day: "numeric",
+          })
+        : "",
+      dueDate: inv.dueDate
+        ? new Date(inv.dueDate).toLocaleDateString("en-US", {
+            year: "numeric",
+            month: "long",
+            day: "numeric",
+          })
+        : "",
       total: Number(inv.total),
       items: inv.items.map((it: any) => ({
         description: it.description,
@@ -516,7 +598,9 @@ export class InvoicesService {
     const inv = await this.findOneOrThrow(id);
     if (inv.status === InvoiceStatus.PAID)
       throw new BadRequestException("Cannot void a fully paid invoice");
-    return this.prisma.invoice.update({ where: { id }, data: { status: InvoiceStatus.VOID } });
+    return this.prisma
+      .forTenant()
+      .invoice.update({ where: { id }, data: { status: InvoiceStatus.VOID } });
   }
 
   async revertInvoiceToDraft(id: string) {
@@ -528,13 +612,15 @@ export class InvoicesService {
       );
     }
     // Block if there are any payments
-    const paymentCount = await this.prisma.invoicePayment.count({ where: { invoiceId: id } });
+    const paymentCount = await this.prisma
+      .forTenant()
+      .invoicePayment.count({ where: { invoiceId: id } });
     if (paymentCount > 0) {
       throw new BadRequestException(
         "Cannot revert to Draft: this invoice has payments recorded. Void it instead.",
       );
     }
-    return this.prisma.invoice.update({
+    return this.prisma.forTenant().invoice.update({
       where: { id },
       data: { status: InvoiceStatus.DRAFT, sentAt: null },
     });
@@ -543,23 +629,25 @@ export class InvoicesService {
   async unvoidInvoice(id: string) {
     const inv = await this.findOneOrThrow(id);
     if (inv.status !== InvoiceStatus.VOID) {
-      throw new BadRequestException(`Only VOID invoices can be unvoided. Current status: ${inv.status}`);
+      throw new BadRequestException(
+        `Only VOID invoices can be unvoided. Current status: ${inv.status}`,
+      );
     }
     // Check if there were payments before voiding (there shouldn't be, since void blocks payments)
     // Revert to DRAFT so operator can review before re-sending
-    return this.prisma.invoice.update({
+    return this.prisma.forTenant().invoice.update({
       where: { id },
       data: { status: InvoiceStatus.DRAFT },
     });
   }
 
   async reopenInvoice(id: string) {
-    const inv = await this.prisma.invoice.findUnique({ where: { id } });
+    const inv = await this.prisma.forTenant().invoice.findUnique({ where: { id } });
     if (!inv) throw new NotFoundException("Invoice not found");
     if (inv.status !== InvoiceStatus.PAID)
       throw new BadRequestException("Only PAID invoices can be reopened");
 
-    return this.prisma.invoice.update({
+    return this.prisma.forTenant().invoice.update({
       where: { id },
       data: { status: InvoiceStatus.DRAFT, paidAt: null },
       include: {
@@ -571,9 +659,11 @@ export class InvoicesService {
   }
 
   async duplicate(id: string) {
-    const inv = await this.prisma.invoice.findUnique({ where: { id }, include: { items: true } });
+    const inv = await this.prisma
+      .forTenant()
+      .invoice.findUnique({ where: { id }, include: { items: true } });
     if (!inv) throw new NotFoundException("Invoice not found");
-    return this.prisma.invoice.create({
+    return this.prisma.forTenant().invoice.create({
       data: {
         invoiceNumber: await this.nextInvoiceNumber(),
         customerId: inv.customerId,
@@ -619,7 +709,18 @@ export class InvoicesService {
     sortBy?: string;
     sortDir?: string;
   }) {
-    const { page = 1, limit = 25, customerId, method, status, dateFrom, dateTo, search, sortBy, sortDir } = query;
+    const {
+      page = 1,
+      limit = 25,
+      customerId,
+      method,
+      status,
+      dateFrom,
+      dateTo,
+      search,
+      sortBy,
+      sortDir,
+    } = query;
     const skip = (page - 1) * limit;
 
     const where: any = {};
@@ -663,20 +764,22 @@ export class InvoicesService {
     };
 
     const [data, total] = await Promise.all([
-      this.prisma.invoicePayment.findMany({ where, skip, take: limit, orderBy, include }),
-      this.prisma.invoicePayment.count({ where }),
+      this.prisma
+        .forTenant()
+        .invoicePayment.findMany({ where, skip, take: limit, orderBy, include }),
+      this.prisma.forTenant().invoicePayment.count({ where }),
     ]);
 
     // Summary: total received (PAID only) and advance balance
     const summaryWhere = { ...where, status: "PAID" };
-    const paidPayments = await this.prisma.invoicePayment.findMany({
+    const paidPayments = await this.prisma.forTenant().invoicePayment.findMany({
       where: summaryWhere,
       select: { amount: true },
     });
     const totalReceived = paidPayments.reduce((s, p) => s + Number(p.amount), 0);
 
     const advanceWhere: any = customerId ? { customerId } : {};
-    const advances = await this.prisma.advancePayment.findMany({
+    const advances = await this.prisma.forTenant().advancePayment.findMany({
       where: advanceWhere,
       select: { balance: true },
     });
@@ -690,7 +793,7 @@ export class InvoicesService {
   }
 
   async findPaymentById(paymentId: string) {
-    const payment = await this.prisma.invoicePayment.findUnique({
+    const payment = await this.prisma.forTenant().invoicePayment.findUnique({
       where: { id: paymentId },
       include: {
         invoice: {
@@ -710,7 +813,7 @@ export class InvoicesService {
   // ─── Payment recording ────────────────────────────────────────────────────
 
   async recordPayment(id: string, dto: RecordInvoicePaymentDto) {
-    return this.prisma.$transaction(async (tx) => {
+    return this.prisma.tenantTransaction(async (tx) => {
       const inv = await tx.invoice.findUnique({
         where: { id },
         include: { payments: { where: { status: { not: "VOID" as any } } } },
@@ -755,9 +858,8 @@ export class InvoicesService {
       });
 
       const newPaid = paymentStatus === "PAID" ? alreadyPaid + dto.amount : alreadyPaid;
-      const newStatus = paymentStatus === "PAID"
-        ? this.recomputeStatus(newPaid, total, inv.dueDate)
-        : inv.status;
+      const newStatus =
+        paymentStatus === "PAID" ? this.recomputeStatus(newPaid, total, inv.dueDate) : inv.status;
 
       const paid = await tx.invoice.update({
         where: { id },
@@ -768,7 +870,7 @@ export class InvoicesService {
           payments: { orderBy: { createdAt: "desc" } },
         },
       });
-      this.gateway.emitInvoiceUpdated({
+      this.gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
         invoiceId: paid.id,
         invoiceNumber: paid.invoiceNumber,
         customerId: paid.customerId,
@@ -780,7 +882,7 @@ export class InvoicesService {
   }
 
   async updatePayment(invoiceId: string, paymentId: string, dto: UpdatePaymentDto) {
-    return this.prisma.$transaction(async (tx) => {
+    return this.prisma.tenantTransaction(async (tx) => {
       const inv = await tx.invoice.findUnique({
         where: { id: invoiceId },
         include: { payments: true },
@@ -830,7 +932,7 @@ export class InvoicesService {
           payments: { orderBy: { createdAt: "desc" } },
         },
       });
-      this.gateway.emitInvoiceUpdated({
+      this.gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
         invoiceId: updated.id,
         invoiceNumber: updated.invoiceNumber,
         customerId: updated.customerId,
@@ -842,7 +944,7 @@ export class InvoicesService {
   }
 
   async deletePayment(invoiceId: string, paymentId: string) {
-    return this.prisma.$transaction(async (tx) => {
+    return this.prisma.tenantTransaction(async (tx) => {
       const inv = await tx.invoice.findUnique({
         where: { id: invoiceId },
         include: { payments: true },
@@ -870,7 +972,7 @@ export class InvoicesService {
           payments: { orderBy: { createdAt: "desc" } },
         },
       });
-      this.gateway.emitInvoiceUpdated({
+      this.gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
         invoiceId: updated.id,
         invoiceNumber: updated.invoiceNumber,
         customerId: updated.customerId,
@@ -894,7 +996,7 @@ export class InvoicesService {
     if (!allowedStatuses.includes(inv.status)) {
       throw new BadRequestException(`Cannot write off an invoice with status ${inv.status}`);
     }
-    return this.prisma.invoice.update({
+    return this.prisma.forTenant().invoice.update({
       where: { id },
       data: {
         status: InvoiceStatus.WRITTEN_OFF,
@@ -912,7 +1014,7 @@ export class InvoicesService {
   // ─── Delete ───────────────────────────────────────────────────────────────
 
   async deleteInvoice(id: string) {
-    return this.prisma.$transaction(async (tx) => {
+    return this.prisma.tenantTransaction(async (tx) => {
       const inv = await tx.invoice.findUnique({
         where: { id },
         include: { payments: true },
@@ -937,7 +1039,7 @@ export class InvoicesService {
       // Delete the invoice (also detaches orderId reference)
       await tx.invoice.delete({ where: { id } });
 
-      this.gateway.emitInvoiceUpdated({
+      this.gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
         invoiceId: id,
         invoiceNumber: inv.invoiceNumber,
         customerId: inv.customerId,
@@ -956,7 +1058,7 @@ export class InvoicesService {
     const paidAt = dto.paidAt ? new Date(dto.paidAt) : new Date();
     const status = dto.status ?? "PAID";
 
-    return this.prisma.$transaction(async (tx) => {
+    return this.prisma.tenantTransaction(async (tx) => {
       // Generate a block of sequential payment numbers
       const counter = await tx.paymentCounter.upsert({
         where: { id: "singleton" },
@@ -974,8 +1076,10 @@ export class InvoicesService {
           where: { id: alloc.invoiceId, customerId: dto.customerId },
           include: { payments: { where: { status: { not: "VOID" as any } } } },
         });
-        if (!invoice) throw new NotFoundException(`Invoice ${alloc.invoiceId} not found for customer`);
-        if (invoice.status === "VOID") throw new BadRequestException(`Invoice ${alloc.invoiceId} is voided`);
+        if (!invoice)
+          throw new NotFoundException(`Invoice ${alloc.invoiceId} not found for customer`);
+        if (invoice.status === "VOID")
+          throw new BadRequestException(`Invoice ${alloc.invoiceId} is voided`);
 
         const payment = await tx.invoicePayment.create({
           data: {
@@ -1001,7 +1105,10 @@ export class InvoicesService {
           const newStatus = this.recomputeStatus(totalPaid, Number(invoice.total), invoice.dueDate);
           await tx.invoice.update({
             where: { id: alloc.invoiceId },
-            data: { status: newStatus, paidAt: newStatus === InvoiceStatus.PAID ? new Date() : null },
+            data: {
+              status: newStatus,
+              paidAt: newStatus === InvoiceStatus.PAID ? new Date() : null,
+            },
           });
         }
       }
@@ -1030,12 +1137,13 @@ export class InvoicesService {
   // ─── Void a single payment ────────────────────────────────────────────────
 
   async voidPayment(invoiceId: string, paymentId: string) {
-    return this.prisma.$transaction(async (tx) => {
+    return this.prisma.tenantTransaction(async (tx) => {
       const payment = await tx.invoicePayment.findFirst({
         where: { id: paymentId, invoiceId },
       });
       if (!payment) throw new NotFoundException("Payment not found");
-      if ((payment as any).status === "VOID") throw new BadRequestException("Payment already voided");
+      if ((payment as any).status === "VOID")
+        throw new BadRequestException("Payment already voided");
 
       await tx.invoicePayment.update({
         where: { id: paymentId },
@@ -1055,10 +1163,19 @@ export class InvoicesService {
       const newStatus = this.recomputeStatus(totalPaid, Number(invoice.total), invoice.dueDate);
       await tx.invoice.update({
         where: { id: invoiceId },
-        data: { status: newStatus, paidAt: newStatus === InvoiceStatus.PAID ? invoice.paidAt : null },
+        data: {
+          status: newStatus,
+          paidAt: newStatus === InvoiceStatus.PAID ? invoice.paidAt : null,
+        },
       });
 
-      this.gateway.emitInvoiceUpdated({ invoiceId, invoiceNumber: invoice.invoiceNumber, customerId: invoice.customerId, status: newStatus, total: Number(invoice.total) });
+      this.gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
+        invoiceId,
+        invoiceNumber: invoice.invoiceNumber,
+        customerId: invoice.customerId,
+        status: newStatus,
+        total: Number(invoice.total),
+      });
       return { success: true };
     });
   }
@@ -1106,7 +1223,7 @@ export class InvoicesService {
     };
     const orderBy = validSortFields[sortBy ?? ""] ?? { paidAt: "desc" };
 
-    const rows = await this.prisma.invoicePayment.findMany({
+    const rows = await this.prisma.forTenant().invoicePayment.findMany({
       where,
       orderBy,
       include: {
@@ -1148,7 +1265,7 @@ export class InvoicesService {
 
   async markOverdue() {
     const now = new Date();
-    await this.prisma.invoice.updateMany({
+    await this.prisma.forTenant().invoice.updateMany({
       where: {
         status: { in: [InvoiceStatus.SENT, InvoiceStatus.VIEWED, InvoiceStatus.PARTIAL] },
         dueDate: { lt: now },
@@ -1163,7 +1280,7 @@ export class InvoicesService {
     id: string,
     dto: { items: { itemId: string; newUnitPrice: number }[]; scope: string; sinceDate?: string },
   ) {
-    const invoice = await this.prisma.invoice.findUnique({
+    const invoice = await this.prisma.forTenant().invoice.findUnique({
       where: { id },
       include: { items: true },
     });
@@ -1183,14 +1300,16 @@ export class InvoicesService {
         const newPrice = localPriceMap.get(item.id);
         if (newPrice == null) continue;
         const newSubtotal = Number(item.qty) * newPrice - Number(item.discount ?? 0);
-        await this.prisma.invoiceItem.update({
+        await this.prisma.forTenant().invoiceItem.update({
           where: { id: item.id },
           data: { unitPrice: newPrice, subtotal: newSubtotal },
         });
       }
 
       // Recalculate invoice totals from fresh item data
-      const updatedItems = await this.prisma.invoiceItem.findMany({ where: { invoiceId: inv.id } });
+      const updatedItems = await this.prisma
+        .forTenant()
+        .invoiceItem.findMany({ where: { invoiceId: inv.id } });
       const subtotal = updatedItems.reduce((s, li) => s + Number(li.subtotal), 0);
       const taxAmount = updatedItems.reduce(
         (s, li) => s + Number(li.subtotal) * Number(li.taxRate ?? 0),
@@ -1198,7 +1317,7 @@ export class InvoicesService {
       );
       const total = subtotal - Number(inv.discount ?? 0) + Number(inv.shippingFee ?? 0) + taxAmount;
 
-      await this.prisma.invoice.update({
+      await this.prisma.forTenant().invoice.update({
         where: { id: inv.id },
         data: {
           subtotal,
@@ -1222,7 +1341,7 @@ export class InvoicesService {
         if (productId) productPriceMap.set(productId, newPrice);
       }
 
-      const targetInvoices = await this.prisma.invoice.findMany({
+      const targetInvoices = await this.prisma.forTenant().invoice.findMany({
         where: {
           customerId: invoice.customerId,
           createdAt: { gte: new Date(dto.sinceDate) },
@@ -1244,7 +1363,7 @@ export class InvoicesService {
       }
     }
 
-    return this.prisma.invoice.findUnique({
+    return this.prisma.forTenant().invoice.findUnique({
       where: { id },
       include: { items: true, customer: { select: { id: true, businessName: true } } },
     });

@@ -51,7 +51,7 @@ export class RecordInvoicePaymentDto {
   @IsOptional() @IsString() notes?: string;
   @IsOptional() @IsDateString() paidAt?: string;
   @IsOptional() @IsNumber() @Min(0) bankCharges?: number;
-  @IsOptional() @IsEnum(['DRAFT', 'PAID']) status?: string;
+  @IsOptional() @IsEnum(["DRAFT", "PAID"]) status?: string;
 }
 
 export class UpdatePaymentDto {
@@ -61,7 +61,7 @@ export class UpdatePaymentDto {
   @IsOptional() @IsString() notes?: string;
   @IsOptional() @IsDateString() paidAt?: string;
   @IsOptional() @IsNumber() @Min(0) bankCharges?: number;
-  @IsOptional() @IsEnum(['DRAFT', 'PAID', 'VOID']) status?: string;
+  @IsOptional() @IsEnum(["DRAFT", "PAID", "VOID"]) status?: string;
 }
 
 export class AllocationDto {
@@ -77,8 +77,11 @@ export class StandalonePaymentDto {
   @IsOptional() @IsNumber() @Min(0) bankCharges?: number;
   @IsOptional() @IsString() reference?: string;
   @IsOptional() @IsString() notes?: string;
-  @IsOptional() @IsEnum(['DRAFT', 'PAID']) status?: string;
-  @IsArray() @ValidateNested({ each: true }) @Type(() => AllocationDto) allocations: AllocationDto[];
+  @IsOptional() @IsEnum(["DRAFT", "PAID"]) status?: string;
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => AllocationDto)
+  allocations: AllocationDto[];
 }
 
 export class WriteOffDto {

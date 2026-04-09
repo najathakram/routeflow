@@ -6,20 +6,29 @@ export class SystemConfigService {
   constructor(private readonly prisma: PrismaService) {}
 
   async get(key: string): Promise<string | null> {
-    const record = await this.prisma.systemConfig.findUnique({ where: { key } });
+    // findFirst instead of findUnique because the unique constraint is now
+    // composite (tenantId, key) and forTenant() injects tenantId at runtime.
+    const record = await this.prisma.forTenant().systemConfig.findFirst({ where: { key } });
     return record?.value ?? null;
   }
 
   async set(key: string, value: string): Promise<void> {
-    await this.prisma.systemConfig.upsert({
-      where: { key },
-      create: { key, value },
-      update: { value },
-    });
+    // Use findFirst + create/update instead of upsert because upsert requires
+    // a composite unique key (tenantId_key) that the forTenant() extension
+    // cannot auto-inject into the `where` clause.
+    const existing = await this.prisma.forTenant().systemConfig.findFirst({ where: { key } });
+    if (existing) {
+      await this.prisma
+        .forTenant()
+        .systemConfig.update({ where: { id: existing.id }, data: { value } });
+    } else {
+      // tenantId is injected automatically by forTenant() at runtime
+      await (this.prisma.forTenant().systemConfig.create as any)({ data: { key, value } });
+    }
   }
 
   async getAll(prefix: string): Promise<Record<string, string>> {
-    const records = await this.prisma.systemConfig.findMany({
+    const records = await this.prisma.forTenant().systemConfig.findMany({
       where: { key: { startsWith: prefix } },
     });
     return Object.fromEntries(records.map((r) => [r.key, r.value]));

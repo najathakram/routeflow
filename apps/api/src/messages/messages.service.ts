@@ -8,7 +8,7 @@ export class MessagesService {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(dto: CreateMessageDto, userId: string, senderRole: string) {
-    return this.prisma.message.create({
+    return this.prisma.forTenant().message.create({
       data: {
         runId: dto.runId ?? null,
         text: dto.text,
@@ -24,7 +24,7 @@ export class MessagesService {
   }
 
   async findByRun(query: ListMessagesDto) {
-    return this.prisma.message.findMany({
+    return this.prisma.forTenant().message.findMany({
       where: query.runId ? { runId: query.runId } : undefined,
       orderBy: { createdAt: "asc" },
       include: {

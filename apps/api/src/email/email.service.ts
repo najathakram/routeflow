@@ -2,20 +2,22 @@ import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Resend } from "resend";
 import * as nodemailer from "nodemailer";
-import { SystemConfigService } from "../system-config/system-config.service";
+import { PrismaService } from "../prisma/prisma.service";
+import { EncryptionService } from "../common/encryption.service";
 
 @Injectable()
 export class EmailService {
   private readonly logger = new Logger(EmailService.name);
   private readonly resend: Resend | null;
-  private readonly fromAddress: string;
+  private readonly platformFrom: string;
 
   constructor(
     private readonly config: ConfigService,
-    private readonly systemConfig: SystemConfigService,
+    private readonly prisma: PrismaService,
+    private readonly encryption: EncryptionService,
   ) {
     const apiKey = this.config.get<string>("RESEND_API_KEY");
-    this.fromAddress =
+    this.platformFrom =
       this.config.get<string>("EMAIL_FROM") ?? "RouteFlow <noreply@routeflow.app>";
 
     if (apiKey) {
@@ -29,43 +31,53 @@ export class EmailService {
     }
   }
 
-  // ─── SMTP helpers ──────────────────────────────────────────────────────────
+  // ─── Per-tenant SMTP helpers ───────────────────────────────────────────────
 
-  private async getSmtpTransport(): Promise<nodemailer.Transporter | null> {
-    const all = await this.systemConfig.getAll("email.");
-    const host = all["email.smtpHost"];
-    const user = all["email.smtpUser"];
-    const pass = all["email.smtpPassword"];
+  private async getTenantSmtpTransport(): Promise<nodemailer.Transporter | null> {
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) return null;
 
-    if (!host || !user || !pass) return null;
+    const cfg = await this.prisma.tenantConfig.findFirst({ where: { tenantId } });
+    if (!cfg?.smtpHost || !cfg.smtpUser || !cfg.smtpPassword) return null;
 
-    const port = all["email.smtpPort"] ? parseInt(all["email.smtpPort"]) : 587;
-    const secure = all["email.smtpSecure"] === "true";
+    const pass = this.encryption.decryptNullable(cfg.smtpPassword);
+    if (!pass) return null;
 
     return nodemailer.createTransport({
-      host,
-      port,
-      secure,
-      auth: { user, pass },
+      host: cfg.smtpHost,
+      port: cfg.smtpPort ?? 587,
+      secure: cfg.smtpSecure,
+      auth: { user: cfg.smtpUser, pass },
     });
   }
 
-  private async getSmtpFromAddress(): Promise<string> {
-    const all = await this.systemConfig.getAll("email.");
-    const fromName = all["email.fromName"];
-    const fromEmail = all["email.fromEmail"];
-    if (fromEmail) {
-      return fromName ? `${fromName} <${fromEmail}>` : fromEmail;
+  private async getTenantFromAddress(): Promise<string> {
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) return this.platformFrom;
+
+    const cfg = await this.prisma.tenantConfig.findFirst({ where: { tenantId } });
+    if (cfg?.smtpFromEmail) {
+      return cfg.smtpFromName ? `${cfg.smtpFromName} <${cfg.smtpFromEmail}>` : cfg.smtpFromEmail;
     }
-    return this.fromAddress;
+    // Fall back to businessName as sender name
+    if (cfg?.businessName) return `${cfg.businessName} <noreply@routeflow.app>`;
+    return this.platformFrom;
+  }
+
+  private async getTenantBusinessName(): Promise<string> {
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) return "RouteFlow";
+    const cfg = await this.prisma.tenantConfig.findFirst({ where: { tenantId } });
+    return cfg?.businessName ?? "RouteFlow";
   }
 
   // ─── Send test email ───────────────────────────────────────────────────────
 
   async sendTestEmail(toEmail: string): Promise<{ success: boolean; message: string }> {
-    const html = `<p>This is a test email from RouteFlow. Your SMTP configuration is working correctly.</p>`;
+    const businessName = await this.getTenantBusinessName();
+    const html = `<p>This is a test email from ${businessName}. Your SMTP configuration is working correctly.</p>`;
     try {
-      await this.send({ to: toEmail, subject: "RouteFlow — Test Email", html });
+      await this.send({ to: toEmail, subject: `${businessName} — Test Email`, html });
       return { success: true, message: "Test email sent successfully" };
     } catch (err: any) {
       return { success: false, message: err?.message ?? "Failed to send test email" };
@@ -86,22 +98,22 @@ export class EmailService {
     pdfUrl?: string;
     isReminder?: boolean;
   }) {
+    const businessName = await this.getTenantBusinessName();
     const subject = params.isReminder
       ? `Payment Reminder — Invoice ${params.invoiceNumber}`
       : `Invoice ${params.invoiceNumber}`;
 
-    const html = this.buildInvoiceEmail(params);
-
+    const html = this.buildInvoiceEmail(params, businessName);
     return this.send({ to: params.to, subject, html });
   }
 
   // ─── Internal send ─────────────────────────────────────────────────────────
 
   async send(params: { to: string; subject: string; html: string }) {
-    // 1. Try SMTP if configured
-    const smtpTransport = await this.getSmtpTransport();
+    // 1. Try per-tenant SMTP if configured
+    const smtpTransport = await this.getTenantSmtpTransport();
     if (smtpTransport) {
-      const from = await this.getSmtpFromAddress();
+      const from = await this.getTenantFromAddress();
       try {
         const info = await smtpTransport.sendMail({
           from,
@@ -109,18 +121,20 @@ export class EmailService {
           subject: params.subject,
           html: params.html,
         });
-        this.logger.log(`Email sent via SMTP to ${params.to} — messageId: ${info.messageId}`);
+        this.logger.log(
+          `Email sent via tenant SMTP to ${params.to} — messageId: ${info.messageId}`,
+        );
         return { id: info.messageId };
       } catch (err: any) {
-        this.logger.error(`SMTP send failed: ${err?.message}. Falling back to Resend.`);
+        this.logger.error(`Tenant SMTP send failed: ${err?.message}. Falling back to Resend.`);
       }
     }
 
-    // 2. Try Resend
+    // 2. Try platform Resend
     if (this.resend) {
       try {
         const result = await this.resend.emails.send({
-          from: this.fromAddress,
+          from: this.platformFrom,
           to: params.to,
           subject: params.subject,
           html: params.html,
@@ -133,23 +147,26 @@ export class EmailService {
       }
     }
 
-    // 3. Log only
+    // 3. Log only (dev/no keys)
     this.logger.log(`[EMAIL MOCK] To: ${params.to} | Subject: ${params.subject}`);
     return { id: "mock" };
   }
 
   // ─── Email template ────────────────────────────────────────────────────────
 
-  private buildInvoiceEmail(params: {
-    customerName: string;
-    invoiceNumber: string;
-    issueDate: string;
-    dueDate: string;
-    total: number;
-    items: { description: string; qty: number; unitPrice: number; subtotal: number }[];
-    pdfUrl?: string;
-    isReminder?: boolean;
-  }): string {
+  private buildInvoiceEmail(
+    params: {
+      customerName: string;
+      invoiceNumber: string;
+      issueDate: string;
+      dueDate: string;
+      total: number;
+      items: { description: string; qty: number; unitPrice: number; subtotal: number }[];
+      pdfUrl?: string;
+      isReminder?: boolean;
+    },
+    businessName: string,
+  ): string {
     const fmt = (n: number) =>
       new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
 
@@ -186,7 +203,7 @@ export class EmailService {
 
         <!-- Header -->
         <tr><td style="background:#1a2033;padding:28px 32px;">
-          <p style="margin:0;font-size:22px;font-weight:700;color:#ffffff;letter-spacing:-0.5px;">RouteFlow</p>
+          <p style="margin:0;font-size:22px;font-weight:700;color:#ffffff;letter-spacing:-0.5px;">${businessName}</p>
           <p style="margin:4px 0 0;font-size:13px;color:rgba(255,255,255,0.6);">Invoice</p>
         </td></tr>
 
@@ -242,7 +259,7 @@ export class EmailService {
 
         <!-- Footer -->
         <tr><td style="background:#f9fafb;padding:20px 32px;border-top:1px solid #f0f0f0;">
-          <p style="margin:0;font-size:12px;color:#9ca3af;text-align:center;">This is an automated email from RouteFlow.</p>
+          <p style="margin:0;font-size:12px;color:#9ca3af;text-align:center;">This is an automated email from ${businessName}.</p>
         </td></tr>
 
       </table>

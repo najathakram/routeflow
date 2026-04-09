@@ -13,6 +13,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { UserRole } from "@routeflow/types";
 import { useAuthStore } from "../lib/auth-store";
+import { useTenantStore } from "../lib/tenant-store";
 
 // Configure how notifications are handled when the app is in the foreground
 Notifications.setNotificationHandler({
@@ -30,11 +31,13 @@ const queryClient = new QueryClient();
 
 function RootLayoutNav() {
   const { user, isLoading, initialize } = useAuthStore();
+  const { slug: tenantSlug, isLoading: tenantLoading, initialize: initTenant } = useTenantStore();
   const router = useRouter();
   const segments: string[] = useSegments();
   const notificationListener = useRef<ReturnType<typeof Notifications.addNotificationReceivedListener> | null>(null);
 
   useEffect(() => {
+    initTenant();
     initialize();
   }, []);
 
@@ -52,7 +55,15 @@ function RootLayoutNav() {
   }, []);
 
   useEffect(() => {
-    if (isLoading) return;
+    if (isLoading || tenantLoading) return;
+
+    // Step 1: Require a company code (tenant slug) before anything else
+    if (!tenantSlug) {
+      if (segments[0] !== "(auth)" || segments[1] !== "company-code") {
+        router.replace("/(auth)/company-code");
+      }
+      return;
+    }
 
     if (!user) {
       // Not logged in — send to login unless already there
@@ -71,9 +82,19 @@ function RootLayoutNav() {
       return;
     }
 
-    if (user.role === UserRole.OPERATOR) {
+    // OPERATOR and TENANT_ADMIN both go to the admin dashboard
+    if (user.role === UserRole.OPERATOR || user.role === UserRole.TENANT_ADMIN) {
       if (segments[0] !== "(admin)") {
         router.replace("/(admin)/dashboard");
+      }
+      return;
+    }
+
+    // SUPER_ADMIN has no mobile UI — show a friendly not-supported screen
+    if ((user.role as string) === "SUPER_ADMIN") {
+      // Reuse the operator-blocked screen for now
+      if (segments[0] !== "(auth)" || segments[1] !== "operator-blocked") {
+        router.replace("/(auth)/operator-blocked");
       }
       return;
     }
@@ -87,7 +108,7 @@ function RootLayoutNav() {
         router.replace("/(driver)/route");
       }
     }
-  }, [user, isLoading, segments]);
+  }, [user, isLoading, tenantSlug, tenantLoading, segments]);
 
   return <Slot />;
 }

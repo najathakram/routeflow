@@ -1447,8 +1447,8 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                   <Button
                     size="sm"
                     leftIcon={<FileText className="h-4 w-4" />}
-                    loading={generateInvoice.isPending}
-                    onClick={() => generateInvoice.mutate(order.id)}
+                    loading={createInvoiceFromOrder.isPending}
+                    onClick={() => createInvoiceFromOrder.mutate(order.id)}
                   >
                     Generate Invoice
                   </Button>

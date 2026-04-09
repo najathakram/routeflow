@@ -45,7 +45,8 @@ export class ImportService {
     if (s === "draft") return InvoiceStatus.DRAFT;
     if (s.includes("partial")) return InvoiceStatus.PARTIAL;
     if (s === "void" || s === "voided") return InvoiceStatus.VOID;
-    if (s === "write off" || s === "write-off" || s === "written off" || s === "written-off") return InvoiceStatus.WRITTEN_OFF;
+    if (s === "write off" || s === "write-off" || s === "written off" || s === "written-off")
+      return InvoiceStatus.WRITTEN_OFF;
     if (s === "sent" || s === "open") return InvoiceStatus.SENT;
     return InvoiceStatus.SENT;
   }
@@ -90,28 +91,33 @@ export class ImportService {
 
     // ── Layer 1: CSV columns ─────────────────────────────────────────────────
     const csv = {
-      email:       (csvRow["Vendor Email"]   || csvRow["Email"]          || "").trim(),
-      phone:       (csvRow["Vendor Phone"]   || csvRow["Phone"]          || "").trim(),
-      mobile:      (csvRow["Vendor Mobile"]  || csvRow["Mobile"]         || "").trim(),
-      website:     (csvRow["Vendor Website"] || csvRow["Website"]        || "").trim(),
-      contactName: (csvRow["Contact Name"]   || csvRow["Vendor Contact"] || "").trim(),
-      addressLine1:(csvRow["Vendor Address"] || csvRow["Billing Address"]|| csvRow["Address"] || "").trim(),
-      city:        (csvRow["Vendor City"]    || csvRow["City"]           || "").trim(),
-      state:       (csvRow["Vendor State"]   || csvRow["State"]          || "").trim(),
-      zip:         (csvRow["Vendor Zip"]     || csvRow["Vendor ZIP"]     || csvRow["Zip"] || "").trim(),
-      country:     (csvRow["Vendor Country"] || csvRow["Country"]        || "").trim(),
+      email: (csvRow["Vendor Email"] || csvRow["Email"] || "").trim(),
+      phone: (csvRow["Vendor Phone"] || csvRow["Phone"] || "").trim(),
+      mobile: (csvRow["Vendor Mobile"] || csvRow["Mobile"] || "").trim(),
+      website: (csvRow["Vendor Website"] || csvRow["Website"] || "").trim(),
+      contactName: (csvRow["Contact Name"] || csvRow["Vendor Contact"] || "").trim(),
+      addressLine1: (
+        csvRow["Vendor Address"] ||
+        csvRow["Billing Address"] ||
+        csvRow["Address"] ||
+        ""
+      ).trim(),
+      city: (csvRow["Vendor City"] || csvRow["City"] || "").trim(),
+      state: (csvRow["Vendor State"] || csvRow["State"] || "").trim(),
+      zip: (csvRow["Vendor Zip"] || csvRow["Vendor ZIP"] || csvRow["Zip"] || "").trim(),
+      country: (csvRow["Vendor Country"] || csvRow["Country"] || "").trim(),
     };
     for (const [k, v] of Object.entries(csv)) {
       if (v) data[k] = v;
     }
 
     // ── Layer 2: Customer contact match (fills gaps left by CSV) ─────────────
-    const matchingCustomers = await this.prisma.customer.findMany({
+    const matchingCustomers = await this.prisma.forTenant().customer.findMany({
       where: {
         OR: [
           { businessName: { equals: name, mode: "insensitive" } },
-          { displayName:  { equals: name, mode: "insensitive" } },
-          { contactName:  { equals: name, mode: "insensitive" } },
+          { displayName: { equals: name, mode: "insensitive" } },
+          { contactName: { equals: name, mode: "insensitive" } },
         ],
       },
       include: { addresses: true },
@@ -119,22 +125,21 @@ export class ImportService {
 
     if (matchingCustomers.length > 0) {
       const c = matchingCustomers[0];
-      if (!data.phone       && c.phone)       data.phone       = c.phone;
-      if (!data.mobile      && c.mobile)      data.mobile      = c.mobile;
-      if (!data.email       && c.email)       data.email       = c.email;
+      if (!data.phone && c.phone) data.phone = c.phone;
+      if (!data.mobile && c.mobile) data.mobile = c.mobile;
+      if (!data.email && c.email) data.email = c.email;
       if (!data.contactName && c.contactName) data.contactName = c.contactName;
-      if (c.notes && !data.notes)             data.notes       = c.notes;
+      if (c.notes && !data.notes) data.notes = c.notes;
 
       // Address — only if CSV didn't provide one
       if (!data.addressLine1) {
-        const addr =
-          c.addresses.find((a) => a.addressType === "BILLING") ?? c.addresses[0];
+        const addr = c.addresses.find((a) => a.addressType === "BILLING") ?? c.addresses[0];
         if (addr) {
-          if (addr.line1)  data.addressLine1 = addr.line1;
-          if (addr.line2)  data.addressLine2 = addr.line2;
-          if (addr.city)   data.city         = addr.city;
-          if (addr.state)  data.state        = addr.state;
-          if (addr.zip)    data.zip          = addr.zip;
+          if (addr.line1) data.addressLine1 = addr.line1;
+          if (addr.line2) data.addressLine2 = addr.line2;
+          if (addr.city) data.city = addr.city;
+          if (addr.state) data.state = addr.state;
+          if (addr.zip) data.zip = addr.zip;
         }
       }
     }
@@ -179,11 +184,12 @@ export class ImportService {
       const firstName = (row["First Name"] || "").trim() || null;
       const lastName = (row["Last Name"] || "").trim() || null;
       // Main phone from Phone column (preferred), fallback to Billing Phone
-      const phone = (row["Phone"] || row["Billing Phone"] || "")
-        .replace(/^'+/, "").replace(/'+/g, "").trim() || null;
+      const phone =
+        (row["Phone"] || row["Billing Phone"] || "").replace(/^'+/, "").replace(/'+/g, "").trim() ||
+        null;
       // Mobile from MobilePhone column
-      const mobile = (row["MobilePhone"] || "")
-        .replace(/^'+/, "").replace(/'+/g, "").trim() || null;
+      const mobile =
+        (row["MobilePhone"] || "").replace(/^'+/, "").replace(/'+/g, "").trim() || null;
       const csvEmail = (row["EmailID"] || row["Email"] || "").trim().toLowerCase() || null;
       const currency = (row["Currency Code"] || "USD").trim() || "USD";
       const notes = (row["Notes"] || "").trim() || null;
@@ -196,7 +202,9 @@ export class ImportService {
 
       // Billing address fields
       const billingLine1 = [row["Billing Address"], row["Billing Street2"]]
-        .filter(Boolean).join(", ").trim();
+        .filter(Boolean)
+        .join(", ")
+        .trim();
       const billingCity = (row["Billing City"] || "").trim();
       const billingState = (row["Billing State"] || "").trim();
       const billingZip = (row["Billing Code"] || "").trim();
@@ -208,7 +216,9 @@ export class ImportService {
 
       // Shipping address fields
       const shippingLine1 = [row["Shipping Address"], row["Shipping Street2"]]
-        .filter(Boolean).join(", ").trim();
+        .filter(Boolean)
+        .join(", ")
+        .trim();
       const shippingCity = (row["Shipping City"] || "").trim();
       const shippingState = (row["Shipping State"] || "").trim();
       const shippingZip = (row["Shipping Code"] || "").trim();
@@ -217,19 +227,22 @@ export class ImportService {
       const shippingLat = isNaN(shippingLatRaw) ? null : shippingLatRaw;
       const shippingLng = isNaN(shippingLngRaw) ? null : shippingLngRaw;
       // Only create shipping if it has data and differs from billing
-      const hasShipping = !!(shippingLine1 || shippingCity) &&
-        (shippingLine1 !== billingLine1 || shippingCity !== billingCity || shippingZip !== billingZip);
+      const hasShipping =
+        !!(shippingLine1 || shippingCity) &&
+        (shippingLine1 !== billingLine1 ||
+          shippingCity !== billingCity ||
+          shippingZip !== billingZip);
 
       // Check if this customer was already imported (by Zoho ID)
       if (zohoContactId) {
-        const existing = await this.prisma.customer.findFirst({
+        const existing = await this.prisma.forTenant().customer.findFirst({
           where: { zohoContactId },
           include: { addresses: true, contactPersons: true },
         });
         if (existing) {
           // Update the existing customer with any missing/new fields
           try {
-            await this.prisma.customer.update({
+            await this.prisma.forTenant().customer.update({
               where: { id: existing.id },
               data: {
                 ...(displayName !== null && { displayName }),
@@ -241,14 +254,17 @@ export class ImportService {
                 ...(csvEmail !== null && { email: csvEmail }),
                 ...(notes !== null && { notes }),
                 currency,
-                contactName: existing.contactName === existing.businessName ? (contactName || existing.contactName) : existing.contactName,
+                contactName:
+                  existing.contactName === existing.businessName
+                    ? contactName || existing.contactName
+                    : existing.contactName,
               },
             });
 
             // Add billing address if not already present
-            const existingBilling = existing.addresses.find(a => a.addressType === "BILLING");
+            const existingBilling = existing.addresses.find((a) => a.addressType === "BILLING");
             if (!existingBilling && hasBilling) {
-              await this.prisma.customerAddress.create({
+              await this.prisma.forTenant().customerAddress.create({
                 data: {
                   customerId: existing.id,
                   label: "Billing",
@@ -265,9 +281,9 @@ export class ImportService {
             }
 
             // Add shipping address if not already present and differs from billing
-            const existingShipping = existing.addresses.find(a => a.addressType === "SHIPPING");
+            const existingShipping = existing.addresses.find((a) => a.addressType === "SHIPPING");
             if (!existingShipping && hasShipping) {
-              await this.prisma.customerAddress.create({
+              await this.prisma.forTenant().customerAddress.create({
                 data: {
                   customerId: existing.id,
                   label: "Shipping",
@@ -285,7 +301,7 @@ export class ImportService {
 
             // Add contact person if we have a name and none exists yet
             if ((firstName || lastName) && existing.contactPersons.length === 0) {
-              await this.prisma.contactPerson.create({
+              await this.prisma.forTenant().contactPerson.create({
                 data: {
                   customerId: existing.id,
                   salutation: salutation || null,
@@ -311,14 +327,16 @@ export class ImportService {
       const baseUsername = this.slugify(name);
       let username = baseUsername;
       let suffix = 1;
-      while (await this.prisma.user.findFirst({ where: { username } })) {
+      while (await this.prisma.forTenant().user.findFirst({ where: { username } })) {
         username = `${baseUsername}_${suffix++}`;
       }
 
       // Determine user email: use CSV email if not taken, otherwise synthetic
       let userEmail: string;
       if (csvEmail) {
-        const emailTaken = await this.prisma.user.findFirst({ where: { email: csvEmail } });
+        const emailTaken = await this.prisma
+          .forTenant()
+          .user.findFirst({ where: { email: csvEmail } });
         userEmail = emailTaken ? `${username}@imported.local` : csvEmail;
       } else {
         userEmail = `${username}@imported.local`;
@@ -327,7 +345,7 @@ export class ImportService {
       try {
         const hashedPassword = await bcrypt.hash(this.generateTempPassword(), 10);
 
-        await this.prisma.$transaction(async (tx) => {
+        await this.prisma.tenantTransaction(async (tx) => {
           const user = await tx.user.create({
             data: {
               email: userEmail,
@@ -448,7 +466,7 @@ export class ImportService {
       }
 
       // Try to find existing customer
-      let customer = await this.prisma.customer.findFirst({
+      let customer = await this.prisma.forTenant().customer.findFirst({
         where: { businessName: { contains: customerName, mode: "insensitive" } },
       });
 
@@ -457,11 +475,11 @@ export class ImportService {
         const baseUsername = this.slugify(customerName);
         let username = baseUsername;
         let usernameSeq = 1;
-        while (await this.prisma.user.findFirst({ where: { username } })) {
+        while (await this.prisma.forTenant().user.findFirst({ where: { username } })) {
           username = `${baseUsername}_${usernameSeq++}`;
         }
         const userEmail = `${username}@imported.local`;
-        const existingUser = await this.prisma.user.findFirst({
+        const existingUser = await this.prisma.forTenant().user.findFirst({
           where: { OR: [{ email: userEmail }, { username }] },
         });
         if (existingUser) {
@@ -477,7 +495,7 @@ export class ImportService {
           const zip = (first["Billing Code"] || "").trim();
           const phone = (first["Billing Phone"] || "").replace(/['+]/g, "").trim();
 
-          await this.prisma.$transaction(async (tx) => {
+          await this.prisma.tenantTransaction(async (tx) => {
             const user = await tx.user.create({
               data: {
                 email: userEmail,
@@ -523,7 +541,8 @@ export class ImportService {
 
       const total = parseFloat(first["Total"] || "0") || 0;
       const subtotal = parseFloat(first["SubTotal"] || first["Sub Total"] || "0") || total;
-      const discount = parseFloat(first["Entity Discount Amount"] || first["Discount Amount"] || "0") || 0;
+      const discount =
+        parseFloat(first["Entity Discount Amount"] || first["Discount Amount"] || "0") || 0;
       const shippingFee = parseFloat(first["Shipping Charge"] || "0") || 0;
       const invoiceNumber =
         first["Invoice Number"] || `INV-${year}-${String(seq++).padStart(4, "0")}`;
@@ -535,14 +554,20 @@ export class ImportService {
       let paidDate: Date | null = null;
       try {
         if (first["Invoice Date"]) issueDate = new Date(first["Invoice Date"]);
-      } catch (_e) { /* ignore */ }
+      } catch (_e) {
+        /* ignore */
+      }
       try {
         if (first["Due Date"]) dueDate = new Date(first["Due Date"]);
-      } catch (_e) { /* ignore */ }
+      } catch (_e) {
+        /* ignore */
+      }
       try {
         const pd = first["Payment Date"] || first["Last Payment Date"];
         if (pd) paidDate = new Date(pd);
-      } catch (_e) { /* ignore */ }
+      } catch (_e) {
+        /* ignore */
+      }
 
       // Determine status using Zoho's "Balance Due" field, which is more reliable
       // than the status label (Zoho may show "Overdue" for invoices paid in cash outside the system)
@@ -569,10 +594,7 @@ export class ImportService {
         status = zohoStatus;
       }
 
-      const paidAt =
-        status === InvoiceStatus.PAID
-          ? (paidDate || dueDate || issueDate)
-          : null;
+      const paidAt = status === InvoiceStatus.PAID ? paidDate || dueDate || issueDate : null;
 
       // Build line items; try to match product by SKU
       const itemsData: any[] = [];
@@ -587,13 +609,13 @@ export class ImportService {
 
         let productId: string | undefined;
         if (sku) {
-          const product = await this.prisma.product.findFirst({
+          const product = await this.prisma.forTenant().product.findFirst({
             where: { sku: { equals: sku, mode: "insensitive" } },
           });
           if (product) productId = product.id;
         }
         if (!productId && description && description !== "Item") {
-          const product = await this.prisma.product.findFirst({
+          const product = await this.prisma.forTenant().product.findFirst({
             where: { name: { equals: description, mode: "insensitive" } },
           });
           if (product) productId = product.id;
@@ -623,14 +645,16 @@ export class ImportService {
 
       try {
         // Skip if invoice number already exists
-        const existing = await this.prisma.invoice.findFirst({ where: { invoiceNumber } });
+        const existing = await this.prisma
+          .forTenant()
+          .invoice.findFirst({ where: { invoiceNumber } });
         if (existing) {
           skipped++;
           errors.push(`${invoiceNumber}: already imported`);
           continue;
         }
 
-        const newInvoice = await this.prisma.invoice.create({
+        const newInvoice = await this.prisma.forTenant().invoice.create({
           data: {
             invoiceNumber,
             customerId: customer.id,
@@ -658,7 +682,7 @@ export class ImportService {
               ? total
               : 0;
           if (paidAmount > 0.01) {
-            await this.prisma.invoicePayment.create({
+            await this.prisma.forTenant().invoicePayment.create({
               data: {
                 invoiceId: newInvoice.id,
                 amount: paidAmount,
@@ -696,7 +720,7 @@ export class ImportService {
         continue;
       }
 
-      const invoice = await this.prisma.invoice.findFirst({ where: { invoiceNumber } });
+      const invoice = await this.prisma.forTenant().invoice.findFirst({ where: { invoiceNumber } });
       if (!invoice) {
         skipped++;
         continue;
@@ -723,19 +747,22 @@ export class ImportService {
       try {
         // Skip if already imported (check by zohoId reference, or amount+date combo)
         if (zohoPaymentId) {
-          const dup = await this.prisma.invoicePayment.findFirst({
+          const dup = await this.prisma.forTenant().invoicePayment.findFirst({
             where: { invoiceId: invoice.id, reference: zohoPaymentId },
           });
-          if (dup) { skipped++; continue; }
+          if (dup) {
+            skipped++;
+            continue;
+          }
         }
 
         // Also remove any synthetic "zoho-import" placeholder payment for this invoice
         // now that we have the real payment record
-        await this.prisma.invoicePayment.deleteMany({
+        await this.prisma.forTenant().invoicePayment.deleteMany({
           where: { invoiceId: invoice.id, reference: "zoho-import" },
         });
 
-        await this.prisma.invoicePayment.create({
+        await this.prisma.forTenant().invoicePayment.create({
           data: {
             invoiceId: invoice.id,
             amount,
@@ -753,7 +780,9 @@ export class ImportService {
     }
 
     // Update invoice statuses based on total payments — wrapped in a single transaction
-    const allInvoices = await this.prisma.invoice.findMany({ include: { payments: true } });
+    const allInvoices = await this.prisma
+      .forTenant()
+      .invoice.findMany({ include: { payments: true } });
     const now = new Date();
     const statusUpdates: Array<{ id: string; status: InvoiceStatus; paidAt: Date | null }> = [];
     for (const inv of allInvoices) {
@@ -765,13 +794,17 @@ export class ImportService {
       else if (inv.dueDate && inv.dueDate < now) newStatus = InvoiceStatus.OVERDUE;
       else newStatus = inv.status;
       if (newStatus !== inv.status) {
-        statusUpdates.push({ id: inv.id, status: newStatus, paidAt: newStatus === InvoiceStatus.PAID ? now : null });
+        statusUpdates.push({
+          id: inv.id,
+          status: newStatus,
+          paidAt: newStatus === InvoiceStatus.PAID ? now : null,
+        });
       }
     }
     if (statusUpdates.length > 0) {
       await this.prisma.$transaction(
         statusUpdates.map((u) =>
-          this.prisma.invoice.update({
+          this.prisma.forTenant().invoice.update({
             where: { id: u.id },
             data: { status: u.status, paidAt: u.paidAt },
           }),
@@ -785,9 +818,18 @@ export class ImportService {
   async importExpenses(
     buffer: Buffer,
     userId: string,
-  ): Promise<{ imported: number; skipped: number; errors: string[]; suppliersCreated: number; suppliersUpdated: number }> {
+  ): Promise<{
+    imported: number;
+    skipped: number;
+    errors: string[];
+    suppliersCreated: number;
+    suppliersUpdated: number;
+  }> {
     const rows = this.parseCsv(buffer);
-    let imported = 0, skipped = 0, suppliersCreated = 0, suppliersUpdated = 0;
+    let imported = 0,
+      skipped = 0,
+      suppliersCreated = 0,
+      suppliersUpdated = 0;
     const errors: string[] = [];
 
     // ── Step 1: Ensure expense categories exist ──────────────────────────────
@@ -800,15 +842,17 @@ export class ImportService {
         .toUpperCase()
         .replace(/[^A-Z0-9]/g, "_")
         .slice(0, 20);
-      let cat = await this.prisma.expenseCategory.findFirst({ where: { name: catName } });
+      let cat = await this.prisma
+        .forTenant()
+        .expenseCategory.findFirst({ where: { name: catName } });
       if (!cat) {
         try {
-          cat = await this.prisma.expenseCategory.create({
+          cat = await this.prisma.forTenant().expenseCategory.create({
             data: { name: catName, code, isCustom: true },
           });
         } catch {
           try {
-            cat = await this.prisma.expenseCategory.create({
+            cat = await this.prisma.forTenant().expenseCategory.create({
               data: { name: catName, code: code + "_Z", isCustom: true },
             });
           } catch (_e) {
@@ -833,8 +877,8 @@ export class ImportService {
       }
     }
 
-    const vendorNames = Object.keys(vendorRowsMap).map(
-      (k) => this.getVendorName(vendorRowsMap[k]),
+    const vendorNames = Object.keys(vendorRowsMap).map((k) =>
+      this.getVendorName(vendorRowsMap[k]),
     ) as string[];
 
     for (const name of vendorNames) {
@@ -843,19 +887,23 @@ export class ImportService {
         // Build full supplier profile: CSV columns + customer contact match
         const supplierData = await this.buildSupplierData(name, sampleRow);
 
-        const existing = await this.prisma.supplier.findFirst({
+        const existing = await this.prisma.forTenant().supplier.findFirst({
           where: { name: { equals: name, mode: "insensitive" } },
         });
         if (existing) {
           // Update — remove the 'name' key (not needed in update) and apply the rest
           const { name: _n, ...updateData } = supplierData;
           if (Object.keys(updateData).length > 0) {
-            await this.prisma.supplier.update({ where: { id: existing.id }, data: updateData });
+            await this.prisma
+              .forTenant()
+              .supplier.update({ where: { id: existing.id }, data: updateData });
           }
           vendorMap[name.toLowerCase()] = existing.id;
           suppliersUpdated++;
         } else {
-          const created = await this.prisma.supplier.create({ data: supplierData as any });
+          const created = await this.prisma
+            .forTenant()
+            .supplier.create({ data: supplierData as any });
           vendorMap[name.toLowerCase()] = created.id;
           suppliersCreated++;
         }
@@ -894,7 +942,7 @@ export class ImportService {
       const supplierId = vendorName ? (vendorMap[vendorName.toLowerCase()] ?? null) : null;
 
       try {
-        await this.prisma.expense.create({
+        await this.prisma.forTenant().expense.create({
           data: {
             categoryId,
             amount,
@@ -937,7 +985,7 @@ export class ImportService {
       const sku = row["SKU"] || null;
 
       try {
-        await this.prisma.product.create({
+        await this.prisma.forTenant().product.create({
           data: {
             name,
             description: description || null,
@@ -970,26 +1018,42 @@ export class ImportService {
     userId: string,
   ): Promise<{ updated: number; created: number; skipped: number; errors: string[] }> {
     const rows = this.parseCsv(buffer);
-    let updated = 0, created = 0, skipped = 0;
+    let updated = 0,
+      created = 0,
+      skipped = 0;
     const errors: string[] = [];
 
     for (const row of rows) {
       const name = (row["Item Name"] || "").trim();
-      if (!name) { skipped++; continue; }
+      if (!name) {
+        skipped++;
+        continue;
+      }
 
       // Skip summary/header rows (e.g. "Purchase Invoice" with comma-formatted numbers)
       const rawSku = (row["SKU"] || "").trim();
       // If SKU contains commas it's a formatted number (not a real barcode) — skip
-      if (rawSku.includes(",")) { skipped++; continue; }
+      if (rawSku.includes(",")) {
+        skipped++;
+        continue;
+      }
 
       // Parse closing stock — handle comma-formatted values like "2,100.00"
       const closingStockRaw = (row["Closing Stock"] || "0").replace(/,/g, "");
       const closingStock = parseFloat(closingStockRaw);
-      if (isNaN(closingStock)) { skipped++; continue; }
+      if (isNaN(closingStock)) {
+        skipped++;
+        continue;
+      }
 
       // Detect summary rows: names like "Purchase Invoice" with no barcode and big stock numbers
       const lowerName = name.toLowerCase();
-      if (!rawSku && (lowerName.includes("invoice") || lowerName.includes("purchase") || lowerName.includes("account"))) {
+      if (
+        !rawSku &&
+        (lowerName.includes("invoice") ||
+          lowerName.includes("purchase") ||
+          lowerName.includes("account"))
+      ) {
         skipped++;
         continue;
       }
@@ -997,24 +1061,26 @@ export class ImportService {
       try {
         // Try to find existing product by barcode first, then by name
         let product = rawSku
-          ? await this.prisma.product.findFirst({ where: { OR: [{ barcode: rawSku }, { sku: rawSku }] } })
+          ? await this.prisma
+              .forTenant()
+              .product.findFirst({ where: { OR: [{ barcode: rawSku }, { sku: rawSku }] } })
           : null;
 
         if (!product) {
-          product = await this.prisma.product.findFirst({
+          product = await this.prisma.forTenant().product.findFirst({
             where: { name: { equals: name, mode: "insensitive" } },
           });
         }
 
         if (product) {
           // Update stock level
-          await this.prisma.product.update({
+          await this.prisma.forTenant().product.update({
             where: { id: product.id },
             data: { currentStock: closingStock },
           });
           // Record the stock adjustment as a stock movement
           if (closingStock !== Number(product.currentStock)) {
-            await this.prisma.stockMovement.create({
+            await this.prisma.forTenant().stockMovement.create({
               data: {
                 productId: product.id,
                 type: "ADJUSTMENT",
@@ -1027,7 +1093,7 @@ export class ImportService {
           updated++;
         } else {
           // Create new product with this stock level
-          await this.prisma.product.create({
+          await this.prisma.forTenant().product.create({
             data: {
               name,
               barcode: rawSku || null,
@@ -1064,7 +1130,10 @@ export class ImportService {
   }> {
     const rows = this.parseCsv(buffer);
     const errors: string[] = [];
-    let created = 0, updated = 0, removedFromCustomers = 0, skipped = 0;
+    let created = 0,
+      updated = 0,
+      removedFromCustomers = 0,
+      skipped = 0;
 
     // Group rows by vendor name — checks Merchant Name / Vendor Name / Customer Name / etc.
     const vendorRowMap: Record<string, any> = {};
@@ -1073,8 +1142,8 @@ export class ImportService {
       if (n && !vendorRowMap[n.toLowerCase()]) vendorRowMap[n.toLowerCase()] = row;
     }
 
-    const supplierNames = Object.keys(vendorRowMap).map(
-      (k) => this.getVendorName(vendorRowMap[k]),
+    const supplierNames = Object.keys(vendorRowMap).map((k) =>
+      this.getVendorName(vendorRowMap[k]),
     ) as string[];
 
     for (const name of supplierNames) {
@@ -1085,22 +1154,20 @@ export class ImportService {
         const supplierData = await this.buildSupplierData(name, sampleRow);
 
         // Upsert supplier (match by name case-insensitive)
-        const existing = await this.prisma.supplier.findFirst({
+        const existing = await this.prisma.forTenant().supplier.findFirst({
           where: { name: { equals: name, mode: "insensitive" } },
         });
 
         if (existing) {
-          await this.prisma.supplier.update({
+          await this.prisma.forTenant().supplier.update({
             where: { id: existing.id },
             data: supplierData,
           });
           updated++;
         } else {
-          await this.prisma.supplier.create({ data: supplierData as any });
+          await this.prisma.forTenant().supplier.create({ data: supplierData as any });
           created++;
         }
-
-
       } catch (e: any) {
         errors.push(`${name}: ${e.message}`);
         skipped++;

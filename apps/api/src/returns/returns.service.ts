@@ -37,7 +37,7 @@ export class ReturnsService {
       );
     }
 
-    const order = await this.prisma.order.findUnique({
+    const order = await this.prisma.forTenant().order.findUnique({
       where: { id: dto.orderId },
       include: {
         customer: { select: { id: true, businessName: true } },
@@ -51,7 +51,7 @@ export class ReturnsService {
 
     // Customers can only create returns for their own orders
     if (userRole === "CUSTOMER") {
-      const customer = await this.prisma.customer.findFirst({ where: { userId } });
+      const customer = await this.prisma.forTenant().customer.findFirst({ where: { userId } });
       if (!customer || order.customerId !== customer.id) {
         throw new ForbiddenException("You can only submit returns for your own orders");
       }
@@ -72,7 +72,7 @@ export class ReturnsService {
         );
     }
 
-    const ret = await this.prisma.return.create({
+    const ret = await this.prisma.forTenant().return.create({
       data: {
         returnNumber: this.generateReturnNumber(),
         orderId: dto.orderId,
@@ -93,7 +93,7 @@ export class ReturnsService {
       include: { items: true },
     });
 
-    this.gateway.emitReturnCreated({
+    this.gateway.emitReturnCreated(this.prisma.getTenantId(), {
       returnId: ret.id,
       customerId: order.customerId,
       customerName: order.customer.businessName,
@@ -114,7 +114,9 @@ export class ReturnsService {
     limit = 20,
   ) {
     if (user.role === "CUSTOMER") {
-      const customer = await this.prisma.customer.findFirst({ where: { userId: user.sub } });
+      const customer = await this.prisma
+        .forTenant()
+        .customer.findFirst({ where: { userId: user.sub } });
       return this.findAll(orderId, customer?.id, status, reason, page, limit);
     }
     return this.findAll(orderId, customerId, status, reason, page, limit);
@@ -135,7 +137,7 @@ export class ReturnsService {
     if (status) where.status = status;
     if (reason) where.reason = reason;
     const [data, total] = await Promise.all([
-      this.prisma.return.findMany({
+      this.prisma.forTenant().return.findMany({
         where,
         include: {
           order: { select: { id: true, orderNumber: true } },
@@ -146,42 +148,44 @@ export class ReturnsService {
         skip,
         take: limit,
       }),
-      this.prisma.return.count({ where }),
+      this.prisma.forTenant().return.count({ where }),
     ]);
     return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
   }
 
   async approve(id: string) {
-    const ret = await this.prisma.return.findUnique({ where: { id } });
+    const ret = await this.prisma.forTenant().return.findUnique({ where: { id } });
     if (!ret) throw new NotFoundException("Return not found");
     if (ret.status !== "PENDING")
       throw new BadRequestException("Only PENDING returns can be approved");
-    return this.prisma.return.update({ where: { id }, data: { status: "APPROVED" } });
+    return this.prisma.forTenant().return.update({ where: { id }, data: { status: "APPROVED" } });
   }
 
   async reject(id: string) {
-    const ret = await this.prisma.return.findUnique({ where: { id } });
+    const ret = await this.prisma.forTenant().return.findUnique({ where: { id } });
     if (!ret) throw new NotFoundException("Return not found");
     if (ret.status !== "PENDING")
       throw new BadRequestException("Only PENDING returns can be rejected");
-    return this.prisma.return.update({ where: { id }, data: { status: "REJECTED" } });
+    return this.prisma.forTenant().return.update({ where: { id }, data: { status: "REJECTED" } });
   }
 
   async markInTransit(id: string) {
-    const ret = await this.prisma.return.findUnique({ where: { id } });
+    const ret = await this.prisma.forTenant().return.findUnique({ where: { id } });
     if (!ret) throw new NotFoundException("Return not found");
     if (ret.status !== "APPROVED")
       throw new BadRequestException("Only APPROVED returns can be marked in transit");
-    return this.prisma.return.update({ where: { id }, data: { status: "IN_TRANSIT" } });
+    return this.prisma.forTenant().return.update({ where: { id }, data: { status: "IN_TRANSIT" } });
   }
 
   async receive(id: string, userId: string) {
-    const ret = await this.prisma.return.findUnique({ where: { id }, include: { items: true } });
+    const ret = await this.prisma
+      .forTenant()
+      .return.findUnique({ where: { id }, include: { items: true } });
     if (!ret) throw new NotFoundException("Return not found");
     if (ret.status !== "IN_TRANSIT")
       throw new BadRequestException("Only IN_TRANSIT returns can be received");
 
-    return this.prisma.$transaction(async (tx) => {
+    return this.prisma.tenantTransaction(async (tx) => {
       for (const item of ret.items) {
         if (item.restock) {
           await tx.stockMovement.create({
@@ -204,23 +208,24 @@ export class ReturnsService {
   }
 
   async processRefund(id: string) {
-    const ret = await this.prisma.return.findUnique({ where: { id } });
+    const ret = await this.prisma.forTenant().return.findUnique({ where: { id } });
     if (!ret) throw new NotFoundException("Return not found");
     if (ret.status !== "RECEIVED")
       throw new BadRequestException("Only RECEIVED returns can be refunded");
-    return this.prisma.return.update({ where: { id }, data: { status: "REFUNDED" } });
+    return this.prisma.forTenant().return.update({ where: { id }, data: { status: "REFUNDED" } });
   }
 
   async cancel(id: string) {
-    const ret = await this.prisma.return.findUnique({
+    const ret = await this.prisma.forTenant().return.findUnique({
       where: { id },
       include: { items: true },
     });
     if (!ret) throw new NotFoundException("Return not found");
     if (ret.status === "CANCELLED") throw new BadRequestException("Return is already cancelled");
-    if (ret.status === "REFUNDED") throw new BadRequestException("Refunded returns cannot be cancelled");
+    if (ret.status === "REFUNDED")
+      throw new BadRequestException("Refunded returns cannot be cancelled");
 
-    return this.prisma.$transaction(async (tx) => {
+    return this.prisma.tenantTransaction(async (tx) => {
       // Reverse stock movements if items were already received into stock
       if (ret.status === "RECEIVED" || ret.status === "PROCESSED") {
         const returnRef = `RET-${ret.id.slice(0, 8)}`;
@@ -241,7 +246,7 @@ export class ReturnsService {
   }
 
   async findOne(id: string) {
-    const ret = await this.prisma.return.findUnique({
+    const ret = await this.prisma.forTenant().return.findUnique({
       where: { id },
       include: {
         order: {

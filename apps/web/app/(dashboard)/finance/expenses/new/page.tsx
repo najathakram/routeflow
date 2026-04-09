@@ -96,7 +96,7 @@ function RecordExpenseTab({ onSaved }: { onSaved: () => void }) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    const dto: CreateExpenseDto = {
+    const dto: Partial<CreateExpenseDto> = {
       date: form.date,
       paymentMethod: form.paymentMethod || undefined,
       referenceNumber: form.referenceNumber || undefined,
@@ -129,7 +129,7 @@ function RecordExpenseTab({ onSaved }: { onSaved: () => void }) {
     }
 
     try {
-      await createExpense.mutateAsync(dto);
+      await createExpense.mutateAsync(dto as CreateExpenseDto);
       toast({ title: "Expense recorded", variant: "success" });
       onSaved();
     } catch (err: unknown) {
@@ -196,7 +196,7 @@ function RecordExpenseTab({ onSaved }: { onSaved: () => void }) {
           <label className={labelCls}>Customer</label>
           <select value={form.customerId} onChange={e => setForm(f => ({ ...f, customerId: e.target.value }))} className={fieldCls}>
             <option value="">None</option>
-            {customers.map(c => <option key={c.id} value={c.id}>{c.businessName}</option>)}
+            {customers.map((c: { id: string; businessName: string }) => <option key={c.id} value={c.id}>{c.businessName}</option>)}
           </select>
         </div>
 
@@ -411,7 +411,7 @@ function RecordMileageTab({ onSaved }: { onSaved: () => void }) {
           <label className={labelCls}>Customer</label>
           <select value={form.customerId} onChange={e => setForm(f => ({ ...f, customerId: e.target.value }))} className={fieldCls}>
             <option value="">None</option>
-            {customers.map(c => <option key={c.id} value={c.id}>{c.businessName}</option>)}
+            {customers.map((c: { id: string; businessName: string }) => <option key={c.id} value={c.id}>{c.businessName}</option>)}
           </select>
         </div>
 
@@ -521,7 +521,7 @@ function BulkAddTab({ onSaved }: { onSaved: () => void }) {
                 <td className="px-2 py-1.5">
                   <select value={row.customerId} onChange={e => updateRow(idx, "customerId", e.target.value)} className="w-40 rounded border border-surface-border px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-brand-500">
                     <option value="">None</option>
-                    {customers.map(c => <option key={c.id} value={c.id}>{c.businessName}</option>)}
+                    {customers.map((c: { id: string; businessName: string }) => <option key={c.id} value={c.id}>{c.businessName}</option>)}
                   </select>
                 </td>
                 <td className="px-2 py-1.5 text-center">

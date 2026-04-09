@@ -5,7 +5,20 @@
  *
  * Prerequisites: API must be running on http://localhost:3000
  * Run from repo root: node apps/api/scripts/fresh-data.js
+ *
+ * Options:
+ *   --tenant <slug>   Use a specific tenant slug (default: "legacy")
+ *   --manifest        Write created IDs to a timestamped manifest file
+ *
+ * Safety: Refuses to run when NODE_ENV=production.
  */
+
+// ─── Production guard ─────────────────────────────────────────────────────────
+if (process.env.NODE_ENV === "production") {
+  console.error("\n❌ FATAL: fresh-data.js must NOT run against production.");
+  console.error("   Set NODE_ENV to 'development' or 'staging' to proceed.\n");
+  process.exit(1);
+}
 
 const { PrismaClient } = require("../../../node_modules/@prisma/client");
 const { PrismaPg } = require("../../../node_modules/@prisma/adapter-pg");
@@ -14,6 +27,31 @@ const path = require("path");
 const fs = require("fs");
 
 const BASE = "http://localhost:3000/api/v1";
+
+// ─── CLI arguments ──────────────────────────────────────────────────────────
+const args = process.argv.slice(2);
+const tenantSlugIndex = args.indexOf("--tenant");
+const TENANT_SLUG = tenantSlugIndex >= 0 ? args[tenantSlugIndex + 1] : "legacy";
+const WRITE_MANIFEST = args.includes("--manifest");
+
+// ─── QA Manifest tracker ───────────────────────────────────────────────────
+/** Tracks all entity IDs created during this run for targeted cleanup. */
+const manifest = {
+  createdAt: new Date().toISOString(),
+  tenantSlug: TENANT_SLUG,
+  suppliers: [],
+  products: [],
+  customers: [],
+  drivers: [],
+  users: [],
+  orders: [],
+  routes: [],
+  routeRuns: [],
+  invoices: [],
+  creditNotes: [],
+  returns: [],
+  orderTemplates: [],
+};
 
 // Load DATABASE_URL from the API's .env file so TRUNCATE runs against the
 // same database the API server is connected to.
@@ -36,7 +74,7 @@ const prisma = new PrismaClient({ adapter });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function api(method, path, body, token, retries = 3) {
-  const headers = { "Content-Type": "application/json" };
+  const headers = { "Content-Type": "application/json", "X-Tenant-Slug": TENANT_SLUG };
   if (token) headers["Authorization"] = `Bearer ${token}`;
   const res = await fetch(`${BASE}${path}`, {
     method,
@@ -542,6 +580,8 @@ async function createReturnsAndTemplates(orders, products) {
 async function main() {
   console.log("🚀 RouteFlow Fresh Data Script");
   console.log("================================");
+  console.log(`   Tenant: ${TENANT_SLUG}`);
+  console.log(`   Manifest: ${WRITE_MANIFEST ? "enabled" : "disabled (use --manifest to enable)"}`);
 
   // Phase 1 — Truncate
   await truncateAll();
@@ -556,11 +596,20 @@ async function main() {
   const customers = await createCustomers(opTok);
   const drivers   = await createDrivers(opTok);
 
+  // Track IDs in manifest
+  manifest.suppliers = suppliers.map(s => s.id);
+  manifest.products = products.map(p => p.id);
+  manifest.customers = customers.map(c => ({ customerId: c.customerId, userId: c.userId, username: c.username }));
+  manifest.drivers = drivers.map(d => ({ driverId: d.driverId, userId: d.userId, username: d.username }));
+
   // Phase 3 — Customers place orders BEFORE runs are created so auto-linking works
   const orders = await placeOrders(customers, products);
+  manifest.orders = orders.map(o => o.id);
 
   // Phase 2E — Create routes + runs AFTER orders so createRun auto-links pending orders to stops
   const { routes, runs } = await createRoutesAndRuns(opTok, drivers, customers);
+  manifest.routes = routes.map(r => r.id);
+  manifest.routeRuns = runs.map(r => r.id);
 
   // Phase 4 — Drivers complete deliveries
   await completeDeliveries(runs, orders, customers, products);
@@ -571,6 +620,14 @@ async function main() {
 
   // Phase 6 — Customer returns + standing orders
   await createReturnsAndTemplates(orders, products);
+
+  // ─── Write manifest to disk ────────────────────────────────────────────────
+  if (WRITE_MANIFEST) {
+    const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    const manifestPath = path.join(__dirname, `qa-manifest-${ts}.json`);
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), "utf8");
+    console.log(`\n📄 Manifest written to: ${manifestPath}`);
+  }
 
   console.log("\n✅ Fresh data population complete!");
   console.log("\n📋 Summary:");

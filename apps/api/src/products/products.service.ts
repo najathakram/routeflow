@@ -48,14 +48,14 @@ export class ProductsService {
       : undefined;
 
     const [data, total] = await Promise.all([
-      this.prisma.product.findMany({
+      this.prisma.forTenant().product.findMany({
         where,
         skip,
         take: limit,
         orderBy: { name: "asc" },
         include: variantsInclude,
       }),
-      this.prisma.product.count({ where }),
+      this.prisma.forTenant().product.count({ where }),
     ]);
 
     // Attach thumbnailUrl (first image only) for list/grid display without loading all images
@@ -79,7 +79,7 @@ export class ProductsService {
   }
 
   async findOne(id: string) {
-    const product = await this.prisma.product.findUnique({
+    const product = await this.prisma.forTenant().product.findUnique({
       where: { id },
       include: {
         variants: { where: { isActive: true }, orderBy: { variantName: "asc" } },
@@ -99,7 +99,7 @@ export class ProductsService {
     originalName: string,
     mimetype: string,
   ): Promise<{ key: string; url: string }> {
-    const product = await this.prisma.product.findUnique({ where: { id } });
+    const product = await this.prisma.forTenant().product.findUnique({ where: { id } });
     if (!product) throw new NotFoundException("Product not found");
 
     const ext = originalName.split(".").pop() ?? "jpg";
@@ -107,7 +107,7 @@ export class ProductsService {
     await this.storage.upload(key, buffer, mimetype);
 
     // Append key to the product's imageKeys array
-    await this.prisma.product.update({
+    await this.prisma.forTenant().product.update({
       where: { id },
       data: { imageKeys: { push: key } },
     });
@@ -117,7 +117,7 @@ export class ProductsService {
   }
 
   async deleteImage(id: string, key: string): Promise<void> {
-    const product = await this.prisma.product.findUnique({ where: { id } });
+    const product = await this.prisma.forTenant().product.findUnique({ where: { id } });
     if (!product) throw new NotFoundException("Product not found");
     if (!product.imageKeys.includes(key)) {
       throw new NotFoundException("Image not found on this product");
@@ -127,14 +127,14 @@ export class ProductsService {
     await this.storage.delete(key);
 
     // Remove key from array
-    await this.prisma.product.update({
+    await this.prisma.forTenant().product.update({
       where: { id },
       data: { imageKeys: product.imageKeys.filter((k) => k !== key) },
     });
   }
 
   async findByBarcode(barcode: string) {
-    const product = await this.prisma.product.findUnique({
+    const product = await this.prisma.forTenant().product.findFirst({
       where: { barcode },
       include: { variants: { where: { isActive: true } }, parent: true },
     });
@@ -144,18 +144,22 @@ export class ProductsService {
 
   async create(dto: CreateProductDto) {
     if (dto.sku) {
-      const existing = await this.prisma.product.findUnique({ where: { sku: dto.sku } });
+      const existing = await this.prisma.forTenant().product.findFirst({ where: { sku: dto.sku } });
       if (existing) throw new BadRequestException("SKU already exists");
     }
     if (dto.barcode) {
-      const existing = await this.prisma.product.findUnique({ where: { barcode: dto.barcode } });
+      const existing = await this.prisma
+        .forTenant()
+        .product.findFirst({ where: { barcode: dto.barcode } });
       if (existing) throw new BadRequestException("Barcode already exists");
     }
     if (dto.parentProductId) {
-      const parent = await this.prisma.product.findUnique({ where: { id: dto.parentProductId } });
+      const parent = await this.prisma
+        .forTenant()
+        .product.findUnique({ where: { id: dto.parentProductId } });
       if (!parent) throw new BadRequestException("Parent product not found");
     }
-    return this.prisma.product.create({
+    return this.prisma.forTenant().product.create({
       data: {
         name: dto.name,
         sku: dto.sku,
@@ -178,18 +182,18 @@ export class ProductsService {
   async update(id: string, dto: UpdateProductDto) {
     await this.findOne(id);
     if (dto.sku) {
-      const existing = await this.prisma.product.findFirst({
+      const existing = await this.prisma.forTenant().product.findFirst({
         where: { sku: dto.sku, id: { not: id } },
       });
       if (existing) throw new BadRequestException("SKU already exists");
     }
     if (dto.barcode) {
-      const existing = await this.prisma.product.findFirst({
+      const existing = await this.prisma.forTenant().product.findFirst({
         where: { barcode: dto.barcode, id: { not: id } },
       });
       if (existing) throw new BadRequestException("Barcode already exists");
     }
-    return this.prisma.product.update({
+    return this.prisma.forTenant().product.update({
       where: { id },
       data: { ...dto },
     });
@@ -197,18 +201,18 @@ export class ProductsService {
 
   async remove(id: string) {
     await this.findOne(id);
-    const activeItems = await this.prisma.orderItem.count({
+    const activeItems = await this.prisma.forTenant().orderItem.count({
       where: { productId: id, status: { notIn: ["DELIVERED", "CANCELLED"] } },
     });
     if (activeItems > 0) {
       throw new BadRequestException("Cannot delete product with active order items");
     }
-    return this.prisma.product.update({ where: { id }, data: { isActive: false } });
+    return this.prisma.forTenant().product.update({ where: { id }, data: { isActive: false } });
   }
 
   async clearAll(): Promise<{ deleted: number }> {
     // Count before clearing so we can report back
-    const count = await this.prisma.product.count();
+    const count = await this.prisma.forTenant().product.count();
     // CASCADE removes all rows in dependent tables (OrderItem, InvoiceItem, etc.)
     await this.prisma.$executeRaw`TRUNCATE TABLE "Product" CASCADE`;
     return { deleted: count };
@@ -218,20 +222,22 @@ export class ProductsService {
     if (ids.length === 0) return { deleted: 0 };
     // Delete all dependent records first, then the products themselves
     await this.prisma.$transaction([
-      this.prisma.customerPrice.deleteMany({ where: { productId: { in: ids } } }),
-      this.prisma.recurringInvoiceItem.deleteMany({ where: { productId: { in: ids } } }),
-      this.prisma.productMapping.deleteMany({ where: { productId: { in: ids } } }),
-      this.prisma.vendorBillItem.deleteMany({ where: { productId: { in: ids } } }),
-      this.prisma.estimateItem.deleteMany({ where: { productId: { in: ids } } }),
-      this.prisma.returnItem.deleteMany({ where: { productId: { in: ids } } }),
-      this.prisma.purchaseOrderItem.deleteMany({ where: { productId: { in: ids } } }),
-      this.prisma.invoiceItem.deleteMany({ where: { productId: { in: ids } } }),
-      this.prisma.orderTemplateItem.deleteMany({ where: { productId: { in: ids } } }),
-      this.prisma.deliveryMutation.deleteMany({ where: { productId: { in: ids } } }),
-      this.prisma.orderItem.deleteMany({ where: { productId: { in: ids } } }),
-      this.prisma.stockLot.deleteMany({ where: { productId: { in: ids } } }),
-      this.prisma.stockMovement.deleteMany({ where: { productId: { in: ids } } }),
-      this.prisma.product.deleteMany({ where: { id: { in: ids } } }),
+      this.prisma.forTenant().customerPrice.deleteMany({ where: { productId: { in: ids } } }),
+      this.prisma
+        .forTenant()
+        .recurringInvoiceItem.deleteMany({ where: { productId: { in: ids } } }),
+      this.prisma.forTenant().productMapping.deleteMany({ where: { productId: { in: ids } } }),
+      this.prisma.forTenant().vendorBillItem.deleteMany({ where: { productId: { in: ids } } }),
+      this.prisma.forTenant().estimateItem.deleteMany({ where: { productId: { in: ids } } }),
+      this.prisma.forTenant().returnItem.deleteMany({ where: { productId: { in: ids } } }),
+      this.prisma.forTenant().purchaseOrderItem.deleteMany({ where: { productId: { in: ids } } }),
+      this.prisma.forTenant().invoiceItem.deleteMany({ where: { productId: { in: ids } } }),
+      this.prisma.forTenant().orderTemplateItem.deleteMany({ where: { productId: { in: ids } } }),
+      this.prisma.forTenant().deliveryMutation.deleteMany({ where: { productId: { in: ids } } }),
+      this.prisma.forTenant().orderItem.deleteMany({ where: { productId: { in: ids } } }),
+      this.prisma.forTenant().stockLot.deleteMany({ where: { productId: { in: ids } } }),
+      this.prisma.forTenant().stockMovement.deleteMany({ where: { productId: { in: ids } } }),
+      this.prisma.forTenant().product.deleteMany({ where: { id: { in: ids } } }),
     ]);
     return { deleted: ids.length };
   }
@@ -252,7 +258,9 @@ export class ProductsService {
       try {
         // Check for duplicate SKU
         if (item.sku) {
-          const existing = await this.prisma.product.findUnique({ where: { sku: item.sku } });
+          const existing = await this.prisma
+            .forTenant()
+            .product.findFirst({ where: { sku: item.sku } });
           if (existing) {
             skipped++;
             continue;
@@ -261,7 +269,7 @@ export class ProductsService {
 
         // Check for duplicate barcode
         if (item.barcode) {
-          const existing = await this.prisma.product.findUnique({
+          const existing = await this.prisma.forTenant().product.findFirst({
             where: { barcode: item.barcode },
           });
           if (existing) {
@@ -271,7 +279,7 @@ export class ProductsService {
           }
         }
 
-        await this.prisma.product.create({
+        await this.prisma.forTenant().product.create({
           data: {
             name: item.name,
             sku: item.sku ?? null,

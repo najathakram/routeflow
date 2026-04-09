@@ -12,12 +12,14 @@ import { ChangeUserStatusDto } from "./dto/change-user-status.dto";
 export class UsersService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findByUsername(username: string): Promise<User | null> {
-    return this.prisma.user.findUnique({ where: { username } });
+  async findByUsername(username: string, tenantId?: string | null): Promise<User | null> {
+    return this.prisma.forTenant().user.findFirst({
+      where: { username, tenantId: tenantId ?? null },
+    });
   }
 
   async findById(id: string): Promise<Omit<User, "password"> | null> {
-    const user = await this.prisma.user.findUnique({ where: { id } });
+    const user = await this.prisma.forTenant().user.findUnique({ where: { id } });
     if (!user) return null;
     const { password: _pw, ...rest } = user;
     return rest;
@@ -38,7 +40,7 @@ export class UsersService {
     }
 
     const [data, total] = await Promise.all([
-      this.prisma.user.findMany({
+      this.prisma.forTenant().user.findMany({
         where,
         select: {
           id: true,
@@ -53,7 +55,7 @@ export class UsersService {
         take: limit,
         orderBy: { createdAt: "desc" },
       }),
-      this.prisma.user.count({ where }),
+      this.prisma.forTenant().user.count({ where }),
     ]);
 
     return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
@@ -61,8 +63,8 @@ export class UsersService {
 
   async createOperator(dto: CreateOperatorDto) {
     const [existingEmail, existingUsername] = await Promise.all([
-      this.prisma.user.findUnique({ where: { email: dto.email } }),
-      this.prisma.user.findUnique({ where: { username: dto.username } }),
+      this.prisma.forTenant().user.findFirst({ where: { email: dto.email } }),
+      this.prisma.forTenant().user.findFirst({ where: { username: dto.username } }),
     ]);
     if (existingEmail) throw new BadRequestException("Email already in use");
     if (existingUsername) throw new BadRequestException("Username already in use");
@@ -70,7 +72,7 @@ export class UsersService {
     const tempPassword = `${crypto.randomBytes(3).toString("hex").toUpperCase()}-${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
     const hashedPassword = await bcrypt.hash(tempPassword, 10);
 
-    const user = await this.prisma.user.create({
+    const user = await this.prisma.forTenant().user.create({
       data: {
         email: dto.email,
         username: dto.username,
@@ -92,9 +94,9 @@ export class UsersService {
   }
 
   async changeStatus(userId: string, dto: ChangeUserStatusDto) {
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    const user = await this.prisma.forTenant().user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException("User not found");
-    return this.prisma.user.update({
+    return this.prisma.forTenant().user.update({
       where: { id: userId },
       data: { status: dto.status },
       select: { id: true, username: true, email: true, role: true, status: true },
@@ -102,9 +104,9 @@ export class UsersService {
   }
 
   async updateUser(userId: string, dto: UpdateUserDto) {
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    const user = await this.prisma.forTenant().user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException("User not found");
-    return this.prisma.user.update({
+    return this.prisma.forTenant().user.update({
       where: { id: userId },
       data: dto,
       select: { id: true, username: true, email: true, role: true, status: true },
@@ -112,11 +114,11 @@ export class UsersService {
   }
 
   async resetPassword(userId: string) {
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    const user = await this.prisma.forTenant().user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException("User not found");
     const tempPassword = `${crypto.randomBytes(3).toString("hex").toUpperCase()}-${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
     const hashedPassword = await bcrypt.hash(tempPassword, 10);
-    await this.prisma.user.update({
+    await this.prisma.forTenant().user.update({
       where: { id: userId },
       data: { password: hashedPassword, forcePasswordChange: true },
     });
@@ -124,12 +126,12 @@ export class UsersService {
   }
 
   async getPreferences(userId: string): Promise<Record<string, string>> {
-    const prefs = await this.prisma.userPreference.findMany({ where: { userId } });
+    const prefs = await this.prisma.forTenant().userPreference.findMany({ where: { userId } });
     return Object.fromEntries(prefs.map((p) => [p.key, p.value]));
   }
 
   async setPreference(userId: string, key: string, value: string): Promise<void> {
-    await this.prisma.userPreference.upsert({
+    await this.prisma.forTenant().userPreference.upsert({
       where: { userId_key: { userId, key } },
       create: { userId, key, value },
       update: { value },

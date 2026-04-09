@@ -232,11 +232,7 @@ export class CustomersController {
 
   @Patch(":id/contacts/:cid")
   @Roles(UserRole.OPERATOR)
-  updateContact(
-    @Param("id") id: string,
-    @Param("cid") cid: string,
-    @Body() dto: any,
-  ) {
+  updateContact(@Param("id") id: string, @Param("cid") cid: string, @Body() dto: any) {
     return this.customersService.updateContactPerson(id, cid, dto);
   }
 

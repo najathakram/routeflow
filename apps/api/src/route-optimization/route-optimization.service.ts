@@ -38,7 +38,7 @@ export class RouteOptimizationService {
   ) {}
 
   async optimizeTemplate(routeId: string): Promise<OptimizeResult> {
-    const route = await this.prisma.route.findUnique({
+    const route = await this.prisma.forTenant().route.findUnique({
       where: { id: routeId },
       include: {
         stops: {
@@ -69,7 +69,9 @@ export class RouteOptimizationService {
       if (!addr || (addr.lat != null && addr.lng != null)) continue;
       const coords = await this.geocodeAddress(addr);
       if (coords) {
-        await this.prisma.customerAddress.update({ where: { id: addr.id }, data: coords });
+        await this.prisma
+          .forTenant()
+          .customerAddress.update({ where: { id: addr.id }, data: coords });
         addr.lat = coords.lat;
         addr.lng = coords.lng;
       }
@@ -121,13 +123,13 @@ export class RouteOptimizationService {
     const offset = stops.length + 1;
     await this.prisma.$transaction([
       ...stops.map((s) =>
-        this.prisma.routeStop.update({
+        this.prisma.forTenant().routeStop.update({
           where: { id: s.id },
           data: { stopNumber: s.stopNumber + offset },
         }),
       ),
       ...stopOrder.map(({ stopId, stopNumber }) =>
-        this.prisma.routeStop.update({
+        this.prisma.forTenant().routeStop.update({
           where: { id: stopId },
           data: { stopNumber },
         }),
@@ -143,7 +145,7 @@ export class RouteOptimizationService {
   }
 
   async optimizeRoute(routeRunId: string): Promise<OptimizeResult> {
-    const run = await this.prisma.routeRun.findUnique({
+    const run = await this.prisma.forTenant().routeRun.findUnique({
       where: { id: routeRunId },
       include: {
         stops: {
@@ -178,7 +180,7 @@ export class RouteOptimizationService {
       if (!addr || (addr.lat != null && addr.lng != null)) continue;
       const coords = await this.geocodeAddress(addr);
       if (coords) {
-        await this.prisma.customerAddress.update({
+        await this.prisma.forTenant().customerAddress.update({
           where: { id: addr.id },
           data: coords,
         });
@@ -231,20 +233,20 @@ export class RouteOptimizationService {
     const offset = stops.length + 1;
     await this.prisma.$transaction([
       ...stops.map((s) =>
-        this.prisma.routeRunStop.update({
+        this.prisma.forTenant().routeRunStop.update({
           where: { id: s.id },
           data: { stopNumber: s.stopNumber + offset },
         }),
       ),
       ...stopOrder.map(({ stopId, stopNumber }) =>
-        this.prisma.routeRunStop.update({
+        this.prisma.forTenant().routeRunStop.update({
           where: { id: stopId },
           data: { stopNumber },
         }),
       ),
     ]);
 
-    await this.prisma.routeRun.update({
+    await this.prisma.forTenant().routeRun.update({
       where: { id: routeRunId },
       data: { manuallyReordered: false },
     });

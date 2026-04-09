@@ -36,6 +36,13 @@ export interface AppConfig {
   fcm: {
     projectId: string;
   };
+  stripe: {
+    secretKey: string;
+    webhookSecret: string;
+    priceStarter: string;
+    priceProfessional: string;
+    priceEnterprise: string;
+  };
 }
 
 export const configuration = (): AppConfig => ({
@@ -75,5 +82,12 @@ export const configuration = (): AppConfig => ({
   },
   fcm: {
     projectId: process.env.FCM_PROJECT_ID ?? "",
+  },
+  stripe: {
+    secretKey: process.env.STRIPE_SECRET_KEY ?? "",
+    webhookSecret: process.env.STRIPE_WEBHOOK_SECRET ?? "",
+    priceStarter: process.env.STRIPE_PRICE_STARTER ?? "",
+    priceProfessional: process.env.STRIPE_PRICE_PROFESSIONAL ?? "",
+    priceEnterprise: process.env.STRIPE_PRICE_ENTERPRISE ?? "",
   },
 });

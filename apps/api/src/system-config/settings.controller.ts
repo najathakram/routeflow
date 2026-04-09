@@ -77,7 +77,11 @@ export class SettingsController {
     const key = stored || envKey || null;
     const configured = !!key && key.length > 0;
     const keyPreview = key ? `${key.slice(0, 10)}...${key.slice(-4)}` : null;
-    return { configured, keyPreview, source: stored ? "database" : envKey ? "environment" : "none" };
+    return {
+      configured,
+      keyPreview,
+      source: stored ? "database" : envKey ? "environment" : "none",
+    };
   }
 
   @Patch("anthropic")

@@ -158,7 +158,7 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
       setReviewItems(
         items.length > 0
           ? items
-          : [{ extractedName: "", productId: "", description: "", qty: "1", unitCost: "", confidence: "none" }],
+          : [{ extractedName: "", productId: "", description: "", qty: "1", unitCost: "", confidence: "none" as const, lineTotal: null, extractedQty: "1", extractedUnitCost: "" }],
       );
       // Pre-fill supplier
       if (result.supplier) {

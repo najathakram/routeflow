@@ -35,7 +35,10 @@ export class CreateExpenseDto {
   @IsOptional() @IsString() mileageUnit?: string;
   @IsOptional() @IsNumber() @Min(0) distance?: number;
   @IsOptional() @IsNumber() @Min(0) mileageRateSnapshot?: number;
-  @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => ExpenseLineItemDto)
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ExpenseLineItemDto)
   lineItems?: ExpenseLineItemDto[];
 }
 
@@ -72,7 +75,9 @@ export class CreateMileageRateDto {
 }
 
 export class BulkCreateExpenseDto {
-  @IsArray() @ValidateNested({ each: true }) @Type(() => CreateExpenseDto)
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreateExpenseDto)
   expenses: CreateExpenseDto[];
 }
 

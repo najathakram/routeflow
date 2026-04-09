@@ -49,10 +49,7 @@ export class UsersController {
   }
 
   @Patch("me/preferences")
-  async updateMyPreferences(
-    @CurrentUser() user: JwtPayload,
-    @Body() dto: Record<string, string>,
-  ) {
+  async updateMyPreferences(@CurrentUser() user: JwtPayload, @Body() dto: Record<string, string>) {
     await this.usersService.setPreferences(user.sub, dto);
     return this.usersService.getPreferences(user.sub);
   }

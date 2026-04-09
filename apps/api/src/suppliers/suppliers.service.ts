@@ -26,8 +26,10 @@ export class SuppliersService {
     if (query.isActive !== undefined) where.isActive = query.isActive;
 
     const [data, total] = await Promise.all([
-      this.prisma.supplier.findMany({ where, skip, take: limit, orderBy: { name: "asc" } }),
-      this.prisma.supplier.count({ where }),
+      this.prisma
+        .forTenant()
+        .supplier.findMany({ where, skip, take: limit, orderBy: { name: "asc" } }),
+      this.prisma.forTenant().supplier.count({ where }),
     ]);
 
     return {
@@ -42,23 +44,23 @@ export class SuppliersService {
   }
 
   async findOne(id: string) {
-    const supplier = await this.prisma.supplier.findUnique({ where: { id } });
+    const supplier = await this.prisma.forTenant().supplier.findUnique({ where: { id } });
     if (!supplier) throw new NotFoundException("Supplier not found");
     return supplier;
   }
 
   async create(dto: CreateSupplierDto) {
-    return this.prisma.supplier.create({ data: { ...dto } });
+    return this.prisma.forTenant().supplier.create({ data: { ...dto } });
   }
 
   async update(id: string, dto: UpdateSupplierDto) {
     await this.findOne(id);
-    return this.prisma.supplier.update({ where: { id }, data: { ...dto } });
+    return this.prisma.forTenant().supplier.update({ where: { id }, data: { ...dto } });
   }
 
   async deactivate(id: string) {
     await this.findOne(id);
-    return this.prisma.supplier.update({ where: { id }, data: { isActive: false } });
+    return this.prisma.forTenant().supplier.update({ where: { id }, data: { isActive: false } });
   }
 
   async remove(id: string) {
@@ -67,8 +69,8 @@ export class SuppliersService {
     // VendorBill.supplierId and PurchaseOrder.supplierId are non-nullable —
     // we cannot null them out, so block deletion if any exist.
     const [billCount, poCount] = await Promise.all([
-      this.prisma.vendorBill.count({ where: { supplierId: id } }),
-      this.prisma.purchaseOrder.count({ where: { supplierId: id } }),
+      this.prisma.forTenant().vendorBill.count({ where: { supplierId: id } }),
+      this.prisma.forTenant().purchaseOrder.count({ where: { supplierId: id } }),
     ]);
 
     if (billCount > 0 || poCount > 0) {
@@ -82,9 +84,13 @@ export class SuppliersService {
 
     // Expense.supplierId and StockMovement.supplierId are nullable — safe to clear
     await this.prisma.$transaction([
-      this.prisma.expense.updateMany({ where: { supplierId: id }, data: { supplierId: null } }),
-      this.prisma.stockMovement.updateMany({ where: { supplierId: id }, data: { supplierId: null } }),
-      this.prisma.supplier.delete({ where: { id } }),
+      this.prisma
+        .forTenant()
+        .expense.updateMany({ where: { supplierId: id }, data: { supplierId: null } }),
+      this.prisma
+        .forTenant()
+        .stockMovement.updateMany({ where: { supplierId: id }, data: { supplierId: null } }),
+      this.prisma.forTenant().supplier.delete({ where: { id } }),
     ]);
 
     return { deleted: true };

@@ -3,6 +3,25 @@ import { Reflector } from "@nestjs/core";
 import { UserRole } from "@prisma/client";
 import { ROLES_KEY } from "../decorators/roles.decorator";
 
+/**
+ * Role hierarchy for access checks:
+ * - SUPER_ADMIN satisfies every role requirement
+ * - TENANT_ADMIN satisfies OPERATOR (and itself)
+ */
+const ROLE_SATISFIES: Record<UserRole, UserRole[]> = {
+  [UserRole.SUPER_ADMIN]: [
+    UserRole.SUPER_ADMIN,
+    UserRole.TENANT_ADMIN,
+    UserRole.OPERATOR,
+    UserRole.DRIVER,
+    UserRole.CUSTOMER,
+  ],
+  [UserRole.TENANT_ADMIN]: [UserRole.TENANT_ADMIN, UserRole.OPERATOR],
+  [UserRole.OPERATOR]: [UserRole.OPERATOR],
+  [UserRole.DRIVER]: [UserRole.DRIVER],
+  [UserRole.CUSTOMER]: [UserRole.CUSTOMER],
+};
+
 @Injectable()
 export class RolesGuard implements CanActivate {
   constructor(private readonly reflector: Reflector) {}
@@ -14,6 +33,8 @@ export class RolesGuard implements CanActivate {
     ]);
     if (!requiredRoles || requiredRoles.length === 0) return false;
     const { user } = context.switchToHttp().getRequest();
-    return requiredRoles.includes(user?.role);
+    if (!user?.role) return false;
+    const satisfied = ROLE_SATISFIES[user.role as UserRole] ?? [user.role];
+    return requiredRoles.some((r) => satisfied.includes(r));
   }
 }

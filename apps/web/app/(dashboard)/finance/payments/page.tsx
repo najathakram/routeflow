@@ -131,7 +131,7 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
               <label className="mb-1.5 block text-sm font-medium text-navy">Customer *</label>
               <select value={customerId} onChange={(e) => setCustomerId(e.target.value)} className={fieldCls}>
                 <option value="">Select customer...</option>
-                {customers.map((c) => <option key={c.id} value={c.id}>{c.businessName}</option>)}
+                {customers.map((c: { id: string; businessName: string }) => <option key={c.id} value={c.id}>{c.businessName}</option>)}
               </select>
             </div>
             <div>
@@ -372,7 +372,7 @@ export default function FinancePaymentsPage() {
           </select>
           <select value={customerId} onChange={(e) => setCustomerId(e.target.value)} className="rounded-lg border border-surface-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
             <option value="">All Customers</option>
-            {customers.map((c) => <option key={c.id} value={c.id}>{c.businessName}</option>)}
+            {customers.map((c: { id: string; businessName: string }) => <option key={c.id} value={c.id}>{c.businessName}</option>)}
           </select>
           <button onClick={() => { setSearch(""); setMethod(""); setStatus(""); setDateFrom(""); setDateTo(""); setCustomerId(""); }} className="text-sm text-navy/50 hover:text-navy underline">Clear</button>
           <button onClick={handleExport} disabled={exportPayments.isPending} className="ml-auto rounded-lg border border-surface-border px-3 py-2 text-sm text-navy/70 hover:bg-surface-raised transition-colors disabled:opacity-50">
