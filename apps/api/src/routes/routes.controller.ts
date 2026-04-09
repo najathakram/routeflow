@@ -54,11 +54,15 @@ export class RoutesController {
   }
 
   @Get(":id/packing-list")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   getPackingList(@Param("id") id: string) {
     return this.routesService.getPackingList(id);
   }
 
   @Get(":id")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   findOne(@Param("id") id: string) {
     return this.routesService.findOneRoute(id);
   }
@@ -110,6 +114,8 @@ export class RouteRunsController {
   constructor(private readonly routesService: RoutesService) {}
 
   @Get()
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   findAll(@Query() query: ListRunsDto, @CurrentUser() user: JwtPayload) {
     return this.routesService.findAllRuns(query, user);
   }
@@ -122,21 +128,29 @@ export class RouteRunsController {
   }
 
   @Get("my-stats")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   getMyStats(@CurrentUser() user: JwtPayload) {
     return this.routesService.getMyStats(user);
   }
 
   @Get(":id/packing-list")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   getRunPackingList(@Param("id") id: string) {
     return this.routesService.getRunPackingList(id);
   }
 
   @Get(":id")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   findOne(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
     return this.routesService.findOneRun(id, user);
   }
 
   @Patch(":id/stops/:stopId")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   updateStopStatus(
     @Param("id") id: string,
     @Param("stopId") stopId: string,
@@ -174,6 +188,8 @@ export class RouteRunsController {
   }
 
   @Patch(":id/status")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   updateStatus(
     @Param("id") id: string,
     @Body() dto: UpdateRunStatusDto,
@@ -183,6 +199,8 @@ export class RouteRunsController {
   }
 
   @Post(":id/stops/:stopId/reopen")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   reopenStop(
     @Param("id") runId: string,
     @Param("stopId") stopId: string,

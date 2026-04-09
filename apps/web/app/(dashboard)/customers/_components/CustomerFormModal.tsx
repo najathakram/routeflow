@@ -192,8 +192,8 @@ export function CustomerFormModal({
         setCityError("Required");
         hasAddressError = true;
       } else setCityError("");
-      if (!data.zip?.trim() || !/^\d{5}(-\d{4})?$/.test(data.zip.trim())) {
-        setZipError("Enter a valid ZIP code");
+      if (!data.zip?.trim()) {
+        setZipError("Required");
         hasAddressError = true;
       } else setZipError("");
       if (hasAddressError) return;

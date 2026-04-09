@@ -81,6 +81,8 @@ async function bootstrap() {
       if (!origin) return callback(null, true);
       // Exact allow-list (explicit origins + localhost defaults)
       if (corsOrigins.includes(origin)) return callback(null, true);
+      // Any localhost port is allowed in development
+      if (/^http:\/\/localhost:\d+$/.test(origin)) return callback(null, true);
       // Wildcard subdomain patterns — e.g. *.routeflow.io, *.routeflow.app
       if (wildcardPatterns.some((p) => p.test(origin))) return callback(null, true);
       callback(new Error(`CORS: origin '${origin}' not allowed`));

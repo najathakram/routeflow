@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -288,37 +289,57 @@ export class RoutesService {
       resolvedDriverId = driver?.id ?? undefined;
     }
 
-    const run = await this.prisma.forTenant().routeRun.create({
-      data: {
-        routeId: dto.routeId,
-        driverId: resolvedDriverId,
-        scheduledDate: new Date(dto.scheduledDate),
-        notes: dto.notes,
-        stops: {
-          create: route.stops.map((s) => ({
-            routeStopId: s.id,
-            stopNumber: s.stopNumber,
-            customerId: s.customerId,
-            customerAddressId: s.customerAddressId,
-            podPhotoUrls: [],
-            tenantId: this.prisma.getTenantId(),
-          })),
+    const run = await this.prisma.tenantTransaction(async (tx) => {
+      // Lock the Route row so concurrent dispatch requests serialize here
+      // instead of racing past the duplicate-run check below.
+      await tx.$executeRaw`SELECT id FROM "Route" WHERE id = ${dto.routeId} FOR UPDATE`;
+
+      // Prevent duplicate active runs for the same route (atomic inside transaction)
+      const activeRun = await tx.routeRun.findFirst({
+        where: {
+          routeId: dto.routeId,
+          status: { in: [RouteRunStatus.SCHEDULED, RouteRunStatus.IN_PROGRESS] },
         },
-      },
-      include: {
-        route: { select: { id: true, name: true } },
-        driver: { select: { id: true, contactName: true, user: { select: { username: true } } } },
-        stops: {
-          include: {
-            customer: { select: { id: true, businessName: true } },
-            customerAddress: true,
+        select: { id: true },
+      });
+      if (activeRun) {
+        throw new ConflictException(
+          "This route already has an active run. Complete or cancel it before dispatching again.",
+        );
+      }
+
+      return tx.routeRun.create({
+        data: {
+          routeId: dto.routeId,
+          driverId: resolvedDriverId,
+          scheduledDate: new Date(dto.scheduledDate),
+          notes: dto.notes,
+          stops: {
+            create: route.stops.map((s) => ({
+              routeStopId: s.id,
+              stopNumber: s.stopNumber,
+              customerId: s.customerId,
+              customerAddressId: s.customerAddressId,
+              podPhotoUrls: [],
+              tenantId: this.prisma.getTenantId(),
+            })),
           },
-          orderBy: { stopNumber: "asc" },
         },
-      },
+        include: {
+          route: { select: { id: true, name: true } },
+          driver: { select: { id: true, contactName: true, user: { select: { username: true } } } },
+          stops: {
+            include: {
+              customer: { select: { id: true, businessName: true } },
+              customerAddress: true,
+            },
+            orderBy: { stopNumber: "asc" },
+          },
+        },
+      });
     });
 
-    // Assign pending/confirmed orders to their respective run stops
+    // Assign pending/confirmed orders to their respective run stops (outside the lock transaction)
     await Promise.all(
       run.stops
         .filter((s) => s.customerId)

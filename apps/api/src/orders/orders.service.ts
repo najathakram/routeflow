@@ -338,7 +338,7 @@ export class OrdersService {
       PENDING: ["CONFIRMED", "CANCELLED"],
       CONFIRMED: ["OUT_FOR_DELIVERY", "DELIVERED", "PENDING", "CANCELLED"],
       OUT_FOR_DELIVERY: ["DELIVERED", "CONFIRMED", "CANCELLED"],
-      DELIVERED: ["CONFIRMED"],
+      DELIVERED: [],
     };
     if (!(allowed[order.status] ?? []).includes(dto.status)) {
       throw new BadRequestException(`Cannot transition from ${order.status} to ${dto.status}`);

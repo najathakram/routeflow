@@ -602,6 +602,10 @@ export class InvoicesService {
     const inv = await this.findOneOrThrow(id);
     if (inv.status === InvoiceStatus.PAID)
       throw new BadRequestException("Cannot void a fully paid invoice");
+    if (inv.status === InvoiceStatus.PARTIAL)
+      throw new BadRequestException(
+        "Cannot void an invoice with partial payments. Reverse or refund payments first.",
+      );
     return this.prisma
       .forTenant()
       .invoice.update({ where: { id }, data: { status: InvoiceStatus.VOID } });
@@ -819,6 +823,9 @@ export class InvoicesService {
 
   async recordPayment(id: string, dto: RecordInvoicePaymentDto) {
     return this.prisma.tenantTransaction(async (tx) => {
+      // Lock the invoice row so concurrent payment requests serialize here
+      await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${id} FOR UPDATE`;
+
       const inv = await tx.invoice.findUnique({
         where: { id },
         include: { payments: { where: { status: { not: "VOID" as any } } } },

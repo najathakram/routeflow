@@ -84,6 +84,10 @@ export class PlatformAdminService {
   async createTenant(dto: CreateTenantDto) {
     const { slug, businessName, adminEmail, adminUsername, plan } = dto;
 
+    const RESERVED_SLUGS = ["admin", "api", "app", "www", "platform", "auth", "health", "static"];
+    if (RESERVED_SLUGS.includes(slug.toLowerCase()))
+      throw new ConflictException(`Slug "${slug}" is reserved and cannot be used`);
+
     const slugTaken = await this.prisma.tenant.findUnique({ where: { slug } });
     if (slugTaken) throw new ConflictException(`Slug "${slug}" is already taken`);
 

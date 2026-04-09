@@ -118,6 +118,36 @@ function getNavForRole(role: string | undefined): NavEntry[] {
   return OPERATOR_NAV; // OPERATOR, SUPER_ADMIN, TENANT_ADMIN, unknown
 }
 
+// ─── Role-based route guard ───────────────────────────────────────────────────
+
+/** Paths that CUSTOMER users may access (prefix-matched) */
+const CUSTOMER_ALLOWED: string[] = ["/dashboard", "/orders", "/returns", "/invoices", "/settings"];
+/** Paths that DRIVER users may access (prefix-matched) */
+const DRIVER_ALLOWED: string[]   = ["/dashboard", "/routes", "/settings"];
+
+function isPathAllowed(pathname: string, allowed: string[]): boolean {
+  return allowed.some((p) => pathname === p || pathname.startsWith(p + "/"));
+}
+
+function RouteGuard({ children }: { children: React.ReactNode }) {
+  const { user } = useAuth();
+  const pathname = usePathname();
+  const router   = useRouter();
+
+  React.useEffect(() => {
+    const role = user?.role;
+    if (!role) return;
+    let allowed: string[] | null = null;
+    if (role === "CUSTOMER") allowed = CUSTOMER_ALLOWED;
+    if (role === "DRIVER")   allowed = DRIVER_ALLOWED;
+    if (allowed && !isPathAllowed(pathname, allowed)) {
+      router.replace("/dashboard");
+    }
+  }, [user?.role, pathname, router]);
+
+  return <>{children}</>;
+}
+
 // ─── Auth guard ───────────────────────────────────────────────────────────────
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
@@ -135,8 +165,15 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
     }
   }, [isAuthenticated, isLoading, user, router]);
 
-  if (isLoading || !isAuthenticated || user?.forcePasswordChange) return null;
-  return <>{children}</>;
+  if (isLoading) {
+    return (
+      <div className="flex h-screen w-full items-center justify-center bg-background">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+      </div>
+    );
+  }
+  if (!isAuthenticated || user?.forcePasswordChange) return null;
+  return <RouteGuard>{children}</RouteGuard>;
 }
 
 // ─── Nav link ─────────────────────────────────────────────────────────────────

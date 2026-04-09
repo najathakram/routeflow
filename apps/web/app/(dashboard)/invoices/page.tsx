@@ -21,6 +21,7 @@ import { useDebounce } from "@/lib/hooks/useDebounce";
 import { useInvoices, useDeleteInvoice, type Invoice, type InvoiceStatus } from "@/lib/api/invoices";
 import { useBookkeepingSummary } from "@/lib/api/bookkeeping";
 import { fmt, fmtDate } from "@/lib/formatting";
+import { useAuth } from "@/lib/auth-context";
 
 // ─── Contextual status display (Zoho-style) ───────────────────────────────────
 
@@ -250,6 +251,8 @@ export default function InvoicesPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { setTitle } = usePageTitle();
+  const { user } = useAuth();
+  const isCustomer = user?.role === "CUSTOMER";
   React.useEffect(() => { setTitle("Invoices"); }, [setTitle]);
 
   const { toast } = useToast();
@@ -305,29 +308,31 @@ export default function InvoicesPage() {
           <h1 className="text-xl font-bold text-navy">All Invoices</h1>
           <ChevronDown className="h-4 w-4 text-navy/50" />
         </div>
-        <div className="flex items-center gap-2">
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => router.push("/invoices/payments")}
-          >
-            Payments Received
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => router.push("/invoices/recurring")}
-          >
-            Recurring
-          </Button>
-          <Button
-            size="sm"
-            leftIcon={<Plus className="h-4 w-4" />}
-            onClick={() => router.push("/invoices/new")}
-          >
-            New Invoice
-          </Button>
-        </div>
+        {!isCustomer && (
+          <div className="flex items-center gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => router.push("/invoices/payments")}
+            >
+              Payments Received
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => router.push("/invoices/recurring")}
+            >
+              Recurring
+            </Button>
+            <Button
+              size="sm"
+              leftIcon={<Plus className="h-4 w-4" />}
+              onClick={() => router.push("/invoices/new")}
+            >
+              New Invoice
+            </Button>
+          </div>
+        )}
       </div>
 
       {/* Payment Summary Bar */}
@@ -495,7 +500,7 @@ export default function InvoicesPage() {
                       className="px-3 py-3"
                       onClick={(e) => e.stopPropagation()}
                     >
-                      {confirmDeleteId === inv.id ? (
+                      {!isCustomer && confirmDeleteId === inv.id ? (
                         <div className="flex items-center gap-1">
                           <button
                             title="Confirm delete"
@@ -535,13 +540,15 @@ export default function InvoicesPage() {
                           >
                             <Eye className="h-4 w-4" />
                           </button>
-                          <button
-                            title="Delete invoice"
-                            onClick={() => setConfirmDeleteId(inv.id)}
-                            className="rounded p-1.5 text-navy/40 hover:bg-white hover:text-danger transition-colors"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
+                          {!isCustomer && (
+                            <button
+                              title="Delete invoice"
+                              onClick={() => setConfirmDeleteId(inv.id)}
+                              className="rounded p-1.5 text-navy/40 hover:bg-white hover:text-danger transition-colors"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          )}
                         </div>
                       )}
                     </td>
