@@ -7,10 +7,11 @@ import { z } from "zod";
 import { X, AlertTriangle, ChevronRight } from "lucide-react";
 import { Modal, Textarea, Button, cn, useToast } from "@routeflow/ui/web";
 import { useQuery } from "@tanstack/react-query";
-import { useCustomers, useCustomerPrices } from "@/lib/api/customers";
+import { useCustomers, useCustomerPrices, useCustomer } from "@/lib/api/customers";
 import { useProducts } from "@/lib/api/products";
 import { useCreateOrder } from "@/lib/api/orders";
 import { apiClient } from "@/lib/api-client";
+import { getTierPrice } from "@/lib/pricing";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -27,6 +28,7 @@ interface SelectedCustomer {
   id: string;
   businessName: string;
   contactName?: string;
+  pricingTier?: number;
 }
 
 interface LineItem {
@@ -70,11 +72,11 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
   const [selectedCustomer, setSelectedCustomer] = React.useState<SelectedCustomer | null>(null);
   const [customerError, setCustomerError] = React.useState("");
 
-  // Customer special prices
+  // Customer per-product tier overrides
   const { data: customerPricesData } = useCustomerPrices(selectedCustomer?.id);
   const cpMap = React.useMemo(() => {
     const map = new Map<string, number>();
-    (customerPricesData ?? []).forEach((cp: any) => map.set(cp.productId, Number(cp.specialPrice)));
+    (customerPricesData ?? []).forEach((cp: any) => map.set(cp.productId, cp.pricingTier));
     return map;
   }, [customerPricesData]);
 
@@ -219,9 +221,11 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
     }
     const upb: number | undefined = product.unitsPerBox ? Number(product.unitsPerBox) : undefined;
     const listPrice = Number(product.pricePerUnit ?? 0);
-    const specialPrice = cpMap.get(product.id);
-    const effectivePrice = specialPrice ?? listPrice;
-    const priceType = specialPrice != null ? 'SPECIAL' as const : 'STANDARD' as const;
+    const customerTier = selectedCustomer?.pricingTier ?? 1;
+    const tierOverride = cpMap.get(product.id);
+    const effectiveTier = tierOverride ?? customerTier;
+    const tierPrice = getTierPrice(product, effectiveTier);
+    const priceType = effectiveTier !== 1 ? 'SPECIAL' as const : 'STANDARD' as const;
     setLineItems((prev) => [
       ...prev,
       {
@@ -230,8 +234,8 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
         productName: product.name,
         unit: product.unit ?? "each",
         listPrice,
-        specialPrice,
-        unitPrice: effectivePrice,
+        specialPrice: effectiveTier !== 1 ? tierPrice : undefined,
+        unitPrice: tierPrice,
         priceType,
         qty: upb ? upb : 1,
         unitsPerBox: upb,

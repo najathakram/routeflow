@@ -330,6 +330,7 @@ export class CustomersService {
           ...(dto.isTaxExempt !== undefined && { isTaxExempt: dto.isTaxExempt }),
           ...(dto.creditLimit !== undefined && { creditLimit: dto.creditLimit }),
           ...(dto.currency !== undefined && { currency: dto.currency }),
+          ...(dto.pricingTier !== undefined && { pricingTier: dto.pricingTier }),
         },
       });
 
@@ -383,6 +384,7 @@ export class CustomersService {
         ...(dto.isTaxExempt !== undefined && { isTaxExempt: dto.isTaxExempt }),
         ...(dto.creditLimit !== undefined && { creditLimit: dto.creditLimit }),
         ...(dto.currency !== undefined && { currency: dto.currency }),
+        ...(dto.pricingTier !== undefined && { pricingTier: dto.pricingTier }),
       },
     });
   }
@@ -668,7 +670,17 @@ export class CustomersService {
       where: { customerId },
       include: {
         product: {
-          select: { id: true, name: true, sku: true, unit: true, pricePerUnit: true },
+          select: {
+            id: true,
+            name: true,
+            sku: true,
+            unit: true,
+            pricePerUnit: true,
+            priceTier2: true,
+            priceTier3: true,
+            priceTier4: true,
+            priceTier5: true,
+          },
         },
       },
       orderBy: { createdAt: "desc" },
@@ -683,16 +695,26 @@ export class CustomersService {
       create: {
         customerId,
         productId: dto.productId,
-        specialPrice: dto.specialPrice,
+        pricingTier: dto.pricingTier,
         notes: dto.notes,
       },
       update: {
-        specialPrice: dto.specialPrice,
+        pricingTier: dto.pricingTier,
         notes: dto.notes,
       },
       include: {
         product: {
-          select: { id: true, name: true, sku: true, unit: true, pricePerUnit: true },
+          select: {
+            id: true,
+            name: true,
+            sku: true,
+            unit: true,
+            pricePerUnit: true,
+            priceTier2: true,
+            priceTier3: true,
+            priceTier4: true,
+            priceTier5: true,
+          },
         },
       },
     });

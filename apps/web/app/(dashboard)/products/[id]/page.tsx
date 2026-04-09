@@ -177,6 +177,10 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
       sku: product.sku ?? "",
       unit: product.unit,
       pricePerUnit: String(priceNumber),
+      priceTier2: String(parseFloat(String(product.priceTier2 ?? priceNumber))),
+      priceTier3: String(parseFloat(String(product.priceTier3 ?? priceNumber))),
+      priceTier4: String(parseFloat(String(product.priceTier4 ?? priceNumber))),
+      priceTier5: String(parseFloat(String(product.priceTier5 ?? priceNumber))),
       category: product.category ?? "",
       description: product.description ?? "",
     });
@@ -704,7 +708,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                 ) : product.unit}
               />
               <InfoRow
-                label="Price"
+                label="Tier 1 Price (List)"
                 value={
                   isEditing ? (
                     <EditableNumber
@@ -716,6 +720,53 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                   )
                 }
               />
+            </div>
+
+            {/* Tier Prices */}
+            <div className="mt-4">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs font-medium text-navy/50">Pricing Tiers</p>
+                {isEditing && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const t1 = editDraft.pricePerUnit as string;
+                      setEditDraft((d) => ({
+                        ...d,
+                        priceTier2: t1,
+                        priceTier3: t1,
+                        priceTier4: t1,
+                        priceTier5: t1,
+                      }));
+                    }}
+                    className="text-xs text-brand-600 hover:underline"
+                  >
+                    Set all to Tier 1
+                  </button>
+                )}
+              </div>
+              <div className="grid grid-cols-4 gap-2">
+                {([
+                  ["Tier 2", "priceTier2", product.priceTier2],
+                  ["Tier 3", "priceTier3", product.priceTier3],
+                  ["Tier 4", "priceTier4", product.priceTier4],
+                  ["Tier 5", "priceTier5", product.priceTier5],
+                ] as [string, string, any][]).map(([label, field, productVal]) => (
+                  <div key={field}>
+                    <p className="mb-1 text-xs text-navy/40">{label}</p>
+                    {isEditing ? (
+                      <EditableNumber
+                        value={parseFloat(String(editDraft[field] ?? parseFloat(String(productVal ?? priceNumber))))}
+                        onChange={(v) => setEditDraft((d) => ({ ...d, [field]: String(v) }))}
+                      />
+                    ) : (
+                      <p className="text-sm font-medium text-navy">
+                        ${parseFloat(String(productVal ?? priceNumber)).toFixed(2)}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
 
             <div className="mt-4">

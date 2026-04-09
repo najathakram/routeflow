@@ -1,11 +1,13 @@
-import { IsUUID, IsDecimal, IsOptional, IsString } from "class-validator";
+import { IsUUID, IsInt, IsOptional, IsString, Min, Max } from "class-validator";
 
 export class UpsertCustomerPriceDto {
   @IsUUID()
   productId: string;
 
-  @IsDecimal()
-  specialPrice: string;
+  @IsInt()
+  @Min(1)
+  @Max(5)
+  pricingTier: number;
 
   @IsOptional()
   @IsString()

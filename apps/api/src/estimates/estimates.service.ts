@@ -1,5 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { PriceType } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
+import { getTierPrice } from "../utils/pricing";
 
 @Injectable()
 export class EstimatesService {
@@ -23,19 +25,83 @@ export class EstimatesService {
     if (!customer) throw new NotFoundException("Customer not found");
 
     const tenantId = this.prisma.getTenantId();
+    const defaultTier = customer.pricingTier ?? 1;
+    const items: any[] = dto.items ?? [];
+
+    // Load products for items that reference a product
+    const productIds = items.filter((i: any) => i.productId).map((i: any) => i.productId);
+    const products =
+      productIds.length > 0
+        ? await this.prisma.forTenant().product.findMany({
+            where: { id: { in: productIds } },
+          })
+        : [];
+    const productMap = new Map(products.map((p) => [p.id, p]));
+
+    // Load per-product tier overrides for this customer
+    const customerPrices =
+      productIds.length > 0
+        ? await this.prisma.forTenant().customerPrice.findMany({
+            where: { customerId: dto.customerId, productId: { in: productIds } },
+          })
+        : [];
+    const cpMap = new Map(customerPrices.map((cp) => [cp.productId, cp.pricingTier]));
+
     let subtotal = 0;
-    const itemsData = dto.items.map((i: any) => {
-      const sub = i.qty * i.unitPrice;
+    const itemsData = items.map((i: any) => {
+      const product = i.productId ? productMap.get(i.productId) : null;
+
+      // Resolve qty from boxes/pieces when provided
+      let qty = Number(i.qty);
+      if (product && (i.boxes != null || i.pieces != null)) {
+        const unitsPerBox = Number(product.unitsPerBox ?? 0);
+        qty = (i.boxes ?? 0) * unitsPerBox + (i.pieces ?? 0);
+      }
+
+      let unitPrice: number;
+      let priceType: PriceType = PriceType.STANDARD;
+      let originalPrice: number | null = null;
+
+      if (product) {
+        // Resolve tier: per-product override > customer default tier
+        const tierForProduct = cpMap.get(i.productId) ?? defaultTier;
+        const tierPrice = getTierPrice(product, tierForProduct);
+        const listPrice = Number(product.pricePerUnit);
+        const overridePrice = i.unitPrice != null ? Number(i.unitPrice) : null;
+
+        if (overridePrice != null && overridePrice < listPrice) {
+          unitPrice = overridePrice;
+          priceType = PriceType.DISCOUNTED;
+          originalPrice = listPrice;
+        } else if (tierForProduct !== 1) {
+          unitPrice = tierPrice;
+          priceType = PriceType.SPECIAL;
+          originalPrice = listPrice;
+        } else {
+          unitPrice = tierPrice;
+          priceType = PriceType.STANDARD;
+        }
+      } else {
+        // Freeform item — use passed unitPrice directly
+        unitPrice = Number(i.unitPrice);
+      }
+
+      const sub = unitPrice * qty;
       subtotal += sub;
       return {
-        description: i.description,
-        productId: i.productId,
-        qty: i.qty,
-        unitPrice: i.unitPrice,
+        description: i.description ?? product?.name ?? "",
+        productId: i.productId ?? null,
+        qty,
+        unitPrice,
         subtotal: sub,
-        tenantId, // nested creates bypass forTenant() extension
+        priceType,
+        originalPrice,
+        boxes: i.boxes ?? null,
+        pieces: i.pieces ?? null,
+        tenantId,
       };
     });
+
     const discount = dto.discount ?? 0;
     const tax = dto.taxAmount ?? 0;
     const total = subtotal - discount + tax;

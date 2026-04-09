@@ -13,6 +13,10 @@ export class CreateProductDto {
   @IsOptional() @IsEnum(CostingMethod) costingMethod?: CostingMethod;
   @IsOptional() @IsDecimal() standardCost?: string;
   @IsOptional() @IsInt() unitsPerBox?: number;
+  @IsOptional() @IsDecimal() priceTier2?: string;
+  @IsOptional() @IsDecimal() priceTier3?: string;
+  @IsOptional() @IsDecimal() priceTier4?: string;
+  @IsOptional() @IsDecimal() priceTier5?: string;
   @IsOptional() @IsUUID() parentProductId?: string;
   @IsOptional() @IsString() variantName?: string;
 }

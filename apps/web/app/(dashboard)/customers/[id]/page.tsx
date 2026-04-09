@@ -47,8 +47,10 @@ import {
   Legend,
 } from "recharts";
 import { usePageTitle } from "@/lib/page-title-context";
+import { useAuth } from "@/lib/auth-context";
 import { CustomerFormModal } from "../_components/CustomerFormModal";
 import { fmt, fmtDate } from "@/lib/formatting";
+import { getTierPrice } from "@/lib/pricing";
 import {
   useCustomer,
   useCustomerOrders,
@@ -752,21 +754,24 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
   );
   const [productSearch, setProductSearch] = React.useState("");
   const [selectedProductId, setSelectedProductId] = React.useState("");
-  const [specialPrice, setSpecialPrice] = React.useState("");
+  const [selectedTier, setSelectedTier] = React.useState(1);
   const [notes, setNotes] = React.useState("");
   const [productDropdownOpen, setProductDropdownOpen] = React.useState(false);
 
   const filteredProducts = allProducts.filter(
-    (p) =>
+    (p: any) =>
       p.name.toLowerCase().includes(productSearch.toLowerCase()) ||
       (p.sku ?? "").toLowerCase().includes(productSearch.toLowerCase()),
   );
+
+  // Get selected product for price preview
+  const selectedProduct = allProducts.find((p: any) => p.id === selectedProductId);
 
   const openAdd = () => {
     setEditingPrice(null);
     setSelectedProductId("");
     setProductSearch("");
-    setSpecialPrice("");
+    setSelectedTier(1);
     setNotes("");
     setIsModalOpen(true);
   };
@@ -775,18 +780,18 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
     setEditingPrice(cp);
     setSelectedProductId(cp.productId);
     setProductSearch(cp.product?.name ?? "");
-    setSpecialPrice(String(cp.specialPrice));
+    setSelectedTier(cp.pricingTier);
     setNotes(cp.notes ?? "");
     setIsModalOpen(true);
   };
 
   const handleSave = () => {
-    if (!selectedProductId || !specialPrice) return;
+    if (!selectedProductId || !selectedTier) return;
     upsertPrice.mutate(
       {
         customerId,
         productId: selectedProductId,
-        specialPrice,
+        pricingTier: selectedTier,
         notes: notes || undefined,
       },
       {
@@ -813,11 +818,10 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
         <div className="mb-4 flex items-center justify-between">
           <div>
             <h3 className="text-base font-semibold text-navy">
-              Special Prices
+              Product Tier Overrides
             </h3>
             <p className="mt-0.5 text-xs text-navy/50">
-              Customer-specific pricing that overrides the standard product
-              price.
+              Override the pricing tier for specific products. These override the customer&apos;s default tier.
             </p>
           </div>
           <Button
@@ -825,7 +829,7 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
             leftIcon={<Plus className="h-4 w-4" />}
             onClick={openAdd}
           >
-            Add Price
+            Add Override
           </Button>
         </div>
 
@@ -833,7 +837,7 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
           <p className="text-sm text-navy/40">Loading…</p>
         ) : priceList.length === 0 ? (
           <div className="rounded-lg border border-dashed border-surface-border bg-surface-raised py-10 text-center">
-            <p className="text-sm text-navy/40">No special prices set.</p>
+            <p className="text-sm text-navy/40">No tier overrides set.</p>
             <button
               className="mt-2 text-sm text-brand-500 hover:underline"
               onClick={openAdd}
@@ -853,10 +857,13 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
                     SKU
                   </th>
                   <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-navy/50">
-                    Regular Price
+                    List Price
+                  </th>
+                  <th className="px-4 py-3 text-center text-xs font-semibold uppercase tracking-wider text-navy/50">
+                    Override Tier
                   </th>
                   <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-navy/50">
-                    Special Price
+                    Tier Price
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/50">
                     Notes
@@ -867,45 +874,51 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-surface-border">
-                {priceList.map((cp) => (
-                  <tr key={cp.id} className="hover:bg-gray-50/60">
-                    <td className="px-6 py-3 text-sm font-medium text-navy">
-                      {cp.product?.name ?? "\u2014"}
-                    </td>
-                    <td className="px-4 py-3 font-mono text-xs text-navy/50">
-                      {cp.product?.sku ?? "\u2014"}
-                    </td>
-                    <td className="px-4 py-3 text-right text-sm text-navy/60">
-                      {cp.product?.pricePerUnit != null
-                        ? fmt(Number(cp.product.pricePerUnit))
-                        : "\u2014"}
-                    </td>
-                    <td className="px-4 py-3 text-right text-sm font-semibold text-brand-600">
-                      {fmt(Number(cp.specialPrice))}
-                    </td>
-                    <td className="px-4 py-3 text-sm text-navy/60">
-                      {cp.notes ?? "\u2014"}
-                    </td>
-                    <td className="px-6 py-3 text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        <button
-                          title="Edit price"
-                          className="rounded p-1.5 text-navy/40 transition-colors hover:bg-surface-raised hover:text-navy"
-                          onClick={() => openEdit(cp)}
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </button>
-                        <button
-                          title="Delete price"
-                          className="rounded p-1.5 text-navy/40 transition-colors hover:bg-danger-bg hover:text-danger"
-                          onClick={() => setDeletingPriceId(cp.id)}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                {priceList.map((cp) => {
+                  const tierPrice = cp.product ? getTierPrice(cp.product, cp.pricingTier) : 0;
+                  return (
+                    <tr key={cp.id} className="hover:bg-gray-50/60">
+                      <td className="px-6 py-3 text-sm font-medium text-navy">
+                        {cp.product?.name ?? "\u2014"}
+                      </td>
+                      <td className="px-4 py-3 font-mono text-xs text-navy/50">
+                        {cp.product?.sku ?? "\u2014"}
+                      </td>
+                      <td className="px-4 py-3 text-right text-sm text-navy/60">
+                        {cp.product?.pricePerUnit != null
+                          ? fmt(Number(cp.product.pricePerUnit))
+                          : "\u2014"}
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <Badge variant="default">Tier {cp.pricingTier}</Badge>
+                      </td>
+                      <td className="px-4 py-3 text-right text-sm font-semibold text-brand-600">
+                        {fmt(tierPrice)}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-navy/60">
+                        {cp.notes ?? "\u2014"}
+                      </td>
+                      <td className="px-6 py-3 text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <button
+                            title="Edit override"
+                            className="rounded p-1.5 text-navy/40 transition-colors hover:bg-surface-raised hover:text-navy"
+                            onClick={() => openEdit(cp)}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                          <button
+                            title="Delete override"
+                            className="rounded p-1.5 text-navy/40 transition-colors hover:bg-danger-bg hover:text-danger"
+                            onClick={() => setDeletingPriceId(cp.id)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -916,7 +929,7 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
       <Modal
         open={isModalOpen}
         onClose={() => setIsModalOpen(false)}
-        title={editingPrice ? "Edit Special Price" : "Add Special Price"}
+        title={editingPrice ? "Edit Tier Override" : "Add Tier Override"}
         footer={
           <>
             <Button
@@ -929,7 +942,7 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
             <Button
               loading={upsertPrice.isPending}
               onClick={handleSave}
-              disabled={!selectedProductId || !specialPrice}
+              disabled={!selectedProductId || !selectedTier}
             >
               Save
             </Button>
@@ -944,7 +957,7 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
             <div className="relative">
               <input
                 type="text"
-                placeholder="Search products…"
+                placeholder="Search by name or SKU…"
                 value={productSearch}
                 onChange={(e) => {
                   setProductSearch(e.target.value);
@@ -958,7 +971,7 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
                 filteredProducts.length > 0 && (
                   <div className="absolute z-10 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg">
                     <ul className="max-h-40 overflow-y-auto">
-                      {filteredProducts.slice(0, 20).map((p) => (
+                      {filteredProducts.slice(0, 20).map((p: any) => (
                         <li key={p.id}>
                           <button
                             className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-surface-raised"
@@ -986,17 +999,25 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
           </div>
           <div>
             <label className="mb-1.5 block text-sm font-medium text-navy/80">
-              Special Price ($)
+              Pricing Tier
             </label>
-            <input
-              type="number"
-              step="0.01"
-              min="0"
-              placeholder="0.00"
-              value={specialPrice}
-              onChange={(e) => setSpecialPrice(e.target.value)}
-              className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-            />
+            <select
+              value={selectedTier}
+              onChange={(e) => setSelectedTier(Number(e.target.value))}
+              className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+            >
+              {[1, 2, 3, 4, 5].map((t) => (
+                <option key={t} value={t}>
+                  Tier {t}{t === 1 ? " (List Price)" : ""}
+                  {selectedProduct ? ` — ${fmt(getTierPrice(selectedProduct, t))}` : ""}
+                </option>
+              ))}
+            </select>
+            {selectedProduct && (
+              <p className="mt-1 text-xs text-navy/40">
+                Price at Tier {selectedTier}: <span className="font-semibold text-brand-600">{fmt(getTierPrice(selectedProduct, selectedTier))}</span>
+              </p>
+            )}
           </div>
           <div>
             <label className="mb-1.5 block text-sm font-medium text-navy/80">
@@ -1019,8 +1040,8 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
         onConfirm={() => {
           if (deletingPriceId) handleDelete(deletingPriceId);
         }}
-        title="Delete special price?"
-        description="This will remove the customer-specific price for this product."
+        title="Delete tier override?"
+        description="This will remove the tier override for this product. The customer will get their default tier price."
         confirmLabel="Yes, delete"
         variant="danger"
         loading={deletePrice.isPending}
@@ -1144,6 +1165,8 @@ export default function CustomerDetailPage({
   params: { id: string };
 }) {
   const { setTitle } = usePageTitle();
+  const { user } = useAuth();
+  const isOperator = user?.role === "OPERATOR";
 
   const { data: customer, isLoading } = useCustomer(params.id);
   const { data: ordersResult } = useCustomerOrders(params.id);
@@ -1503,6 +1526,38 @@ export default function CustomerDetailPage({
                           </div>
                         </div>
                       </div>
+                    )}
+                  </div>
+
+                  {/* Pricing Tier */}
+                  <div className="mt-5 border-t border-surface-border pt-4">
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs font-semibold uppercase tracking-wider text-navy/50">
+                        Pricing Tier
+                      </p>
+                      {isOperator && (
+                        <select
+                          value={customer.pricingTier ?? 1}
+                          onChange={(e) => {
+                            updateCustomer.mutate({
+                              id: params.id,
+                              pricingTier: Number(e.target.value),
+                            });
+                          }}
+                          className="rounded border border-surface-border bg-white px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        >
+                          {[1, 2, 3, 4, 5].map((t) => (
+                            <option key={t} value={t}>
+                              Tier {t}{t === 1 ? " (Default)" : ""}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                    {!isOperator && (
+                      <p className="mt-1 text-sm font-semibold text-navy">
+                        Tier {customer.pricingTier ?? 1}
+                      </p>
                     )}
                   </div>
 

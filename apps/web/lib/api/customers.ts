@@ -21,6 +21,7 @@ export interface Customer {
   isTaxExempt?: boolean;
   creditLimit?: number;
   currency?: string;
+  pricingTier?: number;
   receivables?: number;
   unusedCredits?: number;
   createdAt: string;
@@ -223,7 +224,7 @@ export interface CustomerPrice {
   id: string;
   customerId: string;
   productId: string;
-  specialPrice: number | string;
+  pricingTier: number;
   notes?: string;
   product?: {
     id: string;
@@ -231,6 +232,10 @@ export interface CustomerPrice {
     sku?: string;
     unit: string;
     pricePerUnit: number | string;
+    priceTier2?: number | string;
+    priceTier3?: number | string;
+    priceTier4?: number | string;
+    priceTier5?: number | string;
   };
 }
 
@@ -245,7 +250,7 @@ export function useCustomerPrices(customerId: string | undefined) {
 export function useUpsertCustomerPrice() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ customerId, ...data }: { customerId: string; productId: string; specialPrice: string; notes?: string }) =>
+    mutationFn: ({ customerId, ...data }: { customerId: string; productId: string; pricingTier: number; notes?: string }) =>
       apiClient.post(`/customers/${customerId}/prices`, data).then((r) => r.data),
     onSuccess: (_d, vars) => {
       qc.invalidateQueries({ queryKey: ['customer-prices', vars.customerId] });

@@ -21,8 +21,10 @@ import {
   type EstimateStatus,
   type CreateEstimateItem,
 } from "@/lib/api/estimates";
-import { useCustomers } from "@/lib/api/customers";
+import { useCustomers, useCustomerPrices } from "@/lib/api/customers";
 import { useProducts } from "@/lib/api/products";
+import { apiClient } from "@/lib/api-client";
+import { getTierPrice } from "@/lib/pricing";
 import { fmt, fmtDate } from "@/lib/formatting";
 
 // ─── Status badge ─────────────────────────────────────────────────────────────
@@ -104,47 +106,38 @@ const STATUS_OPTIONS = [
   { value: "EXPIRED", label: "Expired" },
 ];
 
-// ─── Line item row ────────────────────────────────────────────────────────────
+// ─── Estimate Line Item ───────────────────────────────────────────────────────
 
-interface LineItem {
-  key: string;
+interface EstimateLineItem {
+  tempId: string;
   productId: string;
-  description: string;
-  qty: string;
-  unitPrice: string;
+  productName: string;
+  unit: string;
+  listPrice: number;
+  tierPrice: number;
+  discountedPrice?: number;
+  unitPrice: number;
+  priceType: 'STANDARD' | 'SPECIAL' | 'DISCOUNTED';
+  qty: number;
+  unitsPerBox?: number;
+  boxes?: number;
+  pieces?: number;
 }
 
-function newLineItem(): LineItem {
-  return {
-    key: Math.random().toString(36).slice(2),
-    productId: "",
-    description: "",
-    qty: "1",
-    unitPrice: "",
-  };
+interface SelectedEstimateCustomer {
+  id: string;
+  businessName: string;
+  contactName?: string;
+  pricingTier?: number;
 }
 
 // ─── Create Estimate modal ────────────────────────────────────────────────────
-
-interface CreateFormState {
-  customerId: string;
-  issueDate: string;
-  expiryDate: string;
-  notes: string;
-}
 
 function defaultExpiryDate() {
   const d = new Date();
   d.setDate(d.getDate() + 30);
   return d.toISOString().slice(0, 10);
 }
-
-const EMPTY_FORM: CreateFormState = {
-  customerId: "",
-  issueDate: new Date().toISOString().slice(0, 10),
-  expiryDate: defaultExpiryDate(),
-  notes: "",
-};
 
 function CreateEstimateModal({
   isOpen,
@@ -157,100 +150,190 @@ function CreateEstimateModal({
 }) {
   const { toast } = useToast();
   const createEstimate = useCreateEstimate();
-  const [form, setForm] = React.useState<CreateFormState>(EMPTY_FORM);
-  const [items, setItems] = React.useState<LineItem[]>([newLineItem()]);
-  const [errors, setErrors] = React.useState<Record<string, string>>({});
+
+  // Customer search
   const [customerSearch, setCustomerSearch] = React.useState("");
+  const [debouncedCustomerSearch, setDebouncedCustomerSearch] = React.useState("");
+  const [selectedCustomer, setSelectedCustomer] = React.useState<SelectedEstimateCustomer | null>(null);
+
+  // Product search
   const [productSearch, setProductSearch] = React.useState("");
+  const [debouncedProductSearch, setDebouncedProductSearch] = React.useState("");
+  const productSearchRef = React.useRef<HTMLInputElement>(null);
 
-  const { data: customersData } = useCustomers({ search: customerSearch || undefined });
-  const customers = customersData?.data ?? (Array.isArray(customersData) ? customersData : []);
+  // Line items
+  const [lineItems, setLineItems] = React.useState<EstimateLineItem[]>([]);
 
-  const { data: productsData } = useProducts({ search: productSearch || undefined });
-  const products = productsData?.data ?? (Array.isArray(productsData) ? productsData : []);
+  // Dates & notes
+  const [issueDate, setIssueDate] = React.useState(new Date().toISOString().slice(0, 10));
+  const [expiryDate, setExpiryDate] = React.useState(defaultExpiryDate());
+  const [notes, setNotes] = React.useState("");
+  const [errors, setErrors] = React.useState<Record<string, string>>({});
 
+  // Customer per-product tier overrides
+  const { data: customerPricesData } = useCustomerPrices(selectedCustomer?.id);
+  const cpMap = React.useMemo(() => {
+    const map = new Map<string, number>();
+    (customerPricesData ?? []).forEach((cp: any) => map.set(cp.productId, cp.pricingTier));
+    return map;
+  }, [customerPricesData]);
+
+  // Debounce
+  React.useEffect(() => {
+    const t = setTimeout(() => setDebouncedCustomerSearch(customerSearch), 300);
+    return () => clearTimeout(t);
+  }, [customerSearch]);
+  React.useEffect(() => {
+    const t = setTimeout(() => setDebouncedProductSearch(productSearch), 300);
+    return () => clearTimeout(t);
+  }, [productSearch]);
+
+  const { data: customersData } = useCustomers({ search: debouncedCustomerSearch || undefined });
+  const { data: productsData } = useProducts({ search: debouncedProductSearch || undefined, isActive: true, includeVariants: true });
+
+  const filteredCustomers = React.useMemo(() => {
+    if (!debouncedCustomerSearch) return [];
+    return (customersData?.data ?? []).slice(0, 8);
+  }, [customersData, debouncedCustomerSearch]);
+
+  const filteredProducts = React.useMemo(() => {
+    if (!debouncedProductSearch) return [];
+    return (productsData?.data ?? [])
+      .filter((p: any) => !p.parentProductId)
+      .slice(0, 10);
+  }, [productsData, debouncedProductSearch]);
+
+  // Reset on open
   React.useEffect(() => {
     if (isOpen) {
-      setForm({ ...EMPTY_FORM, expiryDate: defaultExpiryDate() });
-      setItems([newLineItem()]);
-      setErrors({});
+      setSelectedCustomer(null);
       setCustomerSearch("");
+      setDebouncedCustomerSearch("");
       setProductSearch("");
+      setDebouncedProductSearch("");
+      setLineItems([]);
+      setIssueDate(new Date().toISOString().slice(0, 10));
+      setExpiryDate(defaultExpiryDate());
+      setNotes("");
+      setErrors({});
     }
   }, [isOpen]);
 
-  function handleProductSelect(itemKey: string, productId: string) {
-    const product = products.find((p: { id: string; name: string; price?: number }) => p.id === productId);
-    setItems((prev) =>
-      prev.map((it) =>
-        it.key === itemKey
-          ? {
-              ...it,
-              productId,
-              description: product?.name ?? it.description,
-              unitPrice: product?.price != null ? String(product.price) : it.unitPrice,
-            }
-          : it,
-      ),
-    );
-  }
+  // Add line item (from search or barcode)
+  const addLineItem = (product: any) => {
+    if (lineItems.some((li) => li.productId === product.id)) {
+      setLineItems((prev) =>
+        prev.map((li) => li.productId === product.id ? { ...li, qty: li.qty + 1 } : li),
+      );
+      setProductSearch("");
+      setDebouncedProductSearch("");
+      setTimeout(() => productSearchRef.current?.focus(), 50);
+      return;
+    }
+    const upb: number | undefined = product.unitsPerBox ? Number(product.unitsPerBox) : undefined;
+    const listPrice = Number(product.pricePerUnit ?? 0);
+    const customerTier = selectedCustomer?.pricingTier ?? 1;
+    const tierOverride = cpMap.get(product.id);
+    const effectiveTier = tierOverride ?? customerTier;
+    const tierPrice = getTierPrice(product, effectiveTier);
+    const priceType = effectiveTier !== 1 ? 'SPECIAL' as const : 'STANDARD' as const;
+    setLineItems((prev) => [
+      ...prev,
+      {
+        tempId: product.id + "-" + Date.now(),
+        productId: product.id,
+        productName: product.name,
+        unit: product.unit ?? "each",
+        listPrice,
+        tierPrice,
+        unitPrice: tierPrice,
+        priceType,
+        qty: upb ? upb : 1,
+        unitsPerBox: upb,
+        boxes: upb ? 1 : undefined,
+        pieces: upb ? 0 : undefined,
+      },
+    ]);
+    setProductSearch("");
+    setDebouncedProductSearch("");
+    setErrors((e) => { const { items: _, ...rest } = e; return rest; });
+    setTimeout(() => productSearchRef.current?.focus(), 50);
+  };
 
-  function updateItem(key: string, field: keyof LineItem, value: string) {
-    setItems((prev) => prev.map((it) => (it.key === key ? { ...it, [field]: value } : it)));
-  }
+  // Barcode / Enter handler
+  const handleProductSearchEnter = async () => {
+    const code = productSearch.trim();
+    if (!code) return;
+    try {
+      const product = await apiClient.get(`/products/barcode/${encodeURIComponent(code)}`).then((r) => r.data);
+      addLineItem(product);
+      return;
+    } catch { /* not found by barcode */ }
+    try {
+      const res = await apiClient.get("/products", { params: { search: code, limit: 10, isActive: true } }).then((r) => r.data);
+      const matches: any[] = res?.data ?? [];
+      const skuMatch = matches.find((p: any) => (p.sku ?? "").toLowerCase() === code.toLowerCase());
+      const toAdd = skuMatch ?? matches[0];
+      if (toAdd) { addLineItem(toAdd); return; }
+    } catch { /* ignore */ }
+    toast({ title: "Product not found", description: `No product matches "${code}"`, variant: "error" });
+    setProductSearch("");
+  };
 
-  function addItem() {
-    setItems((prev) => [...prev, newLineItem()]);
-  }
+  const removeLineItem = (tempId: string) => setLineItems((prev) => prev.filter((li) => li.tempId !== tempId));
 
-  function removeItem(key: string) {
-    setItems((prev) => prev.filter((it) => it.key !== key));
-  }
+  const setBoxes = (tempId: string, value: number) => {
+    setLineItems((prev) => prev.map((li) => {
+      if (li.tempId !== tempId) return li;
+      const boxes = Math.max(0, isNaN(value) ? 0 : value);
+      const pieces = li.pieces ?? 0;
+      const qty = boxes * (li.unitsPerBox ?? 1) + pieces;
+      return { ...li, boxes, qty };
+    }));
+  };
 
-  const subtotal = items.reduce((sum, it) => {
-    const qty = parseFloat(it.qty) || 0;
-    const up = parseFloat(it.unitPrice) || 0;
-    return sum + qty * up;
-  }, 0);
+  const setPieces = (tempId: string, value: number) => {
+    setLineItems((prev) => prev.map((li) => {
+      if (li.tempId !== tempId) return li;
+      const pieces = Math.max(0, isNaN(value) ? 0 : value);
+      const boxes = li.boxes ?? 0;
+      const qty = boxes * (li.unitsPerBox ?? 1) + pieces;
+      return { ...li, pieces, qty };
+    }));
+  };
 
-  function validate() {
-    const e: Record<string, string> = {};
-    if (!form.customerId) e.customerId = "Customer is required.";
-    if (!form.issueDate) e.issueDate = "Issue date is required.";
-    if (!form.expiryDate) e.expiryDate = "Expiry date is required.";
-    if (items.length === 0) e.items = "Add at least one line item.";
-    items.forEach((it, idx) => {
-      if (!it.description.trim()) e[`item_${idx}_desc`] = "Description required.";
-      const qty = parseFloat(it.qty);
-      if (isNaN(qty) || qty <= 0) e[`item_${idx}_qty`] = "Invalid qty.";
-      const up = parseFloat(it.unitPrice);
-      if (isNaN(up) || up < 0) e[`item_${idx}_up`] = "Invalid price.";
-    });
-    return e;
-  }
+  const setQty = (tempId: string, value: number) => {
+    setLineItems((prev) => prev.map((li) =>
+      li.tempId === tempId ? { ...li, qty: Math.max(0, value) } : li,
+    ));
+  };
+
+  const subtotal = lineItems.reduce((sum, li) => sum + li.unitPrice * li.qty, 0);
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const errs = validate();
+    const errs: Record<string, string> = {};
+    if (!selectedCustomer) errs.customer = "Select a customer.";
+    if (!issueDate) errs.issueDate = "Issue date is required.";
+    if (!expiryDate) errs.expiryDate = "Expiry date is required.";
+    if (lineItems.length === 0) errs.items = "Add at least one product.";
     if (Object.keys(errs).length > 0) { setErrors(errs); return; }
     setErrors({});
 
     const dto = {
-      customerId: form.customerId,
-      issueDate: form.issueDate,
-      expiryDate: form.expiryDate,
-      notes: form.notes.trim() || undefined,
-      items: items.map(
-        (it): CreateEstimateItem => ({
-          productId: it.productId || undefined,
-          description: it.description.trim(),
-          qty: parseFloat(it.qty),
-          unitPrice: parseFloat(it.unitPrice),
-        }),
-      ),
+      customerId: selectedCustomer!.id,
+      expiresAt: expiryDate,
+      notes: notes.trim() || undefined,
+      items: lineItems.map((li) => ({
+        productId: li.productId,
+        description: li.productName,
+        qty: li.qty,
+        ...(li.unitsPerBox ? { boxes: li.boxes ?? 0, pieces: li.pieces ?? 0 } : {}),
+        ...(li.priceType === 'DISCOUNTED' && li.discountedPrice != null ? { unitPrice: li.discountedPrice } : {}),
+      })),
     };
 
-    createEstimate.mutate(dto, {
+    createEstimate.mutate(dto as any, {
       onSuccess: (est) => {
         toast({ title: "Estimate created", description: est.estimateNumber, variant: "success" });
         onClose();
@@ -262,18 +345,12 @@ function CreateEstimateModal({
     });
   }
 
-  const inputCls = (err?: string) =>
-    cn(
-      "h-10 w-full rounded-lg border bg-white px-3 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500",
-      err ? "border-danger" : "border-surface-border",
-    );
-
   return (
     <Modal
       open={isOpen}
       onClose={onClose}
       title="New Estimate"
-      description="Create an estimate for a customer with line items."
+      description="Create an estimate for a customer."
       footer={
         <>
           <Button variant="secondary" onClick={onClose} disabled={createEstimate.isPending}>
@@ -286,30 +363,56 @@ function CreateEstimateModal({
       }
     >
       <form id="create-estimate-form" onSubmit={handleSubmit} noValidate className="space-y-5">
-        {/* Customer */}
+        {/* Customer search */}
         <div>
           <label className="mb-1.5 block text-sm font-medium text-navy/80">Customer</label>
-          <div className="relative mb-1">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-navy/30" />
-            <input
-              type="search"
-              placeholder="Search customers…"
-              value={customerSearch}
-              onChange={(e) => setCustomerSearch(e.target.value)}
-              className="h-10 w-full rounded-lg border border-surface-border bg-white pl-9 pr-3 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-            />
-          </div>
-          <select
-            value={form.customerId}
-            onChange={(e) => setForm((f) => ({ ...f, customerId: e.target.value }))}
-            className={inputCls(errors.customerId)}
-          >
-            <option value="">Select customer…</option>
-            {customers.map((c: { id: string; businessName: string }) => (
-              <option key={c.id} value={c.id}>{c.businessName}</option>
-            ))}
-          </select>
-          {errors.customerId && <p className="mt-1 text-xs text-danger">{errors.customerId}</p>}
+          {selectedCustomer ? (
+            <div className="flex items-center justify-between rounded-lg border border-surface-border bg-surface-raised px-3 py-2">
+              <div>
+                <span className="text-sm font-medium text-navy">{selectedCustomer.businessName}</span>
+                {selectedCustomer.contactName && (
+                  <span className="ml-2 text-xs text-navy/50">{selectedCustomer.contactName}</span>
+                )}
+                <span className="ml-2 text-xs text-navy/40">Tier {selectedCustomer.pricingTier ?? 1}</span>
+              </div>
+              <button type="button" onClick={() => { setSelectedCustomer(null); setLineItems([]); }} className="text-navy/40 hover:text-navy">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          ) : (
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-navy/30" />
+              <input
+                type="text"
+                placeholder="Search customers…"
+                value={customerSearch}
+                onChange={(e) => setCustomerSearch(e.target.value)}
+                className="h-10 w-full rounded-lg border border-surface-border bg-white pl-9 pr-3 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+              />
+              {filteredCustomers.length > 0 && customerSearch && (
+                <ul className="absolute left-0 right-0 top-full z-10 mt-1 overflow-hidden rounded-lg border border-surface-border bg-white shadow-dropdown">
+                  {filteredCustomers.map((c: any) => (
+                    <li key={c.id}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedCustomer({ id: c.id, businessName: c.businessName, contactName: c.contactName, pricingTier: c.pricingTier });
+                          setCustomerSearch("");
+                          setDebouncedCustomerSearch("");
+                        }}
+                        className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-navy hover:bg-surface-raised"
+                      >
+                        <span className="font-medium">{c.businessName}</span>
+                        {c.contactName && <span className="text-xs text-navy/50">{c.contactName}</span>}
+                        <span className="ml-auto text-xs text-navy/40">Tier {c.pricingTier ?? 1}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+          {errors.customer && <p className="mt-1 text-xs text-danger">{errors.customer}</p>}
         </div>
 
         {/* Dates */}
@@ -318,9 +421,9 @@ function CreateEstimateModal({
             <label className="mb-1.5 block text-sm font-medium text-navy/80">Issue Date</label>
             <input
               type="date"
-              value={form.issueDate}
-              onChange={(e) => setForm((f) => ({ ...f, issueDate: e.target.value }))}
-              className={inputCls(errors.issueDate)}
+              value={issueDate}
+              onChange={(e) => setIssueDate(e.target.value)}
+              className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             />
             {errors.issueDate && <p className="mt-1 text-xs text-danger">{errors.issueDate}</p>}
           </div>
@@ -328,122 +431,136 @@ function CreateEstimateModal({
             <label className="mb-1.5 block text-sm font-medium text-navy/80">Expiry Date</label>
             <input
               type="date"
-              value={form.expiryDate}
-              min={form.issueDate || undefined}
-              onChange={(e) => setForm((f) => ({ ...f, expiryDate: e.target.value }))}
-              className={inputCls(errors.expiryDate)}
+              value={expiryDate}
+              min={issueDate || undefined}
+              onChange={(e) => setExpiryDate(e.target.value)}
+              className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             />
             {errors.expiryDate && <p className="mt-1 text-xs text-danger">{errors.expiryDate}</p>}
           </div>
         </div>
 
-        {/* Line items */}
+        {/* Product search + Line items */}
         <div>
           <div className="mb-2 flex items-center justify-between">
-            <label className="text-sm font-medium text-navy/80">Line Items</label>
-            <div className="relative w-40">
-              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-navy/30" />
+            <label className="text-sm font-medium text-navy/80">Products</label>
+          </div>
+
+          {/* Product search input */}
+          {selectedCustomer && (
+            <div className="relative mb-3">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-navy/30" />
               <input
-                type="search"
-                placeholder="Search products…"
+                ref={productSearchRef}
+                type="text"
+                placeholder="Search by name, SKU, or scan barcode…"
                 value={productSearch}
                 onChange={(e) => setProductSearch(e.target.value)}
-                className="h-8 w-full rounded border border-surface-border bg-white pl-7 pr-2 text-xs text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleProductSearchEnter(); } }}
+                className="h-10 w-full rounded-lg border border-surface-border bg-white pl-9 pr-3 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
               />
+              {filteredProducts.length > 0 && productSearch && (
+                <ul className="absolute left-0 right-0 top-full z-10 mt-1 max-h-48 overflow-y-auto rounded-lg border border-surface-border bg-white shadow-dropdown">
+                  {filteredProducts.map((p: any) => (
+                    <li key={p.id}>
+                      <button
+                        type="button"
+                        onClick={() => addLineItem(p)}
+                        className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-surface-raised"
+                      >
+                        <div>
+                          <span className="font-medium text-navy">{p.name}</span>
+                          {p.sku && <span className="ml-2 font-mono text-xs text-navy/40">{p.sku}</span>}
+                        </div>
+                        <span className="text-xs text-navy/50">{fmt(Number(p.pricePerUnit))}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
-          </div>
+          )}
+
+          {!selectedCustomer && (
+            <p className="mb-3 text-xs text-navy/40">Select a customer first to add products.</p>
+          )}
 
           {errors.items && <p className="mb-2 text-xs text-danger">{errors.items}</p>}
 
-          <div className="space-y-3 rounded-lg border border-surface-border p-3">
-            {items.map((item, idx) => (
-              <div key={item.key} className="grid grid-cols-12 gap-2">
-                {/* Product selector */}
-                <div className="col-span-4">
-                  <select
-                    value={item.productId}
-                    onChange={(e) => handleProductSelect(item.key, e.target.value)}
-                    className="h-9 w-full rounded border border-surface-border bg-white px-2 text-xs text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  >
-                    <option value="">No product</option>
-                    {products.map((p: { id: string; name: string }) => (
-                      <option key={p.id} value={p.id}>{p.name}</option>
-                    ))}
-                  </select>
-                </div>
-                {/* Description */}
-                <div className="col-span-3">
-                  <input
-                    type="text"
-                    placeholder="Description"
-                    value={item.description}
-                    onChange={(e) => updateItem(item.key, "description", e.target.value)}
-                    className={cn(
-                      "h-9 w-full rounded border bg-white px-2 text-xs text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500",
-                      errors[`item_${idx}_desc`] ? "border-danger" : "border-surface-border",
-                    )}
-                  />
-                </div>
-                {/* Qty */}
-                <div className="col-span-2">
-                  <input
-                    type="number"
-                    placeholder="Qty"
-                    min="0.001"
-                    step="any"
-                    value={item.qty}
-                    onChange={(e) => updateItem(item.key, "qty", e.target.value)}
-                    className={cn(
-                      "h-9 w-full rounded border bg-white px-2 text-xs text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500",
-                      errors[`item_${idx}_qty`] ? "border-danger" : "border-surface-border",
-                    )}
-                  />
-                </div>
-                {/* Unit price */}
-                <div className="col-span-2">
-                  <input
-                    type="number"
-                    placeholder="Price"
-                    min="0"
-                    step="0.01"
-                    value={item.unitPrice}
-                    onChange={(e) => updateItem(item.key, "unitPrice", e.target.value)}
-                    className={cn(
-                      "h-9 w-full rounded border bg-white px-2 text-xs text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500",
-                      errors[`item_${idx}_up`] ? "border-danger" : "border-surface-border",
-                    )}
-                  />
-                </div>
-                {/* Remove */}
-                <div className="col-span-1 flex items-center justify-center">
-                  <button
-                    type="button"
-                    onClick={() => removeItem(item.key)}
-                    disabled={items.length === 1}
-                    className="rounded p-1 text-navy/30 hover:text-danger disabled:opacity-30 transition-colors"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
+          {/* Line items list */}
+          {lineItems.length > 0 && (
+            <div className="space-y-2 rounded-lg border border-surface-border p-3">
+              {lineItems.map((li) => (
+                <div key={li.tempId} className="flex items-center gap-2 rounded-lg bg-surface-raised p-2">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-navy truncate">{li.productName}</span>
+                      {li.priceType === 'SPECIAL' && (
+                        <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">TIER</span>
+                      )}
+                    </div>
+                    <div className="mt-0.5 flex items-center gap-2 text-xs text-navy/50">
+                      <span>{fmt(li.unitPrice)}/{li.unit}</span>
+                      {li.priceType === 'SPECIAL' && (
+                        <span className="line-through">{fmt(li.listPrice)}</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Box/Pieces or Qty */}
+                  {li.unitsPerBox ? (
+                    <div className="flex items-center gap-1">
+                      <input
+                        type="number"
+                        min="0"
+                        value={li.boxes ?? 0}
+                        onChange={(e) => setBoxes(li.tempId, Number(e.target.value))}
+                        className="h-8 w-14 rounded border border-surface-border bg-white px-1.5 text-center text-xs text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                      />
+                      <span className="text-[10px] text-navy/40">box</span>
+                      <input
+                        type="number"
+                        min="0"
+                        value={li.pieces ?? 0}
+                        onChange={(e) => setPieces(li.tempId, Number(e.target.value))}
+                        className="h-8 w-14 rounded border border-surface-border bg-white px-1.5 text-center text-xs text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                      />
+                      <span className="text-[10px] text-navy/40">pcs</span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1">
+                      <button type="button" onClick={() => setQty(li.tempId, li.qty - 1)} className="h-7 w-7 rounded border border-surface-border bg-white text-navy/50 hover:bg-surface-raised">-</button>
+                      <input
+                        type="number"
+                        min="0"
+                        value={li.qty}
+                        onChange={(e) => setQty(li.tempId, Number(e.target.value))}
+                        className="h-8 w-14 rounded border border-surface-border bg-white px-1.5 text-center text-xs text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                      />
+                      <button type="button" onClick={() => setQty(li.tempId, li.qty + 1)} className="h-7 w-7 rounded border border-surface-border bg-white text-navy/50 hover:bg-surface-raised">+</button>
+                    </div>
+                  )}
+
+                  {/* Subtotal */}
+                  <span className="w-20 text-right text-sm font-semibold text-navy">{fmt(li.unitPrice * li.qty)}</span>
+
+                  {/* Remove */}
+                  <button type="button" onClick={() => removeLineItem(li.tempId)} className="rounded p-1 text-navy/30 hover:text-danger transition-colors">
+                    <Trash2 className="h-4 w-4" />
                   </button>
                 </div>
-              </div>
-            ))}
-
-            <button
-              type="button"
-              onClick={addItem}
-              className="mt-1 flex items-center gap-1 text-xs text-brand-500 hover:text-brand-600 transition-colors"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              Add Line Item
-            </button>
-          </div>
+              ))}
+            </div>
+          )}
 
           {/* Subtotal */}
-          <div className="mt-2 flex justify-end">
-            <p className="text-sm text-navy/60">
-              Subtotal: <span className="font-semibold text-navy">{fmt(subtotal)}</span>
-            </p>
-          </div>
+          {lineItems.length > 0 && (
+            <div className="mt-2 flex justify-end">
+              <p className="text-sm text-navy/60">
+                Subtotal: <span className="font-semibold text-navy">{fmt(subtotal)}</span>
+              </p>
+            </div>
+          )}
         </div>
 
         {/* Notes */}
@@ -454,8 +571,8 @@ function CreateEstimateModal({
           <textarea
             rows={2}
             placeholder="Additional notes…"
-            value={form.notes}
-            onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
             className="w-full resize-none rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
           />
         </div>

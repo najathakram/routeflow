@@ -1,4 +1,4 @@
-import { IsBoolean, IsEnum, IsOptional, IsString } from "class-validator";
+import { IsBoolean, IsEnum, IsInt, IsOptional, IsString, Max, Min } from "class-validator";
 import { FulfillPath } from "@prisma/client";
 
 export class UpdateCustomerDto {
@@ -20,4 +20,5 @@ export class UpdateCustomerDto {
   @IsOptional() @IsBoolean() isTaxExempt?: boolean;
   @IsOptional() creditLimit?: number;
   @IsOptional() @IsString() currency?: string;
+  @IsOptional() @IsInt() @Min(1) @Max(5) pricingTier?: number;
 }

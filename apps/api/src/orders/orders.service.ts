@@ -26,6 +26,7 @@ import { ChangeOrderStatusDto } from "./dto/change-order-status.dto";
 import { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
 import { CompleteStopDto } from "./dto/complete-stop.dto";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
+import { getTierPrice } from "../utils/pricing";
 import { ConfigService } from "@nestjs/config";
 import { NotificationsService } from "../notifications/notifications.service";
 import { InvoicesService } from "../invoices/invoices.service";
@@ -169,6 +170,12 @@ export class OrdersService {
       throw new BadRequestException("At least one item is required");
     }
 
+    // Load customer's pricing tier
+    const customerRecord = await this.prisma
+      .forTenant()
+      .customer.findUnique({ where: { id: customerId }, select: { pricingTier: true } });
+    const defaultTier = customerRecord?.pricingTier ?? 1;
+
     const products =
       items.length > 0
         ? await this.prisma.forTenant().product.findMany({
@@ -178,7 +185,7 @@ export class OrdersService {
 
     const productMap = new Map(products.map((p) => [p.id, p]));
 
-    // Load any permanent customer-specific prices for this order
+    // Load any per-product tier overrides for this customer
     const customerPrices =
       items.length > 0
         ? await this.prisma.forTenant().customerPrice.findMany({
@@ -188,7 +195,7 @@ export class OrdersService {
             },
           })
         : [];
-    const cpMap = new Map(customerPrices.map((cp) => [cp.productId, Number(cp.specialPrice)]));
+    const cpMap = new Map(customerPrices.map((cp) => [cp.productId, cp.pricingTier]));
 
     const orderNumber = `ORD-${Date.now()}`;
 
@@ -204,25 +211,27 @@ export class OrdersService {
         qty = (item.boxes ?? 0) * unitsPerBox + (item.pieces ?? 0);
       }
 
-      // Price priority: operator one-time override (DISCOUNTED) > permanent special price (SPECIAL) > list price (STANDARD)
-      const listPrice = Number(product.pricePerUnit);
-      const specialPrice = cpMap.get(item.productId);
+      // Resolve tier: per-product override > customer default tier
+      const tierForProduct = cpMap.get(item.productId) ?? defaultTier;
+      const tierPrice = getTierPrice(product, tierForProduct);
+      const listPrice = Number(product.pricePerUnit); // tier 1 = list price
       const overridePrice = item.unitPrice;
 
       let unitPrice: number;
       let priceType: PriceType;
       let originalPrice: number | null = null;
 
+      // Price priority: operator one-time override (DISCOUNTED) > tier-resolved price (SPECIAL if not tier 1) > list price (STANDARD)
       if (overridePrice != null && overridePrice < listPrice) {
         unitPrice = overridePrice;
         priceType = PriceType.DISCOUNTED;
         originalPrice = listPrice;
-      } else if (specialPrice != null) {
-        unitPrice = specialPrice;
+      } else if (tierForProduct !== 1) {
+        unitPrice = tierPrice;
         priceType = PriceType.SPECIAL;
         originalPrice = listPrice;
       } else {
-        unitPrice = listPrice;
+        unitPrice = tierPrice;
         priceType = PriceType.STANDARD;
       }
 

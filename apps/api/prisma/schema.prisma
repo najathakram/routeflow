@@ -426,6 +426,7 @@ model Customer {
   isTaxExempt         Boolean     @default(false)
   creditLimit         Decimal?    @db.Decimal(10, 2)
   currency            String      @default("USD")
+  pricingTier         Int         @default(1)
   createdAt           DateTime    @default(now())
   updatedAt           DateTime    @updatedAt
   tenantId            String?
@@ -514,6 +515,10 @@ model Product {
   sku              String?
   unit             String
   pricePerUnit     Decimal  @db.Decimal(10, 2)
+  priceTier2       Decimal  @default(0) @db.Decimal(10, 2)
+  priceTier3       Decimal  @default(0) @db.Decimal(10, 2)
+  priceTier4       Decimal  @default(0) @db.Decimal(10, 2)
+  priceTier5       Decimal  @default(0) @db.Decimal(10, 2)
   category         String?
   imageKeys        String[] @default([])
   isActive         Boolean  @default(true)
@@ -1382,16 +1387,20 @@ model Estimate {
 }
 
 model EstimateItem {
-  id          String   @id @default(uuid())
-  estimateId  String
-  description String
-  productId   String?
-  qty         Decimal  @db.Decimal(10, 3)
-  unitPrice   Decimal  @db.Decimal(10, 2)
-  subtotal    Decimal  @db.Decimal(10, 2)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  tenantId    String?
+  id            String    @id @default(uuid())
+  estimateId    String
+  description   String
+  productId     String?
+  qty           Decimal   @db.Decimal(10, 3)
+  unitPrice     Decimal   @db.Decimal(10, 2)
+  subtotal      Decimal   @db.Decimal(10, 2)
+  priceType     PriceType @default(STANDARD)
+  originalPrice Decimal?  @db.Decimal(10, 2)
+  boxes         Int?
+  pieces        Int?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  tenantId      String?
 
   estimate Estimate @relation(fields: [estimateId], references: [id], onDelete: Cascade)
   tenant   Tenant?  @relation(fields: [tenantId], references: [id])
@@ -1636,7 +1645,7 @@ model CustomerPrice {
   id           String   @id @default(uuid())
   customerId   String
   productId    String
-  specialPrice Decimal  @db.Decimal(10,2)
+  pricingTier  Int
   notes        String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt

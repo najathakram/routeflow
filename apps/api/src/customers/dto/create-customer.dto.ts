@@ -2,8 +2,11 @@ import {
   IsBoolean,
   IsEmail,
   IsEnum,
+  IsInt,
   IsOptional,
   IsString,
+  Max,
+  Min,
   MinLength,
   ValidateNested,
 } from "class-validator";
@@ -33,4 +36,5 @@ export class CreateCustomerDto {
   @IsOptional() @IsBoolean() isTaxExempt?: boolean;
   @IsOptional() creditLimit?: number;
   @IsOptional() @IsString() currency?: string;
+  @IsOptional() @IsInt() @Min(1) @Max(5) pricingTier?: number;
 }

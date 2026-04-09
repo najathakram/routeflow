@@ -14,6 +14,10 @@ export interface EstimateItem {
   unitPrice: number;
   subtotal?: number;
   total?: number;
+  priceType?: 'STANDARD' | 'SPECIAL' | 'DISCOUNTED';
+  originalPrice?: number;
+  boxes?: number;
+  pieces?: number;
 }
 
 export interface Estimate {
@@ -69,7 +73,9 @@ export interface CreateEstimateItem {
   productId?: string;
   description: string;
   qty: number;
-  unitPrice: number;
+  unitPrice?: number;
+  boxes?: number;
+  pieces?: number;
 }
 
 export interface CreateEstimateDto {
