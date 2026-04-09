@@ -35,9 +35,8 @@ export interface AddressAutocompleteProps {
 
 // ─── Photon (OpenStreetMap) parser ────────────────────────────────────────────
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function parseFeature(f: any): Suggestion | null {
-  const p = f.properties ?? {};
+function parseFeature(f: Record<string, unknown>): Suggestion | null {
+  const p = (f.properties as Record<string, string | undefined>) ?? {};
   const streetLine = p.housenumber
     ? `${p.housenumber} ${p.street ?? p.name ?? ""}`.trim()
     : (p.street ?? p.name ?? "").trim();
@@ -55,8 +54,9 @@ function parseFeature(f: any): Suggestion | null {
   // Show country for non-US results
   if (p.countrycode && p.countrycode !== "US") displayParts.push(p.country ?? p.countrycode);
 
+  const geometry = f.geometry as { coordinates?: number[] } | undefined;
   return {
-    id: `${(f.geometry?.coordinates ?? []).join(",")}-${streetLine}`,
+    id: `${(geometry?.coordinates ?? []).join(",")}-${streetLine}`,
     display: displayParts.join(", "),
     street: streetLine,
     city,
@@ -106,7 +106,7 @@ export function AddressAutocomplete({
       const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=7&lang=en`;
       const res = await fetch(url, { signal: ctrl.signal });
       if (!res.ok) throw new Error("fetch error");
-      const data = await res.json();
+      const data = (await res.json()) as { features?: Record<string, unknown>[] };
 
       const seen = new Set<string>();
       const parsed: Suggestion[] = [];

@@ -465,7 +465,7 @@ function AdjustStockModal({
               ))}
             </select>
             {productSearch && filteredProducts.length === 0 && (
-              <p className="mt-1 text-xs text-navy/40">No products match "{productSearch}"</p>
+              <p className="mt-1 text-xs text-navy/40">No products match &quot;{productSearch}&quot;</p>
             )}
             {selectedProduct && (
               <p className="mt-1 text-xs text-navy/50">

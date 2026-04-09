@@ -221,7 +221,7 @@ function SendInvoiceModal({
             onClick={onClose}
             className="w-full rounded-lg px-4 py-2 text-sm text-navy/50 hover:text-navy hover:bg-surface-raised transition-colors"
           >
-            Skip — I'll send it later
+            Skip — I&apos;ll send it later
           </button>
         </div>
       </div>

@@ -1072,7 +1072,7 @@ function AIIntegrationsTab() {
             <ol className="ml-4 list-decimal space-y-1 text-brand-600">
               <li>Go to <strong>console.anthropic.com</strong> and sign in (or create a free account)</li>
               <li>Navigate to <strong>Settings → API Keys</strong></li>
-              <li>Click <strong>Create Key</strong>, name it "RouteFlow", and copy it</li>
+              <li>Click <strong>Create Key</strong>, name it &quot;RouteFlow&quot;, and copy it</li>
               <li>Paste the key above and click Save</li>
             </ol>
           </div>
