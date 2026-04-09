@@ -22,6 +22,7 @@ export class EstimatesService {
       .customer.findUnique({ where: { id: dto.customerId } });
     if (!customer) throw new NotFoundException("Customer not found");
 
+    const tenantId = this.prisma.getTenantId();
     let subtotal = 0;
     const itemsData = dto.items.map((i: any) => {
       const sub = i.qty * i.unitPrice;
@@ -32,6 +33,7 @@ export class EstimatesService {
         qty: i.qty,
         unitPrice: i.unitPrice,
         subtotal: sub,
+        tenantId, // nested creates bypass forTenant() extension
       };
     });
     const discount = dto.discount ?? 0;
@@ -164,6 +166,7 @@ export class EstimatesService {
             discount: 0,
             taxRate: 0,
             subtotal: i.subtotal,
+            tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
           })),
         },
       },

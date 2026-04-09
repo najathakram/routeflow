@@ -87,6 +87,7 @@ export class ReturnsService {
             qty: i.qty,
             reason: i.reason,
             restock: i.restock ?? true,
+            tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
           })),
         },
       },

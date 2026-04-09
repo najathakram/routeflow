@@ -73,6 +73,7 @@ export class RecurringInvoicesService {
             unitPrice: i.unitPrice,
             discount: i.discount ?? 0,
             taxRate: i.taxRate ?? 0,
+            tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
           })),
         },
       },
@@ -127,6 +128,7 @@ export class RecurringInvoicesService {
               unitPrice: i.unitPrice,
               discount: i.discount ?? 0,
               taxRate: i.taxRate ?? 0,
+              tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
             })),
           },
         }),

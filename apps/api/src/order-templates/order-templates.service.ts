@@ -143,6 +143,7 @@ export class OrderTemplatesService {
             productId: item.productId,
             qty: item.qty,
             notes: item.notes,
+            tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
           })),
         },
       },
@@ -271,6 +272,7 @@ export class OrderTemplatesService {
     });
     const productMap = new Map(products.map((p) => [p.id, p]));
 
+    const tenantId = this.prisma.getTenantId();
     let subtotal = 0;
     const lineItemsData = template.items.map((item) => {
       const product = productMap.get(item.productId);
@@ -284,6 +286,7 @@ export class OrderTemplatesService {
         unitPrice,
         subtotal: itemSubtotal,
         notes: item.notes ?? undefined,
+        tenantId, // nested creates bypass forTenant() extension
       };
     });
 
