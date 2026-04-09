@@ -39,7 +39,6 @@ export class InvoicesController {
   ) {}
 
   @Post()
-  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   create(@Body() dto: CreateInvoiceDto) {
     return this.invoicesService.create(dto);
   }
@@ -160,7 +159,6 @@ export class InvoicesController {
   }
 
   @Post(":id/payments")
-  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   recordPayment(@Param("id") id: string, @Body() dto: RecordInvoicePaymentDto) {
     return this.invoicesService.recordPayment(id, dto);
   }

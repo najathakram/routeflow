@@ -840,11 +840,13 @@ export class InvoicesService {
           );
       }
 
-      // Auto-generate payment number
+      // Auto-generate payment number — use tenantId as the counter row key so
+      // each tenant has its own independent sequence (avoids @unique collisions).
+      const counterKey = this.prisma.getTenantId() ?? "singleton";
       const counter = await tx.paymentCounter.upsert({
-        where: { id: "singleton" },
+        where: { id: counterKey },
         update: { next: { increment: 1 } },
-        create: { id: "singleton", next: 2 },
+        create: { id: counterKey, next: 2 },
       });
       const paymentNumber = `PAY-${String(counter.next - 1).padStart(4, "0")}`;
 
@@ -1064,11 +1066,12 @@ export class InvoicesService {
     const status = dto.status ?? "PAID";
 
     return this.prisma.tenantTransaction(async (tx) => {
-      // Generate a block of sequential payment numbers
+      // Generate a block of sequential payment numbers (tenant-scoped counter)
+      const counterKey = this.prisma.getTenantId() ?? "singleton";
       const counter = await tx.paymentCounter.upsert({
-        where: { id: "singleton" },
+        where: { id: counterKey },
         update: { next: { increment: dto.allocations.length } },
-        create: { id: "singleton", next: dto.allocations.length + 1 },
+        create: { id: counterKey, next: dto.allocations.length + 1 },
       });
 
       const payments: any[] = [];

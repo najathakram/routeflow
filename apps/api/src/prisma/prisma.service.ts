@@ -97,10 +97,13 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
                     : { ...args.data, tenantId };
                   args = { ...args, data };
                 } else if (method === "upsert") {
+                  // Only inject tenantId into `create` — the `where` clause must
+                  // use declared unique fields only. Adding tenantId to `where`
+                  // when it is not part of a @@unique constraint causes Prisma to
+                  // throw a PrismaClientValidationError at runtime.
                   args = {
                     ...args,
                     create: { ...args.create, tenantId },
-                    where: { ...args.where, tenantId },
                   };
                 }
                 return fn.call(modelTarget, args);
