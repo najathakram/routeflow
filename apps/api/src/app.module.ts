@@ -3,7 +3,7 @@ import { APP_GUARD } from "@nestjs/core";
 import { ConfigModule, ConfigService } from "@nestjs/config";
 import { BullModule } from "@nestjs/bull";
 import { ScheduleModule } from "@nestjs/schedule";
-import { ThrottlerModule, ThrottlerGuard, ThrottlerStorage } from "@nestjs/throttler";
+import { ThrottlerModule, ThrottlerGuard } from "@nestjs/throttler";
 import { RedisThrottlerStorage } from "./common/redis-throttler.storage";
 
 import { configuration } from "./config/configuration";
@@ -67,7 +67,16 @@ import { AppService } from "./app.service";
     TenantsModule,
 
     // ─── Rate limiting (100 req / 60 s per IP, Redis-backed across all instances)
-    ThrottlerModule.forRoot([{ ttl: 60_000, limit: 100 }]),
+    // forRootAsync with storage option is required — forRoot([...]) (array format)
+    // always creates a new in-memory ThrottlerStorageService(), ignoring any
+    // custom storage override. Only the object format honours options.storage.
+    ThrottlerModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        throttlers: [{ ttl: 60_000, limit: 100 }],
+        storage: new RedisThrottlerStorage(config),
+      }),
+    }),
 
     // ─── Redis queue ──────────────────────────────────────────────────────────
     BullModule.forRootAsync({
@@ -131,10 +140,6 @@ import { AppService } from "./app.service";
   controllers: [AppController],
   providers: [
     AppService,
-    // Redis-backed throttler storage — shared across all Railway instances.
-    // Without this, each instance has its own in-memory counter bucket and
-    // rate limits can never be reliably enforced in a multi-instance deploy.
-    { provide: ThrottlerStorage, useClass: RedisThrottlerStorage },
     // Global throttle: 100 req / 60 s per IP on every endpoint
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     // Block SUSPENDED / CANCELLED tenants from making any API calls.
