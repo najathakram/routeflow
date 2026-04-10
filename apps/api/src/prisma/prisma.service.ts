@@ -69,6 +69,9 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       "aggregate",
       "groupBy",
     ]);
+    // findUnique can't have tenantId injected into `where` (only @id/@@unique
+    // fields allowed), so we post-filter the result instead.
+    const POST_FILTER_METHODS = new Set(["findUnique"]);
 
     return new Proxy(rawTx, {
       get(target, modelName) {
@@ -117,6 +120,16 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
               };
             }
 
+            if (POST_FILTER_METHODS.has(method)) {
+              return async (args: any = {}) => {
+                const result = await fn.call(modelTarget, args);
+                if (result && (result as any).tenantId !== undefined && (result as any).tenantId !== tenantId) {
+                  return null;
+                }
+                return result;
+              };
+            }
+
             return fn.bind(modelTarget);
           },
         });
@@ -128,6 +141,16 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     return {
       query: {
         $allModels: {
+          async findUnique({ args, query, model }: any) {
+            // findUnique only allows @id/@@unique fields in `where`, so we
+            // can't inject tenantId there. Instead, run the query and then
+            // verify the returned row belongs to this tenant.
+            const result = await query(args);
+            if (result && (result as any).tenantId !== undefined && (result as any).tenantId !== tenantId) {
+              return null; // treat cross-tenant row as not found
+            }
+            return result;
+          },
           async findMany({ args, query }: any) {
             args.where = { ...args.where, tenantId };
             return query(args);

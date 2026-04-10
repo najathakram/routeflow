@@ -220,6 +220,78 @@ export class InvoicesService {
   }
 
   /**
+   * Fire-and-forget safe variant of createInvoiceFromOrder.
+   * Accepts an explicit tenantId so it doesn't depend on AsyncLocalStorage
+   * (which is lost when the call is not awaited in the request lifecycle).
+   */
+  async createInvoiceFromOrderWithTenant(orderId: string, tenantId: string | null) {
+    // Use raw prisma queries with explicit tenantId filtering
+    const existing = await this.prisma.invoice.findFirst({
+      where: { orderId, ...(tenantId ? { tenantId } : {}) },
+    });
+    if (existing) return existing;
+
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, ...(tenantId ? { tenantId } : {}) },
+      include: {
+        lineItems: {
+          where: { status: { not: "CANCELLED" } },
+          include: { product: { select: { name: true } } },
+        },
+      },
+    });
+    if (!order) throw new NotFoundException("Order not found");
+
+    const itemsData = order.lineItems.map((li: any) => ({
+      description: li.product?.name ?? `Product`,
+      productId: li.productId,
+      qty: Number(li.qty),
+      unitPrice: Number(li.unitPrice),
+      discount: li.originalPrice != null ? Number(li.originalPrice) - Number(li.unitPrice) : 0,
+      originalPrice: li.originalPrice != null ? Number(li.originalPrice) : null,
+      priceType: li.priceType ?? "STANDARD",
+      taxRate: 0,
+      subtotal: Number(li.subtotal),
+      tenantId,
+    }));
+
+    const subtotal = Number(order.subtotal);
+    const taxAmount = Number(order.tax);
+    const total = Number(order.total);
+
+    const dueDate = new Date();
+    dueDate.setDate(dueDate.getDate() + 30);
+
+    const invoiceNumber = await this.generateInvoiceNumber();
+
+    return this.prisma.invoice.create({
+      data: {
+        invoiceNumber,
+        customerId: order.customerId,
+        orderId: order.id,
+        status: InvoiceStatus.DRAFT,
+        subtotal,
+        taxAmount,
+        discount: 0,
+        shippingFee: 0,
+        total,
+        dueDate,
+        issueDate: new Date(),
+        notes: order.orderNumber ? `Order #${order.orderNumber}` : null,
+        items: { create: itemsData },
+        ...(tenantId ? { tenantId } : {}),
+      },
+      include: {
+        customer: {
+          select: { id: true, businessName: true, email: true, phone: true, mobile: true },
+        },
+        items: true,
+        payments: true,
+      },
+    });
+  }
+
+  /**
    * Generate next invoice number. Accepts optional tx client for
    * transactional safety inside $transaction blocks.
    */
@@ -848,14 +920,16 @@ export class InvoicesService {
       }
 
       // Auto-generate payment number — use tenantId as the counter row key so
-      // each tenant has its own independent sequence (avoids @unique collisions).
+      // each tenant has its own independent sequence. Include a short tenant hash
+      // in the payment number to avoid global @unique collisions across tenants.
       const counterKey = this.prisma.getTenantId() ?? "singleton";
+      const tenantShort = counterKey.slice(0, 6).toUpperCase();
       const counter = await tx.paymentCounter.upsert({
         where: { id: counterKey },
         update: { next: { increment: 1 } },
         create: { id: counterKey, next: 2 },
       });
-      const paymentNumber = `PAY-${String(counter.next - 1).padStart(4, "0")}`;
+      const paymentNumber = `PAY-${tenantShort}-${String(counter.next - 1).padStart(4, "0")}`;
 
       await tx.invoicePayment.create({
         data: {

@@ -325,3 +325,1053 @@ All 23 bugs fixed, API rebuilt and running:
 
 | # | Description | Status | Notes |
 |---|-------------|--------|-------|
+
+## QA Run — 2026-04-10T00:51:23.081Z
+
+**API:** http://localhost:3000/api/v1
+**Result:** 0/0 passed (0%) — 0 failed, 0 skipped
+
+| # | Description | Status | Notes |
+|---|-------------|--------|-------|
+
+## QA Run — 2026-04-10T00:53:14.095Z
+
+**API:** http://localhost:3000/api/v1
+**Result:** 0/0 passed (0%) — 0 failed, 0 skipped
+
+| # | Description | Status | Notes |
+|---|-------------|--------|-------|
+
+## QA Run — 2026-04-10T00:53:44.843Z
+
+**API:** http://localhost:3000/api/v1
+**Result:** 0/0 passed (0%) — 0 failed, 0 skipped
+
+| # | Description | Status | Notes |
+|---|-------------|--------|-------|
+
+## QA Run — 2026-04-10T00:54:32.389Z
+
+**API:** http://localhost:3000/api/v1
+**Result:** 0/0 passed (0%) — 0 failed, 0 skipped
+
+| # | Description | Status | Notes |
+|---|-------------|--------|-------|
+
+## QA Run — 2026-04-10T00:54:59.522Z
+
+**API:** http://localhost:3000/api/v1
+**Result:** 0/0 passed (0%) — 0 failed, 0 skipped
+
+| # | Description | Status | Notes |
+|---|-------------|--------|-------|
+
+## QA Run — 2026-04-10T00:55:57.018Z
+
+**API:** http://localhost:3000/api/v1
+**Result:** 0/0 passed (0%) — 0 failed, 0 skipped
+
+| # | Description | Status | Notes |
+|---|-------------|--------|-------|
+
+## QA Run — 2026-04-10T01:00:21.773Z
+
+**API:** http://localhost:3000/api/v1
+**Result:** 143/175 passed (82%) — 31 failed, 1 skipped
+
+| # | Description | Status | Notes |
+|---|-------------|--------|-------|
+| 1 | SUPER_ADMIN login returns role=SUPER_ADMIN, no tenantId | ❌ FAIL | HTTP 429: ThrottlerException: Too Many Requests |
+| 2 | Wrong password returns 401 | ❌ FAIL | Expected 401, got 429 |
+| 3 | SUPER_ADMIN GET /orders without tenant slug returns data (unscoped) | ✅ PASS |  |
+| 4 | SUPER_ADMIN GET /orders with X-Tenant-Slug scopes to that tenant | ✅ PASS |  |
+| 5 | GET /platform-admin/tenants returns list including QA tenant | ✅ PASS |  |
+| 6 | POST /platform-admin/tenants created QA tenant (validated in setup) | ✅ PASS |  |
+| 7 | GET /platform-admin/tenants/:id returns tenant details | ✅ PASS |  |
+| 8 | PATCH /platform-admin/tenants/:id/status SUSPENDED → 200 | ✅ PASS |  |
+| 9 | Suspended tenant JWT returns 403 on API calls | ✅ PASS |  |
+| 10 | Reactivate tenant → calls succeed again | ✅ PASS |  |
+| 11 | POST /platform-admin/tenants/:id/extend-trial → 200 | ✅ PASS |  |
+| 12 | POST /platform-admin/tenants/:id/impersonate → JWT with impersonatedBy | ✅ PASS |  |
+| 13 | Impersonation JWT: GET /orders succeeds (read allowed) | ✅ PASS |  |
+| 14 | Impersonation JWT: POST /orders returns 403 (mutations blocked) | ✅ PASS |  |
+| 15 | GET /platform-admin/stats returns numeric stats | ❌ FAIL | Unexpected stats shape: {"tenants":{"total":6,"active":0,"trial":6,"suspended":0 |
+| 16 | GET /platform-admin/audit-logs returns list | ✅ PASS |  |
+| 17 | GET /platform-admin/tenants/:id/billing returns 200 | ✅ PASS |  |
+| 18 | Tenant isolation — setup creates tenant B, A cannot see B data | ❌ FAIL | HTTP 429: ThrottlerException: Too Many Requests |
+| 19 | Tenant A order ID not accessible from tenant B JWT | ❌ FAIL | Expected 404, got 401 |
+| 20 | OPERATOR login returns role=OPERATOR with tenantId | ❌ FAIL | HTTP 429: ThrottlerException: Too Many Requests |
+| 21 | Wrong password returns 401 | ❌ FAIL | Expected 401, got 429 |
+| 22 | POST /auth/refresh with valid refresh token → new access token | ❌ FAIL | HTTP 429: ThrottlerException: Too Many Requests |
+| 23 | Request without JWT returns 401 | ✅ PASS |  |
+| 24 | GET /customers returns list for this tenant | ✅ PASS |  |
+| 25 | POST /customers creates a customer | ✅ PASS |  |
+| 26 | GET /customers/:id returns customer with addresses | ✅ PASS |  |
+| 27 | PATCH /customers/:id updates customer | ✅ PASS |  |
+| 28 | POST /customers/:id/addresses adds address | ✅ PASS |  |
+| 30 | GET /products returns product list | ✅ PASS |  |
+| 31 | POST /products creates product with tier prices | ✅ PASS |  |
+| 32 | PATCH /products/:id updates single tier price | ✅ PASS |  |
+| 33 | GET /inventory/suppliers returns list | ✅ PASS |  |
+| 34 | POST /inventory/suppliers creates supplier | ✅ PASS |  |
+| 35 | GET /orders returns all tenant orders | ✅ PASS |  |
+| 36 | POST /orders creates order with calculated totals | ✅ PASS |  |
+| 37 | GET /orders/:id returns order with lineItems | ✅ PASS |  |
+| 38 | PATCH /orders/:id/status CONFIRMED → 200 | ✅ PASS |  |
+| 39 | PATCH /orders/:id/status DELIVERED → 200 | ✅ PASS |  |
+| 40 | Delivering order creates auto-invoice | ❌ FAIL | No invoices found after deliveries |
+| 41 | GET /routes returns all routes | ✅ PASS |  |
+| 42 | POST /routes creates route with stops | ✅ PASS |  |
+| 43 | POST /route-runs creates run with status SCHEDULED | ❌ FAIL | HTTP 409: This route already has an active run. Complete or cancel it before dis |
+| 44 | GET /route-runs returns all runs | ✅ PASS |  |
+| 45 | PATCH /route-runs/:id/status IN_PROGRESS → 200 | ❌ FAIL | HTTP 409: This route already has an active run. Complete or cancel it before dis |
+| 46 | GET /invoices returns all invoices | ✅ PASS |  |
+| 47 | POST /invoices creates manual invoice | ✅ PASS |  |
+| 48 | PATCH /invoices/:id/status SENT → 200 | ❌ FAIL | HTTP 404: Cannot PATCH /api/v1/invoices/16659e0c-23b6-4ea9-a161-d0189a66fb66/sta |
+| 49 | PATCH /invoices/:id/status PAID → 200 | ❌ FAIL | HTTP 404: Cannot PATCH /api/v1/invoices/16659e0c-23b6-4ea9-a161-d0189a66fb66/sta |
+| 50 | POST /invoices/:id/send sends email (queued) | ✅ PASS |  |
+| 51 | POST /credit-notes creates credit note | ✅ PASS |  |
+| 52 | GET /credit-notes returns list | ✅ PASS |  |
+| 53 | PATCH /credit-notes/:id/status APPLIED → 200 | ❌ FAIL | HTTP 404: Cannot PATCH /api/v1/credit-notes/d5a059bc-0b73-4ae5-9417-e22c680fb78c |
+| 54 | GET /returns returns all returns | ✅ PASS |  |
+| 55 | PATCH /returns/:id/status APPROVED → 200 | ❌ FAIL | HTTP 404: Cannot PATCH /api/v1/returns/a0948034-4c6a-418e-a9df-372ea32035a0/stat |
+| 56 | PATCH /returns/:id/status REJECTED → 200 | ❌ FAIL | HTTP 404: Cannot PATCH /api/v1/returns/d6944849-1baf-4fe4-9a23-6e3d0b0ae9a8/stat |
+| 57 | POST /estimates creates estimate with tier-resolved product pricing | ✅ PASS |  |
+| 58 | POST /estimates/:id/send → status SENT | ✅ PASS |  |
+| 59 | POST /estimates/:id/accept → status ACCEPTED | ✅ PASS |  |
+| 60 | POST /estimates/:id/convert → invoice created from estimate | ✅ PASS |  |
+| 61 | POST /recurring-invoices creates recurring invoice | ✅ PASS |  |
+| 62 | POST /recurring-invoices/:id/run → invoice generated immediately | ✅ PASS |  |
+| 63 | GET /recurring-invoices returns list | ✅ PASS |  |
+| 64 | POST /order-templates creates standing order | ✅ PASS |  |
+| 65 | POST /order-templates/:id/generate → order created | ✅ PASS |  |
+| 66 | GET /order-templates returns list | ✅ PASS |  |
+| 67 | GET /system-config/all returns config keys | ❌ FAIL | HTTP 404: Cannot GET /api/v1/system-config/all |
+| 68 | PATCH /system-config updates a config key | ❌ FAIL | HTTP 404: Cannot PATCH /api/v1/system-config |
+| 69 | GET /analytics returns revenue and order counts | ❌ FAIL | Expected 200, got 404 |
+| 70 | DRIVER login returns role=DRIVER | ❌ FAIL | HTTP 429: ThrottlerException: Too Many Requests |
+| 71 | DRIVER GET /customers returns 403 (operator-only) | ❌ FAIL | Expected 403, got 200 |
+| 72 | DRIVER POST /orders returns 403 | ✅ PASS |  |
+| 73 | GET /route-runs returns only runs assigned to this driver | ✅ PASS |  |
+| 74 | DRIVER cannot GET route run assigned to another driver | ❌ FAIL | HTTP 409: This route already has an active run. Complete or cancel it before dis |
+| 75 | Driver starts run → status IN_PROGRESS | ✅ PASS |  |
+| 76 | GET /route-runs/:id/stops returns stop list with customer info | ✅ PASS |  |
+| 77 | PATCH stop status ARRIVED → 200 | ✅ PASS |  |
+| 78 | POST complete stop with full delivery → order DELIVERED | ❌ FAIL | HTTP 400: property signature should not exist; deliveries.0.property lineItemId  |
+| 79 | POST complete stop with partial delivery → partial qty recorded | ❌ FAIL | HTTP 400: property orderId should not exist; property sequence should not exist |
+| 80 | DAMAGED delivery flag | ⏭ SKIP | Covered by partial delivery test — damage status is a delivery item status varia |
+| 80 | POST complete stop marking item DAMAGED → damage recorded | ✅ PASS |  |
+| 81 | POST /route-runs/:id/status COMPLETED after all stops done | ✅ PASS |  |
+| 82 | GET /products/barcode/:barcode with valid barcode → 200 product details | ✅ PASS |  |
+| 83 | GET /products/barcode/:barcode with unknown barcode → 404 | ✅ PASS |  |
+| 84 | GET /route-runs/my-stats returns stats for this driver | ✅ PASS |  |
+| 85 | POST /auth/change-password with correct current password → 200 | ✅ PASS |  |
+| 86 | Login with old password after change → 401 | ❌ FAIL | Expected 401, got 429 |
+| 87 | Login with new password → 200 | ❌ FAIL | HTTP 429: ThrottlerException: Too Many Requests |
+| 88 | CUSTOMER login returns role=CUSTOMER | ❌ FAIL | HTTP 429: ThrottlerException: Too Many Requests |
+| 89 | CUSTOMER GET /customers (list all) → 403 | ✅ PASS |  |
+| 90 | CUSTOMER GET /drivers → 403 | ✅ PASS |  |
+| 91 | CUSTOMER GET /routes → 403 | ✅ PASS |  |
+| 92 | CUSTOMER GET /orders returns only own orders | ✅ PASS |  |
+| 93 | CUSTOMER GET /orders/:id for own order → 200 | ✅ PASS |  |
+| 94 | CUSTOMER GET another customer's order → 404 | ✅ PASS |  |
+| 95 | CUSTOMER can cancel own PENDING order → 200 | ✅ PASS |  |
+| 96 | CUSTOMER cannot cancel DELIVERED order → 400 | ✅ PASS |  |
+| 97 | CUSTOMER GET /invoices returns only own invoices | ✅ PASS |  |
+| 98 | CUSTOMER GET another customer's invoice → 404 | ✅ PASS |  |
+| 99 | CUSTOMER POST /returns on own delivered order → 201 | ✅ PASS |  |
+| 100 | CUSTOMER POST /returns on another customer's order → 403 | ✅ PASS |  |
+| 101 | CUSTOMER POST /returns on PENDING order → 400 | ✅ PASS |  |
+| 102 | CUSTOMER GET /returns returns only own returns | ✅ PASS |  |
+| 103 | CUSTOMER GET /order-templates returns only own templates | ✅ PASS |  |
+| 104 | CUSTOMER POST /order-templates creates own standing order → 201 | ✅ PASS |  |
+| 105 | CUSTOMER PATCH another customer's template → 403 | ❌ FAIL | Expected 403/401, got 200 |
+| 106 | CUSTOMER PATCH /customers/me updates own profile → 200 | ✅ PASS |  |
+| 107 | POST /auth/change-password for customer → 200 | ✅ PASS |  |
+| 108 | CUSTOMER GET /credit-notes returns only own credit notes | ✅ PASS |  |
+| 109 | Tenant A operator cannot see tenant B customers | ❌ FAIL | HTTP 401: Unauthorized |
+| 110 | Using tenant A JWT with X-Tenant-Slug: tenant-B → 403 (mismatch) | ❌ FAIL | Expected 403 (tenant mismatch), got 200 |
+| 111 | Call without X-Tenant-Slug and without subdomain → 400/401 | ❌ FAIL | Expected 400/401, got 200 |
+| 112 | Suspended tenant JWT returns 403 (TenantStatusGuard) | ✅ PASS |  |
+| 113 | After reactivation, suspended-tenant JWT succeeds again | ✅ PASS |  |
+| 114 | Rate limit: 101 rapid requests → 429 on 101st | ✅ PASS |  |
+| 115 | Create product with all 5 tier prices | ✅ PASS |  |
+| 116 | GET product returns all tier prices | ✅ PASS |  |
+| 117 | Update single tier price, others unchanged | ✅ PASS |  |
+| 118 | Create product WITHOUT tier prices (defaults) | ✅ PASS |  |
+| 119 | Product list includes tier fields | ✅ PASS |  |
+| 120 | Create customer with pricingTier=3 | ✅ PASS |  |
+| 121 | GET customer returns pricingTier | ✅ PASS |  |
+| 122 | Update pricingTier 3→5 | ✅ PASS |  |
+| 123 | Update pricingTier 5→3 (restore) | ✅ PASS |  |
+| 124 | Create customer without pricingTier defaults to 1 | ✅ PASS |  |
+| 125 | Reject pricingTier=0 → 400 | ✅ PASS |  |
+| 126 | Reject pricingTier=6 → 400 | ✅ PASS |  |
+| 127 | Upsert CustomerPrice — create | ✅ PASS |  |
+| 128 | GET customer prices returns list with product details | ✅ PASS |  |
+| 129 | Upsert same product — update tier to 2 | ✅ PASS |  |
+| 130 | Upsert with notes | ✅ PASS |  |
+| 131 | Delete CustomerPrice | ✅ PASS |  |
+| 132 | GET after delete — CustomerPrice gone | ✅ PASS |  |
+| 133 | Reject pricingTier=0 in CustomerPrice → 400 | ✅ PASS |  |
+| 134 | Reject pricingTier=6 in CustomerPrice → 400 | ✅ PASS |  |
+| 135 | Re-create CustomerPrice after delete (idempotent upsert) | ✅ PASS |  |
+| 136 | Tier-1 customer, no override → STANDARD pricing | ✅ PASS |  |
+| 137 | Tier-3 customer, no override → SPECIAL pricing | ✅ PASS |  |
+| 138 | Tier-1 customer + CustomerPrice override to tier 4 → SPECIAL | ✅ PASS |  |
+| 139 | Operator override lower than list → DISCOUNTED | ✅ PASS |  |
+| 140 | Operator override >= list price → ignored, tier wins | ✅ PASS |  |
+| 141 | Untiered product for tier-3 customer | ✅ PASS |  |
+| 142 | Multi-item order totals from tier-resolved prices | ✅ PASS |  |
+| 143 | Boxes/pieces qty calculation: boxes=2, pieces=3, unitsPerBox=6 → qty=15 | ✅ PASS |  |
+| 144 | Estimate: tier-3 customer + productId → SPECIAL pricing | ✅ PASS |  |
+| 145 | Estimate: tier-1 customer + CustomerPrice override → tier 4 price | ✅ PASS |  |
+| 146 | Estimate: operator override < list → DISCOUNTED | ✅ PASS |  |
+| 147 | Estimate: freeform item (no productId) → STANDARD | ✅ PASS |  |
+| 148 | Estimate: boxes/pieces qty resolution | ✅ PASS |  |
+| 149 | Estimate lifecycle: create → send → accept → convert → invoice prices match | ✅ PASS |  |
+| 150 | Deliver tier-priced order → auto-invoice matches order prices | ✅ PASS |  |
+| 151 | Invoice-from-estimate preserves tier prices (verified in test 149) | ✅ PASS |  |
+| 152 | CustomerPrice with nonexistent productId → error | ✅ PASS |  |
+| 153 | Double upsert same product → last tier wins | ✅ PASS |  |
+| 154 | Delete customer cascades CustomerPrices | ✅ PASS |  |
+| 155 | Delete product cascades CustomerPrices | ✅ PASS |  |
+| 156 | Invoice payment recording | ✅ PASS |  |
+| 157 | Invoice void | ✅ PASS |  |
+| 158 | Invoice duplicate | ✅ PASS |  |
+| 159 | Invoice revert to draft | ✅ PASS |  |
+| 160 | Order reopen (CANCELLED→PENDING) | ✅ PASS |  |
+| 161 | Order item update — qty change recalculates total | ✅ PASS |  |
+| 162 | Customer tags: create | ✅ PASS |  |
+| 163 | Customer tags: assign to customer | ✅ PASS |  |
+| 164 | Customer contacts: add contact person | ✅ PASS |  |
+| 165 | Customer advance payment | ✅ PASS |  |
+| 166 | Bookkeeping summary | ✅ PASS |  |
+| 167 | Bookkeeping transactions | ✅ PASS |  |
+| 168 | Inventory adjustment | ✅ PASS |  |
+| 169 | Inventory purchase | ✅ PASS |  |
+| 170 | Customer export CSV | ✅ PASS |  |
+| 171 | Invoice PDF generation | ✅ PASS |  |
+| 172 | Customer statement | ✅ PASS |  |
+| 173 | Product barcode lookup | ✅ PASS |  |
+| 174 | Supplier CRUD cycle | ✅ PASS |  |
+| 175 | Analytics endpoints probe | ✅ PASS |  |
+
+## QA Run — 2026-04-10T01:19:52.536Z
+
+**API:** http://localhost:3000/api/v1
+**Result:** 41/53 passed (77%) — 12 failed, 0 skipped
+
+| # | Description | Status | Notes |
+|---|-------------|--------|-------|
+| 1 | SUPER_ADMIN login returns role=SUPER_ADMIN, no tenantId | ✅ PASS |  |
+| 2 | Wrong password returns 401 | ✅ PASS |  |
+| 3 | SUPER_ADMIN GET /orders without tenant slug returns data (unscoped) | ✅ PASS |  |
+| 4 | SUPER_ADMIN GET /orders with X-Tenant-Slug scopes to that tenant | ✅ PASS |  |
+| 5 | GET /platform-admin/tenants returns list including QA tenant | ✅ PASS |  |
+| 6 | POST /platform-admin/tenants created QA tenant (validated in setup) | ✅ PASS |  |
+| 7 | GET /platform-admin/tenants/:id returns tenant details | ✅ PASS |  |
+| 8 | PATCH /platform-admin/tenants/:id/status SUSPENDED → 200 | ✅ PASS |  |
+| 9 | Suspended tenant JWT returns 403 on API calls | ✅ PASS |  |
+| 10 | Reactivate tenant → calls succeed again | ✅ PASS |  |
+| 11 | POST /platform-admin/tenants/:id/extend-trial → 200 | ✅ PASS |  |
+| 12 | POST /platform-admin/tenants/:id/impersonate → JWT with impersonatedBy | ✅ PASS |  |
+| 13 | Impersonation JWT: GET /orders succeeds (read allowed) | ✅ PASS |  |
+| 14 | Impersonation JWT: POST /orders returns 403 (mutations blocked) | ✅ PASS |  |
+| 15 | GET /platform-admin/stats returns stats with tenants object | ✅ PASS |  |
+| 16 | GET /platform-admin/audit-logs returns list | ✅ PASS |  |
+| 17 | GET /platform-admin/tenants/:id/billing returns 200 | ✅ PASS |  |
+| 18 | Tenant isolation — setup creates tenant B, A cannot see B data | ✅ PASS |  |
+| 19 | Tenant A order ID not accessible from tenant B JWT | ❌ FAIL | Expected 404, got 200 |
+| 20 | OPERATOR login returns role=OPERATOR with tenantId | ✅ PASS |  |
+| 21 | Wrong password returns 401 | ✅ PASS |  |
+| 22 | POST /auth/refresh with valid refresh token → new access token | ✅ PASS |  |
+| 23 | Request without JWT returns 401 | ✅ PASS |  |
+| 24 | GET /customers returns list for this tenant | ✅ PASS |  |
+| 25 | POST /customers creates a customer | ✅ PASS |  |
+| 26 | GET /customers/:id returns customer with addresses | ✅ PASS |  |
+| 27 | PATCH /customers/:id updates customer | ✅ PASS |  |
+| 28 | POST /customers/:id/addresses adds address | ✅ PASS |  |
+| 30 | GET /products returns product list | ✅ PASS |  |
+| 31 | POST /products creates product with tier prices | ✅ PASS |  |
+| 32 | PATCH /products/:id updates single tier price | ✅ PASS |  |
+| 33 | GET /inventory/suppliers returns list | ✅ PASS |  |
+| 34 | POST /inventory/suppliers creates supplier | ✅ PASS |  |
+| 35 | GET /orders returns all tenant orders | ✅ PASS |  |
+| 36 | POST /orders creates order with calculated totals | ✅ PASS |  |
+| 37 | GET /orders/:id returns order with lineItems | ✅ PASS |  |
+| 38 | PATCH /orders/:id/status CONFIRMED → 200 | ✅ PASS |  |
+| 39 | PATCH /orders/:id/status DELIVERED → 200 | ✅ PASS |  |
+| 40 | Delivering order creates auto-invoice | ❌ FAIL | No invoices found after deliveries |
+| 41 | GET /routes returns all routes | ✅ PASS |  |
+| 42 | POST /routes creates route with stops | ✅ PASS |  |
+| 43 | POST /route-runs creates run with status SCHEDULED | ✅ PASS |  |
+| 44 | GET /route-runs returns all runs | ✅ PASS |  |
+| 45 | PATCH /route-runs/:id/status IN_PROGRESS → 200 | ❌ FAIL | fetch failed |
+| 46 | GET /invoices returns all invoices | ❌ FAIL | fetch failed |
+| 47 | POST /invoices creates manual invoice | ❌ FAIL | fetch failed |
+| 48 | POST /invoices/:id/send → status SENT | ❌ FAIL | fetch failed |
+| 49 | POST /invoices/:id/payments records payment | ❌ FAIL | fetch failed |
+| 50 | POST /invoices/:id/send sends email (queued) | ❌ FAIL | fetch failed |
+| 51 | POST /credit-notes creates credit note | ❌ FAIL | fetch failed |
+| 52 | GET /credit-notes returns list | ❌ FAIL | fetch failed |
+| 53 | POST /credit-notes/:id/issue → status ISSUED | ❌ FAIL | fetch failed |
+| 54 | GET /returns returns all returns | ❌ FAIL | fetch failed |
+
+## QA Run — 2026-04-10T01:25:00.795Z
+
+**API:** http://localhost:3000/api/v1
+**Result:** 165/176 passed (94%) — 9 failed, 2 skipped
+
+| # | Description | Status | Notes |
+|---|-------------|--------|-------|
+| 1 | SUPER_ADMIN login returns role=SUPER_ADMIN, no tenantId | ✅ PASS |  |
+| 2 | Wrong password returns 401 | ✅ PASS |  |
+| 3 | SUPER_ADMIN GET /orders without tenant slug returns data (unscoped) | ✅ PASS |  |
+| 4 | SUPER_ADMIN GET /orders with X-Tenant-Slug scopes to that tenant | ✅ PASS |  |
+| 5 | GET /platform-admin/tenants returns list including QA tenant | ✅ PASS |  |
+| 6 | POST /platform-admin/tenants created QA tenant (validated in setup) | ✅ PASS |  |
+| 7 | GET /platform-admin/tenants/:id returns tenant details | ✅ PASS |  |
+| 8 | PATCH /platform-admin/tenants/:id/status SUSPENDED → 200 | ✅ PASS |  |
+| 9 | Suspended tenant JWT returns 403 on API calls | ✅ PASS |  |
+| 10 | Reactivate tenant → calls succeed again | ✅ PASS |  |
+| 11 | POST /platform-admin/tenants/:id/extend-trial → 200 | ✅ PASS |  |
+| 12 | POST /platform-admin/tenants/:id/impersonate → JWT with impersonatedBy | ✅ PASS |  |
+| 13 | Impersonation JWT: GET /orders succeeds (read allowed) | ✅ PASS |  |
+| 14 | Impersonation JWT: POST /orders returns 403 (mutations blocked) | ✅ PASS |  |
+| 15 | GET /platform-admin/stats returns stats with tenants object | ✅ PASS |  |
+| 16 | GET /platform-admin/audit-logs returns list | ✅ PASS |  |
+| 17 | GET /platform-admin/tenants/:id/billing returns 200 | ✅ PASS |  |
+| 18 | Tenant isolation — setup creates tenant B, A cannot see B data | ✅ PASS |  |
+| 19 | Tenant A order ID not accessible from tenant B JWT | ❌ FAIL | Expected 404, got 200 |
+| 20 | OPERATOR login returns role=OPERATOR with tenantId | ✅ PASS |  |
+| 21 | Wrong password returns 401 | ✅ PASS |  |
+| 22 | POST /auth/refresh with valid refresh token → new access token | ✅ PASS |  |
+| 23 | Request without JWT returns 401 | ✅ PASS |  |
+| 24 | GET /customers returns list for this tenant | ✅ PASS |  |
+| 25 | POST /customers creates a customer | ✅ PASS |  |
+| 26 | GET /customers/:id returns customer with addresses | ✅ PASS |  |
+| 27 | PATCH /customers/:id updates customer | ✅ PASS |  |
+| 28 | POST /customers/:id/addresses adds address | ✅ PASS |  |
+| 30 | GET /products returns product list | ✅ PASS |  |
+| 31 | POST /products creates product with tier prices | ✅ PASS |  |
+| 32 | PATCH /products/:id updates single tier price | ✅ PASS |  |
+| 33 | GET /inventory/suppliers returns list | ✅ PASS |  |
+| 34 | POST /inventory/suppliers creates supplier | ✅ PASS |  |
+| 35 | GET /orders returns all tenant orders | ✅ PASS |  |
+| 36 | POST /orders creates order with calculated totals | ✅ PASS |  |
+| 37 | GET /orders/:id returns order with lineItems | ✅ PASS |  |
+| 38 | PATCH /orders/:id/status CONFIRMED → 200 | ✅ PASS |  |
+| 39 | PATCH /orders/:id/status DELIVERED → 200 | ✅ PASS |  |
+| 40 | Delivering order creates auto-invoice | ❌ FAIL | No invoices found after deliveries |
+| 41 | GET /routes returns all routes | ✅ PASS |  |
+| 42 | POST /routes creates route with stops | ✅ PASS |  |
+| 43 | POST /route-runs creates run with status SCHEDULED | ✅ PASS |  |
+| 44 | GET /route-runs returns all runs | ✅ PASS |  |
+| 45 | PATCH /route-runs/:id/status IN_PROGRESS → 200 | ✅ PASS |  |
+| 46 | GET /invoices returns all invoices | ✅ PASS |  |
+| 47 | POST /invoices creates manual invoice | ✅ PASS |  |
+| 48 | POST /invoices/:id/send → status SENT | ✅ PASS |  |
+| 49 | POST /invoices/:id/payments records payment | ❌ FAIL | HTTP 500: Internal server error |
+| 50 | POST /invoices/:id/send sends email (queued) | ✅ PASS |  |
+| 51 | POST /credit-notes creates credit note | ✅ PASS |  |
+| 52 | GET /credit-notes returns list | ✅ PASS |  |
+| 53 | POST /credit-notes/:id/issue → status ISSUED | ✅ PASS |  |
+| 54 | GET /returns returns all returns | ✅ PASS |  |
+| 55 | POST /returns/:id/approve → status APPROVED | ✅ PASS |  |
+| 56 | POST /returns/:id/reject → status REJECTED | ✅ PASS |  |
+| 57 | POST /estimates creates estimate with tier-resolved product pricing | ✅ PASS |  |
+| 58 | POST /estimates/:id/send → status SENT | ✅ PASS |  |
+| 59 | POST /estimates/:id/accept → status ACCEPTED | ✅ PASS |  |
+| 60 | POST /estimates/:id/convert → invoice created from estimate | ✅ PASS |  |
+| 61 | POST /recurring-invoices creates recurring invoice | ✅ PASS |  |
+| 62 | POST /recurring-invoices/:id/run → invoice generated immediately | ✅ PASS |  |
+| 63 | GET /recurring-invoices returns list | ✅ PASS |  |
+| 64 | POST /order-templates creates standing order | ✅ PASS |  |
+| 65 | POST /order-templates/:id/generate → order created | ✅ PASS |  |
+| 66 | GET /order-templates returns list | ✅ PASS |  |
+| 67 | GET /settings returns tenant settings | ✅ PASS |  |
+| 68 | PATCH /settings updates business name | ✅ PASS |  |
+| 69 | GET /analytics/revenue returns revenue data | ✅ PASS |  |
+| 70 | DRIVER login returns role=DRIVER | ✅ PASS |  |
+| 71 | DRIVER GET /customers returns 200 (drivers allowed) | ✅ PASS |  |
+| 72 | DRIVER POST /orders returns 403 | ✅ PASS |  |
+| 73 | GET /route-runs returns only runs assigned to this driver | ✅ PASS |  |
+| 74 | DRIVER cannot GET route run assigned to another driver | ✅ PASS |  |
+| 75 | Driver starts run → status IN_PROGRESS | ✅ PASS |  |
+| 76 | GET /route-runs/:id/stops returns stop list with customer info | ✅ PASS |  |
+| 77 | PATCH stop status ARRIVED → 200 | ✅ PASS |  |
+| 78 | POST complete stop with full delivery → order DELIVERED | ❌ FAIL | No response from stop complete |
+| 79 | POST complete stop with partial delivery → partial qty recorded | ❌ FAIL | No response from partial stop complete |
+| 80 | DAMAGED delivery flag | ⏭ SKIP | Covered by partial delivery test — damage status is a delivery item status varia |
+| 80 | POST complete stop marking item DAMAGED → damage recorded | ✅ PASS |  |
+| 81 | POST /route-runs/:id/status COMPLETED after all stops done | ✅ PASS |  |
+| 82 | GET /products/barcode/:barcode with valid barcode → 200 product details | ✅ PASS |  |
+| 83 | GET /products/barcode/:barcode with unknown barcode → 404 | ✅ PASS |  |
+| 84 | GET /route-runs/my-stats returns stats for this driver | ✅ PASS |  |
+| 85 | POST /auth/change-password with correct current password → 200 | ✅ PASS |  |
+| 86 | Login with old password after change → 401 | ✅ PASS |  |
+| 87 | Login with new password → 200 | ✅ PASS |  |
+| 88 | CUSTOMER login returns role=CUSTOMER | ✅ PASS |  |
+| 89 | CUSTOMER GET /customers (list all) → 403 | ✅ PASS |  |
+| 90 | CUSTOMER GET /drivers → 403 | ✅ PASS |  |
+| 91 | CUSTOMER GET /routes → 403 | ✅ PASS |  |
+| 92 | CUSTOMER GET /orders returns only own orders | ✅ PASS |  |
+| 93 | CUSTOMER GET /orders/:id for own order → 200 | ✅ PASS |  |
+| 94 | CUSTOMER GET another customer's order → 404 | ✅ PASS |  |
+| 95 | CUSTOMER can cancel own PENDING order → 200 | ✅ PASS |  |
+| 96 | CUSTOMER cannot cancel DELIVERED order → 400 | ✅ PASS |  |
+| 97 | CUSTOMER GET /invoices returns only own invoices | ✅ PASS |  |
+| 98 | CUSTOMER GET another customer's invoice → 404 | ✅ PASS |  |
+| 99 | CUSTOMER POST /returns on own delivered order → 201 | ✅ PASS |  |
+| 100 | CUSTOMER POST /returns on another customer's order → 403 | ✅ PASS |  |
+| 101 | CUSTOMER POST /returns on PENDING order → 400 | ✅ PASS |  |
+| 102 | CUSTOMER GET /returns returns only own returns | ✅ PASS |  |
+| 103 | CUSTOMER GET /order-templates returns only own templates | ✅ PASS |  |
+| 104 | CUSTOMER POST /order-templates creates own standing order → 201 | ✅ PASS |  |
+| 105 | Non-owner PATCH another customer's template → 403/404 | ✅ PASS |  |
+| 106 | CUSTOMER PATCH /customers/me updates own profile → 200 | ✅ PASS |  |
+| 107 | POST /auth/change-password for customer → 200 | ✅ PASS |  |
+| 108 | CUSTOMER GET /credit-notes returns only own credit notes | ✅ PASS |  |
+| 109 | Tenant A operator cannot see tenant B customers | ✅ PASS |  |
+| 110 | Using tenant A JWT with X-Tenant-Slug: tenant-B → 403 (mismatch) | ❌ FAIL | Expected 403 (tenant mismatch), got 200 |
+| 111 | Call without X-Tenant-Slug and without subdomain → 400/401 | ❌ FAIL | Expected 400/401, got 200 |
+| 112 | Suspended tenant JWT returns 403 (TenantStatusGuard) | ✅ PASS |  |
+| 113 | After reactivation, suspended-tenant JWT succeeds again | ✅ PASS |  |
+| 114 | Rate limit: 101 rapid requests → 429 on 101st | ✅ PASS |  |
+| 115 | Create product with all 5 tier prices | ✅ PASS |  |
+| 116 | GET product returns all tier prices | ✅ PASS |  |
+| 117 | Update single tier price, others unchanged | ✅ PASS |  |
+| 118 | Create product WITHOUT tier prices (defaults) | ✅ PASS |  |
+| 119 | Product list includes tier fields | ✅ PASS |  |
+| 120 | Create customer with pricingTier=3 | ✅ PASS |  |
+| 121 | GET customer returns pricingTier | ✅ PASS |  |
+| 122 | Update pricingTier 3→5 | ✅ PASS |  |
+| 123 | Update pricingTier 5→3 (restore) | ✅ PASS |  |
+| 124 | Create customer without pricingTier defaults to 1 | ✅ PASS |  |
+| 125 | Reject pricingTier=0 → 400 | ✅ PASS |  |
+| 126 | Reject pricingTier=6 → 400 | ✅ PASS |  |
+| 127 | Upsert CustomerPrice — create | ✅ PASS |  |
+| 128 | GET customer prices returns list with product details | ✅ PASS |  |
+| 129 | Upsert same product — update tier to 2 | ✅ PASS |  |
+| 130 | Upsert with notes | ✅ PASS |  |
+| 131 | Delete CustomerPrice | ✅ PASS |  |
+| 132 | GET after delete — CustomerPrice gone | ✅ PASS |  |
+| 133 | Reject pricingTier=0 in CustomerPrice → 400 | ✅ PASS |  |
+| 134 | Reject pricingTier=6 in CustomerPrice → 400 | ✅ PASS |  |
+| 135 | Re-create CustomerPrice after delete (idempotent upsert) | ✅ PASS |  |
+| 136 | Tier-1 customer, no override → STANDARD pricing | ✅ PASS |  |
+| 137 | Tier-3 customer, no override → SPECIAL pricing | ✅ PASS |  |
+| 138 | Tier-1 customer + CustomerPrice override to tier 4 → SPECIAL | ✅ PASS |  |
+| 139 | Operator override lower than list → DISCOUNTED | ✅ PASS |  |
+| 140 | Operator override >= list price → ignored, tier wins | ✅ PASS |  |
+| 141 | Untiered product for tier-3 customer | ✅ PASS |  |
+| 142 | Multi-item order totals from tier-resolved prices | ✅ PASS |  |
+| 143 | Boxes/pieces qty calculation: boxes=2, pieces=3, unitsPerBox=6 → qty=15 | ✅ PASS |  |
+| 144 | Estimate: tier-3 customer + productId → SPECIAL pricing | ✅ PASS |  |
+| 145 | Estimate: tier-1 customer + CustomerPrice override → tier 4 price | ✅ PASS |  |
+| 146 | Estimate: operator override < list → DISCOUNTED | ✅ PASS |  |
+| 147 | Estimate: freeform item (no productId) → STANDARD | ✅ PASS |  |
+| 148 | Estimate: boxes/pieces qty resolution | ✅ PASS |  |
+| 149 | Estimate lifecycle: create → send → accept → convert → invoice prices match | ✅ PASS |  |
+| 150 | Deliver tier-priced order → auto-invoice matches order prices | ✅ PASS |  |
+| 151 | Invoice-from-estimate preserves tier prices (verified in test 149) | ✅ PASS |  |
+| 152 | CustomerPrice with nonexistent productId → error | ✅ PASS |  |
+| 153 | Double upsert same product → last tier wins | ✅ PASS |  |
+| 154 | Delete customer cascades CustomerPrices | ✅ PASS |  |
+| 155 | Delete product cascades CustomerPrices | ✅ PASS |  |
+| 156 | Invoice payment recording | ❌ FAIL | HTTP 500: Internal server error |
+| 157 | Invoice void | ✅ PASS |  |
+| 158 | Invoice duplicate | ❌ FAIL | Expected 200/201, got 404 |
+| 159 | Invoice revert to draft | ✅ PASS |  |
+| 160 | Order reopen (CANCELLED→PENDING) | ✅ PASS |  |
+| 161 | Order item update — qty change recalculates total | ✅ PASS |  |
+| 162 | Customer tags: create | ✅ PASS |  |
+| 163 | Customer tags: assign to customer | ✅ PASS |  |
+| 164 | Customer contacts: add contact person | ✅ PASS |  |
+| 165 | Customer advance payment | ✅ PASS |  |
+| 166 | Bookkeeping summary | ✅ PASS |  |
+| 167 | Bookkeeping transactions | ✅ PASS |  |
+| 168 | Inventory adjustment | ✅ PASS |  |
+| 169 | Inventory purchase | ✅ PASS |  |
+| 170 | Customer export CSV | ✅ PASS |  |
+| 171 | Invoice PDF | ⏭ SKIP | No invoice ID |
+| 171 | Invoice PDF generation | ✅ PASS |  |
+| 172 | Customer statement | ✅ PASS |  |
+| 173 | Product barcode lookup | ✅ PASS |  |
+| 174 | Supplier CRUD cycle | ✅ PASS |  |
+| 175 | Analytics endpoints probe | ✅ PASS |  |
+
+## QA Run — 2026-04-10T01:35:06.835Z
+
+**API:** http://localhost:3000/api/v1
+**Result:** 171/175 passed (98%) — 3 failed, 1 skipped
+
+| # | Description | Status | Notes |
+|---|-------------|--------|-------|
+| 1 | SUPER_ADMIN login returns role=SUPER_ADMIN, no tenantId | ✅ PASS |  |
+| 2 | Wrong password returns 401 | ✅ PASS |  |
+| 3 | SUPER_ADMIN GET /orders without tenant slug returns data (unscoped) | ✅ PASS |  |
+| 4 | SUPER_ADMIN GET /orders with X-Tenant-Slug scopes to that tenant | ✅ PASS |  |
+| 5 | GET /platform-admin/tenants returns list including QA tenant | ✅ PASS |  |
+| 6 | POST /platform-admin/tenants created QA tenant (validated in setup) | ✅ PASS |  |
+| 7 | GET /platform-admin/tenants/:id returns tenant details | ✅ PASS |  |
+| 8 | PATCH /platform-admin/tenants/:id/status SUSPENDED → 200 | ✅ PASS |  |
+| 9 | Suspended tenant JWT returns 403 on API calls | ✅ PASS |  |
+| 10 | Reactivate tenant → calls succeed again | ✅ PASS |  |
+| 11 | POST /platform-admin/tenants/:id/extend-trial → 200 | ✅ PASS |  |
+| 12 | POST /platform-admin/tenants/:id/impersonate → JWT with impersonatedBy | ✅ PASS |  |
+| 13 | Impersonation JWT: GET /orders succeeds (read allowed) | ✅ PASS |  |
+| 14 | Impersonation JWT: POST /orders returns 403 (mutations blocked) | ✅ PASS |  |
+| 15 | GET /platform-admin/stats returns stats with tenants object | ✅ PASS |  |
+| 16 | GET /platform-admin/audit-logs returns list | ✅ PASS |  |
+| 17 | GET /platform-admin/tenants/:id/billing returns 200 | ✅ PASS |  |
+| 18 | Tenant isolation — setup creates tenant B, A cannot see B data | ✅ PASS |  |
+| 19 | Tenant A order ID not accessible from tenant B JWT | ✅ PASS |  |
+| 20 | OPERATOR login returns role=OPERATOR with tenantId | ✅ PASS |  |
+| 21 | Wrong password returns 401 | ✅ PASS |  |
+| 22 | POST /auth/refresh with valid refresh token → new access token | ✅ PASS |  |
+| 23 | Request without JWT returns 401 | ✅ PASS |  |
+| 24 | GET /customers returns list for this tenant | ✅ PASS |  |
+| 25 | POST /customers creates a customer | ✅ PASS |  |
+| 26 | GET /customers/:id returns customer with addresses | ✅ PASS |  |
+| 27 | PATCH /customers/:id updates customer | ✅ PASS |  |
+| 28 | POST /customers/:id/addresses adds address | ✅ PASS |  |
+| 30 | GET /products returns product list | ✅ PASS |  |
+| 31 | POST /products creates product with tier prices | ✅ PASS |  |
+| 32 | PATCH /products/:id updates single tier price | ✅ PASS |  |
+| 33 | GET /inventory/suppliers returns list | ✅ PASS |  |
+| 34 | POST /inventory/suppliers creates supplier | ✅ PASS |  |
+| 35 | GET /orders returns all tenant orders | ✅ PASS |  |
+| 36 | POST /orders creates order with calculated totals | ✅ PASS |  |
+| 37 | GET /orders/:id returns order with lineItems | ✅ PASS |  |
+| 38 | PATCH /orders/:id/status CONFIRMED → 200 | ✅ PASS |  |
+| 39 | PATCH /orders/:id/status DELIVERED → 200 | ✅ PASS |  |
+| 40 | Delivering order creates auto-invoice | ❌ FAIL | No invoices found after deliveries (waited 10s) |
+| 41 | GET /routes returns all routes | ✅ PASS |  |
+| 42 | POST /routes creates route with stops | ✅ PASS |  |
+| 43 | POST /route-runs creates run with status SCHEDULED | ✅ PASS |  |
+| 44 | GET /route-runs returns all runs | ✅ PASS |  |
+| 45 | PATCH /route-runs/:id/status IN_PROGRESS → 200 | ✅ PASS |  |
+| 46 | GET /invoices returns all invoices | ✅ PASS |  |
+| 47 | POST /invoices creates manual invoice | ✅ PASS |  |
+| 48 | POST /invoices/:id/send → status SENT | ✅ PASS |  |
+| 49 | POST /invoices/:id/payments records payment | ❌ FAIL | Expected 200/201, got 500: "Internal server error" |
+| 50 | POST /invoices/:id/send sends email (queued) | ✅ PASS |  |
+| 51 | POST /credit-notes creates credit note | ✅ PASS |  |
+| 52 | GET /credit-notes returns list | ✅ PASS |  |
+| 53 | POST /credit-notes/:id/issue → status ISSUED | ✅ PASS |  |
+| 54 | GET /returns returns all returns | ✅ PASS |  |
+| 55 | POST /returns/:id/approve → status APPROVED | ✅ PASS |  |
+| 56 | POST /returns/:id/reject → status REJECTED | ✅ PASS |  |
+| 57 | POST /estimates creates estimate with tier-resolved product pricing | ✅ PASS |  |
+| 58 | POST /estimates/:id/send → status SENT | ✅ PASS |  |
+| 59 | POST /estimates/:id/accept → status ACCEPTED | ✅ PASS |  |
+| 60 | POST /estimates/:id/convert → invoice created from estimate | ✅ PASS |  |
+| 61 | POST /recurring-invoices creates recurring invoice | ✅ PASS |  |
+| 62 | POST /recurring-invoices/:id/run → invoice generated immediately | ✅ PASS |  |
+| 63 | GET /recurring-invoices returns list | ✅ PASS |  |
+| 64 | POST /order-templates creates standing order | ✅ PASS |  |
+| 65 | POST /order-templates/:id/generate → order created | ✅ PASS |  |
+| 66 | GET /order-templates returns list | ✅ PASS |  |
+| 67 | GET /settings returns tenant settings | ✅ PASS |  |
+| 68 | PATCH /settings updates business name | ✅ PASS |  |
+| 69 | GET /analytics/revenue returns revenue data | ✅ PASS |  |
+| 70 | DRIVER login returns role=DRIVER | ✅ PASS |  |
+| 71 | DRIVER GET /customers returns 200 (drivers allowed) | ✅ PASS |  |
+| 72 | DRIVER POST /orders returns 403 | ✅ PASS |  |
+| 73 | GET /route-runs returns only runs assigned to this driver | ✅ PASS |  |
+| 74 | DRIVER cannot GET route run assigned to another driver | ✅ PASS |  |
+| 75 | Driver starts run → status IN_PROGRESS | ✅ PASS |  |
+| 76 | GET /route-runs/:id/stops returns stop list with customer info | ✅ PASS |  |
+| 77 | PATCH stop status ARRIVED → 200 | ✅ PASS |  |
+| 78 | POST complete stop with full delivery → order DELIVERED | ✅ PASS |  |
+| 79 | POST complete stop with partial delivery → partial qty recorded | ✅ PASS |  |
+| 80 | DAMAGED delivery flag | ⏭ SKIP | Covered by partial delivery test — damage status is a delivery item status varia |
+| 80 | POST complete stop marking item DAMAGED → damage recorded | ✅ PASS |  |
+| 81 | POST /route-runs/:id/status COMPLETED after all stops done | ✅ PASS |  |
+| 82 | GET /products/barcode/:barcode with valid barcode → 200 product details | ✅ PASS |  |
+| 83 | GET /products/barcode/:barcode with unknown barcode → 404 | ✅ PASS |  |
+| 84 | GET /route-runs/my-stats returns stats for this driver | ✅ PASS |  |
+| 85 | POST /auth/change-password with correct current password → 200 | ✅ PASS |  |
+| 86 | Login with old password after change → 401 | ✅ PASS |  |
+| 87 | Login with new password → 200 | ✅ PASS |  |
+| 88 | CUSTOMER login returns role=CUSTOMER | ✅ PASS |  |
+| 89 | CUSTOMER GET /customers (list all) → 403 | ✅ PASS |  |
+| 90 | CUSTOMER GET /drivers → 403 | ✅ PASS |  |
+| 91 | CUSTOMER GET /routes → 403 | ✅ PASS |  |
+| 92 | CUSTOMER GET /orders returns only own orders | ✅ PASS |  |
+| 93 | CUSTOMER GET /orders/:id for own order → 200 | ✅ PASS |  |
+| 94 | CUSTOMER GET another customer's order → 404 | ✅ PASS |  |
+| 95 | CUSTOMER can cancel own PENDING order → 200 | ✅ PASS |  |
+| 96 | CUSTOMER cannot cancel DELIVERED order → 400 | ✅ PASS |  |
+| 97 | CUSTOMER GET /invoices returns only own invoices | ✅ PASS |  |
+| 98 | CUSTOMER GET another customer's invoice → 404 | ✅ PASS |  |
+| 99 | CUSTOMER POST /returns on own delivered order → 201 | ✅ PASS |  |
+| 100 | CUSTOMER POST /returns on another customer's order → 403 | ✅ PASS |  |
+| 101 | CUSTOMER POST /returns on PENDING order → 400 | ✅ PASS |  |
+| 102 | CUSTOMER GET /returns returns only own returns | ✅ PASS |  |
+| 103 | CUSTOMER GET /order-templates returns only own templates | ✅ PASS |  |
+| 104 | CUSTOMER POST /order-templates creates own standing order → 201 | ✅ PASS |  |
+| 105 | Non-owner PATCH another customer's template → 403/404 | ✅ PASS |  |
+| 106 | CUSTOMER PATCH /customers/me updates own profile → 200 | ✅ PASS |  |
+| 107 | POST /auth/change-password for customer → 200 | ✅ PASS |  |
+| 108 | CUSTOMER GET /credit-notes returns only own credit notes | ✅ PASS |  |
+| 109 | Tenant A operator cannot see tenant B customers | ✅ PASS |  |
+| 110 | Using tenant A JWT with X-Tenant-Slug: tenant-B → 403 (mismatch) | ✅ PASS |  |
+| 111 | Call without X-Tenant-Slug and without subdomain → 400/401 | ✅ PASS |  |
+| 112 | Suspended tenant JWT returns 403 (TenantStatusGuard) | ✅ PASS |  |
+| 113 | After reactivation, suspended-tenant JWT succeeds again | ✅ PASS |  |
+| 114 | Rate limit: 101 rapid requests → 429 on 101st | ✅ PASS |  |
+| 115 | Create product with all 5 tier prices | ✅ PASS |  |
+| 116 | GET product returns all tier prices | ✅ PASS |  |
+| 117 | Update single tier price, others unchanged | ✅ PASS |  |
+| 118 | Create product WITHOUT tier prices (defaults) | ✅ PASS |  |
+| 119 | Product list includes tier fields | ✅ PASS |  |
+| 120 | Create customer with pricingTier=3 | ✅ PASS |  |
+| 121 | GET customer returns pricingTier | ✅ PASS |  |
+| 122 | Update pricingTier 3→5 | ✅ PASS |  |
+| 123 | Update pricingTier 5→3 (restore) | ✅ PASS |  |
+| 124 | Create customer without pricingTier defaults to 1 | ✅ PASS |  |
+| 125 | Reject pricingTier=0 → 400 | ✅ PASS |  |
+| 126 | Reject pricingTier=6 → 400 | ✅ PASS |  |
+| 127 | Upsert CustomerPrice — create | ✅ PASS |  |
+| 128 | GET customer prices returns list with product details | ✅ PASS |  |
+| 129 | Upsert same product — update tier to 2 | ✅ PASS |  |
+| 130 | Upsert with notes | ✅ PASS |  |
+| 131 | Delete CustomerPrice | ✅ PASS |  |
+| 132 | GET after delete — CustomerPrice gone | ✅ PASS |  |
+| 133 | Reject pricingTier=0 in CustomerPrice → 400 | ✅ PASS |  |
+| 134 | Reject pricingTier=6 in CustomerPrice → 400 | ✅ PASS |  |
+| 135 | Re-create CustomerPrice after delete (idempotent upsert) | ✅ PASS |  |
+| 136 | Tier-1 customer, no override → STANDARD pricing | ✅ PASS |  |
+| 137 | Tier-3 customer, no override → SPECIAL pricing | ✅ PASS |  |
+| 138 | Tier-1 customer + CustomerPrice override to tier 4 → SPECIAL | ✅ PASS |  |
+| 139 | Operator override lower than list → DISCOUNTED | ✅ PASS |  |
+| 140 | Operator override >= list price → ignored, tier wins | ✅ PASS |  |
+| 141 | Untiered product for tier-3 customer | ✅ PASS |  |
+| 142 | Multi-item order totals from tier-resolved prices | ✅ PASS |  |
+| 143 | Boxes/pieces qty calculation: boxes=2, pieces=3, unitsPerBox=6 → qty=15 | ✅ PASS |  |
+| 144 | Estimate: tier-3 customer + productId → SPECIAL pricing | ✅ PASS |  |
+| 145 | Estimate: tier-1 customer + CustomerPrice override → tier 4 price | ✅ PASS |  |
+| 146 | Estimate: operator override < list → DISCOUNTED | ✅ PASS |  |
+| 147 | Estimate: freeform item (no productId) → STANDARD | ✅ PASS |  |
+| 148 | Estimate: boxes/pieces qty resolution | ✅ PASS |  |
+| 149 | Estimate lifecycle: create → send → accept → convert → invoice prices match | ✅ PASS |  |
+| 150 | Deliver tier-priced order → auto-invoice matches order prices | ✅ PASS |  |
+| 151 | Invoice-from-estimate preserves tier prices (verified in test 149) | ✅ PASS |  |
+| 152 | CustomerPrice with nonexistent productId → error | ✅ PASS |  |
+| 153 | Double upsert same product → last tier wins | ✅ PASS |  |
+| 154 | Delete customer cascades CustomerPrices | ✅ PASS |  |
+| 155 | Delete product cascades CustomerPrices | ✅ PASS |  |
+| 156 | Invoice payment recording | ❌ FAIL | Expected 200/201, got 500: "Internal server error" |
+| 157 | Invoice void | ✅ PASS |  |
+| 158 | Invoice duplicate | ✅ PASS |  |
+| 159 | Invoice revert to draft | ✅ PASS |  |
+| 160 | Order reopen (CANCELLED→PENDING) | ✅ PASS |  |
+| 161 | Order item update — qty change recalculates total | ✅ PASS |  |
+| 162 | Customer tags: create | ✅ PASS |  |
+| 163 | Customer tags: assign to customer | ✅ PASS |  |
+| 164 | Customer contacts: add contact person | ✅ PASS |  |
+| 165 | Customer advance payment | ✅ PASS |  |
+| 166 | Bookkeeping summary | ✅ PASS |  |
+| 167 | Bookkeeping transactions | ✅ PASS |  |
+| 168 | Inventory adjustment | ✅ PASS |  |
+| 169 | Inventory purchase | ✅ PASS |  |
+| 170 | Customer export CSV | ✅ PASS |  |
+| 171 | Invoice PDF generation | ✅ PASS |  |
+| 172 | Customer statement | ✅ PASS |  |
+| 173 | Product barcode lookup | ✅ PASS |  |
+| 174 | Supplier CRUD cycle | ✅ PASS |  |
+| 175 | Analytics endpoints probe | ✅ PASS |  |
+
+## QA Run — 2026-04-10T01:42:17.051Z
+
+**API:** http://localhost:3000/api/v1
+**Result:** 174/175 passed (99%) — 0 failed, 1 skipped
+
+| # | Description | Status | Notes |
+|---|-------------|--------|-------|
+| 1 | SUPER_ADMIN login returns role=SUPER_ADMIN, no tenantId | ✅ PASS |  |
+| 2 | Wrong password returns 401 | ✅ PASS |  |
+| 3 | SUPER_ADMIN GET /orders without tenant slug returns data (unscoped) | ✅ PASS |  |
+| 4 | SUPER_ADMIN GET /orders with X-Tenant-Slug scopes to that tenant | ✅ PASS |  |
+| 5 | GET /platform-admin/tenants returns list including QA tenant | ✅ PASS |  |
+| 6 | POST /platform-admin/tenants created QA tenant (validated in setup) | ✅ PASS |  |
+| 7 | GET /platform-admin/tenants/:id returns tenant details | ✅ PASS |  |
+| 8 | PATCH /platform-admin/tenants/:id/status SUSPENDED → 200 | ✅ PASS |  |
+| 9 | Suspended tenant JWT returns 403 on API calls | ✅ PASS |  |
+| 10 | Reactivate tenant → calls succeed again | ✅ PASS |  |
+| 11 | POST /platform-admin/tenants/:id/extend-trial → 200 | ✅ PASS |  |
+| 12 | POST /platform-admin/tenants/:id/impersonate → JWT with impersonatedBy | ✅ PASS |  |
+| 13 | Impersonation JWT: GET /orders succeeds (read allowed) | ✅ PASS |  |
+| 14 | Impersonation JWT: POST /orders returns 403 (mutations blocked) | ✅ PASS |  |
+| 15 | GET /platform-admin/stats returns stats with tenants object | ✅ PASS |  |
+| 16 | GET /platform-admin/audit-logs returns list | ✅ PASS |  |
+| 17 | GET /platform-admin/tenants/:id/billing returns 200 | ✅ PASS |  |
+| 18 | Tenant isolation — setup creates tenant B, A cannot see B data | ✅ PASS |  |
+| 19 | Tenant A order ID not accessible from tenant B JWT | ✅ PASS |  |
+| 20 | OPERATOR login returns role=OPERATOR with tenantId | ✅ PASS |  |
+| 21 | Wrong password returns 401 | ✅ PASS |  |
+| 22 | POST /auth/refresh with valid refresh token → new access token | ✅ PASS |  |
+| 23 | Request without JWT returns 401 | ✅ PASS |  |
+| 24 | GET /customers returns list for this tenant | ✅ PASS |  |
+| 25 | POST /customers creates a customer | ✅ PASS |  |
+| 26 | GET /customers/:id returns customer with addresses | ✅ PASS |  |
+| 27 | PATCH /customers/:id updates customer | ✅ PASS |  |
+| 28 | POST /customers/:id/addresses adds address | ✅ PASS |  |
+| 30 | GET /products returns product list | ✅ PASS |  |
+| 31 | POST /products creates product with tier prices | ✅ PASS |  |
+| 32 | PATCH /products/:id updates single tier price | ✅ PASS |  |
+| 33 | GET /inventory/suppliers returns list | ✅ PASS |  |
+| 34 | POST /inventory/suppliers creates supplier | ✅ PASS |  |
+| 35 | GET /orders returns all tenant orders | ✅ PASS |  |
+| 36 | POST /orders creates order with calculated totals | ✅ PASS |  |
+| 37 | GET /orders/:id returns order with lineItems | ✅ PASS |  |
+| 38 | PATCH /orders/:id/status CONFIRMED → 200 | ✅ PASS |  |
+| 39 | PATCH /orders/:id/status DELIVERED → 200 | ✅ PASS |  |
+| 40 | Delivering order creates auto-invoice | ✅ PASS |  |
+| 41 | GET /routes returns all routes | ✅ PASS |  |
+| 42 | POST /routes creates route with stops | ✅ PASS |  |
+| 43 | POST /route-runs creates run with status SCHEDULED | ✅ PASS |  |
+| 44 | GET /route-runs returns all runs | ✅ PASS |  |
+| 45 | PATCH /route-runs/:id/status IN_PROGRESS → 200 | ✅ PASS |  |
+| 46 | GET /invoices returns all invoices | ✅ PASS |  |
+| 47 | POST /invoices creates manual invoice | ✅ PASS |  |
+| 48 | POST /invoices/:id/send → status SENT | ✅ PASS |  |
+| 49 | POST /invoices/:id/payments records payment | ✅ PASS |  |
+| 50 | POST /invoices/:id/send sends email (queued) | ✅ PASS |  |
+| 51 | POST /credit-notes creates credit note | ✅ PASS |  |
+| 52 | GET /credit-notes returns list | ✅ PASS |  |
+| 53 | POST /credit-notes/:id/issue → status ISSUED | ✅ PASS |  |
+| 54 | GET /returns returns all returns | ✅ PASS |  |
+| 55 | POST /returns/:id/approve → status APPROVED | ✅ PASS |  |
+| 56 | POST /returns/:id/reject → status REJECTED | ✅ PASS |  |
+| 57 | POST /estimates creates estimate with tier-resolved product pricing | ✅ PASS |  |
+| 58 | POST /estimates/:id/send → status SENT | ✅ PASS |  |
+| 59 | POST /estimates/:id/accept → status ACCEPTED | ✅ PASS |  |
+| 60 | POST /estimates/:id/convert → invoice created from estimate | ✅ PASS |  |
+| 61 | POST /recurring-invoices creates recurring invoice | ✅ PASS |  |
+| 62 | POST /recurring-invoices/:id/run → invoice generated immediately | ✅ PASS |  |
+| 63 | GET /recurring-invoices returns list | ✅ PASS |  |
+| 64 | POST /order-templates creates standing order | ✅ PASS |  |
+| 65 | POST /order-templates/:id/generate → order created | ✅ PASS |  |
+| 66 | GET /order-templates returns list | ✅ PASS |  |
+| 67 | GET /settings returns tenant settings | ✅ PASS |  |
+| 68 | PATCH /settings updates business name | ✅ PASS |  |
+| 69 | GET /analytics/revenue returns revenue data | ✅ PASS |  |
+| 70 | DRIVER login returns role=DRIVER | ✅ PASS |  |
+| 71 | DRIVER GET /customers returns 200 (drivers allowed) | ✅ PASS |  |
+| 72 | DRIVER POST /orders returns 403 | ✅ PASS |  |
+| 73 | GET /route-runs returns only runs assigned to this driver | ✅ PASS |  |
+| 74 | DRIVER cannot GET route run assigned to another driver | ✅ PASS |  |
+| 75 | Driver starts run → status IN_PROGRESS | ✅ PASS |  |
+| 76 | GET /route-runs/:id/stops returns stop list with customer info | ✅ PASS |  |
+| 77 | PATCH stop status ARRIVED → 200 | ✅ PASS |  |
+| 78 | POST complete stop with full delivery → order DELIVERED | ✅ PASS |  |
+| 79 | POST complete stop with partial delivery → partial qty recorded | ✅ PASS |  |
+| 80 | DAMAGED delivery flag | ⏭ SKIP | Covered by partial delivery test — damage status is a delivery item status varia |
+| 80 | POST complete stop marking item DAMAGED → damage recorded | ✅ PASS |  |
+| 81 | POST /route-runs/:id/status COMPLETED after all stops done | ✅ PASS |  |
+| 82 | GET /products/barcode/:barcode with valid barcode → 200 product details | ✅ PASS |  |
+| 83 | GET /products/barcode/:barcode with unknown barcode → 404 | ✅ PASS |  |
+| 84 | GET /route-runs/my-stats returns stats for this driver | ✅ PASS |  |
+| 85 | POST /auth/change-password with correct current password → 200 | ✅ PASS |  |
+| 86 | Login with old password after change → 401 | ✅ PASS |  |
+| 87 | Login with new password → 200 | ✅ PASS |  |
+| 88 | CUSTOMER login returns role=CUSTOMER | ✅ PASS |  |
+| 89 | CUSTOMER GET /customers (list all) → 403 | ✅ PASS |  |
+| 90 | CUSTOMER GET /drivers → 403 | ✅ PASS |  |
+| 91 | CUSTOMER GET /routes → 403 | ✅ PASS |  |
+| 92 | CUSTOMER GET /orders returns only own orders | ✅ PASS |  |
+| 93 | CUSTOMER GET /orders/:id for own order → 200 | ✅ PASS |  |
+| 94 | CUSTOMER GET another customer's order → 404 | ✅ PASS |  |
+| 95 | CUSTOMER can cancel own PENDING order → 200 | ✅ PASS |  |
+| 96 | CUSTOMER cannot cancel DELIVERED order → 400 | ✅ PASS |  |
+| 97 | CUSTOMER GET /invoices returns only own invoices | ✅ PASS |  |
+| 98 | CUSTOMER GET another customer's invoice → 404 | ✅ PASS |  |
+| 99 | CUSTOMER POST /returns on own delivered order → 201 | ✅ PASS |  |
+| 100 | CUSTOMER POST /returns on another customer's order → 403 | ✅ PASS |  |
+| 101 | CUSTOMER POST /returns on PENDING order → 400 | ✅ PASS |  |
+| 102 | CUSTOMER GET /returns returns only own returns | ✅ PASS |  |
+| 103 | CUSTOMER GET /order-templates returns only own templates | ✅ PASS |  |
+| 104 | CUSTOMER POST /order-templates creates own standing order → 201 | ✅ PASS |  |
+| 105 | Non-owner PATCH another customer's template → 403/404 | ✅ PASS |  |
+| 106 | CUSTOMER PATCH /customers/me updates own profile → 200 | ✅ PASS |  |
+| 107 | POST /auth/change-password for customer → 200 | ✅ PASS |  |
+| 108 | CUSTOMER GET /credit-notes returns only own credit notes | ✅ PASS |  |
+| 109 | Tenant A operator cannot see tenant B customers | ✅ PASS |  |
+| 110 | Using tenant A JWT with X-Tenant-Slug: tenant-B → 403 (mismatch) | ✅ PASS |  |
+| 111 | Call without X-Tenant-Slug and without subdomain → 400/401 | ✅ PASS |  |
+| 112 | Suspended tenant JWT returns 403 (TenantStatusGuard) | ✅ PASS |  |
+| 113 | After reactivation, suspended-tenant JWT succeeds again | ✅ PASS |  |
+| 114 | Rate limit: 101 rapid requests → 429 on 101st | ✅ PASS |  |
+| 115 | Create product with all 5 tier prices | ✅ PASS |  |
+| 116 | GET product returns all tier prices | ✅ PASS |  |
+| 117 | Update single tier price, others unchanged | ✅ PASS |  |
+| 118 | Create product WITHOUT tier prices (defaults) | ✅ PASS |  |
+| 119 | Product list includes tier fields | ✅ PASS |  |
+| 120 | Create customer with pricingTier=3 | ✅ PASS |  |
+| 121 | GET customer returns pricingTier | ✅ PASS |  |
+| 122 | Update pricingTier 3→5 | ✅ PASS |  |
+| 123 | Update pricingTier 5→3 (restore) | ✅ PASS |  |
+| 124 | Create customer without pricingTier defaults to 1 | ✅ PASS |  |
+| 125 | Reject pricingTier=0 → 400 | ✅ PASS |  |
+| 126 | Reject pricingTier=6 → 400 | ✅ PASS |  |
+| 127 | Upsert CustomerPrice — create | ✅ PASS |  |
+| 128 | GET customer prices returns list with product details | ✅ PASS |  |
+| 129 | Upsert same product — update tier to 2 | ✅ PASS |  |
+| 130 | Upsert with notes | ✅ PASS |  |
+| 131 | Delete CustomerPrice | ✅ PASS |  |
+| 132 | GET after delete — CustomerPrice gone | ✅ PASS |  |
+| 133 | Reject pricingTier=0 in CustomerPrice → 400 | ✅ PASS |  |
+| 134 | Reject pricingTier=6 in CustomerPrice → 400 | ✅ PASS |  |
+| 135 | Re-create CustomerPrice after delete (idempotent upsert) | ✅ PASS |  |
+| 136 | Tier-1 customer, no override → STANDARD pricing | ✅ PASS |  |
+| 137 | Tier-3 customer, no override → SPECIAL pricing | ✅ PASS |  |
+| 138 | Tier-1 customer + CustomerPrice override to tier 4 → SPECIAL | ✅ PASS |  |
+| 139 | Operator override lower than list → DISCOUNTED | ✅ PASS |  |
+| 140 | Operator override >= list price → ignored, tier wins | ✅ PASS |  |
+| 141 | Untiered product for tier-3 customer | ✅ PASS |  |
+| 142 | Multi-item order totals from tier-resolved prices | ✅ PASS |  |
+| 143 | Boxes/pieces qty calculation: boxes=2, pieces=3, unitsPerBox=6 → qty=15 | ✅ PASS |  |
+| 144 | Estimate: tier-3 customer + productId → SPECIAL pricing | ✅ PASS |  |
+| 145 | Estimate: tier-1 customer + CustomerPrice override → tier 4 price | ✅ PASS |  |
+| 146 | Estimate: operator override < list → DISCOUNTED | ✅ PASS |  |
+| 147 | Estimate: freeform item (no productId) → STANDARD | ✅ PASS |  |
+| 148 | Estimate: boxes/pieces qty resolution | ✅ PASS |  |
+| 149 | Estimate lifecycle: create → send → accept → convert → invoice prices match | ✅ PASS |  |
+| 150 | Deliver tier-priced order → auto-invoice matches order prices | ✅ PASS |  |
+| 151 | Invoice-from-estimate preserves tier prices (verified in test 149) | ✅ PASS |  |
+| 152 | CustomerPrice with nonexistent productId → error | ✅ PASS |  |
+| 153 | Double upsert same product → last tier wins | ✅ PASS |  |
+| 154 | Delete customer cascades CustomerPrices | ✅ PASS |  |
+| 155 | Delete product cascades CustomerPrices | ✅ PASS |  |
+| 156 | Invoice payment recording | ✅ PASS |  |
+| 157 | Invoice void | ✅ PASS |  |
+| 158 | Invoice duplicate | ✅ PASS |  |
+| 159 | Invoice revert to draft | ✅ PASS |  |
+| 160 | Order reopen (CANCELLED→PENDING) | ✅ PASS |  |
+| 161 | Order item update — qty change recalculates total | ✅ PASS |  |
+| 162 | Customer tags: create | ✅ PASS |  |
+| 163 | Customer tags: assign to customer | ✅ PASS |  |
+| 164 | Customer contacts: add contact person | ✅ PASS |  |
+| 165 | Customer advance payment | ✅ PASS |  |
+| 166 | Bookkeeping summary | ✅ PASS |  |
+| 167 | Bookkeeping transactions | ✅ PASS |  |
+| 168 | Inventory adjustment | ✅ PASS |  |
+| 169 | Inventory purchase | ✅ PASS |  |
+| 170 | Customer export CSV | ✅ PASS |  |
+| 171 | Invoice PDF generation | ✅ PASS |  |
+| 172 | Customer statement | ✅ PASS |  |
+| 173 | Product barcode lookup | ✅ PASS |  |
+| 174 | Supplier CRUD cycle | ✅ PASS |  |
+| 175 | Analytics endpoints probe | ✅ PASS |  |
+
+## QA Run — 2026-04-10T01:53:02.195Z
+
+**API:** https://routeflowapi-production-d504.up.railway.app/api/v1
+**Result:** 0/0 passed (0%) — 0 failed, 0 skipped
+
+| # | Description | Status | Notes |
+|---|-------------|--------|-------|
+
+## QA Run — 2026-04-10T01:53:11.456Z
+
+**API:** http://localhost:3000/api/v1
+**Result:** 0/0 passed (0%) — 0 failed, 0 skipped
+
+| # | Description | Status | Notes |
+|---|-------------|--------|-------|
+
+## QA Run — 2026-04-10T01:53:34.407Z
+
+**API:** http://localhost:3000/api/v1
+**Result:** 0/0 passed (0%) — 0 failed, 0 skipped
+
+| # | Description | Status | Notes |
+|---|-------------|--------|-------|
+
+## QA Run — 2026-04-10T01:58:54.757Z
+
+**API:** http://localhost:3000/api/v1
+**Result:** 175/176 passed (99%) — 0 failed, 1 skipped
+
+| # | Description | Status | Notes |
+|---|-------------|--------|-------|
+| 1 | SUPER_ADMIN login returns role=SUPER_ADMIN, no tenantId | ✅ PASS |  |
+| 2 | Wrong password returns 401 | ✅ PASS |  |
+| 3 | SUPER_ADMIN GET /orders without tenant slug returns data (unscoped) | ✅ PASS |  |
+| 4 | SUPER_ADMIN GET /orders with X-Tenant-Slug scopes to that tenant | ✅ PASS |  |
+| 5 | GET /platform-admin/tenants returns list including QA tenant | ✅ PASS |  |
+| 6 | POST /platform-admin/tenants created QA tenant (validated in setup) | ✅ PASS |  |
+| 7 | GET /platform-admin/tenants/:id returns tenant details | ✅ PASS |  |
+| 8 | PATCH /platform-admin/tenants/:id/status SUSPENDED → 200 | ✅ PASS |  |
+| 9 | Suspended tenant JWT returns 403 on API calls | ✅ PASS |  |
+| 10 | Reactivate tenant → calls succeed again | ✅ PASS |  |
+| 11 | POST /platform-admin/tenants/:id/extend-trial → 200 | ✅ PASS |  |
+| 12 | POST /platform-admin/tenants/:id/impersonate → JWT with impersonatedBy | ✅ PASS |  |
+| 13 | Impersonation JWT: GET /orders succeeds (read allowed) | ✅ PASS |  |
+| 14 | Impersonation JWT: POST /orders returns 403 (mutations blocked) | ✅ PASS |  |
+| 15 | GET /platform-admin/stats returns stats with tenants object | ✅ PASS |  |
+| 16 | GET /platform-admin/audit-logs returns list | ✅ PASS |  |
+| 17 | GET /platform-admin/tenants/:id/billing returns 200 | ✅ PASS |  |
+| 18 | Tenant isolation — setup creates tenant B, A cannot see B data | ✅ PASS |  |
+| 19 | Tenant A order ID not accessible from tenant B JWT | ✅ PASS |  |
+| 20 | OPERATOR login returns role=OPERATOR with tenantId | ✅ PASS |  |
+| 21 | Wrong password returns 401 | ✅ PASS |  |
+| 22 | POST /auth/refresh with valid refresh token → new access token | ✅ PASS |  |
+| 23 | Request without JWT returns 401 | ✅ PASS |  |
+| 24 | GET /customers returns list for this tenant | ✅ PASS |  |
+| 25 | POST /customers creates a customer | ✅ PASS |  |
+| 26 | GET /customers/:id returns customer with addresses | ✅ PASS |  |
+| 27 | PATCH /customers/:id updates customer | ✅ PASS |  |
+| 28 | POST /customers/:id/addresses adds address | ✅ PASS |  |
+| 29 | PATCH /customers/:id/addresses/:addrId updates address | ✅ PASS |  |
+| 30 | GET /products returns product list | ✅ PASS |  |
+| 31 | POST /products creates product with tier prices | ✅ PASS |  |
+| 32 | PATCH /products/:id updates single tier price | ✅ PASS |  |
+| 33 | GET /inventory/suppliers returns list | ✅ PASS |  |
+| 34 | POST /inventory/suppliers creates supplier | ✅ PASS |  |
+| 35 | GET /orders returns all tenant orders | ✅ PASS |  |
+| 36 | POST /orders creates order with calculated totals | ✅ PASS |  |
+| 37 | GET /orders/:id returns order with lineItems | ✅ PASS |  |
+| 38 | PATCH /orders/:id/status CONFIRMED → 200 | ✅ PASS |  |
+| 39 | PATCH /orders/:id/status DELIVERED → 200 | ✅ PASS |  |
+| 40 | Delivering order creates auto-invoice | ✅ PASS |  |
+| 41 | GET /routes returns all routes | ✅ PASS |  |
+| 42 | POST /routes creates route with stops | ✅ PASS |  |
+| 43 | POST /route-runs creates run with status SCHEDULED | ✅ PASS |  |
+| 44 | GET /route-runs returns all runs | ✅ PASS |  |
+| 45 | PATCH /route-runs/:id/status IN_PROGRESS → 200 | ✅ PASS |  |
+| 46 | GET /invoices returns all invoices | ✅ PASS |  |
+| 47 | POST /invoices creates manual invoice | ✅ PASS |  |
+| 48 | POST /invoices/:id/send → status SENT | ✅ PASS |  |
+| 49 | POST /invoices/:id/payments records payment | ✅ PASS |  |
+| 50 | POST /invoices/:id/send sends email (queued) | ✅ PASS |  |
+| 51 | POST /credit-notes creates credit note | ✅ PASS |  |
+| 52 | GET /credit-notes returns list | ✅ PASS |  |
+| 53 | POST /credit-notes/:id/issue → status ISSUED | ✅ PASS |  |
+| 54 | GET /returns returns all returns | ✅ PASS |  |
+| 55 | POST /returns/:id/approve → status APPROVED | ✅ PASS |  |
+| 56 | POST /returns/:id/reject → status REJECTED | ✅ PASS |  |
+| 57 | POST /estimates creates estimate with tier-resolved product pricing | ✅ PASS |  |
+| 58 | POST /estimates/:id/send → status SENT | ✅ PASS |  |
+| 59 | POST /estimates/:id/accept → status ACCEPTED | ✅ PASS |  |
+| 60 | POST /estimates/:id/convert → invoice created from estimate | ✅ PASS |  |
+| 61 | POST /recurring-invoices creates recurring invoice | ✅ PASS |  |
+| 62 | POST /recurring-invoices/:id/run → invoice generated immediately | ✅ PASS |  |
+| 63 | GET /recurring-invoices returns list | ✅ PASS |  |
+| 64 | POST /order-templates creates standing order | ✅ PASS |  |
+| 65 | POST /order-templates/:id/generate → order created | ✅ PASS |  |
+| 66 | GET /order-templates returns list | ✅ PASS |  |
+| 67 | GET /settings returns tenant settings | ✅ PASS |  |
+| 68 | PATCH /settings updates business name | ✅ PASS |  |
+| 69 | GET /analytics/revenue returns revenue data | ✅ PASS |  |
+| 70 | DRIVER login returns role=DRIVER | ✅ PASS |  |
+| 71 | DRIVER GET /customers returns 200 (drivers allowed) | ✅ PASS |  |
+| 72 | DRIVER POST /orders returns 403 | ✅ PASS |  |
+| 73 | GET /route-runs returns only runs assigned to this driver | ✅ PASS |  |
+| 74 | DRIVER cannot GET route run assigned to another driver | ✅ PASS |  |
+| 75 | Driver starts run → status IN_PROGRESS | ✅ PASS |  |
+| 76 | GET /route-runs/:id/stops returns stop list with customer info | ✅ PASS |  |
+| 77 | PATCH stop status ARRIVED → 200 | ✅ PASS |  |
+| 78 | POST complete stop with full delivery → order DELIVERED | ✅ PASS |  |
+| 79 | POST complete stop with partial delivery → partial qty recorded | ✅ PASS |  |
+| 80 | DAMAGED delivery flag | ⏭ SKIP | Covered by partial delivery test — damage status is a delivery item status varia |
+| 80 | POST complete stop marking item DAMAGED → damage recorded | ✅ PASS |  |
+| 81 | POST /route-runs/:id/status COMPLETED after all stops done | ✅ PASS |  |
+| 82 | GET /products/barcode/:barcode with valid barcode → 200 product details | ✅ PASS |  |
+| 83 | GET /products/barcode/:barcode with unknown barcode → 404 | ✅ PASS |  |
+| 84 | GET /route-runs/my-stats returns stats for this driver | ✅ PASS |  |
+| 85 | POST /auth/change-password with correct current password → 200 | ✅ PASS |  |
+| 86 | Login with old password after change → 401 | ✅ PASS |  |
+| 87 | Login with new password → 200 | ✅ PASS |  |
+| 88 | CUSTOMER login returns role=CUSTOMER | ✅ PASS |  |
+| 89 | CUSTOMER GET /customers (list all) → 403 | ✅ PASS |  |
+| 90 | CUSTOMER GET /drivers → 403 | ✅ PASS |  |
+| 91 | CUSTOMER GET /routes → 403 | ✅ PASS |  |
+| 92 | CUSTOMER GET /orders returns only own orders | ✅ PASS |  |
+| 93 | CUSTOMER GET /orders/:id for own order → 200 | ✅ PASS |  |
+| 94 | CUSTOMER GET another customer's order → 404 | ✅ PASS |  |
+| 95 | CUSTOMER can cancel own PENDING order → 200 | ✅ PASS |  |
+| 96 | CUSTOMER cannot cancel DELIVERED order → 400 | ✅ PASS |  |
+| 97 | CUSTOMER GET /invoices returns only own invoices | ✅ PASS |  |
+| 98 | CUSTOMER GET another customer's invoice → 404 | ✅ PASS |  |
+| 99 | CUSTOMER POST /returns on own delivered order → 201 | ✅ PASS |  |
+| 100 | CUSTOMER POST /returns on another customer's order → 403 | ✅ PASS |  |
+| 101 | CUSTOMER POST /returns on PENDING order → 400 | ✅ PASS |  |
+| 102 | CUSTOMER GET /returns returns only own returns | ✅ PASS |  |
+| 103 | CUSTOMER GET /order-templates returns only own templates | ✅ PASS |  |
+| 104 | CUSTOMER POST /order-templates creates own standing order → 201 | ✅ PASS |  |
+| 105 | Non-owner PATCH another customer's template → 403/404 | ✅ PASS |  |
+| 106 | CUSTOMER PATCH /customers/me updates own profile → 200 | ✅ PASS |  |
+| 107 | POST /auth/change-password for customer → 200 | ✅ PASS |  |
+| 108 | CUSTOMER GET /credit-notes returns only own credit notes | ✅ PASS |  |
+| 109 | Tenant A operator cannot see tenant B customers | ✅ PASS |  |
+| 110 | Using tenant A JWT with X-Tenant-Slug: tenant-B → 403 (mismatch) | ✅ PASS |  |
+| 111 | Call without X-Tenant-Slug and without subdomain → 400/401 | ✅ PASS |  |
+| 112 | Suspended tenant JWT returns 403 (TenantStatusGuard) | ✅ PASS |  |
+| 113 | After reactivation, suspended-tenant JWT succeeds again | ✅ PASS |  |
+| 114 | Rate limit: 101 rapid requests → 429 on 101st | ✅ PASS |  |
+| 115 | Create product with all 5 tier prices | ✅ PASS |  |
+| 116 | GET product returns all tier prices | ✅ PASS |  |
+| 117 | Update single tier price, others unchanged | ✅ PASS |  |
+| 118 | Create product WITHOUT tier prices (defaults) | ✅ PASS |  |
+| 119 | Product list includes tier fields | ✅ PASS |  |
+| 120 | Create customer with pricingTier=3 | ✅ PASS |  |
+| 121 | GET customer returns pricingTier | ✅ PASS |  |
+| 122 | Update pricingTier 3→5 | ✅ PASS |  |
+| 123 | Update pricingTier 5→3 (restore) | ✅ PASS |  |
+| 124 | Create customer without pricingTier defaults to 1 | ✅ PASS |  |
+| 125 | Reject pricingTier=0 → 400 | ✅ PASS |  |
+| 126 | Reject pricingTier=6 → 400 | ✅ PASS |  |
+| 127 | Upsert CustomerPrice — create | ✅ PASS |  |
+| 128 | GET customer prices returns list with product details | ✅ PASS |  |
+| 129 | Upsert same product — update tier to 2 | ✅ PASS |  |
+| 130 | Upsert with notes | ✅ PASS |  |
+| 131 | Delete CustomerPrice | ✅ PASS |  |
+| 132 | GET after delete — CustomerPrice gone | ✅ PASS |  |
+| 133 | Reject pricingTier=0 in CustomerPrice → 400 | ✅ PASS |  |
+| 134 | Reject pricingTier=6 in CustomerPrice → 400 | ✅ PASS |  |
+| 135 | Re-create CustomerPrice after delete (idempotent upsert) | ✅ PASS |  |
+| 136 | Tier-1 customer, no override → STANDARD pricing | ✅ PASS |  |
+| 137 | Tier-3 customer, no override → SPECIAL pricing | ✅ PASS |  |
+| 138 | Tier-1 customer + CustomerPrice override to tier 4 → SPECIAL | ✅ PASS |  |
+| 139 | Operator override lower than list → DISCOUNTED | ✅ PASS |  |
+| 140 | Operator override >= list price → ignored, tier wins | ✅ PASS |  |
+| 141 | Untiered product for tier-3 customer | ✅ PASS |  |
+| 142 | Multi-item order totals from tier-resolved prices | ✅ PASS |  |
+| 143 | Boxes/pieces qty calculation: boxes=2, pieces=3, unitsPerBox=6 → qty=15 | ✅ PASS |  |
+| 144 | Estimate: tier-3 customer + productId → SPECIAL pricing | ✅ PASS |  |
+| 145 | Estimate: tier-1 customer + CustomerPrice override → tier 4 price | ✅ PASS |  |
+| 146 | Estimate: operator override < list → DISCOUNTED | ✅ PASS |  |
+| 147 | Estimate: freeform item (no productId) → STANDARD | ✅ PASS |  |
+| 148 | Estimate: boxes/pieces qty resolution | ✅ PASS |  |
+| 149 | Estimate lifecycle: create → send → accept → convert → invoice prices match | ✅ PASS |  |
+| 150 | Deliver tier-priced order → auto-invoice matches order prices | ✅ PASS |  |
+| 151 | Invoice-from-estimate preserves tier prices (verified in test 149) | ✅ PASS |  |
+| 152 | CustomerPrice with nonexistent productId → error | ✅ PASS |  |
+| 153 | Double upsert same product → last tier wins | ✅ PASS |  |
+| 154 | Delete customer cascades CustomerPrices | ✅ PASS |  |
+| 155 | Delete product cascades CustomerPrices | ✅ PASS |  |
+| 156 | Invoice payment recording | ✅ PASS |  |
+| 157 | Invoice void | ✅ PASS |  |
+| 158 | Invoice duplicate | ✅ PASS |  |
+| 159 | Invoice revert to draft | ✅ PASS |  |
+| 160 | Order reopen (CANCELLED→PENDING) | ✅ PASS |  |
+| 161 | Order item update — qty change recalculates total | ✅ PASS |  |
+| 162 | Customer tags: create | ✅ PASS |  |
+| 163 | Customer tags: assign to customer | ✅ PASS |  |
+| 164 | Customer contacts: add contact person | ✅ PASS |  |
+| 165 | Customer advance payment | ✅ PASS |  |
+| 166 | Bookkeeping summary | ✅ PASS |  |
+| 167 | Bookkeeping transactions | ✅ PASS |  |
+| 168 | Inventory adjustment | ✅ PASS |  |
+| 169 | Inventory purchase | ✅ PASS |  |
+| 170 | Customer export CSV | ✅ PASS |  |
+| 171 | Invoice PDF generation | ✅ PASS |  |
+| 172 | Customer statement | ✅ PASS |  |
+| 173 | Product barcode lookup | ✅ PASS |  |
+| 174 | Supplier CRUD cycle | ✅ PASS |  |
+| 175 | Analytics endpoints probe | ✅ PASS |  |

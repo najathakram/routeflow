@@ -382,9 +382,12 @@ export class OrdersService {
       previousStatus: order.status,
     });
 
-    // Auto-create invoice when operator manually marks order as delivered
+    // Auto-create invoice when operator manually marks order as delivered.
+    // Capture tenantId now — the fire-and-forget promise escapes the request
+    // lifecycle and AsyncLocalStorage context would be lost.
     if (dto.status === OrderStatus.DELIVERED) {
-      this.invoicesService.createInvoiceFromOrder(id).catch((err) => {
+      const capturedTenantId = this.prisma.getTenantId();
+      this.invoicesService.createInvoiceFromOrderWithTenant(id, capturedTenantId).catch((err) => {
         this.logger.error(`Failed to auto-create invoice for order ${id}: ${err?.message ?? err}`);
       });
     }
