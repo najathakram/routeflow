@@ -1,8 +1,8 @@
 "use client";
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
-import { Building2, ArrowRight, RefreshCw } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Building2, ArrowRight, RefreshCw, CheckCircle, X } from "lucide-react";
 import { Badge, Button } from "@routeflow/ui/web";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import type { BuyerSeller } from "@/lib/buyer-auth";
@@ -82,12 +82,67 @@ function SellerCard({
   );
 }
 
+// ─── Linked success banner ────────────────────────────────────────────────────
+// Reads ?linked=true from the URL (set after Google OAuth or invite acceptance)
+// and shows a dismissible confirmation banner. Auto-dismisses after 5 seconds.
+
+function LinkedBanner({ sellerName }: { sellerName?: string }) {
+  const params = useSearchParams();
+  const router = useRouter();
+  const [visible, setVisible] = React.useState(false);
+
+  React.useEffect(() => {
+    if (params.get("linked") === "true") {
+      setVisible(true);
+      const t = setTimeout(() => {
+        setVisible(false);
+        // Remove the query param without a page reload
+        router.replace("/buyer/portal", { scroll: false });
+      }, 5000);
+      return () => clearTimeout(t);
+    }
+  }, [params, router]);
+
+  if (!visible) return null;
+
+  return (
+    <div
+      role="status"
+      className="mb-5 flex items-start gap-3 rounded-xl border border-success/30 bg-success/10 px-4 py-3"
+    >
+      <CheckCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-success" />
+      <p className="flex-1 text-sm font-medium text-success">
+        {sellerName
+          ? `You are now connected to ${sellerName}. Welcome!`
+          : "Seller connected successfully. Welcome!"}
+      </p>
+      <button
+        type="button"
+        onClick={() => {
+          setVisible(false);
+          router.replace("/buyer/portal", { scroll: false });
+        }}
+        className="flex-shrink-0 text-success/60 hover:text-success transition-colors"
+        aria-label="Dismiss"
+      >
+        <X className="h-4 w-4" />
+      </button>
+    </div>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-export default function BuyerPortalPage() {
+function BuyerPortalInner() {
   const router = useRouter();
   const { sellers, setActiveSeller, refreshSellers, isLoading } = useBuyerAuth();
   const [isRefreshing, setIsRefreshing] = React.useState(false);
+
+  // Find the most recently linked active seller for the banner greeting
+  const newestActiveSeller = React.useMemo(
+    () => sellers.find((s) => s.linkStatus === "ACTIVE") ?? null,
+    [sellers],
+  );
 
   const handleSellerClick = (seller: BuyerSeller) => {
     setActiveSeller(seller);
@@ -105,6 +160,11 @@ export default function BuyerPortalPage() {
 
   return (
     <div className="p-6 max-w-3xl mx-auto">
+      {/* Linked success banner — shown when redirected with ?linked=true */}
+      <React.Suspense fallback={null}>
+        <LinkedBanner sellerName={newestActiveSeller?.tenant.name} />
+      </React.Suspense>
+
       {/* Page header */}
       <div className="mb-6 flex items-center justify-between">
         <div>
@@ -150,5 +210,14 @@ export default function BuyerPortalPage() {
         </div>
       )}
     </div>
+  );
+}
+
+// Suspense wrapper required because LinkedBanner uses useSearchParams()
+export default function BuyerPortalPage() {
+  return (
+    <React.Suspense fallback={null}>
+      <BuyerPortalInner />
+    </React.Suspense>
   );
 }
