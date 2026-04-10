@@ -148,11 +148,25 @@ export class GoogleOAuthService {
 
     if (!stateObj?.nonce) throw new ForbiddenException("state_invalid");
 
-    // Verify and atomically consume the nonce
+    // Atomically get-and-delete the nonce in a single round-trip (GETDEL, Redis ≥ 6.2).
+    // Falls back to a Lua transaction on older Redis versions.
     const nonceKey = `oauth:nonce:${stateObj.nonce}`;
-    const stored = await this.redis.get(nonceKey).catch(() => null);
+    let stored: string | null = null;
+    try {
+      // ioredis exposes sendCommand for commands not yet wrapped as methods
+      stored = await (this.redis as any).getdel(nonceKey);
+    } catch {
+      // GETDEL not supported (Redis < 6.2) — use a Lua script for atomicity
+      const luaResult = await this.redis
+        .eval(
+          `local v = redis.call('GET', KEYS[1]); if v then redis.call('DEL', KEYS[1]) end; return v`,
+          1,
+          nonceKey,
+        )
+        .catch(() => null);
+      stored = luaResult as string | null;
+    }
     if (!stored) throw new ForbiddenException("state_invalid");
-    await this.redis.del(nonceKey).catch(() => null);
 
     const redirectUri =
       stateObj.type === "platform"
