@@ -45,6 +45,7 @@ import { BillingModule } from "./billing/billing.module";
 import { BuyerModule } from "./buyer/buyer.module";
 
 import { TenantStatusGuard } from "./tenant/tenant-status.guard";
+import { ImpersonationGuard } from "./auth/guards/impersonation.guard";
 
 import { AppController } from "./app.controller";
 import { AppService } from "./app.service";
@@ -149,6 +150,9 @@ import { AppService } from "./app.service";
     // useExisting ensures the same singleton instance used by PlatformAdminService
     // (for cache invalidation) is the one that runs as the global guard.
     { provide: APP_GUARD, useExisting: TenantStatusGuard },
+    // Block mutation requests (POST/PUT/PATCH/DELETE) when the JWT carries an
+    // `impersonatedBy` claim — impersonation sessions are read-only.
+    { provide: APP_GUARD, useClass: ImpersonationGuard },
   ],
 })
 export class AppModule implements NestModule {
