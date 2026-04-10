@@ -7,6 +7,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TouchableOpacity,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -121,6 +122,19 @@ export default function CompanyCodeScreen() {
         <Text style={styles.hint}>
           {"Don't know your company code? Contact your RouteFlow administrator."}
         </Text>
+
+        <View style={styles.buyerDivider}>
+          <View style={styles.dividerLine} />
+          <Text style={styles.dividerText}>or</Text>
+          <View style={styles.dividerLine} />
+        </View>
+
+        <TouchableOpacity
+          style={styles.buyerLink}
+          onPress={() => router.push("/(buyer-auth)/login")}
+        >
+          <Text style={styles.buyerLinkText}>Sign in as Buyer</Text>
+        </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
   );
@@ -177,5 +191,34 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: "Inter_400Regular",
     color: "#94a3b8",
+  },
+  buyerDivider: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 32,
+    gap: 12,
+  },
+  dividerLine: {
+    flex: 1,
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: "#e2e8f0",
+  },
+  dividerText: {
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    color: "#94a3b8",
+  },
+  buyerLink: {
+    alignItems: "center",
+    marginTop: 16,
+    paddingVertical: 12,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    borderColor: "#4f46e5",
+  },
+  buyerLinkText: {
+    fontSize: 15,
+    fontFamily: "Inter_600SemiBold",
+    color: "#4f46e5",
   },
 });

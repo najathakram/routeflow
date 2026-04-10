@@ -437,3 +437,59 @@ export function useMergeCustomers() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["customers"] }),
   });
 }
+
+// ─── Buyer Portal Management ──────────────────────────────────────────────────
+
+export interface PortalStatus {
+  status: "NOT_INVITED" | "INVITED" | "ACTIVE" | "PENDING_SELLER_APPROVAL" | "DISCONNECTED";
+  inviteMethod?: string;
+  inviteExpiresAt?: string | null;
+  linkedAt?: string | null;
+  disconnectedAt?: string | null;
+  disconnectedBy?: string | null;
+  buyerAccount?: { id: string; email: string; name: string } | null;
+}
+
+export function usePortalStatus(customerId: string) {
+  return useQuery<PortalStatus>({
+    queryKey: ["customers", customerId, "portal-status"],
+    queryFn: () => apiClient.get(`/customers/${customerId}/portal-status`).then((r) => r.data),
+    enabled: !!customerId,
+  });
+}
+
+export function useSendPortalInvite() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, method, overrideEmail }: { id: string; method: "EMAIL" | "SMS"; overrideEmail?: string }) =>
+      apiClient.post(`/customers/${id}/portal-invite`, { method, overrideEmail }).then((r) => r.data),
+    onSuccess: (_d, vars) => qc.invalidateQueries({ queryKey: ["customers", vars.id, "portal-status"] }),
+  });
+}
+
+export function useResendPortalInvite() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiClient.post(`/customers/${id}/portal-resend`).then((r) => r.data),
+    onSuccess: (_d, id) => qc.invalidateQueries({ queryKey: ["customers", id, "portal-status"] }),
+  });
+}
+
+export function useDisconnectPortal() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiClient.post(`/customers/${id}/portal-disconnect`).then((r) => r.data),
+    onSuccess: (_d, id) => qc.invalidateQueries({ queryKey: ["customers", id, "portal-status"] }),
+  });
+}
+
+export function useApprovePortalRequest() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiClient.post(`/customers/${id}/portal-approve`).then((r) => r.data),
+    onSuccess: (_d, id) => qc.invalidateQueries({ queryKey: ["customers", id, "portal-status"] }),
+  });
+}

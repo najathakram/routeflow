@@ -75,6 +75,11 @@ import {
   useAddCustomerComment,
   useDeleteCustomerComment,
   useCustomerIncomeChart,
+  usePortalStatus,
+  useSendPortalInvite,
+  useResendPortalInvite,
+  useDisconnectPortal,
+  useApprovePortalRequest,
   type AdvancePayment,
   type CustomerPrice,
   type ContactPerson,
@@ -1209,6 +1214,15 @@ export default function CustomerDetailPage({
   const removeTag = useRemoveCustomerTag();
   const { data: chartData } = useCustomerIncomeChart(params.id);
 
+  // Buyer Portal management
+  const { data: portalStatus, isLoading: portalLoading } = usePortalStatus(params.id);
+  const sendInvite = useSendPortalInvite();
+  const resendInvite = useResendPortalInvite();
+  const disconnectPortal = useDisconnectPortal();
+  const approvePortal = useApprovePortalRequest();
+  const [portalInviteEmail, setPortalInviteEmail] = React.useState("");
+  const [portalMsg, setPortalMsg] = React.useState<string | null>(null);
+
   const allOrders: ApiOrder[] = ordersResult?.data ?? [];
   const addresses = customer?.addresses ?? [];
   const currentStatus: CustomerStatus =
@@ -1976,7 +1990,7 @@ export default function CustomerDetailPage({
                 </Card>
               </div>
 
-              <div>
+              <div className="space-y-5">
                 <Card title="Account Status">
                   <div className="flex flex-col gap-4">
                     <div className="flex items-center justify-between">
@@ -2011,6 +2025,150 @@ export default function CustomerDetailPage({
                       ))}
                     </div>
                   </div>
+                </Card>
+
+                {/* ── Buyer Portal card ──────────────────────────── */}
+                <Card title="Buyer Portal">
+                  {portalLoading ? (
+                    <p className="text-sm text-navy/50">Loading…</p>
+                  ) : (
+                    <div className="flex flex-col gap-3">
+                      {/* Status row */}
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm text-navy/60">Portal status</p>
+                        <span
+                          className={cn(
+                            "rounded-full px-2.5 py-0.5 text-xs font-semibold",
+                            portalStatus?.status === "ACTIVE"
+                              ? "bg-success/10 text-success"
+                              : portalStatus?.status === "INVITED"
+                                ? "bg-warning/10 text-warning-700"
+                                : portalStatus?.status === "PENDING_SELLER_APPROVAL"
+                                  ? "bg-brand-50 text-brand-700"
+                                  : portalStatus?.status === "DISCONNECTED"
+                                    ? "bg-danger/10 text-danger"
+                                    : "bg-surface-raised text-navy/50",
+                          )}
+                        >
+                          {portalStatus?.status === "NOT_INVITED"
+                            ? "Not Invited"
+                            : portalStatus?.status === "INVITED"
+                              ? "Invite Sent"
+                              : portalStatus?.status === "ACTIVE"
+                                ? "Connected"
+                                : portalStatus?.status === "PENDING_SELLER_APPROVAL"
+                                  ? "Pending Approval"
+                                  : portalStatus?.status === "DISCONNECTED"
+                                    ? "Disconnected"
+                                    : "Unknown"}
+                        </span>
+                      </div>
+
+                      {/* Active: show buyer account */}
+                      {portalStatus?.status === "ACTIVE" && portalStatus.buyerAccount && (
+                        <div className="rounded-lg bg-surface-raised px-3 py-2 text-xs text-navy/70">
+                          <p className="font-medium">{portalStatus.buyerAccount.name}</p>
+                          <p>{portalStatus.buyerAccount.email}</p>
+                        </div>
+                      )}
+
+                      {/* Invited: show expiry */}
+                      {portalStatus?.status === "INVITED" && portalStatus.inviteExpiresAt && (
+                        <p className="text-xs text-navy/50">
+                          Expires {new Date(portalStatus.inviteExpiresAt).toLocaleDateString()}
+                        </p>
+                      )}
+
+                      {/* Error/success message */}
+                      {portalMsg && (
+                        <p className="rounded-lg bg-success/10 px-3 py-2 text-xs text-success">
+                          {portalMsg}
+                        </p>
+                      )}
+
+                      {/* Override email field for sending invite */}
+                      {(portalStatus?.status === "NOT_INVITED" || portalStatus?.status === "DISCONNECTED") && (
+                        <Input
+                          placeholder={`Override email (optional)`}
+                          value={portalInviteEmail}
+                          onChange={(e) => setPortalInviteEmail(e.target.value)}
+                          label="Invite email"
+                        />
+                      )}
+
+                      {/* Actions */}
+                      <div className="flex flex-col gap-2">
+                        {(portalStatus?.status === "NOT_INVITED" || portalStatus?.status === "DISCONNECTED") && (
+                          <Button
+                            size="sm"
+                            loading={sendInvite.isPending}
+                            onClick={() => {
+                              setPortalMsg(null);
+                              sendInvite.mutate(
+                                { id: params.id, method: "EMAIL", overrideEmail: portalInviteEmail || undefined },
+                                {
+                                  onSuccess: (d: { message?: string }) => setPortalMsg(d?.message ?? "Invite sent!"),
+                                  onError: () => setPortalMsg(null),
+                                },
+                              );
+                            }}
+                          >
+                            Send Portal Invite
+                          </Button>
+                        )}
+
+                        {portalStatus?.status === "INVITED" && (
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            loading={resendInvite.isPending}
+                            onClick={() => {
+                              setPortalMsg(null);
+                              resendInvite.mutate(params.id, {
+                                onSuccess: (d: { message?: string }) => setPortalMsg(d?.message ?? "Invite resent!"),
+                                onError: () => setPortalMsg(null),
+                              });
+                            }}
+                          >
+                            Resend Invite
+                          </Button>
+                        )}
+
+                        {portalStatus?.status === "PENDING_SELLER_APPROVAL" && (
+                          <Button
+                            size="sm"
+                            loading={approvePortal.isPending}
+                            onClick={() => {
+                              setPortalMsg(null);
+                              approvePortal.mutate(params.id, {
+                                onSuccess: () => setPortalMsg("Buyer connection approved!"),
+                                onError: () => setPortalMsg(null),
+                              });
+                            }}
+                          >
+                            Approve Connection
+                          </Button>
+                        )}
+
+                        {(portalStatus?.status === "ACTIVE" || portalStatus?.status === "INVITED" || portalStatus?.status === "PENDING_SELLER_APPROVAL") && (
+                          <Button
+                            size="sm"
+                            variant="danger"
+                            loading={disconnectPortal.isPending}
+                            onClick={() => {
+                              setPortalMsg(null);
+                              disconnectPortal.mutate(params.id, {
+                                onSuccess: () => setPortalMsg("Portal disconnected."),
+                                onError: () => setPortalMsg(null),
+                              });
+                            }}
+                          >
+                            Disconnect Portal
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </Card>
               </div>
             </div>

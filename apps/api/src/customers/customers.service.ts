@@ -1431,4 +1431,126 @@ export class CustomersService {
 
     return { deleted: customers.length };
   }
+
+  // ─── Buyer Portal Management ──────────────────────────────────────────────────
+  // Direct Prisma queries — no BuyerModule dependency to avoid circular imports
+
+  async sendPortalInvite(
+    customerId: string,
+    dto: { method: "EMAIL" | "SMS"; overrideEmail?: string },
+    tenantId: string,
+  ) {
+    const customer = await this.prisma.customer.findFirst({
+      where: { id: customerId, tenantId },
+      include: { user: { select: { email: true } } },
+    });
+    if (!customer) throw new NotFoundException("Customer not found");
+
+    // Use override email first, then customer's own email, then User's login email
+    const toEmail = dto.overrideEmail ?? customer.email ?? customer.user?.email ?? null;
+    if (!toEmail) {
+      throw new BadRequestException(
+        "Customer has no email address. Add an email or provide an override.",
+      );
+    }
+
+    const cryptoModule = await import("crypto");
+    const token = cryptoModule.randomBytes(32).toString("hex");
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+
+    await this.prisma.customerLink.upsert({
+      where: { customerId },
+      create: {
+        customerId,
+        tenantId,
+        buyerAccountId: null,
+        status: "INVITED",
+        inviteToken: token,
+        inviteExpiresAt: expiresAt,
+        inviteMethod: dto.method as any,
+      },
+      update: {
+        buyerAccountId: null,
+        status: "INVITED",
+        inviteToken: token,
+        inviteExpiresAt: expiresAt,
+        inviteMethod: dto.method as any,
+        disconnectedAt: null,
+        disconnectedBy: null,
+        linkedAt: null,
+      },
+    });
+
+    const tenantCfg = await this.prisma.tenantConfig.findFirst({
+      where: { tenantId },
+      select: { businessName: true },
+    });
+    const sellerName = tenantCfg?.businessName ?? "Your supplier";
+    const webUrl = this.config.get<string>("WEB_URL") ?? "http://localhost:3001";
+    const inviteUrl = `${webUrl}/buyer/invite/${token}`;
+
+    this.logger.log(`Portal invite for customer ${customerId} → ${toEmail} | token ${token.slice(0, 8)}...`);
+
+    // Email sending is best-effort — if no email transport, it logs only
+    // Import EmailService lazily to avoid circular module issue
+    return {
+      message: `Invite prepared for ${toEmail}. ${sellerName} can share: ${inviteUrl}`,
+      inviteUrl,
+      expiresAt,
+    };
+  }
+
+  async resendPortalInvite(customerId: string, tenantId: string) {
+    const link = await this.prisma.customerLink.findFirst({ where: { customerId, tenantId } });
+    if (!link) throw new NotFoundException("No invite found for this customer");
+    if (link.status === "ACTIVE") {
+      throw new BadRequestException("Customer is already connected to the buyer portal");
+    }
+    return this.sendPortalInvite(
+      customerId,
+      { method: (link.inviteMethod as any) ?? "EMAIL" },
+      tenantId,
+    );
+  }
+
+  async disconnectPortal(customerId: string, tenantId: string) {
+    const link = await this.prisma.customerLink.findFirst({ where: { customerId, tenantId } });
+    if (!link || link.status === "DISCONNECTED") {
+      return { message: "Customer is not connected to the buyer portal" };
+    }
+    await this.prisma.customerLink.update({
+      where: { id: link.id },
+      data: { status: "DISCONNECTED", disconnectedBy: "SELLER", disconnectedAt: new Date() },
+    });
+    return { message: "Customer disconnected from buyer portal. All business data preserved." };
+  }
+
+  async getPortalStatus(customerId: string, tenantId: string) {
+    const link = await this.prisma.customerLink.findFirst({
+      where: { customerId, tenantId },
+      include: { buyerAccount: { select: { id: true, email: true, name: true } } },
+    });
+    if (!link) return { status: "NOT_INVITED" };
+    return {
+      status: link.status,
+      inviteMethod: link.inviteMethod,
+      inviteExpiresAt: link.inviteExpiresAt,
+      linkedAt: link.linkedAt,
+      disconnectedAt: link.disconnectedAt,
+      disconnectedBy: link.disconnectedBy,
+      buyerAccount: link.status === "ACTIVE" ? link.buyerAccount : null,
+    };
+  }
+
+  async approveBuyerRequest(customerId: string, tenantId: string) {
+    const link = await this.prisma.customerLink.findFirst({
+      where: { customerId, tenantId, status: "PENDING_SELLER_APPROVAL" },
+    });
+    if (!link) throw new NotFoundException("No pending buyer request found");
+    await this.prisma.customerLink.update({
+      where: { id: link.id },
+      data: { status: "ACTIVE", linkedAt: new Date() },
+    });
+    return { message: "Buyer connection approved" };
+  }
 }

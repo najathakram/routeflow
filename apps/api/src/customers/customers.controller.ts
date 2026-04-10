@@ -19,6 +19,7 @@ import { Roles } from "../auth/decorators/roles.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { CustomersService } from "./customers.service";
+import { PortalInviteDto } from "../buyer/dto/portal-invite.dto";
 import { CreateCustomerDto } from "./dto/create-customer.dto";
 import { UpdateCustomerDto } from "./dto/update-customer.dto";
 import { ChangeCustomerStatusDto } from "./dto/change-customer-status.dto";
@@ -272,6 +273,42 @@ export class CustomersController {
   @Roles(UserRole.OPERATOR)
   getIncomeChart(@Param("id") id: string) {
     return this.customersService.getIncomeChart(id);
+  }
+
+  // ─── Buyer Portal Management ──────────────────────────────────────────────
+
+  @Post(":id/portal-invite")
+  @Roles(UserRole.OPERATOR)
+  sendPortalInvite(
+    @Param("id") id: string,
+    @Body() dto: PortalInviteDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.customersService.sendPortalInvite(id, dto, user.tenantId!);
+  }
+
+  @Post(":id/portal-resend")
+  @Roles(UserRole.OPERATOR)
+  resendPortalInvite(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
+    return this.customersService.resendPortalInvite(id, user.tenantId!);
+  }
+
+  @Post(":id/portal-disconnect")
+  @Roles(UserRole.OPERATOR)
+  disconnectPortal(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
+    return this.customersService.disconnectPortal(id, user.tenantId!);
+  }
+
+  @Get(":id/portal-status")
+  @Roles(UserRole.OPERATOR)
+  getPortalStatus(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
+    return this.customersService.getPortalStatus(id, user.tenantId!);
+  }
+
+  @Post(":id/portal-approve")
+  @Roles(UserRole.OPERATOR)
+  approveBuyerRequest(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
+    return this.customersService.approveBuyerRequest(id, user.tenantId!);
   }
 
   // ─── Delete ───────────────────────────────────────────────────────────────

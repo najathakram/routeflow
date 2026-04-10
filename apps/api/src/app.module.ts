@@ -42,6 +42,7 @@ import { EmailModule } from "./email/email.module";
 import { PlatformAdminModule } from "./platform-admin/platform-admin.module";
 import { AuditModule } from "./audit/audit.module";
 import { BillingModule } from "./billing/billing.module";
+import { BuyerModule } from "./buyer/buyer.module";
 
 import { TenantStatusGuard } from "./tenant/tenant-status.guard";
 
@@ -136,6 +137,8 @@ import { AppService } from "./app.service";
     AuditModule,
     // ─── Billing (Stripe) ──────────────────────────────────────────────────────
     BillingModule,
+    // ─── Buyer Portal (multi-tenant customer identity) ─────────────────────────
+    BuyerModule,
   ],
   controllers: [AppController],
   providers: [

@@ -207,6 +207,15 @@ export default function LoginPage() {
             First login? You will be prompted to change your password.
           </p>
         </div>
+
+        <div className="mt-6 text-center">
+          <p className="text-xs text-navy/50">
+            Not a staff member?{" "}
+            <a href="/buyer/login" className="text-brand-600 hover:underline">
+              Sign in to Buyer Portal
+            </a>
+          </p>
+        </div>
       </div>
     </div>
   );

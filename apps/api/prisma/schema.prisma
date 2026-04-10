@@ -204,6 +204,31 @@ enum PriceType {
   DISCOUNTED
 }
 
+// ─── Buyer Portal Enums ───────────────────────────────────────────────────────
+
+enum BuyerAccountStatus {
+  ACTIVE
+  SUSPENDED
+  DELETED
+}
+
+enum CustomerLinkStatus {
+  INVITED
+  PENDING_SELLER_APPROVAL
+  ACTIVE
+  DISCONNECTED
+}
+
+enum InviteMethod {
+  EMAIL
+  SMS
+}
+
+enum DisconnectedBy {
+  BUYER
+  SELLER
+}
+
 // ─── Tenant Models ────────────────────────────────────────────────────────────
 
 model Tenant {
@@ -275,6 +300,7 @@ model Tenant {
   messages             Message[]
   customerPrices       CustomerPrice[]
   systemConfigs        SystemConfig[]
+  customerLinks        CustomerLink[]
 
   @@index([slug])
   @@index([status])
@@ -451,6 +477,7 @@ model Customer {
   contactPersons     ContactPerson[]
   tagAssignments     CustomerTagAssignment[]
   comments           CustomerComment[]
+  customerLink       CustomerLink?
 
   @@index([zohoContactId])
   @@index([businessName])
@@ -1658,6 +1685,67 @@ model CustomerPrice {
   @@unique([customerId, productId])
   @@index([customerId])
   @@index([tenantId])
+}
+
+// ─── Buyer Portal ─────────────────────────────────────────────────────────────
+
+model BuyerAccount {
+  id            String             @id @default(uuid())
+  email         String             @unique
+  passwordHash  String
+  name          String
+  phone         String?
+  mobile        String?
+  status        BuyerAccountStatus @default(ACTIVE)
+  emailVerified Boolean            @default(false)
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  deletedAt     DateTime?
+
+  customerLinks CustomerLink[]
+  refreshTokens BuyerRefreshToken[]
+
+  @@index([email])
+  @@index([status])
+  @@index([deletedAt])
+}
+
+model CustomerLink {
+  id              String             @id @default(uuid())
+  buyerAccountId  String?            // null while invite is pending acceptance
+  customerId      String             @unique
+  tenantId        String
+  status          CustomerLinkStatus @default(INVITED)
+  inviteToken     String?            @unique
+  inviteExpiresAt DateTime?
+  inviteMethod    InviteMethod?
+  linkedAt        DateTime?
+  disconnectedAt  DateTime?
+  disconnectedBy  DisconnectedBy?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  buyerAccount BuyerAccount? @relation(fields: [buyerAccountId], references: [id])
+  customer     Customer      @relation(fields: [customerId], references: [id])
+  tenant       Tenant        @relation(fields: [tenantId], references: [id])
+
+  @@index([buyerAccountId])
+  @@index([tenantId])
+  @@index([inviteToken])
+  @@index([status])
+}
+
+model BuyerRefreshToken {
+  id             String       @id @default(uuid())
+  buyerAccountId String
+  tokenHash      String       @unique
+  expiresAt      DateTime
+  createdAt      DateTime     @default(now())
+
+  buyerAccount BuyerAccount @relation(fields: [buyerAccountId], references: [id], onDelete: Cascade)
+
+  @@index([buyerAccountId])
+  @@index([expiresAt])
 }
 
 // ─── Audit Logging ────────────────────────────────────────────────────────────

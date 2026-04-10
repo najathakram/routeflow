@@ -3,6 +3,7 @@
 import * as React from "react";
 import { QueryClient, QueryClientProvider, MutationCache } from "@tanstack/react-query";
 import { AuthProvider } from "@/lib/auth-context";
+import { BuyerAuthProvider } from "@/lib/buyer-auth-context";
 import { ToastProvider, useToast } from "@routeflow/ui/web";
 
 function QueryProviders({ children }: { children: React.ReactNode }) {
@@ -30,7 +31,9 @@ function QueryProviders({ children }: { children: React.ReactNode }) {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <AuthProvider>{children}</AuthProvider>
+      <BuyerAuthProvider>
+        <AuthProvider>{children}</AuthProvider>
+      </BuyerAuthProvider>
     </QueryClientProvider>
   );
 }

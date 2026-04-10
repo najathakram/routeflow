@@ -1,0 +1,63 @@
+import { Module } from "@nestjs/common";
+import { JwtModule } from "@nestjs/jwt";
+import { PassportModule } from "@nestjs/passport";
+import { ConfigModule, ConfigService } from "@nestjs/config";
+import { Reflector } from "@nestjs/core";
+import { AppConfig } from "../config/configuration";
+import { EmailModule } from "../email/email.module";
+import { TenantModule } from "../tenant/tenant.module";
+import { OrdersModule } from "../orders/orders.module";
+import { InvoicesModule } from "../invoices/invoices.module";
+import { CustomersModule } from "../customers/customers.module";
+
+import { BuyerAuthController } from "./buyer-auth.controller";
+import { BuyerController } from "./buyer.controller";
+import { BuyerAdminController, CustomerLinksAdminController } from "./buyer-admin.controller";
+
+import { BuyerAuthService } from "./buyer-auth.service";
+import { BuyerService } from "./buyer.service";
+import { BuyerAdminService } from "./buyer-admin.service";
+
+import { BuyerJwtStrategy } from "./strategies/buyer-jwt.strategy";
+import { BuyerJwtAuthGuard } from "./guards/buyer-jwt-auth.guard";
+import { BuyerSellerContextGuard } from "./guards/buyer-seller-context.guard";
+import { BuyerTenantInterceptor } from "./buyer-tenant.interceptor";
+
+@Module({
+  imports: [
+    PassportModule,
+    EmailModule,
+    TenantModule,
+    OrdersModule,
+    InvoicesModule,
+    CustomersModule,
+    JwtModule.registerAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService<AppConfig>) => ({
+        secret: configService.get<AppConfig["jwt"]>("jwt")?.secret,
+        signOptions: {
+          expiresIn: configService.get<AppConfig["jwt"]>("jwt")?.expiresIn as any,
+        },
+      }),
+    }),
+  ],
+  controllers: [
+    BuyerAuthController,
+    BuyerController,
+    BuyerAdminController,
+    CustomerLinksAdminController,
+  ],
+  providers: [
+    Reflector,
+    BuyerAuthService,
+    BuyerService,
+    BuyerAdminService,
+    BuyerJwtStrategy,
+    BuyerJwtAuthGuard,
+    BuyerSellerContextGuard,
+    BuyerTenantInterceptor,
+  ],
+  exports: [BuyerAuthService, BuyerService, BuyerJwtAuthGuard, BuyerSellerContextGuard],
+})
+export class BuyerModule {}

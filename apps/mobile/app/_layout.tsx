@@ -14,6 +14,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { UserRole } from "@routeflow/types";
 import { useAuthStore } from "../lib/auth-store";
 import { useTenantStore } from "../lib/tenant-store";
+import { useBuyerAuthStore } from "../lib/buyer-auth-store";
 
 // Configure how notifications are handled when the app is in the foreground
 Notifications.setNotificationHandler({
@@ -32,6 +33,13 @@ const queryClient = new QueryClient();
 function RootLayoutNav() {
   const { user, isLoading, initialize } = useAuthStore();
   const { slug: tenantSlug, isLoading: tenantLoading, initialize: initTenant } = useTenantStore();
+  const {
+    buyer,
+    isBuyerAuthenticated,
+    isLoading: buyerLoading,
+    activeSeller,
+    initialize: initBuyer,
+  } = useBuyerAuthStore();
   const router = useRouter();
   const segments: string[] = useSegments();
   const notificationListener = useRef<ReturnType<typeof Notifications.addNotificationReceivedListener> | null>(null);
@@ -39,6 +47,7 @@ function RootLayoutNav() {
   useEffect(() => {
     initTenant();
     initialize();
+    initBuyer();
   }, []);
 
   // Set up foreground notification listener
@@ -55,7 +64,21 @@ function RootLayoutNav() {
   }, []);
 
   useEffect(() => {
-    if (isLoading || tenantLoading) return;
+    if (isLoading || tenantLoading || buyerLoading) return;
+
+    // ── Buyer portal routing (checked before staff routing) ──────────────────
+    if (isBuyerAuthenticated) {
+      const inBuyerAuth = segments[0] === "(buyer-auth)";
+      const inBuyer = segments[0] === "(buyer)";
+      if (!activeSeller && !inBuyerAuth) {
+        router.replace("/(buyer-auth)/sellers");
+      } else if (activeSeller && !inBuyer) {
+        router.replace("/(buyer)/orders");
+      }
+      return; // Don't fall through to staff routing
+    }
+
+    // ── Staff routing ────────────────────────────────────────────────────────
 
     // Step 1: Require a company code (tenant slug) before anything else
     if (!tenantSlug) {
@@ -108,7 +131,7 @@ function RootLayoutNav() {
         router.replace("/(driver)/route");
       }
     }
-  }, [user, isLoading, tenantSlug, tenantLoading, segments]);
+  }, [user, isLoading, tenantSlug, tenantLoading, buyer, isBuyerAuthenticated, buyerLoading, activeSeller, segments]);
 
   return <Slot />;
 }
