@@ -134,8 +134,9 @@ export class OrdersService {
     // Resolve which customer this order is for
     let customerId: string;
 
-    if (user.role === UserRole.OPERATOR) {
-      // Operator creates on behalf of a customer — customerId comes from the DTO
+    const isStaffRole = user.role === UserRole.OPERATOR || user.role === UserRole.TENANT_ADMIN;
+    if (isStaffRole) {
+      // Operator/TENANT_ADMIN creates on behalf of a customer — customerId comes from the DTO
       if (!dto.customerId) throw new BadRequestException("customerId is required");
       const customer = await this.prisma.forTenant().customer.findUnique({
         where: { id: dto.customerId },
