@@ -103,8 +103,13 @@ export class AuthController {
   async googleAuthUrl(
     @Query("tenant") tenantSlug: string,
     @Query("context") context: "portal" | "staff" = "staff",
-    @Query("invite_token") inviteToken?: string,
+    @Query("invite_token") inviteToken: string | undefined,
+    @Res({ passthrough: true }) res: any,
   ) {
+    if (!tenantSlug) {
+      res.status(400);
+      return { message: "tenant query parameter is required", statusCode: 400 };
+    }
     const url = await this.googleOAuth.generateAuthUrl("tenant", tenantSlug, inviteToken, context);
     return { url };
   }
