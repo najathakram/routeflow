@@ -21,10 +21,10 @@ export default defineConfig({
   testDir: "./e2e",
   fullyParallel: false, // sequential within a spec; specs run in parallel
   forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 2 : 1, // Railway can have cold-start latency
+  retries: process.env.CI ? 2 : 2, // Railway can have cold-start latency; always retry twice
   workers: process.env.CI ? 1 : 2,
 
-  timeout: 45_000, // 45 s per test
+  timeout: 60_000, // 60 s per test (Railway cold-start latency)
   expect: { timeout: 15_000 }, // 15 s per assertion
 
   reporter: [

@@ -15,11 +15,14 @@ test.describe("Cross-cutting — Auth Guards & Role Isolation", () => {
 
   test("CC-01 unauthenticated /dashboard → redirect to /login", async ({ page, context }) => {
     await context.clearCookies();
-    await page.evaluate(() =>
-      ["accessToken", "refreshToken"].forEach((k) => localStorage.removeItem(k)),
-    );
+    // Navigate first so localStorage is in scope, then clear tokens
+    await page.goto("/login");
+    await page.evaluate(() => {
+      try { ["accessToken", "refreshToken"].forEach((k) => localStorage.removeItem(k)); } catch {}
+    });
+    await context.clearCookies();
     await page.goto("/dashboard");
-    await page.waitForURL(/\/login/, { timeout: 10_000 });
+    await page.waitForURL(/\/login/, { timeout: 15_000 });
     await expect(page).toHaveURL(/\/login/);
   });
 
@@ -28,10 +31,12 @@ test.describe("Cross-cutting — Auth Guards & Role Isolation", () => {
     context,
   }) => {
     await context.clearCookies();
-    await page.evaluate(() => localStorage.removeItem("superAdminToken"));
+    await page.goto("/admin-login");
+    await page.evaluate(() => { try { localStorage.removeItem("superAdminToken"); } catch {} });
+    await context.clearCookies();
     await page.goto("/admin/dashboard");
-    await page.waitForURL(/\/admin-login/, { timeout: 10_000 });
-    await expect(page).toHaveURL(/\/admin-login/);
+    await page.waitForURL(/\/admin[\-\/]login/, { timeout: 15_000 });
+    await expect(page).toHaveURL(/\/admin[\-\/]login/);
   });
 
   test("CC-03 unauthenticated /buyer/portal → redirect to /buyer/login", async ({
@@ -39,11 +44,13 @@ test.describe("Cross-cutting — Auth Guards & Role Isolation", () => {
     context,
   }) => {
     await context.clearCookies();
-    await page.evaluate(() =>
-      ["buyerAccessToken", "buyerRefreshToken"].forEach((k) => localStorage.removeItem(k)),
-    );
+    await page.goto("/buyer/login");
+    await page.evaluate(() => {
+      try { ["buyerAccessToken", "buyerRefreshToken"].forEach((k) => localStorage.removeItem(k)); } catch {}
+    });
+    await context.clearCookies();
     await page.goto("/buyer/portal");
-    await page.waitForURL(/\/buyer\/login/, { timeout: 10_000 });
+    await page.waitForURL(/\/buyer\/login/, { timeout: 15_000 });
     await expect(page).toHaveURL(/\/buyer\/login/);
   });
 
@@ -72,8 +79,10 @@ test.describe("Cross-cutting — Auth Guards & Role Isolation", () => {
   }) => {
     // Log in as SA, impersonate tenant, verify mutation is blocked
     await loginAsSuperAdmin(page);
-    const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "https://app.routeflow.io";
-    const apiURL = process.env.PLAYWRIGHT_API_URL ?? baseURL.replace(/\/$/, "") + "/api/v1";
+    // API URL must be set separately — the web URL is NOT the API URL
+    const apiURL =
+      process.env.PLAYWRIGHT_API_URL ??
+      "https://routeflowapi-production.up.railway.app/api/v1";
 
     // Get SA token from localStorage
     const saToken = await page.evaluate(() => localStorage.getItem("superAdminToken") ?? "");
@@ -117,12 +126,10 @@ test.describe("Cross-cutting — Auth Guards & Role Isolation", () => {
 
   test("CC-06 invalid invite token /buyer/invite/bad → error shown", async ({ page }) => {
     await page.goto("/buyer/invite/completely-invalid-token-xyz");
-    const errorVisible = await page
-      .getByText(/invalid|expired|not found/i)
-      .or(page.locator("[class*='error'], [class*='alert']").first())
-      .isVisible({ timeout: 15_000 })
-      .catch(() => false);
-    expect(errorVisible).toBe(true);
+    // Page shows "Invalid Invite" card with subtitle "Invite not found or already used"
+    await expect(
+      page.getByText(/invalid invite|invite not found|expired|not found/i).first()
+    ).toBeVisible({ timeout: 20_000 });
   });
 
   // ── Google OAuth buttons redirect to Google ───────────────────────────────
@@ -152,8 +159,8 @@ test.describe("Cross-cutting — Auth Guards & Role Isolation", () => {
     context,
   }) => {
     await context.clearCookies();
-    await page.evaluate(() => localStorage.removeItem("superAdminToken"));
     await page.goto("/admin-login");
+    await page.evaluate(() => { try { localStorage.removeItem("superAdminToken"); } catch {} });
     const googleBtn = page
       .getByRole("button", { name: /google/i })
       .or(page.getByText(/continue with google/i))

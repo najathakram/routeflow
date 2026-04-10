@@ -43,7 +43,8 @@ test.describe("Customer — Scoped Access", () => {
 
   test("CU-03 /routes → redirect or 403 (no access for customer)", async ({ page }) => {
     await page.goto("/routes");
-    // Customer should NOT see the routes page
+    // Wait briefly for client-side redirect to fire
+    await page.waitForTimeout(2000);
     const url = page.url();
     const isBlocked =
       url.includes("/login") ||
@@ -55,6 +56,8 @@ test.describe("Customer — Scoped Access", () => {
 
   test("CU-04 /drivers → redirect or 403 (no access for customer)", async ({ page }) => {
     await page.goto("/drivers");
+    // Wait briefly for client-side redirect to fire
+    await page.waitForTimeout(2000);
     const url = page.url();
     const isBlocked =
       url.includes("/login") ||

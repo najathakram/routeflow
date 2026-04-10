@@ -40,8 +40,8 @@ test.describe("Operator — Tenant Dashboard", () => {
     await setTenantCookie(context, baseURL, TENANT_SLUG);
     await page.goto("/login");
     await page.getByPlaceholder("Enter your username").fill("admin");
-    await page.getByLabel("Password").or(page.getByPlaceholder("Enter your password")).fill("wrong!");
-    await page.getByRole("button", { name: /sign in/i }).click();
+    await page.getByPlaceholder("Enter your password").fill("wrong!");
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
     await expect(page.getByText(/invalid|incorrect|wrong/i)).toBeVisible({ timeout: 10_000 });
     await expect(page).not.toHaveURL(/\/dashboard/);
   });
@@ -139,12 +139,12 @@ test.describe("Operator — Tenant Dashboard", () => {
     await page.goto("/invoices");
     const content = page.locator("table, [class*='invoice'], [class*='empty']").first();
     await expect(content).toBeVisible({ timeout: 15_000 });
-    // Status filter chip (e.g., OVERDUE)
-    const overdueFilter = page
-      .getByRole("button", { name: /overdue/i })
-      .or(page.getByText(/overdue/i).first());
-    if (await overdueFilter.isVisible()) {
-      await overdueFilter.click();
+    // Try clicking the first status tab/chip (OVERDUE, SENT, PAID, etc.)
+    // Use first() to avoid strict-mode violations when multiple elements match
+    const filterBtn = page.locator("button[class*='tab'], button[class*='filter'], button[class*='chip']").first();
+    const isFilterVisible = await filterBtn.isVisible().catch(() => false);
+    if (isFilterVisible) {
+      await filterBtn.click();
       await page.waitForTimeout(400);
     }
   });
