@@ -53,6 +53,8 @@ export default function LoginPage() {
   const [isLoading, setIsLoading] = React.useState(false);
   const [apiError, setApiError] = React.useState<string | null>(null);
   const [showPassword, setShowPassword] = React.useState(false);
+  const [googleLoading, setGoogleLoading] = React.useState(false);
+  const [googleError, setGoogleError] = React.useState<string | null>(null);
 
   const {
     register,
@@ -88,12 +90,27 @@ export default function LoginPage() {
       ? `${window.location.protocol}//${window.location.hostname}:3000/api/v1`
       : "http://localhost:3000/api/v1");
 
-  // Use tenant-specific Google OAuth only when branding has been confirmed loaded
-  // (i.e., the slug resolved to a real tenant). Falls back to the generic endpoint
-  // for platform-level access or when no valid tenant slug is in context.
-  const googleOAuthUrl = (tenantSlug && branding)
-    ? `${apiUrl}/auth/google/${encodeURIComponent(tenantSlug)}`
-    : `${apiUrl}/auth/google`;
+  // Fetch the Google OAuth URL from the backend, then redirect the browser to it.
+  // Uses the new query-param endpoint (not the legacy path-param variant).
+  const handleGoogleSignIn = async () => {
+    setGoogleLoading(true);
+    setGoogleError(null);
+    try {
+      const params = new URLSearchParams({ context: "staff" });
+      if (tenantSlug) params.set("tenant", tenantSlug);
+      const res = await fetch(`${apiUrl}/auth/google?${params}`);
+      if (!res.ok) throw new Error("Failed to get Google OAuth URL");
+      const data = await res.json();
+      if (data?.url) {
+        window.location.href = data.url;
+      } else {
+        throw new Error("No URL in response");
+      }
+    } catch {
+      setGoogleError("Google sign-in is unavailable. Try again or use your username and password.");
+      setGoogleLoading(false);
+    }
+  };
 
   // Show the tenant's business name if they have custom branding (logo uploaded),
   // otherwise show the product name "RouteFlow". This prevents migration artifacts
@@ -194,14 +211,30 @@ export default function LoginPage() {
             <div className="h-px flex-1 bg-surface-border" />
           </div>
 
-          {/* Google Sign-In — uses tenant-specific OAuth if slug is known */}
-          <a
-            href={googleOAuthUrl}
-            className="flex w-full items-center justify-center gap-3 rounded border border-surface-border bg-white px-4 py-2.5 text-sm font-medium text-navy shadow-sm transition-colors hover:bg-surface-raised focus:outline-none focus:ring-2 focus:ring-brand-500"
+          {/* Google Sign-In */}
+          {googleError && (
+            <p className="rounded-lg bg-danger-bg px-3 py-2 text-sm text-danger">
+              {googleError}
+            </p>
+          )}
+          <button
+            type="button"
+            onClick={handleGoogleSignIn}
+            disabled={googleLoading || isLoading}
+            className="flex w-full items-center justify-center gap-3 rounded border border-surface-border bg-white px-4 py-2.5 text-sm font-medium text-navy shadow-sm transition-colors hover:bg-surface-raised focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            <GoogleIcon className="h-4 w-4" />
-            Sign in with Google
-          </a>
+            {googleLoading ? (
+              <>
+                <div className="h-4 w-4 animate-spin rounded-full border-2 border-navy/30 border-t-navy/70" />
+                <span>Redirecting to Google…</span>
+              </>
+            ) : (
+              <>
+                <GoogleIcon className="h-4 w-4" />
+                <span>Sign in with Google</span>
+              </>
+            )}
+          </button>
 
           <p className="mt-4 text-center text-xs text-navy/50">
             First login? You will be prompted to change your password.

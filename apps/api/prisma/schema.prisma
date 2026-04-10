@@ -1696,6 +1696,7 @@ model BuyerAccount {
   name          String
   phone         String?
   mobile        String?
+  googleId      String?            @unique
   status        BuyerAccountStatus @default(ACTIVE)
   emailVerified Boolean            @default(false)
   createdAt     DateTime           @default(now())

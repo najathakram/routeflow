@@ -109,6 +109,10 @@ async function bootstrap() {
       .build();
     const document = SwaggerModule.createDocument(app, config);
     SwaggerModule.setup("api/docs", app, document);
+
+    // Redirect bare root to Swagger UI
+    const expressApp = app.getHttpAdapter().getInstance();
+    expressApp.get("/", (_req: any, res: any) => res.redirect("/api/docs"));
   }
 
   // ─── Graceful shutdown ──────────────────────────────────────────────────────

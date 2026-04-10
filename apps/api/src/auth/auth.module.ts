@@ -11,14 +11,18 @@ import { JwtAuthGuard } from "./guards/jwt-auth.guard";
 import { LocalAuthGuard } from "./guards/local-auth.guard";
 import { GoogleAuthGuard } from "./guards/google-auth.guard";
 import { RolesGuard } from "./guards/roles.guard";
+import { GoogleOAuthService } from "./google-oauth.service";
+import { PlatformGoogleAuthController } from "./platform-google-auth.controller";
 import { TenantGoogleOAuthService } from "../tenants/tenant-google-oauth.service";
 import { UsersModule } from "../users/users.module";
+import { EmailModule } from "../email/email.module";
 import { AppConfig } from "../config/configuration";
 
 @Module({
   imports: [
     PassportModule,
     forwardRef(() => UsersModule),
+    EmailModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -30,7 +34,7 @@ import { AppConfig } from "../config/configuration";
       }),
     }),
   ],
-  controllers: [AuthController],
+  controllers: [AuthController, PlatformGoogleAuthController],
   providers: [
     AuthService,
     LocalStrategy,
@@ -40,8 +44,9 @@ import { AppConfig } from "../config/configuration";
     LocalAuthGuard,
     GoogleAuthGuard,
     RolesGuard,
+    GoogleOAuthService,
     TenantGoogleOAuthService,
   ],
-  exports: [AuthService, JwtAuthGuard, RolesGuard, TenantGoogleOAuthService],
+  exports: [AuthService, JwtAuthGuard, RolesGuard, TenantGoogleOAuthService, GoogleOAuthService],
 })
 export class AuthModule {}

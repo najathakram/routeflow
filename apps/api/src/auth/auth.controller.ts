@@ -6,6 +6,7 @@ import {
   HttpStatus,
   Param,
   Post,
+  Query,
   Req,
   Res,
   UseGuards,
@@ -17,9 +18,9 @@ import type { Response } from "express";
 import { AuthService } from "./auth.service";
 import { LocalAuthGuard } from "./guards/local-auth.guard";
 import { JwtAuthGuard } from "./guards/jwt-auth.guard";
-import { GoogleAuthGuard } from "./guards/google-auth.guard";
 import { CurrentUser } from "./decorators/current-user.decorator";
 import { TenantGoogleOAuthService } from "../tenants/tenant-google-oauth.service";
+import { GoogleOAuthService } from "./google-oauth.service";
 import { LoginDto } from "./dto/login.dto";
 import { RefreshDto } from "./dto/refresh.dto";
 import { ChangePasswordDto } from "./dto/change-password.dto";
@@ -27,16 +28,23 @@ import { ChangePasswordDto } from "./dto/change-password.dto";
 @ApiTags("auth")
 @Controller("auth")
 export class AuthController {
+  private readonly webUrl: string;
+
   constructor(
     private readonly authService: AuthService,
     private readonly configService: ConfigService,
     private readonly tenantGoogleOAuth: TenantGoogleOAuthService,
-  ) {}
+    private readonly googleOAuth: GoogleOAuthService,
+  ) {
+    this.webUrl = configService.get<string>("WEB_URL") ?? "http://localhost:3001";
+  }
+
+  // ─── Username / password ───────────────────────────────────────────────────
 
   @Post("login")
   @HttpCode(HttpStatus.OK)
   @UseGuards(LocalAuthGuard)
-  @Throttle({ default: { ttl: 60_000, limit: 10 } }) // 10 login attempts per minute (global APP_GUARD enforces)
+  @Throttle({ default: { ttl: 60_000, limit: 10 } })
   @ApiOperation({ summary: "Login with username and password" })
   login(@CurrentUser() user: any, @Body() _dto: LoginDto) {
     return this.authService.login(user);
@@ -44,7 +52,7 @@ export class AuthController {
 
   @Post("refresh")
   @HttpCode(HttpStatus.OK)
-  @Throttle({ default: { ttl: 60_000, limit: 20 } }) // 20 refresh attempts per minute (global APP_GUARD enforces)
+  @Throttle({ default: { ttl: 60_000, limit: 20 } })
   @ApiOperation({ summary: "Refresh access token" })
   refresh(@Body() dto: RefreshDto) {
     return this.authService.refresh(dto.refreshToken);
@@ -68,42 +76,108 @@ export class AuthController {
     return this.authService.changePassword(user.id, dto.currentPassword, dto.newPassword);
   }
 
-  // ─── Google OAuth ──────────────────────────────────────────────────────────
-  // NOTE: Set these env vars in Railway before enabling Google OAuth:
-  //   GOOGLE_CLIENT_ID     — from Google Cloud Console OAuth 2.0 credentials
-  //   GOOGLE_CLIENT_SECRET — from Google Cloud Console OAuth 2.0 credentials
-  //   GOOGLE_CALLBACK_URL  — e.g. https://your-api.railway.app/auth/google/callback
-  //   WEB_URL              — e.g. https://your-web-app.vercel.app
+  // ─── Google OAuth (tenant — OPERATOR, DRIVER, or buyer portal) ────────────
+  //
+  // ENV VARS required in Railway:
+  //   GOOGLE_CLIENT_ID              — GCP OAuth 2.0 client ID
+  //   GOOGLE_CLIENT_SECRET          — GCP OAuth 2.0 client secret
+  //   GOOGLE_REDIRECT_URI_TENANT    — https://<api-domain>/api/v1/auth/google/callback
+  //   GOOGLE_REDIRECT_URI_PLATFORM  — https://<api-domain>/api/v1/platform-admin/auth/google/callback
+  //   WEB_URL                       — https://<frontend-domain>
+  //
+  // Both redirect URIs must be added to the "Authorised redirect URIs" list
+  // in the Google Cloud Console OAuth 2.0 credential.
 
+  /**
+   * GET /api/v1/auth/google
+   *
+   * Returns the Google consent URL for the caller to redirect the browser to.
+   * Query params:
+   *   tenant  — tenant slug (required)
+   *   context — "portal" (buyer portal) | "staff" (tenant dashboard) — default staff
+   *
+   * No authentication required — this initiates the login flow.
+   */
   @Get("google")
-  @UseGuards(GoogleAuthGuard)
-  @ApiOperation({ summary: "Initiate Google OAuth login" })
-  googleLogin() {
-    // Passport redirects to Google — no body needed
+  @ApiOperation({ summary: "Get Google OAuth URL for tenant sign-in (staff or buyer portal)" })
+  async googleAuthUrl(
+    @Query("tenant") tenantSlug: string,
+    @Query("context") context: "portal" | "staff" = "staff",
+    @Query("invite_token") inviteToken?: string,
+  ) {
+    const url = await this.googleOAuth.generateAuthUrl("tenant", tenantSlug, inviteToken, context);
+    return { url };
   }
 
+  /**
+   * GET /api/v1/auth/google/callback
+   *
+   * Google redirects here after user consent. Tenant is recovered from the
+   * state param — no X-Tenant-Slug header needed.
+   * On success: redirects to the frontend callback page with JWT in query params.
+   */
   @Get("google/callback")
-  @UseGuards(GoogleAuthGuard)
-  @ApiOperation({ summary: "Google OAuth callback" })
-  async googleCallback(@Req() req: any, @Res() res: Response) {
-    const tokens = await this.authService.login(req.user);
-    const webUrl = this.configService.get<string>("WEB_URL") ?? "http://localhost:3001";
-    res.redirect(
-      `${webUrl}/auth/callback?accessToken=${tokens.accessToken}&refreshToken=${tokens.refreshToken}&role=${tokens.user.role}`,
-    );
+  @ApiOperation({ summary: "Google OAuth callback for tenant users" })
+  async googleCallback(
+    @Query("code") code: string,
+    @Query("state") state: string,
+    @Query("error") oauthError: string,
+    @Res() res: Response,
+  ) {
+    const base = this.webUrl;
+
+    if (oauthError) {
+      return res.redirect(`${base}/auth/google/callback?error=oauth_cancelled`);
+    }
+    if (!code || !state) {
+      return res.redirect(`${base}/auth/google/callback?error=state_invalid`);
+    }
+
+    try {
+      const profile = await this.googleOAuth.verifyCallback(code, state);
+      const result = await this.googleOAuth.findOrCreateUser(profile);
+
+      if (result.kind === "staff" || result.kind === "platform") {
+        const r = result as any;
+        return res.redirect(
+          `${base}/auth/google/callback` +
+            `?accessToken=${r.accessToken}` +
+            `&refreshToken=${r.refreshToken}` +
+            `&role=${r.user.role}` +
+            `&tenantSlug=${r.user.tenantSlug ?? ""}`,
+        );
+      }
+
+      // Buyer portal result
+      const r = result as any;
+      const linked = profile.inviteToken ? "true" : "false";
+      return res.redirect(
+        `${base}/auth/google/callback` +
+          `?accessToken=${r.accessToken}` +
+          `&refreshToken=${r.refreshToken}` +
+          `&type=BUYER` +
+          `&sellerCount=${r.sellerCount}` +
+          `&linked=${linked}`,
+      );
+    } catch (err: any) {
+      const errCode = err?.message ?? "unknown_error";
+      const safeCode = this.mapErrorCode(errCode);
+      return res.redirect(`${base}/auth/google/callback?error=${safeCode}`);
+    }
   }
 
-  // ─── Per-tenant Google OAuth ───────────────────────────────────────────────
+  // ─── Per-tenant Google OAuth (legacy path-param variant) ──────────────────
+  // Kept for backward compatibility. New integrations should use the header-based flow above.
 
   @Get("google/:tenantSlug")
-  @ApiOperation({ summary: "Initiate per-tenant Google OAuth login" })
+  @ApiOperation({ summary: "Initiate per-tenant Google OAuth login (legacy)" })
   async tenantGoogleLogin(@Param("tenantSlug") slug: string, @Res() res: Response) {
     const url = await this.tenantGoogleOAuth.buildAuthUrl(slug);
     res.redirect(url);
   }
 
   @Get("google/:tenantSlug/callback")
-  @ApiOperation({ summary: "Per-tenant Google OAuth callback" })
+  @ApiOperation({ summary: "Per-tenant Google OAuth callback (legacy)" })
   async tenantGoogleCallback(
     @Param("tenantSlug") slug: string,
     @Req() req: any,
@@ -111,14 +185,25 @@ export class AuthController {
   ) {
     const code = req.query?.code as string;
     if (!code) {
-      const webUrl = this.configService.get<string>("WEB_URL") ?? "http://localhost:3001";
-      return res.redirect(`${webUrl}/auth/error?message=oauth_cancelled`);
+      return res.redirect(`${this.webUrl}/auth/error?message=oauth_cancelled`);
     }
     const user = await this.tenantGoogleOAuth.exchangeCode(code, slug);
     const tokens = await this.authService.login(user as any);
-    const webUrl = this.configService.get<string>("WEB_URL") ?? "http://localhost:3001";
     res.redirect(
-      `${webUrl}/auth/callback?accessToken=${tokens.accessToken}&refreshToken=${tokens.refreshToken}&role=${tokens.user.role}&tenantSlug=${slug}`,
+      `${this.webUrl}/auth/callback?accessToken=${tokens.accessToken}&refreshToken=${tokens.refreshToken}&role=${tokens.user.role}&tenantSlug=${slug}`,
     );
+  }
+
+  // ─── Helpers ───────────────────────────────────────────────────────────────
+
+  private mapErrorCode(raw: string): string {
+    const allowed = new Set([
+      "state_invalid",
+      "unauthorized",
+      "tenant_suspended",
+      "google_token_invalid",
+      "google_email_is_staff",
+    ]);
+    return allowed.has(raw) ? raw : "unknown_error";
   }
 }

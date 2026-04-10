@@ -132,6 +132,27 @@ export default function BuyerLoginPage() {
             </Button>
           </form>
 
+          {/* Divider */}
+          <div className="my-4 flex items-center gap-3">
+            <div className="h-px flex-1 bg-surface-border" />
+            <span className="text-xs text-navy/40">or</span>
+            <div className="h-px flex-1 bg-surface-border" />
+          </div>
+
+          {/* Google sign-in note for buyer portal
+              The buyer Google OAuth requires a seller/tenant context which is provided
+              via invite links. The button here is not shown because there is no tenant
+              slug available on the global buyer login page. Buyers using Google will
+              arrive via /buyer/invite/[token] links which embed the seller context. */}
+          <p className="text-center text-xs text-navy/50 px-2">
+            Signing in with Google?{" "}
+            Use the link your seller sent you, or{" "}
+            <a href="/buyer/register" className="text-brand-600 hover:underline">
+              create an account
+            </a>{" "}
+            first.
+          </p>
+
           <div className="mt-4 text-center">
             <p className="text-sm text-navy/60">
               Don&apos;t have an account?{" "}
