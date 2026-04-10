@@ -95,6 +95,25 @@ export class GoogleOAuthService {
   }
 
   /**
+   * Resolve the OAuth redirect URI for a given flow type.
+   * Priority: explicit env var → Railway auto-domain fallback.
+   */
+  private resolveRedirectUri(type: "platform" | "tenant"): string {
+    if (type === "platform") {
+      const explicit = this.configService.get<string>("GOOGLE_REDIRECT_URI_PLATFORM");
+      if (explicit) return explicit;
+      const domain = this.configService.get<string>("RAILWAY_PUBLIC_DOMAIN");
+      if (domain) return `https://${domain}/api/v1/platform-admin/auth/google/callback`;
+      return "";
+    }
+    const explicit = this.configService.get<string>("GOOGLE_REDIRECT_URI_TENANT");
+    if (explicit) return explicit;
+    const domain = this.configService.get<string>("RAILWAY_PUBLIC_DOMAIN");
+    if (domain) return `https://${domain}/api/v1/auth/google/callback`;
+    return "";
+  }
+
+  /**
    * Build a Google OAuth consent URL.
    * Persists a one-time nonce in Redis (TTL 10 min) for CSRF protection.
    */
@@ -119,10 +138,7 @@ export class GoogleOAuthService {
       .set(`oauth:nonce:${nonce}`, "1", "EX", NONCE_TTL_SECS)
       .catch((e: Error) => this.logger.warn(`Nonce write failed: ${e.message}`));
 
-    const redirectUri =
-      type === "platform"
-        ? (this.configService.get<string>("GOOGLE_REDIRECT_URI_PLATFORM") ?? "")
-        : (this.configService.get<string>("GOOGLE_REDIRECT_URI_TENANT") ?? "");
+    const redirectUri = this.resolveRedirectUri(type);
 
     return this.oauth2Client.generateAuthUrl({
       access_type: "online",
@@ -166,10 +182,7 @@ export class GoogleOAuthService {
     }
     if (!stored) throw new ForbiddenException("state_invalid");
 
-    const redirectUri =
-      stateObj.type === "platform"
-        ? (this.configService.get<string>("GOOGLE_REDIRECT_URI_PLATFORM") ?? "")
-        : (this.configService.get<string>("GOOGLE_REDIRECT_URI_TENANT") ?? "");
+    const redirectUri = this.resolveRedirectUri(stateObj.type);
 
     // Exchange code → tokens
     const { tokens } = await this.oauth2Client
