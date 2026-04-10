@@ -43,6 +43,11 @@ tsconfig.tsbuildinfo
 coverage/
 .nyc_output/
 
+# ─── Playwright ──────────────────────────────────────────────────────────────
+playwright-report/
+test-results/
+.env.playwright
+
 # ─── Editors / OS ────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db

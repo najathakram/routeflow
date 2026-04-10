@@ -139,9 +139,7 @@ export class GoogleOAuthService {
   async verifyCallback(code: string, stateParam: string): Promise<GoogleProfile> {
     let stateObj: OAuthState;
     try {
-      stateObj = JSON.parse(
-        Buffer.from(stateParam, "base64url").toString("utf-8"),
-      ) as OAuthState;
+      stateObj = JSON.parse(Buffer.from(stateParam, "base64url").toString("utf-8")) as OAuthState;
     } catch {
       throw new ForbiddenException("state_invalid");
     }
@@ -328,9 +326,7 @@ export class GoogleOAuthService {
             subject: "Google Sign-In linked to your RouteFlow account",
             html: `<p>Your Google account (<strong>${profile.email}</strong>) has been linked to your RouteFlow portal account.</p><p>If you did not authorise this, please contact support immediately.</p>`,
           })
-          .catch((e: Error) =>
-            this.logger.warn(`Google link notification failed: ${e.message}`),
-          );
+          .catch((e: Error) => this.logger.warn(`Google link notification failed: ${e.message}`));
       }
     } else {
       // Auto-create portal account with an unguessable password hash (Google-only)
@@ -394,7 +390,12 @@ export class GoogleOAuthService {
   // ─── Token issuance helpers ────────────────────────────────────────────────
 
   private async issueUserTokenPair(user: any, tenantSlug: string | null): Promise<TokenPair> {
-    const jwtConfig = this.configService.get<{ secret: string; refreshSecret: string; expiresIn: string; refreshExpiresIn: string }>("jwt")!;
+    const jwtConfig = this.configService.get<{
+      secret: string;
+      refreshSecret: string;
+      expiresIn: string;
+      refreshExpiresIn: string;
+    }>("jwt")!;
     const payload: JwtPayload = {
       sub: user.id,
       username: user.username,
@@ -421,7 +422,12 @@ export class GoogleOAuthService {
     email: string,
     name: string,
   ): Promise<TokenPair> {
-    const jwtConfig = this.configService.get<{ secret: string; refreshSecret: string; expiresIn: string; refreshExpiresIn: string }>("jwt")!;
+    const jwtConfig = this.configService.get<{
+      secret: string;
+      refreshSecret: string;
+      expiresIn: string;
+      refreshExpiresIn: string;
+    }>("jwt")!;
     const payload: BuyerJwtPayload = { sub: buyerAccountId, email, name, type: "BUYER" };
     const accessToken = this.jwtService.sign(payload, {
       secret: jwtConfig.secret,
@@ -453,4 +459,3 @@ export class GoogleOAuthService {
     });
   }
 }
-
