@@ -228,11 +228,13 @@ export class GoogleOAuthService {
       throw new ForbiddenException("unauthorized");
     }
 
-    // Link googleId on first Google sign-in via email-match
+    // Link googleId on first Google sign-in via email-match.
+    // Also clear forcePasswordChange — Google-authenticated users cannot set a
+    // password via the change-password form, so the flag must not block them.
     if (!user.googleId) {
       await this.prisma.user.update({
         where: { id: user.id },
-        data: { googleId: profile.googleId },
+        data: { googleId: profile.googleId, forcePasswordChange: false },
       });
     }
 
@@ -280,7 +282,9 @@ export class GoogleOAuthService {
       if (!staffUser.googleId) {
         staffUser = await this.prisma.user.update({
           where: { id: staffUser.id },
-          data: { googleId: profile.googleId },
+          // Clear forcePasswordChange — Google users cannot use the password
+          // change form, so the flag must not redirect them to /change-password.
+          data: { googleId: profile.googleId, forcePasswordChange: false },
         });
       }
       const tokens = await this.issueUserTokenPair(staffUser, tenant.slug);

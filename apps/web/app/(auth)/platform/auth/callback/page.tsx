@@ -53,8 +53,6 @@ function PlatformCallbackInner() {
 
     // Store platform admin token (same key as regular admin login)
     localStorage.setItem("superAdminToken", accessToken);
-    // refreshToken for SA could be stored too if needed by the admin auth context
-    localStorage.setItem("superAdminRefreshToken", refreshToken);
     router.replace("/admin/dashboard");
   }, [params, router]);
 
