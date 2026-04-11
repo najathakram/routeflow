@@ -3,6 +3,7 @@ import {
   ForbiddenException,
   Injectable,
   Logger,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
@@ -80,6 +81,14 @@ export class GoogleOAuthService {
     const clientSecret = configService.get<string>("GOOGLE_CLIENT_SECRET") ?? "";
     this.oauth2Client = new OAuth2Client(clientId, clientSecret);
 
+    if (!clientId || !clientSecret) {
+      this.logger.warn(
+        "GOOGLE_CLIENT_ID and/or GOOGLE_CLIENT_SECRET are not set. " +
+          "Google OAuth sign-in will be unavailable. " +
+          "Set these in your Railway environment variables.",
+      );
+    }
+
     const redisUrl = configService.get<string>("REDIS_URL") ?? "redis://localhost:6379";
     const redisPassword = configService.get<string>("REDIS_PASSWORD");
     this.redis = new Redis(redisUrl, {
@@ -95,8 +104,19 @@ export class GoogleOAuthService {
   }
 
   /**
+   * Returns true if GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are non-empty.
+   * Controllers should call this before attempting to generate an OAuth URL.
+   */
+  isConfigured(): boolean {
+    const clientId = this.configService.get<string>("GOOGLE_CLIENT_ID");
+    const clientSecret = this.configService.get<string>("GOOGLE_CLIENT_SECRET");
+    return !!(clientId && clientSecret);
+  }
+
+  /**
    * Resolve the OAuth redirect URI for a given flow type.
    * Priority: explicit env var → Railway auto-domain fallback.
+   * Throws ServiceUnavailableException if neither is available.
    */
   private resolveRedirectUri(type: "platform" | "tenant"): string {
     if (type === "platform") {
@@ -104,13 +124,19 @@ export class GoogleOAuthService {
       if (explicit) return explicit;
       const domain = this.configService.get<string>("RAILWAY_PUBLIC_DOMAIN");
       if (domain) return `https://${domain}/api/v1/platform-admin/auth/google/callback`;
-      return "";
+      throw new ServiceUnavailableException(
+        "Google OAuth redirect URI cannot be resolved. " +
+          "Set GOOGLE_REDIRECT_URI_PLATFORM or ensure RAILWAY_PUBLIC_DOMAIN is available.",
+      );
     }
     const explicit = this.configService.get<string>("GOOGLE_REDIRECT_URI_TENANT");
     if (explicit) return explicit;
     const domain = this.configService.get<string>("RAILWAY_PUBLIC_DOMAIN");
     if (domain) return `https://${domain}/api/v1/auth/google/callback`;
-    return "";
+    throw new ServiceUnavailableException(
+      "Google OAuth redirect URI cannot be resolved. " +
+        "Set GOOGLE_REDIRECT_URI_TENANT or ensure RAILWAY_PUBLIC_DOMAIN is available.",
+    );
   }
 
   /**

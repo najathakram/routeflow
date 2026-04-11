@@ -6,10 +6,8 @@ import { AuthController } from "./auth.controller";
 import { AuthService } from "./auth.service";
 import { LocalStrategy } from "./strategies/local.strategy";
 import { JwtStrategy } from "./strategies/jwt.strategy";
-import { GoogleStrategy } from "./strategies/google.strategy";
 import { JwtAuthGuard } from "./guards/jwt-auth.guard";
 import { LocalAuthGuard } from "./guards/local-auth.guard";
-import { GoogleAuthGuard } from "./guards/google-auth.guard";
 import { RolesGuard } from "./guards/roles.guard";
 import { GoogleOAuthService } from "./google-oauth.service";
 import { PlatformGoogleAuthController } from "./platform-google-auth.controller";
@@ -39,10 +37,8 @@ import { AppConfig } from "../config/configuration";
     AuthService,
     LocalStrategy,
     JwtStrategy,
-    GoogleStrategy,
     JwtAuthGuard,
     LocalAuthGuard,
-    GoogleAuthGuard,
     RolesGuard,
     GoogleOAuthService,
     TenantGoogleOAuthService,

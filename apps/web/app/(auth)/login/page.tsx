@@ -99,7 +99,16 @@ export default function LoginPage() {
       const params = new URLSearchParams({ context: "staff" });
       if (tenantSlug) params.set("tenant", tenantSlug);
       const res = await fetch(`${apiUrl}/auth/google?${params}`);
-      if (!res.ok) throw new Error("Failed to get Google OAuth URL");
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setGoogleError(
+          res.status === 503
+            ? (body.message ?? "Google sign-in is not configured for this account.")
+            : "Google sign-in is unavailable. Try again or use your username and password.",
+        );
+        setGoogleLoading(false);
+        return;
+      }
       const data = await res.json();
       if (data?.url) {
         window.location.href = data.url;

@@ -44,8 +44,14 @@ export default function AdminLoginPage() {
       } else {
         throw new Error("No URL returned");
       }
-    } catch {
-      setGoogleError("Google sign-in is unavailable. Try again or use your username and password.");
+    } catch (err: unknown) {
+      const status = (err as { response?: { status?: number } })?.response?.status;
+      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
+      if (status === 503) {
+        setGoogleError(msg ?? "Google sign-in is not configured. Contact the platform administrator.");
+      } else {
+        setGoogleError("Google sign-in is unavailable. Try again or use your username and password.");
+      }
       setGoogleLoading(false);
     }
   };

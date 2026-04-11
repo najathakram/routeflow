@@ -1,4 +1,4 @@
-import { Controller, Get, Query, Redirect, Res } from "@nestjs/common";
+import { Controller, Get, Query, Res, ServiceUnavailableException } from "@nestjs/common";
 import { ApiOperation, ApiTags } from "@nestjs/swagger";
 import { ConfigService } from "@nestjs/config";
 import type { Response } from "express";
@@ -18,6 +18,12 @@ export class PlatformGoogleAuthController {
     private readonly configService: ConfigService,
   ) {
     this.webUrl = configService.get<string>("WEB_URL") ?? "http://localhost:3001";
+
+    if (this.webUrl.includes("localhost") && configService.get("NODE_ENV") !== "development") {
+      console.warn(
+        "[GoogleAuth] WEB_URL is not set — OAuth callbacks will redirect to localhost, which will fail in production.",
+      );
+    }
   }
 
   /**
@@ -27,6 +33,11 @@ export class PlatformGoogleAuthController {
   @Get()
   @ApiOperation({ summary: "Get Google OAuth URL for platform admin sign-in" })
   async getAuthUrl() {
+    if (!this.googleOAuth.isConfigured()) {
+      throw new ServiceUnavailableException(
+        "Google sign-in is not configured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET.",
+      );
+    }
     const url = await this.googleOAuth.generateAuthUrl("platform");
     return { url };
   }
@@ -47,11 +58,11 @@ export class PlatformGoogleAuthController {
     const base = `${this.webUrl}/platform`;
 
     if (oauthError) {
-      return res.redirect(`${base}/login?error=oauth_cancelled`);
+      return res.redirect(`${base}/auth/callback?error=oauth_cancelled`);
     }
 
     if (!code || !state) {
-      return res.redirect(`${base}/login?error=state_invalid`);
+      return res.redirect(`${base}/auth/callback?error=state_invalid`);
     }
 
     try {
@@ -60,25 +71,27 @@ export class PlatformGoogleAuthController {
 
       // Only SUPER_ADMIN platform accounts are expected here
       if (result.kind !== "platform") {
-        return res.redirect(`${base}/login?error=unauthorized`);
+        return res.redirect(`${base}/auth/callback?error=unauthorized`);
       }
 
       return res.redirect(
         `${base}/auth/callback?accessToken=${result.accessToken}&refreshToken=${result.refreshToken}&role=${result.user.role}`,
       );
     } catch (err: any) {
-      const code = err?.message ?? "unknown_error";
+      const errCode = err?.message ?? "unknown_error";
 
       // Map known error codes to safe redirect codes; never expose stack traces
-      if (code === "state_invalid") return res.redirect(`${base}/login?error=state_invalid`);
-      if (code === "google_token_invalid")
-        return res.redirect(`${base}/login?error=state_invalid`);
-      if (code === "unauthorized") return res.redirect(`${base}/login?error=unauthorized`);
-      if (code === "tenant_suspended")
-        return res.redirect(`${base}/login?error=tenant_suspended`);
+      if (errCode === "state_invalid")
+        return res.redirect(`${base}/auth/callback?error=state_invalid`);
+      if (errCode === "google_token_invalid")
+        return res.redirect(`${base}/auth/callback?error=state_invalid`);
+      if (errCode === "unauthorized")
+        return res.redirect(`${base}/auth/callback?error=unauthorized`);
+      if (errCode === "tenant_suspended")
+        return res.redirect(`${base}/auth/callback?error=tenant_suspended`);
 
       this.logError(err);
-      return res.redirect(`${base}/login?error=unknown_error`);
+      return res.redirect(`${base}/auth/callback?error=unknown_error`);
     }
   }
 

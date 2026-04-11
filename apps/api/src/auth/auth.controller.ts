@@ -37,6 +37,12 @@ export class AuthController {
     private readonly googleOAuth: GoogleOAuthService,
   ) {
     this.webUrl = configService.get<string>("WEB_URL") ?? "http://localhost:3001";
+
+    if (this.webUrl.includes("localhost") && configService.get("NODE_ENV") !== "development") {
+      console.warn(
+        "[GoogleAuth] WEB_URL is not set — OAuth callbacks will redirect to localhost, which will fail in production.",
+      );
+    }
   }
 
   // ─── Username / password ───────────────────────────────────────────────────
@@ -106,6 +112,10 @@ export class AuthController {
     @Query("invite_token") inviteToken: string | undefined,
     @Res({ passthrough: true }) res: any,
   ) {
+    if (!this.googleOAuth.isConfigured()) {
+      res.status(503);
+      return { message: "Google sign-in is not configured for this environment.", statusCode: 503 };
+    }
     if (!tenantSlug) {
       res.status(400);
       return { message: "tenant query parameter is required", statusCode: 400 };
