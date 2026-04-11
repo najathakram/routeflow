@@ -1,8 +1,10 @@
-import { Controller, Get, Query, Res, ServiceUnavailableException } from "@nestjs/common";
-import { ApiOperation, ApiTags } from "@nestjs/swagger";
+import { Controller, Get, Query, Res, UseGuards, ServiceUnavailableException } from "@nestjs/common";
+import { ApiOperation, ApiTags, ApiBearerAuth } from "@nestjs/swagger";
 import { ConfigService } from "@nestjs/config";
 import type { Response } from "express";
 import { GoogleOAuthService } from "./google-oauth.service";
+import { JwtAuthGuard } from "./guards/jwt-auth.guard";
+import { CurrentUser } from "./decorators/current-user.decorator";
 
 /**
  * Public Google OAuth endpoints for the Platform Admin (SUPER_ADMIN) flow.
@@ -43,6 +45,27 @@ export class PlatformGoogleAuthController {
   }
 
   /**
+   * GET /api/v1/platform-admin/auth/google/link
+   *
+   * Authenticated endpoint — returns a Google consent URL that, when completed,
+   * links the Google account to the currently signed-in platform admin.
+   * Requires a valid SUPER_ADMIN JWT.
+   */
+  @Get("link")
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: "Get Google OAuth URL to link Google account to current platform admin" })
+  async getLinkUrl(@CurrentUser() user: { sub: string }) {
+    if (!this.googleOAuth.isConfigured()) {
+      throw new ServiceUnavailableException(
+        "Google sign-in is not configured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET.",
+      );
+    }
+    const url = await this.googleOAuth.generateLinkUrl("platform", user.sub);
+    return { url };
+  }
+
+  /**
    * GET /api/v1/platform-admin/auth/google/callback
    * Google redirects here after the user consents.
    * Verifies state nonce, exchanges code, issues JWT, redirects to platform UI.
@@ -67,6 +90,14 @@ export class PlatformGoogleAuthController {
 
     try {
       const profile = await this.googleOAuth.verifyCallback(code, state);
+
+      // ── Link-account flow ────────────────────────────────────────────────────
+      if (profile.linkUserId) {
+        await this.googleOAuth.linkGoogleAccount(profile);
+        return res.redirect(`${base}/auth/callback?action=linked`);
+      }
+
+      // ── Sign-in flow ─────────────────────────────────────────────────────────
       const result = await this.googleOAuth.findOrCreateUser(profile);
 
       // Only SUPER_ADMIN platform accounts are expected here
@@ -81,14 +112,17 @@ export class PlatformGoogleAuthController {
       const errCode = err?.message ?? "unknown_error";
 
       // Map known error codes to safe redirect codes; never expose stack traces
-      if (errCode === "state_invalid")
-        return res.redirect(`${base}/auth/callback?error=state_invalid`);
+      const knownCodes = new Set([
+        "state_invalid",
+        "unauthorized",
+        "tenant_suspended",
+        "google_already_linked",
+        "google_id_taken",
+      ]);
       if (errCode === "google_token_invalid")
         return res.redirect(`${base}/auth/callback?error=state_invalid`);
-      if (errCode === "unauthorized")
-        return res.redirect(`${base}/auth/callback?error=unauthorized`);
-      if (errCode === "tenant_suspended")
-        return res.redirect(`${base}/auth/callback?error=tenant_suspended`);
+      if (knownCodes.has(errCode))
+        return res.redirect(`${base}/auth/callback?error=${errCode}`);
 
       this.logError(err);
       return res.redirect(`${base}/auth/callback?error=unknown_error`);

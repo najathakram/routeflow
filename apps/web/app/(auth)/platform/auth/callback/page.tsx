@@ -14,6 +14,10 @@ const ERROR_MESSAGES: Record<string, string> = {
     "Your Google account is not authorized for platform administration. Contact the system owner.",
   tenant_suspended:
     "This account has been suspended. Contact the system owner.",
+  google_already_linked:
+    "Your account already has a Google account connected. Remove the existing connection first.",
+  google_id_taken:
+    "This Google account is already linked to a different user.",
   oauth_cancelled: "Sign-in was cancelled. Please try again.",
   unknown_error: "An unexpected error occurred. Please try again.",
 };
@@ -31,7 +35,14 @@ function PlatformCallbackInner() {
     const accessToken = params.get("accessToken");
     const refreshToken = params.get("refreshToken");
     const role = params.get("role");
+    const action = params.get("action"); // "linked" = Google account just linked
     const error = params.get("error");
+
+    // ── Link-account success path ─────────────────────────────────────────────
+    if (action === "linked") {
+      router.replace("/admin/dashboard?linked=google");
+      return;
+    }
 
     if (error) {
       const msg = ERROR_MESSAGES[error] ?? ERROR_MESSAGES.unknown_error;

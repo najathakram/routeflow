@@ -27,6 +27,8 @@ interface OAuthState {
   inviteToken?: string;
   /** "portal" = buyer portal login page; "staff" = tenant dashboard login page */
   context?: "portal" | "staff";
+  /** When set, this is a link-account flow for an already-authenticated user. */
+  linkUserId?: string;
 }
 
 export interface GoogleProfile {
@@ -38,6 +40,8 @@ export interface GoogleProfile {
   tenantSlug?: string;
   inviteToken?: string;
   context?: "portal" | "staff";
+  /** When set, this is a link-account flow — attach Google to this existing user ID. */
+  linkUserId?: string;
 }
 
 interface TokenPair {
@@ -175,6 +179,70 @@ export class GoogleOAuthService {
   }
 
   /**
+   * Build a Google OAuth consent URL for linking an existing user's account.
+   * The `linkUserId` is embedded in the state so the callback knows to link
+   * rather than sign in.
+   */
+  async generateLinkUrl(type: "platform" | "tenant", userId: string): Promise<string> {
+    const nonce = crypto.randomUUID();
+    const stateObj: OAuthState = { type, nonce, linkUserId: userId };
+    const state = Buffer.from(JSON.stringify(stateObj)).toString("base64url");
+
+    this.redis
+      .set(`oauth:nonce:${nonce}`, "1", "EX", NONCE_TTL_SECS)
+      .catch((e: Error) => this.logger.warn(`Nonce write failed: ${e.message}`));
+
+    const redirectUri = this.resolveRedirectUri(type);
+
+    return this.oauth2Client.generateAuthUrl({
+      access_type: "online",
+      scope: ["email", "profile", "openid"],
+      redirect_uri: redirectUri,
+      state,
+    });
+  }
+
+  /**
+   * Link a Google account to an existing user (identified by `profile.linkUserId`).
+   * Throws if:
+   *   - the user doesn't exist
+   *   - the user already has a different Google account linked
+   *   - the Google ID is already taken by another user
+   */
+  async linkGoogleAccount(profile: GoogleProfile): Promise<void> {
+    const { linkUserId, googleId, email } = profile;
+    if (!linkUserId) throw new BadRequestException("linkUserId required");
+
+    // Check if this Google ID is already claimed by a different user
+    const existingByGoogleId = await this.prisma.user.findFirst({
+      where: { googleId, id: { not: linkUserId }, deletedAt: null },
+    });
+    if (existingByGoogleId) throw new ForbiddenException("google_id_taken");
+
+    const user = await this.prisma.user.findUnique({ where: { id: linkUserId } });
+    if (!user || user.deletedAt) throw new ForbiddenException("unauthorized");
+    if (user.googleId) throw new ForbiddenException("google_already_linked");
+
+    await this.prisma.user.update({
+      where: { id: linkUserId },
+      data: { googleId, forcePasswordChange: false },
+    });
+
+    this.logger.log(`Google account linked for user ${linkUserId} (${email})`);
+
+    // Fire-and-forget security notification
+    if (user.email) {
+      void this.emailService
+        .send({
+          to: user.email,
+          subject: "Google Sign-In linked to your RouteFlow account",
+          html: `<p>Your Google account (<strong>${email}</strong>) has been linked to your RouteFlow account.</p><p>If you did not authorise this, please contact support immediately.</p>`,
+        })
+        .catch((e: Error) => this.logger.warn(`Google link notification failed: ${e.message}`));
+    }
+  }
+
+  /**
    * Exchange Google authorisation code for a verified GoogleProfile.
    * Throws ForbiddenException("state_invalid") if the nonce is missing or expired.
    */
@@ -239,6 +307,7 @@ export class GoogleOAuthService {
       tenantSlug: stateObj.tenantSlug,
       inviteToken: stateObj.inviteToken,
       context: stateObj.context,
+      linkUserId: stateObj.linkUserId,
     };
   }
 

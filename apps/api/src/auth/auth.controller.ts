@@ -125,6 +125,26 @@ export class AuthController {
   }
 
   /**
+   * GET /api/v1/auth/google/link
+   *
+   * Authenticated endpoint — returns a Google consent URL that, when completed,
+   * links the Google account to the currently signed-in user instead of logging in.
+   * Requires a valid JWT (the user must already be authenticated).
+   */
+  @Get("google/link")
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: "Get Google OAuth URL to link Google account to current user" })
+  async linkGoogleUrl(@CurrentUser() user: { sub: string }, @Res({ passthrough: true }) res: any) {
+    if (!this.googleOAuth.isConfigured()) {
+      res.status(503);
+      return { message: "Google sign-in is not configured for this environment.", statusCode: 503 };
+    }
+    const url = await this.googleOAuth.generateLinkUrl("tenant", user.sub);
+    return { url };
+  }
+
+  /**
    * GET /api/v1/auth/google/callback
    *
    * Google redirects here after user consent. Tenant is recovered from the
@@ -150,6 +170,16 @@ export class AuthController {
 
     try {
       const profile = await this.googleOAuth.verifyCallback(code, state);
+
+      // ── Link-account flow ────────────────────────────────────────────────────
+      // When `linkUserId` is present the user is already authenticated and just
+      // wants to attach their Google account — don't issue new tokens.
+      if (profile.linkUserId) {
+        await this.googleOAuth.linkGoogleAccount(profile);
+        return res.redirect(`${base}/auth/google/callback?action=linked`);
+      }
+
+      // ── Sign-in flow ─────────────────────────────────────────────────────────
       const result = await this.googleOAuth.findOrCreateUser(profile);
 
       if (result.kind === "staff" || result.kind === "platform") {
@@ -218,6 +248,8 @@ export class AuthController {
       "tenant_suspended",
       "google_token_invalid",
       "google_email_is_staff",
+      "google_already_linked",
+      "google_id_taken",
     ]);
     return allowed.has(raw) ? raw : "unknown_error";
   }

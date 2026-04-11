@@ -16,6 +16,10 @@ const ERROR_MESSAGES: Record<string, string> = {
     "This account is currently suspended. Please contact support.",
   google_email_is_staff:
     "This email is registered as a staff account. Please sign in from the staff login page instead.",
+  google_already_linked:
+    "Your account already has a Google account connected. Remove the existing connection first.",
+  google_id_taken:
+    "This Google account is already linked to a different user. Sign in with that account or use a different Google account.",
   oauth_cancelled: "Sign-in was cancelled. Please try again.",
   unknown_error: "An unexpected error occurred. Please try again.",
 };
@@ -37,7 +41,16 @@ function GoogleCallbackInner() {
     const tenantSlug = params.get("tenantSlug");
     const sellerCount = params.get("sellerCount");
     const linked = params.get("linked");
+    const action = params.get("action"); // "linked" = Google account just linked
     const error = params.get("error");
+
+    // ── Link-account success path ─────────────────────────────────────────────
+    // User was already signed in; they just linked their Google account.
+    // No tokens to store — just redirect back to settings with a success flag.
+    if (action === "linked") {
+      router.replace("/settings?linked=google");
+      return;
+    }
 
     // ── Error path ──────────────────────────────────────────────────────────
     if (error) {
