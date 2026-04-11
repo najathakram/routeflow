@@ -19,7 +19,9 @@ function productionGuard({ requireFlag } = {}) {
   const IS_PROD  = RAILWAY !== undefined
                 || ENV === "production"
                 || DB_URL.includes("railway.app")
-                || DB_URL.includes("railway.internal");
+                || DB_URL.includes("railway.internal")
+                || DB_URL.includes(".rlwy.net")      // Railway external proxy URLs
+                || DB_URL.includes("rlwy.net");       // short form
 
   if (IS_PROD) {
     console.error("╔══════════════════════════════════════════════════════════╗");
