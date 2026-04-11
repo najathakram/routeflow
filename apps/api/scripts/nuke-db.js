@@ -1,17 +1,18 @@
+// PRODUCTION GUARD — must be first executable code
+const { productionGuard } = require("./lib/production-guard");
+productionGuard({ requireFlag: "--i-know-this-deletes-everything" });
+
 /**
  * Wipe all business data from the database (preserves operator/admin users).
  *
- * Usage — local dev:
- *   node apps/api/scripts/nuke-db.js
- *
- * Usage — Railway production:
- *   railway run node apps/api/scripts/nuke-db.js
- *
- * Usage — custom DATABASE_URL:
- *   DATABASE_URL="postgresql://..." node apps/api/scripts/nuke-db.js
+ * Usage — local dev ONLY:
+ *   node apps/api/scripts/nuke-db.js --i-know-this-deletes-everything
  *
  * Pass --all to also delete operator users (full wipe):
- *   railway run node apps/api/scripts/nuke-db.js --all
+ *   node apps/api/scripts/nuke-db.js --i-know-this-deletes-everything --all
+ *
+ * NEVER run via: railway run node apps/api/scripts/nuke-db.js
+ * The production guard will block it, but don't even try.
  */
 
 const { PrismaClient } = require("../../../node_modules/@prisma/client");

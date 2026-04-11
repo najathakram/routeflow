@@ -15,10 +15,12 @@
  */
 
 // ─── Production guard ─────────────────────────────────────────────────────────
-if (process.env.NODE_ENV === "production") {
-  console.error("\n❌ FATAL: cleanup-qa-data.js must NOT run against production.");
-  console.error("   Set NODE_ENV to 'development' or 'staging' to proceed.\n");
-  process.exit(1);
+const { productionGuard } = require("./lib/production-guard");
+// --all (broad TRUNCATE) requires explicit confirmation; targeted manifest mode does not
+if (process.argv.includes("--all")) {
+  productionGuard({ requireFlag: "--i-know-this-deletes-everything" });
+} else {
+  productionGuard(); // block Railway env even in targeted mode
 }
 
 const { PrismaClient } = require("../../../node_modules/@prisma/client");

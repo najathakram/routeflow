@@ -67,5 +67,9 @@ yarn-error.log*
 # ─── Vercel ──────────────────────────────────────────────────────────────────
 .vercel
 
+# ─── Database backups (may contain real tenant PII — never commit) ──────────
+backups/
+*.sql
+
 # ─── Claude Code internals ───────────────────────────────────────────────────
 .claude/worktrees/

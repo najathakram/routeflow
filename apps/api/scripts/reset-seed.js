@@ -1,6 +1,10 @@
+// PRODUCTION GUARD — must be first executable code
+const { productionGuard } = require("./lib/production-guard");
+productionGuard({ requireFlag: "--i-know-this-deletes-everything" });
+
 /**
  * Reset database (keep operator users) and seed fresh demo data.
- * Run: node apps/api/scripts/reset-seed.js   (from repo root)
+ * Run: node apps/api/scripts/reset-seed.js --i-know-this-deletes-everything   (from repo root)
  */
 
 const { PrismaClient } = require("../../../node_modules/@prisma/client");

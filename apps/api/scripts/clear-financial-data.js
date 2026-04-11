@@ -1,20 +1,18 @@
 #!/usr/bin/env node
+// PRODUCTION GUARD — must be first executable code
+const { productionGuard } = require("./lib/production-guard");
+productionGuard({ requireFlag: "--i-know-this-deletes-everything" });
+
 /**
  * Clear Financial Data Script
  * Deletes all invoices, credit notes, payments received, and vendor bills/purchases
  * from the RouteFlow API.
  *
- * Usage:
- *   node apps/api/scripts/clear-financial-data.js
- *   node apps/api/scripts/clear-financial-data.js https://your-railway-api-url.railway.app/api/v1
- *
- * Credentials can be set via env vars:
- *   ROUTEFLOW_URL=https://your-api.railway.app/api/v1
- *   ROUTEFLOW_USERNAME=admin
- *   ROUTEFLOW_PASSWORD=Admin@123
+ * Usage (local only):
+ *   node apps/api/scripts/clear-financial-data.js --i-know-this-deletes-everything
  */
 
-const BASE_URL = process.argv[2] || process.env.ROUTEFLOW_URL || "http://localhost:3000/api/v1";
+const BASE_URL = process.argv.find(a => a.startsWith("http")) || process.env.ROUTEFLOW_URL || "http://localhost:3000/api/v1";
 const USERNAME = process.env.ROUTEFLOW_USERNAME || "admin";
 const PASSWORD = process.env.ROUTEFLOW_PASSWORD || "Admin@123";
 

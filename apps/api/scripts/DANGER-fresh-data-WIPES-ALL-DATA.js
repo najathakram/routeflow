@@ -1,10 +1,14 @@
+// PRODUCTION GUARD — must be first executable code
+const { productionGuard } = require("./lib/production-guard");
+productionGuard({ requireFlag: "--i-know-this-deletes-everything" });
+
 /**
  * Fresh data population script.
  * Wipes all existing user/operational data then re-creates ≥10 of every entity
  * using the live API, alternating between operator / customer / driver roles.
  *
  * Prerequisites: API must be running on http://localhost:3000
- * Run from repo root: node apps/api/scripts/fresh-data.js
+ * Run from repo root: node apps/api/scripts/DANGER-fresh-data-WIPES-ALL-DATA.js --i-know-this-deletes-everything
  *
  * Options:
  *   --tenant <slug>   Use a specific tenant slug (default: "legacy")
