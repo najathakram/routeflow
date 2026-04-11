@@ -11,10 +11,13 @@ import { test, expect } from "@playwright/test";
 import { setTenantCookie, loginAsCustomer, logout } from "./helpers/auth";
 
 test.describe("Customer — Scoped Access", () => {
+  // Storage state (customer.json) is pre-loaded by the "customer" Playwright project,
+  // so each test context starts already authenticated. We set the tenant header for
+  // correct middleware routing, then navigate to the dashboard.
   test.beforeEach(async ({ page, context }) => {
     const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "https://app.routeflow.io";
     await setTenantCookie(context, baseURL);
-    await loginAsCustomer(page);
+    await page.goto("/dashboard");
   });
 
   test.afterEach(async ({ page }) => {

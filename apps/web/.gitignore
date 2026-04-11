@@ -9,6 +9,9 @@
 # testing
 /coverage
 
+# Playwright auth storage state (contains JWT tokens — never commit)
+e2e/setup/.auth/*.json
+
 # next.js
 /.next/
 /out/

@@ -10,10 +10,13 @@ import { setTenantCookie, loginAsOperator, logout } from "./helpers/auth";
 import { TENANT_SLUG } from "./helpers/constants";
 
 test.describe("Operator — Tenant Dashboard", () => {
+  // Storage state (operator.json) is pre-loaded by the "operator" Playwright project,
+  // so each test context starts already authenticated. We set the tenant header for
+  // correct middleware routing, then navigate to the dashboard.
   test.beforeEach(async ({ page, context }) => {
     const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "https://app.routeflow.io";
     await setTenantCookie(context, baseURL);
-    await loginAsOperator(page);
+    await page.goto("/dashboard");
   });
 
   test.afterEach(async ({ page }) => {

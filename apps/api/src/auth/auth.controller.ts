@@ -50,7 +50,7 @@ export class AuthController {
   @Post("login")
   @HttpCode(HttpStatus.OK)
   @UseGuards(LocalAuthGuard)
-  @Throttle({ default: { ttl: 60_000, limit: 10 } })
+  @Throttle({ default: { ttl: 60_000, limit: 30 } }) // 30/min: still brute-force resistant, allows shared-NAT offices + E2E test suites
   @ApiOperation({ summary: "Login with username and password" })
   login(@CurrentUser() user: any, @Body() _dto: LoginDto) {
     return this.authService.login(user);

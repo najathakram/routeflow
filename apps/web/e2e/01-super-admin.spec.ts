@@ -9,9 +9,11 @@ import { test, expect } from "@playwright/test";
 import { loginAsSuperAdmin, logout } from "./helpers/auth";
 
 test.describe("Super Admin — Platform Admin Panel", () => {
-  // Log in once before the whole suite
+  // Storage state (super-admin.json) is pre-loaded by the "super-admin" Playwright
+  // project, so each test context starts already authenticated. We just navigate
+  // to the dashboard — no UI login on every test.
   test.beforeEach(async ({ page }) => {
-    await loginAsSuperAdmin(page);
+    await page.goto("/admin/dashboard");
   });
 
   test.afterEach(async ({ page }) => {
