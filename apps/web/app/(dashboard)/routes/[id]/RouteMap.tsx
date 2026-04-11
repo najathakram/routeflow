@@ -182,9 +182,9 @@ function MapPlaceholder({ stops }: { stops: RouteRunStop[] }) {
       <div className="flex flex-col items-center gap-3 rounded-xl border border-surface-border bg-white p-8 text-center shadow-card">
         <MapPin className="h-10 w-10 text-navy/20" />
         <div>
-          <p className="font-semibold text-navy">Map unavailable</p>
+          <p className="font-semibold text-navy">Map view unavailable</p>
           <p className="mt-1 text-sm text-navy/50">
-            Set NEXT_PUBLIC_GOOGLE_MAPS_KEY to enable map view.
+            Google Maps is not configured for this deployment. Contact your administrator to enable the map.
           </p>
         </div>
         <div className="flex flex-wrap justify-center gap-2">

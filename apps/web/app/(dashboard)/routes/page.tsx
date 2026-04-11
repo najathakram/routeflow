@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Eye, Play, Calendar, CheckSquare, X, Trash2 } from "lucide-react";
@@ -182,13 +183,13 @@ function useTemplateColumns(
         enableSorting: false,
         cell: ({ row }) => (
           <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-            <button
+            <Link
+              href={`/routes/templates/${row.original.id}`}
               title="View template"
-              onClick={() => router.push(`/routes/templates/${row.original.id}`)}
               className="rounded p-1.5 text-navy/40 hover:bg-surface-raised hover:text-navy transition-colors"
             >
               <Eye className="h-4 w-4" />
-            </button>
+            </Link>
             <button
               title="Dispatch run"
               onClick={() => onDispatch(row.original.id)}
@@ -317,14 +318,12 @@ export default function RoutesPage() {
                     {startTime && <span>Started {startTime}</span>}
                     {endTime && <span>Finished {endTime}</span>}
                   </div>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    className="w-full"
-                    onClick={() => router.push(`/routes/${run.id}`)}
+                  <Link
+                    href={`/routes/${run.id}`}
+                    className="inline-flex w-full items-center justify-center rounded-lg border border-surface-border bg-white px-3 py-1.5 text-sm font-medium text-navy hover:bg-surface-raised transition-colors"
                   >
                     View Run
-                  </Button>
+                  </Link>
                 </div>
               );
             })}

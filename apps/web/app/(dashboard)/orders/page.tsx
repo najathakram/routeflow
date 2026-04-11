@@ -387,10 +387,15 @@ export default function OrdersPage() {
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-3">
             <p className="text-sm text-navy/50">
-              {meta.total > 0
-                ? `Showing ${(page - 1) * limit + 1}–${Math.min(page * limit, meta.total)} of ${meta.total} orders`
-                : "No orders found"}
+              {customerSearch
+                ? filtered.length > 0
+                  ? `Showing ${filtered.length} of ${meta.total} order${meta.total !== 1 ? "s" : ""} (filtered)`
+                  : "No orders match your search"
+                : meta.total > 0
+                  ? `Showing ${(page - 1) * limit + 1}–${Math.min(page * limit, meta.total)} of ${meta.total} order${meta.total !== 1 ? "s" : ""}`
+                  : "No orders found"}
             </p>
+            {!customerSearch && (
             <div className="flex items-center gap-1.5">
               <span className="text-xs text-navy/40">Per page:</span>
               <select
@@ -401,8 +406,9 @@ export default function OrdersPage() {
                 {[10, 20, 50, 100].map((n) => <option key={n} value={n}>{n}</option>)}
               </select>
             </div>
+            )}
           </div>
-          {(meta.totalPages ?? 1) > 1 && (
+          {!customerSearch && (meta.totalPages ?? 1) > 1 && (
             <div className="flex items-center gap-1">
               <button
                 disabled={page <= 1}
