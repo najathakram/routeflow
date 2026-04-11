@@ -1,0 +1,106 @@
+name: Production DB Backup
+
+on:
+  schedule:
+    # Runs daily at 02:00 UTC — adjust to suit your timezone
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+    # Allow manual trigger from GitHub Actions UI anytime
+    inputs:
+      label:
+        description: "Label to append to the backup filename"
+        required: false
+        default: "manual"
+
+jobs:
+  backup:
+    name: pg_dump → Cloudflare R2
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-client
+
+      - name: Dump production database
+        env:
+          PGPASSWORD: ${{ secrets.PRODUCTION_DB_PASSWORD }}
+        run: |
+          LABEL="${{ github.event.inputs.label || 'scheduled' }}"
+          TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+          FILENAME="production_${TIMESTAMP}_${LABEL}.sql"
+
+          echo "Creating backup: $FILENAME"
+
+          pg_dump \
+            "${{ secrets.PRODUCTION_DATABASE_URL }}" \
+            --no-password \
+            --format=plain \
+            --no-acl \
+            --no-owner \
+            > "/tmp/$FILENAME"
+
+          SIZE=$(du -sh "/tmp/$FILENAME" | cut -f1)
+          LINES=$(wc -l < "/tmp/$FILENAME")
+          echo "FILENAME=$FILENAME" >> $GITHUB_ENV
+          echo "SIZE=$SIZE" >> $GITHUB_ENV
+          echo "LINES=$LINES" >> $GITHUB_ENV
+          echo "Backup: $SIZE / $LINES lines"
+
+          if [ "$LINES" -lt 100 ]; then
+            echo "::error::Backup has fewer than 100 lines — may be empty or failed"
+            exit 1
+          fi
+
+      - name: Upload to Cloudflare R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+        run: |
+          # R2 is S3-compatible — use aws CLI with the R2 endpoint
+          ENDPOINT="https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com"
+          BUCKET="${{ secrets.R2_BACKUP_BUCKET }}"
+
+          aws s3 cp \
+            "/tmp/$FILENAME" \
+            "s3://${BUCKET}/db-backups/$FILENAME" \
+            --endpoint-url "$ENDPOINT" \
+            --no-progress
+
+          echo "✔ Uploaded to R2: s3://${BUCKET}/db-backups/$FILENAME"
+
+          # Keep only the last 30 backups — delete older ones
+          echo "Pruning backups older than 30 days..."
+          CUTOFF=$(date -d '30 days ago' +%Y%m%d 2>/dev/null || date -v-30d +%Y%m%d)
+          aws s3 ls "s3://${BUCKET}/db-backups/" \
+            --endpoint-url "$ENDPOINT" \
+            | awk '{print $4}' \
+            | grep "^production_" \
+            | while read key; do
+                DATE=$(echo "$key" | grep -oP '\d{8}')
+                if [ -n "$DATE" ] && [ "$DATE" -lt "$CUTOFF" ]; then
+                  echo "  Deleting old backup: $key"
+                  aws s3 rm "s3://${BUCKET}/db-backups/$key" --endpoint-url "$ENDPOINT"
+                fi
+              done
+
+      - name: Upload as GitHub artifact (90-day fallback)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.FILENAME }}
+          path: /tmp/${{ env.FILENAME }}
+          retention-days: 90
+
+      - name: Summary
+        run: |
+          echo "## ✅ Backup Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| File | \`$FILENAME\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Size | $SIZE |" >> $GITHUB_STEP_SUMMARY
+          echo "| Lines | $LINES |" >> $GITHUB_STEP_SUMMARY
+          echo "| Destination | Cloudflare R2 + GitHub artifact |" >> $GITHUB_STEP_SUMMARY
