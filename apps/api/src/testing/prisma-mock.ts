@@ -126,8 +126,12 @@ export function createMockPrisma(): jest.Mocked<PrismaService> {
     forTenant: jest.fn().mockReturnValue(models),
     getTenantId: jest.fn().mockReturnValue("test-tenant"),
     // tenantTransaction wraps $transaction with tenant context — behaves the same in tests
-    tenantTransaction: jest.fn((fn: any) => fn(txModels())),
-    $transaction: jest.fn((fn: any) => fn(txModels())),
+    tenantTransaction: jest.fn((fn: any) =>
+      fn({ ...models, $executeRaw: jest.fn().mockResolvedValue(0), $queryRaw: jest.fn().mockResolvedValue([]) }),
+    ),
+    $transaction: jest.fn((fn: any) =>
+      fn({ ...models, $executeRaw: jest.fn().mockResolvedValue(0), $queryRaw: jest.fn().mockResolvedValue([]) }),
+    ),
     $connect: jest.fn(),
     $disconnect: jest.fn(),
     $queryRaw: jest.fn().mockResolvedValue([]),
