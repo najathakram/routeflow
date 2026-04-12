@@ -19,7 +19,7 @@ export const OPERATOR_AUTH = path.join(AUTH_DIR, "operator.json");
 export const CUSTOMER_AUTH = path.join(AUTH_DIR, "customer.json");
 
 const BASE_URL =
-  process.env.PLAYWRIGHT_BASE_URL ?? "https://app.routeflow.io";
+  process.env.PLAYWRIGHT_BASE_URL ?? "https://routeflowweb-production.up.railway.app";
 
 // ── Super Admin ────────────────────────────────────────────────────────────────
 

@@ -98,7 +98,7 @@ test.describe("Buyer Portal", () => {
     context,
   }) => {
     // First get an invite token by calling the API (via operator login)
-    const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "https://app.routeflow.io";
+    const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "https://routeflowweb-production.up.railway.app";
     await setTenantCookie(context, baseURL, TENANT_SLUG);
     await loginAsOperator(page);
 
