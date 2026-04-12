@@ -11,6 +11,7 @@ import {
   ChevronRight,
   LayoutGrid,
   Loader2,
+  Settings,
 } from "lucide-react";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import type { BuyerSeller } from "@/lib/buyer-auth";
@@ -174,12 +175,21 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
         {/* Sellers section */}
         <div className="flex-1 overflow-y-auto px-3 py-4">
           {/* Manage sellers link */}
-          <div className="mb-4">
+          <div className="mb-1">
             <NavLink
               href="/buyer/portal"
               icon={LayoutGrid}
               label="Manage Sellers"
               isActive={pathname === "/buyer/portal"}
+            />
+          </div>
+          {/* Settings link */}
+          <div className="mb-4">
+            <NavLink
+              href="/buyer/portal/settings"
+              icon={Settings}
+              label="Settings"
+              isActive={pathname === "/buyer/portal/settings"}
             />
           </div>
 

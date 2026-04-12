@@ -95,6 +95,142 @@ function TrialEndsBadge({ trialEndsAt }: { trialEndsAt: string }) {
   );
 }
 
+// ─── Tenant Admin Section ──────────────────────────────────────────────────────
+
+interface TenantAdminUser {
+  id: string;
+  username: string;
+  email: string | null;
+  status: string;
+  createdAt: string;
+  forcePasswordChange: boolean;
+}
+
+function TenantAdminSection({ tenantId, onRefreshTenant }: { tenantId: string; onRefreshTenant: () => void }) {
+  const [admin, setAdmin] = React.useState<TenantAdminUser | null | undefined>(undefined); // undefined = loading
+  const [showCreateForm, setShowCreateForm] = React.useState(false);
+  const [createForm, setCreateForm] = React.useState({ username: "", email: "" });
+  const [creating, setCreating] = React.useState(false);
+  const [createResult, setCreateResult] = React.useState<{ tempPassword?: string; username?: string } | null>(null);
+  const [msg, setMsg] = React.useState<{ type: "success" | "error"; text: string } | null>(null);
+
+  const fetchAdmin = React.useCallback(() => {
+    superAdminClient
+      .get(`/platform-admin/tenants/${tenantId}/admin`)
+      .then((res) => setAdmin(res.data.admin))
+      .catch(() => setAdmin(null));
+  }, [tenantId]);
+
+  React.useEffect(() => { fetchAdmin(); }, [fetchAdmin]);
+
+  async function handleCreateAdmin(e: React.FormEvent) {
+    e.preventDefault();
+    setCreating(true);
+    setMsg(null);
+    try {
+      const res = await superAdminClient.post(`/platform-admin/tenants/${tenantId}/admin`, createForm);
+      setCreateResult(res.data);
+      setAdmin(res.data);
+      setShowCreateForm(false);
+      setCreateForm({ username: "", email: "" });
+      onRefreshTenant();
+    } catch (err: unknown) {
+      setMsg({ type: "error", text: (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Failed to create admin" });
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  if (admin === undefined) return null; // still loading
+
+  return (
+    <AdminCard title="Admin Account">
+      {msg && (
+        <div className={`mb-3 rounded-lg px-3 py-2 text-sm ${msg.type === "success" ? "bg-green-900/30 text-green-400" : "bg-red-900/30 text-red-400"}`}>
+          {msg.text}
+        </div>
+      )}
+
+      {createResult?.tempPassword && (
+        <div className="mb-4 rounded-lg bg-slate-700/60 p-4 ring-1 ring-slate-600">
+          <p className="mb-2 text-sm text-slate-300">
+            Admin <span className="font-mono text-white">{createResult.username}</span> created. Temporary password:
+          </p>
+          <code className="block rounded bg-slate-900 px-3 py-2 font-mono text-sm text-green-400">{createResult.tempPassword}</code>
+          <p className="mt-2 text-xs text-yellow-500">Share this securely. The user will be forced to change it on next login.</p>
+        </div>
+      )}
+
+      {admin ? (
+        <dl className="flex flex-col gap-2.5 text-sm">
+          {[
+            ["Username", <span key="u" className="font-mono text-slate-300">{admin.username}</span>],
+            ["Email", <span key="e" className="text-white">{admin.email ?? "—"}</span>],
+            ["Status", <span key="s" className={admin.status === "ACTIVE" ? "text-green-400" : "text-yellow-400"}>{admin.status}</span>],
+            ["Force Password Change", <span key="fp" className={admin.forcePasswordChange ? "text-yellow-400" : "text-slate-400"}>{admin.forcePasswordChange ? "Yes" : "No"}</span>],
+            ["Created", <span key="c" className="text-slate-400">{new Date(admin.createdAt).toLocaleDateString()}</span>],
+          ].map(([label, value]) => (
+            <div key={String(label)} className="flex justify-between items-center">
+              <dt className="text-slate-500">{label}</dt>
+              <dd>{value}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : (
+        <div className="rounded-lg border border-dashed border-red-700/40 bg-red-900/10 p-4 text-center">
+          <p className="text-sm font-semibold text-red-400">No admin account found</p>
+          <p className="mt-1 text-xs text-slate-500">This tenant cannot be impersonated until an admin account exists.</p>
+          {!showCreateForm ? (
+            <button
+              onClick={() => setShowCreateForm(true)}
+              className="mt-3 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-indigo-500"
+            >
+              Create Admin Account
+            </button>
+          ) : (
+            <form onSubmit={handleCreateAdmin} className="mt-4 text-left space-y-3">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-400">Username</label>
+                <input
+                  required
+                  value={createForm.username}
+                  onChange={(e) => setCreateForm(f => ({ ...f, username: e.target.value }))}
+                  placeholder="admin"
+                  className="w-full rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 text-sm text-white placeholder-slate-500 focus:border-indigo-500 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-400">Email</label>
+                <input
+                  required
+                  type="email"
+                  value={createForm.email}
+                  onChange={(e) => setCreateForm(f => ({ ...f, email: e.target.value }))}
+                  placeholder="admin@company.com"
+                  className="w-full rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 text-sm text-white placeholder-slate-500 focus:border-indigo-500 focus:outline-none"
+                />
+              </div>
+              <p className="text-xs text-slate-500">A temporary password will be auto-generated and emailed to the admin.</p>
+              <div className="flex gap-2">
+                <button
+                  type="submit"
+                  disabled={creating}
+                  className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+                >
+                  {creating ? "Creating..." : "Create Admin"}
+                </button>
+                <button type="button" onClick={() => setShowCreateForm(false)} className="rounded-lg border border-slate-600 px-4 py-2 text-sm text-slate-400 hover:bg-slate-700">
+                  Cancel
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
+      )}
+    </AdminCard>
+  );
+}
+
 // ─── Overview Tab ──────────────────────────────────────────────────────────────
 
 function OverviewTab({
@@ -102,11 +238,13 @@ function OverviewTab({
   onAction,
   actionLoading,
   statusMsg,
+  onRefreshTenant,
 }: {
   tenant: TenantDetail;
   onAction: (action: string, payload?: unknown) => Promise<void>;
   actionLoading: string | null;
   statusMsg: string | null;
+  onRefreshTenant: () => void;
 }) {
   const [showDeleteConfirm, setShowDeleteConfirm] = React.useState(false);
   const [showResetConfirm, setShowResetConfirm] = React.useState(false);
@@ -171,6 +309,9 @@ function OverviewTab({
           </div>
         </AdminCard>
       )}
+
+      {/* Admin Account */}
+      <TenantAdminSection tenantId={tenant.id} onRefreshTenant={onRefreshTenant} />
 
       {/* Quick Actions */}
       <AdminCard title="Quick Actions" className="lg:col-span-2">
@@ -708,10 +849,19 @@ export default function AdminTenantDetailPage() {
           break;
         }
         case "impersonate": {
-          const res = await superAdminClient.post(`/platform-admin/tenants/${id}/impersonate`);
-          localStorage.setItem("impersonationToken", res.data.accessToken);
-          localStorage.setItem("impersonationTenantSlug", tenant.slug);
-          window.location.href = "/dashboard";
+          try {
+            const res = await superAdminClient.post(`/platform-admin/tenants/${id}/impersonate`);
+            localStorage.setItem("impersonationToken", res.data.accessToken);
+            localStorage.setItem("impersonationTenantSlug", tenant.slug);
+            window.location.href = "/dashboard";
+          } catch (impErr: unknown) {
+            const msg = (impErr as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "";
+            if (msg.toLowerCase().includes("tenant_admin")) {
+              setStatusMsg("⚠️ No admin account found for this tenant. Please create one using the Admin Account section below, then try again.");
+            } else {
+              setStatusMsg(msg || "Impersonation failed");
+            }
+          }
           return;
         }
         case "extend-trial": {
@@ -761,7 +911,7 @@ export default function AdminTenantDetailPage() {
 
       {/* Tab Content */}
       {activeTab === "overview" && (
-        <OverviewTab tenant={tenant} onAction={handleAction} actionLoading={actionLoading} statusMsg={statusMsg} />
+        <OverviewTab tenant={tenant} onAction={handleAction} actionLoading={actionLoading} statusMsg={statusMsg} onRefreshTenant={fetchTenant} />
       )}
       {activeTab === "billing" && <BillingTab tenant={tenant} />}
       {activeTab === "addons" && <AddonsTab tenant={tenant} />}
