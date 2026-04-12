@@ -91,13 +91,38 @@ export async function buyerRefreshTokens(): Promise<BuyerAuthResponse | null> {
   } catch { return null; }
 }
 
+export async function buyerChangePassword(
+  currentPassword: string,
+  newPassword: string,
+  accessToken: string,
+): Promise<void> {
+  await axios.post(
+    `${BASE_URL}/buyer/auth/change-password`,
+    { currentPassword, newPassword },
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+  );
+}
+
+export async function requestSellerConnection(
+  sellerSlug: string,
+  emailAtSeller: string,
+  accessToken: string,
+): Promise<{ message: string; linkId?: string }> {
+  const { data } = await axios.post(
+    `${BASE_URL}/buyer/sellers/request`,
+    { sellerSlug, emailAtSeller },
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+  );
+  return data as { message: string; linkId?: string };
+}
+
 export async function getInviteDetails(token: string): Promise<{ name: string; slug: string; logoKey: string | null }> {
   const { data } = await axios.get(`${BASE_URL}/buyer/invites/${token}/details`);
   // API returns sellerName/sellerSlug; map to the shape the invite page expects
   return {
-    name: data.sellerName ?? data.name ?? "",
-    slug: data.sellerSlug ?? data.slug ?? "",
-    logoKey: data.logoKey ?? null,
+    name: (data as { sellerName?: string; name?: string }).sellerName ?? (data as { name?: string }).name ?? "",
+    slug: (data as { sellerSlug?: string; slug?: string }).sellerSlug ?? (data as { slug?: string }).slug ?? "",
+    logoKey: (data as { logoKey?: string | null }).logoKey ?? null,
   };
 }
 

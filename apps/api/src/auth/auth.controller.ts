@@ -108,7 +108,7 @@ export class AuthController {
   @ApiOperation({ summary: "Get Google OAuth URL for tenant sign-in (staff or buyer portal)" })
   async googleAuthUrl(
     @Query("tenant") tenantSlug: string,
-    @Query("context") context: "portal" | "staff" = "staff",
+    @Query("context") context: "portal" | "staff" | "buyer-standalone" = "staff",
     @Query("invite_token") inviteToken: string | undefined,
     @Res({ passthrough: true }) res: any,
   ) {
@@ -116,7 +116,8 @@ export class AuthController {
       res.status(503);
       return { message: "Google sign-in is not configured for this environment.", statusCode: 503 };
     }
-    if (!tenantSlug) {
+    // buyer-standalone: buyers sign in directly without a seller invite link — no tenant slug needed.
+    if (context !== "buyer-standalone" && !tenantSlug) {
       res.status(400);
       return { message: "tenant query parameter is required", statusCode: 400 };
     }

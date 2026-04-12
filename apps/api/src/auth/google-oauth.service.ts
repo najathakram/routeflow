@@ -25,8 +25,8 @@ interface OAuthState {
   nonce: string;
   tenantSlug?: string;
   inviteToken?: string;
-  /** "portal" = buyer portal login page; "staff" = tenant dashboard login page */
-  context?: "portal" | "staff";
+  /** "portal" = buyer portal via invite; "staff" = tenant dashboard; "buyer-standalone" = buyer portal without seller context */
+  context?: "portal" | "staff" | "buyer-standalone";
   /** When set, this is a link-account flow for an already-authenticated user. */
   linkUserId?: string;
 }
@@ -39,7 +39,7 @@ export interface GoogleProfile {
   type: "platform" | "tenant";
   tenantSlug?: string;
   inviteToken?: string;
-  context?: "portal" | "staff";
+  context?: "portal" | "staff" | "buyer-standalone";
   /** When set, this is a link-account flow — attach Google to this existing user ID. */
   linkUserId?: string;
 }
@@ -151,7 +151,7 @@ export class GoogleOAuthService {
     type: "platform" | "tenant",
     tenantSlug?: string,
     inviteToken?: string,
-    context?: "portal" | "staff",
+    context?: "portal" | "staff" | "buyer-standalone",
   ): Promise<string> {
     const nonce = crypto.randomUUID();
     const stateObj: OAuthState = {
@@ -361,6 +361,12 @@ export class GoogleOAuthService {
   // ─── Tenant flow (OPERATOR/DRIVER or buyer portal) ─────────────────────────
 
   private async handleTenantAuth(profile: GoogleProfile): Promise<GoogleAuthResult> {
+    // buyer-standalone: Google sign-in from the buyer portal without a seller invite link.
+    // Skip tenant resolution entirely and go straight to buyer portal auth.
+    if (profile.context === "buyer-standalone") {
+      return this.handleBuyerPortalAuth(profile);
+    }
+
     if (!profile.tenantSlug) throw new BadRequestException("tenantSlug required");
 
     const tenant = await this.prisma.tenant.findFirst({ where: { slug: profile.tenantSlug } });
