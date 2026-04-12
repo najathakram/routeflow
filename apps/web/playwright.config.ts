@@ -28,6 +28,7 @@ const AUTH_DIR = path.join(__dirname, "e2e/setup/.auth");
 
 export default defineConfig({
   testDir: "./e2e",
+  globalSetup: "./e2e/setup/global.setup.ts",
   fullyParallel: false, // sequential within a spec; specs run in parallel
   forbidOnly: !!process.env.CI,
   retries: 2, // Railway can have cold-start latency; always retry twice
