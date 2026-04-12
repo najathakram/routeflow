@@ -29,6 +29,19 @@ export class UsersService {
     });
   }
 
+  /**
+   * Cross-tenant email lookup — used as fallback when no tenant cookie is present.
+   * Finds a user by email across ALL tenants. Returns null if zero or multiple matches
+   * (ambiguous), so login is only allowed when the email is globally unique.
+   */
+  async findByEmailCrossTenant(email: string): Promise<User | null> {
+    const matches = await this.prisma.user.findMany({
+      where: { email, deletedAt: null, status: "ACTIVE" },
+      take: 2, // we only need to know if there's 0, 1, or 2+
+    });
+    return matches.length === 1 ? matches[0] : null;
+  }
+
   async findById(
     id: string,
   ): Promise<(Omit<User, "password" | "googleId"> & { googleLinked: boolean }) | null> {

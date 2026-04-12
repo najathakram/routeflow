@@ -29,7 +29,15 @@ export class AuthService {
   ) {}
 
   async validateUser(username: string, password: string, tenantId: string | null) {
-    const user = await this.usersService.findByUsername(username, tenantId);
+    let user = await this.usersService.findByUsername(username, tenantId);
+
+    // Fallback: if no user found with the resolved tenant (e.g. stale/missing cookie),
+    // and the input looks like an email, do a cross-tenant lookup so tenant admins can
+    // always log in with their email regardless of which tenant cookie the browser holds.
+    if (!user && username.includes("@")) {
+      user = await this.usersService.findByEmailCrossTenant(username);
+    }
+
     if (!user || user.deletedAt !== null) return null;
     if (user.status !== "ACTIVE") return null;
     // Google-only accounts have no password
