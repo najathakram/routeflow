@@ -111,6 +111,9 @@ export function createMockPrisma(): jest.Mocked<PrismaService> {
     vendorBillItem: modelProxy(),
     billPayment: modelProxy(),
     refreshToken: modelProxy(),
+    // Raw query support inside transactions
+    $executeRaw: jest.fn().mockResolvedValue(0),
+    $queryRaw: jest.fn().mockResolvedValue([]),
   });
 
   const models = allModels();
