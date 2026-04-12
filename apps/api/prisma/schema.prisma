@@ -957,12 +957,16 @@ model OrderTemplateItem {
 }
 
 model RefreshToken {
-  id        String   @id @default(uuid())
-  userId    String
-  tokenHash String   @unique
-  expiresAt DateTime
-  createdAt DateTime @default(now())
-  tenantId  String?
+  id          String   @id @default(uuid())
+  userId      String
+  tokenHash   String   @unique
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+  tenantId    String?
+  userAgent   String?
+  ipAddress   String?
+  deviceName  String?
+  lastUsedAt  DateTime?
 
   user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
   tenant Tenant? @relation(fields: [tenantId], references: [id])
@@ -1741,11 +1745,15 @@ model CustomerLink {
 }
 
 model BuyerRefreshToken {
-  id             String       @id @default(uuid())
+  id             String    @id @default(uuid())
   buyerAccountId String
-  tokenHash      String       @unique
+  tokenHash      String    @unique
   expiresAt      DateTime
-  createdAt      DateTime     @default(now())
+  createdAt      DateTime  @default(now())
+  userAgent      String?
+  ipAddress      String?
+  deviceName     String?
+  lastUsedAt     DateTime?
 
   buyerAccount BuyerAccount @relation(fields: [buyerAccountId], references: [id], onDelete: Cascade)
 

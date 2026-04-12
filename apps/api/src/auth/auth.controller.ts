@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
@@ -52,16 +53,18 @@ export class AuthController {
   @UseGuards(LocalAuthGuard)
   @Throttle({ default: { ttl: 60_000, limit: 30 } }) // 30/min: still brute-force resistant, allows shared-NAT offices + E2E test suites
   @ApiOperation({ summary: "Login with username and password" })
-  login(@CurrentUser() user: any, @Body() _dto: LoginDto) {
-    return this.authService.login(user);
+  login(@CurrentUser() user: any, @Body() _dto: LoginDto, @Req() req: any) {
+    const deviceInfo = this.extractDeviceInfo(req);
+    return this.authService.login(user, deviceInfo);
   }
 
   @Post("refresh")
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { ttl: 60_000, limit: 20 } })
   @ApiOperation({ summary: "Refresh access token" })
-  refresh(@Body() dto: RefreshDto) {
-    return this.authService.refresh(dto.refreshToken);
+  refresh(@Body() dto: RefreshDto, @Req() req: any) {
+    const deviceInfo = this.extractDeviceInfo(req);
+    return this.authService.refresh(dto.refreshToken, deviceInfo);
   }
 
   @Post("logout")
@@ -80,6 +83,25 @@ export class AuthController {
   @ApiOperation({ summary: "Change password" })
   changePassword(@CurrentUser() user: { id: string }, @Body() dto: ChangePasswordDto) {
     return this.authService.changePassword(user.id, dto.currentPassword, dto.newPassword);
+  }
+
+  // ─── Session management ────────────────────────────────────────────────────────
+
+  @Get("sessions")
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: "List active sessions for the current user" })
+  listSessions(@CurrentUser() user: { id: string }) {
+    return this.authService.listSessions(user.id);
+  }
+
+  @Delete("sessions/:id")
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: "Revoke a specific session by ID" })
+  revokeSession(@CurrentUser() user: { id: string }, @Param("id") sessionId: string) {
+    return this.authService.revokeSession(user.id, sessionId);
   }
 
   // ─── Google OAuth (tenant — OPERATOR, DRIVER, or buyer portal) ────────────
@@ -241,6 +263,15 @@ export class AuthController {
   }
 
   // ─── Helpers ───────────────────────────────────────────────────────────────
+
+  private extractDeviceInfo(req: any) {
+    const ua = (req.headers?.["user-agent"] as string) ?? undefined;
+    const ip =
+      (req.headers?.["x-forwarded-for"] as string)?.split(",")[0]?.trim() ??
+      req.socket?.remoteAddress ??
+      undefined;
+    return { userAgent: ua, ipAddress: ip };
+  }
 
   private mapErrorCode(raw: string): string {
     const allowed = new Set([

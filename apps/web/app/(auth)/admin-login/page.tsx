@@ -67,7 +67,7 @@ export default function AdminLoginPage() {
     try {
       // Intentionally no X-Tenant-Slug header — SUPER_ADMIN has tenantId=null
       const res = await axios.post(`${apiUrl}/api/v1/auth/login`, { username, password });
-      const { accessToken, user } = res.data;
+      const { accessToken, refreshToken, user } = res.data;
 
       if (user.role !== "SUPER_ADMIN") {
         setError("This login is for platform administrators only.");
@@ -76,6 +76,7 @@ export default function AdminLoginPage() {
       }
 
       localStorage.setItem("superAdminToken", accessToken);
+      localStorage.setItem("superAdminRefreshToken", refreshToken);
       router.push("/admin/dashboard");
     } catch (err: unknown) {
       const msg =

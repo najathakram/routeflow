@@ -1,4 +1,9 @@
-import { BadRequestException, Injectable, UnauthorizedException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  UnauthorizedException,
+} from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { ConfigService } from "@nestjs/config";
 import * as bcrypt from "bcrypt";
@@ -7,6 +12,12 @@ import { PrismaService } from "../prisma/prisma.service";
 import { UsersService } from "../users/users.service";
 import { AppConfig } from "../config/configuration";
 import { JwtPayload } from "./jwt-payload.interface";
+
+export interface DeviceInfo {
+  userAgent?: string;
+  ipAddress?: string;
+  deviceName?: string;
+}
 
 @Injectable()
 export class AuthService {
@@ -29,7 +40,10 @@ export class AuthService {
     return result;
   }
 
-  async login(user: NonNullable<Awaited<ReturnType<AuthService["validateUser"]>>>) {
+  async login(
+    user: NonNullable<Awaited<ReturnType<AuthService["validateUser"]>>>,
+    deviceInfo?: DeviceInfo,
+  ) {
     const jwtConfig = this.configService.get<AppConfig["jwt"]>("jwt")!;
 
     // Fetch tenant slug if user belongs to a tenant
@@ -62,7 +76,7 @@ export class AuthService {
       { secret: jwtConfig.refreshSecret, expiresIn: jwtConfig.refreshExpiresIn as any },
     );
 
-    await this.storeRefreshToken(user.id, refreshToken);
+    await this.storeRefreshToken(user.id, refreshToken, deviceInfo);
 
     return {
       accessToken,
@@ -79,7 +93,7 @@ export class AuthService {
     };
   }
 
-  async refresh(incomingToken: string) {
+  async refresh(incomingToken: string, deviceInfo?: DeviceInfo) {
     const jwtConfig = this.configService.get<AppConfig["jwt"]>("jwt")!;
 
     let payload: { sub: string };
@@ -135,7 +149,14 @@ export class AuthService {
       { secret: jwtConfig.refreshSecret, expiresIn: jwtConfig.refreshExpiresIn as any },
     );
 
-    await this.storeRefreshToken(user.id, refreshToken);
+    // Preserve device info from old token if not provided
+    const effectiveDeviceInfo: DeviceInfo = deviceInfo ?? {
+      userAgent: stored.userAgent ?? undefined,
+      ipAddress: stored.ipAddress ?? undefined,
+      deviceName: stored.deviceName ?? undefined,
+    };
+
+    await this.storeRefreshToken(user.id, refreshToken, effectiveDeviceInfo);
 
     return {
       accessToken,
@@ -156,6 +177,44 @@ export class AuthService {
     await this.prisma.refreshToken.deleteMany({ where: { userId } });
     return { message: "Logged out successfully" };
   }
+
+  // ─── Session management ────────────────────────────────────────────────────────
+
+  async listSessions(userId: string) {
+    const sessions = await this.prisma.refreshToken.findMany({
+      where: { userId, expiresAt: { gt: new Date() } },
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        createdAt: true,
+        lastUsedAt: true,
+        expiresAt: true,
+        userAgent: true,
+        ipAddress: true,
+        deviceName: true,
+      },
+    });
+    return sessions.map((s) => ({
+      id: s.id,
+      createdAt: s.createdAt,
+      lastUsedAt: s.lastUsedAt,
+      expiresAt: s.expiresAt,
+      userAgent: s.userAgent,
+      ipAddress: s.ipAddress,
+      deviceName: s.deviceName ?? this.deriveDeviceName(s.userAgent),
+    }));
+  }
+
+  async revokeSession(userId: string, sessionId: string) {
+    const session = await this.prisma.refreshToken.findUnique({ where: { id: sessionId } });
+    if (!session || session.userId !== userId) {
+      throw new ForbiddenException("Session not found");
+    }
+    await this.prisma.refreshToken.delete({ where: { id: sessionId } });
+    return { message: "Session revoked" };
+  }
+
+  // ─── OAuth helpers ─────────────────────────────────────────────────────────────
 
   async findOrCreateGoogleUser(profile: any, tenantId?: string | null) {
     const email = profile.emails?.[0]?.value;
@@ -227,14 +286,39 @@ export class AuthService {
     return crypto.createHash("sha256").update(token).digest("hex");
   }
 
-  private async storeRefreshToken(userId: string, token: string) {
+  private async storeRefreshToken(userId: string, token: string, deviceInfo?: DeviceInfo) {
     const tokenHash = this.hashToken(token);
     const decoded = this.jwtService.decode(token) as { exp: number };
     const expiresAt = new Date(decoded.exp * 1000);
     await this.prisma.refreshToken.upsert({
       where: { tokenHash },
-      create: { userId, tokenHash, expiresAt },
-      update: { expiresAt },
+      create: {
+        userId,
+        tokenHash,
+        expiresAt,
+        lastUsedAt: new Date(),
+        userAgent: deviceInfo?.userAgent ?? null,
+        ipAddress: deviceInfo?.ipAddress ?? null,
+        deviceName: deviceInfo?.deviceName ?? null,
+      },
+      update: {
+        expiresAt,
+        lastUsedAt: new Date(),
+        userAgent: deviceInfo?.userAgent ?? undefined,
+        ipAddress: deviceInfo?.ipAddress ?? undefined,
+        deviceName: deviceInfo?.deviceName ?? undefined,
+      },
     });
+  }
+
+  /** Derive a human-readable device name from the User-Agent string */
+  private deriveDeviceName(ua: string | null | undefined): string {
+    if (!ua) return "Unknown device";
+    if (/iPhone|iPad|iOS/i.test(ua)) return "iPhone / iPad";
+    if (/Android/i.test(ua)) return "Android device";
+    if (/Windows/i.test(ua)) return "Windows PC";
+    if (/Macintosh|Mac OS/i.test(ua)) return "Mac";
+    if (/Linux/i.test(ua)) return "Linux PC";
+    return "Unknown device";
   }
 }

@@ -13,6 +13,7 @@ import {
   Layers,
   Users,
   GitMerge,
+  UserCircle,
 } from "lucide-react";
 
 // Re-export for backwards compat (existing pages import from layout)
@@ -67,6 +68,7 @@ const NAV_ITEMS = [
   { label: "Plans & Features", href: "/admin/plans", icon: Layers },
   { label: "Billing", href: "/admin/billing", icon: CreditCard },
   { label: "Audit Logs", href: "/admin/audit-logs", icon: ScrollText },
+  { label: "My Account", href: "/admin/profile", icon: UserCircle },
 ];
 
 function Sidebar() {

@@ -2,10 +2,13 @@ import {
   Body,
   Controller,
   Delete,
+  Get,
   HttpCode,
   HttpStatus,
+  Param,
   Patch,
   Post,
+  Req,
   UseGuards,
 } from "@nestjs/common";
 import { ApiTags, ApiOperation, ApiBearerAuth } from "@nestjs/swagger";
@@ -27,24 +30,24 @@ export class BuyerAuthController {
   @HttpCode(HttpStatus.CREATED)
   @Throttle({ default: { ttl: 60_000, limit: 10 } })
   @ApiOperation({ summary: "Create a new buyer portal account" })
-  register(@Body() dto: BuyerRegisterDto) {
-    return this.buyerAuthService.register(dto);
+  register(@Body() dto: BuyerRegisterDto, @Req() req: any) {
+    return this.buyerAuthService.register(dto, this.extractDeviceInfo(req));
   }
 
   @Post("login")
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { ttl: 60_000, limit: 10 } })
   @ApiOperation({ summary: "Login to buyer portal" })
-  login(@Body() dto: BuyerLoginDto) {
-    return this.buyerAuthService.login(dto);
+  login(@Body() dto: BuyerLoginDto, @Req() req: any) {
+    return this.buyerAuthService.login(dto, this.extractDeviceInfo(req));
   }
 
   @Post("refresh")
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { ttl: 60_000, limit: 20 } })
   @ApiOperation({ summary: "Refresh buyer access token" })
-  refresh(@Body() dto: BuyerRefreshDto) {
-    return this.buyerAuthService.refresh(dto.refreshToken);
+  refresh(@Body() dto: BuyerRefreshDto, @Req() req: any) {
+    return this.buyerAuthService.refresh(dto.refreshToken, this.extractDeviceInfo(req));
   }
 
   @Post("logout")
@@ -87,5 +90,35 @@ export class BuyerAuthController {
     @Body() dto: { name?: string; phone?: string; mobile?: string },
   ) {
     return this.buyerAuthService.updateProfile(buyer.sub, dto);
+  }
+
+  // ─── Session management ───────────────────────────────────────────────────────
+
+  @Get("sessions")
+  @UseGuards(BuyerJwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: "List active sessions for the current buyer" })
+  listSessions(@CurrentBuyer() buyer: BuyerJwtPayload) {
+    return this.buyerAuthService.listSessions(buyer.sub);
+  }
+
+  @Delete("sessions/:id")
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(BuyerJwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: "Revoke a specific buyer session by ID" })
+  revokeSession(@CurrentBuyer() buyer: BuyerJwtPayload, @Param("id") sessionId: string) {
+    return this.buyerAuthService.revokeSession(buyer.sub, sessionId);
+  }
+
+  // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+  private extractDeviceInfo(req: any) {
+    const ua = (req.headers?.["user-agent"] as string) ?? undefined;
+    const ip =
+      (req.headers?.["x-forwarded-for"] as string)?.split(",")[0]?.trim() ??
+      req.socket?.remoteAddress ??
+      undefined;
+    return { userAgent: ua, ipAddress: ip };
   }
 }

@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   Logger,
   UnauthorizedException,
@@ -15,6 +16,12 @@ import { BuyerJwtPayload } from "./interfaces/buyer-jwt-payload.interface";
 import { BuyerRegisterDto } from "./dto/buyer-register.dto";
 import { BuyerLoginDto } from "./dto/buyer-login.dto";
 
+export interface BuyerDeviceInfo {
+  userAgent?: string;
+  ipAddress?: string;
+  deviceName?: string;
+}
+
 @Injectable()
 export class BuyerAuthService {
   private readonly logger = new Logger(BuyerAuthService.name);
@@ -27,7 +34,7 @@ export class BuyerAuthService {
 
   // ─── Register ─────────────────────────────────────────────────────────────────
 
-  async register(dto: BuyerRegisterDto) {
+  async register(dto: BuyerRegisterDto, deviceInfo?: BuyerDeviceInfo) {
     const existing = await this.prisma.buyerAccount.findUnique({
       where: { email: dto.email.toLowerCase() },
     });
@@ -48,7 +55,7 @@ export class BuyerAuthService {
       },
     });
 
-    const tokens = await this.issueBuyerTokenPair(account.id, account.email, account.name);
+    const tokens = await this.issueBuyerTokenPair(account.id, account.email, account.name, deviceInfo);
     this.logger.log(`BuyerAccount registered: ${account.email}`);
 
     return {
@@ -59,7 +66,7 @@ export class BuyerAuthService {
 
   // ─── Login ────────────────────────────────────────────────────────────────────
 
-  async login(dto: BuyerLoginDto) {
+  async login(dto: BuyerLoginDto, deviceInfo?: BuyerDeviceInfo) {
     const account = await this.prisma.buyerAccount.findUnique({
       where: { email: dto.email.toLowerCase() },
     });
@@ -77,7 +84,7 @@ export class BuyerAuthService {
     const valid = await bcrypt.compare(dto.password, account.passwordHash);
     if (!valid) throw new UnauthorizedException("Invalid credentials");
 
-    const tokens = await this.issueBuyerTokenPair(account.id, account.email, account.name);
+    const tokens = await this.issueBuyerTokenPair(account.id, account.email, account.name, deviceInfo);
 
     return {
       ...tokens,
@@ -87,7 +94,7 @@ export class BuyerAuthService {
 
   // ─── Refresh ──────────────────────────────────────────────────────────────────
 
-  async refresh(incomingToken: string) {
+  async refresh(incomingToken: string, deviceInfo?: BuyerDeviceInfo) {
     const jwtConfig = this.configService.get<AppConfig["jwt"]>("jwt")!;
 
     let payload: { sub: string };
@@ -114,7 +121,14 @@ export class BuyerAuthService {
       throw new UnauthorizedException("Account unavailable");
     }
 
-    const tokens = await this.issueBuyerTokenPair(account.id, account.email, account.name);
+    // Preserve device info from old token if not provided
+    const effectiveDeviceInfo: BuyerDeviceInfo = deviceInfo ?? {
+      userAgent: stored.userAgent ?? undefined,
+      ipAddress: stored.ipAddress ?? undefined,
+      deviceName: stored.deviceName ?? undefined,
+    };
+
+    const tokens = await this.issueBuyerTokenPair(account.id, account.email, account.name, effectiveDeviceInfo);
     return {
       ...tokens,
       buyer: { id: account.id, email: account.email, name: account.name },
@@ -126,6 +140,42 @@ export class BuyerAuthService {
   async logout(buyerAccountId: string) {
     await this.prisma.buyerRefreshToken.deleteMany({ where: { buyerAccountId } });
     return { message: "Logged out successfully" };
+  }
+
+  // ─── Session management ───────────────────────────────────────────────────────
+
+  async listSessions(buyerAccountId: string) {
+    const sessions = await this.prisma.buyerRefreshToken.findMany({
+      where: { buyerAccountId, expiresAt: { gt: new Date() } },
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        createdAt: true,
+        lastUsedAt: true,
+        expiresAt: true,
+        userAgent: true,
+        ipAddress: true,
+        deviceName: true,
+      },
+    });
+    return sessions.map((s) => ({
+      id: s.id,
+      createdAt: s.createdAt,
+      lastUsedAt: s.lastUsedAt,
+      expiresAt: s.expiresAt,
+      userAgent: s.userAgent,
+      ipAddress: s.ipAddress,
+      deviceName: s.deviceName ?? this.deriveDeviceName(s.userAgent),
+    }));
+  }
+
+  async revokeSession(buyerAccountId: string, sessionId: string) {
+    const session = await this.prisma.buyerRefreshToken.findUnique({ where: { id: sessionId } });
+    if (!session || session.buyerAccountId !== buyerAccountId) {
+      throw new ForbiddenException("Session not found");
+    }
+    await this.prisma.buyerRefreshToken.delete({ where: { id: sessionId } });
+    return { message: "Session revoked" };
   }
 
   // ─── Delete account ───────────────────────────────────────────────────────────
@@ -206,18 +256,52 @@ export class BuyerAuthService {
     return crypto.createHash("sha256").update(token).digest("hex");
   }
 
-  private async storeBuyerRefreshToken(buyerAccountId: string, token: string) {
+  private async storeBuyerRefreshToken(
+    buyerAccountId: string,
+    token: string,
+    deviceInfo?: BuyerDeviceInfo,
+  ) {
     const tokenHash = this.hashToken(token);
     const decoded = this.jwtService.decode(token) as { exp: number };
     const expiresAt = new Date(decoded.exp * 1000);
     await this.prisma.buyerRefreshToken.upsert({
       where: { tokenHash },
-      create: { buyerAccountId, tokenHash, expiresAt },
-      update: { expiresAt },
+      create: {
+        buyerAccountId,
+        tokenHash,
+        expiresAt,
+        lastUsedAt: new Date(),
+        userAgent: deviceInfo?.userAgent ?? null,
+        ipAddress: deviceInfo?.ipAddress ?? null,
+        deviceName: deviceInfo?.deviceName ?? null,
+      },
+      update: {
+        expiresAt,
+        lastUsedAt: new Date(),
+        userAgent: deviceInfo?.userAgent ?? undefined,
+        ipAddress: deviceInfo?.ipAddress ?? undefined,
+        deviceName: deviceInfo?.deviceName ?? undefined,
+      },
     });
   }
 
-  async issueBuyerTokenPair(buyerAccountId: string, email: string, name: string = "") {
+  /** Derive a human-readable device name from the User-Agent string */
+  private deriveDeviceName(ua: string | null | undefined): string {
+    if (!ua) return "Unknown device";
+    if (/iPhone|iPad|iOS/i.test(ua)) return "iPhone / iPad";
+    if (/Android/i.test(ua)) return "Android device";
+    if (/Windows/i.test(ua)) return "Windows PC";
+    if (/Macintosh|Mac OS/i.test(ua)) return "Mac";
+    if (/Linux/i.test(ua)) return "Linux PC";
+    return "Unknown device";
+  }
+
+  async issueBuyerTokenPair(
+    buyerAccountId: string,
+    email: string,
+    name: string = "",
+    deviceInfo?: BuyerDeviceInfo,
+  ) {
     const jwtConfig = this.configService.get<AppConfig["jwt"]>("jwt")!;
 
     const payload: BuyerJwtPayload = { sub: buyerAccountId, email, name, type: "BUYER" };
@@ -232,7 +316,7 @@ export class BuyerAuthService {
       { secret: jwtConfig.refreshSecret, expiresIn: jwtConfig.refreshExpiresIn as any },
     );
 
-    await this.storeBuyerRefreshToken(buyerAccountId, refreshToken);
+    await this.storeBuyerRefreshToken(buyerAccountId, refreshToken, deviceInfo);
 
     return { accessToken, refreshToken };
   }
