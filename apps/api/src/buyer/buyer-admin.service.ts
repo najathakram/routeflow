@@ -1,4 +1,9 @@
-import { Injectable, NotFoundException, ConflictException, BadRequestException } from "@nestjs/common";
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+  BadRequestException,
+} from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
@@ -18,12 +23,7 @@ export class BuyerAdminService {
 
   // ─── List buyer accounts ──────────────────────────────────────────────────────
 
-  async listBuyers(query: {
-    page?: number;
-    limit?: number;
-    search?: string;
-    status?: string;
-  }) {
+  async listBuyers(query: { page?: number; limit?: number; search?: string; status?: string }) {
     const page = Number(query.page ?? 1);
     const limit = Math.min(Number(query.limit ?? 20), 100);
     const skip = (page - 1) * limit;
@@ -196,7 +196,10 @@ export class BuyerAdminService {
 
   // ─── Update buyer profile ─────────────────────────────────────────────────────
 
-  async updateBuyer(id: string, dto: { name?: string; email?: string; phone?: string | null; mobile?: string | null }) {
+  async updateBuyer(
+    id: string,
+    dto: { name?: string; email?: string; phone?: string | null; mobile?: string | null },
+  ) {
     const buyer = await this.prisma.buyerAccount.findUnique({ where: { id } });
     if (!buyer) throw new NotFoundException("Buyer account not found");
 
@@ -213,7 +216,15 @@ export class BuyerAdminService {
         ...(dto.phone !== undefined && { phone: dto.phone }),
         ...(dto.mobile !== undefined && { mobile: dto.mobile }),
       },
-      select: { id: true, email: true, name: true, phone: true, mobile: true, status: true, emailVerified: true },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        phone: true,
+        mobile: true,
+        status: true,
+        emailVerified: true,
+      },
     });
 
     return updated;
@@ -234,7 +245,9 @@ export class BuyerAdminService {
     if (!customer) throw new NotFoundException("Customer not found in that tenant");
 
     // Check for existing link on this customer (customerId is @unique in CustomerLink)
-    const existing = await this.prisma.customerLink.findUnique({ where: { customerId: dto.customerId } });
+    const existing = await this.prisma.customerLink.findUnique({
+      where: { customerId: dto.customerId },
+    });
     if (existing) {
       if (existing.buyerAccountId === buyerId && existing.status === "ACTIVE") {
         throw new ConflictException("This buyer is already actively linked to this customer");

@@ -19,7 +19,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   async validate(payload: JwtPayload) {
     if (!payload?.sub) throw new UnauthorizedException();
     // Reject buyer tokens — they must use the buyer-jwt strategy
-    if ((payload as any).type === "BUYER") throw new UnauthorizedException("Use buyer auth endpoint");
+    if ((payload as any).type === "BUYER")
+      throw new UnauthorizedException("Use buyer auth endpoint");
     return {
       sub: payload.sub,
       id: payload.sub,

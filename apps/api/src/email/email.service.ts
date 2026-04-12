@@ -272,9 +272,9 @@ export class EmailService {
   // ─── Buyer account merge verification email ────────────────────────────────
 
   async sendMergeVerificationEmail(params: {
-    to: string;           // secondary account's email
+    to: string; // secondary account's email
     primaryEmail: string; // the primary account requesting the merge
-    verifyUrl: string;    // one-click verification link
+    verifyUrl: string; // one-click verification link
   }) {
     const html = `<!DOCTYPE html>
 <html><body style="margin:0;padding:0;background:#f9fafb;font-family:Arial,sans-serif;">
@@ -350,18 +350,21 @@ export class EmailService {
 </td></tr></table>
 </body></html>`;
 
-    await this.send({ to: params.primaryEmail, subject: "Your accounts have been merged — RouteFlow", html });
+    await this.send({
+      to: params.primaryEmail,
+      subject: "Your accounts have been merged — RouteFlow",
+      html,
+    });
     // Also notify the secondary inbox (in case the buyer checks it)
     await this.send({
       to: params.secondaryEmail,
       subject: "This account has been merged — RouteFlow",
-      html: html.replace(
-        `Hi ${params.primaryName}`,
-        `Hi`,
-      ).replace(
-        `You can now sign in with <strong>${params.primaryEmail}</strong> to access everything in one place.`,
-        `Please use <strong>${params.primaryEmail}</strong> to sign in going forward. This account (${params.secondaryEmail}) is now deactivated.`,
-      ),
+      html: html
+        .replace(`Hi ${params.primaryName}`, `Hi`)
+        .replace(
+          `You can now sign in with <strong>${params.primaryEmail}</strong> to access everything in one place.`,
+          `Please use <strong>${params.primaryEmail}</strong> to sign in going forward. This account (${params.secondaryEmail}) is now deactivated.`,
+        ),
     });
   }
 }

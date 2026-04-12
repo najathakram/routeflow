@@ -34,11 +34,7 @@ import { ListInvoicesDto } from "../invoices/dto/list-invoices.dto";
  *   - `role`     → CUSTOMER (triggers per-customer filtering in services)
  *   - `tenantId` → from BuyerSellerContextGuard (set by BuyerTenantInterceptor ALS run)
  */
-function makePseudoUser(ctx: {
-  userId: string;
-  tenantId: string;
-  tenantSlug: string;
-}): JwtPayload {
+function makePseudoUser(ctx: { userId: string; tenantId: string; tenantSlug: string }): JwtPayload {
   return {
     sub: ctx.userId,
     username: "",

@@ -55,7 +55,12 @@ export class BuyerAuthService {
       },
     });
 
-    const tokens = await this.issueBuyerTokenPair(account.id, account.email, account.name, deviceInfo);
+    const tokens = await this.issueBuyerTokenPair(
+      account.id,
+      account.email,
+      account.name,
+      deviceInfo,
+    );
     this.logger.log(`BuyerAccount registered: ${account.email}`);
 
     return {
@@ -84,7 +89,12 @@ export class BuyerAuthService {
     const valid = await bcrypt.compare(dto.password, account.passwordHash);
     if (!valid) throw new UnauthorizedException("Invalid credentials");
 
-    const tokens = await this.issueBuyerTokenPair(account.id, account.email, account.name, deviceInfo);
+    const tokens = await this.issueBuyerTokenPair(
+      account.id,
+      account.email,
+      account.name,
+      deviceInfo,
+    );
 
     return {
       ...tokens,
@@ -128,7 +138,12 @@ export class BuyerAuthService {
       deviceName: stored.deviceName ?? undefined,
     };
 
-    const tokens = await this.issueBuyerTokenPair(account.id, account.email, account.name, effectiveDeviceInfo);
+    const tokens = await this.issueBuyerTokenPair(
+      account.id,
+      account.email,
+      account.name,
+      effectiveDeviceInfo,
+    );
     return {
       ...tokens,
       buyer: { id: account.id, email: account.email, name: account.name },
@@ -236,13 +251,24 @@ export class BuyerAuthService {
   async getProfile(buyerAccountId: string) {
     const account = await this.prisma.buyerAccount.findUnique({
       where: { id: buyerAccountId },
-      select: { id: true, email: true, name: true, phone: true, mobile: true, emailVerified: true, createdAt: true },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        phone: true,
+        mobile: true,
+        emailVerified: true,
+        createdAt: true,
+      },
     });
     if (!account) throw new UnauthorizedException();
     return account;
   }
 
-  async updateProfile(buyerAccountId: string, dto: { name?: string; phone?: string; mobile?: string }) {
+  async updateProfile(
+    buyerAccountId: string,
+    dto: { name?: string; phone?: string; mobile?: string },
+  ) {
     return this.prisma.buyerAccount.update({
       where: { id: buyerAccountId },
       data: dto,

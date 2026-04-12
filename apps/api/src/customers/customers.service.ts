@@ -1492,7 +1492,9 @@ export class CustomersService {
     const webUrl = this.config.get<string>("WEB_URL") ?? "http://localhost:3001";
     const inviteUrl = `${webUrl}/buyer/invite/${token}`;
 
-    this.logger.log(`Portal invite for customer ${customerId} → ${toEmail} | token ${token.slice(0, 8)}...`);
+    this.logger.log(
+      `Portal invite for customer ${customerId} → ${toEmail} | token ${token.slice(0, 8)}...`,
+    );
 
     // Email sending is best-effort — if no email transport, it logs only
     // Import EmailService lazily to avoid circular module issue
@@ -1559,7 +1561,12 @@ export class CustomersService {
 
   // ─── Suggest buyer account merge (tenant-initiated) ───────────────────────────
 
-  async suggestMerge(tenantId: string, primaryCustomerId: string, secondaryCustomerId: string, notes?: string) {
+  async suggestMerge(
+    tenantId: string,
+    primaryCustomerId: string,
+    secondaryCustomerId: string,
+    notes?: string,
+  ) {
     if (primaryCustomerId === secondaryCustomerId) {
       throw new BadRequestException("Cannot merge a customer with itself");
     }
@@ -1595,7 +1602,12 @@ export class CustomersService {
       where: {
         primaryAccountId: primaryLink.buyerAccountId,
         secondaryAccountId: secondaryLink.buyerAccountId,
-        status: { in: [BuyerMergeRequestStatus.PENDING_VERIFICATION, BuyerMergeRequestStatus.PENDING_REVIEW] },
+        status: {
+          in: [
+            BuyerMergeRequestStatus.PENDING_VERIFICATION,
+            BuyerMergeRequestStatus.PENDING_REVIEW,
+          ],
+        },
       },
     });
     if (existing) {
@@ -1613,6 +1625,10 @@ export class CustomersService {
       },
     });
 
-    return { id: mergeRequest.id, status: mergeRequest.status, message: "Merge suggestion submitted for platform admin review." };
+    return {
+      id: mergeRequest.id,
+      status: mergeRequest.status,
+      message: "Merge suggestion submitted for platform admin review.",
+    };
   }
 }

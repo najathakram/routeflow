@@ -1,4 +1,11 @@
-import { Controller, Get, Query, Res, UseGuards, ServiceUnavailableException } from "@nestjs/common";
+import {
+  Controller,
+  Get,
+  Query,
+  Res,
+  UseGuards,
+  ServiceUnavailableException,
+} from "@nestjs/common";
 import { ApiOperation, ApiTags, ApiBearerAuth } from "@nestjs/swagger";
 import { ConfigService } from "@nestjs/config";
 import type { Response } from "express";
@@ -54,7 +61,9 @@ export class PlatformGoogleAuthController {
   @Get("link")
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: "Get Google OAuth URL to link Google account to current platform admin" })
+  @ApiOperation({
+    summary: "Get Google OAuth URL to link Google account to current platform admin",
+  })
   async getLinkUrl(@CurrentUser() user: { sub: string }) {
     if (!this.googleOAuth.isConfigured()) {
       throw new ServiceUnavailableException(
@@ -121,8 +130,7 @@ export class PlatformGoogleAuthController {
       ]);
       if (errCode === "google_token_invalid")
         return res.redirect(`${base}/auth/callback?error=state_invalid`);
-      if (knownCodes.has(errCode))
-        return res.redirect(`${base}/auth/callback?error=${errCode}`);
+      if (knownCodes.has(errCode)) return res.redirect(`${base}/auth/callback?error=${errCode}`);
 
       this.logError(err);
       return res.redirect(`${base}/auth/callback?error=unknown_error`);

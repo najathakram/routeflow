@@ -18,7 +18,9 @@ export class UsersService {
     });
   }
 
-  async findById(id: string): Promise<Omit<User, "password" | "googleId"> & { googleLinked: boolean } | null> {
+  async findById(
+    id: string,
+  ): Promise<(Omit<User, "password" | "googleId"> & { googleLinked: boolean }) | null> {
     const user = await this.prisma.forTenant().user.findUnique({ where: { id } });
     if (!user) return null;
     const { password: _pw, googleId, ...rest } = user;

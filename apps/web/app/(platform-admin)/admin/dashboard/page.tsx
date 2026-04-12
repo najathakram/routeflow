@@ -150,7 +150,7 @@ export default function AdminDashboardPage() {
                   outerRadius={80}
                   paddingAngle={3}
                   dataKey="value"
-                  label={({ name, value }: { name: string; value: number }) => `${name}: ${value}`}
+                  label={({ name, value }: { name?: string; value?: number }) => `${name ?? ""}: ${value ?? 0}`}
                 >
                   {planData.map((_, i) => (
                     <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />

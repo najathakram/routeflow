@@ -16,10 +16,10 @@ import Redis from "ioredis";
 @Injectable()
 export class RedisThrottlerStorage implements ThrottlerStorage, OnModuleDestroy {
   private readonly logger = new Logger(RedisThrottlerStorage.name);
-  readonly redis: Redis;   // `readonly` (not private) so controller can PING it
+  readonly redis: Redis; // `readonly` (not private) so controller can PING it
 
   constructor(private readonly config: ConfigService) {
-    const url      = config.get<string>("redis.url")      ?? "redis://localhost:6379";
+    const url = config.get<string>("redis.url") ?? "redis://localhost:6379";
     const password = config.get<string>("redis.password") || undefined;
 
     this.redis = new Redis(url, {
@@ -28,12 +28,8 @@ export class RedisThrottlerStorage implements ThrottlerStorage, OnModuleDestroy 
       connectTimeout: 5_000,
       enableOfflineQueue: true,
     });
-    this.redis.on("error", (err) =>
-      this.logger.error("Redis throttler error", err),
-    );
-    this.redis.on("connect", () =>
-      this.logger.log("Redis throttler connected"),
-    );
+    this.redis.on("error", (err) => this.logger.error("Redis throttler error", err));
+    this.redis.on("connect", () => this.logger.log("Redis throttler connected"));
   }
 
   async onModuleDestroy() {
@@ -42,7 +38,7 @@ export class RedisThrottlerStorage implements ThrottlerStorage, OnModuleDestroy 
 
   async increment(
     key: string,
-    ttl: number,           // milliseconds
+    ttl: number, // milliseconds
     limit: number,
     blockDuration: number, // milliseconds (may be undefined/0)
     throttlerName: string,
@@ -52,17 +48,17 @@ export class RedisThrottlerStorage implements ThrottlerStorage, OnModuleDestroy 
     isBlocked: boolean;
     timeToBlockExpire: number;
   }> {
-    const ttlSeconds   = Math.ceil(ttl / 1000);
-    const hitKey       = `throttle:hit2:${throttlerName}:${key}`;
-    const blockKey     = `throttle:blk2:${throttlerName}:${key}`;
+    const ttlSeconds = Math.ceil(ttl / 1000);
+    const hitKey = `throttle:hit2:${throttlerName}:${key}`;
+    const blockKey = `throttle:blk2:${throttlerName}:${key}`;
 
     // ── 1. Check existing block ─────────────────────────────────────────────
     const blockPttl = await this.redis.pttl(blockKey).catch(() => -1);
     if (blockPttl > 0) {
       return {
-        totalHits:         limit + 1,
-        timeToExpire:      0,
-        isBlocked:         true,
+        totalHits: limit + 1,
+        timeToExpire: 0,
+        isBlocked: true,
         timeToBlockExpire: Math.ceil(blockPttl / 1000),
       };
     }
@@ -80,13 +76,13 @@ export class RedisThrottlerStorage implements ThrottlerStorage, OnModuleDestroy 
         local ttl = redis.call('TTL', KEYS[1])
         return {current, ttl}
       `;
-      const result = await this.redis.eval(lua, 1, hitKey, ttlSeconds) as [number, number];
+      const result = (await this.redis.eval(lua, 1, hitKey, ttlSeconds)) as [number, number];
       totalHits = result[0];
       const ttlRemaining = result[1] > 0 ? result[1] : ttlSeconds;
       const timeToExpire = ttlRemaining;
 
       // ── 3. Enforce block when limit exceeded ──────────────────────────────
-      let isBlocked         = false;
+      let isBlocked = false;
       let timeToBlockExpire = 0;
       if (totalHits > limit) {
         isBlocked = true;

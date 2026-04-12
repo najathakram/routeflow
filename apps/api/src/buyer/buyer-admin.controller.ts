@@ -35,7 +35,12 @@ export class BuyerAdminController {
   @ApiOperation({ summary: "SUPER_ADMIN: List all buyer accounts" })
   listBuyers(
     @Query()
-    query: { page?: number; limit?: number; search?: string; status?: string },
+    query: {
+      page?: number;
+      limit?: number;
+      search?: string;
+      status?: string;
+    },
   ) {
     return this.buyerAdminService.listBuyers(query);
   }
@@ -67,10 +72,7 @@ export class BuyerAdminController {
   @Post(":id/links")
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: "SUPER_ADMIN: Link buyer to a seller (tenant customer)" })
-  addBuyerLink(
-    @Param("id") id: string,
-    @Body() dto: { tenantId: string; customerId: string },
-  ) {
+  addBuyerLink(@Param("id") id: string, @Body() dto: { tenantId: string; customerId: string }) {
     return this.buyerAdminService.addBuyerLink(id, dto);
   }
 
@@ -83,10 +85,7 @@ export class BuyerAdminController {
 
   @Get(":id/tenant-customers")
   @ApiOperation({ summary: "SUPER_ADMIN: List customers in a tenant (for link picker)" })
-  getTenantCustomers(
-    @Param("id") _buyerId: string,
-    @Query("tenantId") tenantId: string,
-  ) {
+  getTenantCustomers(@Param("id") _buyerId: string, @Query("tenantId") tenantId: string) {
     return this.buyerAdminService.getTenantCustomers(tenantId);
   }
 }
@@ -105,7 +104,12 @@ export class CustomerLinksAdminController {
   @ApiOperation({ summary: "SUPER_ADMIN: List all customer links across all tenants" })
   listLinks(
     @Query()
-    query: { page?: number; limit?: number; status?: string; tenantId?: string },
+    query: {
+      page?: number;
+      limit?: number;
+      status?: string;
+      tenantId?: string;
+    },
   ) {
     return this.buyerAdminService.listLinks(query);
   }

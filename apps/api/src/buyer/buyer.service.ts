@@ -158,10 +158,7 @@ export class BuyerService {
     const customer = await this.prisma.customer.findFirst({
       where: {
         tenantId: tenant.id,
-        OR: [
-          { email: normalizedEmail },
-          { user: { email: normalizedEmail } },
-        ],
+        OR: [{ email: normalizedEmail }, { user: { email: normalizedEmail } }],
       },
     });
     if (!customer) {
@@ -183,7 +180,10 @@ export class BuyerService {
           "This customer account is already claimed by another buyer. Contact the seller.",
         );
       }
-      if (existing.status === "PENDING_SELLER_APPROVAL" && existing.buyerAccountId === buyerAccountId) {
+      if (
+        existing.status === "PENDING_SELLER_APPROVAL" &&
+        existing.buyerAccountId === buyerAccountId
+      ) {
         throw new ConflictException("Your request is already pending seller approval");
       }
     }
@@ -422,17 +422,19 @@ export class BuyerService {
     const sellerName = tenantConfig?.businessName ?? "Your business";
 
     for (const op of operators.filter((o) => o.email)) {
-      await this.emailService.send({
-        to: op.email!,
-        subject: `Buyer portal connection request from ${requestEmail}`,
-        html: `
+      await this.emailService
+        .send({
+          to: op.email!,
+          subject: `Buyer portal connection request from ${requestEmail}`,
+          html: `
           <div style="font-family: Arial, sans-serif; max-width: 600px;">
             <h2>New buyer connection request</h2>
             <p>A buyer with email <strong>${requestEmail}</strong> has requested to connect with your customer account <strong>${customer.businessName}</strong>.</p>
             <p>Log in to RouteFlow to approve or decline this request from the customer's portal status page.</p>
           </div>
         `,
-      }).catch(() => {});
+        })
+        .catch(() => {});
     }
   }
 }

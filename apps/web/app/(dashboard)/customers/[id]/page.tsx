@@ -895,7 +895,7 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
                           : "\u2014"}
                       </td>
                       <td className="px-4 py-3 text-center">
-                        <Badge variant="default">Tier {cp.pricingTier}</Badge>
+                        <Badge variant="neutral">Tier {cp.pricingTier}</Badge>
                       </td>
                       <td className="px-4 py-3 text-right text-sm font-semibold text-brand-600">
                         {fmt(tierPrice)}

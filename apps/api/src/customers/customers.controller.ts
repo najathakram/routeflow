@@ -329,6 +329,11 @@ export class CustomersController {
     @Body() dto: { primaryCustomerId: string; secondaryCustomerId: string; notes?: string },
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.customersService.suggestMerge(user.tenantId!, dto.primaryCustomerId, dto.secondaryCustomerId, dto.notes);
+    return this.customersService.suggestMerge(
+      user.tenantId!,
+      dto.primaryCustomerId,
+      dto.secondaryCustomerId,
+      dto.notes,
+    );
   }
 }
