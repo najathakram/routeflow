@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
@@ -54,11 +55,39 @@ export class BuyerAdminController {
     return this.buyerAdminService.setBuyerStatus(id, dto.status);
   }
 
+  @Patch(":id")
+  @ApiOperation({ summary: "SUPER_ADMIN: Update buyer profile (name, email, phone, mobile)" })
+  updateBuyer(
+    @Param("id") id: string,
+    @Body() dto: { name?: string; email?: string; phone?: string | null; mobile?: string | null },
+  ) {
+    return this.buyerAdminService.updateBuyer(id, dto);
+  }
+
+  @Post(":id/links")
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "SUPER_ADMIN: Link buyer to a seller (tenant customer)" })
+  addBuyerLink(
+    @Param("id") id: string,
+    @Body() dto: { tenantId: string; customerId: string },
+  ) {
+    return this.buyerAdminService.addBuyerLink(id, dto);
+  }
+
   @Post(":id/impersonate")
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: "SUPER_ADMIN: Issue a buyer JWT to impersonate this buyer" })
   impersonateBuyer(@Param("id") id: string, @CurrentUser() admin: JwtPayload) {
     return this.buyerAdminService.impersonateBuyer(id, admin.sub);
+  }
+
+  @Get(":id/tenant-customers")
+  @ApiOperation({ summary: "SUPER_ADMIN: List customers in a tenant (for link picker)" })
+  getTenantCustomers(
+    @Param("id") _buyerId: string,
+    @Query("tenantId") tenantId: string,
+  ) {
+    return this.buyerAdminService.getTenantCustomers(tenantId);
   }
 }
 
@@ -85,5 +114,12 @@ export class CustomerLinksAdminController {
   @ApiOperation({ summary: "SUPER_ADMIN: Get link statistics" })
   linkStats() {
     return this.buyerAdminService.linkStats();
+  }
+
+  @Delete(":id")
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "SUPER_ADMIN: Disconnect (soft-delete) a customer link" })
+  removeLink(@Param("id") id: string) {
+    return this.buyerAdminService.removeLink(id);
   }
 }
