@@ -22,6 +22,7 @@ import { UpdateTenantStatusDto } from "./dto/update-tenant-status.dto";
 import { UpdateTenantPlanDto } from "./dto/update-tenant-plan.dto";
 import { CreateTenantDto } from "./dto/create-tenant.dto";
 import { ExtendTrialDto } from "./dto/extend-trial.dto";
+import { ActivateSubscriptionDto } from "./dto/activate-subscription.dto";
 import { EnableAddonDto, DisableAddonDto } from "../billing/dto/manage-addon.dto";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 
@@ -96,6 +97,16 @@ export class PlatformAdminController {
   @ApiOperation({ summary: "Extend tenant trial period by N days from now" })
   extendTrial(@Param("id") id: string, @Body() dto: ExtendTrialDto) {
     return this.svc.extendTrial(id, dto.days);
+  }
+
+  @Post("tenants/:id/activate-subscription")
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      "Manually activate a tenant subscription via external payment (Zelle, bank transfer, check, etc.)",
+  })
+  activateManualSubscription(@Param("id") id: string, @Body() dto: ActivateSubscriptionDto) {
+    return this.svc.activateManualSubscription(id, dto);
   }
 
   @Post("tenants/:id/reset-admin-password")

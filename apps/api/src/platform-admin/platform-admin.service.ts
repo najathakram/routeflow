@@ -19,6 +19,7 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { UpdateTenantStatusDto } from "./dto/update-tenant-status.dto";
 import { UpdateTenantPlanDto } from "./dto/update-tenant-plan.dto";
 import { CreateTenantDto } from "./dto/create-tenant.dto";
+import { ActivateSubscriptionDto } from "./dto/activate-subscription.dto";
 
 @Injectable()
 export class PlatformAdminService {
@@ -222,6 +223,60 @@ ${paymentSection}
       update: { currentPlan: dto.plan },
     });
     return { id: tenant.id, slug: tenant.slug, plan: tenant.plan };
+  }
+
+  // ─── Manual subscription activation (non-Stripe payment) ─────────────────────
+
+  async activateManualSubscription(id: string, dto: ActivateSubscriptionDto) {
+    await this._findOrThrow(id);
+
+    const now = new Date();
+    const periodEnd = new Date(now.getTime() + dto.billingPeriodDays * 24 * 60 * 60 * 1000);
+
+    const [tenant] = await Promise.all([
+      this.prisma.tenant.update({
+        where: { id },
+        data: { status: "ACTIVE", plan: dto.plan },
+        select: { id: true, slug: true, status: true, plan: true },
+      }),
+      this.prisma.tenantSubscription.upsert({
+        where: { tenantId: id },
+        create: {
+          tenantId: id,
+          currentPlan: dto.plan,
+          periodStart: now,
+          periodEnd,
+          externalPayment: true,
+          externalPaymentMethod: dto.paymentMethod,
+          externalPaymentRef: dto.paymentRef ?? null,
+          externalPaymentNotes: dto.notes ?? null,
+        },
+        update: {
+          currentPlan: dto.plan,
+          periodStart: now,
+          periodEnd,
+          cancelAtPeriodEnd: false,
+          externalPayment: true,
+          externalPaymentMethod: dto.paymentMethod,
+          externalPaymentRef: dto.paymentRef ?? null,
+          externalPaymentNotes: dto.notes ?? null,
+        },
+      }),
+    ]);
+
+    // Invalidate cached tenant status so the guard picks up ACTIVE immediately
+    this.tenantStatusGuard.invalidate(id);
+
+    return {
+      id: tenant.id,
+      slug: tenant.slug,
+      status: tenant.status,
+      plan: tenant.plan,
+      periodStart: now,
+      periodEnd,
+      paymentMethod: dto.paymentMethod,
+      paymentRef: dto.paymentRef ?? null,
+    };
   }
 
   // ─── Impersonation ────────────────────────────────────────────────────────────

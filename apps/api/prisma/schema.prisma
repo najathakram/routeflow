@@ -353,16 +353,21 @@ model TenantGoogleOAuth {
 }
 
 model TenantSubscription {
-  id                String     @id @default(uuid())
-  tenantId          String     @unique
-  stripeCustomerId  String?
-  stripeSubId       String?
-  currentPlan       TenantPlan @default(STARTER)
-  periodStart       DateTime?
-  periodEnd         DateTime?
-  cancelAtPeriodEnd Boolean    @default(false)
-  createdAt         DateTime   @default(now())
-  updatedAt         DateTime   @updatedAt
+  id                    String     @id @default(uuid())
+  tenantId              String     @unique
+  stripeCustomerId      String?
+  stripeSubId           String?
+  currentPlan           TenantPlan @default(STARTER)
+  periodStart           DateTime?
+  periodEnd             DateTime?
+  cancelAtPeriodEnd     Boolean    @default(false)
+  // External (non-Stripe) payment tracking
+  externalPayment       Boolean    @default(false)
+  externalPaymentMethod String?    // ZELLE | BANK_TRANSFER | CHECK | CASH | WIRE | OTHER
+  externalPaymentRef    String?    // transaction ID or confirmation number
+  externalPaymentNotes  String?
+  createdAt             DateTime   @default(now())
+  updatedAt             DateTime   @updatedAt
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 }

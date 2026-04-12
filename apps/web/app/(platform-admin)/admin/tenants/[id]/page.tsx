@@ -32,9 +32,14 @@ interface TenantDetail {
   logoKey: string | null;
   subscription: {
     currentPlan: string;
+    periodStart: string | null;
     periodEnd: string | null;
     cancelAtPeriodEnd: boolean;
     stripeCustomerId?: string | null;
+    externalPayment: boolean;
+    externalPaymentMethod: string | null;
+    externalPaymentRef: string | null;
+    externalPaymentNotes: string | null;
   } | null;
   counts: {
     users: number;
@@ -492,10 +497,42 @@ function OverviewTab({
 
 // ─── Billing Tab ───────────────────────────────────────────────────────────────
 
-function BillingTab({ tenant }: { tenant: TenantDetail }) {
+const EXTERNAL_PAYMENT_METHODS = [
+  { value: "ZELLE", label: "Zelle" },
+  { value: "BANK_TRANSFER", label: "Bank Transfer (ACH/Wire)" },
+  { value: "WIRE", label: "Wire Transfer" },
+  { value: "CHECK", label: "Check" },
+  { value: "CASH", label: "Cash" },
+  { value: "OTHER", label: "Other" },
+] as const;
+
+const BILLING_PERIODS = [
+  { value: 30, label: "Monthly (30 days)" },
+  { value: 90, label: "Quarterly (90 days)" },
+  { value: 180, label: "Semi-Annual (180 days)" },
+  { value: 365, label: "Annual (365 days)" },
+] as const;
+
+function BillingTab({
+  tenant,
+  onRefreshTenant,
+}: {
+  tenant: TenantDetail;
+  onRefreshTenant: () => void;
+}) {
   const [portalLoading, setPortalLoading] = React.useState(false);
   const [checkoutLoading, setCheckoutLoading] = React.useState(false);
-  const [msg, setMsg] = React.useState<string | null>(null);
+  const [msg, setMsg] = React.useState<{ type: "success" | "error" | "info"; text: string } | null>(null);
+
+  // Manual activation form state
+  const [activating, setActivating] = React.useState(false);
+  const [manualForm, setManualForm] = React.useState({
+    plan: tenant.plan as string,
+    paymentMethod: "ZELLE" as string,
+    paymentRef: "",
+    billingPeriodDays: 30,
+    notes: "",
+  });
 
   const sub = tenant.subscription;
   const daysLeft = tenant.trialEndsAt
@@ -508,7 +545,7 @@ function BillingTab({ tenant }: { tenant: TenantDetail }) {
       const res = await superAdminClient.post(`/platform-admin/tenants/${tenant.id}/billing/portal`);
       window.open(res.data.url, "_blank");
     } catch (err: unknown) {
-      setMsg((err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Failed to open billing portal");
+      setMsg({ type: "error", text: (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Failed to open billing portal" });
     } finally {
       setPortalLoading(false);
     }
@@ -518,11 +555,38 @@ function BillingTab({ tenant }: { tenant: TenantDetail }) {
     setCheckoutLoading(true);
     try {
       const res = await superAdminClient.post(`/platform-admin/tenants/${tenant.id}/billing/checkout`);
-      setMsg(`Checkout URL created: ${res.data.checkoutUrl}`);
+      setMsg({ type: "info", text: `Checkout URL: ${res.data.checkoutUrl}` });
     } catch (err: unknown) {
-      setMsg((err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Failed to create checkout session");
+      setMsg({ type: "error", text: (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Failed to create checkout session" });
     } finally {
       setCheckoutLoading(false);
+    }
+  };
+
+  const handleManualActivation = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setActivating(true);
+    setMsg(null);
+    try {
+      const res = await superAdminClient.post(
+        `/platform-admin/tenants/${tenant.id}/activate-subscription`,
+        {
+          plan: manualForm.plan,
+          paymentMethod: manualForm.paymentMethod,
+          paymentRef: manualForm.paymentRef || undefined,
+          billingPeriodDays: manualForm.billingPeriodDays,
+          notes: manualForm.notes || undefined,
+        },
+      );
+      setMsg({
+        type: "success",
+        text: `Subscription activated — ${res.data.plan} plan, paid via ${manualForm.paymentMethod}. Next renewal: ${new Date(res.data.periodEnd).toLocaleDateString()}`,
+      });
+      onRefreshTenant();
+    } catch (err: unknown) {
+      setMsg({ type: "error", text: (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Activation failed" });
+    } finally {
+      setActivating(false);
     }
   };
 
@@ -545,10 +609,28 @@ function BillingTab({ tenant }: { tenant: TenantDetail }) {
       <AdminCard title="Subscription">
         {sub ? (
           <dl className="flex flex-col gap-2 text-sm">
+            {sub.externalPayment && (
+              <div className="mb-2 flex items-center gap-2 rounded-lg bg-emerald-900/30 px-3 py-2 ring-1 ring-emerald-700/50">
+                <span className="text-xs font-semibold uppercase tracking-wider text-emerald-400">
+                  External Payment
+                </span>
+                {sub.externalPaymentMethod && (
+                  <span className="rounded bg-emerald-800/50 px-2 py-0.5 text-xs text-emerald-300">
+                    {EXTERNAL_PAYMENT_METHODS.find((m) => m.value === sub.externalPaymentMethod)?.label ?? sub.externalPaymentMethod}
+                  </span>
+                )}
+              </div>
+            )}
             <div className="flex justify-between">
               <dt className="text-slate-500">Plan</dt>
               <dd className="text-white">{sub.currentPlan}</dd>
             </div>
+            {sub.periodStart && (
+              <div className="flex justify-between">
+                <dt className="text-slate-500">Period Start</dt>
+                <dd className="text-slate-300">{new Date(sub.periodStart).toLocaleDateString()}</dd>
+              </div>
+            )}
             {sub.periodEnd && (
               <div className="flex justify-between">
                 <dt className="text-slate-500">Period End</dt>
@@ -561,6 +643,18 @@ function BillingTab({ tenant }: { tenant: TenantDetail }) {
                 {sub.cancelAtPeriodEnd ? "Yes" : "No"}
               </dd>
             </div>
+            {sub.externalPaymentRef && (
+              <div className="flex justify-between">
+                <dt className="text-slate-500">Payment Ref</dt>
+                <dd className="font-mono text-xs text-slate-300">{sub.externalPaymentRef}</dd>
+              </div>
+            )}
+            {sub.externalPaymentNotes && (
+              <div className="flex flex-col gap-1">
+                <dt className="text-slate-500">Notes</dt>
+                <dd className="rounded bg-slate-700/50 px-3 py-2 text-xs text-slate-300">{sub.externalPaymentNotes}</dd>
+              </div>
+            )}
             {sub.stripeCustomerId && (
               <div className="flex justify-between">
                 <dt className="text-slate-500">Stripe ID</dt>
@@ -573,13 +667,111 @@ function BillingTab({ tenant }: { tenant: TenantDetail }) {
         )}
       </AdminCard>
 
-      {/* Stripe Actions */}
-      <AdminCard title="Stripe Actions" className="lg:col-span-2">
+      {/* Manual Activation */}
+      <AdminCard title="Manual Activation" className="lg:col-span-2">
+        <p className="mb-4 text-sm text-slate-400">
+          Activate this tenant&apos;s subscription when payment was received outside Stripe — via Zelle, bank transfer, check, or any other platform.
+        </p>
+
         {msg && (
-          <div className="mb-4 rounded-lg bg-indigo-900/40 px-4 py-2 text-sm text-indigo-300 ring-1 ring-indigo-700 break-all">
-            {msg}
+          <div className={`mb-4 rounded-lg px-4 py-3 text-sm ring-1 break-all ${
+            msg.type === "success"
+              ? "bg-green-900/30 text-green-300 ring-green-700/50"
+              : msg.type === "error"
+                ? "bg-red-900/30 text-red-300 ring-red-700/50"
+                : "bg-indigo-900/30 text-indigo-300 ring-indigo-700/50"
+          }`}>
+            {msg.text}
           </div>
         )}
+
+        <form onSubmit={handleManualActivation} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {/* Plan */}
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-400">Plan</label>
+            <select
+              value={manualForm.plan}
+              onChange={(e) => setManualForm((f) => ({ ...f, plan: e.target.value }))}
+              className="h-9 w-full rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
+            >
+              {PLANS.map((p) => <option key={p} value={p}>{p}</option>)}
+            </select>
+          </div>
+
+          {/* Payment method */}
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-400">Payment Method</label>
+            <select
+              value={manualForm.paymentMethod}
+              onChange={(e) => setManualForm((f) => ({ ...f, paymentMethod: e.target.value }))}
+              className="h-9 w-full rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
+            >
+              {EXTERNAL_PAYMENT_METHODS.map((m) => (
+                <option key={m.value} value={m.value}>{m.label}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Billing period */}
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-400">Billing Period</label>
+            <select
+              value={manualForm.billingPeriodDays}
+              onChange={(e) => setManualForm((f) => ({ ...f, billingPeriodDays: Number(e.target.value) }))}
+              className="h-9 w-full rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
+            >
+              {BILLING_PERIODS.map((p) => (
+                <option key={p.value} value={p.value}>{p.label}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Reference */}
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-400">
+              Transaction / Confirmation Reference <span className="text-slate-600">(optional)</span>
+            </label>
+            <input
+              type="text"
+              value={manualForm.paymentRef}
+              onChange={(e) => setManualForm((f) => ({ ...f, paymentRef: e.target.value }))}
+              placeholder="e.g. Zelle confirmation #123"
+              className="h-9 w-full rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white placeholder-slate-500 focus:border-indigo-500 focus:outline-none"
+            />
+          </div>
+
+          {/* Notes */}
+          <div className="sm:col-span-2">
+            <label className="mb-1 block text-xs font-medium text-slate-400">
+              Notes <span className="text-slate-600">(optional)</span>
+            </label>
+            <input
+              type="text"
+              value={manualForm.notes}
+              onChange={(e) => setManualForm((f) => ({ ...f, notes: e.target.value }))}
+              placeholder="Internal notes about this payment"
+              className="h-9 w-full rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white placeholder-slate-500 focus:border-indigo-500 focus:outline-none"
+            />
+          </div>
+
+          {/* Submit */}
+          <div className="sm:col-span-full flex items-center gap-4 border-t border-slate-700 pt-4">
+            <button
+              type="submit"
+              disabled={activating}
+              className="rounded-lg bg-emerald-700 px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-emerald-600 disabled:opacity-50"
+            >
+              {activating ? "Activating..." : "Activate Subscription"}
+            </button>
+            <p className="text-xs text-slate-500">
+              This will set the tenant status to <strong className="text-slate-300">ACTIVE</strong> and record the selected payment method.
+            </p>
+          </div>
+        </form>
+      </AdminCard>
+
+      {/* Stripe Actions */}
+      <AdminCard title="Stripe Actions" className="lg:col-span-2">
         <div className="flex flex-wrap gap-3">
           <button
             disabled={portalLoading}
@@ -913,7 +1105,7 @@ export default function AdminTenantDetailPage() {
       {activeTab === "overview" && (
         <OverviewTab tenant={tenant} onAction={handleAction} actionLoading={actionLoading} statusMsg={statusMsg} onRefreshTenant={fetchTenant} />
       )}
-      {activeTab === "billing" && <BillingTab tenant={tenant} />}
+      {activeTab === "billing" && <BillingTab tenant={tenant} onRefreshTenant={fetchTenant} />}
       {activeTab === "addons" && <AddonsTab tenant={tenant} />}
       {activeTab === "config" && <ConfigTab tenant={tenant} />}
       {activeTab === "audit" && <AuditLogTab tenantId={tenant.id} />}
