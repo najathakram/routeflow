@@ -15,7 +15,7 @@ test.describe("Customer — Scoped Access", () => {
   // so each test context starts already authenticated. We set the tenant header for
   // correct middleware routing, then navigate to the dashboard.
   test.beforeEach(async ({ page, context }) => {
-    const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "https://app.routeflow.io";
+    const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "https://routeflowweb-production.up.railway.app";
     await setTenantCookie(context, baseURL);
     await page.goto("/dashboard");
   });

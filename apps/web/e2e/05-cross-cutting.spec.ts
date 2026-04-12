@@ -57,7 +57,7 @@ test.describe("Cross-cutting — Auth Guards & Role Isolation", () => {
   // ── Role cross-access is blocked ──────────────────────────────────────────
 
   test("CC-04 operator cannot access /admin/dashboard → blocked", async ({ page, context }) => {
-    const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "https://app.routeflow.io";
+    const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "https://routeflowweb-production.up.railway.app";
     await setTenantCookie(context, baseURL, TENANT_SLUG);
     await loginAsOperator(page);
     await page.goto("/admin/dashboard");
@@ -138,7 +138,7 @@ test.describe("Cross-cutting — Auth Guards & Role Isolation", () => {
     page,
     context,
   }) => {
-    const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "https://app.routeflow.io";
+    const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "https://routeflowweb-production.up.railway.app";
     await setTenantCookie(context, baseURL, TENANT_SLUG);
     await page.goto("/login");
     const googleBtn = page
@@ -180,7 +180,7 @@ test.describe("Cross-cutting — Auth Guards & Role Isolation", () => {
     page,
     context,
   }) => {
-    const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "https://app.routeflow.io";
+    const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "https://routeflowweb-production.up.railway.app";
     await setTenantCookie(context, baseURL, TENANT_SLUG);
     await loginAsOperator(page);
     await page.reload();

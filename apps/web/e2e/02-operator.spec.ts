@@ -14,7 +14,7 @@ test.describe("Operator — Tenant Dashboard", () => {
   // so each test context starts already authenticated. We set the tenant header for
   // correct middleware routing, then navigate to the dashboard.
   test.beforeEach(async ({ page, context }) => {
-    const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "https://app.routeflow.io";
+    const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "https://routeflowweb-production.up.railway.app";
     await setTenantCookie(context, baseURL);
     await page.goto("/dashboard");
   });
@@ -30,7 +30,7 @@ test.describe("Operator — Tenant Dashboard", () => {
     context,
   }) => {
     await logout(page);
-    const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "https://app.routeflow.io";
+    const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "https://routeflowweb-production.up.railway.app";
     await setTenantCookie(context, baseURL, TENANT_SLUG);
     await page.goto("/login");
     // Page should show branded name or RouteFlow (not an error)
@@ -39,7 +39,7 @@ test.describe("Operator — Tenant Dashboard", () => {
 
   test("OP-02 wrong password → inline error shown", async ({ page, context }) => {
     await logout(page);
-    const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "https://app.routeflow.io";
+    const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "https://routeflowweb-production.up.railway.app";
     await setTenantCookie(context, baseURL, TENANT_SLUG);
     await page.goto("/login");
     await page.getByPlaceholder("Enter your username").fill("admin");
@@ -246,7 +246,7 @@ test.describe("Operator — Tenant Dashboard", () => {
     context,
   }) => {
     await logout(page);
-    const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "https://app.routeflow.io";
+    const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "https://routeflowweb-production.up.railway.app";
     await setTenantCookie(context, baseURL, TENANT_SLUG);
     await page.goto("/login");
     const googleBtn = page

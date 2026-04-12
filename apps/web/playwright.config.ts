@@ -21,7 +21,7 @@ import path from "path";
  *   without re-hitting the login endpoint on every beforeEach.
  */
 
-const BASE_URL = process.env.PLAYWRIGHT_BASE_URL ?? "https://app.routeflow.io";
+const BASE_URL = process.env.PLAYWRIGHT_BASE_URL ?? "https://routeflowweb-production.up.railway.app";
 
 // Path to the pre-authenticated storage state files created by the setup project
 const AUTH_DIR = path.join(__dirname, "e2e/setup/.auth");
