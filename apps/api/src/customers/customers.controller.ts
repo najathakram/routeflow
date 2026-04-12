@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
   Param,
   Patch,
   Post,
@@ -317,5 +318,17 @@ export class CustomersController {
   @Roles(UserRole.OPERATOR)
   remove(@Param("id") id: string) {
     return this.customersService.deleteCustomer(id);
+  }
+
+  // ─── Suggest buyer account merge ──────────────────────────────────────────
+
+  @Post("suggest-merge")
+  @Roles(UserRole.OPERATOR)
+  @HttpCode(200)
+  suggestMerge(
+    @Body() dto: { primaryCustomerId: string; secondaryCustomerId: string; notes?: string },
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.customersService.suggestMerge(user.tenantId!, dto.primaryCustomerId, dto.secondaryCustomerId, dto.notes);
   }
 }

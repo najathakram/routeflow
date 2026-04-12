@@ -268,4 +268,100 @@ export class EmailService {
 </body>
 </html>`;
   }
+
+  // ─── Buyer account merge verification email ────────────────────────────────
+
+  async sendMergeVerificationEmail(params: {
+    to: string;           // secondary account's email
+    primaryEmail: string; // the primary account requesting the merge
+    verifyUrl: string;    // one-click verification link
+  }) {
+    const html = `<!DOCTYPE html>
+<html><body style="margin:0;padding:0;background:#f9fafb;font-family:Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:32px 16px;">
+<table width="560" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:8px;border:1px solid #e5e7eb;">
+  <tr><td style="background:#4f46e5;padding:24px 32px;border-radius:8px 8px 0 0;">
+    <p style="margin:0;font-size:20px;font-weight:700;color:#ffffff;">RouteFlow — Account Merge Request</p>
+  </td></tr>
+  <tr><td style="padding:32px;">
+    <p style="margin:0 0 16px;font-size:15px;color:#374151;">Hi,</p>
+    <p style="margin:0 0 16px;font-size:15px;color:#374151;">
+      An account merge request has been submitted. The account signed in as <strong>${params.primaryEmail}</strong> wants
+      to merge <strong>this account</strong> (${params.to}) into it. After the merge, you'll only need to use the other
+      email to sign in.
+    </p>
+    <p style="margin:0 0 24px;font-size:15px;color:#374151;">
+      If you own both accounts and want to proceed, click the button below to confirm ownership of this account.
+    </p>
+    <table cellpadding="0" cellspacing="0"><tr><td style="background:#4f46e5;border-radius:6px;">
+      <a href="${params.verifyUrl}" style="display:inline-block;padding:12px 28px;font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;">
+        Confirm — I own this account
+      </a>
+    </td></tr></table>
+    <p style="margin:24px 0 0;font-size:13px;color:#9ca3af;">
+      This link expires in 24 hours. If you did not request this merge, you can safely ignore this email — your account will not be affected.
+    </p>
+  </td></tr>
+  <tr><td style="background:#f9fafb;padding:16px 32px;border-top:1px solid #f0f0f0;border-radius:0 0 8px 8px;">
+    <p style="margin:0;font-size:12px;color:#9ca3af;text-align:center;">RouteFlow Platform — this is an automated security email.</p>
+  </td></tr>
+</table>
+</td></tr></table>
+</body></html>`;
+
+    await this.send({ to: params.to, subject: "Confirm account merge — RouteFlow", html });
+  }
+
+  // ─── Buyer account merge completion email ──────────────────────────────────
+
+  async sendMergeCompleteEmail(params: {
+    primaryEmail: string;
+    secondaryEmail: string;
+    primaryName: string;
+  }) {
+    const html = `<!DOCTYPE html>
+<html><body style="margin:0;padding:0;background:#f9fafb;font-family:Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:32px 16px;">
+<table width="560" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:8px;border:1px solid #e5e7eb;">
+  <tr><td style="background:#059669;padding:24px 32px;border-radius:8px 8px 0 0;">
+    <p style="margin:0;font-size:20px;font-weight:700;color:#ffffff;">RouteFlow — Accounts Merged</p>
+  </td></tr>
+  <tr><td style="padding:32px;">
+    <p style="margin:0 0 16px;font-size:15px;color:#374151;">Hi ${params.primaryName},</p>
+    <p style="margin:0 0 16px;font-size:15px;color:#374151;">
+      Your two RouteFlow buyer accounts have been successfully merged.
+    </p>
+    <ul style="margin:0 0 16px;padding-left:20px;font-size:15px;color:#374151;">
+      <li><strong>Active account:</strong> ${params.primaryEmail}</li>
+      <li><strong>Deactivated account:</strong> ${params.secondaryEmail}</li>
+    </ul>
+    <p style="margin:0 0 16px;font-size:15px;color:#374151;">
+      All your seller connections from the deactivated account have been transferred to your active account.
+      You can now sign in with <strong>${params.primaryEmail}</strong> to access everything in one place.
+    </p>
+    <p style="margin:0;font-size:13px;color:#9ca3af;">
+      If you did not request this change, contact our support team immediately.
+    </p>
+  </td></tr>
+  <tr><td style="background:#f9fafb;padding:16px 32px;border-top:1px solid #f0f0f0;border-radius:0 0 8px 8px;">
+    <p style="margin:0;font-size:12px;color:#9ca3af;text-align:center;">RouteFlow Platform — automated notification.</p>
+  </td></tr>
+</table>
+</td></tr></table>
+</body></html>`;
+
+    await this.send({ to: params.primaryEmail, subject: "Your accounts have been merged — RouteFlow", html });
+    // Also notify the secondary inbox (in case the buyer checks it)
+    await this.send({
+      to: params.secondaryEmail,
+      subject: "This account has been merged — RouteFlow",
+      html: html.replace(
+        `Hi ${params.primaryName}`,
+        `Hi`,
+      ).replace(
+        `You can now sign in with <strong>${params.primaryEmail}</strong> to access everything in one place.`,
+        `Please use <strong>${params.primaryEmail}</strong> to sign in going forward. This account (${params.secondaryEmail}) is now deactivated.`,
+      ),
+    });
+  }
 }

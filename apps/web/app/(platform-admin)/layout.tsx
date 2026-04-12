@@ -12,6 +12,7 @@ import {
   CreditCard,
   Layers,
   Users,
+  GitMerge,
 } from "lucide-react";
 
 // Re-export for backwards compat (existing pages import from layout)
@@ -62,6 +63,7 @@ const NAV_ITEMS = [
   { label: "Dashboard", href: "/admin/dashboard", icon: LayoutDashboard },
   { label: "Tenants", href: "/admin/tenants", icon: Building2 },
   { label: "Buyers", href: "/admin/buyers", icon: Users },
+  { label: "Merge Requests", href: "/admin/buyers/merge-requests", icon: GitMerge },
   { label: "Plans & Features", href: "/admin/plans", icon: Layers },
   { label: "Billing", href: "/admin/billing", icon: CreditCard },
   { label: "Audit Logs", href: "/admin/audit-logs", icon: ScrollText },

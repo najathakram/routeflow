@@ -105,6 +105,22 @@ export class PlatformAdminController {
     return this.svc.resetTenantAdminPassword(id);
   }
 
+  @Get("tenants/:id/admin")
+  @ApiOperation({ summary: "Get the TENANT_ADMIN user info for a tenant (null if none)" })
+  getTenantAdmin(@Param("id") id: string) {
+    return this.svc.getTenantAdmin(id);
+  }
+
+  @Post("tenants/:id/admin")
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: "Create a TENANT_ADMIN account for a tenant that has none" })
+  createTenantAdmin(
+    @Param("id") id: string,
+    @Body() dto: { username: string; email: string; password?: string },
+  ) {
+    return this.svc.createTenantAdmin(id, dto);
+  }
+
   @Get("stats/growth")
   @ApiOperation({ summary: "Monthly tenant creation counts for charts" })
   @ApiQuery({ name: "months", required: false, type: Number })

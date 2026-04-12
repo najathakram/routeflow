@@ -301,6 +301,7 @@ model Tenant {
   customerPrices       CustomerPrice[]
   systemConfigs        SystemConfig[]
   customerLinks        CustomerLink[]
+  buyerMergeRequests   BuyerMergeRequest[]
 
   @@index([slug])
   @@index([status])
@@ -1702,9 +1703,12 @@ model BuyerAccount {
   createdAt     DateTime           @default(now())
   updatedAt     DateTime           @updatedAt
   deletedAt     DateTime?
+  mergedIntoId  String?            // audit: set on the secondary after a completed merge
 
-  customerLinks CustomerLink[]
-  refreshTokens BuyerRefreshToken[]
+  customerLinks            CustomerLink[]
+  refreshTokens            BuyerRefreshToken[]
+  mergeRequestsAsPrimary   BuyerMergeRequest[] @relation("MergeAsPrimary")
+  mergeRequestsAsSecondary BuyerMergeRequest[] @relation("MergeAsSecondary")
 
   @@index([email])
   @@index([status])
@@ -1766,4 +1770,46 @@ model AuditLog {
   @@index([userId])
   @@index([entityType, entityId])
   @@index([createdAt])
+}
+
+// ─── Buyer Account Merge Requests ─────────────────────────────────────────────
+
+model BuyerMergeRequest {
+  id                  String                  @id @default(uuid())
+  primaryAccountId    String
+  secondaryAccountId  String
+  status              BuyerMergeRequestStatus @default(PENDING_VERIFICATION)
+  initiatedBy         MergeInitiator
+  initiatedByTenantId String?
+  initiatorNotes      String?
+  adminNotes          String?
+  verificationToken   String?                 @unique
+  verificationExpires DateTime?
+  verifiedAt          DateTime?
+  completedAt         DateTime?
+  rejectedAt          DateTime?
+  createdAt           DateTime                @default(now())
+  updatedAt           DateTime                @updatedAt
+
+  primaryAccount   BuyerAccount @relation("MergeAsPrimary",   fields: [primaryAccountId],   references: [id])
+  secondaryAccount BuyerAccount @relation("MergeAsSecondary", fields: [secondaryAccountId], references: [id])
+  initiatingTenant Tenant?      @relation(fields: [initiatedByTenantId], references: [id])
+
+  @@index([primaryAccountId])
+  @@index([secondaryAccountId])
+  @@index([status])
+  @@index([verificationToken])
+}
+
+enum BuyerMergeRequestStatus {
+  PENDING_VERIFICATION
+  PENDING_REVIEW
+  COMPLETED
+  REJECTED
+}
+
+enum MergeInitiator {
+  BUYER
+  TENANT
+  SUPER_ADMIN
 }

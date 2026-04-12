@@ -13,10 +13,13 @@ import { CustomersModule } from "../customers/customers.module";
 import { BuyerAuthController } from "./buyer-auth.controller";
 import { BuyerController } from "./buyer.controller";
 import { BuyerAdminController, CustomerLinksAdminController } from "./buyer-admin.controller";
+import { BuyerMergeController } from "./buyer-merge.controller";
+import { BuyerAdminMergeController } from "./buyer-admin-merge.controller";
 
 import { BuyerAuthService } from "./buyer-auth.service";
 import { BuyerService } from "./buyer.service";
 import { BuyerAdminService } from "./buyer-admin.service";
+import { BuyerMergeService } from "./buyer-merge.service";
 
 import { BuyerJwtStrategy } from "./strategies/buyer-jwt.strategy";
 import { BuyerJwtAuthGuard } from "./guards/buyer-jwt-auth.guard";
@@ -47,12 +50,15 @@ import { BuyerTenantInterceptor } from "./buyer-tenant.interceptor";
     BuyerController,
     BuyerAdminController,
     CustomerLinksAdminController,
+    BuyerMergeController,
+    BuyerAdminMergeController,
   ],
   providers: [
     Reflector,
     BuyerAuthService,
     BuyerService,
     BuyerAdminService,
+    BuyerMergeService,
     BuyerJwtStrategy,
     BuyerJwtAuthGuard,
     BuyerSellerContextGuard,

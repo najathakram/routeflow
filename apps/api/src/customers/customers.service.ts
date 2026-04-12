@@ -1,10 +1,13 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
   ForbiddenException,
+  UnprocessableEntityException,
 } from "@nestjs/common";
+import { BuyerMergeRequestStatus, MergeInitiator } from "@prisma/client";
 import { ConfigService } from "@nestjs/config";
 import * as bcrypt from "bcrypt";
 import * as crypto from "crypto";
@@ -1552,5 +1555,64 @@ export class CustomersService {
       data: { status: "ACTIVE", linkedAt: new Date() },
     });
     return { message: "Buyer connection approved" };
+  }
+
+  // ─── Suggest buyer account merge (tenant-initiated) ───────────────────────────
+
+  async suggestMerge(tenantId: string, primaryCustomerId: string, secondaryCustomerId: string, notes?: string) {
+    if (primaryCustomerId === secondaryCustomerId) {
+      throw new BadRequestException("Cannot merge a customer with itself");
+    }
+
+    const [primaryLink, secondaryLink] = await Promise.all([
+      this.prisma.customerLink.findFirst({
+        where: { customerId: primaryCustomerId, tenantId },
+        include: { customer: { select: { businessName: true } } },
+      }),
+      this.prisma.customerLink.findFirst({
+        where: { customerId: secondaryCustomerId, tenantId },
+        include: { customer: { select: { businessName: true } } },
+      }),
+    ]);
+
+    if (!primaryLink?.buyerAccountId) {
+      const name = primaryLink?.customer?.businessName ?? primaryCustomerId;
+      throw new UnprocessableEntityException(
+        `Customer "${name}" is not connected to a buyer portal account`,
+      );
+    }
+    if (!secondaryLink?.buyerAccountId) {
+      const name = secondaryLink?.customer?.businessName ?? secondaryCustomerId;
+      throw new UnprocessableEntityException(
+        `Customer "${name}" is not connected to a buyer portal account`,
+      );
+    }
+    if (primaryLink.buyerAccountId === secondaryLink.buyerAccountId) {
+      throw new ConflictException("Both customers are already linked to the same buyer account");
+    }
+
+    const existing = await this.prisma.buyerMergeRequest.findFirst({
+      where: {
+        primaryAccountId: primaryLink.buyerAccountId,
+        secondaryAccountId: secondaryLink.buyerAccountId,
+        status: { in: [BuyerMergeRequestStatus.PENDING_VERIFICATION, BuyerMergeRequestStatus.PENDING_REVIEW] },
+      },
+    });
+    if (existing) {
+      throw new ConflictException("An open merge request between these accounts already exists");
+    }
+
+    const mergeRequest = await this.prisma.buyerMergeRequest.create({
+      data: {
+        primaryAccountId: primaryLink.buyerAccountId,
+        secondaryAccountId: secondaryLink.buyerAccountId,
+        status: BuyerMergeRequestStatus.PENDING_REVIEW,
+        initiatedBy: MergeInitiator.TENANT,
+        initiatedByTenantId: tenantId,
+        initiatorNotes: notes,
+      },
+    });
+
+    return { id: mergeRequest.id, status: mergeRequest.status, message: "Merge suggestion submitted for platform admin review." };
   }
 }
