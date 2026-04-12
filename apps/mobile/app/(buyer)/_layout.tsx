@@ -22,7 +22,6 @@ export default function BuyerLayout() {
           fontSize: 17,
           color: "#1B3A5C",
         },
-        headerSubtitle: sellerName,
       }}
     >
       <Tabs.Screen
