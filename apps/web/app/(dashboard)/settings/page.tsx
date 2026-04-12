@@ -33,6 +33,8 @@ import {
   Globe,
   Clock,
   AlertTriangle,
+  AlertCircle,
+  Package,
   LogOut as LogOutIcon,
   Loader2,
 } from "lucide-react";
@@ -53,6 +55,7 @@ import { useNotificationsStatus, useSendTestNotification } from "@/lib/api/notif
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api-client";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
+import { useImportProducts, type ZohoImportItem } from "@/lib/api/products";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -737,6 +740,256 @@ function UserManagementTab() {
 
 // ─── TAB 4: Import ────────────────────────────────────────────────────────────
 
+// ── Zoho CSV parser (products) ──────────────────────────────────────────────
+
+function splitCsvRows(text: string): string[] {
+  const rows: string[] = [];
+  let current = "";
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '"') {
+      if (inQuotes && text[i + 1] === '"') { current += '"'; i++; }
+      else { inQuotes = !inQuotes; current += ch; }
+    } else if ((ch === "\r" || ch === "\n") && !inQuotes) {
+      if (ch === "\r" && text[i + 1] === "\n") i++;
+      if (current.trim()) rows.push(current);
+      current = "";
+    } else { current += ch; }
+  }
+  if (current.trim()) rows.push(current);
+  return rows;
+}
+
+function parseCSVLine(line: string): string[] {
+  const result: string[] = [];
+  let current = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') { current += '"'; i++; }
+      else { inQuotes = !inQuotes; }
+    } else if (ch === "," && !inQuotes) { result.push(current); current = ""; }
+    else { current += ch; }
+  }
+  result.push(current);
+  return result;
+}
+
+function parseZohoCsv(text: string): ZohoImportItem[] {
+  const rows = splitCsvRows(text);
+  if (rows.length < 2) return [];
+  const headers = parseCSVLine(rows[0].replace(/^\uFEFF/, ""));
+  const colAlt = (row: string[], ...keys: string[]): string => {
+    for (const key of keys) {
+      const idx = headers.indexOf(key);
+      if (idx >= 0) return (row[idx] ?? "").trim();
+    }
+    return "";
+  };
+  const parsePrice = (raw: string): string | undefined => {
+    const cleaned = raw.replace(/^USD\s*/i, "").replace(/,/g, "").trim();
+    const num = parseFloat(cleaned);
+    return isNaN(num) ? undefined : num.toFixed(2);
+  };
+  const items: ZohoImportItem[] = [];
+  for (let i = 1; i < rows.length; i++) {
+    const row = parseCSVLine(rows[i]);
+    if (row.every((c) => c === "")) continue;
+    const name = colAlt(row, "Item Name");
+    if (!name) continue;
+    const pricePerUnit = parsePrice(colAlt(row, "Selling Price", "Rate"));
+    if (!pricePerUnit) continue;
+    const unit = colAlt(row, "Unit Name", "Unit", "Usage unit") || "pcs";
+    const rawSku = colAlt(row, "SKU");
+    const sku = rawSku || undefined;
+    const upc = colAlt(row, "UPC");
+    const ean = colAlt(row, "EAN");
+    const skuLooksLikeBarcode = !!rawSku && /^\d{8,14}$/.test(rawSku);
+    const barcode = upc || ean || (skuLooksLikeBarcode ? rawSku : undefined) || undefined;
+    const description = colAlt(row, "Sales Description", "Description") || undefined;
+    const category = colAlt(row, "Category Name") || undefined;
+    const statusRaw = colAlt(row, "Status");
+    const isActive = statusRaw === "" ? true : statusRaw.toLowerCase() === "active";
+    const stockRaw = colAlt(row, "Stock On Hand", "Opening Stock");
+    const stockNum = parseFloat(stockRaw.replace(/,/g, ""));
+    const currentStock = !isNaN(stockNum) ? stockNum.toFixed(3) : undefined;
+    const averageCost = parsePrice(colAlt(row, "Purchase Price"));
+    const reorderNum = parseInt(colAlt(row, "Reorder Level"), 10);
+    const reorderPoint = !isNaN(reorderNum) ? reorderNum : undefined;
+    items.push({ name, sku, barcode, unit, pricePerUnit, category, description, isActive, currentStock, averageCost, reorderPoint });
+  }
+  return items;
+}
+
+// ── Products import card ────────────────────────────────────────────────────
+
+type ProductImportRow = { row: number; name: string; reason: string };
+
+function ProductsImportCard() {
+  const importProducts = useImportProducts();
+  const { toast } = useToast();
+  const [parsedItems, setParsedItems] = React.useState<ZohoImportItem[]>([]);
+  const [parseError, setParseError] = React.useState<string | null>(null);
+  const [fileName, setFileName] = React.useState<string>("");
+  const [result, setResult] = React.useState<{ created: number; skipped: number; errors: ProductImportRow[] } | null>(null);
+  const [showErrors, setShowErrors] = React.useState(false);
+  const fileRef = React.useRef<HTMLInputElement>(null);
+
+  const handleFile = (file: File) => {
+    if (!file.name.endsWith(".csv")) {
+      setParseError("Please upload a .csv file exported from Zoho.");
+      return;
+    }
+    setParseError(null);
+    setResult(null);
+    setParsedItems([]);
+    setFileName(file.name);
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const items = parseZohoCsv(e.target?.result as string);
+        if (items.length === 0) {
+          setParseError("No valid items found. Make sure you exported Items from Zoho Inventory.");
+          return;
+        }
+        setParsedItems(items);
+      } catch {
+        setParseError("Failed to parse CSV. Please check the file format.");
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const handleImport = async () => {
+    try {
+      const res = await importProducts.mutateAsync(parsedItems);
+      setResult(res);
+      toast({ title: "Products imported", description: `${res.created} created, ${res.skipped} skipped`, variant: "success" });
+    } catch (err: unknown) {
+      toast({ title: "Import failed", description: (err as { message?: string })?.message ?? "Please try again", variant: "error" });
+    }
+  };
+
+  return (
+    <div className="col-span-2 rounded-xl border border-surface-border bg-white overflow-hidden">
+      <div className="flex items-center gap-3 border-b border-surface-border p-4">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-brand-500 bg-brand-50">
+          <Package className="h-5 w-5" />
+        </span>
+        <div className="flex-1 min-w-0">
+          <p className="font-semibold text-navy">Products (Items)</p>
+          <p className="text-xs text-navy/60">Import products and pricing from Zoho Inventory Items CSV export</p>
+        </div>
+        {result && (
+          <div className="flex items-center gap-1.5 text-xs shrink-0">
+            <span className="flex items-center gap-1 text-success"><CheckCircle2 className="h-3.5 w-3.5" />{result.created} created</span>
+            {result.skipped > 0 && <span className="flex items-center gap-1 text-warning ml-2"><Bell className="h-3.5 w-3.5" />{result.skipped} skipped</span>}
+          </div>
+        )}
+      </div>
+      <div className="p-4 space-y-3">
+        <div className="flex items-start gap-2 rounded-lg bg-surface-raised px-3 py-2 text-xs text-navy/60">
+          <Bell className="h-3.5 w-3.5 mt-0.5 shrink-0 text-navy/40" />
+          <span><strong className="text-navy/70">How to export:</strong> Zoho Inventory → Items → ☰ → Export Items → CSV</span>
+        </div>
+        <div
+          onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) handleFile(f); }}
+          onDragOver={(e) => e.preventDefault()}
+          onClick={() => fileRef.current?.click()}
+          className={cn(
+            "flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-6 cursor-pointer transition-colors",
+            parsedItems.length > 0 ? "border-brand-300 bg-brand-50" : "border-surface-border hover:border-brand-300 hover:bg-brand-50/30",
+          )}
+        >
+          <input ref={fileRef} type="file" accept=".csv" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
+          <Upload className={cn("h-6 w-6", parsedItems.length > 0 ? "text-brand-500" : "text-navy/30")} />
+          {parsedItems.length > 0 ? (
+            <div className="text-center">
+              <p className="text-sm font-medium text-brand-600">{fileName}</p>
+              <p className="text-xs text-navy/40">{parsedItems.length} items parsed · Click to change file</p>
+            </div>
+          ) : (
+            <div className="text-center">
+              <p className="text-sm text-navy/60">Drop Zoho Items CSV here or <span className="text-brand-500">browse</span></p>
+              <p className="text-xs text-navy/40 mt-0.5">Zoho Inventory CSV export format</p>
+            </div>
+          )}
+        </div>
+        {parseError && (
+          <div className="flex items-start gap-2 rounded-lg border border-danger/30 bg-danger-bg p-3 text-sm text-danger">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            {parseError}
+          </div>
+        )}
+        {parsedItems.length > 0 && !result && (
+          <div className="rounded-lg border border-surface-border overflow-hidden">
+            <div className="border-b border-surface-border px-3 py-2 bg-surface-raised">
+              <p className="text-xs font-medium text-navy/70">{parsedItems.length} items ready — preview:</p>
+            </div>
+            <div className="overflow-auto max-h-48">
+              <table className="min-w-full text-xs">
+                <thead className="sticky top-0 bg-surface-raised border-b border-surface-border">
+                  <tr>
+                    {["Name", "SKU", "Barcode", "Unit", "Price", "Category", "Stock"].map((h) => (
+                      <th key={h} className="px-3 py-2 text-left font-semibold text-navy/70 whitespace-nowrap">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {parsedItems.map((item, i) => (
+                    <tr key={i} className="border-b border-surface-border hover:bg-surface-raised">
+                      <td className="px-3 py-2 font-medium text-navy max-w-[200px] truncate" title={item.name}>{item.name}</td>
+                      <td className="px-3 py-2 text-navy/70">{item.sku ?? "—"}</td>
+                      <td className="px-3 py-2 text-navy/70">{item.barcode ?? "—"}</td>
+                      <td className="px-3 py-2 text-navy/70">{item.unit}</td>
+                      <td className="px-3 py-2 text-navy/70">${item.pricePerUnit}</td>
+                      <td className="px-3 py-2 text-navy/70">{item.category ?? "—"}</td>
+                      <td className="px-3 py-2 text-navy/70">{item.currentStock ?? "0"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+        <button
+          onClick={handleImport}
+          disabled={parsedItems.length === 0 || importProducts.isPending || !!result}
+          className="w-full rounded-lg bg-brand-500 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-40 transition-colors"
+        >
+          {importProducts.isPending ? (
+            <span className="flex items-center justify-center gap-2">
+              <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+              Importing...
+            </span>
+          ) : result ? "Import complete ✓" : parsedItems.length > 0 ? `Import ${parsedItems.length} Items` : "Import Products (Items)"}
+        </button>
+        {result && result.errors.length > 0 && (
+          <div className="rounded-lg border border-warning/30 bg-warning-bg/50 px-3 py-2">
+            <button
+              onClick={() => setShowErrors((v) => !v)}
+              className="flex w-full items-center justify-between text-xs font-medium text-warning"
+            >
+              <span>{result.errors.length} error{result.errors.length > 1 ? "s" : ""} during import</span>
+              {showErrors ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+            </button>
+            {showErrors && (
+              <ul className="mt-2 space-y-0.5 text-xs text-navy/60 max-h-32 overflow-y-auto">
+                {result.errors.slice(0, 20).map((e, i) => (
+                  <li key={i} className="truncate">• Row {e.row}: {e.name} — {e.reason}</li>
+                ))}
+                {result.errors.length > 20 && <li className="text-navy/40">...and {result.errors.length - 20} more</li>}
+              </ul>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 const IMPORT_SECTIONS = [
   {
     id: "contacts",
@@ -936,11 +1189,12 @@ function ImportTab() {
       <div className="flex items-center gap-3 rounded-xl bg-brand-50 border border-brand-200 px-4 py-3">
         <Bell className="h-4 w-4 text-brand-500 shrink-0" />
         <p className="text-sm text-brand-700">
-          <strong>Recommended import order:</strong> Customers → Inventory → Invoices → Payments → Expenses.
+          <strong>Recommended import order:</strong> Products → Customers → Inventory → Invoices → Payments → Expenses.
           Payments require matching invoices; Invoices require customers to exist first.
         </p>
       </div>
       <div className="grid grid-cols-2 gap-5">
+        <ProductsImportCard />
         {IMPORT_SECTIONS.map((section) => (
           <ImportCard key={section.id} section={section} />
         ))}
