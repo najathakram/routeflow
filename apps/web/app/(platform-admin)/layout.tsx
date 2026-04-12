@@ -35,18 +35,18 @@ function SuperAdminGuard({ children }: { children: React.ReactNode }) {
   React.useEffect(() => {
     const token = localStorage.getItem("superAdminToken");
     if (!token) {
-      router.replace("/admin/login");
+      router.replace("/admin-login");
       return;
     }
     const payload = parseJwt(token);
     if (!payload || payload.role !== "SUPER_ADMIN") {
       localStorage.removeItem("superAdminToken");
-      router.replace("/admin/login");
+      router.replace("/admin-login");
       return;
     }
     if (typeof payload.exp === "number" && payload.exp * 1000 < Date.now()) {
       localStorage.removeItem("superAdminToken");
-      router.replace("/admin/login");
+      router.replace("/admin-login");
       return;
     }
     setChecked(true);
@@ -73,7 +73,7 @@ function Sidebar() {
 
   const handleLogout = () => {
     localStorage.removeItem("superAdminToken");
-    router.push("/admin/login");
+    router.push("/admin-login");
   };
 
   return (
