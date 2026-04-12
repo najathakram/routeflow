@@ -6,7 +6,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, KeyRound } from "lucide-react";
-import { Input, Button } from "@routeflow/ui/web";
+import { PasswordInput, Button } from "@routeflow/ui/web";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { buyerChangePassword } from "@/lib/buyer-auth";
 
@@ -125,16 +125,14 @@ export default function BuyerChangePasswordPage() {
                   )}
                 </div>
               )}
-              <Input
+              <PasswordInput
                 label="Current password"
-                type="password"
                 autoComplete="current-password"
                 register={register("currentPassword")}
                 error={errors.currentPassword?.message}
               />
-              <Input
+              <PasswordInput
                 label="New password"
-                type="password"
                 autoComplete="new-password"
                 register={register("newPassword")}
                 error={errors.newPassword?.message}
@@ -142,9 +140,8 @@ export default function BuyerChangePasswordPage() {
               <p className="text-xs text-navy/50">
                 At least 8 characters, one uppercase letter, one number.
               </p>
-              <Input
+              <PasswordInput
                 label="Confirm new password"
-                type="password"
                 autoComplete="new-password"
                 register={register("confirmPassword")}
                 error={errors.confirmPassword?.message}

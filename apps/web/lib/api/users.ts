@@ -1,13 +1,15 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiClient } from '../api-client';
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { apiClient } from "../api-client";
 
 export interface AppUser {
   id: string;
   username: string;
   email: string;
-  role: 'OPERATOR' | 'DRIVER' | 'CUSTOMER';
-  status: 'ACTIVE' | 'INACTIVE' | 'SUSPENDED';
+  role: "OPERATOR" | "DRIVER" | "CUSTOMER" | "TENANT_ADMIN";
+  status: "ACTIVE" | "INACTIVE" | "SUSPENDED";
   forcePasswordChange: boolean;
+  isAdmin?: boolean;
+  canActAsDriver?: boolean;
   createdAt: string;
 }
 
@@ -18,25 +20,33 @@ interface PaginatedResponse<T> {
 
 export function useUsers(params?: { search?: string; status?: string }) {
   return useQuery<PaginatedResponse<AppUser>>({
-    queryKey: ['users', params],
-    queryFn: () => apiClient.get('/users', { params }).then((r) => r.data),
+    queryKey: ["users", params],
+    queryFn: () => apiClient.get("/users", { params }).then((r) => r.data),
   });
 }
 
 export function useCreateOperator() {
   const qc = useQueryClient();
-  return useMutation<{ user: AppUser; tempPassword: string }, Error, { name: string; email: string; username: string }>({
-    mutationFn: ({ name: _name, ...dto }) => apiClient.post('/users/operator', dto).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
+  return useMutation<
+    { user: AppUser; tempPassword: string },
+    Error,
+    { name: string; email: string; username: string }
+  >({
+    mutationFn: ({ name: _name, ...dto }) =>
+      apiClient.post("/users/operator", dto).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["users"] }),
   });
 }
 
 export function useUpdateUser() {
   const qc = useQueryClient();
-  return useMutation<AppUser, Error, { id: string; email?: string; username?: string; role?: string }>({
-    mutationFn: ({ id, ...data }) =>
-      apiClient.patch(`/users/${id}`, data).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
+  return useMutation<
+    AppUser,
+    Error,
+    { id: string; email?: string; username?: string; role?: string }
+  >({
+    mutationFn: ({ id, ...data }) => apiClient.patch(`/users/${id}`, data).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["users"] }),
   });
 }
 
@@ -48,10 +58,10 @@ export function useResetUserPassword() {
 
 export function useChangeUserStatus() {
   const qc = useQueryClient();
-  return useMutation<AppUser, Error, { id: string; status: 'ACTIVE' | 'INACTIVE' | 'SUSPENDED' }>({
+  return useMutation<AppUser, Error, { id: string; status: "ACTIVE" | "INACTIVE" | "SUSPENDED" }>({
     mutationFn: ({ id, status }) =>
       apiClient.patch(`/users/${id}/status`, { status }).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["users"] }),
   });
 }
 

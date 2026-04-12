@@ -7,6 +7,7 @@ import { ROLES_KEY } from "../decorators/roles.decorator";
  * Role hierarchy for access checks:
  * - SUPER_ADMIN satisfies every role requirement
  * - TENANT_ADMIN satisfies OPERATOR (and itself)
+ * - OPERATOR/TENANT_ADMIN with canActAsDriver also satisfies DRIVER
  */
 const ROLE_SATISFIES: Record<UserRole, UserRole[]> = {
   [UserRole.SUPER_ADMIN]: [
@@ -34,7 +35,18 @@ export class RolesGuard implements CanActivate {
     if (!requiredRoles || requiredRoles.length === 0) return false;
     const { user } = context.switchToHttp().getRequest();
     if (!user?.role) return false;
-    const satisfied = ROLE_SATISFIES[user.role as UserRole] ?? [user.role];
+
+    const satisfied = [...(ROLE_SATISFIES[user.role as UserRole] ?? [user.role])];
+
+    // Operators / tenant admins who can act as drivers also satisfy DRIVER role
+    if (
+      user.canActAsDriver &&
+      (user.role === UserRole.OPERATOR || user.role === UserRole.TENANT_ADMIN) &&
+      !satisfied.includes(UserRole.DRIVER)
+    ) {
+      satisfied.push(UserRole.DRIVER);
+    }
+
     return requiredRoles.some((r) => satisfied.includes(r));
   }
 }

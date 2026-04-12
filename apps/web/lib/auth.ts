@@ -8,6 +8,8 @@ export interface AuthUser {
   role: "OPERATOR" | "DRIVER" | "CUSTOMER" | "SUPER_ADMIN" | "TENANT_ADMIN";
   status: "ACTIVE" | "INACTIVE" | "SUSPENDED";
   forcePasswordChange: boolean;
+  isAdmin?: boolean;
+  canActAsDriver?: boolean;
 }
 
 export interface AuthResponse {
@@ -44,15 +46,14 @@ export function getStoredUser(): AuthUser | null {
     role: payload.role as AuthUser["role"],
     status: payload.status as AuthUser["status"],
     forcePasswordChange: payload.forcePasswordChange as boolean,
+    isAdmin: (payload.isAdmin as boolean) ?? false,
+    canActAsDriver: (payload.canActAsDriver as boolean) ?? false,
   };
 }
 
 // ─── Auth functions ───────────────────────────────────────────────────────────
 
-export async function login(
-  username: string,
-  password: string,
-): Promise<AuthResponse> {
+export async function login(username: string, password: string): Promise<AuthResponse> {
   const { data } = await apiClient.post<AuthResponse>("/auth/login", {
     username,
     password,
@@ -74,8 +75,7 @@ export async function logout(): Promise<void> {
 }
 
 export async function refreshTokens(): Promise<AuthResponse | null> {
-  const refreshToken =
-    typeof window !== "undefined" ? localStorage.getItem("refreshToken") : null;
+  const refreshToken = typeof window !== "undefined" ? localStorage.getItem("refreshToken") : null;
   if (!refreshToken) return null;
   try {
     const { data } = await apiClient.post<AuthResponse>("/auth/refresh", {
@@ -89,9 +89,6 @@ export async function refreshTokens(): Promise<AuthResponse | null> {
   }
 }
 
-export async function changePassword(
-  currentPassword: string,
-  newPassword: string,
-): Promise<void> {
+export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
   await apiClient.post("/auth/change-password", { currentPassword, newPassword });
 }

@@ -32,39 +32,70 @@ export class SettingsController {
   @Get()
   async getSettings() {
     const all = await this.svc.getAll("settings.");
+
+    // Source businessName from TenantConfig (set by super admin, read-only for tenant)
+    const tenantId = this.prisma.getTenantId();
+    let businessName = all["settings.businessName"] ?? "";
+    let ownerName = all["settings.ownerName"] ?? "";
+    const accountEmail = all["settings.email"] ?? "";
+    let customerEmail = "";
+
+    if (tenantId) {
+      const config = await this.prisma.tenantConfig.findUnique({
+        where: { tenantId },
+        select: {
+          businessName: true,
+          ownerName: true,
+          customerEmail: true,
+        },
+      });
+      if (config?.businessName) businessName = config.businessName;
+      if (config?.ownerName) ownerName = config.ownerName;
+      if (config?.customerEmail) customerEmail = config.customerEmail;
+    }
+
     return {
-      businessName: all["settings.businessName"] ?? "",
-      ownerName: all["settings.ownerName"] ?? "",
+      businessName,
+      ownerName,
       phone: all["settings.phone"] ?? "",
-      email: all["settings.email"] ?? "",
+      email: accountEmail,
+      customerEmail,
       street: all["settings.street"] ?? "",
       city: all["settings.city"] ?? "",
       state: all["settings.state"] ?? "",
       zip: all["settings.zip"] ?? "",
-      taxRate: all["settings.taxRate"] != null ? parseFloat(all["settings.taxRate"]) : 10,
+      taxRate: all["settings.taxRate"] != null ? parseFloat(all["settings.taxRate"]) : 0,
       logoUrl: all["settings.logoUrl"] ?? null,
     };
   }
 
   @Patch()
   async updateSettings(@Body() dto: Record<string, unknown>) {
-    const allowed = [
-      "businessName",
-      "ownerName",
-      "phone",
-      "email",
-      "street",
-      "city",
-      "state",
-      "zip",
-      "taxRate",
-      "logoUrl",
-    ];
+    // businessName and email are NOT editable by tenant admin (set by super admin)
+    const allowed = ["ownerName", "phone", "street", "city", "state", "zip", "taxRate", "logoUrl"];
     await Promise.all(
       allowed
         .filter((k) => dto[k] !== undefined)
         .map((k) => this.svc.set(`settings.${k}`, String(dto[k]))),
     );
+
+    // ownerName and customerEmail are also stored in TenantConfig
+    const tenantId = this.prisma.getTenantId();
+    if (tenantId) {
+      const configUpdate: Record<string, unknown> = {};
+      if (dto.ownerName !== undefined)
+        configUpdate.ownerName = typeof dto.ownerName === "string" ? dto.ownerName : "";
+      if (dto.customerEmail !== undefined)
+        configUpdate.customerEmail = typeof dto.customerEmail === "string" ? dto.customerEmail : "";
+      if (Object.keys(configUpdate).length > 0) {
+        await this.prisma.tenantConfig.upsert({
+          where: { tenantId },
+          create: { tenantId, ...configUpdate },
+          update: configUpdate,
+        });
+      }
+    }
+
     return this.getSettings();
   }
 

@@ -88,4 +88,19 @@ export class UsersController {
   resetPassword(@Param("id") id: string) {
     return this.usersService.resetPassword(id);
   }
+
+  @Patch(":id/admin")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR)
+  toggleAdmin(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
+    const callerIsAdmin = user.isAdmin || user.role === UserRole.TENANT_ADMIN;
+    return this.usersService.toggleAdmin(id, callerIsAdmin);
+  }
+
+  @Patch(":id/driver-permit")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR)
+  toggleDriverPermit(@Param("id") id: string) {
+    return this.usersService.toggleDriverPermit(id);
+  }
 }

@@ -1,4 +1,9 @@
-import { Injectable, BadRequestException, NotFoundException } from "@nestjs/common";
+import {
+  Injectable,
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from "@nestjs/common";
 import { User, UserRole, UserStatus } from "@prisma/client";
 import * as crypto from "crypto";
 import * as bcrypt from "bcrypt";
@@ -51,6 +56,8 @@ export class UsersService {
           role: true,
           status: true,
           forcePasswordChange: true,
+          isAdmin: true,
+          canActAsDriver: true,
           createdAt: true,
         },
         skip,
@@ -108,10 +115,34 @@ export class UsersService {
   async updateUser(userId: string, dto: UpdateUserDto) {
     const user = await this.prisma.forTenant().user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException("User not found");
+
+    // Prevent changing role of TENANT_ADMIN users
+    if (user.role === UserRole.TENANT_ADMIN && dto.role && dto.role !== UserRole.TENANT_ADMIN) {
+      throw new ForbiddenException("Cannot change the role of the tenant admin.");
+    }
+
+    // Only allow OPERATOR or DRIVER roles when changing role
+    if (
+      dto.role &&
+      dto.role !== user.role &&
+      dto.role !== UserRole.OPERATOR &&
+      dto.role !== UserRole.DRIVER
+    ) {
+      throw new BadRequestException("Users can only be assigned OPERATOR or DRIVER roles.");
+    }
+
     return this.prisma.forTenant().user.update({
       where: { id: userId },
       data: dto,
-      select: { id: true, username: true, email: true, role: true, status: true },
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        role: true,
+        status: true,
+        isAdmin: true,
+        canActAsDriver: true,
+      },
     });
   }
 
@@ -125,6 +156,71 @@ export class UsersService {
       data: { password: hashedPassword, forcePasswordChange: true },
     });
     return { tempPassword };
+  }
+
+  async toggleAdmin(userId: string, callerIsAdmin: boolean) {
+    if (!callerIsAdmin) {
+      throw new ForbiddenException("Only admins can assign admin rights.");
+    }
+    const user = await this.prisma.forTenant().user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException("User not found");
+    if (user.role !== UserRole.OPERATOR) {
+      throw new BadRequestException("Admin rights can only be assigned to operators.");
+    }
+    return this.prisma.forTenant().user.update({
+      where: { id: userId },
+      data: { isAdmin: !user.isAdmin },
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        role: true,
+        status: true,
+        isAdmin: true,
+        canActAsDriver: true,
+      },
+    });
+  }
+
+  async toggleDriverPermit(userId: string) {
+    const user = await this.prisma.forTenant().user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException("User not found");
+    if (user.role !== UserRole.OPERATOR && user.role !== UserRole.TENANT_ADMIN) {
+      throw new BadRequestException("Driver permit can only be assigned to operators.");
+    }
+
+    const newValue = !user.canActAsDriver;
+
+    // Auto-create Driver record if enabling and no driver record exists
+    if (newValue) {
+      const existingDriver = await this.prisma.forTenant().driver.findFirst({
+        where: { userId: user.id },
+      });
+      if (!existingDriver) {
+        await this.prisma.forTenant().driver.create({
+          data: {
+            userId: user.id,
+            contactName: user.username,
+            phone: "",
+            status: "ACTIVE",
+          },
+        });
+      }
+    }
+
+    return this.prisma.forTenant().user.update({
+      where: { id: userId },
+      data: { canActAsDriver: newValue },
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        role: true,
+        status: true,
+        isAdmin: true,
+        canActAsDriver: true,
+      },
+    });
   }
 
   async getPreferences(userId: string): Promise<Record<string, string>> {

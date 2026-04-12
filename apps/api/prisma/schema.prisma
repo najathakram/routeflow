@@ -330,9 +330,11 @@ model TenantConfig {
   smtpSecure    Boolean  @default(true)
   smtpUser      String?
   smtpPassword  String?
-  smtpFromName  String?
-  smtpFromEmail String?
-  updatedAt     DateTime @updatedAt
+  smtpFromName   String?
+  smtpFromEmail  String?
+  customerEmail  String?
+  ownerName      String?
+  updatedAt      DateTime @updatedAt
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 }
@@ -392,6 +394,8 @@ model User {
   role                UserRole
   status              UserStatus @default(ACTIVE)
   forcePasswordChange Boolean    @default(false)
+  isAdmin             Boolean    @default(false)
+  canActAsDriver      Boolean    @default(false)
   createdAt           DateTime   @default(now())
   updatedAt           DateTime   @updatedAt
   deletedAt           DateTime?

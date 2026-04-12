@@ -112,9 +112,21 @@ const DRIVER_NAV: NavEntry[] = [
   { kind: "leaf", label: "Settings",   href: "/settings", icon: Settings },
 ];
 
-function getNavForRole(role: string | undefined): NavEntry[] {
+function getNavForRole(role: string | undefined, canActAsDriver?: boolean): NavEntry[] {
   if (role === "CUSTOMER") return CUSTOMER_NAV;
   if (role === "DRIVER")   return DRIVER_NAV;
+  // Operators who can also act as drivers get "My Routes" in their nav
+  if (canActAsDriver) {
+    const hasMyRoutes = OPERATOR_NAV.some(
+      (e) => e.kind === "leaf" && e.href === "/routes/my-runs",
+    );
+    if (!hasMyRoutes) {
+      return [
+        ...OPERATOR_NAV,
+        { kind: "leaf", label: "My Routes", href: "/routes/my-runs", icon: MapPin },
+      ];
+    }
+  }
   return OPERATOR_NAV; // OPERATOR, SUPER_ADMIN, TENANT_ADMIN, unknown
 }
 
@@ -504,7 +516,7 @@ function ImpersonationBanner() {
 
 function DashboardShell({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
-  const navStructure = getNavForRole(user?.role);
+  const navStructure = getNavForRole(user?.role, (user as any)?.canActAsDriver);
   const [collapsed, setCollapsed] = React.useState(() => {
     if (typeof window !== "undefined") {
       // Auto-collapse on small screens, otherwise respect saved preference

@@ -8,6 +8,8 @@ export interface JwtPayload {
   forcePasswordChange: boolean;
   tenantId: string | null;
   tenantSlug: string | null;
-  /** Present only on impersonation tokens issued by platform admins. Read-only access. */
+  isAdmin?: boolean;
+  canActAsDriver?: boolean;
+  /** Present only on impersonation tokens issued by platform admins. */
   impersonatedBy?: string;
 }

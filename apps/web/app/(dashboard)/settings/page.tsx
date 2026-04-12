@@ -83,10 +83,9 @@ function TabTrigger({
 // ─── TAB 1: Business Profile ──────────────────────────────────────────────────
 
 const profileSchema = z.object({
-  businessName: z.string().min(1, "Required"),
   ownerName: z.string().min(1, "Required"),
   phone: z.string().min(7, "Enter a valid phone number"),
-  email: z.string().email("Enter a valid email"),
+  customerEmail: z.string().email("Enter a valid email").or(z.literal("")),
   street: z.string().min(1, "Required"),
   city: z.string().min(1, "Required"),
   state: z.string().optional(),
@@ -118,30 +117,28 @@ function BusinessProfileTab() {
   const { register, handleSubmit, reset, watch, setValue, formState: { errors, isSubmitting } } = useForm<ProfileFormValues>({
     resolver: zodResolver(profileSchema),
     defaultValues: {
-      businessName: "",
       ownerName: "",
       phone: "",
-      email: "",
+      customerEmail: "",
       street: "",
       city: "",
       state: "",
       zip: "",
-      taxRate: 10,
+      taxRate: 0,
     },
   });
 
   React.useEffect(() => {
     if (savedSettings) {
       reset({
-        businessName: savedSettings.businessName ?? "",
         ownerName: savedSettings.ownerName ?? "",
         phone: savedSettings.phone ?? "",
-        email: savedSettings.email ?? "",
+        customerEmail: savedSettings.customerEmail ?? "",
         street: savedSettings.street ?? "",
         city: savedSettings.city ?? "",
         state: savedSettings.state ?? "",
         zip: savedSettings.zip ?? "",
-        taxRate: savedSettings.taxRate ?? 10,
+        taxRate: savedSettings.taxRate ?? 0,
       });
     }
   }, [savedSettings, reset]);
@@ -161,10 +158,32 @@ function BusinessProfileTab() {
     <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-6">
       <Card title="Business Information">
         <div className="grid grid-cols-2 gap-4">
-          <Input label="Business Name" register={register("businessName")} error={errors.businessName?.message} />
+          <div className="flex flex-col gap-1">
+            <label className="text-sm font-medium text-navy">Business Name</label>
+            <div className="flex h-10 items-center rounded border border-surface-border bg-surface-raised px-3 text-sm text-navy/70">
+              {savedSettings?.businessName || "Set by platform admin"}
+            </div>
+            <p className="text-xs text-navy/40">Managed by platform admin</p>
+          </div>
           <Input label="Owner / Manager Name" register={register("ownerName")} error={errors.ownerName?.message} />
           <Input label="Phone" type="tel" register={register("phone")} error={errors.phone?.message} />
-          <Input label="Email" type="email" register={register("email")} error={errors.email?.message} />
+          <div className="flex flex-col gap-1">
+            <label className="text-sm font-medium text-navy">Account Email</label>
+            <div className="flex h-10 items-center rounded border border-surface-border bg-surface-raised px-3 text-sm text-navy/70">
+              {savedSettings?.email || "Set by platform admin"}
+            </div>
+            <p className="text-xs text-navy/40">Used for RouteFlow communications. Managed by platform admin.</p>
+          </div>
+          <div className="col-span-2">
+            <Input
+              label="Customer-Facing Email"
+              type="email"
+              placeholder="invoices@yourbusiness.com"
+              register={register("customerEmail")}
+              error={errors.customerEmail?.message}
+            />
+            <p className="mt-1 text-xs text-navy/40">Used for invoices, order updates, and customer communications.</p>
+          </div>
         </div>
       </Card>
 
@@ -452,7 +471,7 @@ function AddUserModal({ isOpen, onClose, onCreated }: {
 const editUserSchema = z.object({
   username: z.string().min(3, "At least 3 characters").regex(/^[a-z0-9_.]+$/, "Lowercase letters, numbers, dots, underscores"),
   email: z.string().email("Enter a valid email"),
-  role: z.enum(["OPERATOR", "DRIVER", "CUSTOMER"]),
+  role: z.enum(["OPERATOR", "DRIVER"]),
 });
 type EditUserFormValues = z.infer<typeof editUserSchema>;
 
@@ -478,7 +497,8 @@ function EditUserModal({
 
   React.useEffect(() => {
     if (isOpen && user) {
-      reset({ username: user.username, email: user.email, role: user.role });
+      const role = user.role === "OPERATOR" || user.role === "DRIVER" ? user.role : "OPERATOR";
+      reset({ username: user.username, email: user.email, role });
       setTempPassword(null);
       setCopied(false);
     }
@@ -537,11 +557,14 @@ function EditUserModal({
           options={[
             { value: "DRIVER", label: "Driver" },
             { value: "OPERATOR", label: "Operator" },
-            { value: "CUSTOMER", label: "Customer" },
           ]}
           register={register("role")}
           error={errors.role?.message}
+          disabled={user?.role === "TENANT_ADMIN"}
         />
+        {user?.role === "TENANT_ADMIN" && (
+          <p className="text-xs text-navy/40">Tenant admin role cannot be changed.</p>
+        )}
         <Input
           label="Username"
           placeholder="jsmith"
@@ -1688,9 +1711,6 @@ export default function SettingsPage() {
           <TabTrigger value="notifications" icon={<Bell className="h-4 w-4" />}>
             Notifications
           </TabTrigger>
-          <TabTrigger value="ai" icon={<Sparkles className="h-4 w-4" />}>
-            AI &amp; Integrations
-          </TabTrigger>
           <TabTrigger value="users" icon={<UsersIcon className="h-4 w-4" />}>
             User Management
           </TabTrigger>
@@ -1711,10 +1731,6 @@ export default function SettingsPage() {
 
         <Tabs.Content value="notifications" className="mt-6 max-w-2xl focus:outline-none">
           <NotificationsTab />
-        </Tabs.Content>
-
-        <Tabs.Content value="ai" className="mt-6 max-w-2xl focus:outline-none">
-          <AIIntegrationsTab />
         </Tabs.Content>
 
         <Tabs.Content value="users" className="mt-6 focus:outline-none">

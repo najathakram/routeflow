@@ -5,7 +5,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useRouter } from "next/navigation";
-import { Input, Button } from "@routeflow/ui/web";
+import { PasswordInput, Button } from "@routeflow/ui/web";
 import { useAuth } from "@/lib/auth-context";
 import { changePassword, refreshTokens } from "@/lib/auth";
 
@@ -90,23 +90,20 @@ export default function ChangePasswordPage() {
                 {apiError}
               </p>
             )}
-            <Input
+            <PasswordInput
               label="Current password"
-              type="password"
               autoComplete="current-password"
               register={register("currentPassword")}
               error={errors.currentPassword?.message}
             />
-            <Input
+            <PasswordInput
               label="New password"
-              type="password"
               autoComplete="new-password"
               register={register("newPassword")}
               error={errors.newPassword?.message}
             />
-            <Input
+            <PasswordInput
               label="Confirm new password"
-              type="password"
               autoComplete="new-password"
               register={register("confirmPassword")}
               error={errors.confirmPassword?.message}

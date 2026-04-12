@@ -64,6 +64,8 @@ export class AuthService {
       forcePasswordChange: user.forcePasswordChange,
       tenantId: user.tenantId ?? null,
       tenantSlug,
+      isAdmin: user.isAdmin || user.role === "TENANT_ADMIN",
+      canActAsDriver: user.canActAsDriver,
     };
 
     const accessToken = this.jwtService.sign(payload, {
@@ -89,6 +91,8 @@ export class AuthService {
         forcePasswordChange: user.forcePasswordChange,
         tenantId: user.tenantId ?? null,
         tenantSlug,
+        isAdmin: user.isAdmin || user.role === "TENANT_ADMIN",
+        canActAsDriver: user.canActAsDriver,
       },
     };
   }
@@ -137,6 +141,8 @@ export class AuthService {
       forcePasswordChange: user.forcePasswordChange,
       tenantId: user.tenantId ?? null,
       tenantSlug,
+      isAdmin: user.isAdmin || user.role === "TENANT_ADMIN",
+      canActAsDriver: user.canActAsDriver,
     };
 
     const accessToken = this.jwtService.sign(newPayload, {
@@ -169,6 +175,8 @@ export class AuthService {
         forcePasswordChange: user.forcePasswordChange,
         tenantId: user.tenantId ?? null,
         tenantSlug,
+        isAdmin: user.isAdmin || user.role === "TENANT_ADMIN",
+        canActAsDriver: user.canActAsDriver,
       },
     };
   }

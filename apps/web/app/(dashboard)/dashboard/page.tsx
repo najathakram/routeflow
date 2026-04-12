@@ -19,6 +19,8 @@ import {
   Plus,
 } from "lucide-react";
 import { StatCard, Badge, Table, Button, Card, cn } from "@routeflow/ui/web";
+import { useQuery } from "@tanstack/react-query";
+import { apiClient } from "@/lib/api-client";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useAuth } from "@/lib/auth-context";
 import { useOrders, type Order } from "@/lib/api/orders";
@@ -220,8 +222,39 @@ export default function DashboardPage() {
   const recentOrders = recentOrdersData?.data ?? [];
   const drivers = driversData?.data ?? [];
 
+  // ── Greeting data ──
+  const { data: settingsData } = useQuery({
+    queryKey: ["settings"],
+    queryFn: () => apiClient.get("/settings").then((r) => r.data),
+    enabled: isOperator,
+  });
+
+  const greeting = React.useMemo(() => {
+    const hour = new Date().getHours();
+    if (hour < 12) return "Good morning";
+    if (hour < 17) return "Good afternoon";
+    return "Good evening";
+  }, []);
+
+  const ownerName = settingsData?.ownerName;
+  const businessName = settingsData?.businessName;
+
   return (
     <div className="space-y-6 p-6">
+
+      {/* ── Greeting ── */}
+      {isOperator && (
+        <div>
+          <h2 className="text-xl font-bold text-navy">
+            {greeting}{ownerName ? `, ${ownerName}` : ""}!
+          </h2>
+          {businessName && (
+            <p className="text-sm text-navy/50">
+              Here&apos;s what&apos;s happening at {businessName} today.
+            </p>
+          )}
+        </div>
+      )}
 
       {/* ── Quick-create shortcuts (role-gated) ── */}
       {!isDriver && (
