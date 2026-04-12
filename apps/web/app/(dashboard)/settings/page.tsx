@@ -350,6 +350,7 @@ const addUserSchema = z.object({
 type AddUserFormValues = z.infer<typeof addUserSchema>;
 
 function RoleBadge({ role }: { role: AppUser["role"] }) {
+  if (role === "TENANT_ADMIN") return <Badge variant="info" label="Admin" />;
   return (
     <Badge
       variant={role === "OPERATOR" ? "info" : "neutral"}
@@ -552,18 +553,24 @@ function EditUserModal({
         {updateUser.error && (
           <p className="text-sm text-danger">{updateUser.error.message}</p>
         )}
-        <Select
-          label="Role"
-          options={[
-            { value: "DRIVER", label: "Driver" },
-            { value: "OPERATOR", label: "Operator" },
-          ]}
-          register={register("role")}
-          error={errors.role?.message}
-          disabled={user?.role === "TENANT_ADMIN"}
-        />
-        {user?.role === "TENANT_ADMIN" && (
-          <p className="text-xs text-navy/40">Tenant admin role cannot be changed.</p>
+        {user?.role === "TENANT_ADMIN" ? (
+          <div>
+            <label className="mb-1 block text-sm font-medium text-navy">Role</label>
+            <div className="flex h-10 items-center rounded-md border border-surface-border bg-surface-secondary px-3 text-sm text-navy/60">
+              Admin
+            </div>
+            <p className="mt-1 text-xs text-navy/40">Tenant admin role cannot be changed.</p>
+          </div>
+        ) : (
+          <Select
+            label="Role"
+            options={[
+              { value: "DRIVER", label: "Driver" },
+              { value: "OPERATOR", label: "Operator" },
+            ]}
+            register={register("role")}
+            error={errors.role?.message}
+          />
         )}
         <Input
           label="Username"
