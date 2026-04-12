@@ -163,8 +163,8 @@ export default function LoginPage() {
               </p>
             )}
             <Input
-              label="Username"
-              placeholder="Enter your username"
+              label="Username or Email"
+              placeholder="Enter your username or email"
               autoComplete="username"
               register={register("username")}
               error={errors.username?.message}

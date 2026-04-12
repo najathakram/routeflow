@@ -18,8 +18,14 @@ export class UsersService {
   constructor(private readonly prisma: PrismaService) {}
 
   async findByUsername(username: string, tenantId?: string | null): Promise<User | null> {
+    // Accept either username or email in the login field
     return this.prisma.forTenant().user.findFirst({
-      where: { username, tenantId: tenantId ?? null },
+      where: {
+        OR: [
+          { username, tenantId: tenantId ?? null },
+          { email: username, tenantId: tenantId ?? null },
+        ],
+      },
     });
   }
 
