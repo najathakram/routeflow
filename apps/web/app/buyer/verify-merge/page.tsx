@@ -5,7 +5,11 @@ import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { CheckCircle, XCircle, Loader2, ShieldCheck } from "lucide-react";
 
-export default function VerifyMergePage() {
+// useSearchParams() requires Suspense — force dynamic rendering to avoid
+// Next.js static-generation export error at build time.
+export const dynamic = "force-dynamic";
+
+function VerifyMergeContent() {
   const params = useSearchParams();
   const token = params.get("token");
 
@@ -90,5 +94,19 @@ export default function VerifyMergePage() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function VerifyMergePage() {
+  return (
+    <React.Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center bg-surface-raised">
+          <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
+        </div>
+      }
+    >
+      <VerifyMergeContent />
+    </React.Suspense>
   );
 }
