@@ -7,6 +7,7 @@ import {
 import * as bcrypt from "bcrypt";
 import * as path from "path";
 import { ConfigService } from "@nestjs/config";
+import { JwtService } from "@nestjs/jwt";
 import { PrismaService } from "../prisma/prisma.service";
 import { EncryptionService } from "../common/encryption.service";
 import { StorageService } from "../storage/storage.service";
@@ -33,6 +34,27 @@ const RESERVED_SLUGS = new Set([
   "dashboard",
 ]);
 
+/** Usernames that are too generic or reserved to use as a tenant admin */
+const RESERVED_USERNAMES = new Set([
+  "admin",
+  "root",
+  "superadmin",
+  "administrator",
+  "system",
+  "support",
+  "help",
+  "info",
+  "demo",
+  "owner",
+  "staff",
+  "operator",
+  "driver",
+  "customer",
+  "test",
+  "user",
+  "manager",
+]);
+
 @Injectable()
 export class TenantsService {
   constructor(
@@ -41,7 +63,12 @@ export class TenantsService {
     private readonly storage: StorageService,
     private readonly email: EmailService,
     private readonly config: ConfigService,
+    private readonly jwt: JwtService,
   ) {}
+
+  isUsernameAvailable(username: string): boolean {
+    return !RESERVED_USERNAMES.has(username.toLowerCase());
+  }
 
   async isSlugAvailable(slug: string): Promise<boolean> {
     if (RESERVED_SLUGS.has(slug)) return false;
@@ -83,7 +110,9 @@ export class TenantsService {
           username: adminUsername,
           password: hashedPassword,
           role: "TENANT_ADMIN",
-          status: "ACTIVE",
+          // Keep INACTIVE until email is verified — prevents login until the
+          // user clicks the verification link in their inbox.
+          status: "INACTIVE",
           forcePasswordChange: false,
           tenantId: tenant.id,
         },
@@ -92,28 +121,32 @@ export class TenantsService {
       return { tenant, user };
     });
 
-    // Send welcome email (best-effort — don't fail signup over email)
+    // Generate a 24-hour email verification JWT and send it
     try {
       const webUrl = this.config.get<string>("WEB_URL") ?? "http://localhost:3001";
-      const trialExpiry = (result.tenant.trialEndsAt ?? new Date()).toLocaleDateString("en-US", {
-        month: "long",
-        day: "numeric",
-        year: "numeric",
-      });
+      const jwtSecret = this.config.get<string>("jwt.secret")!;
+
+      const verifyToken = this.jwt.sign(
+        { sub: result.user.id, tenantId: result.tenant.id, type: "email_verify" },
+        { secret: jwtSecret, expiresIn: "24h" },
+      );
+
+      const verifyUrl = `${webUrl}/verify-email?token=${verifyToken}`;
+
       await this.email.send({
         to: result.user.email,
-        subject: "Welcome to RouteFlow — your 14-day trial has started",
+        subject: "Verify your email to activate RouteFlow",
         html: `<p>Hi ${result.user.username},</p>
-<p>Your RouteFlow account for <strong>${businessName}</strong> is ready to go.</p>
-<p><strong>Workspace:</strong> ${slug}<br/>
-<strong>Username:</strong> ${result.user.username}<br/>
-<strong>Trial expires:</strong> ${trialExpiry}</p>
-<p><a href="${webUrl}/login" style="display:inline-block;padding:10px 20px;background:#2563eb;color:#fff;border-radius:6px;text-decoration:none;font-weight:600;">Sign in to your dashboard</a></p>
-<p>If you have any questions, just reply to this email.</p>
+<p>Thanks for signing up for <strong>RouteFlow</strong>! Click the button below to verify your email and activate your 14-day free trial for <strong>${businessName}</strong>.</p>
+<p style="margin:24px 0;">
+  <a href="${verifyUrl}" style="display:inline-block;padding:12px 24px;background:#2563eb;color:#fff;border-radius:8px;text-decoration:none;font-weight:600;font-size:15px;">Verify My Email</a>
+</p>
+<p>Or paste this link into your browser:<br/><a href="${verifyUrl}">${verifyUrl}</a></p>
+<p><em>This link expires in 24 hours. If you didn't sign up, you can safely ignore this email.</em></p>
 <p>The RouteFlow Team</p>`,
       });
     } catch {
-      /* best-effort */
+      /* best-effort — don't fail signup over email */
     }
 
     return {
@@ -129,6 +162,43 @@ export class TenantsService {
         email: result.user.email,
       },
     };
+  }
+
+  /** Resend a verification email to an INACTIVE user (best-effort, always 200) */
+  async resendVerification(email: string): Promise<void> {
+    const user = await this.prisma.user.findFirst({
+      where: { email: email.toLowerCase().trim(), status: "INACTIVE", deletedAt: null },
+      include: { tenant: { select: { id: true, name: true, slug: true } } },
+    });
+
+    // Silent return to prevent email enumeration
+    if (!user || !user.tenant) return;
+
+    try {
+      const webUrl = this.config.get<string>("WEB_URL") ?? "http://localhost:3001";
+      const jwtSecret = this.config.get<string>("jwt.secret")!;
+
+      const verifyToken = this.jwt.sign(
+        { sub: user.id, tenantId: user.tenant.id, type: "email_verify" },
+        { secret: jwtSecret, expiresIn: "24h" },
+      );
+
+      const verifyUrl = `${webUrl}/verify-email?token=${verifyToken}`;
+
+      await this.email.send({
+        to: user.email,
+        subject: "Verify your email to activate RouteFlow",
+        html: `<p>Hi ${user.username},</p>
+<p>Here's a new verification link for your RouteFlow account (<strong>${user.tenant.name}</strong>):</p>
+<p style="margin:24px 0;">
+  <a href="${verifyUrl}" style="display:inline-block;padding:12px 24px;background:#2563eb;color:#fff;border-radius:8px;text-decoration:none;font-weight:600;font-size:15px;">Verify My Email</a>
+</p>
+<p><em>This link expires in 24 hours.</em></p>
+<p>The RouteFlow Team</p>`,
+      });
+    } catch {
+      /* best-effort */
+    }
   }
 
   async getBranding(slug: string) {

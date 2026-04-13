@@ -1,9 +1,10 @@
-import { Controller, Get, Post, Param, Body, NotFoundException, HttpCode, HttpStatus } from "@nestjs/common";
+import { Controller, Get, Post, Param, Body, Query, NotFoundException, HttpCode, HttpStatus } from "@nestjs/common";
 import { ApiTags, ApiOperation } from "@nestjs/swagger";
 import { Throttle } from "@nestjs/throttler";
 import { TenantsService } from "./tenants.service";
 import { StorageService } from "../storage/storage.service";
 import { RegisterTenantDto } from "./dto/register-tenant.dto";
+import { IsEmail } from "class-validator";
 
 @ApiTags("public/tenants")
 @Controller("public/tenants")
@@ -24,6 +25,25 @@ export class PublicTenantsController {
       adminUsername: result.user.username,
       trialEndsAt: result.tenant.trialEndsAt,
     };
+  }
+
+  @Get("username-available")
+  @ApiOperation({ summary: "Check if a username is available for self-service signup" })
+  @Throttle({ default: { ttl: 60_000, limit: 20 } })
+  checkUsernameAvailability(@Query("username") username: string) {
+    if (!username) return { available: false, reason: "Username is required" };
+    const available = this.tenantsService.isUsernameAvailable(username);
+    return { username, available, ...(available ? {} : { reason: "This username is reserved. Please choose a different one." }) };
+  }
+
+  @Post("resend-verification")
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Resend email verification link (best-effort, always 200)" })
+  @Throttle({ default: { ttl: 60_000, limit: 5 } })
+  async resendVerification(@Body() body: { email: string }) {
+    // Always returns 200 — don't leak whether the email exists
+    await this.tenantsService.resendVerification(body.email ?? "").catch(() => {});
+    return { message: "If an account with that email is pending verification, a new link has been sent." };
   }
 
   @Get(":slug/available")

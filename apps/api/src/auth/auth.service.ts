@@ -279,6 +279,44 @@ export class AuthService {
     return user;
   }
 
+  // ─── Email verification ────────────────────────────────────────────────────────
+
+  /**
+   * Verifies a self-service signup email token, activates the user, and
+   * returns a full auth token pair so the frontend can auto-log in.
+   */
+  async verifyEmailAndLogin(token: string, deviceInfo?: DeviceInfo) {
+    const jwtConfig = this.configService.get<AppConfig["jwt"]>("jwt")!;
+
+    let payload: { sub: string; type: string; tenantId: string };
+    try {
+      payload = this.jwtService.verify(token, { secret: jwtConfig.secret });
+    } catch {
+      throw new BadRequestException("Verification link is invalid or has expired. Please sign up again or request a new link.");
+    }
+
+    if (payload.type !== "email_verify") {
+      throw new BadRequestException("Invalid verification token.");
+    }
+
+    const user = await this.prisma.user.findUnique({ where: { id: payload.sub } });
+    if (!user || user.deletedAt) {
+      throw new BadRequestException("Account not found.");
+    }
+
+    // Already verified — still issue tokens so clicking the link twice works smoothly
+    const activeUser =
+      user.status === "ACTIVE"
+        ? user
+        : await this.prisma.user.update({
+            where: { id: user.id },
+            data: { status: "ACTIVE" },
+          });
+
+    const { password: _pw, ...safeUser } = activeUser;
+    return this.login(safeUser, deviceInfo);
+  }
+
   async changePassword(userId: string, currentPassword: string, newPassword: string) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new UnauthorizedException();

@@ -76,6 +76,15 @@ export class AuthController {
     return this.authService.logout(user.id);
   }
 
+  @Post("verify-email")
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { ttl: 60_000, limit: 10 } })
+  @ApiOperation({ summary: "Verify email from signup link and return auth tokens" })
+  verifyEmail(@Body() body: { token: string }, @Req() req: any) {
+    const deviceInfo = this.extractDeviceInfo(req);
+    return this.authService.verifyEmailAndLogin(body.token, deviceInfo);
+  }
+
   @Post("change-password")
   @HttpCode(HttpStatus.OK)
   @UseGuards(JwtAuthGuard)

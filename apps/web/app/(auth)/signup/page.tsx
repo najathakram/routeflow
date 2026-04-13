@@ -7,7 +7,6 @@ import { z } from "zod";
 import { useRouter } from "next/navigation";
 import { Eye, EyeOff, CheckCircle2, XCircle, ArrowLeft, Loader2 } from "lucide-react";
 import { Input, Button } from "@routeflow/ui/web";
-import { login as apiLogin } from "@/lib/auth";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -42,15 +41,14 @@ const signupSchema = z
 
 type SignupFormValues = z.infer<typeof signupSchema>;
 
-// ─── Slug availability indicator ──────────────────────────────────────────────
+// ─── Availability status indicator ───────────────────────────────────────────
 
-function SlugStatus({ status }: { status: "idle" | "checking" | "available" | "taken" }) {
-  if (status === "checking")
-    return <Loader2 className="h-4 w-4 animate-spin text-navy/40" />;
-  if (status === "available")
-    return <CheckCircle2 className="h-4 w-4 text-success" />;
-  if (status === "taken")
-    return <XCircle className="h-4 w-4 text-danger" />;
+type AvailStatus = "idle" | "checking" | "available" | "taken";
+
+function AvailIndicator({ status }: { status: AvailStatus }) {
+  if (status === "checking") return <Loader2 className="h-4 w-4 animate-spin text-navy/40" />;
+  if (status === "available") return <CheckCircle2 className="h-4 w-4 text-success" />;
+  if (status === "taken") return <XCircle className="h-4 w-4 text-danger" />;
   return null;
 }
 
@@ -62,6 +60,12 @@ function slugify(name: string) {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 30);
+}
+
+/** Derive a username suggestion from a slug: replace hyphens with underscores, append _admin */
+function suggestUsername(slug: string) {
+  const base = slug.replace(/-/g, "_").slice(0, 23); // leave room for _admin (6 chars)
+  return `${base}_admin`;
 }
 
 // ─── Inner page ───────────────────────────────────────────────────────────────
@@ -76,10 +80,16 @@ function SignupInner() {
   const [apiError, setApiError] = React.useState<string | null>(null);
   const [showPassword, setShowPassword] = React.useState(false);
   const [showConfirm, setShowConfirm] = React.useState(false);
-  const [slugStatus, setSlugStatus] = React.useState<"idle" | "checking" | "available" | "taken">("idle");
-  const [slugEdited, setSlugEdited] = React.useState(false);
 
-  const debounceRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Slug availability
+  const [slugStatus, setSlugStatus] = React.useState<AvailStatus>("idle");
+  const [slugEdited, setSlugEdited] = React.useState(false);
+  const slugDebounce = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Username availability
+  const [usernameStatus, setUsernameStatus] = React.useState<AvailStatus>("idle");
+  const [usernameEdited, setUsernameEdited] = React.useState(false);
+  const usernameDebounce = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const {
     register,
@@ -101,6 +111,7 @@ function SignupInner() {
 
   const businessName = watch("businessName");
   const slugValue = watch("slug");
+  const usernameValue = watch("adminUsername");
 
   // Auto-derive slug from business name (unless user has manually edited it)
   React.useEffect(() => {
@@ -112,30 +123,53 @@ function SignupInner() {
     }
   }, [businessName, slugEdited, setValue]);
 
+  // Auto-suggest username from slug (unless user has manually edited it)
+  React.useEffect(() => {
+    if (!usernameEdited && slugValue && slugValue.length >= 3) {
+      const suggested = suggestUsername(slugValue);
+      setValue("adminUsername", suggested, { shouldValidate: false });
+    }
+  }, [slugValue, usernameEdited, setValue]);
+
   // Debounced slug availability check
   React.useEffect(() => {
-    if (!slugValue || slugValue.length < 3) {
-      setSlugStatus("idle");
-      return;
-    }
+    if (!slugValue || slugValue.length < 3) { setSlugStatus("idle"); return; }
     setSlugStatus("checking");
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(async () => {
+    if (slugDebounce.current) clearTimeout(slugDebounce.current);
+    slugDebounce.current = setTimeout(async () => {
       try {
         const res = await fetch(`${apiUrl}/public/tenants/${encodeURIComponent(slugValue)}/available`);
         if (!res.ok) { setSlugStatus("idle"); return; }
         const data: { available: boolean } = await res.json();
         setSlugStatus(data.available ? "available" : "taken");
-      } catch {
-        setSlugStatus("idle");
-      }
+      } catch { setSlugStatus("idle"); }
     }, 400);
-    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+    return () => { if (slugDebounce.current) clearTimeout(slugDebounce.current); };
   }, [slugValue, apiUrl]);
+
+  // Debounced username availability check
+  React.useEffect(() => {
+    if (!usernameValue || usernameValue.length < 3) { setUsernameStatus("idle"); return; }
+    setUsernameStatus("checking");
+    if (usernameDebounce.current) clearTimeout(usernameDebounce.current);
+    usernameDebounce.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`${apiUrl}/public/tenants/username-available?username=${encodeURIComponent(usernameValue)}`);
+        if (!res.ok) { setUsernameStatus("idle"); return; }
+        const data: { available: boolean } = await res.json();
+        setUsernameStatus(data.available ? "available" : "taken");
+      } catch { setUsernameStatus("idle"); }
+    }, 400);
+    return () => { if (usernameDebounce.current) clearTimeout(usernameDebounce.current); };
+  }, [usernameValue, apiUrl]);
 
   const onSubmit = async (data: SignupFormValues) => {
     if (slugStatus === "taken") {
       setApiError("That workspace ID is already taken. Please choose a different one.");
+      return;
+    }
+    if (usernameStatus === "taken") {
+      setApiError("That username is reserved. Please choose a different one.");
       return;
     }
 
@@ -143,7 +177,6 @@ function SignupInner() {
     setApiError(null);
 
     try {
-      // Step 1: Create tenant + admin user
       const regRes = await fetch(`${apiUrl}/public/tenants/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -165,11 +198,8 @@ function SignupInner() {
         return;
       }
 
-      // Step 2: Immediately log in with the just-created credentials
-      await apiLogin(data.adminUsername, data.adminPassword);
-
-      // Step 3: Navigate to dashboard
-      router.push("/dashboard");
+      // Redirect to "check your email" page — no auto-login, must verify first
+      router.push(`/signup/check-email?email=${encodeURIComponent(data.adminEmail)}`);
     } catch {
       setApiError("Something went wrong. Please try again.");
       setIsLoading(false);
@@ -226,13 +256,11 @@ function SignupInner() {
                   type="text"
                   placeholder="acme-distribution"
                   autoComplete="off"
-                  className="h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 text-sm text-navy placeholder:text-navy/40 font-mono transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent"
-                  {...register("slug", {
-                    onChange: () => setSlugEdited(true),
-                  })}
+                  className="h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 font-mono text-sm text-navy placeholder:text-navy/40 transition-colors focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  {...register("slug", { onChange: () => setSlugEdited(true) })}
                 />
                 <span className="absolute inset-y-0 right-0 flex items-center pr-3">
-                  <SlugStatus status={slugStatus} />
+                  <AvailIndicator status={slugStatus} />
                 </span>
               </div>
               {errors.slug ? (
@@ -256,14 +284,34 @@ function SignupInner() {
               error={errors.adminEmail?.message}
             />
 
-            {/* Admin Username */}
-            <Input
-              label="Username"
-              placeholder="admin"
-              autoComplete="username"
-              register={register("adminUsername")}
-              error={errors.adminUsername?.message}
-            />
+            {/* Username */}
+            <div className="flex flex-col gap-1">
+              <label htmlFor="adminUsername" className="text-sm font-medium text-navy">
+                Username
+              </label>
+              <div className="relative">
+                <input
+                  id="adminUsername"
+                  type="text"
+                  placeholder="acme_admin"
+                  autoComplete="username"
+                  className="h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 text-sm text-navy placeholder:text-navy/40 transition-colors focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  {...register("adminUsername", { onChange: () => setUsernameEdited(true) })}
+                />
+                <span className="absolute inset-y-0 right-0 flex items-center pr-3">
+                  <AvailIndicator status={usernameStatus} />
+                </span>
+              </div>
+              {errors.adminUsername ? (
+                <p className="text-xs text-danger">{errors.adminUsername.message}</p>
+              ) : usernameStatus === "taken" ? (
+                <p className="text-xs text-danger">This username is reserved. Please choose a different one.</p>
+              ) : usernameStatus === "available" ? (
+                <p className="text-xs text-success">This username is available.</p>
+              ) : (
+                <p className="text-xs text-navy/40">Letters, numbers, and underscores only.</p>
+              )}
+            </div>
 
             {/* Password */}
             <div className="flex flex-col gap-1">
@@ -276,13 +324,13 @@ function SignupInner() {
                   type={showPassword ? "text" : "password"}
                   placeholder="At least 8 chars, 1 uppercase, 1 number"
                   autoComplete="new-password"
-                  className="h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 text-sm text-navy placeholder:text-navy/40 transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent"
+                  className="h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 text-sm text-navy placeholder:text-navy/40 transition-colors focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
                   {...register("adminPassword")}
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword((v) => !v)}
-                  className="absolute inset-y-0 right-0 flex items-center pr-3 text-navy/40 hover:text-navy transition-colors"
+                  className="absolute inset-y-0 right-0 flex items-center pr-3 text-navy/40 transition-colors hover:text-navy"
                   tabIndex={-1}
                   aria-label={showPassword ? "Hide password" : "Show password"}
                 >
@@ -305,13 +353,13 @@ function SignupInner() {
                   type={showConfirm ? "text" : "password"}
                   placeholder="Re-enter your password"
                   autoComplete="new-password"
-                  className="h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 text-sm text-navy placeholder:text-navy/40 transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent"
+                  className="h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 text-sm text-navy placeholder:text-navy/40 transition-colors focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
                   {...register("confirmPassword")}
                 />
                 <button
                   type="button"
                   onClick={() => setShowConfirm((v) => !v)}
-                  className="absolute inset-y-0 right-0 flex items-center pr-3 text-navy/40 hover:text-navy transition-colors"
+                  className="absolute inset-y-0 right-0 flex items-center pr-3 text-navy/40 transition-colors hover:text-navy"
                   tabIndex={-1}
                   aria-label={showConfirm ? "Hide password" : "Show password"}
                 >
@@ -323,7 +371,12 @@ function SignupInner() {
               )}
             </div>
 
-            <Button type="submit" loading={isLoading} className="mt-2 w-full">
+            <Button
+              type="submit"
+              loading={isLoading}
+              disabled={slugStatus === "taken" || usernameStatus === "taken"}
+              className="mt-2 w-full"
+            >
               Create My Account
             </Button>
           </form>
@@ -339,7 +392,7 @@ function SignupInner() {
         <div className="mt-6 space-y-2 text-center">
           <p className="text-xs text-navy/50">
             Already have an account?{" "}
-            <a href="/login" className="text-brand-600 hover:underline font-medium">
+            <a href="/login" className="font-medium text-brand-600 hover:underline">
               Sign in
             </a>
           </p>
