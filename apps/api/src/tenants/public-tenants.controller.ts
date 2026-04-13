@@ -1,8 +1,9 @@
-import { Controller, Get, Param, NotFoundException } from "@nestjs/common";
+import { Controller, Get, Post, Param, Body, NotFoundException, HttpCode, HttpStatus } from "@nestjs/common";
 import { ApiTags, ApiOperation } from "@nestjs/swagger";
 import { Throttle } from "@nestjs/throttler";
 import { TenantsService } from "./tenants.service";
 import { StorageService } from "../storage/storage.service";
+import { RegisterTenantDto } from "./dto/register-tenant.dto";
 
 @ApiTags("public/tenants")
 @Controller("public/tenants")
@@ -11,6 +12,19 @@ export class PublicTenantsController {
     private readonly tenantsService: TenantsService,
     private readonly storage: StorageService,
   ) {}
+
+  @Post("register")
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: "Self-service tenant signup — creates a new tenant and admin user (14-day trial)" })
+  @Throttle({ default: { ttl: 60_000, limit: 5 } })
+  async register(@Body() dto: RegisterTenantDto) {
+    const result = await this.tenantsService.register(dto);
+    return {
+      slug: result.tenant.slug,
+      adminUsername: result.user.username,
+      trialEndsAt: result.tenant.trialEndsAt,
+    };
+  }
 
   @Get(":slug/available")
   @ApiOperation({ summary: "Check if a tenant slug is available" })

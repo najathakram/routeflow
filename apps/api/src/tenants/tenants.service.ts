@@ -6,9 +6,11 @@ import {
 } from "@nestjs/common";
 import * as bcrypt from "bcrypt";
 import * as path from "path";
+import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
 import { EncryptionService } from "../common/encryption.service";
 import { StorageService } from "../storage/storage.service";
+import { EmailService } from "../email/email.service";
 import { RegisterTenantDto } from "./dto/register-tenant.dto";
 import { UpdateEmailConfigDto } from "./dto/update-email-config.dto";
 import { UpdateGoogleOAuthConfigDto } from "./dto/update-google-oauth-config.dto";
@@ -37,6 +39,8 @@ export class TenantsService {
     private readonly prisma: PrismaService,
     private readonly encryption: EncryptionService,
     private readonly storage: StorageService,
+    private readonly email: EmailService,
+    private readonly config: ConfigService,
   ) {}
 
   async isSlugAvailable(slug: string): Promise<boolean> {
@@ -88,7 +92,43 @@ export class TenantsService {
       return { tenant, user };
     });
 
-    return result;
+    // Send welcome email (best-effort — don't fail signup over email)
+    try {
+      const webUrl = this.config.get<string>("WEB_URL") ?? "http://localhost:3001";
+      const trialExpiry = (result.tenant.trialEndsAt ?? new Date()).toLocaleDateString("en-US", {
+        month: "long",
+        day: "numeric",
+        year: "numeric",
+      });
+      await this.email.send({
+        to: result.user.email,
+        subject: "Welcome to RouteFlow — your 14-day trial has started",
+        html: `<p>Hi ${result.user.username},</p>
+<p>Your RouteFlow account for <strong>${businessName}</strong> is ready to go.</p>
+<p><strong>Workspace:</strong> ${slug}<br/>
+<strong>Username:</strong> ${result.user.username}<br/>
+<strong>Trial expires:</strong> ${trialExpiry}</p>
+<p><a href="${webUrl}/login" style="display:inline-block;padding:10px 20px;background:#2563eb;color:#fff;border-radius:6px;text-decoration:none;font-weight:600;">Sign in to your dashboard</a></p>
+<p>If you have any questions, just reply to this email.</p>
+<p>The RouteFlow Team</p>`,
+      });
+    } catch {
+      /* best-effort */
+    }
+
+    return {
+      tenant: {
+        id: result.tenant.id,
+        slug: result.tenant.slug,
+        name: result.tenant.name,
+        trialEndsAt: result.tenant.trialEndsAt,
+      },
+      user: {
+        id: result.user.id,
+        username: result.user.username,
+        email: result.user.email,
+      },
+    };
   }
 
   async getBranding(slug: string) {

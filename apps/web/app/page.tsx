@@ -75,7 +75,7 @@ export default function SellerLandingPage() {
               Sign In
             </Link>
             <Link
-              href="/login"
+              href="/signup"
               className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-brand-700"
             >
               Get Started
@@ -110,7 +110,7 @@ export default function SellerLandingPage() {
 
           <div className="mt-10 flex flex-col items-center gap-4 sm:flex-row sm:justify-center">
             <Link
-              href="/login"
+              href="/signup"
               className="flex items-center gap-2 rounded-xl bg-white px-8 py-3.5 text-base font-semibold text-navy shadow-lg transition-all hover:shadow-xl hover:bg-brand-50"
             >
               Get Started <ArrowRight className="h-4 w-4" />
@@ -251,7 +251,7 @@ export default function SellerLandingPage() {
             invoice smarter, and grow without limits.
           </p>
           <Link
-            href="/login"
+            href="/signup"
             className="inline-flex items-center gap-2 rounded-xl bg-white px-8 py-3.5 text-base font-semibold text-navy shadow-lg transition-all hover:shadow-xl hover:bg-brand-50"
           >
             <Users className="h-5 w-5" />

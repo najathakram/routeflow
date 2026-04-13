@@ -262,11 +262,17 @@ export default function LoginPage() {
           </p>
         </div>
 
-        <div className="mt-6 text-center">
+        <div className="mt-6 space-y-2 text-center">
           <p className="text-xs text-navy/50">
             Not a staff member?{" "}
             <a href="/buyer/login" className="text-brand-600 hover:underline">
               Sign in to Buyer Portal
+            </a>
+          </p>
+          <p className="text-xs text-navy/50">
+            New to RouteFlow?{" "}
+            <a href="/signup" className="text-brand-600 hover:underline font-medium">
+              Start your free 14-day trial
             </a>
           </p>
         </div>
