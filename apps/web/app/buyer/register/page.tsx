@@ -124,18 +124,15 @@ function BuyerRegisterInner() {
     : "/buyer/login";
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-surface-raised p-4">
+    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-buyer-50 to-white p-4">
       <div className="w-full max-w-sm">
         {/* Logo / Brand */}
         <div className="mb-8 flex flex-col items-center gap-3">
-          <div
-            className="flex h-12 w-12 items-center justify-center rounded-xl text-lg font-bold text-white"
-            style={{ backgroundColor: "#3B82F6" }}
-          >
+          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-buyer-600 text-lg font-bold text-white">
             RF
           </div>
-          <h1 className="text-2xl font-bold text-navy">RouteFlow</h1>
-          <p className="text-sm text-navy/60">Create your Buyer Portal account</p>
+          <h1 className="text-2xl font-bold text-navy">Create Account</h1>
+          <p className="text-sm text-navy/60">Join RouteFlow Buyer Portal</p>
         </div>
 
         {/* Card */}
@@ -150,7 +147,7 @@ function BuyerRegisterInner() {
             type="button"
             onClick={handleGoogleSignUp}
             disabled={googleLoading}
-            className="mb-4 flex w-full items-center justify-center gap-3 rounded border border-surface-border bg-white px-4 py-2.5 text-sm font-medium text-navy shadow-sm transition-colors hover:bg-surface-raised focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-60"
+            className="mb-4 flex w-full items-center justify-center gap-3 rounded border border-surface-border bg-white px-4 py-2.5 text-sm font-medium text-navy shadow-sm transition-colors hover:bg-surface-raised focus:outline-none focus:ring-2 focus:ring-buyer-500 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {googleLoading ? (
               <>
@@ -207,7 +204,7 @@ function BuyerRegisterInner() {
                   type={showPassword ? "text" : "password"}
                   placeholder="At least 8 characters, 1 uppercase, 1 number"
                   autoComplete="new-password"
-                  className="h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 text-sm text-navy placeholder:text-navy/40 transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent"
+                  className="h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 text-sm text-navy placeholder:text-navy/40 transition-colors focus:outline-none focus:ring-2 focus:ring-buyer-500 focus:border-transparent"
                   {...register("password")}
                 />
                 <button
@@ -235,7 +232,7 @@ function BuyerRegisterInner() {
                   type={showConfirmPassword ? "text" : "password"}
                   placeholder="Re-enter your password"
                   autoComplete="new-password"
-                  className="h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 text-sm text-navy placeholder:text-navy/40 transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent"
+                  className="h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 text-sm text-navy placeholder:text-navy/40 transition-colors focus:outline-none focus:ring-2 focus:ring-buyer-500 focus:border-transparent"
                   {...register("confirmPassword")}
                 />
                 <button
@@ -253,15 +250,23 @@ function BuyerRegisterInner() {
               )}
             </div>
 
-            <Button type="submit" loading={isLoading} className="mt-2 w-full">
-              Create Account
-            </Button>
+            <button
+              type="submit"
+              disabled={isLoading}
+              className="mt-2 flex h-10 w-full items-center justify-center rounded-lg bg-buyer-600 text-sm font-semibold text-white transition-colors hover:bg-buyer-700 focus:outline-none focus:ring-2 focus:ring-buyer-500 focus:ring-offset-2 disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              {isLoading ? (
+                <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+              ) : (
+                "Create Account"
+              )}
+            </button>
           </form>
 
           <div className="mt-4 text-center">
             <p className="text-sm text-navy/60">
               Already have an account?{" "}
-              <a href={loginHref} className="text-brand-600 hover:underline font-medium">
+              <a href={loginHref} className="text-buyer-600 hover:underline font-medium">
                 Sign in
               </a>
             </p>
@@ -271,7 +276,7 @@ function BuyerRegisterInner() {
         <div className="mt-6 text-center">
           <p className="text-xs text-navy/50">
             Staff member?{" "}
-            <a href="/login" className="text-brand-600 hover:underline">
+            <a href="/login" className="text-buyer-600 hover:underline">
               Sign in to Staff Portal
             </a>
           </p>

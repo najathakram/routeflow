@@ -112,129 +112,176 @@ function BuyerLoginInner() {
     : "/buyer/register";
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-surface-raised p-4">
-      <div className="w-full max-w-sm">
-        {/* Logo / Brand */}
-        <div className="mb-8 flex flex-col items-center gap-3">
-          <div
-            className="flex h-12 w-12 items-center justify-center rounded-xl text-lg font-bold text-white"
-            style={{ backgroundColor: "#3B82F6" }}
-          >
+    <div className="flex min-h-screen">
+      {/* Left panel — emerald gradient with branding */}
+      <div className="hidden lg:flex lg:w-1/2 items-center justify-center bg-gradient-to-br from-buyer-900 via-buyer-800 to-buyer-700 relative overflow-hidden">
+        {/* Decorative circles */}
+        <div className="absolute -top-24 -left-24 h-96 w-96 rounded-full bg-buyer-600/20" />
+        <div className="absolute -bottom-16 -right-16 h-72 w-72 rounded-full bg-buyer-500/10" />
+        <div className="absolute top-1/3 right-1/4 h-48 w-48 rounded-full bg-buyer-400/10" />
+
+        <div className="relative z-10 max-w-md px-12 text-center">
+          <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-white/10 backdrop-blur-sm text-2xl font-bold text-white">
             RF
           </div>
-          <h1 className="text-2xl font-bold text-navy">RouteFlow</h1>
-          <p className="text-sm text-navy/60">Sign in to Buyer Portal</p>
+          <h2 className="text-3xl font-bold text-white mb-4">
+            Order smarter with RouteFlow
+          </h2>
+          <p className="text-buyer-200 text-base leading-relaxed">
+            Browse catalogs, track deliveries, manage invoices — your one-stop B2B ordering platform.
+          </p>
+          <div className="mt-8 flex justify-center gap-6 text-buyer-300 text-sm">
+            <div className="flex items-center gap-2">
+              <div className="h-2 w-2 rounded-full bg-buyer-400" />
+              Easy ordering
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="h-2 w-2 rounded-full bg-buyer-400" />
+              Real-time tracking
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="h-2 w-2 rounded-full bg-buyer-400" />
+              Invoice management
+            </div>
+          </div>
         </div>
+      </div>
 
-        {/* Card */}
-        <div className="rounded-xl bg-white p-6 shadow-card">
-          {/* Google sign-in button */}
-          {googleError && (
-            <p className="mb-4 rounded-lg bg-danger-bg px-3 py-2 text-sm text-danger">
-              {googleError}
-            </p>
-          )}
-          <button
-            type="button"
-            onClick={handleGoogleSignIn}
-            disabled={googleLoading}
-            className="mb-4 flex w-full items-center justify-center gap-3 rounded border border-surface-border bg-white px-4 py-2.5 text-sm font-medium text-navy shadow-sm transition-colors hover:bg-surface-raised focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {googleLoading ? (
-              <>
-                <div className="h-4 w-4 animate-spin rounded-full border-2 border-navy/30 border-t-navy/70" />
-                <span>Redirecting to Google…</span>
-              </>
-            ) : (
-              <>
-                <GoogleIcon className="h-4 w-4" />
-                <span>Continue with Google</span>
-              </>
-            )}
-          </button>
-
-          {/* Divider */}
-          <div className="mb-4 flex items-center gap-3">
-            <div className="h-px flex-1 bg-surface-border" />
-            <span className="text-xs text-navy/40">or</span>
-            <div className="h-px flex-1 bg-surface-border" />
+      {/* Right panel — form */}
+      <div className="flex flex-1 items-center justify-center bg-surface-raised p-4 lg:p-8">
+        <div className="w-full max-w-sm">
+          {/* Mobile logo (hidden on large screens where left panel shows) */}
+          <div className="mb-8 flex flex-col items-center gap-3 lg:hidden">
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-buyer-600 text-lg font-bold text-white">
+              RF
+            </div>
+            <h1 className="text-2xl font-bold text-navy">RouteFlow</h1>
           </div>
 
-          <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4" noValidate>
-            {apiError && (
-              <p className="rounded-lg bg-danger-bg px-3 py-2 text-sm text-danger">
-                {apiError}
+          {/* Desktop heading */}
+          <div className="mb-6 hidden lg:block">
+            <h1 className="text-2xl font-bold text-navy">Welcome back</h1>
+            <p className="text-sm text-navy/60 mt-1">Sign in to your buyer account</p>
+          </div>
+
+          {/* Card */}
+          <div className="rounded-xl bg-white p-6 shadow-card">
+            {/* Google sign-in button */}
+            {googleError && (
+              <p className="mb-4 rounded-lg bg-danger-bg px-3 py-2 text-sm text-danger">
+                {googleError}
               </p>
             )}
-            <Input
-              label="Email"
-              type="email"
-              placeholder="Enter your email"
-              autoComplete="email"
-              register={register("email")}
-              error={errors.email?.message}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  document.getElementById("buyer-password")?.focus();
-                }
-              }}
-            />
-            <div className="flex flex-col gap-1">
-              <label htmlFor="buyer-password" className="text-sm font-medium text-navy">
-                Password
-              </label>
-              <div className="relative">
-                <input
-                  id="buyer-password"
-                  type={showPassword ? "text" : "password"}
-                  placeholder="Enter your password"
-                  autoComplete="current-password"
-                  className="h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 text-sm text-navy placeholder:text-navy/40 transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent"
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      handleSubmit(onSubmit)();
-                    }
-                  }}
-                  {...register("password")}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword((v) => !v)}
-                  className="absolute inset-y-0 right-0 flex items-center pr-3 text-navy/40 hover:text-navy transition-colors"
-                  tabIndex={-1}
-                  aria-label={showPassword ? "Hide password" : "Show password"}
-                >
-                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </button>
-              </div>
-              {errors.password && (
-                <p className="text-xs text-danger">{errors.password.message}</p>
+            <button
+              type="button"
+              onClick={handleGoogleSignIn}
+              disabled={googleLoading}
+              className="mb-4 flex w-full items-center justify-center gap-3 rounded-lg border border-surface-border bg-white px-4 py-2.5 text-sm font-medium text-navy shadow-sm transition-colors hover:bg-surface-raised focus:outline-none focus:ring-2 focus:ring-buyer-500 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {googleLoading ? (
+                <>
+                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-navy/30 border-t-navy/70" />
+                  <span>Redirecting to Google…</span>
+                </>
+              ) : (
+                <>
+                  <GoogleIcon className="h-4 w-4" />
+                  <span>Continue with Google</span>
+                </>
               )}
-            </div>
-            <Button type="submit" loading={isLoading} className="mt-2 w-full">
-              Sign in
-            </Button>
-          </form>
+            </button>
 
-          <div className="mt-4 text-center">
-            <p className="text-sm text-navy/60">
-              Don&apos;t have an account?{" "}
-              <a href={registerHref} className="text-brand-600 hover:underline font-medium">
-                Create account
+            {/* Divider */}
+            <div className="mb-4 flex items-center gap-3">
+              <div className="h-px flex-1 bg-surface-border" />
+              <span className="text-xs text-navy/40">or sign in with email</span>
+              <div className="h-px flex-1 bg-surface-border" />
+            </div>
+
+            <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4" noValidate>
+              {apiError && (
+                <p className="rounded-lg bg-danger-bg px-3 py-2 text-sm text-danger">
+                  {apiError}
+                </p>
+              )}
+              <Input
+                label="Email"
+                type="email"
+                placeholder="Enter your email"
+                autoComplete="email"
+                register={register("email")}
+                error={errors.email?.message}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    document.getElementById("buyer-password")?.focus();
+                  }
+                }}
+              />
+              <div className="flex flex-col gap-1">
+                <label htmlFor="buyer-password" className="text-sm font-medium text-navy">
+                  Password
+                </label>
+                <div className="relative">
+                  <input
+                    id="buyer-password"
+                    type={showPassword ? "text" : "password"}
+                    placeholder="Enter your password"
+                    autoComplete="current-password"
+                    className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 pr-10 text-sm text-navy placeholder:text-navy/40 transition-colors focus:outline-none focus:ring-2 focus:ring-buyer-500 focus:border-transparent"
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        handleSubmit(onSubmit)();
+                      }
+                    }}
+                    {...register("password")}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((v) => !v)}
+                    className="absolute inset-y-0 right-0 flex items-center pr-3 text-navy/40 hover:text-navy transition-colors"
+                    tabIndex={-1}
+                    aria-label={showPassword ? "Hide password" : "Show password"}
+                  >
+                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+                {errors.password && (
+                  <p className="text-xs text-danger">{errors.password.message}</p>
+                )}
+              </div>
+              <button
+                type="submit"
+                disabled={isLoading}
+                className="mt-2 flex h-10 w-full items-center justify-center rounded-lg bg-buyer-600 text-sm font-semibold text-white transition-colors hover:bg-buyer-700 focus:outline-none focus:ring-2 focus:ring-buyer-500 focus:ring-offset-2 disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {isLoading ? (
+                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                ) : (
+                  "Sign in"
+                )}
+              </button>
+            </form>
+
+            <div className="mt-4 text-center">
+              <p className="text-sm text-navy/60">
+                Don&apos;t have an account?{" "}
+                <a href={registerHref} className="text-buyer-600 hover:text-buyer-700 hover:underline font-medium">
+                  Create account
+                </a>
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-6 text-center">
+            <p className="text-xs text-navy/50">
+              Staff member?{" "}
+              <a href="/login" className="text-buyer-600 hover:underline">
+                Sign in to Staff Portal
               </a>
             </p>
           </div>
-        </div>
-
-        <div className="mt-6 text-center">
-          <p className="text-xs text-navy/50">
-            Staff member?{" "}
-            <a href="/login" className="text-brand-600 hover:underline">
-              Sign in to Staff Portal
-            </a>
-          </p>
         </div>
       </div>
     </div>
