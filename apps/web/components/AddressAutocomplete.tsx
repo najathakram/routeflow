@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { MapPin, Loader2 } from "lucide-react";
+import { APIProvider, useMapsLibrary } from "@vis.gl/react-google-maps";
 import { cn } from "@routeflow/ui/web";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -16,7 +17,6 @@ export interface AddressParts {
 interface Suggestion {
   id: string;
   display: string;
-  /** Google place_id — used to fetch full address details */
   placeId: string;
 }
 
@@ -31,37 +31,11 @@ export interface AddressAutocompleteProps {
   disabled?: boolean;
 }
 
-// ─── Google Maps loader ──────────────────────────────────────────────────────
-
 const MAPS_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY ?? "";
 
-/** Load the Google Maps JS SDK once, returning a promise that resolves when ready. */
-let _loadPromise: Promise<void> | null = null;
+// ─── Inner component (requires APIProvider ancestor) ─────────────────────────
 
-function loadGoogleMaps(): Promise<void> {
-  if (typeof window === "undefined") return Promise.resolve();
-  if (window.google?.maps?.places) return Promise.resolve();
-  if (_loadPromise) return _loadPromise;
-
-  _loadPromise = new Promise<void>((resolve, reject) => {
-    // Check again in case another script loaded it
-    if (window.google?.maps?.places) { resolve(); return; }
-
-    const script = document.createElement("script");
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${MAPS_KEY}&libraries=places`;
-    script.async = true;
-    script.defer = true;
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error("Failed to load Google Maps"));
-    document.head.appendChild(script);
-  });
-
-  return _loadPromise;
-}
-
-// ─── Component ────────────────────────────────────────────────────────────────
-
-export function AddressAutocomplete({
+function AddressAutocompleteInner({
   label,
   value,
   onChange,
@@ -71,11 +45,12 @@ export function AddressAutocomplete({
   className,
   disabled,
 }: AddressAutocompleteProps) {
+  const places = useMapsLibrary("places");
+
   const [suggestions, setSuggestions] = React.useState<Suggestion[]>([]);
   const [isOpen, setIsOpen] = React.useState(false);
   const [isLoading, setIsLoading] = React.useState(false);
   const [activeIndex, setActiveIndex] = React.useState(-1);
-  const [mapsReady, setMapsReady] = React.useState(false);
 
   const debounceRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const containerRef = React.useRef<HTMLDivElement>(null);
@@ -85,30 +60,21 @@ export function AddressAutocomplete({
 
   const inputId = label?.toLowerCase().replace(/\s+/g, "-") ?? "street";
 
-  // ── Load Google Maps SDK ───────────────────────────────────────────────────
+  // ── Initialise services once Places library loads ─────────────────────────
 
   React.useEffect(() => {
-    if (!MAPS_KEY) return;
-    loadGoogleMaps()
-      .then(() => {
-        autocompleteRef.current = new google.maps.places.AutocompleteService();
-        // PlacesService needs a DOM element (can be hidden)
-        if (!attrDivRef.current) {
-          attrDivRef.current = document.createElement("div");
-        }
-        placesRef.current = new google.maps.places.PlacesService(attrDivRef.current);
-        setMapsReady(true);
-      })
-      .catch(() => {
-        // Google Maps failed to load — the component will still render,
-        // but autocomplete will be unavailable
-      });
-  }, []);
+    if (!places) return;
+    autocompleteRef.current = new places.AutocompleteService();
+    if (!attrDivRef.current) {
+      attrDivRef.current = document.createElement("div");
+    }
+    placesRef.current = new places.PlacesService(attrDivRef.current);
+  }, [places]);
 
   // ── Fetch suggestions via Google Places ─────────────────────────────────────
 
   const fetchSuggestions = React.useCallback(
-    async (q: string) => {
+    (q: string) => {
       if (q.trim().length < 3 || !autocompleteRef.current) {
         setSuggestions([]);
         setIsOpen(false);
@@ -116,38 +82,33 @@ export function AddressAutocomplete({
       }
 
       setIsLoading(true);
-      try {
-        const request: google.maps.places.AutocompletionRequest = {
-          input: q,
-          componentRestrictions: { country: "us" },
-          types: ["address"],
-        };
 
-        autocompleteRef.current.getPlacePredictions(request, (results, status) => {
-          setIsLoading(false);
-          if (
-            status !== google.maps.places.PlacesServiceStatus.OK ||
-            !results
-          ) {
-            setSuggestions([]);
-            setIsOpen(false);
-            return;
-          }
+      const request: google.maps.places.AutocompletionRequest = {
+        input: q,
+        componentRestrictions: { country: "us" },
+        types: ["address"],
+      };
 
-          const parsed: Suggestion[] = results.slice(0, 5).map((r) => ({
-            id: r.place_id,
-            display: r.description,
-            placeId: r.place_id,
-          }));
-
-          setSuggestions(parsed);
-          setIsOpen(parsed.length > 0);
-        });
-      } catch {
+      autocompleteRef.current.getPlacePredictions(request, (results, status) => {
         setIsLoading(false);
-        setSuggestions([]);
-        setIsOpen(false);
-      }
+        if (
+          status !== google.maps.places.PlacesServiceStatus.OK ||
+          !results
+        ) {
+          setSuggestions([]);
+          setIsOpen(false);
+          return;
+        }
+
+        const parsed: Suggestion[] = results.slice(0, 5).map((r) => ({
+          id: r.place_id,
+          display: r.description,
+          placeId: r.place_id,
+        }));
+
+        setSuggestions(parsed);
+        setIsOpen(parsed.length > 0);
+      });
     },
     [],
   );
@@ -171,7 +132,6 @@ export function AddressAutocomplete({
       return;
     }
 
-    // Fetch full place details to get structured address components
     placesRef.current.getDetails(
       { placeId: s.placeId, fields: ["address_components"] },
       (place, status) => {
@@ -239,6 +199,8 @@ export function AddressAutocomplete({
 
   // ── Render ────────────────────────────────────────────────────────────────
 
+  const ready = !!places;
+
   return (
     <div ref={containerRef} className={cn("relative flex flex-col gap-1", className)}>
       {label && (
@@ -253,9 +215,9 @@ export function AddressAutocomplete({
           onChange={handleChange}
           onKeyDown={handleKeyDown}
           onFocus={() => suggestions.length > 0 && setIsOpen(true)}
-          placeholder={!MAPS_KEY ? "Enter address manually" : (mapsReady ? placeholder : "Loading\u2026")}
+          placeholder={!MAPS_KEY ? "Enter address manually" : (ready ? placeholder : "Loading\u2026")}
           autoComplete="off"
-          disabled={disabled || (!mapsReady && !!MAPS_KEY)}
+          disabled={disabled}
           aria-autocomplete="list"
           aria-expanded={isOpen}
           aria-invalid={!!error}
@@ -306,5 +268,34 @@ export function AddressAutocomplete({
         </ul>
       )}
     </div>
+  );
+}
+
+// ─── Wrapper: provides Google Maps context ────────────────────────────────────
+
+export function AddressAutocomplete(props: AddressAutocompleteProps) {
+  if (!MAPS_KEY) {
+    // No API key — render a plain text input
+    return (
+      <div className={cn("flex flex-col gap-1", props.className)}>
+        {props.label && (
+          <label className="text-sm font-medium text-navy">{props.label}</label>
+        )}
+        <input
+          value={props.value}
+          onChange={(e) => props.onChange(e.target.value)}
+          placeholder="Enter address manually"
+          disabled={props.disabled}
+          className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/40 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent"
+        />
+        {props.error && <p className="text-xs text-danger">{props.error}</p>}
+      </div>
+    );
+  }
+
+  return (
+    <APIProvider apiKey={MAPS_KEY}>
+      <AddressAutocompleteInner {...props} />
+    </APIProvider>
   );
 }
