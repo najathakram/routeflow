@@ -15,6 +15,7 @@ import {
   Loader2,
   Settings,
   LayoutGrid,
+  Heart,
 } from "lucide-react";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { useBuyerCart } from "@/lib/buyer-cart";
@@ -110,6 +111,10 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
   const { buyer, isLoading, isAuthenticated, activeSeller, sellers, setActiveSeller, logout } =
     useBuyerAuth();
 
+  // Hooks must be called unconditionally — before any early returns
+  const sellerSlug = activeSeller?.tenant.slug;
+  const { totalQty: cartItemCount } = useBuyerCart(buyer?.id, sellerSlug);
+
   // Redirect to login if not authenticated
   React.useEffect(() => {
     if (!isLoading && !isAuthenticated) {
@@ -129,9 +134,6 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
     return null;
   }
 
-  const sellerSlug = activeSeller?.tenant.slug;
-  const { totalQty: cartItemCount } = useBuyerCart(buyer?.id, sellerSlug);
-
   const navItems = sellerSlug
     ? [
         {
@@ -143,6 +145,11 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
           href: `/buyer/portal/${sellerSlug}/shop`,
           icon: Store,
           label: "Shop",
+        },
+        {
+          href: `/buyer/portal/${sellerSlug}/favorites`,
+          icon: Heart,
+          label: "Favorites",
         },
         {
           href: `/buyer/portal/${sellerSlug}/orders`,

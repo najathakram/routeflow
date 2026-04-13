@@ -13,7 +13,7 @@ import {
   UseInterceptors,
 } from "@nestjs/common";
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiHeader } from "@nestjs/swagger";
-import { UserRole, UserStatus } from "@prisma/client";
+import { OrderStatus, UserRole, UserStatus } from "@prisma/client";
 import { BuyerService } from "./buyer.service";
 import { BuyerCatalogService } from "./buyer-catalog.service";
 import { BuyerDashboardService } from "./buyer-dashboard.service";
@@ -22,8 +22,10 @@ import { BuyerSellerContextGuard } from "./guards/buyer-seller-context.guard";
 import { BuyerTenantInterceptor } from "./buyer-tenant.interceptor";
 import { CurrentBuyer, CurrentBuyerCustomer } from "./decorators/current-buyer.decorator";
 import type { BuyerJwtPayload } from "./interfaces/buyer-jwt-payload.interface";
+import { ForbiddenException, NotFoundException } from "@nestjs/common";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { RequestSellerDto } from "./dto/request-seller.dto";
+import { PrismaService } from "../prisma/prisma.service";
 import { BuyerCreateOrderDto } from "./dto/buyer-create-order.dto";
 import { OrdersService } from "../orders/orders.service";
 import { InvoicesService } from "../invoices/invoices.service";
@@ -65,6 +67,7 @@ export class BuyerController {
     private readonly invoicesService: InvoicesService,
     private readonly customersService: CustomersService,
     private readonly templatesService: OrderTemplatesService,
+    private readonly prisma: PrismaService,
   ) {}
 
   // ─── Unscoped endpoints (no seller context needed) ────────────────────────────
@@ -155,15 +158,6 @@ export class BuyerController {
     return this.catalogService.getCategories();
   }
 
-  @Get("products/:id")
-  @UseGuards(BuyerSellerContextGuard)
-  @UseInterceptors(BuyerTenantInterceptor)
-  @ApiHeader({ name: "X-Tenant-Slug", required: true })
-  @ApiOperation({ summary: "Get single product detail with buyer-specific pricing" })
-  getProduct(@Param("id") id: string, @CurrentBuyerCustomer() ctx: any) {
-    return this.catalogService.getProductDetail(id, ctx.customerId);
-  }
-
   @Get("products")
   @UseGuards(BuyerSellerContextGuard)
   @UseInterceptors(BuyerTenantInterceptor)
@@ -177,16 +171,27 @@ export class BuyerController {
     @Query("limit") limit?: string,
     @Query("sort") sort?: string,
   ) {
+    const parsedPage = page ? Number(page) : undefined;
+    const parsedLimit = limit ? Number(limit) : undefined;
     return this.catalogService.getCatalog(
       {
         search,
         category,
-        page: page ? Number(page) : undefined,
-        limit: limit ? Number(limit) : undefined,
+        page: Number.isFinite(parsedPage) && parsedPage! >= 1 ? parsedPage : undefined,
+        limit: Number.isFinite(parsedLimit) && parsedLimit! >= 1 ? parsedLimit : undefined,
         sort,
       },
       ctx.customerId,
     );
+  }
+
+  @Get("products/:id")
+  @UseGuards(BuyerSellerContextGuard)
+  @UseInterceptors(BuyerTenantInterceptor)
+  @ApiHeader({ name: "X-Tenant-Slug", required: true })
+  @ApiOperation({ summary: "Get single product detail with buyer-specific pricing" })
+  getProduct(@Param("id") id: string, @CurrentBuyerCustomer() ctx: any) {
+    return this.catalogService.getProductDetail(id, ctx.customerId);
   }
 
   // ─── Order CRUD ───────────────────────────────────────────────────────────────
@@ -243,7 +248,7 @@ export class BuyerController {
   cancelOrder(@Param("id") id: string, @CurrentBuyerCustomer() ctx: any) {
     return this.ordersService.changeStatus(
       id,
-      { status: "CANCELLED" as any },
+      { status: OrderStatus.CANCELLED },
       makePseudoUser(ctx),
     );
   }
@@ -255,8 +260,13 @@ export class BuyerController {
   @UseInterceptors(BuyerTenantInterceptor)
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "Dashboard data: recent orders, frequent items, spend stats" })
-  getDashboard(@CurrentBuyerCustomer() ctx: any) {
-    return this.dashboardService.getDashboard(ctx.customerId);
+  getDashboard(
+    @CurrentBuyerCustomer() ctx: any,
+    @Query("frequentWindow") frequentWindow?: string,
+  ) {
+    const validWindows = ["30d", "90d", "all"];
+    const window = validWindows.includes(frequentWindow ?? "") ? frequentWindow as "30d" | "90d" | "all" : "all";
+    return this.dashboardService.getDashboard(ctx.customerId, window);
   }
 
   // ─── Order templates ──────────────────────────────────────────────────────────
@@ -276,7 +286,57 @@ export class BuyerController {
   @UseInterceptors(BuyerTenantInterceptor)
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "Generate a new order from a standing order template" })
-  reorderFromTemplate(@Param("id") id: string) {
+  async reorderFromTemplate(
+    @Param("id") id: string,
+    @CurrentBuyerCustomer() ctx: any,
+  ) {
+    // Ownership check: verify the template belongs to this buyer's customer
+    const template = await this.prisma
+      .forTenant()
+      .orderTemplate.findUnique({ where: { id }, select: { customerId: true } });
+    if (!template) throw new NotFoundException("Template not found");
+    if (template.customerId !== ctx.customerId) {
+      throw new ForbiddenException("This template does not belong to your account");
+    }
     return this.templatesService.generateOrder(id);
+  }
+
+  // ─── Favorites ──────────────────────────────────────────────────────────────
+
+  @Get("favorites")
+  @UseGuards(BuyerSellerContextGuard)
+  @UseInterceptors(BuyerTenantInterceptor)
+  @ApiHeader({ name: "X-Tenant-Slug", required: true })
+  @ApiOperation({ summary: "List buyer's favorite products at this seller" })
+  getFavorites(@CurrentBuyer() buyer: BuyerJwtPayload, @CurrentBuyerCustomer() ctx: any) {
+    return this.catalogService.getFavorites(buyer.sub, ctx.customerId);
+  }
+
+  @Post("favorites/:productId")
+  @HttpCode(HttpStatus.CREATED)
+  @UseGuards(BuyerSellerContextGuard)
+  @UseInterceptors(BuyerTenantInterceptor)
+  @ApiHeader({ name: "X-Tenant-Slug", required: true })
+  @ApiOperation({ summary: "Add a product to favorites" })
+  addFavorite(
+    @Param("productId") productId: string,
+    @CurrentBuyer() buyer: BuyerJwtPayload,
+    @CurrentBuyerCustomer() ctx: any,
+  ) {
+    return this.catalogService.addFavorite(buyer.sub, ctx.customerId, productId, ctx.tenantId);
+  }
+
+  @Delete("favorites/:productId")
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(BuyerSellerContextGuard)
+  @UseInterceptors(BuyerTenantInterceptor)
+  @ApiHeader({ name: "X-Tenant-Slug", required: true })
+  @ApiOperation({ summary: "Remove a product from favorites" })
+  removeFavorite(
+    @Param("productId") productId: string,
+    @CurrentBuyer() buyer: BuyerJwtPayload,
+    @CurrentBuyerCustomer() ctx: any,
+  ) {
+    return this.catalogService.removeFavorite(buyer.sub, ctx.customerId, productId);
   }
 }

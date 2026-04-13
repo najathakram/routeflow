@@ -14,10 +14,18 @@ import {
   ChevronLeft,
   ChevronRight,
   X,
+  Heart,
 } from "lucide-react";
-import { Badge, Button } from "@routeflow/ui/web";
+import { Button } from "@routeflow/ui/web";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
-import { useBuyerProducts, useBuyerCategories, type BuyerProduct } from "@/lib/api/buyer";
+import {
+  useBuyerProducts,
+  useBuyerCategories,
+  useBuyerFavorites,
+  useBuyerAddFavorite,
+  useBuyerRemoveFavorite,
+  type BuyerProduct,
+} from "@/lib/api/buyer";
 import { useBuyerCart } from "@/lib/buyer-cart";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -31,13 +39,17 @@ function fmt(n: number) {
 function ProductCard({
   product,
   cartQty,
+  isFavorite,
   onAdd,
   onUpdateQty,
+  onToggleFavorite,
 }: {
   product: BuyerProduct;
   cartQty: number;
+  isFavorite: boolean;
   onAdd: () => void;
   onUpdateQty: (qty: number) => void;
+  onToggleFavorite: () => void;
 }) {
   return (
     <div className="group flex flex-col rounded-xl border border-surface-border bg-white overflow-hidden hover:shadow-md transition-shadow">
@@ -52,9 +64,26 @@ function ProductCard({
         ) : (
           <Package className="h-12 w-12 text-navy/15" />
         )}
+        {/* Favorite heart */}
+        <button
+          onClick={onToggleFavorite}
+          className={`absolute top-2 right-2 flex h-8 w-8 items-center justify-center rounded-full shadow-sm transition-colors ${
+            isFavorite
+              ? "bg-danger/10 text-danger hover:bg-danger hover:text-white"
+              : "bg-white/90 text-navy/30 hover:text-danger"
+          }`}
+          title={isFavorite ? "Remove from favorites" : "Add to favorites"}
+        >
+          <Heart className={`h-4 w-4 ${isFavorite ? "fill-current" : ""}`} />
+        </button>
         {product.category && (
           <span className="absolute top-2 left-2 rounded-full bg-white/90 px-2 py-0.5 text-[10px] font-medium text-navy/70 shadow-sm">
             {product.category}
+          </span>
+        )}
+        {product.isFeatured && (
+          <span className="absolute bottom-2 left-2 rounded-full bg-amber-400 px-2 py-0.5 text-[10px] font-semibold text-white shadow-sm">
+            ⭐ Featured
           </span>
         )}
       </div>
@@ -134,7 +163,7 @@ export default function BuyerShopPage() {
   // Reset page on filter change
   React.useEffect(() => { setPage(1); }, [category, sort]);
 
-  const { data: result, isLoading } = useBuyerProducts({
+  const { data: result, isLoading, isError } = useBuyerProducts({
     search: debouncedSearch || undefined,
     category: category || undefined,
     page,
@@ -142,8 +171,25 @@ export default function BuyerShopPage() {
     sort,
   });
   const { data: categories = [] } = useBuyerCategories();
+  const { data: favorites } = useBuyerFavorites();
+  const addFavorite = useBuyerAddFavorite();
+  const removeFavorite = useBuyerRemoveFavorite();
 
   const cart = useBuyerCart(buyer?.id, sellerSlug);
+
+  // Build a set of favorite product IDs for quick lookup
+  const favoriteIds = React.useMemo(
+    () => new Set((favorites ?? []).map((f) => f.productId)),
+    [favorites],
+  );
+
+  const toggleFavorite = (productId: string) => {
+    if (favoriteIds.has(productId)) {
+      removeFavorite.mutate(productId);
+    } else {
+      addFavorite.mutate(productId);
+    }
+  };
 
   // Redirect checks
   React.useEffect(() => {
@@ -237,8 +283,12 @@ export default function BuyerShopPage() {
           </p>
         )}
 
-        {/* Loading / Empty / Products */}
-        {isLoading ? (
+        {/* Loading / Error / Empty / Products */}
+        {isError ? (
+          <div className="rounded-xl border border-danger/30 bg-danger-bg p-8 text-center">
+            <p className="text-sm text-danger">Failed to load products. Please try again later.</p>
+          </div>
+        ) : isLoading ? (
           <div className="flex items-center justify-center py-16">
             <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
           </div>
@@ -265,6 +315,7 @@ export default function BuyerShopPage() {
                 key={p.id}
                 product={p}
                 cartQty={cart.getItemQty(p.id)}
+                isFavorite={favoriteIds.has(p.id)}
                 onAdd={() =>
                   cart.addItem({
                     productId: p.id,
@@ -275,6 +326,7 @@ export default function BuyerShopPage() {
                   })
                 }
                 onUpdateQty={(qty) => cart.updateQty(p.id, qty)}
+                onToggleFavorite={() => toggleFavorite(p.id)}
               />
             ))}
           </div>
@@ -315,7 +367,18 @@ export default function BuyerShopPage() {
                       <td className="px-4 py-3 text-xs text-navy/50">{p.sku ?? "—"}</td>
                       <td className="px-4 py-3 text-right text-sm font-semibold text-navy">{fmt(p.buyerPrice)}</td>
                       <td className="px-4 py-3">
-                        <div className="flex items-center justify-end gap-1">
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            onClick={() => toggleFavorite(p.id)}
+                            className={`rounded p-1.5 transition-colors ${
+                              favoriteIds.has(p.id)
+                                ? "text-danger hover:bg-danger-bg"
+                                : "text-navy/30 hover:text-danger"
+                            }`}
+                            title={favoriteIds.has(p.id) ? "Remove from favorites" : "Add to favorites"}
+                          >
+                            <Heart className={`h-4 w-4 ${favoriteIds.has(p.id) ? "fill-current" : ""}`} />
+                          </button>
                           {qty > 0 ? (
                             <div className="flex items-center gap-1 rounded-lg border border-brand-200 bg-brand-50">
                               <button onClick={() => cart.updateQty(p.id, qty - 1)} className="rounded-l-lg p-1.5 text-brand-600 hover:bg-brand-100">

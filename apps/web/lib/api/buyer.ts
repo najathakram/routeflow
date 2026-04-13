@@ -16,6 +16,7 @@ export interface BuyerProduct {
   buyerPrice: number;
   thumbnailUrl: string | null;
   imageKeys: string[];
+  isFeatured: boolean;
 }
 
 export interface BuyerProductDetail extends BuyerProduct {
@@ -95,6 +96,24 @@ export interface DashboardData {
     buyerPrice: number;
     thumbnailUrl: string | null;
   }>;
+  featuredItems: Array<{
+    id: string;
+    name: string;
+    sku: string | null;
+    unit: string;
+    category: string | null;
+    buyerPrice: number;
+    thumbnailUrl: string | null;
+  }>;
+  suggestedItems: Array<{
+    id: string;
+    name: string;
+    sku: string | null;
+    unit: string;
+    category: string | null;
+    buyerPrice: number;
+    thumbnailUrl: string | null;
+  }>;
 }
 
 export interface OrderTemplate {
@@ -154,8 +173,18 @@ export function useBuyerCategories() {
 
 // ─── Orders ───────────────────────────────────────────────────────────────────
 
+export interface BuyerOrderListItem {
+  id: string;
+  orderNumber: string;
+  status: string;
+  total: number;
+  totalAmount?: number;
+  createdAt: string;
+  itemCount?: number;
+}
+
 export function useBuyerOrders(params?: { page?: number; limit?: number; status?: string }) {
-  return useQuery<Paginated<any>>({
+  return useQuery<Paginated<BuyerOrderListItem>>({
     queryKey: ["buyer", "orders", params],
     queryFn: () =>
       buyerApiClient.get("/buyer/orders", { params }).then((r) => r.data),
@@ -190,7 +219,7 @@ export function useBuyerCreateOrder() {
 export function useBuyerUpdateOrderItems() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ orderId, items }: { orderId: string; items: any[] }) =>
+    mutationFn: ({ orderId, items }: { orderId: string; items: Array<{ productId: string; qty: number }> }) =>
       buyerApiClient.patch(`/buyer/orders/${orderId}/items`, { items }).then((r) => r.data),
     onSuccess: (_d, vars) => {
       qc.invalidateQueries({ queryKey: ["buyer", "order", vars.orderId] });
@@ -214,10 +243,13 @@ export function useBuyerCancelOrder() {
 
 // ─── Dashboard ────────────────────────────────────────────────────────────────
 
-export function useBuyerDashboard() {
+export function useBuyerDashboard(frequentWindow?: "30d" | "90d" | "all") {
   return useQuery<DashboardData>({
-    queryKey: ["buyer", "dashboard"],
-    queryFn: () => buyerApiClient.get("/buyer/dashboard").then((r) => r.data),
+    queryKey: ["buyer", "dashboard", frequentWindow],
+    queryFn: () =>
+      buyerApiClient
+        .get("/buyer/dashboard", { params: { frequentWindow } })
+        .then((r) => r.data),
   });
 }
 
@@ -238,6 +270,50 @@ export function useBuyerReorder() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["buyer", "orders"] });
       qc.invalidateQueries({ queryKey: ["buyer", "dashboard"] });
+    },
+  });
+}
+
+// ─── Favorites ───────────────────────────────────────────────────────────────
+
+export interface BuyerFavoriteItem {
+  id: string;
+  productId: string;
+  name: string;
+  sku: string | null;
+  unit: string;
+  category: string | null;
+  buyerPrice: number;
+  thumbnailUrl: string | null;
+  imageKeys: string[];
+  createdAt: string;
+}
+
+export function useBuyerFavorites() {
+  return useQuery<BuyerFavoriteItem[]>({
+    queryKey: ["buyer", "favorites"],
+    queryFn: () => buyerApiClient.get("/buyer/favorites").then((r) => r.data),
+  });
+}
+
+export function useBuyerAddFavorite() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (productId: string) =>
+      buyerApiClient.post(`/buyer/favorites/${productId}`).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["buyer", "favorites"] });
+    },
+  });
+}
+
+export function useBuyerRemoveFavorite() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (productId: string) =>
+      buyerApiClient.delete(`/buyer/favorites/${productId}`).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["buyer", "favorites"] });
     },
   });
 }

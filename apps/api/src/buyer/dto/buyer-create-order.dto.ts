@@ -1,10 +1,10 @@
 import {
+  ArrayMinSize,
   IsArray,
   IsBoolean,
   IsDateString,
   IsEnum,
   IsInt,
-  IsNumber,
   IsOptional,
   IsString,
   Min,
@@ -14,12 +14,13 @@ import { Type } from "class-transformer";
 
 class BuyerOrderItemDto {
   @IsString() productId: string;
-  @IsNumber() @Min(1) qty: number;
+  @IsInt() @Min(1) qty: number;
   @IsOptional() @IsString() notes?: string;
 }
 
 export class BuyerCreateOrderDto {
   @IsArray()
+  @ArrayMinSize(1, { message: "Order must contain at least one item" })
   @ValidateNested({ each: true })
   @Type(() => BuyerOrderItemDto)
   items: BuyerOrderItemDto[];

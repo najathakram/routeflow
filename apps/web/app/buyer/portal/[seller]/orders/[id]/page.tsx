@@ -119,6 +119,7 @@ export default function BuyerOrderDetailPage() {
   const [editMode, setEditMode] = React.useState(false);
   const [editItems, setEditItems] = React.useState<Array<{ productId: string; qty: number; name: string; unit: string }>>([]);
   const [cancelOpen, setCancelOpen] = React.useState(false);
+  const [actionError, setActionError] = React.useState<string | null>(null);
 
   // Redirect checks
   React.useEffect(() => {
@@ -136,6 +137,7 @@ export default function BuyerOrderDetailPage() {
 
   const enterEditMode = () => {
     if (!order) return;
+    setActionError(null);
     setEditItems(
       order.lineItems
         .filter((li) => li.status !== "CANCELLED")
@@ -151,17 +153,28 @@ export default function BuyerOrderDetailPage() {
 
   const handleSaveEdit = async () => {
     if (!order) return;
-    await updateItems.mutateAsync({
-      orderId: order.id,
-      items: editItems.map((i) => ({ productId: i.productId, qty: i.qty })),
-    });
-    setEditMode(false);
+    setActionError(null);
+    try {
+      await updateItems.mutateAsync({
+        orderId: order.id,
+        items: editItems.map((i) => ({ productId: i.productId, qty: i.qty })),
+      });
+      setEditMode(false);
+    } catch (err: any) {
+      setActionError(err?.response?.data?.message ?? "Failed to update order items.");
+    }
   };
 
   const handleCancel = async () => {
     if (!order) return;
-    await cancelOrder.mutateAsync(order.id);
-    setCancelOpen(false);
+    setActionError(null);
+    try {
+      await cancelOrder.mutateAsync(order.id);
+      setCancelOpen(false);
+    } catch (err: any) {
+      setCancelOpen(false);
+      setActionError(err?.response?.data?.message ?? "Failed to cancel order.");
+    }
   };
 
   if (authLoading || isLoading) {
@@ -238,6 +251,14 @@ export default function BuyerOrderDetailPage() {
         <div className="mb-4 rounded-xl border border-surface-border bg-white p-4">
           <p className="text-xs text-navy/50 mb-1">Order Notes</p>
           <p className="text-sm text-navy">{order.notes}</p>
+        </div>
+      )}
+
+      {/* Action error */}
+      {actionError && (
+        <div className="mb-4 flex items-center gap-2 rounded-lg bg-danger-bg px-4 py-2.5 text-sm text-danger">
+          <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+          {actionError}
         </div>
       )}
 

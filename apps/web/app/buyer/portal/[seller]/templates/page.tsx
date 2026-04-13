@@ -11,7 +11,6 @@ import {
   Calendar,
   ShoppingCart,
   CheckCircle2,
-  XCircle,
   AlertTriangle,
 } from "lucide-react";
 import { Badge, Button } from "@routeflow/ui/web";
@@ -145,7 +144,7 @@ export default function BuyerTemplatesPage() {
   const { activeSeller, isLoading: authLoading } = useBuyerAuth();
   const sellerSlug = params.seller as string;
 
-  const { data: result, isLoading } = useBuyerTemplates();
+  const { data: result, isLoading, isError } = useBuyerTemplates();
   const reorder = useBuyerReorder();
 
   const [reorderingId, setReorderingId] = React.useState<string | null>(null);
@@ -225,7 +224,11 @@ export default function BuyerTemplatesPage() {
       )}
 
       {/* Templates list */}
-      {templates.length === 0 ? (
+      {isError ? (
+        <div className="rounded-xl border border-danger/30 bg-danger-bg p-8 text-center">
+          <p className="text-sm text-danger">Failed to load standing orders. Please try again later.</p>
+        </div>
+      ) : templates.length === 0 ? (
         <div className="rounded-xl border border-dashed border-surface-border bg-white p-12 text-center">
           <Repeat className="mx-auto mb-4 h-12 w-12 text-navy/20" />
           <h2 className="text-lg font-semibold text-navy mb-2">No standing orders</h2>

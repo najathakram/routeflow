@@ -35,13 +35,11 @@ export default function BuyerCartPage() {
   const [deliveryDate, setDeliveryDate] = React.useState("");
   const [urgent, setUrgent] = React.useState(false);
   const [orderPlaced, setOrderPlaced] = React.useState<{ id: string; orderNumber: string } | null>(null);
+  const [orderError, setOrderError] = React.useState<string | null>(null);
 
-  // Fetch live prices for cart items
-  const productIds = cart.items.map((i) => i.productId);
-  const { data: productsResult } = useBuyerProducts({
-    limit: 100,
-    search: undefined,
-  });
+  // Fetch ALL products (limit=0 returns all) to build a complete price map
+  // This ensures cart items are always priced correctly regardless of catalog size
+  const { data: productsResult } = useBuyerProducts({ limit: 0 });
 
   // Build price map from available products
   const priceMap = React.useMemo(() => {
@@ -65,15 +63,22 @@ export default function BuyerCartPage() {
   }, [authLoading, activeSeller, router]);
 
   const handlePlaceOrder = async (status: "PENDING" | "DRAFT") => {
-    const result = await createOrder.mutateAsync({
-      items: cart.items.map((i) => ({ productId: i.productId, qty: i.qty })),
-      notes: notes || undefined,
-      urgent,
-      requestedDeliveryDate: deliveryDate || undefined,
-      status,
-    });
-    cart.clearCart();
-    setOrderPlaced(result);
+    setOrderError(null);
+    try {
+      const result = await createOrder.mutateAsync({
+        items: cart.items.map((i) => ({ productId: i.productId, qty: i.qty })),
+        notes: notes || undefined,
+        urgent,
+        requestedDeliveryDate: deliveryDate || undefined,
+        status,
+      });
+      cart.clearCart();
+      setOrderPlaced(result);
+    } catch (err: any) {
+      setOrderError(
+        err?.response?.data?.message ?? "Failed to create order. Please try again.",
+      );
+    }
   };
 
   if (authLoading) {
@@ -286,6 +291,7 @@ export default function BuyerCartPage() {
               className="w-full"
               onClick={() => handlePlaceOrder("PENDING")}
               loading={createOrder.isPending}
+              disabled={createOrder.isPending}
             >
               Place Order
             </Button>
@@ -294,14 +300,15 @@ export default function BuyerCartPage() {
               className="w-full"
               onClick={() => handlePlaceOrder("DRAFT")}
               loading={createOrder.isPending}
+              disabled={createOrder.isPending}
             >
               Save as Draft
             </Button>
           </div>
 
-          {createOrder.isError && (
+          {orderError && (
             <div className="rounded-lg bg-danger-bg px-3 py-2 text-xs text-danger">
-              {(createOrder.error as any)?.response?.data?.message ?? "Failed to create order"}
+              {orderError}
             </div>
           )}
         </div>

@@ -302,6 +302,7 @@ model Tenant {
   systemConfigs        SystemConfig[]
   customerLinks        CustomerLink[]
   buyerMergeRequests   BuyerMergeRequest[]
+  buyerFavorites       BuyerFavorite[]
 
   @@index([slug])
   @@index([status])
@@ -488,6 +489,7 @@ model Customer {
   tagAssignments     CustomerTagAssignment[]
   comments           CustomerComment[]
   customerLink       CustomerLink?
+  buyerFavorites     BuyerFavorite[]
 
   @@index([zohoContactId])
   @@index([businessName])
@@ -559,6 +561,7 @@ model Product {
   category         String?
   imageKeys        String[] @default([])
   isActive         Boolean  @default(true)
+  isFeatured       Boolean  @default(false)
   barcode          String?
   currentStock     Decimal  @default(0) @db.Decimal(10, 3)
   averageCost      Decimal? @db.Decimal(10, 4)
@@ -587,6 +590,7 @@ model Product {
   vendorBillItems         VendorBillItem[]
   customerPrices          CustomerPrice[]
   productMappings         ProductMapping[]
+  buyerFavorites          BuyerFavorite[]
   parent                  Product?  @relation("ProductVariants", fields: [parentProductId], references: [id])
   variants                Product[] @relation("ProductVariants")
 
@@ -594,6 +598,7 @@ model Product {
   @@unique([tenantId, barcode])
   @@index([category])
   @@index([isActive])
+  @@index([isFeatured])
   @@index([barcode])
   @@index([parentProductId])
   @@index([tenantId])
@@ -1731,6 +1736,7 @@ model BuyerAccount {
   refreshTokens            BuyerRefreshToken[]
   mergeRequestsAsPrimary   BuyerMergeRequest[] @relation("MergeAsPrimary")
   mergeRequestsAsSecondary BuyerMergeRequest[] @relation("MergeAsSecondary")
+  favorites                BuyerFavorite[]
 
   @@index([email])
   @@index([status])
@@ -1838,4 +1844,24 @@ enum MergeInitiator {
   BUYER
   TENANT
   SUPER_ADMIN
+}
+
+// ─── Buyer Favorites ──────────────────────────────────────────────────────────
+
+model BuyerFavorite {
+  id             String   @id @default(uuid())
+  buyerAccountId String
+  customerId     String
+  productId      String
+  tenantId       String
+  createdAt      DateTime @default(now())
+
+  buyerAccount   BuyerAccount @relation(fields: [buyerAccountId], references: [id], onDelete: Cascade)
+  customer       Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  product        Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  tenant         Tenant       @relation(fields: [tenantId], references: [id])
+
+  @@unique([buyerAccountId, customerId, productId])
+  @@index([buyerAccountId, customerId])
+  @@index([tenantId])
 }

@@ -2,31 +2,16 @@
 
 import * as React from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ChevronLeft, ChevronRight, ShoppingCart } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  ShoppingCart,
+  Loader2,
+  AlertTriangle,
+} from "lucide-react";
 import { Badge } from "@routeflow/ui/web";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
-import { buyerApiClient } from "@/lib/buyer-api-client";
-
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-interface Order {
-  id: string;
-  orderNumber?: string;
-  createdAt: string;
-  status: string;
-  totalAmount?: number;
-  total?: number;
-}
-
-interface PaginatedResponse {
-  data: Order[];
-  meta: {
-    total: number;
-    page: number;
-    limit: number;
-    totalPages: number;
-  };
-}
+import { useBuyerOrders } from "@/lib/api/buyer";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -38,6 +23,8 @@ function getStatusVariant(status: string): "success" | "warning" | "danger" | "n
     case "PENDING":
     case "PROCESSING":
     case "IN_TRANSIT":
+    case "CONFIRMED":
+    case "OUT_FOR_DELIVERY":
       return "warning";
     case "CANCELLED":
     case "FAILED":
@@ -79,11 +66,8 @@ export default function BuyerOrdersPage() {
   const { activeSeller, isLoading: authLoading } = useBuyerAuth();
   const sellerSlug = params.seller as string;
 
-  const [orders, setOrders] = React.useState<Order[]>([]);
-  const [meta, setMeta] = React.useState<PaginatedResponse["meta"] | null>(null);
   const [page, setPage] = React.useState(1);
-  const [isLoading, setIsLoading] = React.useState(true);
-  const [error, setError] = React.useState<string | null>(null);
+  const { data: result, isLoading, isError, error } = useBuyerOrders({ page, limit: 20 });
 
   // Validate slug matches active seller
   React.useEffect(() => {
@@ -99,32 +83,13 @@ export default function BuyerOrdersPage() {
     }
   }, [authLoading, activeSeller, router]);
 
-  // Fetch orders
-  React.useEffect(() => {
-    if (authLoading || !activeSeller) return;
-    if (activeSeller.tenant.slug !== sellerSlug) return;
-
-    setIsLoading(true);
-    setError(null);
-    buyerApiClient
-      .get<PaginatedResponse>("/buyer/orders", { params: { page, limit: 20 } })
-      .then((res) => {
-        setOrders(res.data.data);
-        setMeta(res.data.meta);
-      })
-      .catch((err) => {
-        const msg =
-          (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
-          "Failed to load orders.";
-        setError(typeof msg === "string" ? msg : "Failed to load orders.");
-      })
-      .finally(() => setIsLoading(false));
-  }, [authLoading, activeSeller, sellerSlug, page]);
+  const orders = result?.data ?? [];
+  const meta = result?.meta ?? null;
 
   if (authLoading) {
     return (
       <div className="flex items-center justify-center py-16">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-brand-500 border-t-transparent" />
+        <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
       </div>
     );
   }
@@ -142,24 +107,25 @@ export default function BuyerOrdersPage() {
       </div>
 
       {/* Error */}
-      {error && (
-        <div className="mb-4 rounded-lg bg-danger-bg px-4 py-3 text-sm text-danger">
-          {error}
+      {isError && (
+        <div className="mb-4 flex items-center gap-2 rounded-lg bg-danger-bg px-4 py-3 text-sm text-danger">
+          <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+          {(error as any)?.response?.data?.message ?? "Failed to load orders."}
         </div>
       )}
 
       {/* Loading */}
       {isLoading ? (
         <div className="flex items-center justify-center py-16">
-          <div className="h-8 w-8 animate-spin rounded-full border-2 border-brand-500 border-t-transparent" />
+          <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
         </div>
-      ) : orders.length === 0 ? (
+      ) : orders.length === 0 && !isError ? (
         <div className="rounded-xl border border-dashed border-surface-border bg-white p-12 text-center">
           <ShoppingCart className="mx-auto mb-4 h-12 w-12 text-navy/20" />
           <h2 className="text-lg font-semibold text-navy mb-2">No orders yet</h2>
           <p className="text-sm text-navy/60">Orders from this seller will appear here.</p>
         </div>
-      ) : (
+      ) : orders.length > 0 ? (
         <>
           {/* Table */}
           <div className="overflow-hidden rounded-xl border border-surface-border bg-white shadow-sm">
@@ -181,7 +147,7 @@ export default function BuyerOrdersPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-surface-border">
-                {orders.map((order) => (
+                {orders.map((order: any) => (
                   <tr
                     key={order.id}
                     onClick={() => router.push(`/buyer/portal/${sellerSlug}/orders/${order.id}`)}
@@ -199,7 +165,7 @@ export default function BuyerOrdersPage() {
                       </Badge>
                     </td>
                     <td className="px-4 py-3 text-right text-sm text-navy">
-                      {formatCurrency(order.totalAmount ?? order.total)}
+                      {formatCurrency(Number(order.totalAmount ?? order.total))}
                     </td>
                   </tr>
                 ))}
@@ -238,7 +204,7 @@ export default function BuyerOrdersPage() {
             </div>
           )}
         </>
-      )}
+      ) : null}
     </div>
   );
 }

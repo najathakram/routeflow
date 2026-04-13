@@ -44,7 +44,8 @@ export default function BuyerDashboardPage() {
   const { buyer, activeSeller, isLoading: authLoading } = useBuyerAuth();
   const sellerSlug = params.seller as string;
 
-  const { data: dashboard, isLoading } = useBuyerDashboard();
+  const [frequentWindow, setFrequentWindow] = React.useState<"30d" | "90d" | "all">("all");
+  const { data: dashboard, isLoading, isError } = useBuyerDashboard(frequentWindow);
   const cart = useBuyerCart(buyer?.id, sellerSlug);
 
   React.useEffect(() => {
@@ -55,6 +56,16 @@ export default function BuyerDashboardPage() {
     return (
       <div className="flex items-center justify-center py-16">
         <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div className="p-6">
+        <div className="rounded-lg bg-danger-bg px-4 py-3 text-sm text-danger">
+          Failed to load dashboard data. Please try again later.
+        </div>
       </div>
     );
   }
@@ -117,7 +128,28 @@ export default function BuyerDashboardPage() {
       {dashboard.frequentlyOrdered.length > 0 && (
         <div className="rounded-xl border border-surface-border bg-white overflow-hidden">
           <div className="flex items-center justify-between border-b border-surface-border px-4 py-3">
-            <h2 className="text-sm font-semibold text-navy">Frequently Ordered</h2>
+            <div className="flex items-center gap-3">
+              <h2 className="text-sm font-semibold text-navy">Frequently Ordered</h2>
+              <div className="flex items-center rounded-lg border border-surface-border bg-surface-raised p-0.5">
+                {([
+                  { value: "30d" as const, label: "30 Days" },
+                  { value: "90d" as const, label: "90 Days" },
+                  { value: "all" as const, label: "All Time" },
+                ]).map((opt) => (
+                  <button
+                    key={opt.value}
+                    onClick={() => setFrequentWindow(opt.value)}
+                    className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                      frequentWindow === opt.value
+                        ? "bg-white text-brand-600 shadow-sm"
+                        : "text-navy/50 hover:text-navy"
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
             <button
               onClick={() => router.push(`/buyer/portal/${sellerSlug}/shop`)}
               className="text-xs text-brand-500 hover:text-brand-600 font-medium flex items-center gap-1"
@@ -228,6 +260,111 @@ export default function BuyerDashboardPage() {
                     <Package className="h-7 w-7 text-navy/15" />
                   )}
                 </div>
+                <p className="text-xs font-medium text-navy text-center line-clamp-2">{p.name}</p>
+                <p className="text-xs font-bold text-navy">{fmt(p.buyerPrice)}</p>
+                <button
+                  onClick={() =>
+                    cart.addItem({
+                      productId: p.id,
+                      qty: 1,
+                      name: p.name,
+                      unit: p.unit,
+                      thumbnailUrl: p.thumbnailUrl,
+                    })
+                  }
+                  className="flex items-center gap-1 rounded-md bg-brand-500 px-2 py-1 text-[10px] font-semibold text-white hover:bg-brand-600 transition-colors"
+                >
+                  <Plus className="h-3 w-3" /> Add
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Featured Items */}
+      {dashboard.featuredItems && dashboard.featuredItems.length > 0 && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50/30 overflow-hidden">
+          <div className="flex items-center justify-between border-b border-amber-200 px-4 py-3">
+            <div className="flex items-center gap-2">
+              <span className="text-amber-500 text-base">⭐</span>
+              <h2 className="text-sm font-semibold text-navy">Featured by {activeSeller?.tenant.name}</h2>
+            </div>
+            <button
+              onClick={() => router.push(`/buyer/portal/${sellerSlug}/shop`)}
+              className="text-xs text-brand-500 hover:text-brand-600 font-medium flex items-center gap-1"
+            >
+              Browse All <ArrowRight className="h-3 w-3" />
+            </button>
+          </div>
+          <div className="flex gap-3 overflow-x-auto p-4">
+            {dashboard.featuredItems.map((p) => (
+              <div
+                key={p.id}
+                className="flex-shrink-0 w-36 flex flex-col items-center gap-2 rounded-lg border border-amber-200 bg-white p-3"
+              >
+                <div className="h-16 w-16 rounded-lg bg-surface-raised flex items-center justify-center overflow-hidden">
+                  {p.thumbnailUrl ? (
+                    <img src={p.thumbnailUrl} alt="" className="h-full w-full object-cover" />
+                  ) : (
+                    <Package className="h-7 w-7 text-navy/15" />
+                  )}
+                </div>
+                <p className="text-xs font-medium text-navy text-center line-clamp-2">{p.name}</p>
+                <p className="text-xs font-bold text-navy">{fmt(p.buyerPrice)}</p>
+                <button
+                  onClick={() =>
+                    cart.addItem({
+                      productId: p.id,
+                      qty: 1,
+                      name: p.name,
+                      unit: p.unit,
+                      thumbnailUrl: p.thumbnailUrl,
+                    })
+                  }
+                  className="flex items-center gap-1 rounded-md bg-brand-500 px-2 py-1 text-[10px] font-semibold text-white hover:bg-brand-600 transition-colors"
+                >
+                  <Plus className="h-3 w-3" /> Add
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Suggested for You */}
+      {dashboard.suggestedItems && dashboard.suggestedItems.length > 0 && (
+        <div className="rounded-xl border border-surface-border bg-white overflow-hidden">
+          <div className="flex items-center justify-between border-b border-surface-border px-4 py-3">
+            <div>
+              <h2 className="text-sm font-semibold text-navy">Suggested for You</h2>
+              <p className="text-[11px] text-navy/50 mt-0.5">Products from categories you order from but haven&apos;t tried yet</p>
+            </div>
+            <button
+              onClick={() => router.push(`/buyer/portal/${sellerSlug}/shop`)}
+              className="text-xs text-brand-500 hover:text-brand-600 font-medium flex items-center gap-1"
+            >
+              Browse All <ArrowRight className="h-3 w-3" />
+            </button>
+          </div>
+          <div className="flex gap-3 overflow-x-auto p-4">
+            {dashboard.suggestedItems.map((p) => (
+              <div
+                key={p.id}
+                className="flex-shrink-0 w-36 flex flex-col items-center gap-2 rounded-lg border border-brand-100 bg-brand-50/30 p-3"
+              >
+                <div className="h-16 w-16 rounded-lg bg-surface-raised flex items-center justify-center overflow-hidden">
+                  {p.thumbnailUrl ? (
+                    <img src={p.thumbnailUrl} alt="" className="h-full w-full object-cover" />
+                  ) : (
+                    <Package className="h-7 w-7 text-navy/15" />
+                  )}
+                </div>
+                {p.category && (
+                  <span className="rounded-full bg-brand-100 px-2 py-0.5 text-[9px] font-medium text-brand-600">
+                    {p.category}
+                  </span>
+                )}
                 <p className="text-xs font-medium text-navy text-center line-clamp-2">{p.name}</p>
                 <p className="text-xs font-bold text-navy">{fmt(p.buyerPrice)}</p>
                 <button

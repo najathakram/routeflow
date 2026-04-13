@@ -61,15 +61,6 @@ export function useBuyerCart(buyerAccountId?: string, sellerSlug?: string) {
     return () => window.removeEventListener("storage", handler);
   }, [key]);
 
-  const persist = React.useCallback(
-    (next: CartState) => {
-      if (!key) return;
-      setCart(next);
-      writeCart(key, next);
-    },
-    [key],
-  );
-
   const addItem = React.useCallback(
     (item: CartItem) => {
       setCart((prev) => {
@@ -125,10 +116,6 @@ export function useBuyerCart(buyerAccountId?: string, sellerSlug?: string) {
     setCart(next);
   }, [key]);
 
-  const getCartCount = React.useCallback(() => {
-    return cart.items.reduce((sum, i) => sum + i.qty, 0);
-  }, [cart]);
-
   const getItemQty = React.useCallback(
     (productId: string) => {
       return cart.items.find((i) => i.productId === productId)?.qty ?? 0;
@@ -142,7 +129,6 @@ export function useBuyerCart(buyerAccountId?: string, sellerSlug?: string) {
     removeItem,
     updateQty,
     clearCart,
-    getCartCount,
     getItemQty,
     itemCount: cart.items.length,
     totalQty: cart.items.reduce((s, i) => s + i.qty, 0),

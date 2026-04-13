@@ -12,8 +12,9 @@ export class BuyerDashboardService {
 
   /**
    * Aggregated dashboard data for a buyer at a specific seller.
+   * @param frequentWindow - time window for frequently ordered: '30d', '90d', or 'all' (default: 'all')
    */
-  async getDashboard(customerId: string) {
+  async getDashboard(customerId: string, frequentWindow: '30d' | '90d' | 'all' = 'all') {
     const now = new Date();
     const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
     const ninetyDaysAgo = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
@@ -32,6 +33,7 @@ export class BuyerDashboardService {
       templateCount,
       frequentlyOrderedRaw,
       newProducts,
+      featuredProducts,
       spend30d,
       spend90d,
       spendAllTime,
@@ -75,11 +77,19 @@ export class BuyerDashboardService {
         where: { customerId, isActive: true },
       }),
 
-      // Frequently ordered products (top 10 by occurrence count)
+      // Frequently ordered products (top 10 by occurrence count, filtered by time window)
       this.prisma.forTenant().orderItem.groupBy({
         by: ["productId"],
         where: {
-          order: { customerId, status: { not: "CANCELLED" } },
+          order: {
+            customerId,
+            status: { not: "CANCELLED" },
+            ...(frequentWindow === '30d'
+              ? { createdAt: { gte: thirtyDaysAgo } }
+              : frequentWindow === '90d'
+                ? { createdAt: { gte: ninetyDaysAgo } }
+                : {}),
+          },
         },
         _count: { productId: true },
         _sum: { qty: true },
@@ -91,6 +101,13 @@ export class BuyerDashboardService {
       this.prisma.forTenant().product.findMany({
         where: { isActive: true, createdAt: { gte: thirtyDaysAgo } },
         orderBy: { createdAt: "desc" },
+        take: 10,
+      }),
+
+      // Featured products
+      this.prisma.forTenant().product.findMany({
+        where: { isActive: true, isFeatured: true },
+        orderBy: { name: "asc" },
         take: 10,
       }),
 
@@ -194,6 +211,90 @@ export class BuyerDashboardService {
       }),
     );
 
+    // ─── Featured Items ──────────────────────────────────────────────────────
+    const featuredProductIds = featuredProducts.map((p) => p.id);
+    const featCpOverrides = featuredProductIds.length > 0
+      ? await this.prisma.forTenant().customerPrice.findMany({
+          where: { customerId, productId: { in: featuredProductIds } },
+        })
+      : [];
+    const featCpMap = new Map(featCpOverrides.map((cp) => [cp.productId, cp.pricingTier]));
+
+    const featuredItems = await Promise.all(
+      featuredProducts.map(async (p) => {
+        const effectiveTier = featCpMap.get(p.id) ?? defaultTier;
+        const thumbnailUrl =
+          p.imageKeys.length > 0 ? await this.storage.presignedUrl(p.imageKeys[0]) : null;
+        return {
+          id: p.id,
+          name: p.name,
+          sku: p.sku,
+          unit: p.unit,
+          category: p.category,
+          buyerPrice: getTierPrice(p, effectiveTier),
+          thumbnailUrl,
+        };
+      }),
+    );
+
+    // ─── Suggested Items (category affinity) ──────────────────────────────────
+    // Products in categories the buyer orders from, but hasn't tried yet
+    const orderedProductIds = freqProductIds.length > 0
+      ? freqProductIds
+      : (await this.prisma.forTenant().orderItem.findMany({
+          where: { order: { customerId, status: { not: "CANCELLED" } } },
+          select: { productId: true },
+          distinct: ["productId"],
+        })).map((oi) => oi.productId);
+
+    // Get categories the buyer has ordered from
+    const orderedCategories = orderedProductIds.length > 0
+      ? (await this.prisma.forTenant().product.findMany({
+          where: { id: { in: orderedProductIds }, category: { not: null } },
+          select: { category: true },
+          distinct: ["category"],
+        })).map((p) => p.category).filter(Boolean) as string[]
+      : [];
+
+    // Find products in those categories that the buyer hasn't ordered
+    const suggestedProducts = orderedCategories.length > 0
+      ? await this.prisma.forTenant().product.findMany({
+          where: {
+            isActive: true,
+            category: { in: orderedCategories },
+            id: { notIn: orderedProductIds },
+          },
+          orderBy: { createdAt: "desc" },
+          take: 8,
+        })
+      : [];
+
+    // Enrich suggested products with buyer pricing + thumbnails
+    const suggestedProductIds = suggestedProducts.map((p) => p.id);
+    const sugCpOverrides = suggestedProductIds.length > 0
+      ? await this.prisma.forTenant().customerPrice.findMany({
+          where: { customerId, productId: { in: suggestedProductIds } },
+        })
+      : [];
+    const sugCpMap = new Map(sugCpOverrides.map((cp) => [cp.productId, cp.pricingTier]));
+
+    const suggestedItems = await Promise.all(
+      suggestedProducts.map(async (p) => {
+        const effectiveTier = sugCpMap.get(p.id) ?? defaultTier;
+        const thumbnailUrl =
+          p.imageKeys.length > 0 ? await this.storage.presignedUrl(p.imageKeys[0]) : null;
+        return {
+          id: p.id,
+          name: p.name,
+          sku: p.sku,
+          unit: p.unit,
+          category: p.category,
+          buyerPrice: getTierPrice(p, effectiveTier),
+          thumbnailUrl,
+        };
+      }),
+    );
+
     return {
       recentOrders: recentOrders.map((o) => ({
         id: o.id,
@@ -214,6 +315,8 @@ export class BuyerDashboardService {
       },
       frequentlyOrdered,
       newFromSeller,
+      featuredItems,
+      suggestedItems,
     };
   }
 }
