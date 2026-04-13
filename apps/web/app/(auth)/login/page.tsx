@@ -5,7 +5,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useRouter } from "next/navigation";
-import { Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff, ArrowLeft } from "lucide-react";
 import { Input, Button } from "@routeflow/ui/web";
 import { useAuth } from "@/lib/auth-context";
 import { useTenant } from "@/components/tenant-provider";
@@ -133,6 +133,14 @@ export default function LoginPage() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-surface-raised p-4">
       <div className="w-full max-w-sm">
+        {/* Back to home */}
+        <a
+          href="/"
+          className="mb-6 flex items-center gap-1.5 text-sm text-navy/50 hover:text-navy transition-colors"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" /> Back to Home
+        </a>
+
         {/* Logo / Brand */}
         <div className="mb-8 flex flex-col items-center gap-3">
           {logoUrl ? (
