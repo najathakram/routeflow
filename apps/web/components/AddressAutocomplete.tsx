@@ -2,7 +2,6 @@
 
 import * as React from "react";
 import { MapPin, Loader2 } from "lucide-react";
-import { APIProvider, useMapsLibrary } from "@vis.gl/react-google-maps";
 import { cn } from "@routeflow/ui/web";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -15,9 +14,10 @@ export interface AddressParts {
 }
 
 interface Suggestion {
-  id: string;
-  display: string;
   placeId: string;
+  display: string;
+  mainText: string;
+  secondaryText: string;
 }
 
 export interface AddressAutocompleteProps {
@@ -31,11 +31,12 @@ export interface AddressAutocompleteProps {
   disabled?: boolean;
 }
 
-const MAPS_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY ?? "";
+const API_BASE =
+  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000/api/v1";
 
-// ─── Inner component (requires APIProvider ancestor) ─────────────────────────
+// ─── Component ────────────────────────────────────────────────────────────────
 
-function AddressAutocompleteInner({
+export function AddressAutocomplete({
   label,
   value,
   onChange,
@@ -45,8 +46,6 @@ function AddressAutocompleteInner({
   className,
   disabled,
 }: AddressAutocompleteProps) {
-  const places = useMapsLibrary("places");
-
   const [suggestions, setSuggestions] = React.useState<Suggestion[]>([]);
   const [isOpen, setIsOpen] = React.useState(false);
   const [isLoading, setIsLoading] = React.useState(false);
@@ -54,66 +53,60 @@ function AddressAutocompleteInner({
 
   const debounceRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const containerRef = React.useRef<HTMLDivElement>(null);
-  const autocompleteRef = React.useRef<google.maps.places.AutocompleteService | null>(null);
-  const placesRef = React.useRef<google.maps.places.PlacesService | null>(null);
-  const attrDivRef = React.useRef<HTMLDivElement | null>(null);
-
   const inputId = label?.toLowerCase().replace(/\s+/g, "-") ?? "street";
 
-  // ── Initialise services once Places library loads ─────────────────────────
+  // ── Fetch suggestions from backend proxy ─────────────────────────────────
 
-  React.useEffect(() => {
-    if (!places) return;
-    autocompleteRef.current = new places.AutocompleteService();
-    if (!attrDivRef.current) {
-      attrDivRef.current = document.createElement("div");
+  const fetchSuggestions = React.useCallback(async (q: string) => {
+    if (q.trim().length < 3) {
+      setSuggestions([]);
+      setIsOpen(false);
+      return;
     }
-    placesRef.current = new places.PlacesService(attrDivRef.current);
-  }, [places]);
 
-  // ── Fetch suggestions via Google Places ─────────────────────────────────────
+    setIsLoading(true);
+    try {
+      const res = await fetch(
+        `${API_BASE}/public/places/autocomplete?q=${encodeURIComponent(q.trim())}`,
+      );
+      if (!res.ok) throw new Error(`${res.status}`);
+      const data = (await res.json()) as { suggestions?: Suggestion[] };
+      const list = data.suggestions ?? [];
+      setSuggestions(list);
+      setIsOpen(list.length > 0);
+    } catch {
+      setSuggestions([]);
+      setIsOpen(false);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
 
-  const fetchSuggestions = React.useCallback(
-    (q: string) => {
-      if (q.trim().length < 3 || !autocompleteRef.current) {
-        setSuggestions([]);
-        setIsOpen(false);
-        return;
+  // ── Select a suggestion: fetch full address components ────────────────────
+
+  const handleSelect = React.useCallback(
+    async (s: Suggestion) => {
+      setIsOpen(false);
+      setActiveIndex(-1);
+      onChange(s.mainText || s.display);
+
+      try {
+        const res = await fetch(
+          `${API_BASE}/public/places/details?placeId=${encodeURIComponent(s.placeId)}`,
+        );
+        if (!res.ok) throw new Error(`${res.status}`);
+        const parts = (await res.json()) as AddressParts;
+        if (parts.street) onChange(parts.street);
+        onAddressSelect(parts);
+      } catch {
+        // Fallback: use the display text as the street value
+        onAddressSelect({ street: s.mainText || s.display, city: "", state: "", zip: "" });
       }
-
-      setIsLoading(true);
-
-      const request: google.maps.places.AutocompletionRequest = {
-        input: q,
-        componentRestrictions: { country: "us" },
-        types: ["address"],
-      };
-
-      autocompleteRef.current.getPlacePredictions(request, (results, status) => {
-        setIsLoading(false);
-        if (
-          status !== google.maps.places.PlacesServiceStatus.OK ||
-          !results
-        ) {
-          setSuggestions([]);
-          setIsOpen(false);
-          return;
-        }
-
-        const parsed: Suggestion[] = results.slice(0, 5).map((r) => ({
-          id: r.place_id,
-          display: r.description,
-          placeId: r.place_id,
-        }));
-
-        setSuggestions(parsed);
-        setIsOpen(parsed.length > 0);
-      });
     },
-    [],
+    [onChange, onAddressSelect],
   );
 
-  // ── Handlers ─────────────────────────────────────────────────────────────
+  // ── Input handlers ────────────────────────────────────────────────────────
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const v = e.target.value;
@@ -121,42 +114,6 @@ function AddressAutocompleteInner({
     setActiveIndex(-1);
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => fetchSuggestions(v), 300);
-  };
-
-  const handleSelect = (s: Suggestion) => {
-    setIsOpen(false);
-    setActiveIndex(-1);
-
-    if (!placesRef.current) {
-      onChange(s.display);
-      return;
-    }
-
-    placesRef.current.getDetails(
-      { placeId: s.placeId, fields: ["address_components"] },
-      (place, status) => {
-        if (
-          status !== google.maps.places.PlacesServiceStatus.OK ||
-          !place?.address_components
-        ) {
-          onChange(s.display);
-          return;
-        }
-
-        const get = (type: string): string =>
-          place.address_components!.find((c) => c.types.includes(type))?.short_name ?? "";
-
-        const streetNumber = get("street_number");
-        const route = get("route");
-        const street = streetNumber ? `${streetNumber} ${route}` : route;
-        const city = get("locality") || get("sublocality") || get("neighborhood");
-        const state = get("administrative_area_level_1");
-        const zip = get("postal_code");
-
-        onChange(street);
-        onAddressSelect({ street, city, state, zip });
-      },
-    );
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -199,8 +156,6 @@ function AddressAutocompleteInner({
 
   // ── Render ────────────────────────────────────────────────────────────────
 
-  const ready = !!places;
-
   return (
     <div ref={containerRef} className={cn("relative flex flex-col gap-1", className)}>
       {label && (
@@ -215,7 +170,7 @@ function AddressAutocompleteInner({
           onChange={handleChange}
           onKeyDown={handleKeyDown}
           onFocus={() => suggestions.length > 0 && setIsOpen(true)}
-          placeholder={!MAPS_KEY ? "Enter address manually" : (ready ? placeholder : "Loading\u2026")}
+          placeholder={placeholder}
           autoComplete="off"
           disabled={disabled}
           aria-autocomplete="list"
@@ -245,7 +200,7 @@ function AddressAutocompleteInner({
         >
           {suggestions.map((s, i) => (
             <li
-              key={s.id}
+              key={s.placeId}
               role="option"
               aria-selected={i === activeIndex}
               onMouseDown={(e) => {
@@ -262,40 +217,16 @@ function AddressAutocompleteInner({
               )}
             >
               <MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0 text-brand-400" />
-              <span className="leading-snug">{s.display}</span>
+              <span className="leading-snug">
+                <span className="font-medium">{s.mainText}</span>
+                {s.secondaryText && (
+                  <span className="text-navy/60">{" "}{s.secondaryText}</span>
+                )}
+              </span>
             </li>
           ))}
         </ul>
       )}
     </div>
-  );
-}
-
-// ─── Wrapper: provides Google Maps context ────────────────────────────────────
-
-export function AddressAutocomplete(props: AddressAutocompleteProps) {
-  if (!MAPS_KEY) {
-    // No API key — render a plain text input
-    return (
-      <div className={cn("flex flex-col gap-1", props.className)}>
-        {props.label && (
-          <label className="text-sm font-medium text-navy">{props.label}</label>
-        )}
-        <input
-          value={props.value}
-          onChange={(e) => props.onChange(e.target.value)}
-          placeholder="Enter address manually"
-          disabled={props.disabled}
-          className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/40 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent"
-        />
-        {props.error && <p className="text-xs text-danger">{props.error}</p>}
-      </div>
-    );
-  }
-
-  return (
-    <APIProvider apiKey={MAPS_KEY}>
-      <AddressAutocompleteInner {...props} />
-    </APIProvider>
   );
 }
