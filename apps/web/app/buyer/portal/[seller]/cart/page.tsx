@@ -67,7 +67,7 @@ export default function BuyerCartPage() {
     if (!authLoading && !activeSeller) router.push("/buyer/portal");
   }, [authLoading, activeSeller, router]);
 
-  const handlePlaceOrder = async (status: "PENDING" | "DRAFT") => {
+  const handlePlaceOrder = async () => {
     setOrderError(null);
     try {
       const result = await createOrder.mutateAsync({
@@ -75,8 +75,8 @@ export default function BuyerCartPage() {
         notes: notes || undefined,
         urgent,
         requestedDeliveryDate: deliveryDate || undefined,
-        status,
-        forceNew: forceNew || status === "DRAFT", // Drafts always create new
+        status: "PENDING",
+        forceNew,
       });
       cart.clearCart();
 
@@ -332,23 +332,12 @@ export default function BuyerCartPage() {
           <div className="space-y-2">
             <Button
               className="w-full"
-              onClick={() => handlePlaceOrder("PENDING")}
+              onClick={handlePlaceOrder}
               loading={createOrder.isPending}
               disabled={createOrder.isPending}
             >
-              {willMerge ? `Add to Order #${(activeOrder as any)?.orderNumber ?? ""}` : "Place Order"}
+              {willMerge ? "Add to existing order" : "Place Order"}
             </Button>
-            {!willMerge && (
-              <Button
-                variant="secondary"
-                className="w-full"
-                onClick={() => handlePlaceOrder("DRAFT")}
-                loading={createOrder.isPending}
-                disabled={createOrder.isPending}
-              >
-                Save as Draft
-              </Button>
-            )}
           </div>
 
           {orderError && (

@@ -28,6 +28,6 @@ export class BuyerCreateOrderDto {
   @IsOptional() @IsString() notes?: string;
   @IsOptional() @IsBoolean() urgent?: boolean;
   @IsOptional() @IsDateString() requestedDeliveryDate?: string;
-  @IsOptional() @IsEnum(["DRAFT", "PENDING"]) status?: "DRAFT" | "PENDING";
+  @IsOptional() @IsEnum(["PENDING"]) status?: "PENDING";
   @IsOptional() @IsBoolean() forceNew?: boolean;
 }

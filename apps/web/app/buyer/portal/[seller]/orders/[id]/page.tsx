@@ -29,7 +29,7 @@ import {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const STATUS_STEPS = ["DRAFT", "PENDING", "CONFIRMED", "OUT_FOR_DELIVERY", "PARTIALLY_DELIVERED", "DELIVERED"];
+const STATUS_STEPS = ["PENDING", "CONFIRMED", "OUT_FOR_DELIVERY", "PARTIALLY_DELIVERED", "DELIVERED"];
 
 function getStatusVariant(s: string): "success" | "warning" | "danger" | "neutral" {
   if (s === "DELIVERED" || s === "COMPLETED") return "success";
@@ -58,11 +58,11 @@ function OrderTimeline({ status }: { status: string }) {
   const currentIdx = STATUS_STEPS.indexOf(status);
 
   const icons = [
-    { icon: Edit3, label: "Draft" },
     { icon: Clock, label: "Pending" },
     { icon: CheckCircle2, label: "Confirmed" },
     { icon: Truck, label: "Out for Delivery" },
-    { icon: Package, label: "Delivered" },
+    { icon: Package, label: "Partial Delivery" },
+    { icon: CheckCircle2, label: "Delivered" },
   ];
 
   return (
