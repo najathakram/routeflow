@@ -184,38 +184,49 @@ export class BuyerService {
         existing.status === "PENDING_SELLER_APPROVAL" &&
         existing.buyerAccountId === buyerAccountId
       ) {
-        throw new ConflictException("Your request is already pending seller approval");
+        // Upgrade the existing pending request to ACTIVE (email ownership already proven)
+        const upgraded = await this.prisma.customerLink.update({
+          where: { id: existing.id },
+          data: { status: "ACTIVE", linkedAt: new Date() },
+        });
+        this.logger.log(
+          `BuyerAccount ${buyerAccountId} upgraded PENDING_SELLER_APPROVAL link ${existing.id} to ACTIVE`,
+        );
+        return {
+          message: "Connected! You can now view your orders and invoices from this seller.",
+          linkId: upgraded.id,
+        };
       }
     }
 
-    // Create or update to PENDING_SELLER_APPROVAL
+    // The buyer proved ownership of this email by authenticating with it on the buyer
+    // platform. Since the seller already has a customer record with this email, auto-approve
+    // the connection immediately — no manual seller review needed.
+    const now = new Date();
     const link = await this.prisma.customerLink.upsert({
       where: { customerId: customer.id },
       create: {
         buyerAccountId,
         customerId: customer.id,
         tenantId: tenant.id,
-        status: "PENDING_SELLER_APPROVAL",
+        status: "ACTIVE",
+        linkedAt: now,
       },
       update: {
         buyerAccountId,
-        status: "PENDING_SELLER_APPROVAL",
+        status: "ACTIVE",
+        linkedAt: now,
         inviteToken: null,
         inviteExpiresAt: null,
       },
     });
 
-    // Notify tenant operator via email (best-effort, non-blocking)
-    this.notifySellerOfRequest(tenant.id, customer, dto.emailAtSeller).catch((err) =>
-      this.logger.error(`Failed to notify seller of buyer request: ${err?.message}`),
-    );
-
     this.logger.log(
-      `BuyerAccount ${buyerAccountId} requested link to tenant ${tenant.id} (customer ${customer.id})`,
+      `BuyerAccount ${buyerAccountId} auto-approved link to tenant ${tenant.id} (customer ${customer.id}) via email match`,
     );
 
     return {
-      message: "Connection request sent. The seller will review and approve your request.",
+      message: "Connected! You can now view your orders and invoices from this seller.",
       linkId: link.id,
     };
   }
