@@ -16,7 +16,6 @@ import {
   ChevronDown,
   ChevronUp,
   BarChart3,
-  Building2,
 } from "lucide-react";
 import { cn } from "@routeflow/ui/web";
 
@@ -24,7 +23,7 @@ interface ImportResult {
   imported?: number;
   updated?: number;
   created?: number;
-  skipped: number;
+  skipped?: number;
   errors: string[];
   suppliersCreated?: number;
   suppliersUpdated?: number;
@@ -42,6 +41,15 @@ interface ImportSection {
 
 const IMPORT_SECTIONS: ImportSection[] = [
   {
+    id: "products",
+    label: "Products (Items)",
+    description: "Import products and pricing from Zoho Inventory Items CSV export",
+    endpoint: "/import/products",
+    icon: Package,
+    color: "text-purple-500 bg-purple-50",
+    zohoExportPath: "Zoho Inventory → Items → ≡ → Export Items → CSV",
+  },
+  {
     id: "contacts",
     label: "Customers (Contacts)",
     description: "Import customers from Zoho Contacts CSV export",
@@ -53,11 +61,11 @@ const IMPORT_SECTIONS: ImportSection[] = [
   {
     id: "inventory",
     label: "Inventory Stock Levels",
-    description: "Sync current stock quantities from Zoho Stock Summary Report",
+    description: "Sync current stock quantities from Zoho Stock Summary Report (Item Name, SKU, Closing Stock)",
     endpoint: "/import/inventory",
     icon: BarChart3,
     color: "text-teal-500 bg-teal-50",
-    zohoExportPath: "Zoho Inventory → Reports → Stock Summary → Export",
+    zohoExportPath: "Zoho Inventory → Reports → Stock Summary → Export as CSV",
   },
   {
     id: "invoices",
@@ -80,24 +88,19 @@ const IMPORT_SECTIONS: ImportSection[] = [
   {
     id: "expenses",
     label: "Expenses",
-    description: "Import expense records from Zoho Expense CSV export. Suppliers are auto-created from vendor names.",
+    description: "Import expense records from Zoho Expense CSV. Suppliers are auto-created from vendor names — no separate supplier import needed.",
     endpoint: "/import/expenses",
     icon: Receipt,
     color: "text-danger bg-danger-bg",
     zohoExportPath: "Zoho Expense → My Expenses → Export",
   },
-  {
-    id: "suppliers",
-    label: "Suppliers",
-    description: "Import suppliers from a Zoho Expense CSV — creates/updates supplier records from the vendor names",
-    endpoint: "/import/expense-suppliers",
-    icon: Building2,
-    color: "text-purple-500 bg-purple-50",
-    zohoExportPath: "Zoho Expense → My Expenses → Export (same file as Expenses)",
-  },
 ];
 
-function ImportCard({ section }: { section: ImportSection }) {
+const STEP_LABELS = ["Products", "Customers", "Inventory", "Invoices", "Payments", "Expenses"];
+
+// ─── Import Card ──────────────────────────────────────────────────────────────
+
+function ImportCard({ section, step }: { section: ImportSection; step: number }) {
   const { toast } = useToast();
   const [file, setFile] = React.useState<File | null>(null);
   const [result, setResult] = React.useState<ImportResult | null>(null);
@@ -136,26 +139,24 @@ function ImportCard({ section }: { section: ImportSection }) {
       });
       setResult(res.data);
       const d = res.data;
-      let summary = d.updated !== undefined
-        ? `${d.updated} updated, ${d.created} created, ${d.skipped} skipped`
-        : `${d.imported} records imported, ${d.skipped} skipped`;
+      const skipped = d.skipped ?? 0;
+      let summary =
+        d.updated !== undefined
+          ? `${d.updated} updated, ${d.created} created, ${skipped} skipped`
+          : `${d.imported} records imported, ${skipped} skipped`;
       if (d.suppliersCreated || d.suppliersUpdated) {
-        const supplierParts: string[] = [];
-        if (d.suppliersCreated) supplierParts.push(`${d.suppliersCreated} supplier${d.suppliersCreated !== 1 ? "s" : ""} created`);
-        if (d.suppliersUpdated) supplierParts.push(`${d.suppliersUpdated} supplier${d.suppliersUpdated !== 1 ? "s" : ""} matched`);
-        summary += ` · ${supplierParts.join(", ")}`;
+        const parts: string[] = [];
+        if (d.suppliersCreated)
+          parts.push(`${d.suppliersCreated} supplier${d.suppliersCreated !== 1 ? "s" : ""} created`);
+        if (d.suppliersUpdated)
+          parts.push(`${d.suppliersUpdated} supplier${d.suppliersUpdated !== 1 ? "s" : ""} matched`);
+        summary += ` · ${parts.join(", ")}`;
       }
-      toast({
-        title: `${section.label} imported`,
-        description: summary,
-        variant: "success",
-      });
+      toast({ title: `${section.label} imported`, description: summary, variant: "success" });
     } catch (err: any) {
       toast({
         title: "Import failed",
-        description:
-          err?.response?.data?.message ??
-          "Please check your file format and try again",
+        description: err?.response?.data?.message ?? "Please check your file format and try again",
         variant: "error",
       });
     } finally {
@@ -163,10 +164,12 @@ function ImportCard({ section }: { section: ImportSection }) {
     }
   };
 
+  const skipped = result?.skipped ?? 0;
+
   return (
-    <div className="rounded-xl border border-surface-border bg-white overflow-hidden">
+    <div className="rounded-xl border border-surface-border bg-white overflow-hidden flex flex-col">
       {/* Header */}
-      <div className="flex items-center gap-3 border-b border-surface-border p-4">
+      <div className="flex items-start gap-3 border-b border-surface-border p-4">
         <span
           className={cn(
             "flex h-10 w-10 shrink-0 items-center justify-center rounded-lg",
@@ -176,21 +179,26 @@ function ImportCard({ section }: { section: ImportSection }) {
           <Icon className="h-5 w-5" />
         </span>
         <div className="flex-1 min-w-0">
-          <p className="font-semibold text-navy">{section.label}</p>
-          <p className="text-xs text-navy/60">{section.description}</p>
+          <div className="flex items-center gap-2">
+            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-navy/10 text-[11px] font-bold text-navy/50 shrink-0">
+              {step}
+            </span>
+            <p className="font-semibold text-navy">{section.label}</p>
+          </div>
+          <p className="text-xs text-navy/60 mt-0.5 leading-relaxed">{section.description}</p>
         </div>
         {result && (
-          <div className="flex items-center gap-1.5 text-xs shrink-0">
+          <div className="flex flex-col items-end gap-1 text-xs shrink-0">
             <span className="flex items-center gap-1 text-success">
               <CheckCircle2 className="h-3.5 w-3.5" />
               {result.updated !== undefined
                 ? `${result.updated} updated, ${result.created} created`
                 : `${result.imported} imported`}
             </span>
-            {result.skipped > 0 && (
-              <span className="flex items-center gap-1 text-warning ml-2">
+            {skipped > 0 && (
+              <span className="flex items-center gap-1 text-warning">
                 <AlertCircle className="h-3.5 w-3.5" />
-                {result.skipped} skipped
+                {skipped} skipped
               </span>
             )}
           </div>
@@ -198,7 +206,7 @@ function ImportCard({ section }: { section: ImportSection }) {
       </div>
 
       {/* Body */}
-      <div className="p-4 space-y-3">
+      <div className="flex flex-col flex-1 gap-3 p-4">
         {/* Export hint */}
         <div className="flex items-start gap-2 rounded-lg bg-surface-raised px-3 py-2 text-xs text-navy/60">
           <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0 text-navy/40" />
@@ -214,7 +222,7 @@ function ImportCard({ section }: { section: ImportSection }) {
           onDragOver={(e) => e.preventDefault()}
           onClick={() => inputRef.current?.click()}
           className={cn(
-            "flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-6 cursor-pointer transition-colors",
+            "flex flex-1 flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-6 cursor-pointer transition-colors min-h-[100px]",
             file
               ? "border-brand-300 bg-brand-50"
               : "border-surface-border hover:border-brand-300 hover:bg-brand-50/30",
@@ -227,9 +235,7 @@ function ImportCard({ section }: { section: ImportSection }) {
             className="hidden"
             onChange={handleFileChange}
           />
-          <Upload
-            className={cn("h-6 w-6", file ? "text-brand-500" : "text-navy/30")}
-          />
+          <Upload className={cn("h-6 w-6", file ? "text-brand-500" : "text-navy/30")} />
           {file ? (
             <div className="text-center">
               <p className="text-sm font-medium text-brand-600">{file.name}</p>
@@ -243,9 +249,7 @@ function ImportCard({ section }: { section: ImportSection }) {
                 Drop CSV file here or{" "}
                 <span className="text-brand-500">browse</span>
               </p>
-              <p className="text-xs text-navy/40 mt-0.5">
-                Zoho CSV export format
-              </p>
+              <p className="text-xs text-navy/40 mt-0.5">Zoho CSV export format</p>
             </div>
           )}
         </div>
@@ -259,7 +263,7 @@ function ImportCard({ section }: { section: ImportSection }) {
           {loading ? (
             <span className="flex items-center justify-center gap-2">
               <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-              Importing... (this may take a moment)
+              Importing…
             </span>
           ) : (
             `Import ${section.label}`
@@ -274,8 +278,7 @@ function ImportCard({ section }: { section: ImportSection }) {
               className="flex w-full items-center justify-between text-xs font-medium text-warning"
             >
               <span>
-                {result.errors.length} error
-                {result.errors.length > 1 ? "s" : ""} during import
+                {result.errors.length} error{result.errors.length > 1 ? "s" : ""} during import
               </span>
               {showErrors ? (
                 <ChevronUp className="h-3.5 w-3.5" />
@@ -292,7 +295,7 @@ function ImportCard({ section }: { section: ImportSection }) {
                 ))}
                 {result.errors.length > 20 && (
                   <li className="text-navy/40">
-                    ...and {result.errors.length - 20} more
+                    …and {result.errors.length - 20} more
                   </li>
                 )}
               </ul>
@@ -304,79 +307,7 @@ function ImportCard({ section }: { section: ImportSection }) {
   );
 }
 
-function ProductImportCard() {
-  const { toast } = useToast();
-  const [file, setFile] = React.useState<File | null>(null);
-  const [loading, setLoading] = React.useState(false);
-  const [result, setResult] = React.useState<ImportResult | null>(null);
-  const inputRef = React.useRef<HTMLInputElement>(null);
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0];
-    if (f) {
-      setFile(f);
-      setResult(null);
-    }
-  };
-
-  const handleImport = async () => {
-    if (!file) return;
-    setLoading(true);
-    try {
-      const formData = new FormData();
-      formData.append("file", file);
-      const res = await apiClient.post("/import/products", formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-        timeout: 120_000,
-      });
-      setResult(res.data);
-      toast({
-        title: "Products imported",
-        description: `${res.data.imported} products imported`,
-        variant: "success",
-      });
-    } catch (err: any) {
-      toast({
-        title: "Import failed",
-        description:
-          err?.response?.data?.message ?? "Check file format",
-        variant: "error",
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div className="flex items-center gap-3">
-      <input
-        ref={inputRef}
-        type="file"
-        accept=".csv"
-        className="hidden"
-        onChange={handleFileChange}
-      />
-      <button
-        onClick={() => inputRef.current?.click()}
-        className="rounded-lg border border-surface-border px-3 py-1.5 text-sm text-navy/60 hover:bg-surface-raised transition-colors"
-      >
-        {file ? file.name : "Choose Zoho Items CSV..."}
-      </button>
-      <button
-        onClick={handleImport}
-        disabled={!file || loading}
-        className="rounded-lg bg-brand-500 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-40 hover:bg-brand-600 transition-colors"
-      >
-        {loading ? "Importing..." : "Import Products"}
-      </button>
-      {result && (
-        <span className="text-xs text-success">
-          {result.imported} imported
-        </span>
-      )}
-    </div>
-  );
-}
+// ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function SettingsImportPage() {
   const { setTitle } = usePageTitle();
@@ -386,51 +317,45 @@ export default function SettingsImportPage() {
 
   return (
     <div className="space-y-6 p-6">
+      {/* Header */}
       <div>
         <h1 className="text-xl font-semibold text-navy">Import from Zoho</h1>
         <p className="mt-1 text-sm text-navy/60">
-          Import your data from Zoho Invoices exports. Follow the order below
-          for best results:{" "}
-          <strong className="text-navy">
-            Customers → Invoices → Payments → Expenses
-          </strong>
+          Upload CSV exports from Zoho to migrate your data into RouteFlow.
         </p>
       </div>
 
-      {/* Order guidance */}
-      <div className="flex items-center gap-3 rounded-xl bg-brand-50 border border-brand-200 px-4 py-3">
-        <AlertCircle className="h-4 w-4 text-brand-500 shrink-0" />
-        <p className="text-sm text-brand-700">
-          <strong>Recommended import order:</strong> Import Customers first,
-          then Invoices, then Payments. Payments require matching invoices to
-          already exist.
-        </p>
-      </div>
-
-      {/* Import cards - 2 column grid */}
-      <div className="grid grid-cols-2 gap-5">
-        {IMPORT_SECTIONS.map((section) => (
-          <ImportCard key={section.id} section={section} />
-        ))}
-      </div>
-
-      {/* Products section */}
-      <div className="rounded-xl border border-surface-border bg-white p-4">
-        <div className="flex items-start gap-3">
-          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-purple-50 text-purple-500 shrink-0">
-            <Package className="h-4 w-4" />
-          </span>
-          <div className="flex-1">
-            <p className="font-medium text-navy">Products / Inventory Items</p>
-            <p className="mt-0.5 text-sm text-navy/60">
-              Export your Items list from Zoho Invoices → Items → Export, then
-              import below.
-            </p>
-            <div className="mt-3">
-              <ProductImportCard />
-            </div>
+      {/* Recommended order banner */}
+      <div className="flex items-start gap-3 rounded-xl border border-brand-200 bg-brand-50 px-4 py-3">
+        <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-brand-500" />
+        <div>
+          <p className="text-sm font-semibold text-brand-700">Import in this order for best results</p>
+          <div className="mt-2 flex flex-wrap items-center gap-x-1.5 gap-y-1">
+            {STEP_LABELS.map((label, i) => (
+              <React.Fragment key={label}>
+                <span className="inline-flex items-center gap-1.5 text-sm text-brand-700">
+                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-brand-200 text-[11px] font-bold text-brand-800">
+                    {i + 1}
+                  </span>
+                  {label}
+                </span>
+                {i < STEP_LABELS.length - 1 && (
+                  <span className="text-brand-300 text-xs select-none">→</span>
+                )}
+              </React.Fragment>
+            ))}
           </div>
+          <p className="mt-2 text-xs text-brand-600">
+            Invoices require customers to exist first. Payments require matching invoices.
+          </p>
         </div>
+      </div>
+
+      {/* Import cards — uniform 2-column grid, cards stretch to equal height per row */}
+      <div className="grid grid-cols-2 gap-5">
+        {IMPORT_SECTIONS.map((section, i) => (
+          <ImportCard key={section.id} section={section} step={i + 1} />
+        ))}
       </div>
     </div>
   );
