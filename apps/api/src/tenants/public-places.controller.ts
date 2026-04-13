@@ -52,7 +52,9 @@ export class PublicPlacesController {
       body: JSON.stringify({
         input: q.trim(),
         includedRegionCodes: ["us"],
-        includedPrimaryTypes: ["address"],
+        // "address" is not a valid Places API (New) primary type — omit the
+        // filter; the US region restriction already focuses results on the US
+        // and the query text naturally surfaces address results.
       }),
     });
 
