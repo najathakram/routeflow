@@ -12,143 +12,130 @@ import { ConfigService } from "@nestjs/config";
 import { AppConfig } from "../config/configuration";
 
 /**
- * Public proxy for address autocomplete.
+ * Public proxy for the Google Places API (New).
  *
- * Uses the Mapbox Geocoding API v5 — no API key restrictions, excellent US
- * residential address coverage. Results are restricted to US addresses.
- *
- * The autocomplete response embeds full address parts (street/city/state/zip)
- * so the frontend never needs a separate details round-trip.
+ * Why proxy? Keeps the API key secure server-side and avoids CORS.
+ * The API key must have "Places API (New)" enabled in its API restrictions
+ * (Google Cloud Console → APIs & Services → Credentials → RouteFlowRoute).
  */
 @ApiTags("public/places")
 @Controller("public/places")
 export class PublicPlacesController {
   private readonly logger = new Logger(PublicPlacesController.name);
-  private readonly accessToken: string;
+  private readonly apiKey: string;
 
   constructor(private readonly config: ConfigService<AppConfig>) {
-    this.accessToken = this.config.get<AppConfig["mapbox"]>("mapbox")!.accessToken;
+    this.apiKey = this.config.get<AppConfig["googleMaps"]>("googleMaps")!.apiKey;
   }
 
   // ─── Address autocomplete ─────────────────────────────────────────────────
 
   @Get("autocomplete")
-  @ApiOperation({ summary: "Autocomplete a US address via Mapbox Geocoding API" })
-  @Throttle({ default: { ttl: 1_000, limit: 10 } })
+  @ApiOperation({ summary: "Autocomplete a US address via Google Places API (New)" })
+  @Throttle({ default: { ttl: 1_000, limit: 10 } }) // 10 req/sec per IP
   async autocomplete(@Query("q") q: string) {
     if (!q || q.trim().length < 3) {
       return { suggestions: [] };
     }
-    if (!this.accessToken) {
-      throw new InternalServerErrorException("Mapbox access token not configured");
+    if (!this.apiKey) {
+      throw new InternalServerErrorException("Google Maps API key not configured");
     }
 
-    const url = new URL(
-      `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(q.trim())}.json`,
-    );
-    url.searchParams.set("access_token", this.accessToken);
-    url.searchParams.set("types", "address");
-    url.searchParams.set("country", "us");
-    url.searchParams.set("limit", "5");
-    url.searchParams.set("autocomplete", "true");
-    url.searchParams.set("language", "en");
-
-    const res = await fetch(url.toString());
+    const res = await fetch("https://places.googleapis.com/v1/places:autocomplete", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": this.apiKey,
+        "X-Goog-FieldMask":
+          "suggestions.placePrediction.placeId,suggestions.placePrediction.text,suggestions.placePrediction.structuredFormat",
+      },
+      body: JSON.stringify({
+        input: q.trim(),
+        includedRegionCodes: ["us"],
+        includedPrimaryTypes: ["address"],
+      }),
+    });
 
     if (!res.ok) {
       const err = await res.text().catch(() => "");
-      this.logger.error(`Mapbox autocomplete HTTP error: ${res.status} ${err}`);
-      throw new InternalServerErrorException(`Mapbox API error: ${res.status}`);
+      this.logger.error(`Places autocomplete error: ${res.status} ${err}`);
+      throw new InternalServerErrorException(`Places API error: ${res.status} ${err}`);
     }
 
     const data = (await res.json()) as {
-      features?: Array<{
-        id: string;
-        place_name: string;
-        text: string;        // street name
-        address?: string;    // house number
-        context?: Array<{
-          id: string;
-          text: string;
-          short_code?: string;
-        }>;
+      suggestions?: Array<{
+        placePrediction?: {
+          placeId?: string;
+          text?: { text?: string };
+          structuredFormat?: {
+            mainText?: { text?: string };
+            secondaryText?: { text?: string };
+          };
+        };
       }>;
     };
 
-    const suggestions = (data.features ?? []).map((f) => {
-      // Build street: "4506 Selwyn Rd"
-      const street = f.address ? `${f.address} ${f.text}` : f.text;
-
-      // Parse context for city / state / zip
-      const postcode = f.context?.find((c) => c.id.startsWith("postcode."))?.text ?? "";
-      const city =
-        f.context?.find((c) => c.id.startsWith("place."))?.text ??
-        f.context?.find((c) => c.id.startsWith("locality."))?.text ??
-        "";
-      // short_code is e.g. "US-TX" — strip the "US-" prefix
-      const rawState = f.context?.find((c) => c.id.startsWith("region."));
-      const state = rawState?.short_code?.replace(/^US-/i, "") ?? rawState?.text ?? "";
-
-      const secondaryText = [city, state, postcode].filter(Boolean).join(", ");
-
-      return {
-        placeId: f.id,
-        display: f.place_name,
-        mainText: street,
-        secondaryText,
-        // Embed full address parts so the frontend never needs a details call
-        addressParts: { street, city, state, zip: postcode },
-      };
-    });
+    const suggestions = (data.suggestions ?? [])
+      .map((s) => {
+        const p = s.placePrediction;
+        if (!p?.placeId) return null;
+        return {
+          placeId: p.placeId,
+          display: p.text?.text ?? "",
+          mainText: p.structuredFormat?.mainText?.text ?? "",
+          secondaryText: p.structuredFormat?.secondaryText?.text ?? "",
+        };
+      })
+      .filter(Boolean);
 
     return { suggestions };
   }
 
-  // ─── Place details (kept for API compatibility) ───────────────────────────
+  // ─── Place details (address components) ──────────────────────────────────
 
   @Get("details")
-  @ApiOperation({ summary: "Get address components for a place ID (Mapbox)" })
+  @ApiOperation({ summary: "Get address components for a place ID" })
   @Throttle({ default: { ttl: 1_000, limit: 10 } })
   async details(@Query("placeId") placeId: string) {
     if (!placeId) throw new BadRequestException("placeId is required");
-    if (!this.accessToken) {
-      throw new InternalServerErrorException("Mapbox access token not configured");
+    if (!this.apiKey) {
+      throw new InternalServerErrorException("Google Maps API key not configured");
     }
 
-    // Mapbox feature IDs can be used directly in the geocoding endpoint
-    const url = new URL(
-      `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(placeId)}.json`,
+    const res = await fetch(
+      `https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}`,
+      {
+        headers: {
+          "X-Goog-Api-Key": this.apiKey,
+          "X-Goog-FieldMask": "addressComponents",
+        },
+      },
     );
-    url.searchParams.set("access_token", this.accessToken);
-
-    const res = await fetch(url.toString());
 
     if (!res.ok) {
       const err = await res.text().catch(() => "");
-      this.logger.error(`Mapbox details HTTP error: ${res.status} ${err}`);
-      throw new InternalServerErrorException(`Mapbox API error: ${res.status}`);
+      this.logger.error(`Places details error: ${res.status} ${err}`);
+      throw new InternalServerErrorException(`Places API error: ${res.status} ${err}`);
     }
 
     const data = (await res.json()) as {
-      features?: Array<{
-        text: string;
-        address?: string;
-        context?: Array<{ id: string; text: string; short_code?: string }>;
+      addressComponents?: Array<{
+        longText?: string;
+        shortText?: string;
+        types?: string[];
       }>;
     };
 
-    const f = data.features?.[0];
-    if (!f) throw new BadRequestException("Place not found");
+    const get = (type: string): string =>
+      data.addressComponents?.find((c) => c.types?.includes(type))?.shortText ?? "";
 
-    const street = f.address ? `${f.address} ${f.text}` : f.text;
-    const postcode = f.context?.find((c) => c.id.startsWith("postcode."))?.text ?? "";
-    const city =
-      f.context?.find((c) => c.id.startsWith("place."))?.text ??
-      f.context?.find((c) => c.id.startsWith("locality."))?.text ??
-      "";
-    const rawState = f.context?.find((c) => c.id.startsWith("region."));
-    const state = rawState?.short_code?.replace(/^US-/i, "") ?? rawState?.text ?? "";
+    const streetNumber = get("street_number");
+    const route = get("route");
+    const street = streetNumber ? `${streetNumber} ${route}` : route;
+    const city = get("locality") || get("sublocality") || get("neighborhood");
+    const state = get("administrative_area_level_1");
+    const zip = get("postal_code");
 
-    return { street, city, state, zip: postcode };
+    return { street, city, state, zip };
   }
 }
