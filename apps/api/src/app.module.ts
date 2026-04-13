@@ -150,8 +150,8 @@ import { AppService } from "./app.service";
     // useExisting ensures the same singleton instance used by PlatformAdminService
     // (for cache invalidation) is the one that runs as the global guard.
     { provide: APP_GUARD, useExisting: TenantStatusGuard },
-    // Block mutation requests (POST/PUT/PATCH/DELETE) when the JWT carries an
-    // `impersonatedBy` claim — impersonation sessions are read-only.
+    // ImpersonationGuard — kept as a no-op for the `impersonatedBy` audit trail;
+    // impersonation sessions have full write access (same as the impersonated user).
     { provide: APP_GUARD, useClass: ImpersonationGuard },
   ],
 })

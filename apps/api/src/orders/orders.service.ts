@@ -468,8 +468,8 @@ export class OrdersService {
       include: { lineItems: true },
     });
     if (!order) throw new NotFoundException("Order not found");
-    if (!["PENDING", "CONFIRMED"].includes(order.status)) {
-      throw new BadRequestException("Items can only be edited on PENDING or CONFIRMED orders");
+    if (!["DRAFT", "PENDING", "CONFIRMED"].includes(order.status)) {
+      throw new BadRequestException("Items can only be edited on DRAFT, PENDING, or CONFIRMED orders");
     }
 
     // Customer/Driver path: replace items by productId

@@ -20,6 +20,7 @@ import { UpdateTenantStatusDto } from "./dto/update-tenant-status.dto";
 import { UpdateTenantPlanDto } from "./dto/update-tenant-plan.dto";
 import { CreateTenantDto } from "./dto/create-tenant.dto";
 import { ActivateSubscriptionDto } from "./dto/activate-subscription.dto";
+import { UpdateTenantConfigDto } from "./dto/update-tenant-config.dto";
 
 @Injectable()
 export class PlatformAdminService {
@@ -284,8 +285,8 @@ ${paymentSection}
   /**
    * Issues a short-lived (15-min) access token with the target tenant-admin
    * user's claims plus `impersonatedBy: superAdminId`.
-   * Tokens with `impersonatedBy` are rejected by ImpersonationGuard on all
-   * mutation (POST/PATCH/PUT/DELETE) endpoints.
+   * The impersonated session has FULL write access — no mutations are blocked.
+   * The `impersonatedBy` claim is kept for audit trail and UI banners only.
    */
   async impersonate(tenantId: string, superAdminId: string) {
     const tenant = await this._findOrThrow(tenantId);
@@ -306,6 +307,8 @@ ${paymentSection}
       forcePasswordChange: false,
       tenantId,
       tenantSlug: tenant.slug,
+      isAdmin: adminUser.isAdmin || adminUser.role === "TENANT_ADMIN",
+      canActAsDriver: adminUser.canActAsDriver,
       impersonatedBy: superAdminId,
     };
 
@@ -555,12 +558,31 @@ ${paymentSection}
       trialEndsAt: t.trialEndsAt,
       createdAt: t.createdAt,
       deletedAt: t.deletedAt,
-      businessName: t.config?.businessName ?? null,
-      primaryColor: t.config?.primaryColor ?? null,
-      logoKey: t.config?.logoKey ?? null,
+      businessName: t.config?.businessName  ?? null,
+      primaryColor: t.config?.primaryColor  ?? null,
+      logoKey:      t.config?.logoKey       ?? null,
+      addressLine1: t.config?.addressLine1  ?? null,
+      city:         t.config?.city          ?? null,
+      state:        t.config?.state         ?? null,
+      zip:          t.config?.zip           ?? null,
+      country:      t.config?.country       ?? null,
+      phone:        t.config?.phone         ?? null,
       subscription: t.subscription ?? null,
       counts: t._count ?? null,
     };
+  }
+
+  async updateTenantConfig(tenantId: string, dto: UpdateTenantConfigDto) {
+    const tenant = await this.prisma.tenant.findUnique({ where: { id: tenantId } });
+    if (!tenant) throw new NotFoundException(`Tenant ${tenantId} not found`);
+
+    await this.prisma.tenantConfig.upsert({
+      where: { tenantId },
+      create: { tenantId, ...dto },
+      update: dto,
+    });
+
+    return this.getTenant(tenantId);
   }
 
   // ─── Tenant admin management ──────────────────────────────────────────────────

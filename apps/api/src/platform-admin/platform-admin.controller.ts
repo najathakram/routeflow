@@ -24,6 +24,7 @@ import { UpdateTenantPlanDto } from "./dto/update-tenant-plan.dto";
 import { CreateTenantDto } from "./dto/create-tenant.dto";
 import { ExtendTrialDto } from "./dto/extend-trial.dto";
 import { ActivateSubscriptionDto } from "./dto/activate-subscription.dto";
+import { UpdateTenantConfigDto } from "./dto/update-tenant-config.dto";
 import { EnableAddonDto, DisableAddonDto } from "../billing/dto/manage-addon.dto";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 
@@ -66,6 +67,12 @@ export class PlatformAdminController {
     return this.svc.getTenant(id);
   }
 
+  @Patch("tenants/:id/config")
+  @ApiOperation({ summary: "Update tenant configuration (address, phone, etc.)" })
+  updateTenantConfig(@Param("id") id: string, @Body() dto: UpdateTenantConfigDto) {
+    return this.svc.updateTenantConfig(id, dto);
+  }
+
   @Delete("tenants/:id")
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: "Soft-delete (cancel) a tenant" })
@@ -88,7 +95,7 @@ export class PlatformAdminController {
   @Post("tenants/:id/impersonate")
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: "Issue a 15-min impersonation token for a tenant. Read-only — mutations are blocked.",
+    summary: "Issue a 15-min impersonation token for a tenant with full write access.",
   })
   impersonate(@Param("id") id: string, @CurrentUser() admin: JwtPayload) {
     return this.svc.impersonate(id, admin.sub);

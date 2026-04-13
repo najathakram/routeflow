@@ -40,6 +40,13 @@ export class SettingsController {
     let accountEmail = all["settings.email"] ?? "";
     let customerEmail = "";
 
+    // Address / phone resolved below (TenantConfig takes precedence over SystemConfig)
+    let street = all["settings.street"] ?? "";
+    let city   = all["settings.city"]   ?? "";
+    let state  = all["settings.state"]  ?? "";
+    let zip    = all["settings.zip"]    ?? "";
+    let phone  = all["settings.phone"]  ?? "";
+
     if (tenantId) {
       const config = await this.prisma.tenantConfig.findUnique({
         where: { tenantId },
@@ -47,11 +54,22 @@ export class SettingsController {
           businessName: true,
           ownerName: true,
           customerEmail: true,
+          addressLine1: true,
+          city: true,
+          state: true,
+          zip: true,
+          phone: true,
         },
       });
       if (config?.businessName) businessName = config.businessName;
       if (config?.ownerName) ownerName = config.ownerName;
       if (config?.customerEmail) customerEmail = config.customerEmail;
+      // Address from TenantConfig overrides any legacy SystemConfig values
+      if (config?.addressLine1 != null) street = config.addressLine1;
+      if (config?.city != null)         city   = config.city;
+      if (config?.state != null)        state  = config.state;
+      if (config?.zip != null)          zip    = config.zip;
+      if (config?.phone != null)        phone  = config.phone;
 
       // If account email is not explicitly set in system config, source it from
       // the TENANT_ADMIN user's email — this is the email used when the tenant
@@ -68,13 +86,13 @@ export class SettingsController {
     return {
       businessName,
       ownerName,
-      phone: all["settings.phone"] ?? "",
+      phone,
       email: accountEmail,
       customerEmail,
-      street: all["settings.street"] ?? "",
-      city: all["settings.city"] ?? "",
-      state: all["settings.state"] ?? "",
-      zip: all["settings.zip"] ?? "",
+      street,
+      city,
+      state,
+      zip,
       taxRate: all["settings.taxRate"] != null ? parseFloat(all["settings.taxRate"]) : 0,
       logoUrl: all["settings.logoUrl"] ?? null,
     };
@@ -82,15 +100,16 @@ export class SettingsController {
 
   @Patch()
   async updateSettings(@Body() dto: Record<string, unknown>) {
-    // businessName and email are NOT editable by tenant admin (set by super admin)
-    const allowed = ["ownerName", "phone", "street", "city", "state", "zip", "taxRate", "logoUrl"];
+    // businessName and email are NOT editable by tenant admin (set by super admin).
+    // taxRate and logoUrl stay in SystemConfig (no dedicated TenantConfig column for them yet).
+    const allowed = ["taxRate", "logoUrl"];
     await Promise.all(
       allowed
         .filter((k) => dto[k] !== undefined)
         .map((k) => this.svc.set(`settings.${k}`, String(dto[k]))),
     );
 
-    // ownerName and customerEmail are also stored in TenantConfig
+    // ownerName, customerEmail, and address fields are stored in TenantConfig
     const tenantId = this.prisma.getTenantId();
     if (tenantId) {
       const configUpdate: Record<string, unknown> = {};
@@ -98,6 +117,17 @@ export class SettingsController {
         configUpdate.ownerName = typeof dto.ownerName === "string" ? dto.ownerName : "";
       if (dto.customerEmail !== undefined)
         configUpdate.customerEmail = typeof dto.customerEmail === "string" ? dto.customerEmail : "";
+      // Address / phone — map frontend field names to TenantConfig column names
+      if (dto.street !== undefined)
+        configUpdate.addressLine1 = typeof dto.street === "string" ? dto.street : "";
+      if (dto.city !== undefined)
+        configUpdate.city = typeof dto.city === "string" ? dto.city : "";
+      if (dto.state !== undefined)
+        configUpdate.state = typeof dto.state === "string" ? dto.state : "";
+      if (dto.zip !== undefined)
+        configUpdate.zip = typeof dto.zip === "string" ? dto.zip : "";
+      if (dto.phone !== undefined)
+        configUpdate.phone = typeof dto.phone === "string" ? dto.phone : "";
       if (Object.keys(configUpdate).length > 0) {
         await this.prisma.tenantConfig.upsert({
           where: { tenantId },

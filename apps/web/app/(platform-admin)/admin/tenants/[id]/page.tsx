@@ -31,6 +31,12 @@ interface TenantDetail {
   businessName: string | null;
   primaryColor: string | null;
   logoKey: string | null;
+  addressLine1: string | null;
+  city: string | null;
+  state: string | null;
+  zip: string | null;
+  country: string | null;
+  phone: string | null;
   subscription: {
     currentPlan: string;
     periodStart: string | null;
@@ -904,17 +910,54 @@ function AddonsTab({ tenant }: { tenant: TenantDetail }) {
 // ─── Configuration Tab ─────────────────────────────────────────────────────────
 
 function ConfigTab({ tenant }: { tenant: TenantDetail }) {
-  const configFields: [string, string | null][] = [
+  const [form, setForm] = React.useState({
+    addressLine1: tenant.addressLine1 ?? "",
+    city:         tenant.city         ?? "",
+    state:        tenant.state        ?? "",
+    zip:          tenant.zip          ?? "",
+    country:      tenant.country      ?? "",
+    phone:        tenant.phone        ?? "",
+  });
+  const [saving, setSaving] = React.useState(false);
+  const [saved,  setSaved]  = React.useState(false);
+  const [error,  setError]  = React.useState<string | null>(null);
+
+  async function handleSave(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    setError(null);
+    try {
+      await superAdminClient.patch(`/platform-admin/tenants/${tenant.id}/config`, form);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 3000);
+    } catch {
+      setError("Failed to save. Please try again.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const readOnlyFields: [string, string | null][] = [
     ["Business Name", tenant.businessName],
     ["Primary Color", tenant.primaryColor],
-    ["Logo Key", tenant.logoKey],
+    ["Logo Key",      tenant.logoKey],
   ];
+
+  const addressFields = [
+    { key: "addressLine1", label: "Street" },
+    { key: "city",         label: "City" },
+    { key: "state",        label: "State / Province" },
+    { key: "zip",          label: "ZIP / Postcode" },
+    { key: "country",      label: "Country" },
+    { key: "phone",        label: "Phone" },
+  ] as const;
 
   return (
     <AdminCard title="Tenant Configuration">
-      <dl className="flex flex-col gap-3 text-sm">
-        {configFields.map(([label, value]) => (
-          <div key={label} className="flex justify-between items-center">
+      {/* Read-only branding info */}
+      <dl className="mb-6 flex flex-col gap-3 text-sm">
+        {readOnlyFields.map(([label, value]) => (
+          <div key={label} className="flex items-center justify-between">
             <dt className="text-slate-500">{label}</dt>
             <dd className="text-white">
               {label === "Primary Color" && value ? (
@@ -929,7 +972,31 @@ function ConfigTab({ tenant }: { tenant: TenantDetail }) {
           </div>
         ))}
       </dl>
-      <p className="mt-4 text-xs text-slate-600">Configuration editing coming soon.</p>
+
+      <hr className="mb-5 border-slate-700" />
+
+      {/* Editable address / contact form */}
+      <form onSubmit={handleSave} className="flex flex-col gap-4">
+        <h3 className="text-sm font-semibold text-slate-300">Business Address &amp; Contact</h3>
+        {addressFields.map(({ key, label }) => (
+          <div key={key} className="flex flex-col gap-1">
+            <label className="text-xs text-slate-400">{label}</label>
+            <input
+              className="rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-white placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              value={form[key]}
+              onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))}
+            />
+          </div>
+        ))}
+        {error && <p className="text-xs text-red-400">{error}</p>}
+        <button
+          type="submit"
+          disabled={saving}
+          className="self-end rounded bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+        >
+          {saving ? "Saving…" : saved ? "Saved ✓" : "Save Changes"}
+        </button>
+      </form>
     </AdminCard>
   );
 }
