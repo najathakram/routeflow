@@ -34,7 +34,15 @@ export default function OrdersPage() {
   const [urgentOnly, setUrgentOnly] = React.useState(false);
   const [dateFrom, setDateFrom] = React.useState("");
   const [dateTo, setDateTo] = React.useState("");
-  const [isCreateOpen, setIsCreateOpen] = React.useState(false);
+  const [isCreateOpen, setIsCreateOpen] = React.useState(searchParams.get("action") === "new");
+
+  // Strip ?action=new from the URL once the modal has been opened so that
+  // refreshing the page doesn't reopen it unexpectedly.
+  React.useEffect(() => {
+    if (searchParams.get("action") === "new") {
+      router.replace("/orders");
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const [selectMode, setSelectMode] = React.useState(false);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [isCancelling, setIsCancelling] = React.useState(false);

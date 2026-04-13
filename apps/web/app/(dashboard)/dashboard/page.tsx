@@ -266,7 +266,7 @@ export default function DashboardPage() {
           </Button>
           {isOperator && (
             <>
-              <Button href="/routes?action=new" size="sm" variant="secondary">
+              <Button href="/routes/create" size="sm" variant="secondary">
                 <Plus className="mr-1.5 h-3.5 w-3.5" />
                 New Route
               </Button>
