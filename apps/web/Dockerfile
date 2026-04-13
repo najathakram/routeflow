@@ -26,6 +26,7 @@ COPY apps/web/package.json apps/web/
 RUN npm install --force
 
 # ── Copy full source ──
+# cache-bust: 2026-04-13
 COPY packages/ packages/
 COPY apps/web/ apps/web/
 
