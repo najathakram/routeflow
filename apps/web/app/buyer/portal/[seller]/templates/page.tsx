@@ -65,8 +65,8 @@ function TemplateRow({
         </button>
 
         {/* Icon */}
-        <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-brand-50">
-          <Repeat className="h-5 w-5 text-brand-500" />
+        <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-buyer-50">
+          <Repeat className="h-5 w-5 text-buyer-500" />
         </div>
 
         {/* Info */}
@@ -184,7 +184,7 @@ export default function BuyerTemplatesPage() {
   if (authLoading || isLoading) {
     return (
       <div className="flex items-center justify-center py-16">
-        <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
+        <Loader2 className="h-8 w-8 animate-spin text-buyer-500" />
       </div>
     );
   }

@@ -54,9 +54,15 @@ function BuyerRegisterInner() {
   const [googleLoading, setGoogleLoading] = React.useState(false);
   const [googleError, setGoogleError] = React.useState<string | null>(null);
 
-  // Validate redirect — only allow paths within /buyer/ to prevent open-redirect
+  // Validate redirect: must be a relative path within /buyer/ and cannot contain
+  // protocol markers, double-dots, or double-slashes that could escape the path.
   const rawRedirect = params.get("redirect");
-  const redirect = rawRedirect?.startsWith("/buyer/") ? rawRedirect : null;
+  const redirect = (() => {
+    if (!rawRedirect) return null;
+    if (!rawRedirect.startsWith("/buyer/")) return null;
+    if (/\.\.|:\/\/|\/\//.test(rawRedirect)) return null;
+    return rawRedirect;
+  })();
 
   const apiUrl =
     process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") ?? "http://localhost:3000/api/v1";

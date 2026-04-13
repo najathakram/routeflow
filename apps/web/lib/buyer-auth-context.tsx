@@ -50,7 +50,9 @@ export function BuyerAuthProvider({ children }: { children: React.ReactNode }) {
       // Refresh sellers list in background
       const token = typeof window !== "undefined" ? localStorage.getItem("buyerAccessToken") : null;
       if (token) {
-        getBuyerSellers(token).then(setSellers).catch(() => {});
+        getBuyerSellers(token)
+          .then(setSellers)
+          .catch((err) => console.warn("[BuyerAuth] Failed to load sellers:", err?.message));
       }
       setIsLoading(false);
     } else {
@@ -60,7 +62,11 @@ export function BuyerAuthProvider({ children }: { children: React.ReactNode }) {
             setBuyer(data.buyer);
             setActiveSellerState(getStoredActiveSeller());
             const token = typeof window !== "undefined" ? localStorage.getItem("buyerAccessToken") : null;
-            if (token) getBuyerSellers(token).then(setSellers).catch(() => {});
+            if (token) {
+              getBuyerSellers(token)
+                .then(setSellers)
+                .catch((err) => console.warn("[BuyerAuth] Failed to load sellers:", err?.message));
+            }
           }
         })
         .finally(() => setIsLoading(false));

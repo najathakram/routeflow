@@ -165,7 +165,7 @@ function SessionsSection() {
 
       {loading && (
         <div className="flex justify-center py-6">
-          <Loader2 className="h-5 w-5 animate-spin text-brand-500" />
+          <Loader2 className="h-5 w-5 animate-spin text-buyer-500" />
         </div>
       )}
 
@@ -254,8 +254,8 @@ function MergeAccountsSection({ buyerEmail }: { buyerEmail?: string }) {
   return (
     <div className="rounded-xl border border-surface-border bg-white p-6 shadow-sm">
       <div className="mb-4 flex items-center gap-3">
-        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-50">
-          <Merge className="h-5 w-5 text-brand-600" />
+        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-buyer-50">
+          <Merge className="h-5 w-5 text-buyer-600" />
         </div>
         <div>
           <h2 className="text-base font-semibold text-navy">Merge Accounts</h2>
@@ -296,7 +296,7 @@ function MergeAccountsSection({ buyerEmail }: { buyerEmail?: string }) {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="other@example.com"
-              className="w-full rounded-lg border border-surface-border px-3 py-2 text-sm text-navy placeholder-navy/40 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100"
+              className="w-full rounded-lg border border-surface-border px-3 py-2 text-sm text-navy placeholder-navy/40 focus:border-buyer-400 focus:outline-none focus:ring-2 focus:ring-buyer-100"
             />
             <p className="mt-1 text-xs text-navy/50">
               We&apos;ll send a verification email to this address to confirm you own it.
@@ -312,7 +312,7 @@ function MergeAccountsSection({ buyerEmail }: { buyerEmail?: string }) {
               onChange={(e) => setNotes(e.target.value)}
               rows={2}
               placeholder="Any context that might help the platform admin..."
-              className="w-full rounded-lg border border-surface-border px-3 py-2 text-sm text-navy placeholder-navy/40 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100"
+              className="w-full rounded-lg border border-surface-border px-3 py-2 text-sm text-navy placeholder-navy/40 focus:border-buyer-400 focus:outline-none focus:ring-2 focus:ring-buyer-100"
             />
           </div>
 
@@ -326,7 +326,7 @@ function MergeAccountsSection({ buyerEmail }: { buyerEmail?: string }) {
           <button
             type="submit"
             disabled={loading || !email}
-            className="flex items-center gap-2 rounded-lg bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-brand-700 disabled:opacity-50"
+            className="flex items-center gap-2 rounded-lg bg-buyer-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-buyer-700 disabled:opacity-50"
           >
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
             {loading ? "Sending..." : "Send Verification Email"}

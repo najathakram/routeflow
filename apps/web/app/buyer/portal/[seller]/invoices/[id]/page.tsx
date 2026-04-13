@@ -49,7 +49,7 @@ export default function BuyerInvoiceDetailPage() {
   if (authLoading || isLoading) {
     return (
       <div className="flex items-center justify-center py-16">
-        <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
+        <Loader2 className="h-8 w-8 animate-spin text-buyer-500" />
       </div>
     );
   }

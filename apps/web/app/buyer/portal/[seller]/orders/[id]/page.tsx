@@ -76,23 +76,23 @@ function OrderTimeline({ status }: { status: string }) {
           <React.Fragment key={step.label}>
             {i > 0 && (
               <div
-                className={`flex-1 h-0.5 ${isComplete ? "bg-brand-500" : "bg-surface-border"}`}
+                className={`flex-1 h-0.5 ${isComplete ? "bg-buyer-500" : "bg-surface-border"}`}
               />
             )}
             <div className="flex flex-col items-center gap-1">
               <div
                 className={`flex h-9 w-9 items-center justify-center rounded-full border-2 transition-colors ${
                   isCurrent
-                    ? "border-brand-500 bg-brand-50 text-brand-600"
+                    ? "border-buyer-500 bg-buyer-50 text-buyer-600"
                     : isComplete
-                      ? "border-brand-500 bg-brand-500 text-white"
+                      ? "border-buyer-500 bg-buyer-500 text-white"
                       : "border-surface-border bg-white text-navy/30"
                 }`}
               >
                 <Icon className="h-4 w-4" />
               </div>
               <span
-                className={`text-[10px] font-medium ${isCurrent ? "text-brand-600" : isComplete ? "text-navy" : "text-navy/40"}`}
+                className={`text-[10px] font-medium ${isCurrent ? "text-buyer-600" : isComplete ? "text-navy" : "text-navy/40"}`}
               >
                 {step.label}
               </span>
@@ -203,7 +203,7 @@ export default function BuyerOrderDetailPage() {
   if (authLoading || isLoading) {
     return (
       <div className="flex items-center justify-center py-16">
-        <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
+        <Loader2 className="h-8 w-8 animate-spin text-buyer-500" />
       </div>
     );
   }
@@ -403,7 +403,7 @@ export default function BuyerOrderDetailPage() {
                             className={`ml-1.5 inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
                               li.priceType === "DISCOUNTED"
                                 ? "bg-success-bg text-success"
-                                : "bg-brand-50 text-brand-600"
+                                : "bg-buyer-50 text-buyer-600"
                             }`}
                           >
                             {li.priceType === "DISCOUNTED" ? "Discounted" : "Special"}
@@ -462,7 +462,7 @@ export default function BuyerOrderDetailPage() {
                 value={addSearch}
                 onChange={(e) => setAddSearch(e.target.value)}
                 placeholder="Search products to add (name, SKU, barcode)..."
-                className="w-full rounded-lg border border-surface-border bg-white py-2 pl-10 pr-4 text-sm text-navy placeholder:text-navy/40 focus:border-brand-300 focus:outline-none focus:ring-1 focus:ring-brand-200"
+                className="w-full rounded-lg border border-surface-border bg-white py-2 pl-10 pr-4 text-sm text-navy placeholder:text-navy/40 focus:border-buyer-300 focus:outline-none focus:ring-1 focus:ring-buyer-200"
               />
             </div>
             {showProductSearch && searchResults?.data && searchResults.data.length > 0 && (
@@ -482,7 +482,7 @@ export default function BuyerOrderDetailPage() {
                       }}
                       className="w-full flex items-center gap-3 px-3 py-2 text-left text-sm hover:bg-surface-raised transition-colors border-b border-surface-border last:border-b-0"
                     >
-                      <Plus className="h-4 w-4 text-brand-500 flex-shrink-0" />
+                      <Plus className="h-4 w-4 text-buyer-500 flex-shrink-0" />
                       <div className="flex-1 min-w-0">
                         <p className="font-medium text-navy truncate">{p.name}</p>
                         <p className="text-[11px] text-navy/50">

@@ -132,7 +132,7 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
   if (isLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-surface-raised">
-        <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
+        <Loader2 className="h-8 w-8 animate-spin text-buyer-500" />
       </div>
     );
   }

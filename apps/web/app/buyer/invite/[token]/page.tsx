@@ -114,7 +114,7 @@ export default function BuyerInvitePage() {
   if (isLoadingInvite || authLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-surface-raised">
-        <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
+        <Loader2 className="h-8 w-8 animate-spin text-buyer-500" />
       </div>
     );
   }
@@ -126,7 +126,7 @@ export default function BuyerInvitePage() {
           <AlertCircle className="mx-auto mb-4 h-12 w-12 text-danger" />
           <h1 className="text-xl font-bold text-navy mb-2">Invalid Invite</h1>
           <p className="text-sm text-navy/60 mb-6">{loadError}</p>
-          <a href="/buyer/portal" className="text-brand-600 hover:underline text-sm">
+          <a href="/buyer/portal" className="text-buyer-600 hover:underline text-sm">
             Go to Buyer Portal
           </a>
         </div>
@@ -223,7 +223,7 @@ export default function BuyerInvitePage() {
                     type="button"
                     onClick={handleGoogleSignIn}
                     disabled={googleLoading}
-                    className="flex w-full items-center justify-center gap-3 rounded border border-surface-border bg-white px-4 py-2.5 text-sm font-medium text-navy shadow-sm transition-colors hover:bg-surface-raised focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="flex w-full items-center justify-center gap-3 rounded border border-surface-border bg-white px-4 py-2.5 text-sm font-medium text-navy shadow-sm transition-colors hover:bg-surface-raised focus:outline-none focus:ring-2 focus:ring-buyer-500 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {googleLoading ? (
                       <>
@@ -249,7 +249,7 @@ export default function BuyerInvitePage() {
 
               <a
                 href={`/buyer/login?redirect=/buyer/invite/${token}`}
-                className="flex w-full items-center justify-center gap-2 rounded-lg bg-brand-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-brand-700 transition-colors"
+                className="flex w-full items-center justify-center gap-2 rounded-lg bg-buyer-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-buyer-700 transition-colors"
               >
                 Sign in to accept
               </a>

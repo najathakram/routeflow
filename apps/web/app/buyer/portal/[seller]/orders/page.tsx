@@ -89,7 +89,7 @@ export default function BuyerOrdersPage() {
   if (authLoading) {
     return (
       <div className="flex items-center justify-center py-16">
-        <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
+        <Loader2 className="h-8 w-8 animate-spin text-buyer-500" />
       </div>
     );
   }
@@ -117,7 +117,7 @@ export default function BuyerOrdersPage() {
       {/* Loading */}
       {isLoading ? (
         <div className="flex items-center justify-center py-16">
-          <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
+          <Loader2 className="h-8 w-8 animate-spin text-buyer-500" />
         </div>
       ) : orders.length === 0 && !isError ? (
         <div className="rounded-xl border border-dashed border-surface-border bg-white p-12 text-center">

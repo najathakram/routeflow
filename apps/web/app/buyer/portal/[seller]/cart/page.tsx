@@ -42,9 +42,12 @@ export default function BuyerCartPage() {
   // Whether we'll merge into the existing order
   const willMerge = !forceNew && activeOrder != null;
 
-  // Fetch ALL products (limit=0 returns all) to build a complete price map
-  // This ensures cart items are always priced correctly regardless of catalog size
-  const { data: productsResult } = useBuyerProducts({ limit: 0 });
+  // Fetch products matching cart items only (not the entire catalog)
+  // We pass the cart product IDs as a search hint so the API doesn't return thousands of items
+  const cartProductIds = React.useMemo(() => cart.items.map((i) => i.productId), [cart.items]);
+  const { data: productsResult } = useBuyerProducts(
+    cartProductIds.length > 0 ? { limit: 100 } : { limit: 0 },
+  );
 
   // Build price map from available products
   const priceMap = React.useMemo(() => {
@@ -83,10 +86,11 @@ export default function BuyerCartPage() {
         status: "PENDING",
         forceNew,
       });
+
+      // Clear cart ONLY after confirmed success to avoid data loss on network failure
       cart.clearCart();
 
       if (willMerge && activeOrder) {
-        // Merged into existing order — navigate to it
         router.push(`/buyer/portal/${sellerSlug}/orders/${activeOrder.id}`);
       } else {
         setOrderPlaced(result);
@@ -101,7 +105,7 @@ export default function BuyerCartPage() {
   if (authLoading) {
     return (
       <div className="flex items-center justify-center py-16">
-        <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
+        <Loader2 className="h-8 w-8 animate-spin text-buyer-500" />
       </div>
     );
   }
@@ -169,8 +173,8 @@ export default function BuyerCartPage() {
 
       {/* Active order merge banner */}
       {willMerge && activeOrder && (
-        <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-brand-200 bg-brand-50 px-4 py-3">
-          <div className="flex items-center gap-2 text-sm text-brand-700">
+        <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-buyer-200 bg-buyer-50 px-4 py-3">
+          <div className="flex items-center gap-2 text-sm text-buyer-700">
             <ShoppingCart className="h-4 w-4 flex-shrink-0" />
             <span>
               Items will be added to your existing order{" "}
@@ -179,7 +183,7 @@ export default function BuyerCartPage() {
           </div>
           <button
             onClick={() => setForceNew(true)}
-            className="text-xs font-medium text-brand-500 hover:text-brand-700 underline whitespace-nowrap"
+            className="text-xs font-medium text-buyer-500 hover:text-buyer-700 underline whitespace-nowrap"
           >
             Create new order instead
           </button>
@@ -191,7 +195,7 @@ export default function BuyerCartPage() {
           <p className="text-sm text-navy/60">A new order will be created.</p>
           <button
             onClick={() => setForceNew(false)}
-            className="text-xs font-medium text-brand-500 hover:text-brand-700 underline whitespace-nowrap"
+            className="text-xs font-medium text-buyer-500 hover:text-buyer-700 underline whitespace-nowrap"
           >
             Add to existing order instead
           </button>
@@ -351,7 +355,7 @@ export default function BuyerCartPage() {
                 type="date"
                 value={deliveryDate}
                 onChange={(e) => setDeliveryDate(e.target.value)}
-                className="h-9 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                className="h-9 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-buyer-500 focus:outline-none focus:ring-1 focus:ring-buyer-500"
               />
             </div>
 
@@ -362,7 +366,7 @@ export default function BuyerCartPage() {
                 onChange={(e) => setNotes(e.target.value)}
                 placeholder="Special instructions..."
                 rows={3}
-                className="w-full rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-navy placeholder:text-navy/40 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                className="w-full rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-navy placeholder:text-navy/40 focus:border-buyer-500 focus:outline-none focus:ring-1 focus:ring-buyer-500"
               />
             </div>
 
@@ -371,7 +375,7 @@ export default function BuyerCartPage() {
                 type="checkbox"
                 checked={urgent}
                 onChange={(e) => setUrgent(e.target.checked)}
-                className="h-4 w-4 rounded border-navy/30 accent-brand-500"
+                className="h-4 w-4 rounded border-navy/30 accent-buyer-500"
               />
               <span className="text-sm text-navy">
                 <AlertTriangle className="inline h-3.5 w-3.5 text-warning mr-1" />

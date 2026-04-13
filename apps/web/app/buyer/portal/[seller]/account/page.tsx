@@ -61,7 +61,7 @@ export default function BuyerAccountPage() {
   if (authLoading) {
     return (
       <div className="flex items-center justify-center py-16">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-brand-500 border-t-transparent" />
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-buyer-500 border-t-transparent" />
       </div>
     );
   }
@@ -82,7 +82,7 @@ export default function BuyerAccountPage() {
         {/* Buyer profile card */}
         <div className="rounded-xl border border-surface-border bg-white p-6 shadow-sm">
           <div className="mb-4 flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-brand-50 text-brand-600">
+            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-buyer-50 text-buyer-600">
               <User className="h-5 w-5" />
             </div>
             <h2 className="text-base font-semibold text-navy">Your Profile</h2>

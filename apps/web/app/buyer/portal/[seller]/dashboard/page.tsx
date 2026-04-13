@@ -55,7 +55,7 @@ export default function BuyerDashboardPage() {
   if (authLoading || isLoading) {
     return (
       <div className="flex items-center justify-center py-16">
-        <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
+        <Loader2 className="h-8 w-8 animate-spin text-buyer-500" />
       </div>
     );
   }
@@ -91,7 +91,7 @@ export default function BuyerDashboardPage() {
             icon: ShoppingCart,
             label: "Active Orders",
             value: dashboard.stats.activeOrders,
-            color: "text-brand-600 bg-brand-50",
+            color: "text-buyer-600 bg-buyer-50",
           },
           {
             icon: DollarSign,
@@ -141,7 +141,7 @@ export default function BuyerDashboardPage() {
                     onClick={() => setFrequentWindow(opt.value)}
                     className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors ${
                       frequentWindow === opt.value
-                        ? "bg-white text-brand-600 shadow-sm"
+                        ? "bg-white text-buyer-600 shadow-sm"
                         : "text-navy/50 hover:text-navy"
                     }`}
                   >
@@ -152,7 +152,7 @@ export default function BuyerDashboardPage() {
             </div>
             <button
               onClick={() => router.push(`/buyer/portal/${sellerSlug}/shop`)}
-              className="text-xs text-brand-500 hover:text-brand-600 font-medium flex items-center gap-1"
+              className="text-xs text-buyer-500 hover:text-buyer-600 font-medium flex items-center gap-1"
             >
               Browse All <ArrowRight className="h-3 w-3" />
             </button>
@@ -182,7 +182,7 @@ export default function BuyerDashboardPage() {
                       thumbnailUrl: p.thumbnailUrl,
                     })
                   }
-                  className="flex items-center gap-1 rounded-md bg-brand-500 px-2 py-1 text-[10px] font-semibold text-white hover:bg-brand-600 transition-colors"
+                  className="flex items-center gap-1 rounded-md bg-buyer-500 px-2 py-1 text-[10px] font-semibold text-white hover:bg-buyer-600 transition-colors"
                 >
                   <Plus className="h-3 w-3" /> Add
                 </button>
@@ -199,7 +199,7 @@ export default function BuyerDashboardPage() {
             <h2 className="text-sm font-semibold text-navy">Recent Orders</h2>
             <button
               onClick={() => router.push(`/buyer/portal/${sellerSlug}/orders`)}
-              className="text-xs text-brand-500 hover:text-brand-600 font-medium flex items-center gap-1"
+              className="text-xs text-buyer-500 hover:text-buyer-600 font-medium flex items-center gap-1"
             >
               View All <ArrowRight className="h-3 w-3" />
             </button>
@@ -242,7 +242,7 @@ export default function BuyerDashboardPage() {
             </h2>
             <button
               onClick={() => router.push(`/buyer/portal/${sellerSlug}/shop`)}
-              className="text-xs text-brand-500 hover:text-brand-600 font-medium flex items-center gap-1"
+              className="text-xs text-buyer-500 hover:text-buyer-600 font-medium flex items-center gap-1"
             >
               Browse All <ArrowRight className="h-3 w-3" />
             </button>
@@ -272,7 +272,7 @@ export default function BuyerDashboardPage() {
                       thumbnailUrl: p.thumbnailUrl,
                     })
                   }
-                  className="flex items-center gap-1 rounded-md bg-brand-500 px-2 py-1 text-[10px] font-semibold text-white hover:bg-brand-600 transition-colors"
+                  className="flex items-center gap-1 rounded-md bg-buyer-500 px-2 py-1 text-[10px] font-semibold text-white hover:bg-buyer-600 transition-colors"
                 >
                   <Plus className="h-3 w-3" /> Add
                 </button>
@@ -292,7 +292,7 @@ export default function BuyerDashboardPage() {
             </div>
             <button
               onClick={() => router.push(`/buyer/portal/${sellerSlug}/shop`)}
-              className="text-xs text-brand-500 hover:text-brand-600 font-medium flex items-center gap-1"
+              className="text-xs text-buyer-500 hover:text-buyer-600 font-medium flex items-center gap-1"
             >
               Browse All <ArrowRight className="h-3 w-3" />
             </button>
@@ -322,7 +322,7 @@ export default function BuyerDashboardPage() {
                       thumbnailUrl: p.thumbnailUrl,
                     })
                   }
-                  className="flex items-center gap-1 rounded-md bg-brand-500 px-2 py-1 text-[10px] font-semibold text-white hover:bg-brand-600 transition-colors"
+                  className="flex items-center gap-1 rounded-md bg-buyer-500 px-2 py-1 text-[10px] font-semibold text-white hover:bg-buyer-600 transition-colors"
                 >
                   <Plus className="h-3 w-3" /> Add
                 </button>
@@ -342,7 +342,7 @@ export default function BuyerDashboardPage() {
             </div>
             <button
               onClick={() => router.push(`/buyer/portal/${sellerSlug}/shop`)}
-              className="text-xs text-brand-500 hover:text-brand-600 font-medium flex items-center gap-1"
+              className="text-xs text-buyer-500 hover:text-buyer-600 font-medium flex items-center gap-1"
             >
               Browse All <ArrowRight className="h-3 w-3" />
             </button>
@@ -351,7 +351,7 @@ export default function BuyerDashboardPage() {
             {dashboard.suggestedItems.map((p) => (
               <div
                 key={p.id}
-                className="flex-shrink-0 w-36 flex flex-col items-center gap-2 rounded-lg border border-brand-100 bg-brand-50/30 p-3"
+                className="flex-shrink-0 w-36 flex flex-col items-center gap-2 rounded-lg border border-buyer-100 bg-buyer-50/30 p-3"
               >
                 <div className="h-16 w-16 rounded-lg bg-surface-raised flex items-center justify-center overflow-hidden">
                   {p.thumbnailUrl ? (
@@ -361,7 +361,7 @@ export default function BuyerDashboardPage() {
                   )}
                 </div>
                 {p.category && (
-                  <span className="rounded-full bg-brand-100 px-2 py-0.5 text-[9px] font-medium text-brand-600">
+                  <span className="rounded-full bg-buyer-100 px-2 py-0.5 text-[9px] font-medium text-buyer-600">
                     {p.category}
                   </span>
                 )}
@@ -377,7 +377,7 @@ export default function BuyerDashboardPage() {
                       thumbnailUrl: p.thumbnailUrl,
                     })
                   }
-                  className="flex items-center gap-1 rounded-md bg-brand-500 px-2 py-1 text-[10px] font-semibold text-white hover:bg-brand-600 transition-colors"
+                  className="flex items-center gap-1 rounded-md bg-buyer-500 px-2 py-1 text-[10px] font-semibold text-white hover:bg-buyer-600 transition-colors"
                 >
                   <Plus className="h-3 w-3" /> Add
                 </button>

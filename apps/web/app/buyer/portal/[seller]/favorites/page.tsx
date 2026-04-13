@@ -81,19 +81,19 @@ function FavoriteCard({
           </div>
 
           {cartQty > 0 ? (
-            <div className="flex items-center gap-1 rounded-lg border border-brand-200 bg-brand-50">
+            <div className="flex items-center gap-1 rounded-lg border border-buyer-200 bg-buyer-50">
               <button
                 onClick={() => onUpdateQty(cartQty - 1)}
-                className="rounded-l-lg p-1.5 text-brand-600 hover:bg-brand-100 transition-colors"
+                className="rounded-l-lg p-1.5 text-buyer-600 hover:bg-buyer-100 transition-colors"
               >
                 <Minus className="h-3.5 w-3.5" />
               </button>
-              <span className="min-w-[28px] text-center text-sm font-semibold text-brand-700">
+              <span className="min-w-[28px] text-center text-sm font-semibold text-buyer-700">
                 {cartQty}
               </span>
               <button
                 onClick={() => onUpdateQty(cartQty + 1)}
-                className="rounded-r-lg p-1.5 text-brand-600 hover:bg-brand-100 transition-colors"
+                className="rounded-r-lg p-1.5 text-buyer-600 hover:bg-buyer-100 transition-colors"
               >
                 <Plus className="h-3.5 w-3.5" />
               </button>
@@ -101,7 +101,7 @@ function FavoriteCard({
           ) : (
             <button
               onClick={onAdd}
-              className="flex items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-xs font-semibold text-white hover:bg-brand-600 transition-colors"
+              className="flex items-center gap-1.5 rounded-lg bg-buyer-500 px-3 py-2 text-xs font-semibold text-white hover:bg-buyer-600 transition-colors"
             >
               <Plus className="h-3.5 w-3.5" /> Add
             </button>
@@ -142,7 +142,7 @@ export default function BuyerFavoritesPage() {
   if (authLoading || isLoading) {
     return (
       <div className="flex items-center justify-center py-16">
-        <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
+        <Loader2 className="h-8 w-8 animate-spin text-buyer-500" />
       </div>
     );
   }
