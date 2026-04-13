@@ -16,6 +16,7 @@ import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { SuperAdminGuard } from "../tenant/super-admin.guard";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { PlatformAdminService } from "./platform-admin.service";
+import { PlatformConfigService } from "./platform-config.service";
 import { BillingService } from "../billing/billing.service";
 import { AddonService } from "../billing/addon.service";
 import { UpdateTenantStatusDto } from "./dto/update-tenant-status.dto";
@@ -33,6 +34,7 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 export class PlatformAdminController {
   constructor(
     private readonly svc: PlatformAdminService,
+    private readonly platformConfig: PlatformConfigService,
     private readonly billingService: BillingService,
     private readonly addonService: AddonService,
   ) {}
@@ -221,5 +223,21 @@ export class PlatformAdminController {
   @ApiOperation({ summary: "Disable an add-on feature for a tenant" })
   disableAddon(@Param("id") id: string, @Body() dto: DisableAddonDto) {
     return this.addonService.disableAddon(id, dto.addonKey);
+  }
+
+  // ─── Platform AI Configuration ────────────────────────────────────────────
+
+  @Get("ai-config")
+  @ApiOperation({ summary: "Get platform-wide Claude AI configuration" })
+  getAiConfig() {
+    return this.platformConfig.getAiConfig();
+  }
+
+  @Patch("ai-config")
+  @ApiOperation({ summary: "Update platform-wide Claude AI configuration" })
+  updateAiConfig(
+    @Body() dto: { apiKey?: string; model?: string; maxTokens?: number },
+  ) {
+    return this.platformConfig.updateAiConfig(dto);
   }
 }

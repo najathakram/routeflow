@@ -926,6 +926,15 @@ model SystemConfig {
   @@index([tenantId])
 }
 
+/// Platform-wide key/value config — not scoped to any tenant.
+/// Used for global settings such as the platform Anthropic API key.
+model PlatformConfig {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
 model OrderTemplate {
   id         String   @id @default(uuid())
   customerId String

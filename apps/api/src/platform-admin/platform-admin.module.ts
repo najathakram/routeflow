@@ -3,6 +3,7 @@ import { JwtModule } from "@nestjs/jwt";
 import { ConfigModule, ConfigService } from "@nestjs/config";
 import { PlatformAdminController } from "./platform-admin.controller";
 import { PlatformAdminService } from "./platform-admin.service";
+import { PlatformConfigService } from "./platform-config.service";
 import { AppConfig } from "../config/configuration";
 import { EmailModule } from "../email/email.module";
 import { BillingModule } from "../billing/billing.module";
@@ -24,6 +25,7 @@ import { BillingModule } from "../billing/billing.module";
     BillingModule,
   ],
   controllers: [PlatformAdminController],
-  providers: [PlatformAdminService],
+  providers: [PlatformAdminService, PlatformConfigService],
+  exports: [PlatformConfigService],
 })
 export class PlatformAdminModule {}
