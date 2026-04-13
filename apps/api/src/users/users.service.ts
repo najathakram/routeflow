@@ -42,6 +42,19 @@ export class UsersService {
     return matches.length === 1 ? matches[0] : null;
   }
 
+  /**
+   * Cross-tenant username lookup — fallback for username-based logins with a stale cookie.
+   * Returns null if zero or multiple matches (common usernames like "admin" exist in
+   * multiple tenants and won't trigger the fallback — user must use email instead).
+   */
+  async findByUsernameCrossTenant(username: string): Promise<User | null> {
+    const matches = await this.prisma.user.findMany({
+      where: { username, deletedAt: null, status: "ACTIVE" },
+      take: 2,
+    });
+    return matches.length === 1 ? matches[0] : null;
+  }
+
   async findById(
     id: string,
   ): Promise<(Omit<User, "password" | "googleId"> & { googleLinked: boolean }) | null> {

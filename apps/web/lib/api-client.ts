@@ -32,9 +32,10 @@ apiClient.interceptors.request.use((config) => {
     if (token) config.headers.Authorization = `Bearer ${token}`;
 
     // Tell the API which tenant this request belongs to.
-    // On production the API already knows from the subdomain (Host header),
-    // but in dev (localhost) the header is required.
-    const slug = getTenantSlugFromCookie();
+    // Prefer the impersonation slug (set when super admin impersonates a tenant)
+    // over the cookie, as defense-in-depth against stale cookies.
+    const impersonationSlug = localStorage.getItem("impersonationTenantSlug");
+    const slug = impersonationSlug || getTenantSlugFromCookie();
     if (slug) config.headers["X-Tenant-Slug"] = slug;
   }
   return config;

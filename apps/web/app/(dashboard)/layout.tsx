@@ -39,6 +39,7 @@ import {
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { cn, Avatar, ToastProvider } from "@routeflow/ui/web";
 import { useAuth } from "@/lib/auth-context";
+import { clearTenantCookie } from "@/lib/tenant-cookie";
 import { PageTitleProvider, usePageTitle } from "@/lib/page-title-context";
 import { useRealtimeUpdates } from "@/lib/hooks/useRealtimeUpdates";
 import { useNotifications, type AppNotification } from "@/lib/hooks/useNotifications";
@@ -492,6 +493,7 @@ function ImpersonationBanner() {
   if (!tenantSlug) return null;
 
   const exitImpersonation = () => {
+    clearTenantCookie();
     localStorage.removeItem("impersonationToken");
     localStorage.removeItem("impersonationTenantSlug");
     router.push("/admin/tenants");

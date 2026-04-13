@@ -32,10 +32,15 @@ export class AuthService {
     let user = await this.usersService.findByUsername(username, tenantId);
 
     // Fallback: if no user found with the resolved tenant (e.g. stale/missing cookie),
-    // and the input looks like an email, do a cross-tenant lookup so tenant admins can
-    // always log in with their email regardless of which tenant cookie the browser holds.
+    // do a cross-tenant lookup so tenant admins can always log in regardless of which
+    // tenant cookie the browser holds. Email lookups are tried first; username lookups
+    // only succeed when the username is globally unique (common names like "admin" that
+    // exist in multiple tenants will not match — those users must use their email).
     if (!user && username.includes("@")) {
       user = await this.usersService.findByEmailCrossTenant(username);
+    }
+    if (!user && !username.includes("@")) {
+      user = await this.usersService.findByUsernameCrossTenant(username);
     }
 
     if (!user || user.deletedAt !== null) return null;

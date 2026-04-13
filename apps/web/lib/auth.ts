@@ -1,4 +1,5 @@
 import { apiClient } from "./api-client";
+import { setTenantCookie, clearTenantCookie } from "./tenant-cookie";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -10,6 +11,7 @@ export interface AuthUser {
   forcePasswordChange: boolean;
   isAdmin?: boolean;
   canActAsDriver?: boolean;
+  tenantSlug?: string | null;
 }
 
 export interface AuthResponse {
@@ -60,6 +62,12 @@ export async function login(username: string, password: string): Promise<AuthRes
   });
   localStorage.setItem("accessToken", data.accessToken);
   localStorage.setItem("refreshToken", data.refreshToken);
+  // Correct the tenant cookie to match the authenticated user's actual tenant.
+  // This ensures that even if the browser had a stale cookie from a previous
+  // session or impersonation, all subsequent API calls use the correct tenant.
+  if (data.user.tenantSlug) {
+    setTenantCookie(data.user.tenantSlug);
+  }
   return data;
 }
 
@@ -71,6 +79,7 @@ export async function logout(): Promise<void> {
   }
   localStorage.removeItem("accessToken");
   localStorage.removeItem("refreshToken");
+  clearTenantCookie();
   window.location.href = "/login";
 }
 

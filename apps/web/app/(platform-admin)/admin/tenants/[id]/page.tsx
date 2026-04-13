@@ -4,6 +4,7 @@ import * as React from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { superAdminClient } from "@/lib/admin-api";
+import { setTenantCookie } from "@/lib/tenant-cookie";
 import { AdminTabs } from "../../../_components/AdminTabs";
 import { AdminBadge } from "../../../_components/AdminBadge";
 import { AdminCard } from "../../../_components/AdminCard";
@@ -1045,6 +1046,7 @@ export default function AdminTenantDetailPage() {
             const res = await superAdminClient.post(`/platform-admin/tenants/${id}/impersonate`);
             localStorage.setItem("impersonationToken", res.data.accessToken);
             localStorage.setItem("impersonationTenantSlug", tenant.slug);
+            setTenantCookie(tenant.slug);
             window.location.href = "/dashboard";
           } catch (impErr: unknown) {
             const msg = (impErr as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "";

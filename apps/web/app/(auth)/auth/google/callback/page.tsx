@@ -4,6 +4,7 @@ export const dynamic = "force-dynamic";
 
 import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { setTenantCookie } from "@/lib/tenant-cookie";
 
 // ─── Error messages shown to the user ────────────────────────────────────────
 
@@ -89,8 +90,7 @@ function GoogleCallbackInner() {
 
       // Restore tenant cookie so API calls include X-Tenant-Slug header
       if (tenantSlug) {
-        const maxAge = 60 * 60 * 24 * 30; // 30 days
-        document.cookie = `tenant-slug=${encodeURIComponent(tenantSlug)}; path=/; max-age=${maxAge}; samesite=lax`;
+        setTenantCookie(tenantSlug);
       }
 
       // Role-based post-login destination
