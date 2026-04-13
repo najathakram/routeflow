@@ -27,24 +27,31 @@ import { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
 import { CompleteStopDto } from "./dto/complete-stop.dto";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { getTierPrice } from "../utils/pricing";
-import { ConfigService } from "@nestjs/config";
 import { NotificationsService } from "../notifications/notifications.service";
 import { InvoicesService } from "../invoices/invoices.service";
+import { SystemConfigService } from "../system-config/system-config.service";
 
 @Injectable()
 export class OrdersService {
   private readonly logger = new Logger(OrdersService.name);
-  private readonly taxRate: number;
 
   constructor(
     private readonly prisma: PrismaService,
     @InjectQueue("invoices") private readonly invoiceQueue: Queue,
     private readonly gateway: RouteFlowGateway,
-    private readonly config: ConfigService,
     private readonly notifications: NotificationsService,
     private readonly invoicesService: InvoicesService,
-  ) {
-    this.taxRate = this.config.get<number>("taxRate") ?? 0.1;
+    private readonly systemConfig: SystemConfigService,
+  ) {}
+
+  /**
+   * Read the tax rate from the tenant's Settings (SystemConfig) at request time.
+   * Falls back to 0 so that unconfigured tenants don't get a surprise 10% charge.
+   */
+  private async getTaxRate(): Promise<number> {
+    const stored = await this.systemConfig.get("settings.taxRate");
+    if (stored !== null && stored !== "") return parseFloat(stored);
+    return 0;
   }
 
   async findAll(query: ListOrdersDto, user: JwtPayload) {
@@ -253,7 +260,7 @@ export class OrdersService {
     });
 
     const orderDiscount = dto.discountAmount ?? 0;
-    const tax = subtotal * this.taxRate;
+    const tax = subtotal * await this.getTaxRate();
     const total = subtotal + tax - orderDiscount;
 
     const order = await this.prisma.forTenant().order.create({
@@ -566,7 +573,7 @@ export class OrdersService {
       where: { orderId, status: { not: "CANCELLED" } },
     });
     const subtotal = activeItems.reduce((s, li) => s + Number(li.subtotal), 0);
-    const tax = subtotal * this.taxRate;
+    const tax = subtotal * await this.getTaxRate();
     await this.prisma.forTenant().order.update({
       where: { id: orderId },
       data: {

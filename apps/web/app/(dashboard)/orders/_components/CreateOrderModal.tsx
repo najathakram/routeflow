@@ -64,7 +64,7 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
     queryFn: () => apiClient.get("/settings").then((r) => r.data),
     staleTime: 60_000,
   });
-  const taxRate = (settings?.taxRate ?? 10) / 100;
+  const taxRate = (settings?.taxRate ?? 0) / 100;
 
   // Customer search state
   const [customerSearch, setCustomerSearch] = React.useState("");

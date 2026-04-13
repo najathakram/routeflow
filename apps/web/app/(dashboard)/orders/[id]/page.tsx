@@ -872,7 +872,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
         .reduce((s, it) => s + it.qty * it.unitPrice, 0)
     : Number(order.subtotal);
 
-  const taxRate = order.subtotal > 0 ? Number(order.tax) / Number(order.subtotal) : 0.1;
+  const taxRate = order.subtotal > 0 ? Number(order.tax) / Number(order.subtotal) : 0;
   const editTax = isEditing ? editSubtotal * taxRate : Number(order.tax);
   const editTotal = editSubtotal + editTax;
 
