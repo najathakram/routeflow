@@ -2706,9 +2706,7 @@ export default function CustomerDetailPage({
                 <div className="mb-6 flex items-start justify-between">
                   <div>
                     <div className="flex items-center gap-2">
-                      <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-500 text-xs font-bold text-white">
-                        RF
-                      </div>
+                      <img src="/logo-seller.png" alt="RouteFlow" className="h-7 w-7 object-contain" />
                       <span className="text-base font-bold text-navy">
                         RouteFlow
                       </span>

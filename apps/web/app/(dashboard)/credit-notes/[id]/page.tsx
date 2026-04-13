@@ -384,9 +384,7 @@ export default function CreditNoteDetailPage({ params }: { params: { id: string 
             <div className="mb-6 flex items-start justify-between gap-4">
               <div>
                 <div className="flex items-center gap-2">
-                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-500 text-sm font-bold text-white">
-                    RF
-                  </div>
+                  <img src="/logo-seller.png" alt="RouteFlow" className="h-8 w-8 object-contain" />
                   <span className="text-lg font-bold text-navy">RouteFlow</span>
                 </div>
                 <p className="mt-1 text-xs text-navy/50">Austin, TX · routeflow.io</p>

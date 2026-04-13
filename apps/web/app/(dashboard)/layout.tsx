@@ -569,9 +569,11 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
             collapsed ? "justify-center" : "gap-3",
           )}
         >
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-brand-500 text-sm font-bold text-white">
-            RF
-          </div>
+          <img
+            src="/logo-seller.png"
+            alt="RouteFlow"
+            className="h-8 w-8 shrink-0 rounded-lg object-contain"
+          />
           {!collapsed && (
             <span className="text-lg font-bold text-white">RouteFlow</span>
           )}

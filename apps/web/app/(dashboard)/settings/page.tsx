@@ -226,9 +226,7 @@ function BusinessProfileTab() {
             {logoPreview ? (
               <img src={logoPreview} alt="Logo preview" className="h-full w-full object-cover" />
             ) : (
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-500 text-base font-bold text-white">
-                RF
-              </div>
+              <img src="/logo-seller.png" alt="RouteFlow" className="h-10 w-10 object-contain" />
             )}
           </div>
           <div className="space-y-2">

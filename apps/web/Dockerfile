@@ -59,7 +59,8 @@ COPY --from=builder /app/apps/web/.next/standalone ./
 # expects: <monorepo-root>/apps/web/.next/static
 COPY --from=builder /app/apps/web/.next/static ./apps/web/.next/static
 
-# Note: apps/web/public is intentionally absent — no static public assets.
+# Public assets (logos, etc.) must be served from <monorepo-root>/apps/web/public
+COPY --from=builder /app/apps/web/public ./apps/web/public
 
 ENV HOSTNAME="0.0.0.0"
 # PORT is injected by Railway at runtime; Next.js standalone server reads it
