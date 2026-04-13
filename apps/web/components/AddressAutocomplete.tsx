@@ -16,10 +16,8 @@ export interface AddressParts {
 interface Suggestion {
   id: string;
   display: string;
-  street: string;
-  city: string;
-  state: string;
-  zip: string;
+  /** Google place_id — used to fetch full address details */
+  placeId: string;
 }
 
 export interface AddressAutocompleteProps {
@@ -33,36 +31,32 @@ export interface AddressAutocompleteProps {
   disabled?: boolean;
 }
 
-// ─── Photon (OpenStreetMap) parser ────────────────────────────────────────────
+// ─── Google Maps loader ──────────────────────────────────────────────────────
 
-function parseFeature(f: Record<string, unknown>): Suggestion | null {
-  const p = (f.properties as Record<string, string | undefined>) ?? {};
-  const streetLine = p.housenumber
-    ? `${p.housenumber} ${p.street ?? p.name ?? ""}`.trim()
-    : (p.street ?? p.name ?? "").trim();
-  if (!streetLine) return null;
+const MAPS_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY ?? "";
 
-  const city = p.city ?? p.town ?? p.village ?? p.county ?? "";
-  const state = p.state ?? "";
-  const zip = p.postcode ?? "";
+/** Load the Google Maps JS SDK once, returning a promise that resolves when ready. */
+let _loadPromise: Promise<void> | null = null;
 
-  const displayParts = [streetLine];
-  if (city) displayParts.push(city);
-  if (state && zip) displayParts.push(`${state} ${zip}`);
-  else if (state) displayParts.push(state);
-  else if (zip) displayParts.push(zip);
-  // Show country for non-US results
-  if (p.countrycode && p.countrycode !== "US") displayParts.push(p.country ?? p.countrycode);
+function loadGoogleMaps(): Promise<void> {
+  if (typeof window === "undefined") return Promise.resolve();
+  if (window.google?.maps?.places) return Promise.resolve();
+  if (_loadPromise) return _loadPromise;
 
-  const geometry = f.geometry as { coordinates?: number[] } | undefined;
-  return {
-    id: `${(geometry?.coordinates ?? []).join(",")}-${streetLine}`,
-    display: displayParts.join(", "),
-    street: streetLine,
-    city,
-    state,
-    zip,
-  };
+  _loadPromise = new Promise<void>((resolve, reject) => {
+    // Check again in case another script loaded it
+    if (window.google?.maps?.places) { resolve(); return; }
+
+    const script = document.createElement("script");
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${MAPS_KEY}&libraries=places`;
+    script.async = true;
+    script.defer = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("Failed to load Google Maps"));
+    document.head.appendChild(script);
+  });
+
+  return _loadPromise;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -73,7 +67,7 @@ export function AddressAutocomplete({
   onChange,
   onAddressSelect,
   error,
-  placeholder = "Start typing an address…",
+  placeholder = "Start typing an address\u2026",
   className,
   disabled,
 }: AddressAutocompleteProps) {
@@ -81,56 +75,82 @@ export function AddressAutocomplete({
   const [isOpen, setIsOpen] = React.useState(false);
   const [isLoading, setIsLoading] = React.useState(false);
   const [activeIndex, setActiveIndex] = React.useState(-1);
+  const [mapsReady, setMapsReady] = React.useState(false);
 
-  const abortRef = React.useRef<AbortController | null>(null);
   const debounceRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const containerRef = React.useRef<HTMLDivElement>(null);
+  const autocompleteRef = React.useRef<google.maps.places.AutocompleteService | null>(null);
+  const placesRef = React.useRef<google.maps.places.PlacesService | null>(null);
+  const attrDivRef = React.useRef<HTMLDivElement | null>(null);
 
   const inputId = label?.toLowerCase().replace(/\s+/g, "-") ?? "street";
 
-  // ── Fetch suggestions ────────────────────────────────────────────────────
+  // ── Load Google Maps SDK ───────────────────────────────────────────────────
 
-  const fetchSuggestions = React.useCallback(async (q: string) => {
-    if (q.trim().length < 3) {
-      setSuggestions([]);
-      setIsOpen(false);
-      return;
-    }
+  React.useEffect(() => {
+    if (!MAPS_KEY) return;
+    loadGoogleMaps()
+      .then(() => {
+        autocompleteRef.current = new google.maps.places.AutocompleteService();
+        // PlacesService needs a DOM element (can be hidden)
+        if (!attrDivRef.current) {
+          attrDivRef.current = document.createElement("div");
+        }
+        placesRef.current = new google.maps.places.PlacesService(attrDivRef.current);
+        setMapsReady(true);
+      })
+      .catch(() => {
+        // Google Maps failed to load — the component will still render,
+        // but autocomplete will be unavailable
+      });
+  }, []);
 
-    abortRef.current?.abort();
-    const ctrl = new AbortController();
-    abortRef.current = ctrl;
+  // ── Fetch suggestions via Google Places ─────────────────────────────────────
 
-    setIsLoading(true);
-    try {
-      const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=7&lang=en`;
-      const res = await fetch(url, { signal: ctrl.signal });
-      if (!res.ok) throw new Error("fetch error");
-      const data = (await res.json()) as { features?: Record<string, unknown>[] };
-
-      const seen = new Set<string>();
-      const parsed: Suggestion[] = [];
-      for (const f of data.features ?? []) {
-        const s = parseFeature(f);
-        if (!s) continue;
-        const key = `${s.street}|${s.city}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        parsed.push(s);
-        if (parsed.length >= 5) break;
+  const fetchSuggestions = React.useCallback(
+    async (q: string) => {
+      if (q.trim().length < 3 || !autocompleteRef.current) {
+        setSuggestions([]);
+        setIsOpen(false);
+        return;
       }
 
-      setSuggestions(parsed);
-      setIsOpen(parsed.length > 0);
-    } catch (e) {
-      if ((e as Error).name !== "AbortError") {
+      setIsLoading(true);
+      try {
+        const request: google.maps.places.AutocompletionRequest = {
+          input: q,
+          componentRestrictions: { country: "us" },
+          types: ["address"],
+        };
+
+        autocompleteRef.current.getPlacePredictions(request, (results, status) => {
+          setIsLoading(false);
+          if (
+            status !== google.maps.places.PlacesServiceStatus.OK ||
+            !results
+          ) {
+            setSuggestions([]);
+            setIsOpen(false);
+            return;
+          }
+
+          const parsed: Suggestion[] = results.slice(0, 5).map((r) => ({
+            id: r.place_id,
+            display: r.description,
+            placeId: r.place_id,
+          }));
+
+          setSuggestions(parsed);
+          setIsOpen(parsed.length > 0);
+        });
+      } catch {
+        setIsLoading(false);
         setSuggestions([]);
         setIsOpen(false);
       }
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
+    },
+    [],
+  );
 
   // ── Handlers ─────────────────────────────────────────────────────────────
 
@@ -139,15 +159,44 @@ export function AddressAutocomplete({
     onChange(v);
     setActiveIndex(-1);
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => fetchSuggestions(v), 350);
+    debounceRef.current = setTimeout(() => fetchSuggestions(v), 300);
   };
 
   const handleSelect = (s: Suggestion) => {
-    onChange(s.street);
-    onAddressSelect({ street: s.street, city: s.city, state: s.state, zip: s.zip });
-    setSuggestions([]);
     setIsOpen(false);
     setActiveIndex(-1);
+
+    if (!placesRef.current) {
+      onChange(s.display);
+      return;
+    }
+
+    // Fetch full place details to get structured address components
+    placesRef.current.getDetails(
+      { placeId: s.placeId, fields: ["address_components"] },
+      (place, status) => {
+        if (
+          status !== google.maps.places.PlacesServiceStatus.OK ||
+          !place?.address_components
+        ) {
+          onChange(s.display);
+          return;
+        }
+
+        const get = (type: string): string =>
+          place.address_components!.find((c) => c.types.includes(type))?.short_name ?? "";
+
+        const streetNumber = get("street_number");
+        const route = get("route");
+        const street = streetNumber ? `${streetNumber} ${route}` : route;
+        const city = get("locality") || get("sublocality") || get("neighborhood");
+        const state = get("administrative_area_level_1");
+        const zip = get("postal_code");
+
+        onChange(street);
+        onAddressSelect({ street, city, state, zip });
+      },
+    );
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -184,7 +233,6 @@ export function AddressAutocomplete({
   React.useEffect(
     () => () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
-      abortRef.current?.abort();
     },
     [],
   );
@@ -205,9 +253,9 @@ export function AddressAutocomplete({
           onChange={handleChange}
           onKeyDown={handleKeyDown}
           onFocus={() => suggestions.length > 0 && setIsOpen(true)}
-          placeholder={placeholder}
+          placeholder={!MAPS_KEY ? "Enter address manually" : (mapsReady ? placeholder : "Loading\u2026")}
           autoComplete="off"
-          disabled={disabled}
+          disabled={disabled || (!mapsReady && !!MAPS_KEY)}
           aria-autocomplete="list"
           aria-expanded={isOpen}
           aria-invalid={!!error}
@@ -255,9 +303,6 @@ export function AddressAutocomplete({
               <span className="leading-snug">{s.display}</span>
             </li>
           ))}
-          <li className="border-t border-surface-border px-3 py-1.5 text-right">
-            <span className="text-[10px] text-navy/30">Powered by OpenStreetMap</span>
-          </li>
         </ul>
       )}
     </div>

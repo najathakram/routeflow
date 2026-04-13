@@ -37,7 +37,7 @@ export class SettingsController {
     const tenantId = this.prisma.getTenantId();
     let businessName = all["settings.businessName"] ?? "";
     let ownerName = all["settings.ownerName"] ?? "";
-    const accountEmail = all["settings.email"] ?? "";
+    let accountEmail = all["settings.email"] ?? "";
     let customerEmail = "";
 
     if (tenantId) {
@@ -52,6 +52,17 @@ export class SettingsController {
       if (config?.businessName) businessName = config.businessName;
       if (config?.ownerName) ownerName = config.ownerName;
       if (config?.customerEmail) customerEmail = config.customerEmail;
+
+      // If account email is not explicitly set in system config, source it from
+      // the TENANT_ADMIN user's email — this is the email used when the tenant
+      // was created and serves as the primary account identifier.
+      if (!accountEmail) {
+        const admin = await this.prisma.forTenant().user.findFirst({
+          where: { tenantId, role: UserRole.TENANT_ADMIN, deletedAt: null },
+          select: { email: true },
+        });
+        if (admin?.email) accountEmail = admin.email;
+      }
     }
 
     return {
