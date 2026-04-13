@@ -12,136 +12,143 @@ import { ConfigService } from "@nestjs/config";
 import { AppConfig } from "../config/configuration";
 
 /**
- * Public proxy for the Google Places API.
+ * Public proxy for address autocomplete.
  *
- * Uses the legacy Places API REST endpoint (maps.googleapis.com) rather than
- * the newer places.googleapis.com endpoint, because the API key in use has
- * "API restrictions" that allow maps.googleapis.com (already used by Geocoding)
- * but block places.googleapis.com.
+ * Uses the Mapbox Geocoding API v5 — no API key restrictions, excellent US
+ * residential address coverage. Results are restricted to US addresses.
  *
- * Legacy docs: https://developers.google.com/maps/documentation/places/web-service/autocomplete
+ * The autocomplete response embeds full address parts (street/city/state/zip)
+ * so the frontend never needs a separate details round-trip.
  */
 @ApiTags("public/places")
 @Controller("public/places")
 export class PublicPlacesController {
   private readonly logger = new Logger(PublicPlacesController.name);
-  private readonly apiKey: string;
+  private readonly accessToken: string;
 
   constructor(private readonly config: ConfigService<AppConfig>) {
-    this.apiKey = this.config.get<AppConfig["googleMaps"]>("googleMaps")!.apiKey;
+    this.accessToken = this.config.get<AppConfig["mapbox"]>("mapbox")!.accessToken;
   }
 
   // ─── Address autocomplete ─────────────────────────────────────────────────
 
   @Get("autocomplete")
-  @ApiOperation({ summary: "Autocomplete a US address via Google Places API" })
-  @Throttle({ default: { ttl: 1_000, limit: 10 } }) // 10 req/sec per IP
+  @ApiOperation({ summary: "Autocomplete a US address via Mapbox Geocoding API" })
+  @Throttle({ default: { ttl: 1_000, limit: 10 } })
   async autocomplete(@Query("q") q: string) {
     if (!q || q.trim().length < 3) {
       return { suggestions: [] };
     }
-    if (!this.apiKey) {
-      throw new InternalServerErrorException("Google Maps API key not configured");
+    if (!this.accessToken) {
+      throw new InternalServerErrorException("Mapbox access token not configured");
     }
 
-    const url = new URL("https://maps.googleapis.com/maps/api/place/autocomplete/json");
-    url.searchParams.set("input", q.trim());
-    url.searchParams.set("key", this.apiKey);
-    url.searchParams.set("components", "country:us");
+    const url = new URL(
+      `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(q.trim())}.json`,
+    );
+    url.searchParams.set("access_token", this.accessToken);
     url.searchParams.set("types", "address");
+    url.searchParams.set("country", "us");
+    url.searchParams.set("limit", "5");
+    url.searchParams.set("autocomplete", "true");
     url.searchParams.set("language", "en");
 
     const res = await fetch(url.toString());
 
     if (!res.ok) {
       const err = await res.text().catch(() => "");
-      this.logger.error(`Places autocomplete HTTP error: ${res.status} ${err}`);
-      throw new InternalServerErrorException(`Places API error: ${res.status}`);
+      this.logger.error(`Mapbox autocomplete HTTP error: ${res.status} ${err}`);
+      throw new InternalServerErrorException(`Mapbox API error: ${res.status}`);
     }
 
     const data = (await res.json()) as {
-      status: string;
-      error_message?: string;
-      predictions?: Array<{
-        place_id: string;
-        description: string;
-        structured_formatting?: {
-          main_text?: string;
-          secondary_text?: string;
-        };
+      features?: Array<{
+        id: string;
+        place_name: string;
+        text: string;        // street name
+        address?: string;    // house number
+        context?: Array<{
+          id: string;
+          text: string;
+          short_code?: string;
+        }>;
       }>;
     };
 
-    if (data.status !== "OK" && data.status !== "ZERO_RESULTS") {
-      this.logger.error(`Places autocomplete API error: ${data.status} — ${data.error_message ?? ""}`);
-      throw new InternalServerErrorException(
-        `Places API error: ${data.status}${data.error_message ? " — " + data.error_message : ""}`,
-      );
-    }
+    const suggestions = (data.features ?? []).map((f) => {
+      // Build street: "4506 Selwyn Rd"
+      const street = f.address ? `${f.address} ${f.text}` : f.text;
 
-    const suggestions = (data.predictions ?? []).slice(0, 5).map((p) => ({
-      placeId: p.place_id,
-      display: p.description,
-      mainText: p.structured_formatting?.main_text ?? p.description,
-      secondaryText: p.structured_formatting?.secondary_text ?? "",
-    }));
+      // Parse context for city / state / zip
+      const postcode = f.context?.find((c) => c.id.startsWith("postcode."))?.text ?? "";
+      const city =
+        f.context?.find((c) => c.id.startsWith("place."))?.text ??
+        f.context?.find((c) => c.id.startsWith("locality."))?.text ??
+        "";
+      // short_code is e.g. "US-TX" — strip the "US-" prefix
+      const rawState = f.context?.find((c) => c.id.startsWith("region."));
+      const state = rawState?.short_code?.replace(/^US-/i, "") ?? rawState?.text ?? "";
+
+      const secondaryText = [city, state, postcode].filter(Boolean).join(", ");
+
+      return {
+        placeId: f.id,
+        display: f.place_name,
+        mainText: street,
+        secondaryText,
+        // Embed full address parts so the frontend never needs a details call
+        addressParts: { street, city, state, zip: postcode },
+      };
+    });
 
     return { suggestions };
   }
 
-  // ─── Place details (address components) ──────────────────────────────────
+  // ─── Place details (kept for API compatibility) ───────────────────────────
 
   @Get("details")
-  @ApiOperation({ summary: "Get address components for a place ID" })
+  @ApiOperation({ summary: "Get address components for a place ID (Mapbox)" })
   @Throttle({ default: { ttl: 1_000, limit: 10 } })
   async details(@Query("placeId") placeId: string) {
     if (!placeId) throw new BadRequestException("placeId is required");
-    if (!this.apiKey) {
-      throw new InternalServerErrorException("Google Maps API key not configured");
+    if (!this.accessToken) {
+      throw new InternalServerErrorException("Mapbox access token not configured");
     }
 
-    const url = new URL("https://maps.googleapis.com/maps/api/place/details/json");
-    url.searchParams.set("place_id", placeId);
-    url.searchParams.set("key", this.apiKey);
-    url.searchParams.set("fields", "address_component");
+    // Mapbox feature IDs can be used directly in the geocoding endpoint
+    const url = new URL(
+      `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(placeId)}.json`,
+    );
+    url.searchParams.set("access_token", this.accessToken);
 
     const res = await fetch(url.toString());
 
     if (!res.ok) {
       const err = await res.text().catch(() => "");
-      this.logger.error(`Places details HTTP error: ${res.status} ${err}`);
-      throw new InternalServerErrorException(`Places API error: ${res.status}`);
+      this.logger.error(`Mapbox details HTTP error: ${res.status} ${err}`);
+      throw new InternalServerErrorException(`Mapbox API error: ${res.status}`);
     }
 
     const data = (await res.json()) as {
-      status: string;
-      error_message?: string;
-      result?: {
-        address_components?: Array<{
-          long_name: string;
-          short_name: string;
-          types: string[];
-        }>;
-      };
+      features?: Array<{
+        text: string;
+        address?: string;
+        context?: Array<{ id: string; text: string; short_code?: string }>;
+      }>;
     };
 
-    if (data.status !== "OK") {
-      this.logger.error(`Places details API error: ${data.status} — ${data.error_message ?? ""}`);
-      throw new InternalServerErrorException(
-        `Places API error: ${data.status}${data.error_message ? " — " + data.error_message : ""}`,
-      );
-    }
+    const f = data.features?.[0];
+    if (!f) throw new BadRequestException("Place not found");
 
-    const get = (type: string): string =>
-      data.result?.address_components?.find((c) => c.types.includes(type))?.short_name ?? "";
+    const street = f.address ? `${f.address} ${f.text}` : f.text;
+    const postcode = f.context?.find((c) => c.id.startsWith("postcode."))?.text ?? "";
+    const city =
+      f.context?.find((c) => c.id.startsWith("place."))?.text ??
+      f.context?.find((c) => c.id.startsWith("locality."))?.text ??
+      "";
+    const rawState = f.context?.find((c) => c.id.startsWith("region."));
+    const state = rawState?.short_code?.replace(/^US-/i, "") ?? rawState?.text ?? "";
 
-    const streetNumber = get("street_number");
-    const route = get("route");
-    const street = streetNumber ? `${streetNumber} ${route}` : route;
-    const city = get("locality") || get("sublocality") || get("neighborhood");
-    const state = get("administrative_area_level_1");
-    const zip = get("postal_code");
-
-    return { street, city, state, zip };
+    return { street, city, state, zip: postcode };
   }
 }

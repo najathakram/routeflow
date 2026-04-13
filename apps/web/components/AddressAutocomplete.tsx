@@ -18,6 +18,8 @@ interface Suggestion {
   display: string;
   mainText: string;
   secondaryText: string;
+  // Mapbox embeds address parts directly — no details round-trip needed
+  addressParts?: { street: string; city: string; state: string; zip: string };
 }
 
 export interface AddressAutocompleteProps {
@@ -89,8 +91,16 @@ export function AddressAutocomplete({
     async (s: Suggestion) => {
       setIsOpen(false);
       setActiveIndex(-1);
-      onChange(s.mainText || s.display);
 
+      // Mapbox embeds address parts directly — use them, no extra fetch needed
+      if (s.addressParts) {
+        onChange(s.addressParts.street || s.mainText);
+        onAddressSelect(s.addressParts);
+        return;
+      }
+
+      // Fallback: fetch details separately
+      onChange(s.mainText || s.display);
       try {
         const res = await fetch(
           `${API_BASE}/public/places/details?placeId=${encodeURIComponent(s.placeId)}`,
@@ -101,7 +111,6 @@ export function AddressAutocomplete({
         onAddressSelect(parts);
       } catch (err) {
         console.error("[AddressAutocomplete] details fetch failed:", err);
-        // Fallback: use the display text as the street value
         onAddressSelect({ street: s.mainText || s.display, city: "", state: "", zip: "" });
       }
     },

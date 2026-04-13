@@ -33,6 +33,9 @@ export interface AppConfig {
   googleMaps: {
     apiKey: string;
   };
+  mapbox: {
+    accessToken: string;
+  };
   fcm: {
     projectId: string;
   };
@@ -79,6 +82,9 @@ export const configuration = (): AppConfig => ({
   },
   googleMaps: {
     apiKey: process.env.GOOGLE_MAPS_API_KEY ?? "",
+  },
+  mapbox: {
+    accessToken: process.env.MAPBOX_ACCESS_TOKEN ?? "",
   },
   fcm: {
     projectId: process.env.FCM_PROJECT_ID ?? "",
