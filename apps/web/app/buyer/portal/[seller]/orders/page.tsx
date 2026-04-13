@@ -182,7 +182,11 @@ export default function BuyerOrdersPage() {
               </thead>
               <tbody className="divide-y divide-surface-border">
                 {orders.map((order) => (
-                  <tr key={order.id} className="hover:bg-surface-raised transition-colors">
+                  <tr
+                    key={order.id}
+                    onClick={() => router.push(`/buyer/portal/${sellerSlug}/orders/${order.id}`)}
+                    className="hover:bg-surface-raised transition-colors cursor-pointer"
+                  >
                     <td className="px-4 py-3 text-sm font-medium text-navy">
                       {order.orderNumber ?? order.id.slice(0, 8).toUpperCase()}
                     </td>

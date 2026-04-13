@@ -1,0 +1,399 @@
+"use client";
+
+import * as React from "react";
+import { useParams, useRouter } from "next/navigation";
+import {
+  Search,
+  Grid3X3,
+  List,
+  ShoppingCart,
+  Plus,
+  Minus,
+  Loader2,
+  Package,
+  ChevronLeft,
+  ChevronRight,
+  X,
+} from "lucide-react";
+import { Badge, Button } from "@routeflow/ui/web";
+import { useBuyerAuth } from "@/lib/buyer-auth-context";
+import { useBuyerProducts, useBuyerCategories, type BuyerProduct } from "@/lib/api/buyer";
+import { useBuyerCart } from "@/lib/buyer-cart";
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function fmt(n: number) {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
+}
+
+// ─── Product Card ─────────────────────────────────────────────────────────────
+
+function ProductCard({
+  product,
+  cartQty,
+  onAdd,
+  onUpdateQty,
+}: {
+  product: BuyerProduct;
+  cartQty: number;
+  onAdd: () => void;
+  onUpdateQty: (qty: number) => void;
+}) {
+  return (
+    <div className="group flex flex-col rounded-xl border border-surface-border bg-white overflow-hidden hover:shadow-md transition-shadow">
+      {/* Image */}
+      <div className="relative aspect-square bg-surface-raised flex items-center justify-center overflow-hidden">
+        {product.thumbnailUrl ? (
+          <img
+            src={product.thumbnailUrl}
+            alt={product.name}
+            className="h-full w-full object-cover"
+          />
+        ) : (
+          <Package className="h-12 w-12 text-navy/15" />
+        )}
+        {product.category && (
+          <span className="absolute top-2 left-2 rounded-full bg-white/90 px-2 py-0.5 text-[10px] font-medium text-navy/70 shadow-sm">
+            {product.category}
+          </span>
+        )}
+      </div>
+
+      {/* Info */}
+      <div className="flex flex-1 flex-col gap-2 p-3">
+        <div className="flex-1">
+          <h3 className="text-sm font-semibold text-navy line-clamp-2">{product.name}</h3>
+          {product.sku && (
+            <p className="text-[11px] text-navy/40 mt-0.5">SKU: {product.sku}</p>
+          )}
+        </div>
+
+        <div className="flex items-end justify-between gap-2">
+          <div>
+            <p className="text-lg font-bold text-navy">{fmt(product.buyerPrice)}</p>
+            <p className="text-[11px] text-navy/40">per {product.unit}</p>
+          </div>
+
+          {cartQty > 0 ? (
+            <div className="flex items-center gap-1 rounded-lg border border-brand-200 bg-brand-50">
+              <button
+                onClick={() => onUpdateQty(cartQty - 1)}
+                className="rounded-l-lg p-1.5 text-brand-600 hover:bg-brand-100 transition-colors"
+              >
+                <Minus className="h-3.5 w-3.5" />
+              </button>
+              <span className="min-w-[28px] text-center text-sm font-semibold text-brand-700">
+                {cartQty}
+              </span>
+              <button
+                onClick={() => onUpdateQty(cartQty + 1)}
+                className="rounded-r-lg p-1.5 text-brand-600 hover:bg-brand-100 transition-colors"
+              >
+                <Plus className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={onAdd}
+              className="flex items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-xs font-semibold text-white hover:bg-brand-600 transition-colors"
+            >
+              <Plus className="h-3.5 w-3.5" /> Add
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
+
+export default function BuyerShopPage() {
+  const params = useParams();
+  const router = useRouter();
+  const { buyer, activeSeller, isLoading: authLoading } = useBuyerAuth();
+  const sellerSlug = params.seller as string;
+
+  const [search, setSearch] = React.useState("");
+  const [debouncedSearch, setDebouncedSearch] = React.useState("");
+  const [category, setCategory] = React.useState("");
+  const [sort, setSort] = React.useState("name_asc");
+  const [page, setPage] = React.useState(1);
+  const [viewMode, setViewMode] = React.useState<"grid" | "list">("grid");
+  const limit = 20;
+
+  // Debounce search
+  React.useEffect(() => {
+    const t = setTimeout(() => {
+      setDebouncedSearch(search);
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  // Reset page on filter change
+  React.useEffect(() => { setPage(1); }, [category, sort]);
+
+  const { data: result, isLoading } = useBuyerProducts({
+    search: debouncedSearch || undefined,
+    category: category || undefined,
+    page,
+    limit,
+    sort,
+  });
+  const { data: categories = [] } = useBuyerCategories();
+
+  const cart = useBuyerCart(buyer?.id, sellerSlug);
+
+  // Redirect checks
+  React.useEffect(() => {
+    if (!authLoading && !activeSeller) router.push("/buyer/portal");
+  }, [authLoading, activeSeller, router]);
+
+  const products = result?.data ?? [];
+  const meta = result?.meta;
+
+  return (
+    <div className="flex flex-col min-h-full">
+      <div className="flex-1 p-6">
+        {/* Header */}
+        <div className="mb-6">
+          <h1 className="text-2xl font-bold text-navy">Shop</h1>
+          <p className="text-sm text-navy/60 mt-1">
+            Browse products from {activeSeller?.tenant.name}
+          </p>
+        </div>
+
+        {/* Search + filters bar */}
+        <div className="mb-6 flex flex-wrap items-center gap-3">
+          {/* Search */}
+          <div className="relative flex-1 min-w-[260px]">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-navy/40" />
+            <input
+              type="search"
+              placeholder="Search products by name, SKU, or barcode..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="h-10 w-full rounded-lg border border-surface-border bg-white pl-10 pr-3 text-sm text-navy placeholder:text-navy/40 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+            />
+            {search && (
+              <button
+                onClick={() => setSearch("")}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-navy/40 hover:text-navy"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+
+          {/* Category filter */}
+          {categories.length > 0 && (
+            <select
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              className="h-10 rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+            >
+              <option value="">All Categories</option>
+              {categories.map((c) => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+            </select>
+          )}
+
+          {/* Sort */}
+          <select
+            value={sort}
+            onChange={(e) => setSort(e.target.value)}
+            className="h-10 rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+          >
+            <option value="name_asc">Name A-Z</option>
+            <option value="name_desc">Name Z-A</option>
+            <option value="price_asc">Price: Low to High</option>
+            <option value="price_desc">Price: High to Low</option>
+          </select>
+
+          {/* View toggle */}
+          <div className="flex items-center rounded-lg border border-surface-border bg-white">
+            <button
+              onClick={() => setViewMode("grid")}
+              className={`rounded-l-lg p-2.5 transition-colors ${viewMode === "grid" ? "bg-brand-50 text-brand-600" : "text-navy/40 hover:text-navy"}`}
+            >
+              <Grid3X3 className="h-4 w-4" />
+            </button>
+            <button
+              onClick={() => setViewMode("list")}
+              className={`rounded-r-lg p-2.5 transition-colors ${viewMode === "list" ? "bg-brand-50 text-brand-600" : "text-navy/40 hover:text-navy"}`}
+            >
+              <List className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+
+        {/* Results count */}
+        {meta && (
+          <p className="mb-4 text-xs text-navy/50">
+            Showing {meta.total === 0 ? 0 : (page - 1) * limit + 1}–
+            {Math.min(page * limit, meta.total)} of {meta.total} products
+          </p>
+        )}
+
+        {/* Loading / Empty / Products */}
+        {isLoading ? (
+          <div className="flex items-center justify-center py-16">
+            <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
+          </div>
+        ) : products.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-surface-border bg-white p-12 text-center">
+            <Package className="mx-auto mb-4 h-12 w-12 text-navy/20" />
+            <h2 className="text-lg font-semibold text-navy mb-2">No products found</h2>
+            <p className="text-sm text-navy/60 mb-4">
+              {search || category ? "Try adjusting your search or filters." : "No products available from this seller yet."}
+            </p>
+            {(search || category) && (
+              <button
+                onClick={() => { setSearch(""); setCategory(""); }}
+                className="text-sm text-brand-500 hover:underline"
+              >
+                Clear all filters
+              </button>
+            )}
+          </div>
+        ) : viewMode === "grid" ? (
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+            {products.map((p) => (
+              <ProductCard
+                key={p.id}
+                product={p}
+                cartQty={cart.getItemQty(p.id)}
+                onAdd={() =>
+                  cart.addItem({
+                    productId: p.id,
+                    qty: 1,
+                    name: p.name,
+                    unit: p.unit,
+                    thumbnailUrl: p.thumbnailUrl,
+                  })
+                }
+                onUpdateQty={(qty) => cart.updateQty(p.id, qty)}
+              />
+            ))}
+          </div>
+        ) : (
+          /* List view */
+          <div className="rounded-xl border border-surface-border bg-white overflow-hidden">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-surface-border bg-surface-raised text-xs text-navy/50 uppercase tracking-wider">
+                  <th className="px-4 py-2.5 text-left">Product</th>
+                  <th className="px-4 py-2.5 text-left w-28">Category</th>
+                  <th className="px-4 py-2.5 text-left w-24">SKU</th>
+                  <th className="px-4 py-2.5 text-right w-28">Price</th>
+                  <th className="px-4 py-2.5 text-right w-36">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-surface-border">
+                {products.map((p) => {
+                  const qty = cart.getItemQty(p.id);
+                  return (
+                    <tr key={p.id} className="hover:bg-surface-raised/50">
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-3">
+                          <div className="h-10 w-10 flex-shrink-0 rounded-lg bg-surface-raised flex items-center justify-center overflow-hidden">
+                            {p.thumbnailUrl ? (
+                              <img src={p.thumbnailUrl} alt="" className="h-full w-full object-cover" />
+                            ) : (
+                              <Package className="h-5 w-5 text-navy/15" />
+                            )}
+                          </div>
+                          <div>
+                            <p className="text-sm font-medium text-navy">{p.name}</p>
+                            <p className="text-xs text-navy/40">per {p.unit}</p>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-navy/60">{p.category ?? "—"}</td>
+                      <td className="px-4 py-3 text-xs text-navy/50">{p.sku ?? "—"}</td>
+                      <td className="px-4 py-3 text-right text-sm font-semibold text-navy">{fmt(p.buyerPrice)}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center justify-end gap-1">
+                          {qty > 0 ? (
+                            <div className="flex items-center gap-1 rounded-lg border border-brand-200 bg-brand-50">
+                              <button onClick={() => cart.updateQty(p.id, qty - 1)} className="rounded-l-lg p-1.5 text-brand-600 hover:bg-brand-100">
+                                <Minus className="h-3.5 w-3.5" />
+                              </button>
+                              <span className="min-w-[24px] text-center text-sm font-semibold text-brand-700">{qty}</span>
+                              <button onClick={() => cart.updateQty(p.id, qty + 1)} className="rounded-r-lg p-1.5 text-brand-600 hover:bg-brand-100">
+                                <Plus className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => cart.addItem({ productId: p.id, qty: 1, name: p.name, unit: p.unit, thumbnailUrl: p.thumbnailUrl })}
+                              className="flex items-center gap-1 rounded-lg bg-brand-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-600"
+                            >
+                              <Plus className="h-3.5 w-3.5" /> Add
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* Pagination */}
+        {meta && meta.totalPages > 1 && (
+          <div className="mt-6 flex items-center justify-between">
+            <p className="text-sm text-navy/60">
+              Page {meta.page} of {meta.totalPages}
+            </p>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setPage((p) => p - 1)}
+                disabled={page === 1}
+                className="flex h-8 w-8 items-center justify-center rounded-lg border border-surface-border bg-white text-navy/60 hover:bg-surface-raised disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+              <span className="text-sm text-navy">{meta.page} / {meta.totalPages}</span>
+              <button
+                onClick={() => setPage((p) => p + 1)}
+                disabled={page === meta.totalPages}
+                className="flex h-8 w-8 items-center justify-center rounded-lg border border-surface-border bg-white text-navy/60 hover:bg-surface-raised disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Sticky cart bar */}
+      {cart.itemCount > 0 && (
+        <div className="sticky bottom-0 border-t border-surface-border bg-white px-6 py-3 shadow-lg">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-brand-500 text-white">
+                <ShoppingCart className="h-4 w-4" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-navy">
+                  {cart.totalQty} {cart.totalQty === 1 ? "item" : "items"} in cart
+                </p>
+                <p className="text-xs text-navy/50">
+                  {cart.itemCount} {cart.itemCount === 1 ? "product" : "products"}
+                </p>
+              </div>
+            </div>
+            <Button onClick={() => router.push(`/buyer/portal/${sellerSlug}/cart`)}>
+              <ShoppingCart className="mr-1.5 h-4 w-4" /> View Cart
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

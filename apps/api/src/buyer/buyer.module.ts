@@ -9,6 +9,9 @@ import { TenantModule } from "../tenant/tenant.module";
 import { OrdersModule } from "../orders/orders.module";
 import { InvoicesModule } from "../invoices/invoices.module";
 import { CustomersModule } from "../customers/customers.module";
+import { ProductsModule } from "../products/products.module";
+import { OrderTemplatesModule } from "../order-templates/order-templates.module";
+import { StorageModule } from "../storage/storage.module";
 
 import { BuyerAuthController } from "./buyer-auth.controller";
 import { BuyerController } from "./buyer.controller";
@@ -20,6 +23,8 @@ import { BuyerAuthService } from "./buyer-auth.service";
 import { BuyerService } from "./buyer.service";
 import { BuyerAdminService } from "./buyer-admin.service";
 import { BuyerMergeService } from "./buyer-merge.service";
+import { BuyerCatalogService } from "./buyer-catalog.service";
+import { BuyerDashboardService } from "./buyer-dashboard.service";
 
 import { BuyerJwtStrategy } from "./strategies/buyer-jwt.strategy";
 import { BuyerJwtAuthGuard } from "./guards/buyer-jwt-auth.guard";
@@ -34,6 +39,9 @@ import { BuyerTenantInterceptor } from "./buyer-tenant.interceptor";
     OrdersModule,
     InvoicesModule,
     CustomersModule,
+    ProductsModule,
+    OrderTemplatesModule,
+    StorageModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -59,6 +67,8 @@ import { BuyerTenantInterceptor } from "./buyer-tenant.interceptor";
     BuyerService,
     BuyerAdminService,
     BuyerMergeService,
+    BuyerCatalogService,
+    BuyerDashboardService,
     BuyerJwtStrategy,
     BuyerJwtAuthGuard,
     BuyerSellerContextGuard,

@@ -9,11 +9,15 @@ import {
   LogOut,
   Building2,
   ChevronRight,
-  LayoutGrid,
+  LayoutDashboard,
+  Store,
+  Repeat,
   Loader2,
   Settings,
+  LayoutGrid,
 } from "lucide-react";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
+import { useBuyerCart } from "@/lib/buyer-cart";
 import type { BuyerSeller } from "@/lib/buyer-auth";
 
 // ─── Status badge variant helper ─────────────────────────────────────────────
@@ -126,9 +130,20 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
   }
 
   const sellerSlug = activeSeller?.tenant.slug;
+  const { totalQty: cartItemCount } = useBuyerCart(buyer?.id, sellerSlug);
 
   const navItems = sellerSlug
     ? [
+        {
+          href: `/buyer/portal/${sellerSlug}/dashboard`,
+          icon: LayoutDashboard,
+          label: "Dashboard",
+        },
+        {
+          href: `/buyer/portal/${sellerSlug}/shop`,
+          icon: Store,
+          label: "Shop",
+        },
         {
           href: `/buyer/portal/${sellerSlug}/orders`,
           icon: ShoppingCart,
@@ -140,6 +155,11 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
           label: "Invoices",
         },
         {
+          href: `/buyer/portal/${sellerSlug}/templates`,
+          icon: Repeat,
+          label: "Standing Orders",
+        },
+        {
           href: `/buyer/portal/${sellerSlug}/account`,
           icon: User,
           label: "Account",
@@ -149,7 +169,7 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
 
   const handleSellerClick = (seller: BuyerSeller) => {
     setActiveSeller(seller);
-    router.push(`/buyer/portal/${seller.tenant.slug}/orders`);
+    router.push(`/buyer/portal/${seller.tenant.slug}/dashboard`);
   };
 
   return (
@@ -227,13 +247,19 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
               </p>
               <div className="flex flex-col gap-1">
                 {navItems.map((item) => (
-                  <NavLink
-                    key={item.href}
-                    href={item.href}
-                    icon={item.icon}
-                    label={item.label}
-                    isActive={pathname === item.href || pathname.startsWith(item.href)}
-                  />
+                  <div key={item.href} className="relative">
+                    <NavLink
+                      href={item.href}
+                      icon={item.icon}
+                      label={item.label}
+                      isActive={pathname === item.href || pathname.startsWith(item.href)}
+                    />
+                    {item.label === "Shop" && cartItemCount > 0 && (
+                      <span className="absolute right-2 top-1/2 -translate-y-1/2 flex h-5 min-w-5 items-center justify-center rounded-full bg-brand-500 px-1.5 text-[10px] font-bold text-white">
+                        {cartItemCount}
+                      </span>
+                    )}
+                  </div>
                 ))}
               </div>
             </div>

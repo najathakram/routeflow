@@ -1,0 +1,404 @@
+"use client";
+
+import * as React from "react";
+import { useParams, useRouter } from "next/navigation";
+import {
+  ArrowLeft,
+  Package,
+  Clock,
+  CheckCircle2,
+  Truck,
+  XCircle,
+  AlertTriangle,
+  Edit3,
+  Minus,
+  Plus,
+  Loader2,
+} from "lucide-react";
+import { Badge, Button, Modal } from "@routeflow/ui/web";
+import { useBuyerAuth } from "@/lib/buyer-auth-context";
+import { useBuyerOrder, useBuyerCancelOrder, useBuyerUpdateOrderItems } from "@/lib/api/buyer";
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+const STATUS_STEPS = ["DRAFT", "PENDING", "CONFIRMED", "OUT_FOR_DELIVERY", "DELIVERED"];
+
+function getStatusVariant(s: string): "success" | "warning" | "danger" | "neutral" {
+  if (s === "DELIVERED" || s === "COMPLETED") return "success";
+  if (s === "PENDING" || s === "CONFIRMED" || s === "OUT_FOR_DELIVERY") return "warning";
+  if (s === "CANCELLED") return "danger";
+  return "neutral";
+}
+
+function fmt(n: number) {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
+}
+
+function formatDate(d: string) {
+  return new Date(d).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+}
+
+function formatStatus(s: string) {
+  return s.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+// ─── Status Timeline ──────────────────────────────────────────────────────────
+
+function OrderTimeline({ status }: { status: string }) {
+  const isCancelled = status === "CANCELLED";
+  const currentIdx = STATUS_STEPS.indexOf(status);
+
+  const icons = [
+    { icon: Edit3, label: "Draft" },
+    { icon: Clock, label: "Pending" },
+    { icon: CheckCircle2, label: "Confirmed" },
+    { icon: Truck, label: "Out for Delivery" },
+    { icon: Package, label: "Delivered" },
+  ];
+
+  return (
+    <div className="flex items-center justify-between gap-0">
+      {icons.map((step, i) => {
+        const Icon = step.icon;
+        const isComplete = !isCancelled && i <= currentIdx;
+        const isCurrent = !isCancelled && i === currentIdx;
+
+        return (
+          <React.Fragment key={step.label}>
+            {i > 0 && (
+              <div
+                className={`flex-1 h-0.5 ${isComplete ? "bg-brand-500" : "bg-surface-border"}`}
+              />
+            )}
+            <div className="flex flex-col items-center gap-1">
+              <div
+                className={`flex h-9 w-9 items-center justify-center rounded-full border-2 transition-colors ${
+                  isCurrent
+                    ? "border-brand-500 bg-brand-50 text-brand-600"
+                    : isComplete
+                      ? "border-brand-500 bg-brand-500 text-white"
+                      : "border-surface-border bg-white text-navy/30"
+                }`}
+              >
+                <Icon className="h-4 w-4" />
+              </div>
+              <span
+                className={`text-[10px] font-medium ${isCurrent ? "text-brand-600" : isComplete ? "text-navy" : "text-navy/40"}`}
+              >
+                {step.label}
+              </span>
+            </div>
+          </React.Fragment>
+        );
+      })}
+      {isCancelled && (
+        <div className="flex flex-col items-center gap-1 ml-4">
+          <div className="flex h-9 w-9 items-center justify-center rounded-full border-2 border-danger bg-danger-bg text-danger">
+            <XCircle className="h-4 w-4" />
+          </div>
+          <span className="text-[10px] font-medium text-danger">Cancelled</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
+
+export default function BuyerOrderDetailPage() {
+  const params = useParams();
+  const router = useRouter();
+  const { activeSeller, isLoading: authLoading } = useBuyerAuth();
+  const sellerSlug = params.seller as string;
+  const orderId = params.id as string;
+
+  const { data: order, isLoading, isError } = useBuyerOrder(orderId);
+  const cancelOrder = useBuyerCancelOrder();
+  const updateItems = useBuyerUpdateOrderItems();
+
+  const [editMode, setEditMode] = React.useState(false);
+  const [editItems, setEditItems] = React.useState<Array<{ productId: string; qty: number; name: string; unit: string }>>([]);
+  const [cancelOpen, setCancelOpen] = React.useState(false);
+
+  // Redirect checks
+  React.useEffect(() => {
+    if (!authLoading && !activeSeller) router.push("/buyer/portal");
+  }, [authLoading, activeSeller, router]);
+
+  React.useEffect(() => {
+    if (!authLoading && activeSeller && activeSeller.tenant.slug !== sellerSlug) {
+      router.push("/buyer/portal");
+    }
+  }, [authLoading, activeSeller, sellerSlug, router]);
+
+  const canEdit = order && (order.status === "DRAFT" || order.status === "PENDING");
+  const canCancel = canEdit;
+
+  const enterEditMode = () => {
+    if (!order) return;
+    setEditItems(
+      order.lineItems
+        .filter((li) => li.status !== "CANCELLED")
+        .map((li) => ({
+          productId: li.productId,
+          qty: Number(li.qty),
+          name: li.product.name,
+          unit: li.product.unit,
+        })),
+    );
+    setEditMode(true);
+  };
+
+  const handleSaveEdit = async () => {
+    if (!order) return;
+    await updateItems.mutateAsync({
+      orderId: order.id,
+      items: editItems.map((i) => ({ productId: i.productId, qty: i.qty })),
+    });
+    setEditMode(false);
+  };
+
+  const handleCancel = async () => {
+    if (!order) return;
+    await cancelOrder.mutateAsync(order.id);
+    setCancelOpen(false);
+  };
+
+  if (authLoading || isLoading) {
+    return (
+      <div className="flex items-center justify-center py-16">
+        <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
+      </div>
+    );
+  }
+
+  if (isError || !order) {
+    return (
+      <div className="p-6">
+        <div className="rounded-lg bg-danger-bg px-4 py-3 text-sm text-danger">
+          Failed to load order.
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-6 max-w-4xl">
+      {/* Back + header */}
+      <button
+        onClick={() => router.push(`/buyer/portal/${sellerSlug}/orders`)}
+        className="mb-4 flex items-center gap-1.5 text-sm text-navy/60 hover:text-navy transition-colors"
+      >
+        <ArrowLeft className="h-4 w-4" /> Back to Orders
+      </button>
+
+      <div className="flex items-center justify-between gap-4 mb-6">
+        <div>
+          <h1 className="text-2xl font-bold text-navy">{order.orderNumber}</h1>
+          <p className="text-sm text-navy/60 mt-0.5">
+            Placed {formatDate(order.createdAt)}
+            {order.requestedDeliveryDate && (
+              <> · Delivery requested {formatDate(order.requestedDeliveryDate)}</>
+            )}
+          </p>
+        </div>
+        <Badge variant={getStatusVariant(order.status)}>{formatStatus(order.status)}</Badge>
+      </div>
+
+      {/* Status timeline */}
+      <div className="mb-8 rounded-xl border border-surface-border bg-white p-6">
+        <OrderTimeline status={order.status} />
+      </div>
+
+      {/* Order summary cards */}
+      <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
+        {[
+          { label: "Subtotal", value: fmt(Number(order.subtotal)) },
+          { label: "Tax", value: fmt(Number(order.tax)) },
+          {
+            label: "Discount",
+            value: Number(order.discountAmount) > 0 ? `-${fmt(Number(order.discountAmount))}` : "—",
+          },
+          { label: "Total", value: fmt(Number(order.total)), bold: true },
+        ].map((c) => (
+          <div key={c.label} className="rounded-xl border border-surface-border bg-white p-4">
+            <p className="text-xs text-navy/50 mb-1">{c.label}</p>
+            <p className={`text-lg ${c.bold ? "font-bold text-navy" : "text-navy/80"}`}>{c.value}</p>
+          </div>
+        ))}
+      </div>
+
+      {order.urgent && (
+        <div className="mb-4 flex items-center gap-2 rounded-lg border border-warning/30 bg-warning-bg px-4 py-2.5 text-sm text-warning">
+          <AlertTriangle className="h-4 w-4" /> This order is marked as urgent
+        </div>
+      )}
+
+      {order.notes && (
+        <div className="mb-4 rounded-xl border border-surface-border bg-white p-4">
+          <p className="text-xs text-navy/50 mb-1">Order Notes</p>
+          <p className="text-sm text-navy">{order.notes}</p>
+        </div>
+      )}
+
+      {/* Line items */}
+      <div className="rounded-xl border border-surface-border bg-white overflow-hidden mb-6">
+        <div className="flex items-center justify-between border-b border-surface-border bg-surface-raised px-4 py-3">
+          <h2 className="text-sm font-semibold text-navy">
+            Items ({order.lineItems.filter((li) => li.status !== "CANCELLED").length})
+          </h2>
+          {canEdit && !editMode && (
+            <Button variant="secondary" size="sm" onClick={enterEditMode}>
+              <Edit3 className="mr-1.5 h-3.5 w-3.5" /> Edit Items
+            </Button>
+          )}
+          {editMode && (
+            <div className="flex items-center gap-2">
+              <Button variant="secondary" size="sm" onClick={() => setEditMode(false)}>
+                Cancel
+              </Button>
+              <Button size="sm" onClick={handleSaveEdit} loading={updateItems.isPending}>
+                Save Changes
+              </Button>
+            </div>
+          )}
+        </div>
+
+        <table className="w-full">
+          <thead>
+            <tr className="border-b border-surface-border text-xs text-navy/50 uppercase tracking-wider">
+              <th className="px-4 py-2.5 text-left">Product</th>
+              <th className="px-4 py-2.5 text-right w-24">Qty</th>
+              <th className="px-4 py-2.5 text-right w-28">Unit Price</th>
+              <th className="px-4 py-2.5 text-right w-28">Subtotal</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-surface-border">
+            {editMode
+              ? editItems.map((item) => (
+                  <tr key={item.productId} className="hover:bg-surface-raised/50">
+                    <td className="px-4 py-3 text-sm font-medium text-navy">{item.name}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center justify-end gap-1">
+                        <button
+                          onClick={() =>
+                            setEditItems((prev) =>
+                              prev.map((i) =>
+                                i.productId === item.productId
+                                  ? { ...i, qty: Math.max(1, i.qty - 1) }
+                                  : i,
+                              ),
+                            )
+                          }
+                          className="rounded p-1 text-navy/40 hover:bg-surface-raised hover:text-navy"
+                        >
+                          <Minus className="h-3.5 w-3.5" />
+                        </button>
+                        <input
+                          type="number"
+                          min={1}
+                          value={item.qty}
+                          onChange={(e) => {
+                            const v = Math.max(1, Number(e.target.value));
+                            setEditItems((prev) =>
+                              prev.map((i) =>
+                                i.productId === item.productId ? { ...i, qty: v } : i,
+                              ),
+                            );
+                          }}
+                          className="w-14 rounded border border-surface-border bg-white px-2 py-1 text-center text-sm text-navy"
+                        />
+                        <button
+                          onClick={() =>
+                            setEditItems((prev) =>
+                              prev.map((i) =>
+                                i.productId === item.productId ? { ...i, qty: i.qty + 1 } : i,
+                              ),
+                            )
+                          }
+                          className="rounded p-1 text-navy/40 hover:bg-surface-raised hover:text-navy"
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-right text-sm text-navy/60">—</td>
+                    <td className="px-4 py-3 text-right text-sm text-navy/60">—</td>
+                  </tr>
+                ))
+              : order.lineItems.map((li) => (
+                  <tr
+                    key={li.id}
+                    className={`hover:bg-surface-raised/50 ${li.status === "CANCELLED" ? "opacity-40 line-through" : ""}`}
+                  >
+                    <td className="px-4 py-3">
+                      <p className="text-sm font-medium text-navy">{li.product.name}</p>
+                      <p className="text-xs text-navy/50">
+                        {li.product.unit}
+                        {li.priceType !== "STANDARD" && (
+                          <span
+                            className={`ml-1.5 inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
+                              li.priceType === "DISCOUNTED"
+                                ? "bg-success-bg text-success"
+                                : "bg-brand-50 text-brand-600"
+                            }`}
+                          >
+                            {li.priceType === "DISCOUNTED" ? "Discounted" : "Special"}
+                          </span>
+                        )}
+                      </p>
+                    </td>
+                    <td className="px-4 py-3 text-right text-sm text-navy">
+                      {Number(li.qty)}
+                    </td>
+                    <td className="px-4 py-3 text-right text-sm text-navy/70">
+                      {fmt(Number(li.unitPrice))}
+                      {li.originalPrice && Number(li.originalPrice) > Number(li.unitPrice) && (
+                        <span className="ml-1 text-xs text-navy/40 line-through">
+                          {fmt(Number(li.originalPrice))}
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-right text-sm font-medium text-navy">
+                      {fmt(Number(li.subtotal))}
+                    </td>
+                  </tr>
+                ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Actions */}
+      {canCancel && (
+        <div className="flex justify-end">
+          <Button variant="danger" onClick={() => setCancelOpen(true)}>
+            Cancel Order
+          </Button>
+        </div>
+      )}
+
+      {/* Cancel confirmation */}
+      <Modal
+        open={cancelOpen}
+        onClose={() => setCancelOpen(false)}
+        title="Cancel Order?"
+        description={`Cancel order ${order.orderNumber}?`}
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setCancelOpen(false)}>
+              Keep Order
+            </Button>
+            <Button variant="danger" onClick={handleCancel} loading={cancelOrder.isPending}>
+              Cancel Order
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-navy/70">
+          This will cancel your order <strong>{order.orderNumber}</strong>. This action cannot be
+          undone.
+        </p>
+      </Modal>
+    </div>
+  );
+}
