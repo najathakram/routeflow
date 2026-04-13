@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { superAdminClient } from "@/lib/admin-api";
 import { AdminBadge } from "../../_components/AdminBadge";
 import { AdminModal } from "../../_components/AdminModal";
-import { ChevronUp, ChevronDown } from "lucide-react";
+import { ChevronUp, ChevronDown, X } from "lucide-react";
 
 interface Tenant {
   id: string;
@@ -39,6 +39,7 @@ export default function AdminTenantsPage() {
   const [search, setSearch] = React.useState("");
   const [statusFilter, setStatusFilter] = React.useState("");
   const [planFilter, setPlanFilter] = React.useState("");
+  const [showDeleted, setShowDeleted] = React.useState(false);
 
   // Sort
   const [sortKey, setSortKey] = React.useState<SortKey>("createdAt");
@@ -63,17 +64,28 @@ export default function AdminTenantsPage() {
 
   const [deletingTenant, setDeletingTenant] = React.useState<Tenant | null>(null);
   const [deleteConfirmSlug, setDeleteConfirmSlug] = React.useState("");
+  const [suspendingTenant, setSuspendingTenant] = React.useState<Tenant | null>(null);
+  const [actionError, setActionError] = React.useState<string | null>(null);
+  const [bulkError, setBulkError] = React.useState<string | null>(null);
 
   const deleteTenant = async () => {
     if (!deletingTenant || deleteConfirmSlug !== deletingTenant.slug) return;
     setActionLoading(deletingTenant.id + "-del");
+    setActionError(null);
     try {
       await superAdminClient.delete(`/platform-admin/tenants/${deletingTenant.id}`);
+      const deletedId = deletingTenant.id;
       setDeletingTenant(null);
       setDeleteConfirmSlug("");
+      // Remove deleted tenant from local state immediately; re-fetch to sync
+      setData((prev) => prev ? {
+        ...prev,
+        data: prev.data.filter((t) => t.id !== deletedId),
+        meta: { ...prev.meta, total: prev.meta.total - 1 },
+      } : prev);
       fetchTenants(page);
     } catch (err: unknown) {
-      alert((err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Delete failed");
+      setActionError((err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Delete failed");
     } finally {
       setActionLoading(null);
     }
@@ -82,14 +94,32 @@ export default function AdminTenantsPage() {
   const toggleStatus = async (tenant: Tenant) => {
     const newStatus = tenant.status === "SUSPENDED" ? "ACTIVE" : "SUSPENDED";
     if (newStatus === "SUSPENDED") {
-      if (!window.confirm(`Suspend "${tenant.businessName ?? tenant.slug}"?`)) return;
+      setSuspendingTenant(tenant);
+      return;
     }
     setActionLoading(tenant.id);
+    setActionError(null);
     try {
       await superAdminClient.patch(`/platform-admin/tenants/${tenant.id}/status`, { status: newStatus });
       fetchTenants(page);
     } catch (err: unknown) {
-      alert((err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Action failed");
+      setActionError((err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Action failed");
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const confirmSuspend = async () => {
+    if (!suspendingTenant) return;
+    const tenant = suspendingTenant;
+    setSuspendingTenant(null);
+    setActionLoading(tenant.id);
+    setActionError(null);
+    try {
+      await superAdminClient.patch(`/platform-admin/tenants/${tenant.id}/status`, { status: "SUSPENDED" });
+      fetchTenants(page);
+    } catch (err: unknown) {
+      setActionError((err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Action failed");
     } finally {
       setActionLoading(null);
     }
@@ -97,13 +127,14 @@ export default function AdminTenantsPage() {
 
   const impersonate = async (tenant: Tenant) => {
     setActionLoading(tenant.id + "-imp");
+    setActionError(null);
     try {
       const res = await superAdminClient.post(`/platform-admin/tenants/${tenant.id}/impersonate`);
       localStorage.setItem("impersonationToken", res.data.accessToken);
       localStorage.setItem("impersonationTenantSlug", tenant.slug);
       router.push("/dashboard");
     } catch (err: unknown) {
-      alert((err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Impersonation failed");
+      setActionError((err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Impersonation failed");
     } finally {
       setActionLoading(null);
     }
@@ -114,6 +145,7 @@ export default function AdminTenantsPage() {
     if (!data) return [];
     const q = search.toLowerCase();
     let rows = data.data.filter((t) => {
+      if (!showDeleted && t.status === "CANCELLED") return false;
       const matchSearch = !q || t.slug.toLowerCase().includes(q) || (t.businessName ?? t.name).toLowerCase().includes(q);
       const matchStatus = !statusFilter || t.status === statusFilter;
       const matchPlan = !planFilter || t.plan === planFilter;
@@ -168,6 +200,7 @@ export default function AdminTenantsPage() {
   const executeBulk = async () => {
     if (!bulkAction || selected.size === 0) return;
     setActionLoading("bulk");
+    setBulkError(null);
     const ids = Array.from(selected);
     try {
       for (const id of ids) {
@@ -183,16 +216,49 @@ export default function AdminTenantsPage() {
       setBulkAction(null);
       fetchTenants(page);
     } catch (err: unknown) {
-      alert((err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Bulk action failed");
+      setBulkError((err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Bulk action failed");
     } finally {
       setActionLoading(null);
     }
   };
 
-  const filtersActive = search !== "" || statusFilter !== "" || planFilter !== "";
+  const filtersActive = search !== "" || statusFilter !== "" || planFilter !== "" || showDeleted;
+  const cancelledCount = data?.data.filter((t) => t.status === "CANCELLED").length ?? 0;
 
   return (
     <div className="p-6">
+      {/* Action error banner */}
+      {actionError && (
+        <div className="mb-4 flex items-center justify-between rounded-lg bg-red-900/40 px-4 py-3 text-sm text-red-400 ring-1 ring-red-700">
+          <span>{actionError}</span>
+          <button onClick={() => setActionError(null)} className="ml-4 shrink-0 text-red-400 hover:text-red-200">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
+      {/* Suspend confirmation modal */}
+      <AdminModal
+        open={!!suspendingTenant}
+        onClose={() => setSuspendingTenant(null)}
+        title={`Suspend "${suspendingTenant?.businessName ?? suspendingTenant?.slug}"?`}
+        footer={
+          <>
+            <button onClick={() => setSuspendingTenant(null)} className="rounded-lg px-4 py-2 text-sm text-slate-400 hover:bg-slate-700">Cancel</button>
+            <button
+              onClick={confirmSuspend}
+              className="rounded-lg bg-yellow-600 px-4 py-2 text-sm font-semibold text-white hover:bg-yellow-500"
+            >
+              Suspend
+            </button>
+          </>
+        }
+      >
+        <p className="text-sm text-slate-300">
+          This tenant will be suspended and their users will no longer be able to log in. You can reactivate them at any time.
+        </p>
+      </AdminModal>
+
       {/* Header */}
       <div className="mb-6 flex items-center justify-between">
         <div>
@@ -230,10 +296,20 @@ export default function AdminTenantsPage() {
           <option value="PROFESSIONAL">PROFESSIONAL</option>
           <option value="ENTERPRISE">ENTERPRISE</option>
         </select>
+        <button
+          onClick={() => setShowDeleted((v) => !v)}
+          className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
+            showDeleted
+              ? "border-slate-500 bg-slate-700 text-slate-300"
+              : "border-slate-700 text-slate-500 hover:border-slate-500 hover:text-slate-400"
+          }`}
+        >
+          {showDeleted ? "Hide deleted" : `Show deleted${cancelledCount > 0 ? ` (${cancelledCount})` : ""}`}
+        </button>
         {filtersActive && (
           <>
             <span className="text-sm text-slate-400">{filteredSorted.length} results</span>
-            <button onClick={() => { setSearch(""); setStatusFilter(""); setPlanFilter(""); }} className="text-xs text-slate-500 hover:text-slate-300">Clear filters</button>
+            <button onClick={() => { setSearch(""); setStatusFilter(""); setPlanFilter(""); setShowDeleted(false); }} className="text-xs text-slate-500 hover:text-slate-300">Clear filters</button>
           </>
         )}
       </div>
@@ -271,6 +347,9 @@ export default function AdminTenantsPage() {
           </>
         }
       >
+        {bulkError && (
+          <div className="mb-3 rounded-lg bg-red-900/40 px-3 py-2 text-sm text-red-400 ring-1 ring-red-700">{bulkError}</div>
+        )}
         {bulkAction === "change-plan" && (
           <div className="mb-3">
             <label className="mb-1 block text-sm text-slate-400">New plan</label>
@@ -303,6 +382,9 @@ export default function AdminTenantsPage() {
         }
       >
         <div className="space-y-3">
+          {actionError && (
+            <div className="rounded-lg bg-red-900/40 px-3 py-2 text-sm text-red-400 ring-1 ring-red-700">{actionError}</div>
+          )}
           <p className="text-sm text-slate-300">
             This will permanently cancel and archive <strong className="text-white">{deletingTenant?.businessName ?? deletingTenant?.slug}</strong>. This action cannot be undone.
           </p>
