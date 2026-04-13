@@ -346,7 +346,7 @@ export class OrdersService {
       if (dto.status !== OrderStatus.CONFIRMED || order.status !== OrderStatus.PENDING) {
         throw new ForbiddenException("Drivers can only confirm pending orders");
       }
-    } else if (user.role !== UserRole.OPERATOR) {
+    } else if (user.role !== UserRole.OPERATOR && user.role !== UserRole.TENANT_ADMIN) {
       throw new ForbiddenException("Only operators can change order status");
     }
 
