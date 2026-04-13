@@ -34,6 +34,92 @@ function fmt(n: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
 }
 
+// ─── Quantity Stepper ─────────────────────────────────────────────────────────
+
+function QtyStepper({
+  qty,
+  onUpdate,
+  onRemove,
+  size = "md",
+}: {
+  qty: number;
+  onUpdate: (qty: number) => void;
+  onRemove: () => void;
+  size?: "sm" | "md";
+}) {
+  const [inputVal, setInputVal] = React.useState(String(qty));
+
+  // Keep in sync when external qty changes (e.g. cart updated from elsewhere)
+  React.useEffect(() => {
+    setInputVal(String(qty));
+  }, [qty]);
+
+  const commit = (raw: string) => {
+    const n = parseInt(raw, 10);
+    if (!isNaN(n) && n > 0) {
+      onUpdate(n);
+      setInputVal(String(n));
+    } else {
+      // Revert to current qty if invalid
+      setInputVal(String(qty));
+    }
+  };
+
+  const btnCls =
+    size === "sm"
+      ? "p-1 text-buyer-600 hover:bg-buyer-100 transition-colors"
+      : "p-1.5 text-buyer-600 hover:bg-buyer-100 transition-colors";
+
+  const iconCls = size === "sm" ? "h-3 w-3" : "h-3.5 w-3.5";
+  const inputW = size === "sm" ? "w-7" : "w-8";
+
+  return (
+    <div className="flex items-center gap-1">
+      {/* Red X remove button */}
+      <button
+        onClick={onRemove}
+        className="flex items-center justify-center rounded p-0.5 text-danger/60 hover:bg-danger/10 hover:text-danger transition-colors"
+        title="Remove from cart"
+      >
+        <X className={iconCls} />
+      </button>
+
+      {/* Stepper group */}
+      <div className={`flex items-center rounded-lg border border-buyer-200 bg-buyer-50 ${size === "sm" ? "gap-0" : "gap-0"}`}>
+        <button
+          onClick={() => { if (qty > 1) onUpdate(qty - 1); }}
+          className={`rounded-l-lg ${btnCls}`}
+          disabled={qty <= 1}
+        >
+          <Minus className={iconCls} />
+        </button>
+        <input
+          type="number"
+          min={1}
+          value={inputVal}
+          onChange={(e) => setInputVal(e.target.value)}
+          onBlur={(e) => commit(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.currentTarget.blur();
+            } else if (e.key === "Escape") {
+              setInputVal(String(qty));
+              e.currentTarget.blur();
+            }
+          }}
+          className={`${inputW} border-none bg-transparent text-center text-sm font-semibold text-buyer-700 focus:outline-none focus:ring-1 focus:ring-buyer-400 rounded [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none`}
+        />
+        <button
+          onClick={() => onUpdate(qty + 1)}
+          className={`rounded-r-lg ${btnCls}`}
+        >
+          <Plus className={iconCls} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Product Card ─────────────────────────────────────────────────────────────
 
 function ProductCard({
@@ -83,7 +169,7 @@ function ProductCard({
         )}
         {product.isFeatured && (
           <span className="absolute bottom-2 left-2 rounded-full bg-amber-400 px-2 py-0.5 text-[10px] font-semibold text-white shadow-sm">
-            ⭐ Featured
+            Featured
           </span>
         )}
       </div>
@@ -102,32 +188,20 @@ function ProductCard({
             <p className="text-lg font-bold text-navy">{fmt(product.buyerPrice)}</p>
             <p className="text-[11px] text-navy/40">
               per {product.unit}
-              {product.unitsPerBox ? ` (${product.unitsPerBox}/${product.unit === "box" ? "box" : "box"})` : ""}
+              {product.unitsPerBox ? ` (${product.unitsPerBox}/box)` : ""}
             </p>
           </div>
 
           {cartQty > 0 ? (
-            <div className="flex items-center gap-1 rounded-lg border border-brand-200 bg-brand-50">
-              <button
-                onClick={() => onUpdateQty(cartQty - 1)}
-                className="rounded-l-lg p-1.5 text-brand-600 hover:bg-brand-100 transition-colors"
-              >
-                <Minus className="h-3.5 w-3.5" />
-              </button>
-              <span className="min-w-[28px] text-center text-sm font-semibold text-brand-700">
-                {cartQty}
-              </span>
-              <button
-                onClick={() => onUpdateQty(cartQty + 1)}
-                className="rounded-r-lg p-1.5 text-brand-600 hover:bg-brand-100 transition-colors"
-              >
-                <Plus className="h-3.5 w-3.5" />
-              </button>
-            </div>
+            <QtyStepper
+              qty={cartQty}
+              onUpdate={onUpdateQty}
+              onRemove={() => onUpdateQty(0)}
+            />
           ) : (
             <button
               onClick={onAdd}
-              className="flex items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-xs font-semibold text-white hover:bg-brand-600 transition-colors"
+              className="flex items-center gap-1.5 rounded-lg bg-buyer-500 px-3 py-2 text-xs font-semibold text-white hover:bg-buyer-600 transition-colors"
             >
               <Plus className="h-3.5 w-3.5" /> Add
             </button>
@@ -223,7 +297,7 @@ export default function BuyerShopPage() {
               placeholder="Search products by name, SKU, or barcode..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="h-10 w-full rounded-lg border border-surface-border bg-white pl-10 pr-3 text-sm text-navy placeholder:text-navy/40 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+              className="h-10 w-full rounded-lg border border-surface-border bg-white pl-10 pr-3 text-sm text-navy placeholder:text-navy/40 focus:border-buyer-500 focus:outline-none focus:ring-1 focus:ring-buyer-500"
             />
             {search && (
               <button
@@ -240,7 +314,7 @@ export default function BuyerShopPage() {
             <select
               value={category}
               onChange={(e) => setCategory(e.target.value)}
-              className="h-10 rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+              className="h-10 rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-buyer-500 focus:outline-none focus:ring-1 focus:ring-buyer-500"
             >
               <option value="">All Categories</option>
               {categories.map((c) => (
@@ -253,7 +327,7 @@ export default function BuyerShopPage() {
           <select
             value={sort}
             onChange={(e) => setSort(e.target.value)}
-            className="h-10 rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+            className="h-10 rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-buyer-500 focus:outline-none focus:ring-1 focus:ring-buyer-500"
           >
             <option value="name_asc">Name A-Z</option>
             <option value="name_desc">Name Z-A</option>
@@ -265,13 +339,13 @@ export default function BuyerShopPage() {
           <div className="flex items-center rounded-lg border border-surface-border bg-white">
             <button
               onClick={() => setViewMode("grid")}
-              className={`rounded-l-lg p-2.5 transition-colors ${viewMode === "grid" ? "bg-brand-50 text-brand-600" : "text-navy/40 hover:text-navy"}`}
+              className={`rounded-l-lg p-2.5 transition-colors ${viewMode === "grid" ? "bg-buyer-50 text-buyer-600" : "text-navy/40 hover:text-navy"}`}
             >
               <Grid3X3 className="h-4 w-4" />
             </button>
             <button
               onClick={() => setViewMode("list")}
-              className={`rounded-r-lg p-2.5 transition-colors ${viewMode === "list" ? "bg-brand-50 text-brand-600" : "text-navy/40 hover:text-navy"}`}
+              className={`rounded-r-lg p-2.5 transition-colors ${viewMode === "list" ? "bg-buyer-50 text-buyer-600" : "text-navy/40 hover:text-navy"}`}
             >
               <List className="h-4 w-4" />
             </button>
@@ -281,7 +355,7 @@ export default function BuyerShopPage() {
         {/* Results count */}
         {meta && (
           <p className="mb-4 text-xs text-navy/50">
-            Showing {meta.total === 0 ? 0 : (page - 1) * limit + 1}–
+            Showing {meta.total === 0 ? 0 : (page - 1) * limit + 1} to{" "}
             {Math.min(page * limit, meta.total)} of {meta.total} products
           </p>
         )}
@@ -293,7 +367,7 @@ export default function BuyerShopPage() {
           </div>
         ) : isLoading ? (
           <div className="flex items-center justify-center py-16">
-            <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
+            <Loader2 className="h-8 w-8 animate-spin text-buyer-500" />
           </div>
         ) : products.length === 0 ? (
           <div className="rounded-xl border border-dashed border-surface-border bg-white p-12 text-center">
@@ -305,7 +379,7 @@ export default function BuyerShopPage() {
             {(search || category) && (
               <button
                 onClick={() => { setSearch(""); setCategory(""); }}
-                className="text-sm text-brand-500 hover:underline"
+                className="text-sm text-buyer-500 hover:underline"
               >
                 Clear all filters
               </button>
@@ -346,7 +420,7 @@ export default function BuyerShopPage() {
                   <th className="px-4 py-2.5 text-left w-28">Category</th>
                   <th className="px-4 py-2.5 text-left w-24">SKU</th>
                   <th className="px-4 py-2.5 text-right w-28">Price</th>
-                  <th className="px-4 py-2.5 text-right w-36">Actions</th>
+                  <th className="px-4 py-2.5 text-right w-44">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-surface-border">
@@ -369,8 +443,8 @@ export default function BuyerShopPage() {
                           </div>
                         </div>
                       </td>
-                      <td className="px-4 py-3 text-xs text-navy/60">{p.category ?? "—"}</td>
-                      <td className="px-4 py-3 text-xs text-navy/50">{p.sku ?? "—"}</td>
+                      <td className="px-4 py-3 text-xs text-navy/60">{p.category ?? "N/A"}</td>
+                      <td className="px-4 py-3 text-xs text-navy/50">{p.sku ?? "N/A"}</td>
                       <td className="px-4 py-3 text-right text-sm font-semibold text-navy">{fmt(p.buyerPrice)}</td>
                       <td className="px-4 py-3">
                         <div className="flex items-center justify-end gap-2">
@@ -386,19 +460,16 @@ export default function BuyerShopPage() {
                             <Heart className={`h-4 w-4 ${favoriteIds.has(p.id) ? "fill-current" : ""}`} />
                           </button>
                           {qty > 0 ? (
-                            <div className="flex items-center gap-1 rounded-lg border border-brand-200 bg-brand-50">
-                              <button onClick={() => cart.updateQty(p.id, qty - 1)} className="rounded-l-lg p-1.5 text-brand-600 hover:bg-brand-100">
-                                <Minus className="h-3.5 w-3.5" />
-                              </button>
-                              <span className="min-w-[24px] text-center text-sm font-semibold text-brand-700">{qty}</span>
-                              <button onClick={() => cart.updateQty(p.id, qty + 1)} className="rounded-r-lg p-1.5 text-brand-600 hover:bg-brand-100">
-                                <Plus className="h-3.5 w-3.5" />
-                              </button>
-                            </div>
+                            <QtyStepper
+                              qty={qty}
+                              onUpdate={(n) => cart.updateQty(p.id, n)}
+                              onRemove={() => cart.updateQty(p.id, 0)}
+                              size="sm"
+                            />
                           ) : (
                             <button
                               onClick={() => cart.addItem({ productId: p.id, qty: p.unitsPerBox ? p.unitsPerBox : 1, name: p.name, unit: p.unit, thumbnailUrl: p.thumbnailUrl, unitsPerBox: p.unitsPerBox, boxes: p.unitsPerBox ? 1 : undefined, pieces: p.unitsPerBox ? 0 : undefined })}
-                              className="flex items-center gap-1 rounded-lg bg-brand-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-600"
+                              className="flex items-center gap-1 rounded-lg bg-buyer-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-buyer-600 transition-colors"
                             >
                               <Plus className="h-3.5 w-3.5" /> Add
                             </button>
@@ -445,7 +516,7 @@ export default function BuyerShopPage() {
         <div className="sticky bottom-0 border-t border-surface-border bg-white px-6 py-3 shadow-lg">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-brand-500 text-white">
+              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-buyer-500 text-white">
                 <ShoppingCart className="h-4 w-4" />
               </div>
               <div>

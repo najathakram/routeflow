@@ -193,9 +193,11 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
         {/* Header */}
         <div className="border-b border-white/10 px-4 py-4">
           <div className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-buyer-500 text-xs font-bold text-white">
-              RF
-            </div>
+            <img
+              src="/logo-buyer.png"
+              alt="RouteFlow"
+              className="h-8 w-8 rounded-lg object-contain"
+            />
             <div className="flex-1">
               <p className="text-sm font-bold text-white">RouteFlow</p>
               <p className="text-xs text-buyer-300">Buyer Portal</p>

@@ -121,14 +121,14 @@ function BuyerLoginInner() {
         <div className="absolute top-1/3 right-1/4 h-48 w-48 rounded-full bg-buyer-400/10" />
 
         <div className="relative z-10 max-w-md px-12 text-center">
-          <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-white/10 backdrop-blur-sm text-2xl font-bold text-white">
-            RF
+          <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-white/10 backdrop-blur-sm p-2">
+            <img src="/logo-buyer.png" alt="RouteFlow" className="h-full w-full object-contain" />
           </div>
           <h2 className="text-3xl font-bold text-white mb-4">
             Order smarter with RouteFlow
           </h2>
           <p className="text-buyer-200 text-base leading-relaxed">
-            Browse catalogs, track deliveries, manage invoices — your one-stop B2B ordering platform.
+            Browse catalogs, track deliveries, and manage invoices. Your one-stop B2B ordering platform.
           </p>
           <div className="mt-8 flex justify-center gap-6 text-buyer-300 text-sm">
             <div className="flex items-center gap-2">
@@ -152,9 +152,7 @@ function BuyerLoginInner() {
         <div className="w-full max-w-sm">
           {/* Mobile logo (hidden on large screens where left panel shows) */}
           <div className="mb-8 flex flex-col items-center gap-3 lg:hidden">
-            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-buyer-600 text-lg font-bold text-white">
-              RF
-            </div>
+            <img src="/logo-buyer.png" alt="RouteFlow" className="h-12 w-12 object-contain" />
             <h1 className="text-2xl font-bold text-navy">RouteFlow</h1>
           </div>
 
@@ -166,38 +164,6 @@ function BuyerLoginInner() {
 
           {/* Card */}
           <div className="rounded-xl bg-white p-6 shadow-card">
-            {/* Google sign-in button */}
-            {googleError && (
-              <p className="mb-4 rounded-lg bg-danger-bg px-3 py-2 text-sm text-danger">
-                {googleError}
-              </p>
-            )}
-            <button
-              type="button"
-              onClick={handleGoogleSignIn}
-              disabled={googleLoading}
-              className="mb-4 flex w-full items-center justify-center gap-3 rounded-lg border border-surface-border bg-white px-4 py-2.5 text-sm font-medium text-navy shadow-sm transition-colors hover:bg-surface-raised focus:outline-none focus:ring-2 focus:ring-buyer-500 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {googleLoading ? (
-                <>
-                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-navy/30 border-t-navy/70" />
-                  <span>Redirecting to Google…</span>
-                </>
-              ) : (
-                <>
-                  <GoogleIcon className="h-4 w-4" />
-                  <span>Continue with Google</span>
-                </>
-              )}
-            </button>
-
-            {/* Divider */}
-            <div className="mb-4 flex items-center gap-3">
-              <div className="h-px flex-1 bg-surface-border" />
-              <span className="text-xs text-navy/40">or sign in with email</span>
-              <div className="h-px flex-1 bg-surface-border" />
-            </div>
-
             <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4" noValidate>
               {apiError && (
                 <p className="rounded-lg bg-danger-bg px-3 py-2 text-sm text-danger">
@@ -263,6 +229,38 @@ function BuyerLoginInner() {
                 )}
               </button>
             </form>
+
+            {/* Divider */}
+            <div className="my-4 flex items-center gap-3">
+              <div className="h-px flex-1 bg-surface-border" />
+              <span className="text-xs text-navy/40">or</span>
+              <div className="h-px flex-1 bg-surface-border" />
+            </div>
+
+            {/* Google sign-in button */}
+            {googleError && (
+              <p className="mb-3 rounded-lg bg-danger-bg px-3 py-2 text-sm text-danger">
+                {googleError}
+              </p>
+            )}
+            <button
+              type="button"
+              onClick={handleGoogleSignIn}
+              disabled={googleLoading}
+              className="flex w-full items-center justify-center gap-3 rounded-lg border border-surface-border bg-white px-4 py-2.5 text-sm font-medium text-navy shadow-sm transition-colors hover:bg-surface-raised focus:outline-none focus:ring-2 focus:ring-buyer-500 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {googleLoading ? (
+                <>
+                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-navy/30 border-t-navy/70" />
+                  <span>Redirecting to Google...</span>
+                </>
+              ) : (
+                <>
+                  <GoogleIcon className="h-4 w-4" />
+                  <span>Continue with Google</span>
+                </>
+              )}
+            </button>
 
             <div className="mt-4 text-center">
               <p className="text-sm text-navy/60">

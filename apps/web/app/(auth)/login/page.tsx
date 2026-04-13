@@ -143,12 +143,11 @@ export default function LoginPage() {
               className="h-12 w-12 rounded-xl object-contain"
             />
           ) : (
-            <div
-              className="flex h-12 w-12 items-center justify-center rounded-xl text-lg font-bold text-white"
-              style={{ backgroundColor: "var(--primary, #3B82F6)" }}
-            >
-              {businessName.slice(0, 2).toUpperCase()}
-            </div>
+            <img
+              src="/logo-seller.png"
+              alt={businessName}
+              className="h-12 w-12 object-contain"
+            />
           )}
           <h1 className="text-2xl font-bold text-navy">{businessName}</h1>
           <div className="flex items-center gap-2">

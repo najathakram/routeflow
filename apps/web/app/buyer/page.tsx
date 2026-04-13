@@ -63,9 +63,7 @@ export default function BuyerLandingPage() {
       <nav className="sticky top-0 z-50 border-b border-buyer-800/10 bg-white/80 backdrop-blur-md">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
           <div className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-buyer-600 text-xs font-bold text-white">
-              RF
-            </div>
+            <img src="/logo-buyer.png" alt="RouteFlow" className="h-8 w-8 object-contain" />
             <span className="text-lg font-bold text-navy">RouteFlow</span>
           </div>
           <div className="flex items-center gap-4">
@@ -104,7 +102,7 @@ export default function BuyerLandingPage() {
           </h1>
 
           <p className="mx-auto mt-6 max-w-2xl text-lg text-buyer-200/80 leading-relaxed">
-            The easiest way to order from your suppliers. Browse personalized catalogs, track every delivery, manage invoices — all in one place.
+            The easiest way to order from your suppliers. Browse personalized catalogs, track every delivery, and manage invoices. All in one place.
           </p>
 
           <div className="mt-10 flex flex-col items-center gap-4 sm:flex-row sm:justify-center">
@@ -163,7 +161,7 @@ export default function BuyerLandingPage() {
             <FeatureCard
               icon={FileText}
               title="Manage Invoices"
-              description="View invoices as they arrive, track payments, and download PDFs — all linked to your deliveries."
+              description="View invoices as they arrive, track payments, and download PDFs. All linked to your deliveries."
             />
             <FeatureCard
               icon={Shield}
@@ -221,7 +219,7 @@ export default function BuyerLandingPage() {
             </div>
             <div>
               <p className="text-3xl font-bold text-buyer-700">Simple</p>
-              <p className="text-sm text-navy/60 mt-1">No training needed — intuitive design</p>
+              <p className="text-sm text-navy/60 mt-1">No training needed. Intuitive design.</p>
             </div>
           </div>
         </div>
@@ -250,9 +248,7 @@ export default function BuyerLandingPage() {
       <footer className="border-t border-surface-border bg-white py-8">
         <div className="mx-auto max-w-6xl px-6 flex flex-col items-center gap-4 sm:flex-row sm:justify-between">
           <div className="flex items-center gap-2">
-            <div className="flex h-6 w-6 items-center justify-center rounded bg-buyer-600 text-[10px] font-bold text-white">
-              RF
-            </div>
+            <img src="/logo-buyer.png" alt="RouteFlow" className="h-6 w-6 object-contain" />
             <span className="text-sm font-semibold text-navy">RouteFlow</span>
           </div>
           <p className="text-xs text-navy/40">
