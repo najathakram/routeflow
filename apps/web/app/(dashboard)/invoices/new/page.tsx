@@ -322,7 +322,7 @@ export default function NewInvoicePage() {
   React.useEffect(() => { setTitle("New Invoice"); }, [setTitle]);
 
   const [customer, setCustomer] = React.useState<Customer | null>(null);
-  const [orderNumber, setOrderNumber] = React.useState("");
+  const [reference, setReference] = React.useState("");
   const [subject, setSubject] = React.useState("");
   const [terms, setTerms] = React.useState("");
   const [issueDate, setIssueDate] = React.useState(
@@ -449,7 +449,11 @@ export default function NewInvoicePage() {
         taxRate: it.taxable ? taxRate : 0,
         ...(it.unitsPerBox ? { boxes: it.boxes ?? 0, pieces: it.pieces ?? 0 } : {}),
       })),
-      notes: notes.trim() || undefined,
+      notes: [
+        reference.trim() ? `Ref: ${reference.trim()}` : "",
+        subject.trim() ? `For: ${subject.trim()}` : "",
+        notes.trim(),
+      ].filter(Boolean).join("\n") || undefined,
       // Map adjustment to discount (negative = reduce price) or shippingFee (positive = surcharge)
       ...(adjustment < 0 ? { discount: Math.abs(adjustment) } : {}),
       ...(adjustment > 0 ? { shippingFee: adjustment } : {}),
@@ -511,13 +515,13 @@ export default function NewInvoicePage() {
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="mb-1.5 block text-sm font-medium text-navy/80">
-                      Order Number <span className="text-navy/40 font-normal">(optional)</span>
+                      Reference / PO Number <span className="text-navy/40 font-normal">(optional)</span>
                     </label>
                     <input
                       type="text"
-                      placeholder="e.g. PO-1234"
-                      value={orderNumber}
-                      onChange={(e) => setOrderNumber(e.target.value)}
+                      placeholder="e.g. PO-1234, contract ref, etc."
+                      value={reference}
+                      onChange={(e) => setReference(e.target.value)}
                       className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
                     />
                   </div>

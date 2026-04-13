@@ -475,9 +475,19 @@ export default function InvoicesPage() {
                       {fmtDate((inv as any).issueDate ?? inv.createdAt)}
                     </td>
                     <td className="px-4 py-3">
-                      <span className="font-mono text-xs font-semibold text-brand-500">
-                        {inv.invoiceNumber}
-                      </span>
+                      <div className="flex flex-col gap-0.5">
+                        <span className="font-mono text-xs font-semibold text-brand-500">
+                          {inv.invoiceNumber}
+                        </span>
+                        <span className={cn(
+                          "inline-flex w-fit items-center rounded-full px-1.5 py-px text-[10px] font-medium leading-tight",
+                          (inv as any).orderId
+                            ? "bg-brand-50 text-brand-600"
+                            : "bg-surface-raised text-navy/40",
+                        )}>
+                          {(inv as any).orderId ? "From Order" : "Manual"}
+                        </span>
+                      </div>
                     </td>
                     <td className="px-4 py-3 font-medium text-navy">
                       {inv.customer?.businessName ?? "—"}
