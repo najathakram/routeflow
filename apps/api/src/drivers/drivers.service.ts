@@ -97,7 +97,11 @@ export class DriversService {
       },
     });
     if (!driver) throw new NotFoundException("Driver not found");
-    if (user.role !== UserRole.OPERATOR && driver.userId !== user.sub) {
+    if (
+      user.role !== UserRole.OPERATOR &&
+      user.role !== UserRole.TENANT_ADMIN &&
+      driver.userId !== user.sub
+    ) {
       throw new ForbiddenException("Access denied");
     }
     return driver;

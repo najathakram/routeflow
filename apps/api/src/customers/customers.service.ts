@@ -287,6 +287,7 @@ export class CustomersService {
     if (!customer) throw new NotFoundException("Customer not found");
     if (
       user.role !== UserRole.OPERATOR &&
+      user.role !== UserRole.TENANT_ADMIN &&
       user.role !== UserRole.DRIVER &&
       customer.userId !== user.sub
     ) {
@@ -439,7 +440,11 @@ export class CustomersService {
 
   async findOrders(id: string, user: JwtPayload) {
     const customer = await this.findCustomerOrThrow(id);
-    if (user.role !== UserRole.OPERATOR && customer.userId !== user.sub) {
+    if (
+      user.role !== UserRole.OPERATOR &&
+      user.role !== UserRole.TENANT_ADMIN &&
+      customer.userId !== user.sub
+    ) {
       throw new ForbiddenException();
     }
     const [data, total] = await Promise.all([

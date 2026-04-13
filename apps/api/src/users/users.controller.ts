@@ -61,7 +61,7 @@ export class UsersController {
 
   @Get(":id")
   findOne(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
-    if (user.role !== UserRole.OPERATOR && user.sub !== id) {
+    if (user.role !== UserRole.OPERATOR && user.role !== UserRole.TENANT_ADMIN && user.sub !== id) {
       throw new ForbiddenException("Access denied");
     }
     return this.usersService.findById(id);
@@ -69,7 +69,7 @@ export class UsersController {
 
   @Patch(":id")
   update(@Param("id") id: string, @Body() dto: UpdateUserDto, @CurrentUser() user: JwtPayload) {
-    if (user.role !== UserRole.OPERATOR && user.sub !== id) {
+    if (user.role !== UserRole.OPERATOR && user.role !== UserRole.TENANT_ADMIN && user.sub !== id) {
       throw new ForbiddenException("Access denied");
     }
     return this.usersService.updateUser(id, dto);
