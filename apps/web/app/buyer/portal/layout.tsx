@@ -59,20 +59,20 @@ function SellerItem({
       onClick={onClick}
       className={`w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors ${
         isActive
-          ? "bg-brand-50 text-brand-700 ring-1 ring-brand-200"
-          : "text-navy/70 hover:bg-surface-raised hover:text-navy"
+          ? "bg-buyer-500/20 text-buyer-100 ring-1 ring-buyer-400/30"
+          : "text-white/70 hover:bg-white/10 hover:text-white"
       }`}
     >
-      <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-surface-border text-xs font-bold text-navy/60">
+      <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-white/10 text-xs font-bold text-buyer-200">
         {seller.tenant.name.slice(0, 2).toUpperCase()}
       </div>
       <div className="min-w-0 flex-1">
-        <p className={`text-sm font-medium truncate ${isActive ? "text-brand-700" : "text-navy"}`}>
+        <p className={`text-sm font-medium truncate ${isActive ? "text-buyer-100" : "text-white/80"}`}>
           {seller.tenant.name}
         </p>
-        <p className="text-xs text-navy/50 truncate">{seller.customer.businessName}</p>
+        <p className="text-xs text-buyer-300/70 truncate">{seller.customer.businessName}</p>
       </div>
-      {isActive && <ChevronRight className="h-4 w-4 flex-shrink-0 text-brand-500" />}
+      {isActive && <ChevronRight className="h-4 w-4 flex-shrink-0 text-buyer-400" />}
     </button>
   );
 }
@@ -97,8 +97,8 @@ function NavLink({
       onClick={() => router.push(href)}
       className={`w-full flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
         isActive
-          ? "bg-brand-50 text-brand-700"
-          : "text-navy/70 hover:bg-surface-raised hover:text-navy"
+          ? "bg-white text-buyer-800"
+          : "text-white/70 hover:bg-white/10 hover:text-white"
       }`}
     >
       <Icon className="h-4 w-4 flex-shrink-0" />
@@ -188,20 +188,17 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
 
   return (
     <div className="flex min-h-screen bg-surface-raised">
-      {/* Sidebar */}
-      <aside className="flex w-64 flex-shrink-0 flex-col border-r border-surface-border bg-white">
+      {/* Sidebar — Buyer: dark teal/emerald theme */}
+      <aside className="flex w-64 flex-shrink-0 flex-col bg-gradient-to-b from-buyer-900 to-buyer-800 shadow-lg">
         {/* Header */}
-        <div className="border-b border-surface-border px-4 py-4">
+        <div className="border-b border-white/10 px-4 py-4">
           <div className="flex items-center gap-2">
-            <div
-              className="flex h-8 w-8 items-center justify-center rounded-lg text-xs font-bold text-white"
-              style={{ backgroundColor: "#3B82F6" }}
-            >
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-buyer-500 text-xs font-bold text-white">
               RF
             </div>
             <div className="flex-1">
-              <p className="text-sm font-bold text-navy">RouteFlow</p>
-              <p className="text-xs text-navy/50">Buyer Portal</p>
+              <p className="text-sm font-bold text-white">RouteFlow</p>
+              <p className="text-xs text-buyer-300">Buyer Portal</p>
             </div>
             {/* Notification bell */}
             <div className="relative">
@@ -211,11 +208,11 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
                   setNotifOpen(!notifOpen);
                   if (!notifOpen) markAllRead();
                 }}
-                className="relative rounded-lg p-2 text-navy/50 hover:bg-surface-raised hover:text-navy transition-colors"
+                className="relative rounded-lg p-2 text-buyer-300 hover:bg-white/10 hover:text-white transition-colors"
               >
                 <Bell className="h-4 w-4" />
                 {unreadCount > 0 && (
-                  <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-danger px-1 text-[9px] font-bold text-white">
+                  <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-bold text-white">
                     {unreadCount}
                   </span>
                 )}
@@ -232,7 +229,7 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
                   </div>
                   <div className="max-h-64 overflow-y-auto">
                     {notifications.length === 0 ? (
-                      <p className="px-3 py-6 text-center text-xs text-navy/40">No notifications</p>
+                      <p className="px-3 py-6 text-center text-xs text-buyer-600">No notifications</p>
                     ) : (
                       notifications.slice(0, 20).map((n) => (
                         <div key={n.id} className="border-b border-surface-border px-3 py-2 last:border-b-0 hover:bg-surface-raised/50">
@@ -268,7 +265,7 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
             <button
               type="button"
               onClick={() => setSellersOpen(!sellersOpen)}
-              className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-xs font-semibold uppercase tracking-wider text-navy/40 hover:bg-surface-raised transition-colors"
+              className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-xs font-semibold uppercase tracking-wider text-buyer-300/60 hover:bg-white/10 transition-colors"
             >
               <span>Your Sellers</span>
               <ChevronDown
@@ -278,7 +275,7 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
 
             {/* Preview: show active seller name when collapsed */}
             {!sellersOpen && activeSeller && (
-              <div className="mt-1 px-3 py-1.5 rounded-lg bg-brand-50 text-sm font-medium text-brand-700 truncate">
+              <div className="mt-1 px-3 py-1.5 rounded-lg bg-buyer-500/20 text-sm font-medium text-buyer-100 truncate">
                 {activeSeller.tenant.name}
               </div>
             )}
@@ -299,9 +296,9 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
                     />
                   ))
                 ) : (
-                  <div className="rounded-lg border border-dashed border-surface-border p-4 text-center">
-                    <Building2 className="mx-auto mb-2 h-6 w-6 text-navy/30" />
-                    <p className="text-xs text-navy/50">No sellers linked yet</p>
+                  <div className="rounded-lg border border-dashed border-white/20 p-4 text-center">
+                    <Building2 className="mx-auto mb-2 h-6 w-6 text-buyer-400/40" />
+                    <p className="text-xs text-buyer-300/60">No sellers linked yet</p>
                   </div>
                 )}
                 {/* Manage Sellers inside the dropdown */}
@@ -318,7 +315,7 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
           {/* Nav links for active seller */}
           {activeSeller && navItems.length > 0 && (
             <div>
-              <p className="mb-2 px-3 text-xs font-semibold uppercase tracking-wider text-navy/40">
+              <p className="mb-2 px-3 text-xs font-semibold uppercase tracking-wider text-buyer-300/60">
                 {activeSeller.tenant.name}
               </p>
               <div className="flex flex-col gap-1">
@@ -331,7 +328,7 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
                       isActive={pathname === item.href || pathname.startsWith(item.href)}
                     />
                     {item.label === "Shop" && cartItemCount > 0 && (
-                      <span className="absolute right-2 top-1/2 -translate-y-1/2 flex h-5 min-w-5 items-center justify-center rounded-full bg-brand-500 px-1.5 text-[10px] font-bold text-white">
+                      <span className="absolute right-2 top-1/2 -translate-y-1/2 flex h-5 min-w-5 items-center justify-center rounded-full bg-buyer-400 px-1.5 text-[10px] font-bold text-white">
                         {cartItemCount}
                       </span>
                     )}
@@ -343,15 +340,15 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
         </div>
 
         {/* Footer */}
-        <div className="border-t border-surface-border px-3 py-3">
-          <div className="mb-2 rounded-lg bg-surface-raised px-3 py-2">
-            <p className="text-xs font-medium text-navy truncate">{buyer.name}</p>
-            <p className="text-xs text-navy/50 truncate">{buyer.email}</p>
+        <div className="border-t border-white/10 px-3 py-3">
+          <div className="mb-2 rounded-lg bg-buyer-800/50 px-3 py-2">
+            <p className="text-xs font-medium text-buyer-100 truncate">{buyer.name}</p>
+            <p className="text-xs text-buyer-300/70 truncate">{buyer.email}</p>
           </div>
           <button
             type="button"
             onClick={logout}
-            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-navy/60 hover:bg-danger-bg hover:text-danger transition-colors"
+            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-buyer-300/70 hover:bg-red-900/30 hover:text-red-400 transition-colors"
           >
             <LogOut className="h-4 w-4" />
             Sign Out
