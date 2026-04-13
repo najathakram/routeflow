@@ -196,6 +196,15 @@ export class BuyerController {
 
   // ─── Order CRUD ───────────────────────────────────────────────────────────────
 
+  @Get("orders/active")
+  @UseGuards(BuyerSellerContextGuard)
+  @UseInterceptors(BuyerTenantInterceptor)
+  @ApiHeader({ name: "X-Tenant-Slug", required: true })
+  @ApiOperation({ summary: "Get the buyer's active DRAFT/PENDING order (or null)" })
+  getActiveOrder(@CurrentBuyerCustomer() ctx: any) {
+    return this.ordersService.findActiveOrder(ctx.customerId);
+  }
+
   @Get("orders/:id")
   @UseGuards(BuyerSellerContextGuard)
   @UseInterceptors(BuyerTenantInterceptor)
@@ -209,9 +218,38 @@ export class BuyerController {
   @UseGuards(BuyerSellerContextGuard)
   @UseInterceptors(BuyerTenantInterceptor)
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
-  @ApiOperation({ summary: "Create a new order from cart items" })
-  createOrder(@Body() dto: BuyerCreateOrderDto, @CurrentBuyerCustomer() ctx: any) {
-    // Map buyer DTO to the full CreateOrderDto format
+  @ApiOperation({ summary: "Create a new order or merge into existing active order" })
+  async createOrder(@Body() dto: BuyerCreateOrderDto, @CurrentBuyerCustomer() ctx: any) {
+    // Check if buyer has an active DRAFT/PENDING order (unless forceNew is set)
+    if (!dto.forceNew) {
+      const activeOrder = await this.ordersService.findActiveOrder(ctx.customerId);
+      if (activeOrder) {
+        // Merge: combine existing items with new cart items
+        const mergedMap = new Map<string, number>();
+        for (const li of activeOrder.lineItems) {
+          mergedMap.set(li.productId, Number(li.qty));
+        }
+        for (const item of dto.items) {
+          mergedMap.set(item.productId, (mergedMap.get(item.productId) ?? 0) + item.qty);
+        }
+        const mergedItems = Array.from(mergedMap.entries()).map(([productId, qty]) => ({
+          productId,
+          qty,
+        }));
+
+        // Update existing order items with merged list
+        await this.ordersService.updateOrderItems(
+          activeOrder.id,
+          { items: mergedItems } as any,
+          makePseudoUser(ctx),
+        );
+
+        // Return the updated order
+        return this.ordersService.findOne(activeOrder.id, makePseudoUser(ctx));
+      }
+    }
+
+    // No active order or forceNew — create a new one
     const createDto = {
       items: dto.items.map((item) => ({
         productId: item.productId,

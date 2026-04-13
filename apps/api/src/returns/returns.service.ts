@@ -42,7 +42,7 @@ export class ReturnsService {
       include: {
         customer: { select: { id: true, businessName: true } },
         lineItems: { select: { productId: true, qty: true, unitPrice: true } },
-        invoice: { select: { id: true } },
+        invoices: { select: { id: true } },
       },
     });
     if (!order) throw new NotFoundException("Order not found");

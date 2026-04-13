@@ -9,6 +9,7 @@ import {
   LogOut,
   Building2,
   ChevronRight,
+  ChevronDown,
   LayoutDashboard,
   Store,
   Repeat,
@@ -114,6 +115,7 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
   // Hooks must be called unconditionally — before any early returns
   const sellerSlug = activeSeller?.tenant.slug;
   const { totalQty: cartItemCount } = useBuyerCart(buyer?.id, sellerSlug);
+  const [sellersOpen, setSellersOpen] = React.useState(false);
 
   // Redirect to login if not authenticated
   React.useEffect(() => {
@@ -199,19 +201,10 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
           </div>
         </div>
 
-        {/* Sellers section */}
+        {/* Sidebar content */}
         <div className="flex-1 overflow-y-auto px-3 py-4">
-          {/* Manage sellers link */}
-          <div className="mb-1">
-            <NavLink
-              href="/buyer/portal"
-              icon={LayoutGrid}
-              label="Manage Sellers"
-              isActive={pathname === "/buyer/portal"}
-            />
-          </div>
           {/* Settings link */}
-          <div className="mb-4">
+          <div className="mb-3">
             <NavLink
               href="/buyer/portal/settings"
               icon={Settings}
@@ -220,35 +213,61 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
             />
           </div>
 
-          {/* Sellers list */}
-          {sellers.length > 0 && (
-            <div className="mb-4">
-              <p className="mb-2 px-3 text-xs font-semibold uppercase tracking-wider text-navy/40">
-                Your Sellers
-              </p>
-              <div className="flex flex-col gap-1">
-                {sellers.map((seller) => (
-                  <SellerItem
-                    key={seller.linkId}
-                    seller={seller}
-                    isActive={activeSeller?.linkId === seller.linkId}
-                    onClick={() => handleSellerClick(seller)}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
+          {/* Your Sellers — collapsible dropdown */}
+          <div className="mb-4">
+            <button
+              type="button"
+              onClick={() => setSellersOpen(!sellersOpen)}
+              className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-xs font-semibold uppercase tracking-wider text-navy/40 hover:bg-surface-raised transition-colors"
+            >
+              <span>Your Sellers</span>
+              <ChevronDown
+                className={`h-3.5 w-3.5 transition-transform ${sellersOpen ? "rotate-180" : ""}`}
+              />
+            </button>
 
-          {sellers.length === 0 && (
-            <div className="rounded-lg border border-dashed border-surface-border p-4 text-center">
-              <Building2 className="mx-auto mb-2 h-6 w-6 text-navy/30" />
-              <p className="text-xs text-navy/50">No sellers linked yet</p>
-            </div>
-          )}
+            {/* Preview: show active seller name when collapsed */}
+            {!sellersOpen && activeSeller && (
+              <div className="mt-1 px-3 py-1.5 rounded-lg bg-brand-50 text-sm font-medium text-brand-700 truncate">
+                {activeSeller.tenant.name}
+              </div>
+            )}
+
+            {/* Expanded sellers list */}
+            {sellersOpen && (
+              <div className="mt-1 flex flex-col gap-1">
+                {sellers.length > 0 ? (
+                  sellers.map((seller) => (
+                    <SellerItem
+                      key={seller.linkId}
+                      seller={seller}
+                      isActive={activeSeller?.linkId === seller.linkId}
+                      onClick={() => {
+                        handleSellerClick(seller);
+                        setSellersOpen(false);
+                      }}
+                    />
+                  ))
+                ) : (
+                  <div className="rounded-lg border border-dashed border-surface-border p-4 text-center">
+                    <Building2 className="mx-auto mb-2 h-6 w-6 text-navy/30" />
+                    <p className="text-xs text-navy/50">No sellers linked yet</p>
+                  </div>
+                )}
+                {/* Manage Sellers inside the dropdown */}
+                <NavLink
+                  href="/buyer/portal"
+                  icon={LayoutGrid}
+                  label="Manage Sellers"
+                  isActive={pathname === "/buyer/portal"}
+                />
+              </div>
+            )}
+          </div>
 
           {/* Nav links for active seller */}
           {activeSeller && navItems.length > 0 && (
-            <div className="mt-4">
+            <div>
               <p className="mb-2 px-3 text-xs font-semibold uppercase tracking-wider text-navy/40">
                 {activeSeller.tenant.name}
               </p>

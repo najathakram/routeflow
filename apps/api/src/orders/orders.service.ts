@@ -122,7 +122,7 @@ export class OrdersService {
         },
         lineItems: { include: { product: { select: { id: true, name: true, unit: true } } } },
         transaction: true,
-        invoice: { select: { id: true, invoiceNumber: true, status: true, total: true } },
+        invoices: { select: { id: true, invoiceNumber: true, status: true, total: true } },
       },
     });
     if (!order) throw new NotFoundException("Order not found");
@@ -135,6 +135,27 @@ export class OrdersService {
     }
 
     return order;
+  }
+
+  /**
+   * Find the most recent active (DRAFT/PENDING) order for a customer.
+   * Used by the buyer portal to merge new items into an existing order.
+   */
+  async findActiveOrder(customerId: string) {
+    return this.prisma.forTenant().order.findFirst({
+      where: {
+        customerId,
+        status: { in: [OrderStatus.DRAFT, OrderStatus.PENDING] },
+      },
+      include: {
+        lineItems: {
+          where: { status: { not: ItemStatus.CANCELLED } },
+          include: { product: { select: { id: true, name: true, unit: true } } },
+        },
+        customer: { select: { id: true, businessName: true } },
+      },
+      orderBy: { createdAt: "desc" },
+    });
   }
 
   async create(dto: CreateOrderDto, user: JwtPayload) {
@@ -354,7 +375,8 @@ export class OrdersService {
       DRAFT: ["PENDING", "CANCELLED"],
       PENDING: ["CONFIRMED", "CANCELLED"],
       CONFIRMED: ["OUT_FOR_DELIVERY", "DELIVERED", "PENDING", "CANCELLED"],
-      OUT_FOR_DELIVERY: ["DELIVERED", "CONFIRMED", "CANCELLED"],
+      OUT_FOR_DELIVERY: ["DELIVERED", "PARTIALLY_DELIVERED", "CONFIRMED", "CANCELLED"],
+      PARTIALLY_DELIVERED: ["OUT_FOR_DELIVERY", "DELIVERED", "CANCELLED"],
       DELIVERED: [],
     };
     if (!(allowed[order.status] ?? []).includes(dto.status)) {
@@ -365,7 +387,8 @@ export class OrdersService {
     const isDemotion =
       (order.status === "CONFIRMED" && dto.status === "PENDING") ||
       (order.status === "OUT_FOR_DELIVERY" &&
-        (dto.status === "PENDING" || dto.status === "CONFIRMED"));
+        (dto.status === "PENDING" || dto.status === "CONFIRMED")) ||
+      (order.status === "PARTIALLY_DELIVERED" && dto.status === "OUT_FOR_DELIVERY");
     if (isDemotion && !dto.reason?.trim()) {
       throw new BadRequestException("A reason is required when demoting an order");
     }
@@ -409,6 +432,10 @@ export class OrdersService {
       [OrderStatus.OUT_FOR_DELIVERY]: {
         title: "Out for Delivery 🚚",
         body: `Your order #${order.orderNumber} is on its way!`,
+      },
+      [OrderStatus.PARTIALLY_DELIVERED]: {
+        title: "Partial Delivery 📦",
+        body: `Some items from order #${order.orderNumber} have been delivered.`,
       },
       [OrderStatus.DELIVERED]: {
         title: "Order Delivered ✓",
@@ -616,14 +643,36 @@ export class OrdersService {
       });
       if (!stop) throw new NotFoundException("Route run stop not found");
 
-      for (const delivery of dto.deliveries) {
-        const orderItem = await tx.orderItem.findUnique({ where: { id: delivery.orderItemId } });
-        if (!orderItem) throw new NotFoundException(`Order item ${delivery.orderItemId} not found`);
+      // Resolve driver ID once
+      const driverId =
+        user.role === UserRole.DRIVER
+          ? ((await tx.driver.findFirst({ where: { userId: user.sub } }))?.id ?? undefined)
+          : undefined;
 
-        const driverId =
-          user.role === UserRole.DRIVER
-            ? ((await tx.driver.findFirst({ where: { userId: user.sub } }))?.id ?? undefined)
-            : undefined;
+      // Create a DeliveryBatch grouping all mutations in this stop completion.
+      // Used to link the per-delivery invoice back to this event.
+      const customerId = stop.orders[0]?.customerId ?? stop.customerId;
+      const batch = await tx.deliveryBatch.create({
+        data: {
+          customerId: customerId!,
+          routeRunStopId: stopId,
+          driverId,
+          deliveredAt: new Date(),
+        },
+      });
+
+      // Track which items were delivered in this batch, grouped by orderId
+      const batchDeliveredItems = new Map<
+        string,
+        Array<{ orderItemId: string; productId: string; qty: number; unitPrice: number; productName: string; priceType: string; originalPrice: number | null }>
+      >();
+
+      for (const delivery of dto.deliveries) {
+        const orderItem = await tx.orderItem.findUnique({
+          where: { id: delivery.orderItemId },
+          include: { product: { select: { name: true } } },
+        });
+        if (!orderItem) throw new NotFoundException(`Order item ${delivery.orderItemId} not found`);
 
         await tx.deliveryMutation.create({
           data: {
@@ -631,6 +680,7 @@ export class OrdersService {
             orderItemId: delivery.orderItemId,
             productId: orderItem.productId,
             routeRunStopId: stopId,
+            deliveryBatchId: batch.id,
             type: delivery.type,
             quantityDelivered: delivery.quantityDelivered,
             note: delivery.note,
@@ -662,31 +712,93 @@ export class OrdersService {
           });
         }
 
+        // Determine new item status and update deliveredQty
         let newItemStatus: ItemStatus = ItemStatus.DELIVERED;
-        if (delivery.type === MutationType.PARTIAL) newItemStatus = ItemStatus.PARTIAL;
-        else if (delivery.type === MutationType.REFUSED) newItemStatus = ItemStatus.CANCELLED;
+        let deliveredQtyIncrement = new Prisma.Decimal(0);
+
+        if (delivery.type === MutationType.DELIVERED) {
+          newItemStatus = ItemStatus.DELIVERED;
+          deliveredQtyIncrement = orderItem.qty; // full delivery
+        } else if (delivery.type === MutationType.PARTIAL) {
+          newItemStatus = ItemStatus.PARTIAL;
+          deliveredQtyIncrement = delivery.quantityDelivered != null
+            ? new Prisma.Decimal(delivery.quantityDelivered.toString())
+            : new Prisma.Decimal(0);
+        } else if (delivery.type === MutationType.REFUSED) {
+          newItemStatus = ItemStatus.CANCELLED;
+        }
 
         await tx.orderItem.update({
           where: { id: delivery.orderItemId },
-          data: { status: newItemStatus },
+          data: {
+            status: newItemStatus,
+            deliveredQty: { increment: deliveredQtyIncrement },
+          },
         });
+
+        // Track delivered items for per-batch invoice generation
+        if (delivery.type === MutationType.DELIVERED || delivery.type === MutationType.PARTIAL) {
+          const deliveredQty =
+            delivery.type === MutationType.DELIVERED
+              ? Number(orderItem.qty)
+              : Number(delivery.quantityDelivered ?? 0);
+          if (deliveredQty > 0) {
+            const items = batchDeliveredItems.get(orderItem.orderId) ?? [];
+            items.push({
+              orderItemId: orderItem.id,
+              productId: orderItem.productId,
+              qty: deliveredQty,
+              unitPrice: Number(orderItem.unitPrice),
+              productName: (orderItem as any).product?.name ?? "Product",
+              priceType: orderItem.priceType ?? PriceType.STANDARD,
+              originalPrice: orderItem.originalPrice != null ? Number(orderItem.originalPrice) : null,
+            });
+            batchDeliveredItems.set(orderItem.orderId, items);
+          }
+        }
       }
 
+      // Determine order status and create per-batch invoices
       for (const order of stop.orders) {
         const updatedItems = await tx.orderItem.findMany({ where: { orderId: order.id } });
-        const allDelivered = updatedItems.every((i) => i.status === ItemStatus.DELIVERED);
-        const anyDelivered = updatedItems.some(
-          (i) => i.status === ItemStatus.DELIVERED || i.status === ItemStatus.PARTIAL,
+
+        // Check if ALL items are fully delivered (deliveredQty >= qty)
+        const allFullyDelivered = updatedItems.every(
+          (i) =>
+            i.status === ItemStatus.DELIVERED ||
+            i.status === ItemStatus.CANCELLED ||
+            i.deliveredQty.gte(i.qty),
         );
-        // Fix H2: allDelivered → DELIVERED, partiallyDelivered → OUT_FOR_DELIVERY, nothing → keep current
-        const newOrderStatus = allDelivered
-          ? OrderStatus.DELIVERED
-          : anyDelivered
-            ? OrderStatus.OUT_FOR_DELIVERY
-            : order.status;
+        const anyDelivered = updatedItems.some(
+          (i) =>
+            i.status === ItemStatus.DELIVERED ||
+            i.status === ItemStatus.PARTIAL ||
+            i.deliveredQty.gt(0),
+        );
+        const allCancelledOrRefused = updatedItems.every(
+          (i) => i.status === ItemStatus.CANCELLED,
+        );
 
-        await tx.order.update({ where: { id: order.id }, data: { status: newOrderStatus } });
+        let newOrderStatus: OrderStatus;
+        if (allCancelledOrRefused) {
+          newOrderStatus = OrderStatus.CANCELLED;
+        } else if (allFullyDelivered) {
+          newOrderStatus = OrderStatus.DELIVERED;
+        } else if (anyDelivered) {
+          newOrderStatus = OrderStatus.PARTIALLY_DELIVERED;
+        } else {
+          newOrderStatus = order.status; // no change
+        }
 
+        await tx.order.update({
+          where: { id: order.id },
+          data: {
+            status: newOrderStatus,
+            ...(newOrderStatus === OrderStatus.DELIVERED ? { deliveredAt: new Date() } : {}),
+          },
+        });
+
+        // Create Transaction only when order is fully DELIVERED
         if (newOrderStatus === OrderStatus.DELIVERED) {
           const createdTxn = await tx.transaction.upsert({
             where: { orderId: order.id },
@@ -699,68 +811,64 @@ export class OrdersService {
             update: {},
           });
           invoiceTransactionIds.push(createdTxn.id);
+        }
 
-          // Auto-create Invoice from the delivered order
-          const existingInvoice = await tx.invoice.findFirst({ where: { orderId: order.id } });
-          if (!existingInvoice) {
-            const fullOrder = await tx.order.findUnique({
-              where: { id: order.id },
-              include: {
-                lineItems: {
-                  where: { status: { not: ItemStatus.CANCELLED } },
-                  include: { product: { select: { name: true } } },
-                },
+        // Create per-batch invoice for items delivered in THIS batch
+        const deliveredInBatch = batchDeliveredItems.get(order.id);
+        if (deliveredInBatch && deliveredInBatch.length > 0) {
+          // Generate invoice number
+          const year = new Date().getFullYear();
+          const invPrefix = `INV-${year}-`;
+          const lastInv = await tx.invoice.findFirst({
+            where: { invoiceNumber: { startsWith: invPrefix } },
+            orderBy: { invoiceNumber: "desc" },
+          });
+          const seq = lastInv ? parseInt(lastInv.invoiceNumber.split("-")[2], 10) + 1 : 1;
+          const invoiceNumber = `${invPrefix}${String(seq).padStart(4, "0")}`;
+
+          const dueDate = new Date();
+          dueDate.setDate(dueDate.getDate() + 30);
+
+          // Compute totals from delivered items only
+          const invoiceSubtotal = deliveredInBatch.reduce(
+            (sum, li) => sum + li.qty * li.unitPrice,
+            0,
+          );
+
+          await tx.invoice.create({
+            data: {
+              invoiceNumber,
+              customerId: order.customerId,
+              orderId: order.id,
+              deliveryBatchId: batch.id,
+              status: InvoiceStatus.SENT,
+              sentAt: new Date(),
+              subtotal: invoiceSubtotal,
+              taxAmount: 0,
+              discount: 0,
+              shippingFee: 0,
+              total: invoiceSubtotal,
+              dueDate,
+              issueDate: new Date(),
+              notes: order.orderNumber
+                ? `Order #${order.orderNumber} — delivery batch`
+                : "Delivery batch invoice",
+              items: {
+                create: deliveredInBatch.map((li) => ({
+                  description: li.productName,
+                  productId: li.productId,
+                  qty: li.qty,
+                  unitPrice: li.unitPrice,
+                  discount:
+                    li.originalPrice != null ? li.originalPrice - li.unitPrice : 0,
+                  originalPrice: li.originalPrice,
+                  priceType: li.priceType as any,
+                  taxRate: 0,
+                  subtotal: li.qty * li.unitPrice,
+                })),
               },
-            });
-            if (fullOrder && fullOrder.lineItems.length > 0) {
-              // Generate invoice number
-              const year = new Date().getFullYear();
-              const invPrefix = `INV-${year}-`;
-              const lastInv = await tx.invoice.findFirst({
-                where: { invoiceNumber: { startsWith: invPrefix } },
-                orderBy: { invoiceNumber: "desc" },
-              });
-              const seq = lastInv ? parseInt(lastInv.invoiceNumber.split("-")[2], 10) + 1 : 1;
-              const invoiceNumber = `${invPrefix}${String(seq).padStart(4, "0")}`;
-
-              const dueDate = new Date();
-              dueDate.setDate(dueDate.getDate() + 30);
-
-              await tx.invoice.create({
-                data: {
-                  invoiceNumber,
-                  customerId: fullOrder.customerId,
-                  orderId: fullOrder.id,
-                  status: InvoiceStatus.SENT,
-                  sentAt: new Date(),
-                  subtotal: fullOrder.subtotal,
-                  taxAmount: fullOrder.tax,
-                  discount: 0,
-                  shippingFee: 0,
-                  total: fullOrder.total,
-                  dueDate,
-                  issueDate: new Date(),
-                  notes: fullOrder.orderNumber ? `Order #${fullOrder.orderNumber}` : null,
-                  items: {
-                    create: fullOrder.lineItems.map((li: any) => ({
-                      description: li.product?.name ?? "Product",
-                      productId: li.productId,
-                      qty: Number(li.qty),
-                      unitPrice: Number(li.unitPrice),
-                      discount:
-                        li.originalPrice != null
-                          ? Number(li.originalPrice) - Number(li.unitPrice)
-                          : 0,
-                      originalPrice: li.originalPrice != null ? Number(li.originalPrice) : null,
-                      priceType: li.priceType ?? PriceType.STANDARD,
-                      taxRate: 0,
-                      subtotal: Number(li.subtotal),
-                    })),
-                  },
-                },
-              });
-            }
-          }
+            },
+          });
         }
       }
 
@@ -814,6 +922,15 @@ export class OrdersService {
               order.customerId,
               "Order Delivered ✓",
               `Your order #${order.orderNumber} has been delivered.`,
+              { orderId: order.id },
+            )
+            .catch(() => {});
+        } else if (order.status === OrderStatus.PARTIALLY_DELIVERED) {
+          this.notifications
+            .sendToCustomer(
+              order.customerId,
+              "Partial Delivery 📦",
+              `Some items from order #${order.orderNumber} have been delivered. Remaining items will follow.`,
               { orderId: order.id },
             )
             .catch(() => {});
@@ -917,7 +1034,7 @@ export class OrdersService {
   async deleteOrder(id: string) {
     const order = await this.prisma.forTenant().order.findUnique({
       where: { id },
-      include: { invoice: { select: { id: true } }, transaction: { select: { id: true } } },
+      include: { invoices: { select: { id: true } }, transaction: { select: { id: true } } },
     });
     if (!order) throw new NotFoundException("Order not found");
 
@@ -929,10 +1046,11 @@ export class OrdersService {
     }
 
     await this.prisma.tenantTransaction(async (tx) => {
-      if (order.invoice) {
-        await tx.invoicePayment.deleteMany({ where: { invoiceId: order.invoice!.id } });
-        await tx.invoiceItem.deleteMany({ where: { invoiceId: order.invoice!.id } });
-        await tx.invoice.delete({ where: { id: order.invoice!.id } });
+      // Delete all invoices associated with this order
+      for (const inv of order.invoices) {
+        await tx.invoicePayment.deleteMany({ where: { invoiceId: inv.id } });
+        await tx.invoiceItem.deleteMany({ where: { invoiceId: inv.id } });
+        await tx.invoice.delete({ where: { id: inv.id } });
       }
       if (order.transaction) {
         await tx.transactionItem.deleteMany({ where: { transactionId: order.transaction!.id } });

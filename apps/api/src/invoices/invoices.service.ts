@@ -149,8 +149,10 @@ export class InvoicesService {
   async createInvoiceFromOrder(orderId: string, txClient?: any) {
     const db = txClient ?? this.prisma;
 
-    // Idempotency: skip if invoice already exists for this order
-    const existing = await db.invoice.findFirst({ where: { orderId } });
+    // Idempotency: skip if a manual (non-delivery-batch) invoice already exists for this order
+    const existing = await db.invoice.findFirst({
+      where: { orderId, deliveryBatchId: null },
+    });
     if (existing) return existing;
 
     // Fetch order with non-cancelled line items

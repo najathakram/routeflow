@@ -16,6 +16,7 @@ const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: "PENDING", label: "Pending" },
   { value: "CONFIRMED", label: "Confirmed" },
   { value: "OUT_FOR_DELIVERY", label: "Out for Delivery" },
+  { value: "PARTIALLY_DELIVERED", label: "Partially Delivered" },
   { value: "DELIVERED", label: "Delivered" },
   { value: "CANCELLED", label: "Cancelled" },
 ];

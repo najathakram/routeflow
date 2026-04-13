@@ -53,9 +53,10 @@ export interface BuyerOrder {
     originalPrice: number | null;
     notes: string | null;
     status: string;
+    deliveredQty: number;
     product: { id: string; name: string; unit: string };
   }>;
-  invoice?: { id: string; invoiceNumber: string; status: string; total: number } | null;
+  invoices?: Array<{ id: string; invoiceNumber: string; status: string; total: number }>;
 }
 
 export interface DashboardData {
@@ -172,6 +173,14 @@ export function useBuyerCategories() {
 }
 
 // ─── Orders ───────────────────────────────────────────────────────────────────
+
+export function useBuyerActiveOrder() {
+  return useQuery<BuyerOrder | null>({
+    queryKey: ["buyer", "activeOrder"],
+    queryFn: () =>
+      buyerApiClient.get("/buyer/orders/active").then((r) => r.data),
+  });
+}
 
 export interface BuyerOrderListItem {
   id: string;

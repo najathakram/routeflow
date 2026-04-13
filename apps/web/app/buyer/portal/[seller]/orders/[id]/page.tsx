@@ -14,17 +14,26 @@ import {
   Minus,
   Plus,
   Loader2,
+  Search,
+  Trash2,
+  FileText,
 } from "lucide-react";
 import { Badge, Button, Modal } from "@routeflow/ui/web";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
-import { useBuyerOrder, useBuyerCancelOrder, useBuyerUpdateOrderItems } from "@/lib/api/buyer";
+import {
+  useBuyerOrder,
+  useBuyerCancelOrder,
+  useBuyerUpdateOrderItems,
+  useBuyerProducts,
+} from "@/lib/api/buyer";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const STATUS_STEPS = ["DRAFT", "PENDING", "CONFIRMED", "OUT_FOR_DELIVERY", "DELIVERED"];
+const STATUS_STEPS = ["DRAFT", "PENDING", "CONFIRMED", "OUT_FOR_DELIVERY", "PARTIALLY_DELIVERED", "DELIVERED"];
 
 function getStatusVariant(s: string): "success" | "warning" | "danger" | "neutral" {
   if (s === "DELIVERED" || s === "COMPLETED") return "success";
+  if (s === "PARTIALLY_DELIVERED") return "warning";
   if (s === "PENDING" || s === "CONFIRMED" || s === "OUT_FOR_DELIVERY") return "warning";
   if (s === "CANCELLED") return "danger";
   return "neutral";
@@ -120,6 +129,19 @@ export default function BuyerOrderDetailPage() {
   const [editItems, setEditItems] = React.useState<Array<{ productId: string; qty: number; name: string; unit: string }>>([]);
   const [cancelOpen, setCancelOpen] = React.useState(false);
   const [actionError, setActionError] = React.useState<string | null>(null);
+  const [addSearch, setAddSearch] = React.useState("");
+  const [addSearchDebounced, setAddSearchDebounced] = React.useState("");
+
+  // Debounce product search for adding items
+  React.useEffect(() => {
+    const t = setTimeout(() => setAddSearchDebounced(addSearch), 300);
+    return () => clearTimeout(t);
+  }, [addSearch]);
+
+  const showProductSearch = editMode && addSearchDebounced.length >= 2;
+  const { data: searchResults } = useBuyerProducts(
+    showProductSearch ? { search: addSearchDebounced, limit: 6 } : { limit: 0 },
+  );
 
   // Redirect checks
   React.useEffect(() => {
@@ -298,7 +320,20 @@ export default function BuyerOrderDetailPage() {
             {editMode
               ? editItems.map((item) => (
                   <tr key={item.productId} className="hover:bg-surface-raised/50">
-                    <td className="px-4 py-3 text-sm font-medium text-navy">{item.name}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() =>
+                            setEditItems((prev) => prev.filter((i) => i.productId !== item.productId))
+                          }
+                          className="rounded p-1 text-danger/40 hover:bg-danger-bg hover:text-danger transition-colors"
+                          title="Remove item"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                        <span className="text-sm font-medium text-navy">{item.name}</span>
+                      </div>
+                    </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1">
                         <button
@@ -387,6 +422,57 @@ export default function BuyerOrderDetailPage() {
                 ))}
           </tbody>
         </table>
+
+        {/* Inline product search (edit mode only) */}
+        {editMode && (
+          <div className="border-t border-surface-border p-4 bg-surface-raised/30">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-navy/30" />
+              <input
+                type="text"
+                value={addSearch}
+                onChange={(e) => setAddSearch(e.target.value)}
+                placeholder="Search products to add (name, SKU, barcode)..."
+                className="w-full rounded-lg border border-surface-border bg-white py-2 pl-10 pr-4 text-sm text-navy placeholder:text-navy/40 focus:border-brand-300 focus:outline-none focus:ring-1 focus:ring-brand-200"
+              />
+            </div>
+            {showProductSearch && searchResults?.data && searchResults.data.length > 0 && (
+              <div className="mt-2 rounded-lg border border-surface-border bg-white shadow-lg max-h-48 overflow-y-auto">
+                {searchResults.data
+                  .filter((p) => !editItems.some((ei) => ei.productId === p.id))
+                  .map((p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => {
+                        setEditItems((prev) => [
+                          ...prev,
+                          { productId: p.id, qty: 1, name: p.name, unit: p.unit },
+                        ]);
+                        setAddSearch("");
+                      }}
+                      className="w-full flex items-center gap-3 px-3 py-2 text-left text-sm hover:bg-surface-raised transition-colors border-b border-surface-border last:border-b-0"
+                    >
+                      <Plus className="h-4 w-4 text-brand-500 flex-shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium text-navy truncate">{p.name}</p>
+                        <p className="text-[11px] text-navy/50">
+                          {p.sku ? `SKU: ${p.sku} · ` : ""}
+                          {p.unit} · {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(p.buyerPrice)}
+                        </p>
+                      </div>
+                    </button>
+                  ))}
+                {searchResults.data.every((p) => editItems.some((ei) => ei.productId === p.id)) && (
+                  <p className="px-3 py-2 text-xs text-navy/50 text-center">All results already in order</p>
+                )}
+              </div>
+            )}
+            {showProductSearch && searchResults?.data?.length === 0 && (
+              <p className="mt-2 text-xs text-navy/50 text-center py-2">No products found</p>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Actions */}

@@ -60,7 +60,7 @@ export class BuyerDashboardService {
       this.prisma.forTenant().order.count({
         where: {
           customerId,
-          status: { in: ["PENDING", "CONFIRMED", "OUT_FOR_DELIVERY"] },
+          status: { in: ["PENDING", "CONFIRMED", "OUT_FOR_DELIVERY", "PARTIALLY_DELIVERED"] },
         },
       }),
 
@@ -68,7 +68,7 @@ export class BuyerDashboardService {
       this.prisma.forTenant().order.count({
         where: {
           customerId,
-          status: { in: ["CONFIRMED", "OUT_FOR_DELIVERY"] },
+          status: { in: ["CONFIRMED", "OUT_FOR_DELIVERY", "PARTIALLY_DELIVERED"] },
         },
       }),
 

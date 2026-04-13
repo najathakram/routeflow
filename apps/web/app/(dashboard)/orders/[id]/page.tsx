@@ -1422,24 +1422,28 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
             </dl>
           </Card>
 
-          {/* Invoice link */}
-          {localStatus === "DELIVERED" && (
-            <Card title="Invoice">
-              {(order as any).invoice ? (
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <FileText className="h-4 w-4 text-brand-500" />
-                    <span className="text-sm font-medium text-navy">
-                      {(order as any).invoice.invoiceNumber}
-                    </span>
-                  </div>
-                  <Badge status={(order as any).invoice.status as BadgeStatus} />
-                  <Link
-                    href={`/invoices/${(order as any).invoice.id}`}
-                    className="block text-xs text-brand-500 hover:underline"
-                  >
-                    View invoice →
-                  </Link>
+          {/* Invoice link(s) */}
+          {(localStatus === "DELIVERED" || localStatus === "PARTIALLY_DELIVERED") && (
+            <Card title={`Invoice${((order as any).invoices?.length ?? 0) > 1 ? "s" : ""}`}>
+              {(order as any).invoices?.length > 0 ? (
+                <div className="space-y-3">
+                  {(order as any).invoices.map((inv: any) => (
+                    <div key={inv.id} className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <FileText className="h-4 w-4 text-brand-500" />
+                        <span className="text-sm font-medium text-navy">
+                          {inv.invoiceNumber}
+                        </span>
+                      </div>
+                      <Badge status={inv.status as BadgeStatus} />
+                      <Link
+                        href={`/invoices/${inv.id}`}
+                        className="block text-xs text-brand-500 hover:underline"
+                      >
+                        View invoice →
+                      </Link>
+                    </div>
+                  ))}
                 </div>
               ) : (
                 <div className="space-y-2">

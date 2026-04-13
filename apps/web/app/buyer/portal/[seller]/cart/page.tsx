@@ -16,7 +16,7 @@ import {
 import { Button } from "@routeflow/ui/web";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { useBuyerCart } from "@/lib/buyer-cart";
-import { useBuyerProducts, useBuyerCreateOrder } from "@/lib/api/buyer";
+import { useBuyerProducts, useBuyerCreateOrder, useBuyerActiveOrder } from "@/lib/api/buyer";
 
 function fmt(n: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
@@ -30,12 +30,17 @@ export default function BuyerCartPage() {
 
   const cart = useBuyerCart(buyer?.id, sellerSlug);
   const createOrder = useBuyerCreateOrder();
+  const { data: activeOrder } = useBuyerActiveOrder();
 
   const [notes, setNotes] = React.useState("");
   const [deliveryDate, setDeliveryDate] = React.useState("");
   const [urgent, setUrgent] = React.useState(false);
+  const [forceNew, setForceNew] = React.useState(false);
   const [orderPlaced, setOrderPlaced] = React.useState<{ id: string; orderNumber: string } | null>(null);
   const [orderError, setOrderError] = React.useState<string | null>(null);
+
+  // Whether we'll merge into the existing order
+  const willMerge = !forceNew && activeOrder != null;
 
   // Fetch ALL products (limit=0 returns all) to build a complete price map
   // This ensures cart items are always priced correctly regardless of catalog size
@@ -71,9 +76,16 @@ export default function BuyerCartPage() {
         urgent,
         requestedDeliveryDate: deliveryDate || undefined,
         status,
+        forceNew: forceNew || status === "DRAFT", // Drafts always create new
       });
       cart.clearCart();
-      setOrderPlaced(result);
+
+      if (willMerge && activeOrder) {
+        // Merged into existing order — navigate to it
+        router.push(`/buyer/portal/${sellerSlug}/orders/${activeOrder.id}`);
+      } else {
+        setOrderPlaced(result);
+      }
     } catch (err: any) {
       setOrderError(
         err?.response?.data?.message ?? "Failed to create order. Please try again.",
@@ -148,7 +160,38 @@ export default function BuyerCartPage() {
         <ArrowLeft className="h-4 w-4" /> Continue Shopping
       </button>
 
-      <h1 className="text-2xl font-bold text-navy mb-6">Cart</h1>
+      <h1 className="text-2xl font-bold text-navy mb-4">Cart</h1>
+
+      {/* Active order merge banner */}
+      {willMerge && activeOrder && (
+        <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-brand-200 bg-brand-50 px-4 py-3">
+          <div className="flex items-center gap-2 text-sm text-brand-700">
+            <ShoppingCart className="h-4 w-4 flex-shrink-0" />
+            <span>
+              Items will be added to your existing order{" "}
+              <strong>#{(activeOrder as any).orderNumber ?? activeOrder.id.slice(0, 8)}</strong>
+            </span>
+          </div>
+          <button
+            onClick={() => setForceNew(true)}
+            className="text-xs font-medium text-brand-500 hover:text-brand-700 underline whitespace-nowrap"
+          >
+            Create new order instead
+          </button>
+        </div>
+      )}
+
+      {forceNew && activeOrder && (
+        <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-surface-border bg-surface-raised px-4 py-3">
+          <p className="text-sm text-navy/60">A new order will be created.</p>
+          <button
+            onClick={() => setForceNew(false)}
+            className="text-xs font-medium text-brand-500 hover:text-brand-700 underline whitespace-nowrap"
+          >
+            Add to existing order instead
+          </button>
+        </div>
+      )}
 
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Items */}
@@ -293,17 +336,19 @@ export default function BuyerCartPage() {
               loading={createOrder.isPending}
               disabled={createOrder.isPending}
             >
-              Place Order
+              {willMerge ? `Add to Order #${(activeOrder as any)?.orderNumber ?? ""}` : "Place Order"}
             </Button>
-            <Button
-              variant="secondary"
-              className="w-full"
-              onClick={() => handlePlaceOrder("DRAFT")}
-              loading={createOrder.isPending}
-              disabled={createOrder.isPending}
-            >
-              Save as Draft
-            </Button>
+            {!willMerge && (
+              <Button
+                variant="secondary"
+                className="w-full"
+                onClick={() => handlePlaceOrder("DRAFT")}
+                loading={createOrder.isPending}
+                disabled={createOrder.isPending}
+              >
+                Save as Draft
+              </Button>
+            )}
           </div>
 
           {orderError && (
