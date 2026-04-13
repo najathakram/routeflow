@@ -58,7 +58,7 @@ function formatStatus(status: string): string {
 }
 
 function formatDate(dateStr?: string): string {
-  if (!dateStr) return "—";
+  if (!dateStr) return "N/A";
   try {
     return new Date(dateStr).toLocaleDateString("en-GB", {
       day: "2-digit",
@@ -71,7 +71,7 @@ function formatDate(dateStr?: string): string {
 }
 
 function formatCurrency(amount?: number): string {
-  if (amount === undefined || amount === null) return "—";
+  if (amount === undefined || amount === null) return "N/A";
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(amount);
 }
 
@@ -229,7 +229,7 @@ export default function BuyerInvoicesPage() {
           {meta && meta.totalPages > 1 && (
             <div className="mt-4 flex items-center justify-between">
               <p className="text-sm text-navy/60">
-                Showing {(meta.page - 1) * meta.limit + 1}–
+                Showing {(meta.page - 1) * meta.limit + 1} to{" "}
                 {Math.min(meta.page * meta.limit, meta.total)} of {meta.total}
               </p>
               <div className="flex items-center gap-2">

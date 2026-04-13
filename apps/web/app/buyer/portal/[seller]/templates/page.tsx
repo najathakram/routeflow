@@ -124,7 +124,7 @@ function TemplateRow({
                     <td className="px-3 py-2 font-medium text-navy">{item.product.name}</td>
                     <td className="px-3 py-2 text-navy/60">{item.product.unit}</td>
                     <td className="px-3 py-2 text-right text-navy">{item.qty}</td>
-                    <td className="px-3 py-2 text-navy/50 text-xs">{item.notes ?? "—"}</td>
+                    <td className="px-3 py-2 text-navy/50 text-xs">{item.notes ?? "N/A"}</td>
                   </tr>
                 ))}
               </tbody>

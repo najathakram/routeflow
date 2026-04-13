@@ -24,6 +24,7 @@ import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { useBuyerCart } from "@/lib/buyer-cart";
 import { useBuyerNotifications, type BuyerNotification } from "@/lib/hooks/useBuyerNotifications";
 import type { BuyerSeller } from "@/lib/buyer-auth";
+import { BuyerPortalErrorBoundary } from "./error-boundary";
 
 // ─── Status badge variant helper ─────────────────────────────────────────────
 
@@ -359,7 +360,9 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
       </aside>
 
       {/* Main content */}
-      <main className="flex-1 overflow-auto">{children}</main>
+      <main className="flex-1 overflow-auto">
+        <BuyerPortalErrorBoundary>{children}</BuyerPortalErrorBoundary>
+      </main>
     </div>
   );
 }

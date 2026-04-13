@@ -285,8 +285,8 @@ ${paymentSection}
   /**
    * Issues a short-lived (15-min) access token with the target tenant-admin
    * user's claims plus `impersonatedBy: superAdminId`.
-   * The impersonated session has FULL write access — no mutations are blocked.
-   * The `impersonatedBy` claim is kept for audit trail and UI banners only.
+   * The ImpersonationGuard blocks write operations during impersonation;
+   * only read operations and safe endpoints (auth, export, pdf) are allowed.
    */
   async impersonate(tenantId: string, superAdminId: string) {
     const tenant = await this._findOrThrow(tenantId);

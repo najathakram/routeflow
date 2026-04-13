@@ -94,14 +94,14 @@ export default function BuyerAccountPage() {
                 <User className="h-4 w-4" />
                 Full Name
               </dt>
-              <dd className="text-sm font-medium text-navy">{buyer?.name ?? "—"}</dd>
+              <dd className="text-sm font-medium text-navy">{buyer?.name ?? "N/A"}</dd>
             </div>
             <div className="flex items-center justify-between py-3">
               <dt className="flex items-center gap-2 text-sm text-navy/60">
                 <Mail className="h-4 w-4" />
                 Email
               </dt>
-              <dd className="text-sm font-medium text-navy">{buyer?.email ?? "—"}</dd>
+              <dd className="text-sm font-medium text-navy">{buyer?.email ?? "N/A"}</dd>
             </div>
           </dl>
         </div>

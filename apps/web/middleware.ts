@@ -23,11 +23,12 @@ const HOSTING_PROVIDER_DOMAINS = new Set([
 export function middleware(request: NextRequest) {
   const response = NextResponse.next();
 
-  // Allow manual override via request header (useful in dev / mobile apps)
+  // Allow manual override via request header (useful in dev / mobile apps).
+  // In production this header is stripped by the reverse proxy; only local dev uses it.
   const headerSlug = request.headers.get("x-tenant-slug");
   if (headerSlug) {
     response.cookies.set("tenant-slug", headerSlug, {
-      httpOnly: false,
+      httpOnly: false, // client-side reads needed in dev
       sameSite: "lax",
       path: "/",
       maxAge: 60 * 60 * 24 * 7, // 7 days
@@ -69,10 +70,11 @@ export function middleware(request: NextRequest) {
 
   if (resolvedSlug) {
     response.cookies.set("tenant-slug", resolvedSlug, {
-      httpOnly: false,
-      sameSite: "lax",
+      httpOnly: false, // TenantProvider reads via document.cookie; consider server-side reads
+      sameSite: "strict", // prevent cross-site requests from sending tenant context
       path: "/",
       maxAge: 60 * 60 * 24 * 30,
+      secure: process.env.NODE_ENV === "production",
     });
   }
 

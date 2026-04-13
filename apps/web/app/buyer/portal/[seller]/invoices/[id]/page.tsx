@@ -22,7 +22,7 @@ function fmt(n: number) {
 }
 
 function formatDate(d: string | null) {
-  if (!d) return "—";
+  if (!d) return "N/A";
   return new Date(d).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
 }
 

@@ -243,7 +243,7 @@ function ConnectSellerModal({
                   <p className="text-xs text-danger">{errors.emailAtSeller.message}</p>
                 )}
                 <p className="text-xs text-navy/50">
-                  This is the email address your seller has on file for you — it may differ from
+                  This is the email address your seller has on file for you. It may differ from
                   your RouteFlow login email.
                 </p>
               </div>
@@ -405,7 +405,7 @@ function BuyerPortalInner() {
           </div>
           <h2 className="text-lg font-semibold text-navy mb-2">No sellers connected yet</h2>
           <p className="text-sm text-navy/60 max-w-xs mx-auto mb-6">
-            Connect with your seller to view your orders, invoices, and delivery updates — all in
+            Connect with your seller to view your orders, invoices, and delivery updates. All in
             one place.
           </p>
 
@@ -422,7 +422,7 @@ function BuyerPortalInner() {
           <div className="mt-5 rounded-lg bg-surface-raised px-4 py-3 max-w-xs mx-auto">
             <p className="text-xs text-navy/60 text-left leading-relaxed">
               <span className="font-medium text-navy">Got an invite link?</span>{" "}
-              Check your email from your seller and click the link — you&apos;ll be connected
+              Check your email from your seller and click the link. You&apos;ll be connected
               instantly.
             </p>
           </div>

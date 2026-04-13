@@ -95,7 +95,7 @@ export class PlatformAdminController {
   @Post("tenants/:id/impersonate")
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: "Issue a 15-min impersonation token for a tenant with full write access.",
+    summary: "Issue a 15-min read-only impersonation token for a tenant.",
   })
   impersonate(@Param("id") id: string, @CurrentUser() admin: JwtPayload) {
     return this.svc.impersonate(id, admin.sub);

@@ -253,7 +253,7 @@ export default function BuyerOrderDetailPage() {
           { label: "Tax", value: fmt(Number(order.tax)) },
           {
             label: "Discount",
-            value: Number(order.discountAmount) > 0 ? `-${fmt(Number(order.discountAmount))}` : "—",
+            value: Number(order.discountAmount) > 0 ? `-${fmt(Number(order.discountAmount))}` : "N/A",
           },
           { label: "Total", value: fmt(Number(order.total)), bold: true },
         ].map((c) => (
@@ -385,8 +385,8 @@ export default function BuyerOrderDetailPage() {
                         </button>
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-right text-sm text-navy/60">—</td>
-                    <td className="px-4 py-3 text-right text-sm text-navy/60">—</td>
+                    <td className="px-4 py-3 text-right text-sm text-navy/60">N/A</td>
+                    <td className="px-4 py-3 text-right text-sm text-navy/60">N/A</td>
                   </tr>
                 ))
               : order.lineItems.map((li) => (

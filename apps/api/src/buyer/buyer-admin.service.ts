@@ -122,13 +122,13 @@ export class BuyerAdminService {
 
     const accessToken = this.jwtService.sign(payload, {
       secret: jwtConfig.secret,
-      expiresIn: "1h", // short-lived for safety
+      expiresIn: "15m", // match platform admin impersonation window
     });
 
     return {
       accessToken,
       buyer: { id: buyer.id, email: buyer.email, name: buyer.name },
-      expiresIn: "1h",
+      expiresIn: "15m",
       warning: "This token impersonates the buyer. Use responsibly.",
     };
   }
