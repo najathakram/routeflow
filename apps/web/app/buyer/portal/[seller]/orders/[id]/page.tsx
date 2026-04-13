@@ -412,7 +412,12 @@ export default function BuyerOrderDetailPage() {
                       </p>
                     </td>
                     <td className="px-4 py-3 text-right text-sm text-navy">
-                      {Number(li.qty)}
+                      <span>{Number(li.qty)}</span>
+                      {li.boxes != null && li.boxes > 0 && (
+                        <p className="text-[10px] text-navy/40">
+                          {li.boxes} box{li.boxes > 1 ? "es" : ""}{li.pieces ? ` + ${li.pieces} pcs` : ""}
+                        </p>
+                      )}
                     </td>
                     {showDeliveryProgress && (
                       <>

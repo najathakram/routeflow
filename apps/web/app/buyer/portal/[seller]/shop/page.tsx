@@ -100,7 +100,10 @@ function ProductCard({
         <div className="flex items-end justify-between gap-2">
           <div>
             <p className="text-lg font-bold text-navy">{fmt(product.buyerPrice)}</p>
-            <p className="text-[11px] text-navy/40">per {product.unit}</p>
+            <p className="text-[11px] text-navy/40">
+              per {product.unit}
+              {product.unitsPerBox ? ` (${product.unitsPerBox}/${product.unit === "box" ? "box" : "box"})` : ""}
+            </p>
           </div>
 
           {cartQty > 0 ? (
@@ -319,10 +322,13 @@ export default function BuyerShopPage() {
                 onAdd={() =>
                   cart.addItem({
                     productId: p.id,
-                    qty: 1,
+                    qty: p.unitsPerBox ? p.unitsPerBox : 1,
                     name: p.name,
                     unit: p.unit,
                     thumbnailUrl: p.thumbnailUrl,
+                    unitsPerBox: p.unitsPerBox,
+                    boxes: p.unitsPerBox ? 1 : undefined,
+                    pieces: p.unitsPerBox ? 0 : undefined,
                   })
                 }
                 onUpdateQty={(qty) => cart.updateQty(p.id, qty)}
@@ -391,7 +397,7 @@ export default function BuyerShopPage() {
                             </div>
                           ) : (
                             <button
-                              onClick={() => cart.addItem({ productId: p.id, qty: 1, name: p.name, unit: p.unit, thumbnailUrl: p.thumbnailUrl })}
+                              onClick={() => cart.addItem({ productId: p.id, qty: p.unitsPerBox ? p.unitsPerBox : 1, name: p.name, unit: p.unit, thumbnailUrl: p.thumbnailUrl, unitsPerBox: p.unitsPerBox, boxes: p.unitsPerBox ? 1 : undefined, pieces: p.unitsPerBox ? 0 : undefined })}
                               className="flex items-center gap-1 rounded-lg bg-brand-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-600"
                             >
                               <Plus className="h-3.5 w-3.5" /> Add

@@ -8,6 +8,9 @@ export interface CartItem {
   name: string;
   unit: string;
   thumbnailUrl?: string | null;
+  unitsPerBox?: number | null;
+  boxes?: number;
+  pieces?: number;
 }
 
 interface CartState {

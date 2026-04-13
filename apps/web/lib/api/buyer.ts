@@ -14,6 +14,7 @@ export interface BuyerProduct {
   unit: string;
   category: string | null;
   buyerPrice: number;
+  unitsPerBox: number | null;
   thumbnailUrl: string | null;
   imageKeys: string[];
   isFeatured: boolean;
@@ -54,6 +55,8 @@ export interface BuyerOrder {
     notes: string | null;
     status: string;
     deliveredQty: number;
+    boxes: number | null;
+    pieces: number | null;
     product: { id: string; name: string; unit: string };
   }>;
   invoices?: Array<{ id: string; invoiceNumber: string; status: string; total: number }>;
@@ -212,7 +215,7 @@ export function useBuyerCreateOrder() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (data: {
-      items: Array<{ productId: string; qty: number; notes?: string }>;
+      items: Array<{ productId: string; qty: number; boxes?: number; pieces?: number; notes?: string }>;
       notes?: string;
       urgent?: boolean;
       requestedDeliveryDate?: string;

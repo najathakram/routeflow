@@ -25,6 +25,10 @@ interface ApiProduct {
   category?: string;
   unit: string;
   pricePerUnit: string;
+  priceTier2?: string;
+  priceTier3?: string;
+  priceTier4?: string;
+  priceTier5?: string;
   isActive: boolean;
   currentStock: number;
   averageCost?: string;
@@ -376,12 +380,42 @@ function makeTableColumns(
       accessorKey: "unitsPerBox",
       header: "Per Box",
       enableSorting: false,
-      cell: ({ row }) => (
-        <span className="text-navy/70">
-          {row.original.unitsPerBox ?? "—"}
-        </span>
-      ),
+      cell: ({ row }) => {
+        const p = row.original;
+        if (quickEditMode) {
+          return (
+            <QuickEditCell
+              value={p.unitsPerBox != null ? String(p.unitsPerBox) : ""}
+              quickEditMode={quickEditMode}
+              onSave={(val, rec) => onQuickSave(p, "unitsPerBox", val, rec)}
+            />
+          );
+        }
+        return <span className="text-navy/70">{p.unitsPerBox ?? "—"}</span>;
+      },
     },
+    // Tier price columns — only shown in Quick Edit mode
+    ...(quickEditMode
+      ? [2, 3, 4, 5].map((tier) => ({
+          id: `priceTier${tier}`,
+          header: `T${tier}`,
+          enableSorting: false,
+          cell: ({ row }: any) => {
+            const p = row.original;
+            const tierKey = `priceTier${tier}` as keyof ApiProduct;
+            const val = p[tierKey] as string | undefined;
+            return (
+              <QuickEditCell
+                value={val ? parseFloat(String(val)).toFixed(2) : ""}
+                quickEditMode={quickEditMode}
+                onSave={async (newVal, rec) => {
+                  await onQuickSave(p, `priceTier${tier}`, newVal || "0", rec);
+                }}
+              />
+            );
+          },
+        }))
+      : []),
     {
       accessorKey: "currentStock",
       header: "Stock",
@@ -764,7 +798,23 @@ export default function ProductsPage() {
   const barcodeRefs = React.useRef<Record<string, React.RefObject<HTMLInputElement | null>>>({});
 
   const handleQuickSave = React.useCallback(async (product: ApiProduct, field: string, newVal: string, record: EditRecord) => {
-    await updateProduct.mutateAsync({ id: product.id, [field]: newVal || null });
+    const updates: Record<string, any> = { id: product.id, [field]: newVal || null };
+
+    // Auto-copy pricePerUnit to all tiers if they were all the same as the old price
+    if (field === "pricePerUnit" && newVal) {
+      const oldPrice = parseFloat(String(product.pricePerUnit)).toFixed(2);
+      const allSameAsOld = [product.priceTier2, product.priceTier3, product.priceTier4, product.priceTier5].every(
+        (t) => !t || parseFloat(String(t)).toFixed(2) === oldPrice || parseFloat(String(t)).toFixed(2) === "0.00",
+      );
+      if (allSameAsOld) {
+        updates.priceTier2 = newVal;
+        updates.priceTier3 = newVal;
+        updates.priceTier4 = newVal;
+        updates.priceTier5 = newVal;
+      }
+    }
+
+    await updateProduct.mutateAsync(updates);
     toast({ title: `${field} updated`, variant: "success" });
     setUndoStack((prev) => [...prev.slice(-19), record]);
     setRedoStack([]);
@@ -796,7 +846,22 @@ export default function ProductsPage() {
   const handleEditPriceSave = async (id: string) => {
     if (!editPriceValue) return;
     try {
-      await updateProduct.mutateAsync({ id, pricePerUnit: parseFloat(editPriceValue).toFixed(2) });
+      // Find the product to check if tiers should auto-copy
+      const product = data?.data?.find((p: ApiProduct) => p.id === id);
+      const updates: Record<string, any> = { id, pricePerUnit: parseFloat(editPriceValue).toFixed(2) };
+      if (product) {
+        const oldPrice = parseFloat(String(product.pricePerUnit)).toFixed(2);
+        const allSameAsOld = [product.priceTier2, product.priceTier3, product.priceTier4, product.priceTier5].every(
+          (t) => !t || parseFloat(String(t)).toFixed(2) === oldPrice || parseFloat(String(t)).toFixed(2) === "0.00",
+        );
+        if (allSameAsOld) {
+          updates.priceTier2 = updates.pricePerUnit;
+          updates.priceTier3 = updates.pricePerUnit;
+          updates.priceTier4 = updates.pricePerUnit;
+          updates.priceTier5 = updates.pricePerUnit;
+        }
+      }
+      await updateProduct.mutateAsync(updates);
       toast({ title: "Price updated", variant: "success" });
     } catch {
       toast({ title: "Failed to update price", variant: "error" });

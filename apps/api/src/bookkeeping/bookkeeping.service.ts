@@ -138,7 +138,12 @@ export class BookkeepingService implements OnModuleInit {
 
   // ── Expense Categories ──
   async listExpenseCategories() {
-    return this.prisma.forTenant().expenseCategory.findMany({ orderBy: { name: "asc" } });
+    // Include both tenant-specific AND system-wide default categories (tenantId = null)
+    const tenantId = this.prisma.getTenantId();
+    return this.prisma.expenseCategory.findMany({
+      where: { OR: [{ tenantId }, { tenantId: null }] },
+      orderBy: { name: "asc" },
+    });
   }
 
   async createExpenseCategory(dto: { name: string; code: string }) {

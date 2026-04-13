@@ -13,6 +13,7 @@ export interface BuyerProduct {
   unit: string;
   category: string | null;
   buyerPrice: number;
+  unitsPerBox: number | null;
   thumbnailUrl: string | null;
   imageKeys: string[];
   isFeatured: boolean;
@@ -79,6 +80,7 @@ export class BuyerCatalogService {
         unit: p.unit,
         category: p.category,
         buyerPrice,
+        unitsPerBox: p.unitsPerBox ?? null,
         isFeatured: p.isFeatured ?? false,
         thumbnailUrl: p.thumbnailUrl ?? null,
         imageKeys: p.imageKeys ?? [],

@@ -275,6 +275,8 @@ export class BuyerController {
       items: dto.items.map((item) => ({
         productId: item.productId,
         qty: item.qty,
+        boxes: item.boxes,
+        pieces: item.pieces,
         notes: item.notes,
       })),
       notes: dto.notes,
