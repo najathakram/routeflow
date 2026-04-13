@@ -10,33 +10,70 @@ import { AddressAutocomplete } from "@/components/AddressAutocomplete";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
-const customerSchema = z.object({
-  customerType: z.enum(["BUSINESS", "INDIVIDUAL"]),
-  businessName: z.string().min(1, "Required"),
-  contactName: z.string().min(1, "Required"),
-  salutation: z.string().optional(),
-  firstName: z.string().optional(),
-  lastName: z.string().optional(),
-  displayName: z.string().optional(),
-  phone: z
-    .string()
-    .min(7, "Enter a valid phone number")
-    .optional()
-    .or(z.literal("")),
-  mobile: z.string().optional().or(z.literal("")),
-  email: z.string().email("Enter a valid email"),
-  creditTerms: z.enum(["Net 15", "Net 30", "Net 60", "COD"]),
-  currency: z.string().optional(),
-  creditLimit: z.string().optional().or(z.literal("")),
-  taxId: z.string().optional().or(z.literal("")),
-  isTaxExempt: z.boolean().optional(),
-  notes: z.string().optional(),
-  street: z.string().optional(),
-  city: z.string().optional(),
-  state: z.string().optional(),
-  zip: z.string().optional(),
-  addressType: z.enum(["BILLING", "SHIPPING"]).optional(),
-});
+const customerSchema = z
+  .object({
+    customerType: z.enum(["BUSINESS", "INDIVIDUAL"]),
+    // Business-specific
+    businessName: z.string().optional().or(z.literal("")),
+    contactName: z.string().optional().or(z.literal("")),
+    // Individual-specific
+    salutation: z.string().optional(),
+    firstName: z.string().optional().or(z.literal("")),
+    lastName: z.string().optional().or(z.literal("")),
+    // Shared contact
+    phone: z
+      .string()
+      .min(7, "Enter a valid phone number")
+      .optional()
+      .or(z.literal("")),
+    mobile: z.string().optional().or(z.literal("")),
+    email: z.string().email("Enter a valid email"),
+    // Account
+    currency: z.string().optional(),
+    creditLimit: z.string().optional().or(z.literal("")),
+    taxId: z.string().optional().or(z.literal("")),
+    isTaxExempt: z.boolean().optional(),
+    notes: z.string().optional(),
+    // Address
+    street: z.string().optional(),
+    city: z.string().optional(),
+    state: z.string().optional(),
+    zip: z.string().optional(),
+    addressType: z.enum(["BILLING", "SHIPPING"]).optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.customerType === "BUSINESS") {
+      if (!data.businessName?.trim()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["businessName"],
+          message: "Business name is required",
+        });
+      }
+      if (!data.contactName?.trim()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["contactName"],
+          message: "Contact name is required",
+        });
+      }
+    } else {
+      if (!data.firstName?.trim()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["firstName"],
+          message: "First name is required",
+        });
+      }
+      if (!data.lastName?.trim()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["lastName"],
+          message: "Last name is required",
+        });
+      }
+    }
+  });
 
 type CustomerFormValues = z.infer<typeof customerSchema>;
 
@@ -79,11 +116,9 @@ function buildDefaultValues(initialData?: CustomerFormModalProps["initialData"])
       salutation: "",
       firstName: "",
       lastName: "",
-      displayName: "",
       phone: "",
       mobile: "",
       email: "",
-      creditTerms: "Net 30",
       currency: "USD",
       creditLimit: "",
       taxId: "",
@@ -103,11 +138,9 @@ function buildDefaultValues(initialData?: CustomerFormModalProps["initialData"])
     salutation: initialData.salutation ?? "",
     firstName: initialData.firstName ?? "",
     lastName: initialData.lastName ?? "",
-    displayName: initialData.displayName ?? "",
     phone: initialData.phone ?? "",
     mobile: initialData.mobile ?? "",
     email: initialData.email ?? initialData.user?.email ?? "",
-    creditTerms: "Net 30",
     currency: initialData.currency ?? "USD",
     creditLimit: initialData.creditLimit ? String(initialData.creditLimit) : "",
     taxId: initialData.taxId ?? "",
@@ -133,7 +166,6 @@ export function CustomerFormModal({
   const createCustomer = useCreateCustomer();
   const updateCustomer = useUpdateCustomer();
 
-  // Manual address-field errors for add mode
   const [streetError, setStreetError] = React.useState("");
   const [cityError, setCityError] = React.useState("");
   const [zipError, setZipError] = React.useState("");
@@ -151,20 +183,9 @@ export function CustomerFormModal({
   });
 
   const customerType = watch("customerType");
-  const firstName = watch("firstName");
-  const lastName = watch("lastName");
-  const businessName = watch("businessName");
+  const isBusiness = customerType === "BUSINESS";
 
-  // Auto-suggest display name
-  React.useEffect(() => {
-    if (customerType === "INDIVIDUAL" && (firstName || lastName)) {
-      setValue("displayName", `${firstName ?? ""} ${lastName ?? ""}`.trim());
-    } else if (customerType === "BUSINESS" && businessName) {
-      setValue("displayName", businessName);
-    }
-  }, [customerType, firstName, lastName, businessName, setValue]);
-
-  // Reset form and clear mutation state whenever the modal opens or the customer changes
+  // Reset form whenever the modal opens or the customer changes
   React.useEffect(() => {
     if (isOpen) {
       createCustomer.reset();
@@ -181,21 +202,17 @@ export function CustomerFormModal({
   const isPending = createCustomer.isPending || updateCustomer.isPending;
 
   const onSubmit = (data: CustomerFormValues) => {
+    // Derive business-model fields for individual customers
+    const fullName = `${data.firstName ?? ""} ${data.lastName ?? ""}`.trim();
+    const resolvedBusinessName = isBusiness ? (data.businessName ?? "") : fullName;
+    const resolvedContactName = isBusiness ? (data.contactName ?? "") : fullName;
+    const resolvedDisplayName = isBusiness ? (data.businessName ?? "") : fullName;
+
     if (mode === "add") {
-      // Enforce address fields for new customers
       let hasAddressError = false;
-      if (!data.street?.trim()) {
-        setStreetError("Required");
-        hasAddressError = true;
-      } else setStreetError("");
-      if (!data.city?.trim()) {
-        setCityError("Required");
-        hasAddressError = true;
-      } else setCityError("");
-      if (!data.zip?.trim()) {
-        setZipError("Required");
-        hasAddressError = true;
-      } else setZipError("");
+      if (!data.street?.trim()) { setStreetError("Required"); hasAddressError = true; } else setStreetError("");
+      if (!data.city?.trim())   { setCityError("Required");   hasAddressError = true; } else setCityError("");
+      if (!data.zip?.trim())    { setZipError("Required");    hasAddressError = true; } else setZipError("");
       if (hasAddressError) return;
 
       const username =
@@ -207,12 +224,12 @@ export function CustomerFormModal({
         {
           email: data.email,
           username,
-          businessName: data.businessName,
-          contactName: data.contactName,
+          businessName: resolvedBusinessName,
+          contactName: resolvedContactName,
           phone: data.phone || undefined,
           mobile: data.mobile || undefined,
           customerType: data.customerType,
-          displayName: data.displayName || undefined,
+          displayName: resolvedDisplayName,
           salutation: data.salutation || undefined,
           firstName: data.firstName || undefined,
           lastName: data.lastName || undefined,
@@ -246,12 +263,12 @@ export function CustomerFormModal({
       updateCustomer.mutate(
         {
           id: initialData.id,
-          businessName: data.businessName,
-          contactName: data.contactName,
+          businessName: resolvedBusinessName,
+          contactName: resolvedContactName,
           phone: data.phone || undefined,
           mobile: data.mobile || undefined,
           customerType: data.customerType,
-          displayName: data.displayName || undefined,
+          displayName: resolvedDisplayName,
           salutation: data.salutation || undefined,
           firstName: data.firstName || undefined,
           lastName: data.lastName || undefined,
@@ -307,7 +324,7 @@ export function CustomerFormModal({
             </div>
           )}
 
-          {/* Customer Type Toggle */}
+          {/* ── Customer Type Toggle ─────────────────────────────────────────── */}
           <section className="space-y-3">
             <p className="text-xs font-semibold uppercase tracking-wider text-navy/40">
               Customer Type
@@ -317,7 +334,7 @@ export function CustomerFormModal({
                 <button
                   key={t}
                   type="button"
-                  onClick={() => setValue("customerType", t)}
+                  onClick={() => setValue("customerType", t, { shouldValidate: false })}
                   className={cn(
                     "flex-1 rounded-lg border px-4 py-2.5 text-sm font-medium transition-colors",
                     customerType === t
@@ -331,55 +348,69 @@ export function CustomerFormModal({
             </div>
           </section>
 
-          {/* Customer info */}
+          {/* ── Name Fields (type-specific) ──────────────────────────────────── */}
           <section className="space-y-3">
             <p className="text-xs font-semibold uppercase tracking-wider text-navy/40">
-              Customer Info
+              {isBusiness ? "Business Info" : "Personal Info"}
             </p>
-            <div className="grid grid-cols-2 gap-3">
-              <Input
-                label="Business Name"
-                placeholder="Acme Co."
-                register={register("businessName")}
-                error={errors.businessName?.message}
-              />
-              <Input
-                label="Contact Name"
-                placeholder="Jane Doe"
-                register={register("contactName")}
-                error={errors.contactName?.message}
-              />
-            </div>
-            <div className="grid grid-cols-4 gap-3">
-              <div>
-                <Select
-                  label="Salutation"
-                  options={[
-                    { value: "", label: "—" },
-                    { value: "Mr.", label: "Mr." },
-                    { value: "Mrs.", label: "Mrs." },
-                    { value: "Ms.", label: "Ms." },
-                    { value: "Dr.", label: "Dr." },
-                  ]}
-                  register={register("salutation")}
+
+            {isBusiness ? (
+              /* Business: company name + primary contact person */
+              <div className="grid grid-cols-2 gap-3">
+                <Input
+                  label="Business Name"
+                  placeholder="Acme Co."
+                  register={register("businessName")}
+                  error={errors.businessName?.message}
+                />
+                <Input
+                  label="Contact Name"
+                  placeholder="Jane Doe"
+                  register={register("contactName")}
+                  error={errors.contactName?.message}
                 />
               </div>
-              <Input
-                label="First Name"
-                placeholder="Jane"
-                register={register("firstName")}
-              />
-              <Input
-                label="Last Name"
-                placeholder="Doe"
-                register={register("lastName")}
-              />
-              <Input
-                label="Display Name"
-                placeholder="Auto-generated"
-                register={register("displayName")}
-              />
-            </div>
+            ) : (
+              /* Individual: salutation + first + last */
+              <div className="grid grid-cols-8 gap-3">
+                <div className="col-span-2">
+                  <Select
+                    label="Salutation"
+                    options={[
+                      { value: "", label: "—" },
+                      { value: "Mr.", label: "Mr." },
+                      { value: "Mrs.", label: "Mrs." },
+                      { value: "Ms.", label: "Ms." },
+                      { value: "Dr.", label: "Dr." },
+                    ]}
+                    register={register("salutation")}
+                  />
+                </div>
+                <div className="col-span-3">
+                  <Input
+                    label="First Name"
+                    placeholder="Jane"
+                    register={register("firstName")}
+                    error={errors.firstName?.message}
+                  />
+                </div>
+                <div className="col-span-3">
+                  <Input
+                    label="Last Name"
+                    placeholder="Doe"
+                    register={register("lastName")}
+                    error={errors.lastName?.message}
+                  />
+                </div>
+              </div>
+            )}
+          </section>
+
+          {/* ── Contact Details (shared) ─────────────────────────────────────── */}
+          <section className="space-y-3">
+            <p className="text-xs font-semibold uppercase tracking-wider text-navy/40">
+              Contact Details
+            </p>
             <div className="grid grid-cols-2 gap-3">
               <Input
                 label="Phone (optional)"
@@ -398,30 +429,19 @@ export function CustomerFormModal({
             <Input
               label="Email"
               type="email"
-              placeholder="contact@business.com"
+              placeholder={isBusiness ? "billing@acmeco.com" : "jane.doe@email.com"}
               register={register("email")}
               error={errors.email?.message}
               disabled={mode === "edit"}
             />
           </section>
 
-          {/* Account */}
+          {/* ── Account ─────────────────────────────────────────────────────── */}
           <section className="space-y-3">
             <p className="text-xs font-semibold uppercase tracking-wider text-navy/40">
               Account
             </p>
             <div className="grid grid-cols-2 gap-3">
-              <Select
-                label="Credit Terms"
-                options={[
-                  { value: "Net 15", label: "Net 15" },
-                  { value: "Net 30", label: "Net 30" },
-                  { value: "Net 60", label: "Net 60" },
-                  { value: "COD", label: "Cash on Delivery (COD)" },
-                ]}
-                register={register("creditTerms")}
-                error={errors.creditTerms?.message}
-              />
               <Select
                 label="Currency"
                 options={[
@@ -432,31 +452,33 @@ export function CustomerFormModal({
                 ]}
                 register={register("currency")}
               />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
               <Input
-                label="Credit Limit"
+                label="Credit Limit (optional)"
                 type="number"
                 placeholder="0.00"
                 register={register("creditLimit")}
               />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
               <Input
-                label="Tax ID"
-                placeholder="XX-XXXXXXX"
+                label="Tax ID (optional)"
+                placeholder={isBusiness ? "XX-XXXXXXX" : "SSN / ITIN"}
                 register={register("taxId")}
               />
+              <div className="flex items-end pb-2">
+                <label className="flex items-center gap-2 text-sm text-navy cursor-pointer">
+                  <input
+                    type="checkbox"
+                    {...register("isTaxExempt")}
+                    className="h-4 w-4 rounded border-navy/30 accent-brand-500"
+                  />
+                  Tax Exempt
+                </label>
+              </div>
             </div>
-            <label className="flex items-center gap-2 text-sm text-navy">
-              <input
-                type="checkbox"
-                {...register("isTaxExempt")}
-                className="h-4 w-4 rounded border-navy/30 accent-brand-500"
-              />
-              Tax Exempt
-            </label>
           </section>
 
-          {/* Primary delivery address */}
+          {/* ── Primary Delivery Address ─────────────────────────────────────── */}
           <section className="space-y-3">
             <p className="text-xs font-semibold uppercase tracking-wider text-navy/40">
               Primary Delivery Address
@@ -464,7 +486,7 @@ export function CustomerFormModal({
                 <span className="ml-1 font-normal normal-case text-navy/30">(optional)</span>
               )}
             </p>
-            <div className="flex gap-2 mb-2">
+            <div className="flex gap-2">
               {(["BILLING", "SHIPPING"] as const).map((t) => (
                 <button
                   key={t}
@@ -506,14 +528,12 @@ export function CustomerFormModal({
                   error={errors.city?.message || cityError}
                 />
               </div>
-              <div>
-                <Input
-                  label="State"
-                  placeholder="TX"
-                  register={register("state")}
-                  error={errors.state?.message}
-                />
-              </div>
+              <Input
+                label="State"
+                placeholder="TX"
+                register={register("state")}
+                error={errors.state?.message}
+              />
             </div>
             <Input
               label="ZIP Code"
@@ -523,10 +543,10 @@ export function CustomerFormModal({
             />
           </section>
 
-          {/* Notes */}
+          {/* ── Notes ───────────────────────────────────────────────────────── */}
           <section className="space-y-2">
             <Textarea
-              label="Notes"
+              label="Notes (optional)"
               placeholder="Delivery instructions, special requirements…"
               register={register("notes")}
               error={errors.notes?.message}
