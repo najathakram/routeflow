@@ -10,12 +10,7 @@
   --primary-foreground: #ffffff;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
+/* Dark mode disabled — app is light-mode only */
 
 body {
   color: var(--foreground);
