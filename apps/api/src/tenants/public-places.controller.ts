@@ -4,6 +4,7 @@ import {
   Query,
   BadRequestException,
   InternalServerErrorException,
+  Logger,
 } from "@nestjs/common";
 import { ApiTags, ApiOperation } from "@nestjs/swagger";
 import { Throttle } from "@nestjs/throttler";
@@ -11,16 +12,19 @@ import { ConfigService } from "@nestjs/config";
 import { AppConfig } from "../config/configuration";
 
 /**
- * Public proxy for the Google Places API (New).
+ * Public proxy for the Google Places API.
  *
- * Why proxy? The legacy AutocompleteService JS API requires the "Legacy"
- * Places API to be enabled, but many projects now only have "Places API (New)"
- * enabled. This controller proxies requests server-side so we use the REST
- * endpoint (Places API New), keeping the API key secure and avoiding CORS.
+ * Uses the legacy Places API REST endpoint (maps.googleapis.com) rather than
+ * the newer places.googleapis.com endpoint, because the API key in use has
+ * "API restrictions" that allow maps.googleapis.com (already used by Geocoding)
+ * but block places.googleapis.com.
+ *
+ * Legacy docs: https://developers.google.com/maps/documentation/places/web-service/autocomplete
  */
 @ApiTags("public/places")
 @Controller("public/places")
 export class PublicPlacesController {
+  private readonly logger = new Logger(PublicPlacesController.name);
   private readonly apiKey: string;
 
   constructor(private readonly config: ConfigService<AppConfig>) {
@@ -30,7 +34,7 @@ export class PublicPlacesController {
   // ─── Address autocomplete ─────────────────────────────────────────────────
 
   @Get("autocomplete")
-  @ApiOperation({ summary: "Autocomplete a US address via Google Places API (New)" })
+  @ApiOperation({ summary: "Autocomplete a US address via Google Places API" })
   @Throttle({ default: { ttl: 1_000, limit: 10 } }) // 10 req/sec per IP
   async autocomplete(@Query("q") q: string) {
     if (!q || q.trim().length < 3) {
@@ -40,51 +44,47 @@ export class PublicPlacesController {
       throw new InternalServerErrorException("Google Maps API key not configured");
     }
 
-    const res = await fetch("https://places.googleapis.com/v1/places:autocomplete", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Goog-Api-Key": this.apiKey,
-        "X-Goog-FieldMask":
-          "suggestions.placePrediction.placeId,suggestions.placePrediction.text,suggestions.placePrediction.structuredFormat",
-      },
-      body: JSON.stringify({
-        input: q.trim(),
-        includedRegionCodes: ["us"],
-        includedPrimaryTypes: ["address"],
-      }),
-    });
+    const url = new URL("https://maps.googleapis.com/maps/api/place/autocomplete/json");
+    url.searchParams.set("input", q.trim());
+    url.searchParams.set("key", this.apiKey);
+    url.searchParams.set("components", "country:us");
+    url.searchParams.set("types", "address");
+    url.searchParams.set("language", "en");
+
+    const res = await fetch(url.toString());
 
     if (!res.ok) {
       const err = await res.text().catch(() => "");
-      throw new InternalServerErrorException(`Places API error: ${res.status} ${err}`);
+      this.logger.error(`Places autocomplete HTTP error: ${res.status} ${err}`);
+      throw new InternalServerErrorException(`Places API error: ${res.status}`);
     }
 
     const data = (await res.json()) as {
-      suggestions?: Array<{
-        placePrediction?: {
-          placeId?: string;
-          text?: { text?: string };
-          structuredFormat?: {
-            mainText?: { text?: string };
-            secondaryText?: { text?: string };
-          };
+      status: string;
+      error_message?: string;
+      predictions?: Array<{
+        place_id: string;
+        description: string;
+        structured_formatting?: {
+          main_text?: string;
+          secondary_text?: string;
         };
       }>;
     };
 
-    const suggestions = (data.suggestions ?? [])
-      .map((s) => {
-        const p = s.placePrediction;
-        if (!p?.placeId) return null;
-        return {
-          placeId: p.placeId,
-          display: p.text?.text ?? "",
-          mainText: p.structuredFormat?.mainText?.text ?? "",
-          secondaryText: p.structuredFormat?.secondaryText?.text ?? "",
-        };
-      })
-      .filter(Boolean);
+    if (data.status !== "OK" && data.status !== "ZERO_RESULTS") {
+      this.logger.error(`Places autocomplete API error: ${data.status} — ${data.error_message ?? ""}`);
+      throw new InternalServerErrorException(
+        `Places API error: ${data.status}${data.error_message ? " — " + data.error_message : ""}`,
+      );
+    }
+
+    const suggestions = (data.predictions ?? []).slice(0, 5).map((p) => ({
+      placeId: p.place_id,
+      display: p.description,
+      mainText: p.structured_formatting?.main_text ?? p.description,
+      secondaryText: p.structured_formatting?.secondary_text ?? "",
+    }));
 
     return { suggestions };
   }
@@ -100,31 +100,40 @@ export class PublicPlacesController {
       throw new InternalServerErrorException("Google Maps API key not configured");
     }
 
-    const res = await fetch(
-      `https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}`,
-      {
-        headers: {
-          "X-Goog-Api-Key": this.apiKey,
-          "X-Goog-FieldMask": "addressComponents",
-        },
-      },
-    );
+    const url = new URL("https://maps.googleapis.com/maps/api/place/details/json");
+    url.searchParams.set("place_id", placeId);
+    url.searchParams.set("key", this.apiKey);
+    url.searchParams.set("fields", "address_component");
+
+    const res = await fetch(url.toString());
 
     if (!res.ok) {
       const err = await res.text().catch(() => "");
-      throw new InternalServerErrorException(`Places API error: ${res.status} ${err}`);
+      this.logger.error(`Places details HTTP error: ${res.status} ${err}`);
+      throw new InternalServerErrorException(`Places API error: ${res.status}`);
     }
 
     const data = (await res.json()) as {
-      addressComponents?: Array<{
-        longText?: string;
-        shortText?: string;
-        types?: string[];
-      }>;
+      status: string;
+      error_message?: string;
+      result?: {
+        address_components?: Array<{
+          long_name: string;
+          short_name: string;
+          types: string[];
+        }>;
+      };
     };
 
+    if (data.status !== "OK") {
+      this.logger.error(`Places details API error: ${data.status} — ${data.error_message ?? ""}`);
+      throw new InternalServerErrorException(
+        `Places API error: ${data.status}${data.error_message ? " — " + data.error_message : ""}`,
+      );
+    }
+
     const get = (type: string): string =>
-      data.addressComponents?.find((c) => c.types?.includes(type))?.shortText ?? "";
+      data.result?.address_components?.find((c) => c.types.includes(type))?.short_name ?? "";
 
     const streetNumber = get("street_number");
     const route = get("route");

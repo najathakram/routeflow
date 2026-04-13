@@ -69,12 +69,13 @@ export function AddressAutocomplete({
       const res = await fetch(
         `${API_BASE}/public/places/autocomplete?q=${encodeURIComponent(q.trim())}`,
       );
-      if (!res.ok) throw new Error(`${res.status}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = (await res.json()) as { suggestions?: Suggestion[] };
       const list = data.suggestions ?? [];
       setSuggestions(list);
       setIsOpen(list.length > 0);
-    } catch {
+    } catch (err) {
+      console.error("[AddressAutocomplete] autocomplete fetch failed:", err);
       setSuggestions([]);
       setIsOpen(false);
     } finally {
@@ -98,7 +99,8 @@ export function AddressAutocomplete({
         const parts = (await res.json()) as AddressParts;
         if (parts.street) onChange(parts.street);
         onAddressSelect(parts);
-      } catch {
+      } catch (err) {
+        console.error("[AddressAutocomplete] details fetch failed:", err);
         // Fallback: use the display text as the street value
         onAddressSelect({ street: s.mainText || s.display, city: "", state: "", zip: "" });
       }
