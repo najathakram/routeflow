@@ -155,6 +155,7 @@ export default function BuyerOrderDetailPage() {
   }, [authLoading, activeSeller, sellerSlug, router]);
 
   const canEdit = order && (order.status === "DRAFT" || order.status === "PENDING");
+  const showDeliveryProgress = order && (order.status === "PARTIALLY_DELIVERED" || order.status === "OUT_FOR_DELIVERY" || order.status === "DELIVERED");
   const canCancel = canEdit;
 
   const enterEditMode = () => {
@@ -311,7 +312,13 @@ export default function BuyerOrderDetailPage() {
           <thead>
             <tr className="border-b border-surface-border text-xs text-navy/50 uppercase tracking-wider">
               <th className="px-4 py-2.5 text-left">Product</th>
-              <th className="px-4 py-2.5 text-right w-24">Qty</th>
+              <th className="px-4 py-2.5 text-right w-20">{showDeliveryProgress ? "Ordered" : "Qty"}</th>
+              {showDeliveryProgress && (
+                <>
+                  <th className="px-4 py-2.5 text-right w-20">Delivered</th>
+                  <th className="px-4 py-2.5 text-right w-20">Remaining</th>
+                </>
+              )}
               <th className="px-4 py-2.5 text-right w-28">Unit Price</th>
               <th className="px-4 py-2.5 text-right w-28">Subtotal</th>
             </tr>
@@ -407,6 +414,23 @@ export default function BuyerOrderDetailPage() {
                     <td className="px-4 py-3 text-right text-sm text-navy">
                       {Number(li.qty)}
                     </td>
+                    {showDeliveryProgress && (
+                      <>
+                        <td className="px-4 py-3 text-right text-sm text-success font-medium">
+                          {Number(li.deliveredQty ?? 0)}
+                        </td>
+                        <td className="px-4 py-3 text-right text-sm">
+                          {(() => {
+                            const remaining = Number(li.qty) - Number(li.deliveredQty ?? 0);
+                            return remaining > 0 ? (
+                              <span className="text-warning font-medium">{remaining}</span>
+                            ) : (
+                              <span className="text-success">0</span>
+                            );
+                          })()}
+                        </td>
+                      </>
+                    )}
                     <td className="px-4 py-3 text-right text-sm text-navy/70">
                       {fmt(Number(li.unitPrice))}
                       {li.originalPrice && Number(li.originalPrice) > Number(li.unitPrice) && (

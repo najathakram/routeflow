@@ -1111,7 +1111,9 @@ export default function AdminTenantDetailPage() {
         case "impersonate": {
           try {
             const res = await superAdminClient.post(`/platform-admin/tenants/${id}/impersonate`);
+            // Store impersonation token in BOTH keys so every auth path finds it
             localStorage.setItem("impersonationToken", res.data.accessToken);
+            localStorage.setItem("accessToken", res.data.accessToken);
             localStorage.setItem("impersonationTenantSlug", tenant.slug);
             setTenantCookie(tenant.slug);
             window.location.href = "/dashboard";

@@ -17,9 +17,12 @@ import {
   Settings,
   LayoutGrid,
   Heart,
+  Bell,
+  X,
 } from "lucide-react";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { useBuyerCart } from "@/lib/buyer-cart";
+import { useBuyerNotifications, type BuyerNotification } from "@/lib/hooks/useBuyerNotifications";
 import type { BuyerSeller } from "@/lib/buyer-auth";
 
 // ─── Status badge variant helper ─────────────────────────────────────────────
@@ -115,7 +118,9 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
   // Hooks must be called unconditionally — before any early returns
   const sellerSlug = activeSeller?.tenant.slug;
   const { totalQty: cartItemCount } = useBuyerCart(buyer?.id, sellerSlug);
+  const { notifications, unreadCount, markAllRead, clearAll } = useBuyerNotifications();
   const [sellersOpen, setSellersOpen] = React.useState(false);
+  const [notifOpen, setNotifOpen] = React.useState(false);
 
   // Redirect to login if not authenticated
   React.useEffect(() => {
@@ -194,9 +199,54 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
             >
               RF
             </div>
-            <div>
+            <div className="flex-1">
               <p className="text-sm font-bold text-navy">RouteFlow</p>
               <p className="text-xs text-navy/50">Buyer Portal</p>
+            </div>
+            {/* Notification bell */}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => {
+                  setNotifOpen(!notifOpen);
+                  if (!notifOpen) markAllRead();
+                }}
+                className="relative rounded-lg p-2 text-navy/50 hover:bg-surface-raised hover:text-navy transition-colors"
+              >
+                <Bell className="h-4 w-4" />
+                {unreadCount > 0 && (
+                  <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-danger px-1 text-[9px] font-bold text-white">
+                    {unreadCount}
+                  </span>
+                )}
+              </button>
+              {notifOpen && (
+                <div className="absolute left-0 top-full mt-1 z-50 w-72 rounded-xl border border-surface-border bg-white shadow-lg">
+                  <div className="flex items-center justify-between border-b border-surface-border px-3 py-2">
+                    <p className="text-xs font-semibold text-navy">Notifications</p>
+                    {notifications.length > 0 && (
+                      <button onClick={clearAll} className="text-[10px] text-navy/40 hover:text-danger">
+                        Clear all
+                      </button>
+                    )}
+                  </div>
+                  <div className="max-h-64 overflow-y-auto">
+                    {notifications.length === 0 ? (
+                      <p className="px-3 py-6 text-center text-xs text-navy/40">No notifications</p>
+                    ) : (
+                      notifications.slice(0, 20).map((n) => (
+                        <div key={n.id} className="border-b border-surface-border px-3 py-2 last:border-b-0 hover:bg-surface-raised/50">
+                          <p className="text-xs font-medium text-navy">{n.title}</p>
+                          <p className="text-[11px] text-navy/50 mt-0.5">{n.description}</p>
+                          <p className="text-[9px] text-navy/30 mt-0.5">
+                            {new Date(n.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                          </p>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

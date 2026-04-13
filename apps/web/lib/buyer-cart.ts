@@ -32,6 +32,9 @@ function readCart(key: string): CartState {
 function writeCart(key: string, state: CartState) {
   if (typeof window === "undefined") return;
   localStorage.setItem(key, JSON.stringify(state));
+  // Dispatch custom event so OTHER hook instances in the same tab update immediately.
+  // (The native 'storage' event only fires in other tabs/windows.)
+  window.dispatchEvent(new CustomEvent("cart-updated", { detail: { key } }));
 }
 
 /**
@@ -49,16 +52,21 @@ export function useBuyerCart(buyerAccountId?: string, sellerSlug?: string) {
     setCart(readCart(key));
   }, [key]);
 
-  // Cross-tab sync
+  // Cross-tab sync + same-tab sync via custom event
   React.useEffect(() => {
     if (!key) return;
-    const handler = (e: StorageEvent) => {
-      if (e.key === key) {
-        setCart(readCart(key));
-      }
+    const storageHandler = (e: StorageEvent) => {
+      if (e.key === key) setCart(readCart(key));
     };
-    window.addEventListener("storage", handler);
-    return () => window.removeEventListener("storage", handler);
+    const cartHandler = (e: Event) => {
+      if ((e as CustomEvent).detail?.key === key) setCart(readCart(key));
+    };
+    window.addEventListener("storage", storageHandler);
+    window.addEventListener("cart-updated", cartHandler);
+    return () => {
+      window.removeEventListener("storage", storageHandler);
+      window.removeEventListener("cart-updated", cartHandler);
+    };
   }, [key]);
 
   const addItem = React.useCallback(

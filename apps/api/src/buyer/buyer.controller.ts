@@ -138,6 +138,27 @@ export class BuyerController {
     return this.invoicesService.findAll(query, makePseudoUser(ctx));
   }
 
+  @Get("invoices/:id")
+  @UseGuards(BuyerSellerContextGuard)
+  @UseInterceptors(BuyerTenantInterceptor)
+  @ApiHeader({ name: "X-Tenant-Slug", required: true })
+  @ApiOperation({ summary: "Get invoice detail with items and payments" })
+  async getInvoice(@Param("id") id: string, @CurrentBuyerCustomer() ctx: any) {
+    const invoice = await this.invoicesService.findOne(id);
+    // Ownership check: invoice must belong to this buyer's customer
+    if ((invoice as any).customerId !== ctx.customerId) {
+      throw new ForbiddenException("This invoice does not belong to your account");
+    }
+    // Mark as viewed if not already
+    if (!(invoice as any).viewedAt) {
+      await this.prisma.forTenant().invoice.update({
+        where: { id },
+        data: { viewedAt: new Date() },
+      });
+    }
+    return invoice;
+  }
+
   @Get("statement")
   @UseGuards(BuyerSellerContextGuard)
   @UseInterceptors(BuyerTenantInterceptor)
@@ -283,12 +304,15 @@ export class BuyerController {
   @UseInterceptors(BuyerTenantInterceptor)
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "Cancel a DRAFT or PENDING order" })
-  cancelOrder(@Param("id") id: string, @CurrentBuyerCustomer() ctx: any) {
-    return this.ordersService.changeStatus(
+  async cancelOrder(@Param("id") id: string, @CurrentBuyerCustomer() ctx: any) {
+    // Cancel then immediately delete — buyer-cancelled orders shouldn't linger
+    await this.ordersService.changeStatus(
       id,
       { status: OrderStatus.CANCELLED },
       makePseudoUser(ctx),
     );
+    await this.ordersService.deleteOrder(id);
+    return { message: "Order cancelled and removed" };
   }
 
   // ─── Dashboard ────────────────────────────────────────────────────────────────

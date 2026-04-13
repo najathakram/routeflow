@@ -50,6 +50,7 @@ export function getStoredUser(): AuthUser | null {
     forcePasswordChange: payload.forcePasswordChange as boolean,
     isAdmin: (payload.isAdmin as boolean) ?? false,
     canActAsDriver: (payload.canActAsDriver as boolean) ?? false,
+    tenantSlug: (payload.tenantSlug as string) ?? localStorage.getItem("impersonationTenantSlug") ?? null,
   };
 }
 

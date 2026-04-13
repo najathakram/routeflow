@@ -193,7 +193,11 @@ export default function BuyerInvoicesPage() {
                 </thead>
                 <tbody className="divide-y divide-surface-border">
                   {invoices.map((invoice) => (
-                    <tr key={invoice.id} className="hover:bg-surface-raised transition-colors">
+                    <tr
+                      key={invoice.id}
+                      onClick={() => router.push(`/buyer/portal/${sellerSlug}/invoices/${invoice.id}`)}
+                      className="hover:bg-surface-raised transition-colors cursor-pointer"
+                    >
                       <td className="px-4 py-3 text-sm font-medium text-navy">
                         {invoice.invoiceNumber ?? invoice.id.slice(0, 8).toUpperCase()}
                       </td>

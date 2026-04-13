@@ -226,7 +226,16 @@ export class OrdersService {
         : [];
     const cpMap = new Map(customerPrices.map((cp) => [cp.productId, cp.pricingTier]));
 
-    const orderNumber = `ORD-${Date.now()}`;
+    // Generate progressive, tenant-scoped order number
+    const lastOrder = await this.prisma.forTenant().order.findFirst({
+      where: { orderNumber: { startsWith: "ORD-" } },
+      orderBy: { orderNumber: "desc" },
+      select: { orderNumber: true },
+    });
+    const seq = lastOrder?.orderNumber
+      ? parseInt(lastOrder.orderNumber.replace("ORD-", ""), 10) + 1
+      : 1;
+    const orderNumber = `ORD-${String(Number.isFinite(seq) ? seq : 1).padStart(5, "0")}`;
 
     let subtotal = 0;
     const lineItemsData = items.map((item) => {

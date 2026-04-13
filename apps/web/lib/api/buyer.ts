@@ -250,6 +250,53 @@ export function useBuyerCancelOrder() {
   });
 }
 
+// ─── Invoice Detail ──────────────────────────────────────────────────────────
+
+export interface BuyerInvoiceDetail {
+  id: string;
+  invoiceNumber: string;
+  status: string;
+  subtotal: number;
+  taxAmount: number;
+  discount: number;
+  shippingFee: number;
+  total: number;
+  dueDate: string | null;
+  sentAt: string | null;
+  viewedAt: string | null;
+  paidAt: string | null;
+  issueDate: string;
+  pdfUrl: string | null;
+  notes: string | null;
+  terms: string | null;
+  orderId: string | null;
+  items: Array<{
+    id: string;
+    description: string;
+    productId: string | null;
+    qty: number;
+    unitPrice: number;
+    discount: number;
+    subtotal: number;
+    priceType: string;
+  }>;
+  payments: Array<{
+    id: string;
+    amount: number;
+    method: string;
+    recordedAt: string;
+  }>;
+  customer: { id: string; businessName: string };
+}
+
+export function useBuyerInvoice(invoiceId: string) {
+  return useQuery<BuyerInvoiceDetail>({
+    queryKey: ["buyer", "invoice", invoiceId],
+    queryFn: () => buyerApiClient.get(`/buyer/invoices/${invoiceId}`).then((r) => r.data),
+    enabled: !!invoiceId,
+  });
+}
+
 // ─── Dashboard ────────────────────────────────────────────────────────────────
 
 export function useBuyerDashboard(frequentWindow?: "30d" | "90d" | "all") {
