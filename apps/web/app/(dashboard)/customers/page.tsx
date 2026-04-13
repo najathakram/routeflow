@@ -3,12 +3,12 @@
 import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Pencil, ToggleLeft, ToggleRight, Eye, CheckSquare, X, Trash2, Download, Upload, ArrowUpDown, Merge, AlertCircle } from "lucide-react";
+import { Pencil, ToggleLeft, ToggleRight, Eye, CheckSquare, X, Trash2, Download, Upload, ArrowUpDown, Merge, AlertCircle, UserCheck, ChevronDown, ChevronUp, ExternalLink } from "lucide-react";
 import { PageHeader, Table, Badge, Button, Select, Modal, cn, type BadgeStatus } from "@routeflow/ui/web";
 import { useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { CustomerFormModal } from "./_components/CustomerFormModal";
-import { useCustomers, useUpdateCustomerStatus, useDeleteCustomer, useCustomerTags, useExportCustomers, useMergeCustomers } from "@/lib/api/customers";
+import { useCustomers, useUpdateCustomerStatus, useDeleteCustomer, useCustomerTags, useExportCustomers, useMergeCustomers, usePendingPortalApprovals, useApprovePortalFromList } from "@/lib/api/customers";
 import { apiClient } from "@/lib/api-client";
 import { useCustomerRouteAssignments } from "@/lib/api/routes";
 import { useDebounce } from "@/lib/hooks/useDebounce";
@@ -222,6 +222,11 @@ export default function CustomersPage() {
 
   const updateStatus = useUpdateCustomerStatus();
   const deleteCustomer = useDeleteCustomer();
+
+  // ── Pending portal approvals ──────────────────────────────────────────────
+  const { data: pendingApprovals = [] } = usePendingPortalApprovals();
+  const approveFromList = useApprovePortalFromList();
+  const [approvalsExpanded, setApprovalsExpanded] = React.useState(true);
 
   // ── Filter: unassigned only ───────────────────────────────────────────────
   const visibleCustomers = React.useMemo(() => {
@@ -510,6 +515,83 @@ export default function CustomersPage() {
               Delete {selected.size}
             </Button>
           </div>
+        </div>
+      )}
+
+      {/* Pending portal connection approvals */}
+      {pendingApprovals.length > 0 && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 overflow-hidden">
+          {/* Header */}
+          <button
+            onClick={() => setApprovalsExpanded((v) => !v)}
+            className="flex w-full items-center justify-between px-4 py-3 text-left hover:bg-amber-100/60 transition-colors"
+          >
+            <div className="flex items-center gap-2.5">
+              <div className="flex h-6 w-6 items-center justify-center rounded-full bg-amber-500 text-white text-xs font-bold shrink-0">
+                {pendingApprovals.length}
+              </div>
+              <span className="text-sm font-semibold text-amber-900">
+                Pending Buyer Portal {pendingApprovals.length === 1 ? "Connection" : "Connections"}
+              </span>
+              <span className="text-xs text-amber-700">
+                — review and approve buyers requesting access to their accounts
+              </span>
+            </div>
+            {approvalsExpanded ? (
+              <ChevronUp className="h-4 w-4 text-amber-600 shrink-0" />
+            ) : (
+              <ChevronDown className="h-4 w-4 text-amber-600 shrink-0" />
+            )}
+          </button>
+
+          {/* Rows */}
+          {approvalsExpanded && (
+            <div className="border-t border-amber-200 divide-y divide-amber-100">
+              {pendingApprovals.map((item) => (
+                <div key={item.id} className="flex items-center justify-between gap-4 px-4 py-3 bg-white/60">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <UserCheck className="h-4 w-4 text-amber-500 shrink-0" />
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-navy truncate">
+                        {item.customer.contactName || item.customer.businessName}
+                        {item.customer.contactName && item.customer.businessName && (
+                          <span className="ml-1.5 text-navy/50 font-normal text-xs">
+                            · {item.customer.businessName}
+                          </span>
+                        )}
+                      </p>
+                      <p className="text-xs text-navy/60 truncate">
+                        Buyer account:{" "}
+                        <span className="font-medium text-navy/80">
+                          {item.buyerAccount?.email ?? item.customer.email ?? "—"}
+                        </span>
+                        {item.buyerAccount?.name && (
+                          <span className="ml-1 text-navy/40">({item.buyerAccount.name})</span>
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      onClick={() => router.push(`/customers/${item.customer.id}`)}
+                      title="View customer"
+                      className="rounded p-1.5 text-navy/40 hover:bg-surface-raised hover:text-navy transition-colors"
+                    >
+                      <ExternalLink className="h-4 w-4" />
+                    </button>
+                    <button
+                      onClick={() => approveFromList.mutate(item.customer.id)}
+                      disabled={approveFromList.isPending}
+                      className="flex items-center gap-1.5 rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-600 disabled:opacity-50 transition-colors"
+                    >
+                      <UserCheck className="h-3.5 w-3.5" />
+                      Approve
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

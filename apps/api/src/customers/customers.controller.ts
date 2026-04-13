@@ -91,6 +91,12 @@ export class CustomersController {
     return this.customersService.geocodeAllAddresses();
   }
 
+  @Get("pending-portal-approvals")
+  @Roles(UserRole.OPERATOR)
+  listPendingPortalApprovals(@CurrentUser() user: JwtPayload) {
+    return this.customersService.listPendingPortalApprovals(user.tenantId!);
+  }
+
   @Get("me")
   @Roles(UserRole.CUSTOMER)
   getMyProfile(@CurrentUser() user: JwtPayload) {

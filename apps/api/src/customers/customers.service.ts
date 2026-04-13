@@ -1564,6 +1564,22 @@ export class CustomersService {
     return { message: "Buyer connection approved" };
   }
 
+  async listPendingPortalApprovals(tenantId: string) {
+    const links = await this.prisma.customerLink.findMany({
+      where: { tenantId, status: "PENDING_SELLER_APPROVAL" },
+      include: {
+        customer: {
+          select: { id: true, businessName: true, contactName: true, email: true },
+        },
+        buyerAccount: {
+          select: { id: true, email: true, name: true },
+        },
+      },
+      orderBy: { createdAt: "asc" },
+    });
+    return links;
+  }
+
   // ─── Suggest buyer account merge (tenant-initiated) ───────────────────────────
 
   async suggestMerge(

@@ -493,3 +493,31 @@ export function useApprovePortalRequest() {
     onSuccess: (_d, id) => qc.invalidateQueries({ queryKey: ["customers", id, "portal-status"] }),
   });
 }
+
+export interface PendingPortalApproval {
+  id: string;
+  customerId: string;
+  customer: { id: string; businessName: string; contactName: string; email: string | null };
+  buyerAccount: { id: string; email: string; name: string } | null;
+  createdAt: string;
+}
+
+export function usePendingPortalApprovals() {
+  return useQuery<PendingPortalApproval[]>({
+    queryKey: ["customers", "pending-portal-approvals"],
+    queryFn: () => apiClient.get("/customers/pending-portal-approvals").then((r) => r.data),
+    refetchInterval: 30_000, // auto-refresh every 30 s
+  });
+}
+
+export function useApprovePortalFromList() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (customerId: string) =>
+      apiClient.post(`/customers/${customerId}/portal-approve`).then((r) => r.data),
+    onSuccess: (_d, customerId) => {
+      qc.invalidateQueries({ queryKey: ["customers", "pending-portal-approvals"] });
+      qc.invalidateQueries({ queryKey: ["customers", customerId, "portal-status"] });
+    },
+  });
+}
