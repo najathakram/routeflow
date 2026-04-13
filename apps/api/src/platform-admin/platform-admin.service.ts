@@ -188,7 +188,16 @@ ${paymentSection}
   }
 
   async deleteTenant(id: string) {
-    await this._findOrThrow(id);
+    const existing = await this.prisma.tenant.findUnique({
+      where: { id },
+      select: { id: true, slug: true, status: true },
+    });
+    if (!existing) throw new NotFoundException(`Tenant ${id} not found`);
+    if (existing.status !== "SUSPENDED") {
+      throw new BadRequestException(
+        "Tenant must be suspended before it can be deleted. Suspend the tenant first.",
+      );
+    }
     const tenant = await this.prisma.tenant.update({
       where: { id },
       data: { deletedAt: new Date(), status: "CANCELLED" },

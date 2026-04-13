@@ -61,6 +61,24 @@ export default function AdminTenantsPage() {
 
   React.useEffect(() => { fetchTenants(page); }, [page, fetchTenants]);
 
+  const [deletingTenant, setDeletingTenant] = React.useState<Tenant | null>(null);
+  const [deleteConfirmSlug, setDeleteConfirmSlug] = React.useState("");
+
+  const deleteTenant = async () => {
+    if (!deletingTenant || deleteConfirmSlug !== deletingTenant.slug) return;
+    setActionLoading(deletingTenant.id + "-del");
+    try {
+      await superAdminClient.delete(`/platform-admin/tenants/${deletingTenant.id}`);
+      setDeletingTenant(null);
+      setDeleteConfirmSlug("");
+      fetchTenants(page);
+    } catch (err: unknown) {
+      alert((err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Delete failed");
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
   const toggleStatus = async (tenant: Tenant) => {
     const newStatus = tenant.status === "SUSPENDED" ? "ACTIVE" : "SUSPENDED";
     if (newStatus === "SUSPENDED") {
@@ -266,6 +284,41 @@ export default function AdminTenantsPage() {
         <p className="text-sm text-slate-300">This action will be applied to {selected.size} selected tenant(s).</p>
       </AdminModal>
 
+      {/* Delete confirmation modal */}
+      <AdminModal
+        open={!!deletingTenant}
+        onClose={() => { setDeletingTenant(null); setDeleteConfirmSlug(""); }}
+        title="Permanently delete tenant?"
+        footer={
+          <>
+            <button onClick={() => { setDeletingTenant(null); setDeleteConfirmSlug(""); }} className="rounded-lg px-4 py-2 text-sm text-slate-400 hover:bg-slate-700">Cancel</button>
+            <button
+              disabled={deleteConfirmSlug !== deletingTenant?.slug || actionLoading === deletingTenant?.id + "-del"}
+              onClick={deleteTenant}
+              className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-500 disabled:opacity-50"
+            >
+              {actionLoading === deletingTenant?.id + "-del" ? "Deleting..." : "Delete Permanently"}
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <p className="text-sm text-slate-300">
+            This will permanently cancel and archive <strong className="text-white">{deletingTenant?.businessName ?? deletingTenant?.slug}</strong>. This action cannot be undone.
+          </p>
+          <p className="text-sm text-slate-400">
+            Type the tenant slug <strong className="font-mono text-slate-200">{deletingTenant?.slug}</strong> to confirm:
+          </p>
+          <input
+            type="text"
+            value={deleteConfirmSlug}
+            onChange={(e) => setDeleteConfirmSlug(e.target.value)}
+            placeholder={deletingTenant?.slug}
+            className="h-9 w-full rounded-lg border border-slate-600 bg-slate-800 px-3 text-sm text-white placeholder:text-slate-500 focus:border-red-500 focus:outline-none focus:ring-2 focus:ring-red-500/30"
+          />
+        </div>
+      </AdminModal>
+
       {loading && <div className="text-center text-slate-500 py-12">Loading tenants...</div>}
       {error && <div className="rounded-lg bg-red-900/40 px-4 py-3 text-sm text-red-400 ring-1 ring-red-700 mb-4">{error}</div>}
 
@@ -341,6 +394,15 @@ export default function AdminTenantsPage() {
                               className="rounded px-2 py-1 text-xs font-medium text-slate-400 hover:bg-slate-700 hover:text-white disabled:opacity-50"
                             >
                               Impersonate
+                            </button>
+                          )}
+                          {t.status === "SUSPENDED" && (
+                            <button
+                              disabled={!!actionLoading}
+                              onClick={() => { setDeletingTenant(t); setDeleteConfirmSlug(""); }}
+                              className="rounded px-2 py-1 text-xs font-medium text-red-400 hover:bg-red-900/30 disabled:opacity-50"
+                            >
+                              Delete
                             </button>
                           )}
                         </div>

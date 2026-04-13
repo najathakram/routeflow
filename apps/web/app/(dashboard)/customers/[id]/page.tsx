@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import * as Tabs from "@radix-ui/react-tabs";
 import type { ColumnDef } from "@tanstack/react-table";
 import {
@@ -80,6 +81,7 @@ import {
   useResendPortalInvite,
   useDisconnectPortal,
   useApprovePortalRequest,
+  useDeleteCustomer,
   type AdvancePayment,
   type CustomerPrice,
   type ContactPerson,
@@ -1170,6 +1172,7 @@ export default function CustomerDetailPage({
   params: { id: string };
 }) {
   const { setTitle } = usePageTitle();
+  const router = useRouter();
   const { user } = useAuth();
   const isOperator = user?.role === "OPERATOR";
 
@@ -1213,6 +1216,19 @@ export default function CustomerDetailPage({
   const assignTag = useAssignCustomerTag();
   const removeTag = useRemoveCustomerTag();
   const { data: chartData } = useCustomerIncomeChart(params.id);
+
+  // Delete customer
+  const deleteCustomer = useDeleteCustomer();
+  const [isDeleteOpen, setIsDeleteOpen] = React.useState(false);
+  const [deleteConfirm, setDeleteConfirm] = React.useState("");
+
+  const handleDeleteCustomer = () => {
+    deleteCustomer.mutate(params.id, {
+      onSuccess: () => {
+        router.push("/customers");
+      },
+    });
+  };
 
   // Buyer Portal management
   const { data: portalStatus, isLoading: portalLoading } = usePortalStatus(params.id);
@@ -2024,6 +2040,17 @@ export default function CustomerDetailPage({
                         </button>
                       ))}
                     </div>
+                    {currentStatus === "SUSPENDED" && (
+                      <div className="border-t border-surface-border pt-4">
+                        <button
+                          onClick={() => { setIsDeleteOpen(true); setDeleteConfirm(""); }}
+                          className="flex w-full items-center gap-2 rounded-lg border border-danger/30 px-3 py-2 text-sm font-medium text-danger transition-colors hover:bg-danger/5"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                          Delete Customer
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </Card>
 
@@ -3158,6 +3185,40 @@ export default function CustomerDetailPage({
         variant="danger"
         loading={deleteContact.isPending}
       />
+
+      {/* ── Delete customer modal ─────────────────────────────────── */}
+      <Modal
+        open={isDeleteOpen}
+        onClose={() => setIsDeleteOpen(false)}
+        title="Permanently delete customer?"
+        description={`All orders, invoices, addresses, and history for ${customer?.businessName ?? "this customer"} will be permanently erased. This cannot be undone.`}
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setIsDeleteOpen(false)}>Cancel</Button>
+            <Button
+              variant="danger"
+              disabled={deleteConfirm !== (customer?.businessName ?? "") || deleteCustomer.isPending}
+              loading={deleteCustomer.isPending}
+              onClick={handleDeleteCustomer}
+            >
+              Delete Permanently
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3 pt-2">
+          <p className="text-sm text-navy/60">
+            Type <strong className="font-semibold text-navy">{customer?.businessName}</strong> to confirm deletion:
+          </p>
+          <input
+            type="text"
+            value={deleteConfirm}
+            onChange={(e) => setDeleteConfirm(e.target.value)}
+            placeholder={customer?.businessName}
+            className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/40 focus:border-danger focus:outline-none focus:ring-2 focus:ring-danger/20"
+          />
+        </div>
+      </Modal>
     </div>
   );
 }
