@@ -394,28 +394,37 @@ function makeTableColumns(
         return <span className="text-navy/70">{p.unitsPerBox ?? "—"}</span>;
       },
     },
-    // Tier price columns — only shown in Quick Edit mode
-    ...(quickEditMode
-      ? [2, 3, 4, 5].map((tier) => ({
-          id: `priceTier${tier}`,
-          header: `T${tier}`,
-          enableSorting: false,
-          cell: ({ row }: any) => {
-            const p = row.original;
-            const tierKey = `priceTier${tier}` as keyof ApiProduct;
-            const val = p[tierKey] as string | undefined;
-            return (
-              <QuickEditCell
-                value={val ? parseFloat(String(val)).toFixed(2) : ""}
-                quickEditMode={quickEditMode}
-                onSave={async (newVal, rec) => {
-                  await onQuickSave(p, `priceTier${tier}`, newVal || "0", rec);
-                }}
-              />
-            );
-          },
-        }))
-      : []),
+    // Tier price columns — always shown, editable only in Quick Edit mode
+    ...[2, 3, 4, 5].map((tier) => ({
+      id: `priceTier${tier}`,
+      header: `T${tier}`,
+      enableSorting: false,
+      cell: ({ row }: any) => {
+        const p = row.original;
+        const tierKey = `priceTier${tier}` as keyof ApiProduct;
+        const val = p[tierKey] as string | undefined;
+        if (quickEditMode) {
+          return (
+            <QuickEditCell
+              productId={p.id}
+              productName={p.name}
+              field={`priceTier${tier}`}
+              value={val ? parseFloat(String(val)).toFixed(2) : ""}
+              quickEditMode={quickEditMode}
+              onSave={async (newVal, rec) => {
+                await onQuickSave(p, `priceTier${tier}`, newVal || "0", rec);
+              }}
+            />
+          );
+        }
+        // Normal view: read-only display
+        return (
+          <span className="text-sm text-navy/70">
+            {val && parseFloat(String(val)) > 0 ? `$${parseFloat(String(val)).toFixed(2)}` : <span className="text-navy/30">—</span>}
+          </span>
+        );
+      },
+    })),
     {
       accessorKey: "currentStock",
       header: "Stock",
@@ -802,6 +811,7 @@ export default function ProductsPage() {
 
     // Auto-copy pricePerUnit to all tiers if they were all the same as the old price
     if (field === "pricePerUnit" && newVal) {
+      const newPrice = parseFloat(newVal);
       const oldPrice = parseFloat(String(product.pricePerUnit)).toFixed(2);
       const allSameAsOld = [product.priceTier2, product.priceTier3, product.priceTier4, product.priceTier5].every(
         (t) => !t || parseFloat(String(t)).toFixed(2) === oldPrice || parseFloat(String(t)).toFixed(2) === "0.00",
@@ -811,6 +821,30 @@ export default function ProductsPage() {
         updates.priceTier3 = newVal;
         updates.priceTier4 = newVal;
         updates.priceTier5 = newVal;
+      } else {
+        // Cascade cap: higher tiers that are MORE expensive than T1 get capped
+        for (let m = 2; m <= 5; m++) {
+          const key = `priceTier${m}` as keyof ApiProduct;
+          const tierVal = product[key];
+          const tierPrice = tierVal ? parseFloat(String(tierVal)) : 0;
+          if (!tierVal || tierPrice > newPrice) {
+            updates[`priceTier${m}`] = newVal;
+          }
+        }
+      }
+    }
+
+    // Cascade tier prices: when saving priceTierN, cap all higher tiers that are more expensive
+    if (field.startsWith("priceTier") && newVal) {
+      const tier = parseInt(field.replace("priceTier", ""), 10); // 2,3,4,5
+      const newPrice = parseFloat(newVal);
+      for (let m = tier + 1; m <= 5; m++) {
+        const key = `priceTier${m}` as keyof ApiProduct;
+        const tierVal = product[key];
+        const tierPrice = tierVal ? parseFloat(String(tierVal)) : 0;
+        if (!tierVal || tierPrice > newPrice) {
+          updates[`priceTier${m}`] = newVal;
+        }
       }
     }
 
@@ -847,18 +881,30 @@ export default function ProductsPage() {
     if (!editPriceValue) return;
     try {
       // Find the product to check if tiers should auto-copy
-      const product = data?.data?.find((p: ApiProduct) => p.id === id);
-      const updates: Record<string, any> = { id, pricePerUnit: parseFloat(editPriceValue).toFixed(2) };
+      const product = productList.find((p: ApiProduct) => p.id === id);
+      const newPriceStr = parseFloat(editPriceValue).toFixed(2);
+      const newPrice = parseFloat(newPriceStr);
+      const updates: Record<string, any> = { id, pricePerUnit: newPriceStr };
       if (product) {
         const oldPrice = parseFloat(String(product.pricePerUnit)).toFixed(2);
         const allSameAsOld = [product.priceTier2, product.priceTier3, product.priceTier4, product.priceTier5].every(
           (t) => !t || parseFloat(String(t)).toFixed(2) === oldPrice || parseFloat(String(t)).toFixed(2) === "0.00",
         );
         if (allSameAsOld) {
-          updates.priceTier2 = updates.pricePerUnit;
-          updates.priceTier3 = updates.pricePerUnit;
-          updates.priceTier4 = updates.pricePerUnit;
-          updates.priceTier5 = updates.pricePerUnit;
+          updates.priceTier2 = newPriceStr;
+          updates.priceTier3 = newPriceStr;
+          updates.priceTier4 = newPriceStr;
+          updates.priceTier5 = newPriceStr;
+        } else {
+          // Cascade cap: any tier that's currently MORE expensive than the new T1 gets capped
+          for (let m = 2; m <= 5; m++) {
+            const key = `priceTier${m}` as keyof ApiProduct;
+            const tierVal = product[key];
+            const tierPrice = tierVal ? parseFloat(String(tierVal)) : 0;
+            if (!tierVal || tierPrice > newPrice) {
+              updates[`priceTier${m}`] = newPriceStr;
+            }
+          }
         }
       }
       await updateProduct.mutateAsync(updates);
@@ -1013,10 +1059,10 @@ export default function ProductsPage() {
         <div className="rounded-lg bg-brand-50 border border-brand-200 px-4 py-2.5 text-sm text-brand-700 flex items-center gap-2">
           <Pencil className="h-4 w-4 shrink-0" />
           <span>
-            <strong>Quick Edit Mode</strong> — click any SKU/Barcode or Category cell to edit.
+            <strong>Quick Edit Mode</strong> — click any SKU/Barcode, Category, or Tier Price cell to edit.
             Press <kbd className="rounded border border-brand-300 bg-white px-1 py-0.5 text-xs font-mono">Enter</kbd> to save,{" "}
             <kbd className="rounded border border-brand-300 bg-white px-1 py-0.5 text-xs font-mono">Esc</kbd> to cancel.
-            Enter jumps to the next row — ideal for barcode scanner workflows. Use the 📷 camera button for mobile scanning.
+            Tier prices cascade automatically — setting T2 caps T3–T5 to the same or lower. Use the 📷 camera button for mobile scanning.
           </span>
         </div>
       )}
