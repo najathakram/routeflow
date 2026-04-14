@@ -98,4 +98,25 @@ export class ImportController {
     if (!file) throw new BadRequestException("No file uploaded");
     return this.importService.importExpenseSuppliers(file.buffer);
   }
+
+  /**
+   * Diagnose: find customers with a zohoContactId that belong to a different
+   * (or null) tenant — i.e. orphaned from a super-admin import.
+   */
+  @Get("contacts/orphans")
+  diagnoseOrphanedContacts(@CurrentUser() user: JwtPayload) {
+    if (!user.tenantId) throw new BadRequestException("No tenant context");
+    return this.importService.diagnoseOrphanedContacts(user.tenantId);
+  }
+
+  /**
+   * Repair: adopt all orphaned Zoho contacts into the current tenant.
+   * Use after confirming via GET /import/contacts/orphans.
+   */
+  @Post("contacts/adopt-orphans")
+  @HttpCode(HttpStatus.OK)
+  adoptOrphanedContacts(@CurrentUser() user: JwtPayload) {
+    if (!user.tenantId) throw new BadRequestException("No tenant context");
+    return this.importService.adoptOrphanedContacts(user.tenantId);
+  }
 }

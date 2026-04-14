@@ -1036,6 +1036,84 @@ export class ImportService {
     }));
   }
 
+  // ── Orphaned customer repair ────────────────────────────────────────────────
+
+  /**
+   * Diagnose: find customers that have a zohoContactId but belong to a
+   * different (or null) tenant than the one currently making the request.
+   * Returns their count so the caller can decide whether to adopt them.
+   */
+  async diagnoseOrphanedContacts(tenantId: string) {
+    // Use raw (unscoped) prisma to see across all tenants
+    const orphans = await this.prisma.$queryRawUnsafe<
+      Array<{ id: string; businessName: string; tenantId: string | null }>
+    >(
+      `SELECT c."id", c."businessName", c."tenantId"
+       FROM "Customer" c
+       WHERE c."zohoContactId" IS NOT NULL
+         AND (c."tenantId" IS NULL OR c."tenantId" != $1)
+       LIMIT 100`,
+      tenantId,
+    );
+    return {
+      orphanCount: orphans.length,
+      tenantId,
+      sample: orphans.slice(0, 5),
+    };
+  }
+
+  /**
+   * Repair: reassign all customers (and their User accounts) that have a
+   * zohoContactId but belong to a null/wrong tenant, adopting them into
+   * the current tenant.
+   *
+   * This is the fix for the case where a super-admin imported contacts
+   * without an active tenant context, leaving records with tenantId = null.
+   */
+  async adoptOrphanedContacts(tenantId: string): Promise<{ adopted: number }> {
+    // Find all orphaned customers (tenantId IS NULL or != current tenant)
+    const orphans = await this.prisma.$queryRawUnsafe<Array<{ id: string; userId: string }>>(
+      `SELECT c."id", c."userId"
+       FROM "Customer" c
+       WHERE c."zohoContactId" IS NOT NULL
+         AND (c."tenantId" IS NULL OR c."tenantId" != $1)`,
+      tenantId,
+    );
+
+    if (orphans.length === 0) return { adopted: 0 };
+
+    const customerIds = orphans.map((o) => o.id);
+    const userIds = orphans.map((o) => o.userId).filter(Boolean);
+
+    // Reassign Customer records
+    await this.prisma.$executeRawUnsafe(
+      `UPDATE "Customer" SET "tenantId" = $1
+       WHERE "id" = ANY($2::uuid[])`,
+      tenantId,
+      customerIds,
+    );
+
+    // Reassign associated User records
+    if (userIds.length > 0) {
+      await this.prisma.$executeRawUnsafe(
+        `UPDATE "User" SET "tenantId" = $1
+         WHERE "id" = ANY($2::uuid[])`,
+        tenantId,
+        userIds,
+      );
+    }
+
+    // Reassign any CustomerAddress records that may also lack tenantId
+    await this.prisma.$executeRawUnsafe(
+      `UPDATE "CustomerAddress" SET "tenantId" = $1
+       WHERE "customerId" = ANY($2::uuid[])`,
+      tenantId,
+      customerIds,
+    );
+
+    return { adopted: orphans.length };
+  }
+
   async importProducts(
     buffer: Buffer,
     userId: string,
