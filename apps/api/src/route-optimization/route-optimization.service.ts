@@ -309,28 +309,99 @@ export class RouteOptimizationService {
     return optimizedIds;
   }
 
-  // ─── Nearest-neighbour fallback (pure TS) ────────────────────────────────
+  // ─── Nearest-neighbour + 2-opt fallback (pure TS) ───────────────────────
+  //
+  // Strategy:
+  //   1. Run nearest-neighbour from *every* starting stop, keep the shortest.
+  //   2. Apply 2-opt local search until no improving swap exists.
+  //
+  // Greedy NN alone can produce routes that are 10–30 % longer than optimal
+  // when stops cluster geographically and the "wrong" start is chosen.
+  // 2-opt fixes crossed edges and typically closes that gap completely for
+  // ≤ 30 stops in a few dozen iterations.
 
   private nearestNeighborFallback(stops: StopWithCoords[]): string[] {
+    if (stops.length <= 2) return stops.map((s) => s.id);
+
+    // ── Step 1: best nearest-neighbour across all starting points ──────────
+    let bestRoute = this.nnFrom(stops, 0);
+    let bestDist = this.pathKm(bestRoute);
+
+    for (let start = 1; start < stops.length; start++) {
+      const route = this.nnFrom(stops, start);
+      const dist = this.pathKm(route);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestRoute = route;
+      }
+    }
+
+    // ── Step 2: 2-opt improvement ──────────────────────────────────────────
+    bestRoute = this.twoOpt(bestRoute);
+
+    return bestRoute.map((s) => s.id);
+  }
+
+  /** Run nearest-neighbour starting from stop at index `startIdx`. */
+  private nnFrom(stops: StopWithCoords[], startIdx: number): StopWithCoords[] {
     const unvisited = [...stops];
-    const result: string[] = [];
-    let current = unvisited.shift()!;
-    result.push(current.id);
+    let current = unvisited.splice(startIdx, 1)[0];
+    const result: StopWithCoords[] = [current];
 
     while (unvisited.length > 0) {
       let nearestIdx = 0;
       let minDist = this.haversineKm(current, unvisited[0]);
       for (let i = 1; i < unvisited.length; i++) {
         const d = this.haversineKm(current, unvisited[i]);
-        if (d < minDist) {
-          minDist = d;
-          nearestIdx = i;
-        }
+        if (d < minDist) { minDist = d; nearestIdx = i; }
       }
       current = unvisited.splice(nearestIdx, 1)[0];
-      result.push(current.id);
+      result.push(current);
     }
     return result;
+  }
+
+  /** 2-opt local search on an open path (no wrap-around edge). */
+  private twoOpt(stops: StopWithCoords[]): StopWithCoords[] {
+    const n = stops.length;
+    if (n < 4) return stops;
+
+    let route = [...stops];
+    let improved = true;
+
+    while (improved) {
+      improved = false;
+      // i..n-3 so that i+1 and j+1 are both valid indices (j ≤ n-2)
+      outer: for (let i = 0; i <= n - 3; i++) {
+        for (let j = i + 2; j <= n - 2; j++) {
+          const a = route[i], b = route[i + 1], c = route[j], d = route[j + 1];
+          // Improvement: replacing edges (a→b, c→d) with (a→c, b→d)
+          const delta =
+            this.haversineKm(a, b) + this.haversineKm(c, d) -
+            this.haversineKm(a, c) - this.haversineKm(b, d);
+          if (delta > 0.001) {
+            // Reverse segment [i+1 .. j]
+            route = [
+              ...route.slice(0, i + 1),
+              ...route.slice(i + 1, j + 1).reverse(),
+              ...route.slice(j + 1),
+            ];
+            improved = true;
+            break outer; // restart after any improvement
+          }
+        }
+      }
+    }
+    return route;
+  }
+
+  /** Total path distance in km for an ordered stop array. */
+  private pathKm(stops: StopWithCoords[]): number {
+    let total = 0;
+    for (let i = 0; i < stops.length - 1; i++) {
+      total += this.haversineKm(stops[i], stops[i + 1]);
+    }
+    return total;
   }
 
   // ─── Google Maps Geocoding ────────────────────────────────────────────────

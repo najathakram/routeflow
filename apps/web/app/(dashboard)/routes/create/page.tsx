@@ -55,7 +55,12 @@ export interface CustomerForMap {
   }>;
 }
 
-// ─── Client-side nearest-neighbour optimisation ────────────────────────────────
+// ─── Client-side route optimisation (nearest-neighbour + 2-opt) ───────────────
+//
+// Pure greedy NN can produce routes that are significantly longer than optimal
+// when stops are geographically clustered and the wrong starting stop is chosen.
+// The 2-opt pass fixes crossed edges and typically closes that gap entirely for
+// the typical route sizes (≤ 30 stops) used in this app.
 
 function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const R = 6371;
@@ -69,24 +74,76 @@ function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): nu
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+function pathKm(stops: StopEntry[]): number {
+  let total = 0;
+  for (let i = 0; i < stops.length - 1; i++) {
+    total += haversineKm(stops[i].lat!, stops[i].lng!, stops[i + 1].lat!, stops[i + 1].lng!);
+  }
+  return total;
+}
+
+function nnFrom(stops: StopEntry[], startIdx: number): StopEntry[] {
+  const remaining = [...stops];
+  let current = remaining.splice(startIdx, 1)[0];
+  const ordered: StopEntry[] = [current];
+  while (remaining.length > 0) {
+    let nearestIdx = 0;
+    let minDist = Infinity;
+    remaining.forEach((s, i) => {
+      const d = haversineKm(current.lat!, current.lng!, s.lat!, s.lng!);
+      if (d < minDist) { minDist = d; nearestIdx = i; }
+    });
+    current = remaining.splice(nearestIdx, 1)[0];
+    ordered.push(current);
+  }
+  return ordered;
+}
+
+function twoOpt(stops: StopEntry[]): StopEntry[] {
+  const n = stops.length;
+  if (n < 4) return stops;
+  let route = [...stops];
+  let improved = true;
+  while (improved) {
+    improved = false;
+    outer: for (let i = 0; i <= n - 3; i++) {
+      for (let j = i + 2; j <= n - 2; j++) {
+        const [a, b, c, d] = [route[i], route[i + 1], route[j], route[j + 1]];
+        const delta =
+          haversineKm(a.lat!, a.lng!, b.lat!, b.lng!) +
+          haversineKm(c.lat!, c.lng!, d.lat!, d.lng!) -
+          haversineKm(a.lat!, a.lng!, c.lat!, c.lng!) -
+          haversineKm(b.lat!, b.lng!, d.lat!, d.lng!);
+        if (delta > 0.001) {
+          route = [...route.slice(0, i + 1), ...route.slice(i + 1, j + 1).reverse(), ...route.slice(j + 1)];
+          improved = true;
+          break outer;
+        }
+      }
+    }
+  }
+  return route;
+}
+
 function nearestNeighborOrder(stops: StopEntry[]): StopEntry[] {
   const withCoords = stops.filter((s) => s.lat != null && s.lng != null);
   const withoutCoords = stops.filter((s) => s.lat == null || s.lng == null);
   if (withCoords.length < 2) return stops;
-  const remaining = [...withCoords];
-  const ordered: StopEntry[] = [remaining.splice(0, 1)[0]];
-  while (remaining.length > 0) {
-    const last = ordered[ordered.length - 1];
-    let nearestIdx = 0;
-    let minDist = Infinity;
-    remaining.forEach((s, i) => {
-      const dist = haversineKm(last.lat!, last.lng!, s.lat!, s.lng!);
-      if (dist < minDist) { minDist = dist; nearestIdx = i; }
-    });
-    ordered.push(remaining.splice(nearestIdx, 1)[0]);
+
+  // Best nearest-neighbour across all starting points
+  let best = nnFrom(withCoords, 0);
+  let bestDist = pathKm(best);
+  for (let i = 1; i < withCoords.length; i++) {
+    const candidate = nnFrom(withCoords, i);
+    const dist = pathKm(candidate);
+    if (dist < bestDist) { bestDist = dist; best = candidate; }
   }
-  // Stops without coordinates are appended at the end in their original relative order
-  return [...ordered, ...withoutCoords];
+
+  // 2-opt improvement pass
+  best = twoOpt(best);
+
+  // Stops without coordinates are appended last in their original relative order
+  return [...best, ...withoutCoords];
 }
 
 // ─── Page ──────────────────────────────────────────────────────────────────────
