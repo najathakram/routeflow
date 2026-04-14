@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useRouter } from "next/navigation";
 import {
   Plus, Search, Building2, Phone, Mail, Clock, Pencil, X, CheckSquare,
   Trash2, MapPin, Globe, LayoutGrid, LayoutList, DollarSign,
@@ -162,11 +163,12 @@ function SupplierModal({
 // ─── Supplier card (grid view) ─────────────────────────────────────────────────
 
 function SupplierCard({
-  supplier, onEdit, onDeactivate, onReactivate, onDelete,
+  supplier, onEdit, onView, onDeactivate, onReactivate, onDelete,
   isUpdating, selectMode, selected, onSelect,
 }: {
   supplier: Supplier;
   onEdit: () => void;
+  onView: () => void;
   onDeactivate: () => void;
   onReactivate: () => void;
   onDelete: () => void;
@@ -184,10 +186,10 @@ function SupplierCard({
       className={cn(
         "relative flex flex-col gap-3 rounded-xl border bg-white p-4 shadow-card transition-shadow hover:shadow-dropdown",
         !supplier.isActive && "opacity-60",
-        selectMode && "cursor-pointer",
+        "cursor-pointer",
         selected && "ring-2 ring-brand-500 border-brand-500",
       )}
-      onClick={selectMode ? onSelect : undefined}
+      onClick={selectMode ? onSelect : onView}
     >
       {/* Checkbox — only in selection mode */}
       {selectMode && (
@@ -317,11 +319,12 @@ function SupplierCard({
 // ─── Supplier row (list view) ──────────────────────────────────────────────────
 
 function SupplierRow({
-  supplier, onEdit, onDeactivate, onReactivate, onDelete,
+  supplier, onEdit, onView, onDeactivate, onReactivate, onDelete,
   isUpdating, selectMode, selected, onSelect,
 }: {
   supplier: Supplier;
   onEdit: () => void;
+  onView: () => void;
   onDeactivate: () => void;
   onReactivate: () => void;
   onDelete: () => void;
@@ -330,17 +333,21 @@ function SupplierRow({
   selected?: boolean;
   onSelect?: () => void;
 }) {
-  const [menuOpen, setMenuOpen] = React.useState(false);
   const [confirmDelete, setConfirmDelete] = React.useState(false);
   const outstanding = supplier.outstandingBalance ?? 0;
 
   return (
     <tr
       className={cn(
-        "group border-b border-surface-border transition-colors hover:bg-surface-raised/50",
+        "group border-b border-surface-border transition-colors hover:bg-surface-raised/50 cursor-pointer",
         !supplier.isActive && "opacity-60",
         selected && "bg-brand-50/40",
       )}
+      onClick={(e) => {
+        if ((e.target as HTMLElement).closest('button,input,a')) return;
+        if (selectMode) { onSelect?.(); return; }
+        onView();
+      }}
     >
       {/* Checkbox */}
       {selectMode && (
@@ -461,6 +468,7 @@ function SupplierRow({
 // ─── Page ──────────────────────────────────────────────────────────────────────
 
 export default function SuppliersPage() {
+  const router = useRouter();
   const { setTitle } = usePageTitle();
   const { toast } = useToast();
   React.useEffect(() => { setTitle("Suppliers"); }, [setTitle]);
@@ -557,6 +565,7 @@ export default function SuppliersPage() {
   const sharedRowProps = (s: Supplier) => ({
     supplier: s,
     onEdit: () => { if (!selectMode) { setEditTarget(s); setShowModal(true); } },
+    onView: () => { if (!selectMode) router.push(`/suppliers/${s.id}`); },
     onDeactivate: () => { if (!selectMode) handleDeactivate(s); },
     onReactivate: () => { if (!selectMode) handleReactivate(s); },
     onDelete: () => { if (!selectMode) handleDelete(s); },

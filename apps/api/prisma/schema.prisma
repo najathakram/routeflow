@@ -458,6 +458,7 @@ model Customer {
   email               String?
   mobile              String?
   customerType        String      @default("BUSINESS")
+  supplierOnly        Boolean     @default(false) // true = this contact is a vendor/supplier; hide from Customers list
   displayName         String?
   salutation          String?
   firstName           String?

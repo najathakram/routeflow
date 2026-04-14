@@ -110,6 +110,17 @@ export class ImportController {
   }
 
   /**
+   * Mark supplier-only customers: find customers with no orders whose name
+   * matches an existing supplier, and flag them supplierOnly=true so they
+   * are hidden from the Customers list but their data is preserved.
+   */
+  @Post("contacts/mark-supplier-only")
+  @HttpCode(HttpStatus.OK)
+  markSupplierOnlyCustomers() {
+    return this.importService.markSupplierOnlyCustomers();
+  }
+
+  /**
    * Diagnose: find customers with a zohoContactId that belong to a different
    * (or null) tenant — i.e. orphaned from a super-admin import.
    */

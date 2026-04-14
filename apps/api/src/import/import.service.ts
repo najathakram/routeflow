@@ -1209,6 +1209,46 @@ export class ImportService {
     return { adopted: orphans.length };
   }
 
+  /**
+   * Identify customers that have no orders and whose name matches a supplier
+   * record — these are vendor/expense contacts that were accidentally imported
+   * as customers. Mark them supplierOnly=true to hide from the Customers list.
+   * Safe to call multiple times; already-marked records are skipped.
+   */
+  async markSupplierOnlyCustomers(): Promise<{ marked: number; alreadyMarked: number }> {
+    // Find all suppliers for name-matching
+    const suppliers = await this.prisma.forTenant().supplier.findMany({
+      select: { id: true, name: true },
+    });
+    const supplierNames = new Set(suppliers.map((s) => s.name.toLowerCase().trim()));
+
+    // Candidates: customers with no orders AND whose businessName matches a supplier
+    const candidates = await this.prisma.forTenant().customer.findMany({
+      where: { supplierOnly: false },
+      select: {
+        id: true,
+        businessName: true,
+        _count: { select: { orders: true } },
+      },
+    });
+
+    const toMark = candidates.filter((c) => {
+      if ((c._count as any).orders > 0) return false; // has orders → real customer
+      const name = (c.businessName ?? "").toLowerCase().trim();
+      return supplierNames.has(name);
+    });
+
+    if (toMark.length === 0) return { marked: 0, alreadyMarked: 0 };
+
+    const ids = toMark.map((c) => c.id);
+    await this.prisma.forTenant().customer.updateMany({
+      where: { id: { in: ids } },
+      data: { supplierOnly: true },
+    });
+
+    return { marked: toMark.length, alreadyMarked: 0 };
+  }
+
   async importProducts(
     buffer: Buffer,
     userId: string,

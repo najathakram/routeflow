@@ -26,18 +26,22 @@ COPY apps/web/package.json apps/web/
 RUN npm install --force
 
 # ── Copy full source ──
-# cache-bust: 2026-04-13
 COPY packages/ packages/
 COPY apps/web/ apps/web/
 
 # NEXT_PUBLIC_* variables must be present at next build time — they are baked
 # into the JS bundle and are NOT available from runtime env vars.
-# We hardcode the production API URL here; it can be overridden via Docker
-# build arg: --build-arg NEXT_PUBLIC_API_URL=https://...
-ARG NEXT_PUBLIC_API_URL=https://routeflowapi-production-d504.up.railway.app/api/v1
+# Railway passes service env vars as Docker build args automatically for any
+# ARG declared in the Dockerfile.
+# BUILD_DATE forces a cache miss on the next build layer whenever it changes,
+# ensuring NEXT_PUBLIC vars are always freshly evaluated.
+ARG BUILD_DATE=2026-04-14
+ARG NEXT_PUBLIC_API_URL=https://routeflowapi-production.up.railway.app/api/v1
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ARG NEXT_PUBLIC_GOOGLE_MAPS_KEY=""
 ENV NEXT_PUBLIC_GOOGLE_MAPS_KEY=$NEXT_PUBLIC_GOOGLE_MAPS_KEY
+ARG NEXT_PUBLIC_DEFAULT_TENANT=""
+ENV NEXT_PUBLIC_DEFAULT_TENANT=$NEXT_PUBLIC_DEFAULT_TENANT
 
 # Build the Next.js application (output: standalone is set in next.config.mjs)
 WORKDIR /app/apps/web

@@ -84,7 +84,10 @@ export class CustomersService {
     const limit = Number(query.limit ?? 20);
     const skip = (page - 1) * limit;
 
-    const where: any = {};
+    const where: any = {
+      // Exclude supplier-only contacts (vendors imported from expense CSVs that have no orders)
+      supplierOnly: false,
+    };
     if (query.search) {
       const q = query.search;
       where.OR = [
