@@ -164,6 +164,11 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
   const catalogCategories = Array.from(new Set(allProducts.map((p: any) => p.category).filter(Boolean))) as string[];
   const catalogUnits = Array.from(new Set([...COMMON_UNITS, ...allProducts.map((p: any) => p.unit).filter(Boolean)])).sort() as string[];
 
+  // Standalone products eligible as parents in the "Variant of" edit dropdown
+  const variantOfCandidates = allProducts.filter(
+    (p: any) => !p.parentProductId && p.id !== params.id,
+  );
+
   // Reset active image index if images change
   React.useEffect(() => {
     setActiveImageIdx(0);
@@ -206,12 +211,21 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
       priceTier5: String(parseFloat(String(product.priceTier5 ?? priceNumber))),
       category: product.category ?? "",
       description: product.description ?? "",
+      parentProductId: product.parentProductId ?? "",
+      variantName: product.variantName ?? "",
     });
     setIsEditing(true);
   };
 
   const saveEdit = () => {
-    updateProduct.mutate({ id: params.id, ...editDraft });
+    const selectedParent = (editDraft.parentProductId as string)
+      ? allProducts.find((p: any) => p.id === editDraft.parentProductId)
+      : null;
+    const composedName =
+      selectedParent && (editDraft.variantName as string)?.trim()
+        ? `${(selectedParent as any).name} - ${(editDraft.variantName as string).trim()}`
+        : (editDraft.name as string);
+    updateProduct.mutate({ id: params.id, ...editDraft, name: composedName });
     setIsEditing(false);
   };
 
@@ -842,11 +856,28 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
             <div className="mb-4 flex items-start justify-between gap-3">
               <div className="min-w-0 flex-1">
                 {isEditing ? (
-                  <input
-                    value={(editDraft.name as string) ?? ""}
-                    onChange={(e) => setEditDraft((d) => ({ ...d, name: e.target.value }))}
-                    className="w-full rounded border border-surface-border px-2 py-1 text-lg font-bold text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  />
+                  (() => {
+                    const editParent = (editDraft.parentProductId as string)
+                      ? allProducts.find((p: any) => p.id === editDraft.parentProductId)
+                      : null;
+                    const previewName = editParent && (editDraft.variantName as string)?.trim()
+                      ? `${(editParent as any).name} - ${(editDraft.variantName as string).trim()}`
+                      : null;
+                    return editParent ? (
+                      <div>
+                        <p className="w-full rounded border border-surface-border bg-surface-raised px-2 py-1 text-lg font-bold text-navy/60 select-none">
+                          {previewName ?? <span className="text-navy/30 italic text-sm font-normal">auto-composed from parent + flavor</span>}
+                        </p>
+                        <p className="mt-0.5 text-xs text-navy/40 italic">Name auto-composed from parent + flavor</p>
+                      </div>
+                    ) : (
+                      <input
+                        value={(editDraft.name as string) ?? ""}
+                        onChange={(e) => setEditDraft((d) => ({ ...d, name: e.target.value }))}
+                        className="w-full rounded border border-surface-border px-2 py-1 text-lg font-bold text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                      />
+                    );
+                  })()
                 ) : (
                   <h1 className="text-xl font-bold text-navy">{product.name}</h1>
                 )}
@@ -978,6 +1009,54 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                   )
                 }
               />
+              {/* Variant of — always show when editing; in view mode show only if product has a parent */}
+              {(isEditing || product.parentProductId) && (
+                <InfoRow
+                  label="Variant of"
+                  value={isEditing ? (
+                    <select
+                      value={(editDraft.parentProductId as string) ?? ""}
+                      onChange={(e) => setEditDraft((d) => ({ ...d, parentProductId: e.target.value, variantName: e.target.value ? (d.variantName as string) : "" }))}
+                      className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    >
+                      <option value="">None (standalone product)</option>
+                      {variantOfCandidates.map((p: any) => (
+                        <option key={p.id} value={p.id}>{p.name}{p.sku ? ` — ${p.sku}` : ""}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    product.parent ? (
+                      <Link href={`/products/${product.parentProductId}`} className="text-brand-600 underline text-sm">
+                        {product.parent.name}
+                      </Link>
+                    ) : "—"
+                  )}
+                />
+              )}
+              {/* Flavor / variety — only when a parent is selected */}
+              {isEditing && (editDraft.parentProductId as string) && (
+                <InfoRow
+                  label="Flavor / variety"
+                  value={
+                    <div>
+                      <input
+                        value={(editDraft.variantName as string) ?? ""}
+                        onChange={(e) => setEditDraft((d) => ({ ...d, variantName: e.target.value }))}
+                        placeholder="e.g. Large, Strawberry, Red…"
+                        className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                      />
+                      {(editDraft.variantName as string)?.trim() && (() => {
+                        const p = allProducts.find((x: any) => x.id === editDraft.parentProductId) as any;
+                        return p ? (
+                          <p className="mt-1 text-xs text-navy/40 italic">
+                            Name will be: &ldquo;{p.name} - {(editDraft.variantName as string).trim()}&rdquo;
+                          </p>
+                        ) : null;
+                      })()}
+                    </div>
+                  }
+                />
+              )}
             </div>
 
             {/* Tier Prices */}
