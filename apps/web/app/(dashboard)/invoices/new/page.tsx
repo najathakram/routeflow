@@ -675,8 +675,9 @@ export default function NewInvoicePage() {
                       value={item.description}
                       onCreateProduct={(searchTerm) => {
                         const idx = items.findIndex((it) => it.key === item.key);
-                        setCreateProductInitialName(searchTerm);
-                        setCreateProductInitialSku("");
+                        const looksLikeSku = /^\d{6,}$/.test(searchTerm.trim());
+                        setCreateProductInitialName(looksLikeSku ? "" : searchTerm);
+                        setCreateProductInitialSku(looksLikeSku ? searchTerm.trim() : "");
                         setCreateProductTargetIdx(idx);
                         setCreateProductOpen(true);
                       }}

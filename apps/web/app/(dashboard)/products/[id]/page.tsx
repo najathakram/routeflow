@@ -133,6 +133,12 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
   const [makeVariantName, setMakeVariantName] = React.useState("");
   const [makeVariantScanLoading, setMakeVariantScanLoading] = React.useState(false);
 
+  // ── "Link existing product as variant" modal state ──────────────────────
+  const [linkExistingOpen, setLinkExistingOpen] = React.useState(false);
+  const [linkExistingProductId, setLinkExistingProductId] = React.useState("");
+  const [linkExistingVariantName, setLinkExistingVariantName] = React.useState("");
+  const [linkExistingSearch, setLinkExistingSearch] = React.useState("");
+
   // ── Auth ──────────────────────────────────────────────────────────────────
   const { user } = useAuth();
   const isOperator = user?.role === "OPERATOR";
@@ -440,6 +446,70 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
           setMakeVariantOpen(false);
         },
         onError: () => toast({ title: "Failed to link as variant", variant: "error" }),
+      },
+    );
+  };
+
+  // ── "Link existing product as variant" helpers ────────────────────────────
+
+  const openLinkExistingModal = () => {
+    setLinkExistingProductId("");
+    setLinkExistingVariantName("");
+    setLinkExistingSearch("");
+    setLinkExistingOpen(true);
+  };
+
+  // Derive filterable candidates: standalone products that aren't already variants of this product
+  const existingVariantIds = new Set((product?.variants ?? []).map((v: any) => v.id));
+  const linkCandidates = allProducts.filter(
+    (p: any) =>
+      !p.parentProductId &&          // standalone only
+      p.id !== params.id &&          // not self
+      !existingVariantIds.has(p.id), // not already a variant of this product
+  );
+  const filteredLinkCandidates = linkExistingSearch
+    ? linkCandidates.filter((p: any) =>
+        p.name.toLowerCase().includes(linkExistingSearch.toLowerCase()) ||
+        (p.sku && p.sku.toLowerCase().includes(linkExistingSearch.toLowerCase())),
+      )
+    : linkCandidates;
+
+  const handleLinkExistingSubmit = () => {
+    if (!linkExistingProductId) {
+      toast({ title: "Please select a product", variant: "error" });
+      return;
+    }
+    if (!linkExistingVariantName.trim()) {
+      toast({ title: "Flavor / variety name is required", variant: "error" });
+      return;
+    }
+    const composedName = `${product.name} - ${linkExistingVariantName.trim()}`;
+    updateProduct.mutate(
+      {
+        id: linkExistingProductId,
+        parentProductId: product.id,
+        variantName: linkExistingVariantName.trim(),
+        name: composedName,
+      },
+      {
+        onSuccess: () => {
+          toast({ title: "Product linked as variant", variant: "success" });
+          setLinkExistingOpen(false);
+        },
+        onError: () => toast({ title: "Failed to link product", variant: "error" }),
+      },
+    );
+  };
+
+  // ── Unlink from parent ────────────────────────────────────────────────────
+
+  const handleUnlinkFromParent = () => {
+    if (!window.confirm("Unlink this product from its parent? It will become a standalone product again.")) return;
+    updateProduct.mutate(
+      { id: params.id, parentProductId: null, variantName: null },
+      {
+        onSuccess: () => toast({ title: "Product unlinked — now standalone", variant: "success" }),
+        onError: () => toast({ title: "Failed to unlink", variant: "error" }),
       },
     );
   };
@@ -835,13 +905,21 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
 
             {/* Parent link banner for variants */}
             {product.parentProductId && product.parent && (
-              <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 mb-4">
+              <div className="flex items-center justify-between rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 mb-4">
                 <p className="text-sm text-blue-700">
                   This is a variant of{" "}
                   <Link href={`/products/${product.parentProductId}`} className="font-medium underline">
                     {product.parent.name}
                   </Link>
                 </p>
+                {isOperator && (
+                  <button
+                    onClick={handleUnlinkFromParent}
+                    className="text-xs font-medium text-blue-600 hover:text-blue-800 hover:underline"
+                  >
+                    Unlink
+                  </button>
+                )}
               </div>
             )}
 
@@ -1015,9 +1093,14 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-sm font-semibold text-navy">Variants</h3>
                 {isOperator && (
-                  <Button size="sm" leftIcon={<Plus className="h-3.5 w-3.5" />} onClick={() => openVariantModal()}>
-                    Add Variant
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Button size="sm" variant="secondary" onClick={openLinkExistingModal}>
+                      Link existing
+                    </Button>
+                    <Button size="sm" leftIcon={<Plus className="h-3.5 w-3.5" />} onClick={() => openVariantModal()}>
+                      Add Variant
+                    </Button>
+                  </div>
                 )}
               </div>
 
@@ -1243,6 +1326,85 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
             </p>
           ) : null;
         })()}
+      </div>
+    </Modal>
+
+    {/* ── Link Existing Product as Variant Modal ── */}
+    <Modal
+      open={linkExistingOpen}
+      onClose={() => setLinkExistingOpen(false)}
+      title="Link existing product as variant"
+      footer={
+        <>
+          <Button variant="secondary" onClick={() => setLinkExistingOpen(false)}>Cancel</Button>
+          <Button onClick={handleLinkExistingSubmit} loading={updateProduct.isPending}>
+            Link as variant
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <p className="text-sm text-navy/60">
+          Pick an existing standalone product to adopt as a variant of{" "}
+          <span className="font-medium text-navy">{product.name}</span>.
+        </p>
+
+        {/* Searchable product list */}
+        <div>
+          <label className="mb-1 block text-xs font-medium text-navy/60">
+            Product <span className="text-danger">*</span>
+          </label>
+          <input
+            type="text"
+            placeholder="Search by name or SKU…"
+            value={linkExistingSearch}
+            onChange={(e) => setLinkExistingSearch(e.target.value)}
+            className="mb-2 w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+          />
+          <div className="max-h-40 overflow-y-auto rounded border border-surface-border">
+            {filteredLinkCandidates.length === 0 ? (
+              <p className="px-3 py-4 text-center text-xs text-navy/40">No matching standalone products.</p>
+            ) : (
+              filteredLinkCandidates.map((p: any) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => setLinkExistingProductId(p.id)}
+                  className={cn(
+                    "flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-surface-raised transition-colors",
+                    linkExistingProductId === p.id && "bg-brand-50 ring-1 ring-brand-300",
+                  )}
+                >
+                  <div>
+                    <span className="font-medium text-navy">{p.name}</span>
+                    {p.sku && <span className="ml-2 text-xs text-navy/40">{p.sku}</span>}
+                  </div>
+                  <span className="text-xs text-navy/50">${parseFloat(String(p.pricePerUnit)).toFixed(2)}</span>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+
+        {/* Variant / flavor name */}
+        <div>
+          <label className="mb-1 block text-xs font-medium text-navy/60">
+            Flavor / variety <span className="text-danger">*</span>
+          </label>
+          <input
+            value={linkExistingVariantName}
+            onChange={(e) => setLinkExistingVariantName(e.target.value)}
+            placeholder='e.g. "Chocolate", "Large", "500ml"'
+            className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+          />
+        </div>
+
+        {/* Name preview */}
+        {linkExistingProductId && linkExistingVariantName.trim() && (
+          <p className="rounded bg-surface-raised px-3 py-2 text-xs text-navy/60">
+            Will be renamed: <span className="font-medium text-navy">{product.name} - {linkExistingVariantName.trim()}</span>
+          </p>
+        )}
       </div>
     </Modal>
     </>

@@ -613,8 +613,9 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
                       type="button"
                       className="flex w-full items-center gap-2 px-3 py-2.5 text-sm text-brand-500 hover:bg-surface-raised font-medium"
                       onClick={() => {
-                        setCreateProductInitialName(debouncedProductSearch);
-                        setCreateProductInitialSku("");
+                        const looksLikeSku = /^\d{6,}$/.test(debouncedProductSearch.trim());
+                        setCreateProductInitialName(looksLikeSku ? "" : debouncedProductSearch);
+                        setCreateProductInitialSku(looksLikeSku ? debouncedProductSearch.trim() : "");
                         setCreateProductOpen(true);
                         setProductSearch("");
                         setDebouncedProductSearch("");

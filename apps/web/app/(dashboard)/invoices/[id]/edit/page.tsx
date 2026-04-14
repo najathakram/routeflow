@@ -9,7 +9,9 @@ import { usePageTitle } from "@/lib/page-title-context";
 import { useInvoice, useUpdateInvoice, type CreateInvoiceItem } from "@/lib/api/invoices";
 import { useCustomers } from "@/lib/api/customers";
 import { useProducts } from "@/lib/api/products";
+import { apiClient } from "@/lib/api-client";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
+import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -21,15 +23,18 @@ function ProductSearchInput({
   value,
   onChange,
   onCreateProduct,
+  onBarcodeNotFound,
 }: {
   value: string;
   onChange: (description: string, productId?: string, unitPrice?: number) => void;
   onCreateProduct?: (searchTerm: string) => void;
+  onBarcodeNotFound?: (barcode: string) => void;
 }) {
   const [query, setQuery] = React.useState(value);
   const [debouncedQuery, setDebouncedQuery] = React.useState("");
   const [open, setOpen] = React.useState(false);
   const ref = React.useRef<HTMLDivElement>(null);
+  const inputRef = React.useRef<HTMLInputElement>(null);
 
   React.useEffect(() => {
     const t = setTimeout(() => setDebouncedQuery(query), 300);
@@ -48,8 +53,9 @@ function ProductSearchInput({
   }, []);
 
   return (
-    <div ref={ref} className="relative">
+    <div ref={ref} className="relative flex items-center gap-1">
       <input
+        ref={inputRef}
         type="text"
         placeholder="Description / product…"
         value={query}
@@ -60,6 +66,23 @@ function ProductSearchInput({
         }}
         onFocus={() => setOpen(true)}
         className="h-9 w-full rounded border border-surface-border bg-white px-2.5 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
+      />
+      <BarcodeScannerButton
+        inputRef={inputRef}
+        onScan={async (code) => {
+          try {
+            const product = await apiClient.get(`/products/barcode/${encodeURIComponent(code)}`).then((r) => r.data);
+            if (product) {
+              setQuery(product.name);
+              onChange(product.name, product.id, product.pricePerUnit);
+              setOpen(false);
+              return;
+            }
+          } catch {
+            // product not found by barcode
+          }
+          if (onBarcodeNotFound) onBarcodeNotFound(code);
+        }}
       />
       {open && debouncedQuery.length > 0 && (products.length > 0 || onCreateProduct) && (
         <div className="absolute z-10 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg">
@@ -344,8 +367,16 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
                     value={item.description}
                     onCreateProduct={(searchTerm) => {
                       const idx = items.findIndex((it) => it.key === item.key);
-                      setCreateProductInitialName(searchTerm);
-                      setCreateProductInitialSku("");
+                      const looksLikeSku = /^\d{6,}$/.test(searchTerm.trim());
+                      setCreateProductInitialName(looksLikeSku ? "" : searchTerm);
+                      setCreateProductInitialSku(looksLikeSku ? searchTerm.trim() : "");
+                      setCreateProductTargetIdx(idx);
+                      setCreateProductOpen(true);
+                    }}
+                    onBarcodeNotFound={(barcode) => {
+                      const idx = items.findIndex((it) => it.key === item.key);
+                      setCreateProductInitialName("");
+                      setCreateProductInitialSku(barcode);
                       setCreateProductTargetIdx(idx);
                       setCreateProductOpen(true);
                     }}
