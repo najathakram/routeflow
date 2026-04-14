@@ -30,62 +30,113 @@ export class BookkeepingService implements OnModuleInit {
   }
 
   async findAll(query: ListTransactionsDto) {
+    const { InvoiceStatus } = await import("@prisma/client");
     const { status, customerId, dateFrom, dateTo, page = 1, limit = 20 } = query;
     const skip = (page - 1) * limit;
-    const where: any = {};
 
-    if (status) where.status = status;
+    // Base filter: exclude drafts and voided invoices
+    const where: any = {
+      status: { notIn: [InvoiceStatus.DRAFT, InvoiceStatus.VOID] },
+    };
+
+    // Map TxnStatus filter values to InvoiceStatus
+    if (status === "PAID") {
+      where.status = InvoiceStatus.PAID;
+    } else if (status === "PARTIAL") {
+      where.status = InvoiceStatus.PARTIAL;
+    } else if (status === "UNPAID") {
+      where.status = { in: [InvoiceStatus.SENT, InvoiceStatus.VIEWED, InvoiceStatus.OVERDUE] };
+    }
+
     if (customerId) where.customerId = customerId;
     if (dateFrom || dateTo) {
-      where.createdAt = {};
-      if (dateFrom) where.createdAt.gte = new Date(dateFrom);
+      where.issueDate = {};
+      if (dateFrom) where.issueDate.gte = new Date(dateFrom);
       if (dateTo) {
-        const toDate = new Date(dateTo);
-        toDate.setUTCHours(23, 59, 59, 999);
-        where.createdAt.lte = toDate;
+        const d = new Date(dateTo);
+        d.setUTCHours(23, 59, 59, 999);
+        where.issueDate.lte = d;
       }
     }
 
-    const [data, total] = await Promise.all([
-      this.prisma.forTenant().transaction.findMany({
+    const [invoices, total] = await Promise.all([
+      this.prisma.forTenant().invoice.findMany({
         where,
         include: {
           customer: { select: { id: true, businessName: true } },
           payments: { orderBy: { createdAt: "desc" }, take: 1 },
+          order: { select: { id: true, orderNumber: true, status: true } },
         },
         skip,
         take: limit,
-        orderBy: { createdAt: "desc" },
+        orderBy: { issueDate: "desc" },
       }),
-      this.prisma.forTenant().transaction.count({ where }),
+      this.prisma.forTenant().invoice.count({ where }),
     ]);
+
+    const data = invoices.map((inv) => {
+      const paid = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
+      let ledgerStatus: TxnStatus;
+      if (inv.status === InvoiceStatus.PAID) ledgerStatus = TxnStatus.PAID;
+      else if (inv.status === InvoiceStatus.PARTIAL) ledgerStatus = TxnStatus.PARTIAL;
+      else ledgerStatus = TxnStatus.UNPAID;
+      return {
+        id: inv.id,
+        status: ledgerStatus,
+        customerId: inv.customerId,
+        createdAt: inv.issueDate,
+        totalOwed: Number(inv.total),
+        totalPaid: paid,
+        customer: inv.customer,
+        order: inv.order ?? { orderNumber: inv.invoiceNumber },
+        payments: inv.payments,
+      };
+    });
 
     return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
   }
 
   async findOne(id: string) {
-    const txn = await this.prisma.forTenant().transaction.findUnique({
+    const { InvoiceStatus } = await import("@prisma/client");
+    const inv = await this.prisma.forTenant().invoice.findUnique({
       where: { id },
       include: {
         customer: { select: { id: true, businessName: true, contactName: true } },
         order: { select: { id: true, orderNumber: true, status: true } },
-        items: {
-          include: { orderItem: { include: { product: { select: { id: true, name: true } } } } },
-        },
         payments: { orderBy: { createdAt: "desc" } },
       },
     });
-    if (!txn) throw new NotFoundException("Transaction not found");
-    return txn;
+    if (!inv) throw new NotFoundException("Transaction not found");
+    const paid = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
+    let ledgerStatus: TxnStatus;
+    if (inv.status === InvoiceStatus.PAID) ledgerStatus = TxnStatus.PAID;
+    else if (inv.status === InvoiceStatus.PARTIAL) ledgerStatus = TxnStatus.PARTIAL;
+    else ledgerStatus = TxnStatus.UNPAID;
+    return {
+      id: inv.id,
+      status: ledgerStatus,
+      customerId: inv.customerId,
+      createdAt: inv.issueDate,
+      totalOwed: Number(inv.total),
+      totalPaid: paid,
+      customer: inv.customer,
+      order: inv.order ?? { orderNumber: inv.invoiceNumber },
+      payments: inv.payments,
+      items: [],
+    };
   }
 
   async recordPayment(id: string, dto: RecordPaymentDto) {
+    const { InvoiceStatus, PaymentStatus } = await import("@prisma/client");
     return this.prisma.tenantTransaction(async (tx) => {
-      const txn = await tx.transaction.findUnique({ where: { id }, include: { payments: true } });
-      if (!txn) throw new NotFoundException("Transaction not found");
+      const inv = await tx.invoice.findUnique({
+        where: { id },
+        include: { payments: true },
+      });
+      if (!inv) throw new NotFoundException("Transaction not found");
 
-      const alreadyPaid = txn.payments.reduce((sum, p) => sum + Number(p.amount), 0);
-      const totalOwed = Number(txn.totalOwed);
+      const alreadyPaid = inv.payments.reduce((sum, p) => sum + Number(p.amount), 0);
+      const totalOwed = Number(inv.total);
       const remaining = totalOwed - alreadyPaid;
       if (remaining <= 0) {
         throw new BadRequestException("Transaction is already fully paid");
@@ -96,37 +147,56 @@ export class BookkeepingService implements OnModuleInit {
         );
       }
 
-      await tx.payment.create({
+      await tx.invoicePayment.create({
         data: {
-          transactionId: id,
+          invoiceId: id,
           amount: dto.amount,
-          method: dto.method,
+          method: dto.method as any,
           reference: dto.reference,
           notes: dto.notes,
+          status: PaymentStatus.PAID,
+          paidAt: new Date(),
         },
       });
 
-      const totalPaid = txn.payments.reduce((sum, p) => sum + Number(p.amount), 0) + dto.amount;
+      const totalPaid = alreadyPaid + dto.amount;
+      const newInvStatus =
+        totalPaid >= totalOwed
+          ? InvoiceStatus.PAID
+          : totalPaid > 0
+            ? InvoiceStatus.PARTIAL
+            : InvoiceStatus.SENT;
 
-      let newStatus: TxnStatus;
-      let paidAt: Date | null = null;
-      if (totalPaid >= totalOwed) {
-        newStatus = TxnStatus.PAID;
-        paidAt = new Date();
-      } else if (totalPaid > 0) {
-        newStatus = TxnStatus.PARTIAL;
-      } else {
-        newStatus = TxnStatus.UNPAID;
-      }
-
-      return tx.transaction.update({
+      const updated = await tx.invoice.update({
         where: { id },
-        data: { totalPaid, status: newStatus, paidAt },
+        data: {
+          status: newInvStatus,
+          ...(newInvStatus === InvoiceStatus.PAID ? { paidAt: new Date() } : {}),
+        },
         include: {
           customer: { select: { id: true, businessName: true } },
           payments: { orderBy: { createdAt: "desc" } },
+          order: { select: { id: true, orderNumber: true, status: true } },
         },
       });
+
+      let ledgerStatus: TxnStatus;
+      if (updated.status === InvoiceStatus.PAID) ledgerStatus = TxnStatus.PAID;
+      else if (updated.status === InvoiceStatus.PARTIAL) ledgerStatus = TxnStatus.PARTIAL;
+      else ledgerStatus = TxnStatus.UNPAID;
+
+      const paid2 = updated.payments.reduce((s, p) => s + Number(p.amount), 0);
+      return {
+        id: updated.id,
+        status: ledgerStatus,
+        customerId: updated.customerId,
+        createdAt: updated.issueDate,
+        totalOwed: Number(updated.total),
+        totalPaid: paid2,
+        customer: updated.customer,
+        order: updated.order ?? { orderNumber: updated.invoiceNumber },
+        payments: updated.payments,
+      };
     });
   }
 
