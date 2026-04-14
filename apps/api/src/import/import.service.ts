@@ -1,7 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { parse } from "csv-parse/sync";
-import { InvoiceStatus, UserRole } from "@prisma/client";
+import { InvoiceStatus, UserRole, Prisma } from "@prisma/client";
 import * as bcrypt from "bcrypt";
 import * as crypto from "crypto";
 
@@ -1045,15 +1045,16 @@ export class ImportService {
    */
   async diagnoseOrphanedContacts(tenantId: string) {
     // Use raw (unscoped) prisma to see across all tenants
-    const orphans = await this.prisma.$queryRawUnsafe<
+    const orphans = await this.prisma.$queryRaw<
       Array<{ id: string; businessName: string; tenantId: string | null }>
     >(
-      `SELECT c."id", c."businessName", c."tenantId"
-       FROM "Customer" c
-       WHERE c."zohoContactId" IS NOT NULL
-         AND (c."tenantId" IS NULL OR c."tenantId" != $1)
-       LIMIT 100`,
-      tenantId,
+      Prisma.sql`
+        SELECT c."id", c."businessName", c."tenantId"
+        FROM "Customer" c
+        WHERE c."zohoContactId" IS NOT NULL
+          AND (c."tenantId" IS NULL OR c."tenantId" != ${tenantId}::uuid)
+        LIMIT 100
+      `,
     );
     return {
       orphanCount: orphans.length,
@@ -1067,49 +1068,36 @@ export class ImportService {
    * zohoContactId but belong to a null/wrong tenant, adopting them into
    * the current tenant.
    *
-   * This is the fix for the case where a super-admin imported contacts
-   * without an active tenant context, leaving records with tenantId = null.
+   * This is the fix for the case where contacts were imported under the wrong
+   * tenant context (e.g. by a super-admin without active impersonation).
    */
   async adoptOrphanedContacts(tenantId: string): Promise<{ adopted: number }> {
     // Find all orphaned customers (tenantId IS NULL or != current tenant)
-    const orphans = await this.prisma.$queryRawUnsafe<Array<{ id: string; userId: string }>>(
-      `SELECT c."id", c."userId"
-       FROM "Customer" c
-       WHERE c."zohoContactId" IS NOT NULL
-         AND (c."tenantId" IS NULL OR c."tenantId" != $1)`,
-      tenantId,
+    const orphans = await this.prisma.$queryRaw<Array<{ id: string; userId: string }>>(
+      Prisma.sql`
+        SELECT c."id", c."userId"
+        FROM "Customer" c
+        WHERE c."zohoContactId" IS NOT NULL
+          AND (c."tenantId" IS NULL OR c."tenantId" != ${tenantId}::uuid)
+      `,
     );
 
     if (orphans.length === 0) return { adopted: 0 };
 
-    const customerIds = orphans.map((o) => o.id);
-    const userIds = orphans.map((o) => o.userId).filter(Boolean);
-
-    // Reassign Customer records
-    await this.prisma.$executeRawUnsafe(
-      `UPDATE "Customer" SET "tenantId" = $1
-       WHERE "id" = ANY($2::uuid[])`,
-      tenantId,
-      customerIds,
-    );
-
-    // Reassign associated User records
-    if (userIds.length > 0) {
-      await this.prisma.$executeRawUnsafe(
-        `UPDATE "User" SET "tenantId" = $1
-         WHERE "id" = ANY($2::uuid[])`,
-        tenantId,
-        userIds,
+    // Update each record individually to avoid array parameter serialisation issues
+    for (const o of orphans) {
+      await this.prisma.$executeRaw(
+        Prisma.sql`UPDATE "Customer" SET "tenantId" = ${tenantId}::uuid WHERE "id" = ${o.id}::uuid`,
+      );
+      if (o.userId) {
+        await this.prisma.$executeRaw(
+          Prisma.sql`UPDATE "User" SET "tenantId" = ${tenantId}::uuid WHERE "id" = ${o.userId}::uuid`,
+        );
+      }
+      await this.prisma.$executeRaw(
+        Prisma.sql`UPDATE "CustomerAddress" SET "tenantId" = ${tenantId}::uuid WHERE "customerId" = ${o.id}::uuid`,
       );
     }
-
-    // Reassign any CustomerAddress records that may also lack tenantId
-    await this.prisma.$executeRawUnsafe(
-      `UPDATE "CustomerAddress" SET "tenantId" = $1
-       WHERE "customerId" = ANY($2::uuid[])`,
-      tenantId,
-      customerIds,
-    );
 
     return { adopted: orphans.length };
   }
