@@ -20,6 +20,15 @@ import { JwtPayload } from "../auth/jwt-payload.interface";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { EmailService } from "../email/email.service";
 import { InvoicePdfService } from "./invoice-pdf.service";
+import { SystemConfigService } from "../system-config/system-config.service";
+
+const TERM_DAYS: Record<string, number> = {
+  "Due on Receipt": 0,
+  "Net 15": 15,
+  "Net 30": 30,
+  "Net 45": 45,
+  "Net 60": 60,
+};
 
 @Injectable()
 export class InvoicesService {
@@ -30,7 +39,15 @@ export class InvoicesService {
     private readonly gateway: RouteFlowGateway,
     private readonly emailService: EmailService,
     private readonly pdfService: InvoicePdfService,
+    private readonly systemConfig: SystemConfigService,
   ) {}
+
+  /** Resolve the tenant's default invoice terms and corresponding due-days offset. */
+  async resolveDefaultTerms(): Promise<{ terms: string; dueDays: number }> {
+    const stored = await this.systemConfig.get("invoice.defaultTerms");
+    const terms = stored || "Net 30";
+    return { terms, dueDays: TERM_DAYS[terms] ?? 30 };
+  }
 
   // ─── Helpers ──────────────────────────────────────────────────────────────
 
@@ -207,9 +224,10 @@ export class InvoicesService {
     const taxAmount = Number(order.tax);
     const total = Number(order.total);
 
-    // Due date: 30 days from now
+    // Due date from configured terms
+    const { terms: defaultTerms, dueDays } = await this.resolveDefaultTerms();
     const dueDate = new Date();
-    dueDate.setDate(dueDate.getDate() + 30);
+    dueDate.setDate(dueDate.getDate() + dueDays);
 
     // Generate invoice number
     const invoiceNumber = await this.generateInvoiceNumber(db);
@@ -226,6 +244,7 @@ export class InvoicesService {
         shippingFee: 0,
         total,
         dueDate,
+        terms: defaultTerms,
         issueDate: new Date(),
         notes: order.orderNumber ? `Order #${order.orderNumber}` : null,
         items: { create: itemsData },
@@ -282,8 +301,23 @@ export class InvoicesService {
     const taxAmount = Number(order.tax);
     const total = Number(order.total);
 
+    // Resolve default terms — read SystemConfig with explicit tenantId since we're
+    // outside the normal request context (fire-and-forget, no AsyncLocalStorage).
+    let defaultTerms = "Net 30";
+    let dueDays = 30;
+    if (tenantId) {
+      const cfg = await this.prisma.systemConfig.findFirst({
+        where: { tenantId, key: "invoice.defaultTerms" },
+        select: { value: true },
+      });
+      if (cfg?.value) {
+        defaultTerms = cfg.value;
+        dueDays = TERM_DAYS[defaultTerms] ?? 30;
+      }
+    }
+
     const dueDate = new Date();
-    dueDate.setDate(dueDate.getDate() + 30);
+    dueDate.setDate(dueDate.getDate() + dueDays);
 
     const invoiceNumber = await this.generateInvoiceNumber();
 
@@ -299,6 +333,7 @@ export class InvoicesService {
         shippingFee: 0,
         total,
         dueDate,
+        terms: defaultTerms,
         issueDate: new Date(),
         notes: order.orderNumber ? `Order #${order.orderNumber}` : null,
         items: { create: itemsData },

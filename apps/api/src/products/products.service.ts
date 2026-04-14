@@ -82,7 +82,7 @@ export class ProductsService {
     const product = await this.prisma.forTenant().product.findUnique({
       where: { id },
       include: {
-        variants: { where: { isActive: true }, orderBy: { variantName: "asc" } },
+        variants: { orderBy: [{ isActive: "desc" as const }, { variantName: "asc" as const }] },
         parent: true,
       },
     });

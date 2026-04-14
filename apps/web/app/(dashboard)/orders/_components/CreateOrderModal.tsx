@@ -4,7 +4,7 @@ import * as React from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { X, AlertTriangle, ChevronRight } from "lucide-react";
+import { X, AlertTriangle, ChevronRight, Plus } from "lucide-react";
 import { Modal, Textarea, Button, cn, useToast } from "@routeflow/ui/web";
 import { useQuery } from "@tanstack/react-query";
 import { useCustomers, useCustomerPrices, useCustomer } from "@/lib/api/customers";
@@ -12,6 +12,7 @@ import { useProducts } from "@/lib/api/products";
 import { useCreateOrder } from "@/lib/api/orders";
 import { apiClient } from "@/lib/api-client";
 import { getTierPrice } from "@/lib/pricing";
+import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -88,6 +89,11 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
   const [expandedParentId, setExpandedParentId] = React.useState<string | null>(null);
   const productSearchRef = React.useRef<HTMLInputElement>(null);
 
+  // Create-product modal state
+  const [createProductOpen, setCreateProductOpen] = React.useState(false);
+  const [createProductInitialName, setCreateProductInitialName] = React.useState("");
+  const [createProductInitialSku, setCreateProductInitialSku] = React.useState("");
+
   // Debounce customer search
   React.useEffect(() => {
     const t = setTimeout(() => setDebouncedCustomerSearch(customerSearch), 300);
@@ -152,9 +158,10 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
     } catch {
       // fall through to not-found
     }
-    // Nothing found — show clear error and stay focused for the next scan
-    toast({ title: "Item not found", variant: "error" });
-    setTimeout(() => productSearchRef.current?.focus(), 50);
+    // Nothing found — open create-product modal with scanned barcode as SKU
+    setCreateProductInitialName("");
+    setCreateProductInitialSku(code);
+    setCreateProductOpen(true);
   };
 
   // handleProductSearchEnter — called when Enter is pressed in the product search input.
@@ -189,6 +196,9 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
       setLineItemsError("");
       setRequestedDeliveryDate("");
       setOrderDiscount("");
+      setCreateProductOpen(false);
+      setCreateProductInitialName("");
+      setCreateProductInitialSku("");
       createOrder.reset();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -521,8 +531,11 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
                     : "border-surface-border focus:border-transparent",
                 )}
               />
-              {filteredProducts.length > 0 && productSearch && (
+              {productSearch && (filteredProducts.length > 0 || debouncedProductSearch.length > 0) && (
                 <ul className="absolute left-0 right-0 top-full z-10 mt-1 overflow-hidden rounded-lg border border-surface-border bg-white shadow-dropdown">
+                  {filteredProducts.length === 0 && debouncedProductSearch.length > 0 && (
+                    <li className="px-3 py-2 text-sm text-navy/50">No products found.</li>
+                  )}
                   {filteredProducts.map((p: any) => {
                     const hasVariants = p.variants?.length > 0;
                     const isExpanded = expandedParentId === p.id;
@@ -595,6 +608,22 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
                       </React.Fragment>
                     );
                   })}
+                  <li className="border-t border-surface-border">
+                    <button
+                      type="button"
+                      className="flex w-full items-center gap-2 px-3 py-2.5 text-sm text-brand-500 hover:bg-surface-raised font-medium"
+                      onClick={() => {
+                        setCreateProductInitialName(debouncedProductSearch);
+                        setCreateProductInitialSku("");
+                        setCreateProductOpen(true);
+                        setProductSearch("");
+                        setDebouncedProductSearch("");
+                      }}
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      Create new product{debouncedProductSearch ? `: "${debouncedProductSearch}"` : ""}
+                    </button>
+                  </li>
                 </ul>
               )}
             </div>
@@ -809,6 +838,24 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
           </section>
         </div>
       </form>
+
+      <InlineCreateProductModal
+        isOpen={createProductOpen}
+        onClose={() => setCreateProductOpen(false)}
+        onCreated={(product) => {
+          addLineItem({
+            id: product.id,
+            name: product.name,
+            sku: product.sku,
+            unit: product.unit,
+            pricePerUnit: product.pricePerUnit,
+            unitsPerBox: undefined,
+          });
+          setCreateProductOpen(false);
+        }}
+        initialName={createProductInitialName}
+        initialSku={createProductInitialSku}
+      />
     </Modal>
   );
 }

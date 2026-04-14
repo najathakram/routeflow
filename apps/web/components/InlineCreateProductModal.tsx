@@ -23,6 +23,8 @@ interface InlineCreateProductModalProps {
   onCreated: (product: CreatedProduct) => void;
   /** Pre-fill name from a search term the operator typed */
   initialName?: string;
+  /** Pre-fill SKU from a scanned barcode */
+  initialSku?: string;
 }
 
 export function InlineCreateProductModal({
@@ -30,6 +32,7 @@ export function InlineCreateProductModal({
   onClose,
   onCreated,
   initialName = "",
+  initialSku = "",
 }: InlineCreateProductModalProps) {
   const { toast } = useToast();
   const createProduct = useCreateProduct();
@@ -50,12 +53,12 @@ export function InlineCreateProductModal({
   const { data: allProductsData } = useProducts({ limit: 0, isActive: true });
   const parentCandidates = (allProductsData?.data ?? []).filter((p: any) => !p.parentProductId);
 
-  // Sync initialName when it changes
+  // Sync initialName / initialSku when modal opens
   React.useEffect(() => {
     if (isOpen) {
-      setForm((f) => ({ ...f, name: initialName }));
+      setForm((f) => ({ ...f, name: initialName, sku: initialSku || "" }));
     }
-  }, [isOpen, initialName]);
+  }, [isOpen, initialName, initialSku]);
 
   if (!isOpen) return null;
 

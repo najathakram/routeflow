@@ -571,6 +571,27 @@ export interface PriceAdjustmentDto {
   sinceDate?: string;
 }
 
+// ─── Invoice Settings ──────────────────────────────────────────────────────
+
+export interface InvoiceSettings {
+  defaultTerms: string;
+}
+
+export function useInvoiceSettings() {
+  return useQuery<InvoiceSettings>({
+    queryKey: ['invoice-settings'],
+    queryFn: () => apiClient.get('/settings/invoice').then((r) => r.data),
+  });
+}
+
+export function useUpdateInvoiceSettings() {
+  const qc = useQueryClient();
+  return useMutation<InvoiceSettings, Error, Partial<InvoiceSettings>>({
+    mutationFn: (dto) => apiClient.patch('/settings/invoice', dto).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['invoice-settings'] }),
+  });
+}
+
 export function useAdjustInvoicePrices() {
   const qc = useQueryClient();
   return useMutation<Invoice, Error, { id: string } & PriceAdjustmentDto>({

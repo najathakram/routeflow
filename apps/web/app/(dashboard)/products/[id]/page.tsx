@@ -14,6 +14,8 @@ import {
   ChevronRight,
   Star,
   Scissors,
+  Plus,
+  Power,
 } from "lucide-react";
 import {
   BarChart,
@@ -24,10 +26,11 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
-import { Badge, Button, Card, cn } from "@routeflow/ui/web";
+import { Badge, Button, Card, Modal, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useToast } from "@routeflow/ui/web";
-import { useProduct, useProducts, useUpdateProduct, useDeleteProduct, useUploadProductImages, useDeleteProductImage } from "@/lib/api/products";
+import { useProduct, useProducts, useUpdateProduct, useDeleteProduct, useUploadProductImages, useDeleteProductImage, useCreateProduct, type ApiProduct } from "@/lib/api/products";
+import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { useAuth } from "@/lib/auth-context";
 import { CropModal } from "./CropModal";
 import { ImageLightbox } from "./ImageLightbox";
@@ -103,6 +106,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
   const { data: product, isLoading } = useProduct(params.id);
   const { data: allProductsResult } = useProducts({ limit: 0 });
   const updateProduct = useUpdateProduct();
+  const createProduct = useCreateProduct();
   const deleteProduct = useDeleteProduct();
   const uploadImages = useUploadProductImages(params.id);
   const deleteImage = useDeleteProductImage(params.id);
@@ -115,6 +119,12 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
   const [selectedImages, setSelectedImages] = React.useState<Set<number>>(new Set());
   const [selectMode, setSelectMode] = React.useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
+
+  // ── Variant modal state ──────────────────────────────────────────────────
+  const [variantModalOpen, setVariantModalOpen] = React.useState(false);
+  const [editingVariant, setEditingVariant] = React.useState<ApiProduct | null>(null);
+  const [variantForm, setVariantForm] = React.useState({ variantName: "", sku: "", price: "", unit: "" });
+  const variantSkuRef = React.useRef<HTMLInputElement>(null);
 
   // ── Auth ──────────────────────────────────────────────────────────────────
   const { user } = useAuth();
@@ -283,6 +293,92 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
       setCropState({ queue: [file], accumulated: [] });
     } catch {
       toast({ title: "Failed to load image for cropping", variant: "error" });
+    }
+  };
+
+  // ── Variant helpers ─────────────────────────────────────────────────────
+
+  const openVariantModal = (variant?: ApiProduct) => {
+    if (variant) {
+      setEditingVariant(variant);
+      setVariantForm({
+        variantName: variant.variantName ?? "",
+        sku: variant.sku ?? "",
+        price: String(parseFloat(String(variant.pricePerUnit))),
+        unit: variant.unit ?? product.unit,
+      });
+    } else {
+      setEditingVariant(null);
+      setVariantForm({
+        variantName: "",
+        sku: "",
+        price: String(priceNumber),
+        unit: product.unit,
+      });
+    }
+    setVariantModalOpen(true);
+  };
+
+  const closeVariantModal = () => {
+    setVariantModalOpen(false);
+    setEditingVariant(null);
+  };
+
+  const handleVariantSubmit = () => {
+    if (!variantForm.variantName.trim()) {
+      toast({ title: "Variant name is required", variant: "error" });
+      return;
+    }
+    if (editingVariant) {
+      updateProduct.mutate(
+        {
+          id: editingVariant.id,
+          variantName: variantForm.variantName,
+          sku: variantForm.sku || undefined,
+          pricePerUnit: variantForm.price,
+        },
+        {
+          onSuccess: () => {
+            toast({ title: "Variant updated", variant: "success" });
+            closeVariantModal();
+          },
+          onError: () => toast({ title: "Failed to update variant", variant: "error" }),
+        },
+      );
+    } else {
+      createProduct.mutate(
+        {
+          name: `${product.name} - ${variantForm.variantName}`,
+          parentProductId: product.id,
+          variantName: variantForm.variantName,
+          sku: variantForm.sku || undefined,
+          unit: variantForm.unit || product.unit,
+          pricePerUnit: variantForm.price || String(product.pricePerUnit),
+          category: product.category || undefined,
+        },
+        {
+          onSuccess: () => {
+            toast({ title: "Variant created", variant: "success" });
+            closeVariantModal();
+          },
+          onError: () => toast({ title: "Failed to create variant", variant: "error" }),
+        },
+      );
+    }
+  };
+
+  const handleToggleVariantActive = (variant: ApiProduct) => {
+    if (variant.isActive) {
+      if (!window.confirm("Deactivate this variant?")) return;
+      updateProduct.mutate(
+        { id: variant.id, isActive: false },
+        { onSuccess: () => toast({ title: "Variant deactivated", variant: "success" }) },
+      );
+    } else {
+      updateProduct.mutate(
+        { id: variant.id, isActive: true },
+        { onSuccess: () => toast({ title: "Variant reactivated", variant: "success" }) },
+      );
     }
   };
 
@@ -665,6 +761,18 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
               </div>
             </div>
 
+            {/* Parent link banner for variants */}
+            {product.parentProductId && product.parent && (
+              <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 mb-4">
+                <p className="text-sm text-blue-700">
+                  This is a variant of{" "}
+                  <Link href={`/products/${product.parentProductId}`} className="font-medium underline">
+                    {product.parent.name}
+                  </Link>
+                </p>
+              </div>
+            )}
+
             <div className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3">
               <InfoRow
                 label="SKU / Barcode"
@@ -828,9 +936,167 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
               <div className="h-[200px] animate-pulse rounded-lg bg-surface-raised" />
             )}
           </Card>
+
+          {/* Variants section — only for non-variant (parent) products */}
+          {!product.parentProductId && (
+            <Card>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-sm font-semibold text-navy">Variants</h3>
+                {isOperator && (
+                  <Button size="sm" leftIcon={<Plus className="h-3.5 w-3.5" />} onClick={() => openVariantModal()}>
+                    Add Variant
+                  </Button>
+                )}
+              </div>
+
+              {!product.variants || product.variants.length === 0 ? (
+                <p className="text-sm text-navy/40 text-center py-8">
+                  No variants yet. Add flavors, sizes, or other variations.
+                </p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-surface-border text-left">
+                        <th className="pb-2 pr-4 text-xs font-medium text-navy/50">Variant Name</th>
+                        <th className="pb-2 pr-4 text-xs font-medium text-navy/50">SKU</th>
+                        <th className="pb-2 pr-4 text-xs font-medium text-navy/50">Price</th>
+                        <th className="pb-2 pr-4 text-xs font-medium text-navy/50">Status</th>
+                        {isOperator && <th className="pb-2 text-xs font-medium text-navy/50">Actions</th>}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {product.variants.map((variant: ApiProduct) => (
+                        <tr key={variant.id} className="border-b border-surface-border last:border-0">
+                          <td className="py-2.5 pr-4">
+                            <Link
+                              href={`/products/${variant.id}`}
+                              className="font-medium text-brand-600 hover:underline"
+                            >
+                              {variant.variantName || variant.name}
+                            </Link>
+                          </td>
+                          <td className="py-2.5 pr-4 font-mono text-xs text-navy/60">
+                            {variant.sku || <span className="text-navy/30">&mdash;</span>}
+                          </td>
+                          <td className="py-2.5 pr-4 text-navy">
+                            ${parseFloat(String(variant.pricePerUnit)).toFixed(2)}
+                          </td>
+                          <td className="py-2.5 pr-4">
+                            <Badge
+                              variant={variant.isActive ? "success" : "neutral"}
+                              label={variant.isActive ? "Active" : "Inactive"}
+                            />
+                          </td>
+                          {isOperator && (
+                            <td className="py-2.5">
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  onClick={() => openVariantModal(variant)}
+                                  title="Edit variant"
+                                  className="rounded p-1.5 text-navy/40 hover:bg-surface-raised hover:text-navy transition-colors"
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </button>
+                                <button
+                                  onClick={() => handleToggleVariantActive(variant)}
+                                  title={variant.isActive ? "Deactivate" : "Reactivate"}
+                                  className={cn(
+                                    "rounded p-1.5 transition-colors",
+                                    variant.isActive
+                                      ? "text-navy/40 hover:bg-warning-bg hover:text-warning"
+                                      : "text-navy/40 hover:bg-success-bg hover:text-success",
+                                  )}
+                                >
+                                  <Power className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            </td>
+                          )}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Card>
+          )}
         </div>
       </div>
     </div>
+
+    {/* Variant Add/Edit Modal */}
+    <Modal
+      open={variantModalOpen}
+      onClose={closeVariantModal}
+      title={editingVariant ? "Edit Variant" : "Add Variant"}
+      footer={
+        <>
+          <Button variant="secondary" onClick={closeVariantModal}>Cancel</Button>
+          <Button
+            onClick={handleVariantSubmit}
+            loading={createProduct.isPending || updateProduct.isPending}
+          >
+            {editingVariant ? "Save Changes" : "Create Variant"}
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <div>
+          <label className="mb-1 block text-xs font-medium text-navy/60">
+            Variant Name <span className="text-danger">*</span>
+          </label>
+          <input
+            value={variantForm.variantName}
+            onChange={(e) => setVariantForm((f) => ({ ...f, variantName: e.target.value }))}
+            placeholder='e.g. "Chocolate", "Large", "500ml"'
+            className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+          />
+        </div>
+
+        <div>
+          <label className="mb-1 block text-xs font-medium text-navy/60">SKU</label>
+          <div className="flex gap-2">
+            <input
+              ref={variantSkuRef}
+              value={variantForm.sku}
+              onChange={(e) => setVariantForm((f) => ({ ...f, sku: e.target.value }))}
+              placeholder="Optional SKU or barcode"
+              className="flex-1 rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+            />
+            <BarcodeScannerButton
+              onScan={(code) => setVariantForm((f) => ({ ...f, sku: code }))}
+              inputRef={variantSkuRef}
+            />
+          </div>
+        </div>
+
+        <div>
+          <label className="mb-1 block text-xs font-medium text-navy/60">Price</label>
+          <input
+            type="number"
+            min={0}
+            step={0.01}
+            value={variantForm.price}
+            onChange={(e) => setVariantForm((f) => ({ ...f, price: e.target.value }))}
+            className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+          />
+        </div>
+
+        {!editingVariant && (
+          <div>
+            <label className="mb-1 block text-xs font-medium text-navy/60">Unit</label>
+            <input
+              value={variantForm.unit}
+              onChange={(e) => setVariantForm((f) => ({ ...f, unit: e.target.value }))}
+              placeholder={product.unit}
+              className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+            />
+          </div>
+        )}
+      </div>
+    </Modal>
     </>
   );
 }

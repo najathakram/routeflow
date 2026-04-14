@@ -20,6 +20,7 @@ import { useCustomers, useCustomerPrices, type Customer } from "@/lib/api/custom
 import { useProducts } from "@/lib/api/products";
 import { apiClient } from "@/lib/api-client";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
+import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { fmt } from "@/lib/formatting";
 
 // ─── Terms options ─────────────────────────────────────────────────────────────
@@ -153,9 +154,13 @@ function CustomerSearch({
 function ProductSearchInput({
   value,
   onChange,
+  onCreateProduct,
+  onBarcodeNotFound,
 }: {
   value: string;
   onChange: (description: string, productId: string, unitPrice: string, avgCost?: number, unitsPerBox?: number) => void;
+  onCreateProduct?: (searchTerm: string) => void;
+  onBarcodeNotFound?: (barcode: string) => void;
 }) {
   const [query, setQuery] = React.useState(value);
   const [debouncedQuery, setDebouncedQuery] = React.useState("");
@@ -217,15 +222,22 @@ function ProductSearchInput({
         onScan={async (code) => {
           try {
             const product = await apiClient.get(`/products/barcode/${encodeURIComponent(code)}`).then(r => r.data);
-            if (product) selectProduct(product);
+            if (product) { selectProduct(product); return; }
           } catch {
-            // product not found — leave query as-is
+            // product not found by barcode
+          }
+          // Not found — open create-product modal with scanned code as SKU
+          if (onBarcodeNotFound) {
+            onBarcodeNotFound(code);
           }
         }}
       />
-      {open && products.length > 0 && (
+      {open && debouncedQuery.length > 0 && (products.length > 0 || onCreateProduct) && (
         <div className="absolute left-0 top-full z-10 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg">
           <ul className="max-h-48 overflow-y-auto">
+            {products.length === 0 && (
+              <li className="px-3 py-2 text-sm text-navy/50">No products found.</li>
+            )}
             {products.map((p: any) => {
               const hasVariants = p.variants?.length > 0;
               const isExpanded = expandedParentId === p.id;
@@ -270,6 +282,20 @@ function ProductSearchInput({
                 </React.Fragment>
               );
             })}
+            {onCreateProduct && (
+              <li className="border-t border-surface-border">
+                <button
+                  className="flex w-full items-center gap-2 px-3 py-2.5 text-sm text-brand-500 hover:bg-surface-raised font-medium"
+                  onClick={() => {
+                    onCreateProduct(debouncedQuery);
+                    setOpen(false);
+                  }}
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Create new product{debouncedQuery ? `: "${debouncedQuery}"` : ""}
+                </button>
+              </li>
+            )}
           </ul>
         </div>
       )}
@@ -341,6 +367,12 @@ export default function NewInvoicePage() {
   const [adjustment, setAdjustment] = React.useState(0);
   const [errors, setErrors] = React.useState<Record<string, string>>({});
   const [showAvgCost, setShowAvgCost] = React.useState(false);
+
+  // Create-product modal state
+  const [createProductOpen, setCreateProductOpen] = React.useState(false);
+  const [createProductInitialName, setCreateProductInitialName] = React.useState("");
+  const [createProductInitialSku, setCreateProductInitialSku] = React.useState("");
+  const [createProductTargetIdx, setCreateProductTargetIdx] = React.useState<number | null>(null);
 
   const { data: settings } = useQuery<{ taxRate?: number }>({
     queryKey: ["settings"],
@@ -641,6 +673,20 @@ export default function NewInvoicePage() {
                     {/* Description / product search */}
                     <ProductSearchInput
                       value={item.description}
+                      onCreateProduct={(searchTerm) => {
+                        const idx = items.findIndex((it) => it.key === item.key);
+                        setCreateProductInitialName(searchTerm);
+                        setCreateProductInitialSku("");
+                        setCreateProductTargetIdx(idx);
+                        setCreateProductOpen(true);
+                      }}
+                      onBarcodeNotFound={(barcode) => {
+                        const idx = items.findIndex((it) => it.key === item.key);
+                        setCreateProductInitialName("");
+                        setCreateProductInitialSku(barcode);
+                        setCreateProductTargetIdx(idx);
+                        setCreateProductOpen(true);
+                      }}
                       onChange={(desc, pid, price, avgCost, unitsPerBox) => {
                         const specialPrice = pid ? priceMap[pid] : undefined;
                         const effectivePrice = specialPrice ?? (price ? parseFloat(price) : item.unitPrice);
@@ -889,6 +935,26 @@ export default function NewInvoicePage() {
           </div>
         </div>
       </div>
+
+      <InlineCreateProductModal
+        isOpen={createProductOpen}
+        onClose={() => { setCreateProductOpen(false); setCreateProductTargetIdx(null); }}
+        onCreated={(product) => {
+          if (createProductTargetIdx !== null) {
+            setItems((prev) =>
+              prev.map((item, i) =>
+                i === createProductTargetIdx
+                  ? { ...item, description: product.name, productId: product.id, unitPrice: parseFloat(product.pricePerUnit) || 0 }
+                  : item
+              )
+            );
+          }
+          setCreateProductOpen(false);
+          setCreateProductTargetIdx(null);
+        }}
+        initialName={createProductInitialName}
+        initialSku={createProductInitialSku}
+      />
 
       {/* Sticky bottom bar (Zoho-style) */}
       <div className="fixed inset-x-0 bottom-0 z-40 border-t border-surface-border bg-white px-6 py-3 shadow-[0_-2px_8px_0_rgb(0,0,0,0.06)]">

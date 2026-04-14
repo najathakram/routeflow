@@ -9,6 +9,7 @@ import { usePageTitle } from "@/lib/page-title-context";
 import { useInvoice, useUpdateInvoice, type CreateInvoiceItem } from "@/lib/api/invoices";
 import { useCustomers } from "@/lib/api/customers";
 import { useProducts } from "@/lib/api/products";
+import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -19,9 +20,11 @@ const fmt = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" 
 function ProductSearchInput({
   value,
   onChange,
+  onCreateProduct,
 }: {
   value: string;
   onChange: (description: string, productId?: string, unitPrice?: number) => void;
+  onCreateProduct?: (searchTerm: string) => void;
 }) {
   const [query, setQuery] = React.useState(value);
   const [debouncedQuery, setDebouncedQuery] = React.useState("");
@@ -58,9 +61,12 @@ function ProductSearchInput({
         onFocus={() => setOpen(true)}
         className="h-9 w-full rounded border border-surface-border bg-white px-2.5 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
       />
-      {open && debouncedQuery.length > 0 && products.length > 0 && (
+      {open && debouncedQuery.length > 0 && (products.length > 0 || onCreateProduct) && (
         <div className="absolute z-10 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg">
           <ul className="max-h-36 overflow-y-auto">
+            {products.length === 0 && (
+              <li className="px-3 py-2 text-sm text-navy/50">No products found.</li>
+            )}
             {products.map((p: { id: string; name: string; pricePerUnit: number; sku?: string }) => (
               <li key={p.id}>
                 <button
@@ -79,6 +85,20 @@ function ProductSearchInput({
                 </button>
               </li>
             ))}
+            {onCreateProduct && (
+              <li className="border-t border-surface-border">
+                <button
+                  className="flex w-full items-center gap-2 px-3 py-2.5 text-sm text-brand-500 hover:bg-surface-raised font-medium"
+                  onClick={() => {
+                    onCreateProduct(debouncedQuery);
+                    setOpen(false);
+                  }}
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Create new product{debouncedQuery ? `: "${debouncedQuery}"` : ""}
+                </button>
+              </li>
+            )}
           </ul>
         </div>
       )}
@@ -128,6 +148,12 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
   const [terms, setTerms] = React.useState("");
   const [items, setItems] = React.useState<LineItemState[]>([createEmptyItem()]);
   const [errors, setErrors] = React.useState<Record<string, string>>({});
+
+  // Create-product modal state
+  const [createProductOpen, setCreateProductOpen] = React.useState(false);
+  const [createProductInitialName, setCreateProductInitialName] = React.useState("");
+  const [createProductInitialSku, setCreateProductInitialSku] = React.useState("");
+  const [createProductTargetIdx, setCreateProductTargetIdx] = React.useState<number | null>(null);
 
   React.useEffect(() => {
     if (invoice && !initialized) {
@@ -316,6 +342,13 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
                 <div key={item.key} className="grid grid-cols-[1fr_70px_90px_70px_70px_32px] items-center gap-2">
                   <ProductSearchInput
                     value={item.description}
+                    onCreateProduct={(searchTerm) => {
+                      const idx = items.findIndex((it) => it.key === item.key);
+                      setCreateProductInitialName(searchTerm);
+                      setCreateProductInitialSku("");
+                      setCreateProductTargetIdx(idx);
+                      setCreateProductOpen(true);
+                    }}
                     onChange={(description, productId, unitPrice) => {
                       updateItem(item.key, {
                         description,
@@ -468,6 +501,26 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
           </Card>
         </div>
       </div>
+
+      <InlineCreateProductModal
+        isOpen={createProductOpen}
+        onClose={() => { setCreateProductOpen(false); setCreateProductTargetIdx(null); }}
+        onCreated={(product) => {
+          if (createProductTargetIdx !== null) {
+            setItems((prev) =>
+              prev.map((item, i) =>
+                i === createProductTargetIdx
+                  ? { ...item, description: product.name, productId: product.id, unitPrice: parseFloat(product.pricePerUnit) || 0 }
+                  : item
+              )
+            );
+          }
+          setCreateProductOpen(false);
+          setCreateProductTargetIdx(null);
+        }}
+        initialName={createProductInitialName}
+        initialSku={createProductInitialSku}
+      />
     </div>
   );
 }

@@ -20,6 +20,7 @@ import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { UpdateRouteSettingsDto } from "./dto/update-route-settings.dto";
+import { UpdateInvoiceSettingsDto } from "./dto/update-invoice-settings.dto";
 
 @Controller("settings")
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -299,5 +300,24 @@ export class SettingsController {
       await this.svc.set("route.defaultStartTime", dto.defaultStartTime);
     }
     return this.getRouteSettings();
+  }
+
+  // ─── Invoice Settings ─────────────────────────────────────────────────────────
+
+  @Get("invoice")
+  async getInvoiceSettings() {
+    const defaultTerms = await this.svc.get("invoice.defaultTerms");
+    return {
+      defaultTerms: defaultTerms ?? "Net 30",
+    };
+  }
+
+  @Patch("invoice")
+  @UsePipes(new ValidationPipe({ whitelist: true }))
+  async updateInvoiceSettings(@Body() dto: UpdateInvoiceSettingsDto) {
+    if (dto.defaultTerms !== undefined) {
+      await this.svc.set("invoice.defaultTerms", dto.defaultTerms);
+    }
+    return this.getInvoiceSettings();
   }
 }

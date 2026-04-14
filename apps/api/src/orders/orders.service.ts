@@ -653,6 +653,10 @@ export class OrdersService {
   }
 
   async completeStop(runId: string, stopId: string, dto: CompleteStopDto, user: JwtPayload) {
+    // Resolve default invoice terms BEFORE the transaction (avoids nested async DB reads inside tx)
+    const { terms: invoiceTerms, dueDays: invoiceDueDays } =
+      await this.invoicesService.resolveDefaultTerms();
+
     // Capture IDs of transactions created/updated so we can enqueue PDF jobs after commit
     const invoiceTransactionIds: string[] = [];
 
@@ -855,7 +859,7 @@ export class OrdersService {
           const invoiceNumber = `${invPrefix}${String(seq).padStart(4, "0")}`;
 
           const dueDate = new Date();
-          dueDate.setDate(dueDate.getDate() + 30);
+          dueDate.setDate(dueDate.getDate() + invoiceDueDays);
 
           // Compute totals from delivered items only
           const invoiceSubtotal = deliveredInBatch.reduce(
@@ -877,6 +881,7 @@ export class OrdersService {
               shippingFee: 0,
               total: invoiceSubtotal,
               dueDate,
+              terms: invoiceTerms,
               issueDate: new Date(),
               notes: order.orderNumber
                 ? `Order #${order.orderNumber} — delivery batch`

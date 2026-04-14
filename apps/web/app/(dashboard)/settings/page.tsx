@@ -37,6 +37,7 @@ import {
   Package,
   LogOut as LogOutIcon,
   Loader2,
+  FileText,
 } from "lucide-react";
 import {
   Input,
@@ -56,6 +57,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api-client";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
 import { useImportProducts, type ZohoImportItem } from "@/lib/api/products";
+import { useInvoiceSettings, useUpdateInvoiceSettings } from "@/lib/api/invoices";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -1930,6 +1932,75 @@ function MyAccountTab() {
   );
 }
 
+// ─── TAB: Invoicing ──────────────────────────────────────────────────────────
+
+const TERMS_OPTIONS = [
+  { value: "Due on Receipt", label: "Due on Receipt" },
+  { value: "Net 15", label: "Net 15" },
+  { value: "Net 30", label: "Net 30" },
+  { value: "Net 45", label: "Net 45" },
+  { value: "Net 60", label: "Net 60" },
+];
+
+function InvoicingTab() {
+  const { toast } = useToast();
+  const { data: settings, isLoading } = useInvoiceSettings();
+  const updateSettings = useUpdateInvoiceSettings();
+
+  const handleChange = (value: string) => {
+    updateSettings.mutate(
+      { defaultTerms: value },
+      {
+        onSuccess: () =>
+          toast({
+            title: "Invoice settings saved",
+            description: "Default terms updated successfully.",
+            variant: "success",
+          }),
+        onError: () =>
+          toast({
+            title: "Failed to save",
+            description: "Could not update invoice settings.",
+            variant: "error",
+          }),
+      },
+    );
+  };
+
+  return (
+    <div className="space-y-5">
+      <Card title="Default Invoice Terms">
+        <div className="space-y-4">
+          <p className="text-sm text-navy/60">
+            Automatically applied to invoices created from deliveries
+          </p>
+
+          <div className="flex items-center gap-4 rounded-lg border border-surface-border bg-surface-raised p-4">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-brand-50">
+              <FileText className="h-5 w-5 text-brand-500" />
+            </div>
+            <div className="flex-1 space-y-1">
+              <p className="text-sm font-semibold text-navy">Payment Terms</p>
+              <select
+                className="w-full rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-navy focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                value={settings?.defaultTerms ?? "Net 30"}
+                onChange={(e) => handleChange(e.target.value)}
+                disabled={isLoading || updateSettings.isPending}
+              >
+                {TERMS_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function SettingsPage() {
@@ -1979,6 +2050,9 @@ export default function SettingsPage() {
           <TabTrigger value="email" icon={<Mail className="h-4 w-4" />}>
             Email
           </TabTrigger>
+          <TabTrigger value="invoicing" icon={<FileText className="h-4 w-4" />}>
+            Invoicing
+          </TabTrigger>
           <TabTrigger value="account" icon={<UserCircle className="h-4 w-4" />}>
             My Account
           </TabTrigger>
@@ -2002,6 +2076,10 @@ export default function SettingsPage() {
 
         <Tabs.Content value="email" className="mt-6 max-w-2xl focus:outline-none">
           <EmailSettingsTab />
+        </Tabs.Content>
+
+        <Tabs.Content value="invoicing" className="mt-6 max-w-2xl focus:outline-none">
+          <InvoicingTab />
         </Tabs.Content>
 
         <Tabs.Content value="account" className="mt-6 max-w-2xl focus:outline-none">

@@ -6,9 +6,10 @@ import { PrismaModule } from "../prisma/prisma.module";
 import { GatewaysModule } from "../gateways/gateways.module";
 import { StorageModule } from "../storage/storage.module";
 import { EmailModule } from "../email/email.module";
+import { SystemConfigModule } from "../system-config/system-config.module";
 
 @Module({
-  imports: [PrismaModule, GatewaysModule, StorageModule, EmailModule],
+  imports: [PrismaModule, GatewaysModule, StorageModule, EmailModule, SystemConfigModule],
   controllers: [InvoicesController],
   providers: [InvoicesService, InvoicePdfService],
   exports: [InvoicesService],
