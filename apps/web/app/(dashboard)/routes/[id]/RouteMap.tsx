@@ -11,8 +11,7 @@ import {
 } from '@vis.gl/react-google-maps';
 import { MapPin } from 'lucide-react';
 import type { RouteRunStop } from '@/lib/api/routes';
-
-const MAPS_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY ?? '';
+import { useGoogleMapsKey } from '@/hooks/useGoogleMapsKey';
 
 // ─── Marker colour by stop status ────────────────────────────────────────────
 
@@ -208,6 +207,7 @@ function MapPlaceholder({ stops }: { stops: RouteRunStop[] }) {
 // ─── Exported component ───────────────────────────────────────────────────────
 
 export function RouteMap({ stops }: { stops: RouteRunStop[] }) {
+  const MAPS_KEY = useGoogleMapsKey();
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
 
   const stopsWithCoords = stops.filter(

@@ -11,8 +11,7 @@ import {
 } from "@vis.gl/react-google-maps";
 import { MapPin, Plus, Minus } from "lucide-react";
 import type { StopEntry, CustomerForMap } from "./page";
-
-const MAPS_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY ?? "";
+import { useGoogleMapsKey } from "@/hooks/useGoogleMapsKey";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -232,6 +231,7 @@ export function CreateRouteMap({
   onAddStop,
   onRemoveStop,
 }: CreateRouteMapProps) {
+  const MAPS_KEY = useGoogleMapsKey();
   const [selectedCustomerId, setSelectedCustomerId] = React.useState<string | null>(null);
 
   // Build geocoded customer list

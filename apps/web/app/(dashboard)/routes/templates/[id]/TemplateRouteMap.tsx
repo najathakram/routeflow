@@ -12,8 +12,7 @@ import {
 import { MapPin, Trash2 } from 'lucide-react';
 import { cn } from '@routeflow/ui/web';
 import type { RouteTemplateStop } from '@/lib/api/routes';
-
-const MAPS_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY ?? '';
+import { useGoogleMapsKey } from '@/hooks/useGoogleMapsKey';
 
 // ─── Numbered stop bubble ──────────────────────────────────────────────────────
 
@@ -180,6 +179,7 @@ export function TemplateRouteMap({
   onSelectStop,
   onRemoveStop,
 }: TemplateRouteMapProps) {
+  const MAPS_KEY = useGoogleMapsKey();
   const geoStops = stops.filter((s) => s.customerAddress?.lat != null);
 
   if (!MAPS_KEY) {

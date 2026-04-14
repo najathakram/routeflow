@@ -28,6 +28,16 @@ export class PublicPlacesController {
     this.apiKey = this.config.get<AppConfig["googleMaps"]>("googleMaps")!.apiKey;
   }
 
+  // ─── Public client config (exposes the Maps key so the Next.js frontend
+  //      can load it at runtime instead of relying on build-time env vars) ────
+
+  @Get("config")
+  @ApiOperation({ summary: "Return public client configuration" })
+  @Throttle({ default: { ttl: 60_000, limit: 30 } })
+  publicConfig() {
+    return { googleMapsKey: this.apiKey };
+  }
+
   // ─── Address autocomplete ─────────────────────────────────────────────────
 
   @Get("autocomplete")
