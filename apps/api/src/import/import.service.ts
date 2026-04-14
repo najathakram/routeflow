@@ -960,10 +960,27 @@ export class ImportService {
       }
     }
 
-    // ── Step 3: Import expense rows ──────────────────────────────────────────
+    // ── Step 3: Ensure "Other" fallback category exists ─────────────────────
+    // Used for rows that have no Expense Category or whose category could not
+    // be created (e.g. due to a code-uniqueness clash).
+    let otherCategoryId: string | null = null;
+    {
+      let otherCat = await this.prisma
+        .forTenant()
+        .expenseCategory.findFirst({ where: { code: "OTHER" } });
+      if (!otherCat) {
+        otherCat = await this.prisma.forTenant().expenseCategory.create({
+          data: { name: "Other", code: "OTHER", isCustom: false },
+        });
+      }
+      otherCategoryId = otherCat.id;
+    }
+
+    // ── Step 4: Import expense rows ──────────────────────────────────────────
     for (const row of rows) {
       const catName = row["Expense Category"];
-      const categoryId = catMap[catName];
+      // Resolve category — fall back to "Other" instead of silently dropping the row
+      const categoryId = (catName && catMap[catName]) || otherCategoryId;
       if (!categoryId) {
         skipped++;
         continue;

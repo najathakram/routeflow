@@ -138,10 +138,15 @@ export class BookkeepingService implements OnModuleInit {
 
   // ── Expense Categories ──
   async listExpenseCategories() {
-    // Include both tenant-specific AND system-wide default categories (tenantId = null)
+    // Include both tenant-specific AND system-wide default categories (tenantId = null).
+    // Exclude INVENTORY_PURCHASE — those expenses are handled in the Vendor Bills /
+    // Inventory Purchases tab and should never appear in the Other Expenses filter.
     const tenantId = this.prisma.getTenantId();
     return this.prisma.expenseCategory.findMany({
-      where: { OR: [{ tenantId }, { tenantId: null }] },
+      where: {
+        OR: [{ tenantId }, { tenantId: null }],
+        NOT: { code: "INVENTORY_PURCHASE" },
+      },
       orderBy: { name: "asc" },
     });
   }
