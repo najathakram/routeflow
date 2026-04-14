@@ -231,7 +231,7 @@ export function CreateRouteMap({
   onAddStop,
   onRemoveStop,
 }: CreateRouteMapProps) {
-  const MAPS_KEY = useGoogleMapsKey();
+  const { key: MAPS_KEY, loading: mapsKeyLoading } = useGoogleMapsKey();
   const [selectedCustomerId, setSelectedCustomerId] = React.useState<string | null>(null);
 
   // Build geocoded customer list
@@ -255,6 +255,14 @@ export function CreateRouteMap({
     : -1;
   const isSelectedAdded = selectedStopIdx >= 0;
 
+  if (mapsKeyLoading) {
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center gap-3 bg-surface-raised">
+        <MapPin className="h-10 w-10 animate-pulse text-navy/20" />
+        <p className="text-sm text-navy/50">Loading map…</p>
+      </div>
+    );
+  }
   if (!MAPS_KEY) return <MapPlaceholder customerCount={customers.length} />;
   if (geoCustomers.length === 0) return <MapPlaceholder customerCount={customers.length} />;
 

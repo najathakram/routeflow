@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000/api/v1";
@@ -13,40 +13,60 @@ const API_BASE =
  * Railway doesn't pass them as --build-arg, so the key is always empty
  * in the production bundle. This hook loads it from the API instead.
  */
-let _cachedKey: string | null = null;
 
-export function useGoogleMapsKey(): string {
-  const [key, setKey] = useState(_cachedKey ?? "");
+// Module-level promise so multiple components share the same fetch
+let _keyPromise: Promise<string> | null = null;
+let _resolvedKey: string | undefined;
+
+function fetchKey(): Promise<string> {
+  if (_keyPromise) return _keyPromise;
+
+  // Check build-time env var first (works in local dev)
+  const buildTimeKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY ?? "";
+  if (buildTimeKey) {
+    _resolvedKey = buildTimeKey;
+    _keyPromise = Promise.resolve(buildTimeKey);
+    return _keyPromise;
+  }
+
+  const base = API_BASE.replace(/\/api\/v1\/?$/, "/api/v1");
+  _keyPromise = fetch(`${base}/public/places/config`)
+    .then((res) => (res.ok ? res.json() : null))
+    .then((data) => {
+      const k = data?.googleMapsKey ?? "";
+      _resolvedKey = k;
+      return k;
+    })
+    .catch(() => {
+      _resolvedKey = "";
+      return "";
+    });
+
+  return _keyPromise;
+}
+
+export function useGoogleMapsKey(): { key: string; loading: boolean } {
+  const [key, setKey] = useState(_resolvedKey ?? "");
+  const [loading, setLoading] = useState(_resolvedKey === undefined);
 
   useEffect(() => {
-    if (_cachedKey !== null) {
-      setKey(_cachedKey);
+    // If already resolved (cached from a previous component mount), use it
+    if (_resolvedKey !== undefined) {
+      setKey(_resolvedKey);
+      setLoading(false);
       return;
     }
 
-    // Also check the build-time env var as a fast fallback for local dev
-    const buildTimeKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY ?? "";
-    if (buildTimeKey) {
-      _cachedKey = buildTimeKey;
-      setKey(buildTimeKey);
-      return;
-    }
-
-    // Strip /api/v1 suffix to get the base origin for public endpoints
-    const base = API_BASE.replace(/\/api\/v1\/?$/, "/api/v1");
-
-    fetch(`${base}/public/places/config`, { cache: "force-cache" })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        const k = data?.googleMapsKey ?? "";
-        _cachedKey = k;
+    let cancelled = false;
+    fetchKey().then((k) => {
+      if (!cancelled) {
         setKey(k);
-      })
-      .catch(() => {
-        _cachedKey = "";
-        setKey("");
-      });
+        setLoading(false);
+      }
+    });
+
+    return () => { cancelled = true; };
   }, []);
 
-  return key;
+  return { key, loading };
 }

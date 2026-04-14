@@ -179,8 +179,17 @@ export function TemplateRouteMap({
   onSelectStop,
   onRemoveStop,
 }: TemplateRouteMapProps) {
-  const MAPS_KEY = useGoogleMapsKey();
+  const { key: MAPS_KEY, loading: mapsKeyLoading } = useGoogleMapsKey();
   const geoStops = stops.filter((s) => s.customerAddress?.lat != null);
+
+  if (mapsKeyLoading) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-3 bg-surface-raised">
+        <MapPin className="h-10 w-10 animate-pulse text-navy/20" />
+        <p className="text-sm text-navy/50">Loading map…</p>
+      </div>
+    );
+  }
 
   if (!MAPS_KEY) {
     return <MapPlaceholder message="Google Maps API key not configured." />;
