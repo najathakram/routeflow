@@ -35,7 +35,7 @@ COPY apps/web/ apps/web/
 # ARG declared in the Dockerfile.
 # BUILD_DATE forces a cache miss on the next build layer whenever it changes,
 # ensuring NEXT_PUBLIC vars are always freshly evaluated.
-ARG BUILD_DATE=2026-04-14
+ARG BUILD_DATE=2026-04-14b
 ARG NEXT_PUBLIC_API_URL=https://routeflowapi-production.up.railway.app/api/v1
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ARG NEXT_PUBLIC_GOOGLE_MAPS_KEY=""
