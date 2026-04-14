@@ -93,14 +93,14 @@ function ArAgingReport({ onSelectReport }: { onSelectReport?: (id: string, conte
   const [interval, setInterval] = React.useState<15 | 30 | 60>(30);
   const { data, isLoading, isFetching, isError, refetch } = useArAgingInvoices(interval);
   if (isError) return <ErrorState onRetry={() => refetch()} />;
-  const buckets = data?.buckets ?? { current: [], days1_30: [], days31_60: [], days61_90: [], days90plus: [] };
-  const totals = data?.totals ?? { current: 0, days1_30: 0, days31_60: 0, days61_90: 0, days90plus: 0, total: 0 };
+  const buckets = data?.buckets ?? {};
+  const totals = data?.totals ?? { total: 0 };
   const colDefs = [
-    { key: "current",    label: "Current" },
-    { key: "days1_30",   label: `1–${interval} days` },
-    { key: "days31_60",  label: `${interval + 1}–${interval * 2} days` },
-    { key: "days61_90",  label: `${interval * 2 + 1}–${interval * 3} days` },
-    { key: "days90plus", label: `${interval * 3 + 1}+ days` },
+    { key: "current",                                     label: "Current" },
+    { key: `days1_${interval}`,                           label: `1–${interval} days` },
+    { key: `days${interval + 1}_${interval * 2}`,         label: `${interval + 1}–${interval * 2} days` },
+    { key: `days${interval * 2 + 1}_${interval * 3}`,     label: `${interval * 2 + 1}–${interval * 3} days` },
+    { key: `days${interval * 3}plus`,                     label: `${interval * 3 + 1}+ days` },
   ];
   const customerMap: Record<string, { name: string; buckets: Record<string, number> }> = {};
   for (const [bKey, items] of Object.entries(buckets)) {
@@ -277,13 +277,13 @@ function SalesByItemReport({ from, to }: { from?: string; to?: string }) {
 function SalesByDriverReport({ from, to }: { from?: string; to?: string }) {
   const { data, isLoading, isFetching, isError, refetch } = useSalesByDriver(from, to);
   if (isError) return <ErrorState onRetry={() => refetch()} />;
-  const rows: Array<{ driverName: string; invoiceCount: number; sales: number; salesWithTax: number }> = data?.data ?? [];
-  const grandTotal = rows.reduce((s, r) => s + r.sales, 0);
+  const rows: Array<{ driverName: string; invoiceCount: number; salesTotal: number; salesWithTax: number }> = data?.data ?? [];
+  const grandTotal = rows.reduce((s, r) => s + r.salesTotal, 0);
 
   const chartData = rows
-    .sort((a, b) => b.sales - a.sales)
+    .sort((a, b) => b.salesTotal - a.salesTotal)
     .slice(0, 10)
-    .map(r => ({ name: r.driverName, sales: r.sales }));
+    .map(r => ({ name: r.driverName, salesTotal: r.salesTotal }));
   const chartHeight = Math.max(280, chartData.length * 44 + 60);
 
   return (
@@ -301,7 +301,7 @@ function SalesByDriverReport({ from, to }: { from?: string; to?: string }) {
                   </text>
                 )} />
               <Tooltip {...chartTooltipStyle} formatter={(value) => fmt(Number(value))} />
-              <Bar dataKey="sales" fill={CHART_COLORS[4]} radius={[0, 4, 4, 0]} name="Sales" />
+              <Bar dataKey="salesTotal" fill={CHART_COLORS[4]} radius={[0, 4, 4, 0]} name="Sales" />
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -320,7 +320,7 @@ function SalesByDriverReport({ from, to }: { from?: string; to?: string }) {
             <tr key={i} className="hover:bg-surface-raised/50">
               <td className="px-4 py-2.5 font-medium text-navy">{r.driverName}</td>
               <td className="px-4 py-2.5 text-right text-navy">{r.invoiceCount}</td>
-              <td className="px-4 py-2.5 text-right font-semibold text-navy">{fmt(r.sales)}</td>
+              <td className="px-4 py-2.5 text-right font-semibold text-navy">{fmt(r.salesTotal)}</td>
               <td className="px-4 py-2.5 text-right text-navy">{fmt(r.salesWithTax)}</td>
             </tr>
           ))}
@@ -599,7 +599,7 @@ function RefundHistoryReport({ from, to }: { from?: string; to?: string }) {
   const { data, isLoading, isFetching, isError, refetch } = useRefundHistory(from, to);
   if (isError) return <ErrorState onRetry={() => refetch()} />;
   const rows: Array<{
-    id: string; date: string; reference: string; customerName: string;
+    date: string; reference: string; customerName: string;
     method: string; amount: number; type: string;
   }> = data?.data ?? [];
   const grandTotal = rows.reduce((s, r) => s + r.amount, 0);
@@ -620,8 +620,8 @@ function RefundHistoryReport({ from, to }: { from?: string; to?: string }) {
         <tbody className="divide-y divide-surface-border">
           {(isLoading || isFetching) ? <SkeletonRows cols={6} /> : rows.length === 0 ? (
             <tr><td colSpan={6} className="px-4 py-10 text-center text-sm text-navy/40">No refunds in this period</td></tr>
-          ) : rows.map((r) => (
-            <tr key={r.id} className="hover:bg-surface-raised/50">
+          ) : rows.map((r, idx) => (
+            <tr key={`${r.reference}-${r.type}-${idx}`} className="hover:bg-surface-raised/50">
               <td className="px-4 py-2.5 text-navy/70">{fmtDate(r.date)}</td>
               <td className="px-4 py-2.5 font-medium text-navy">{r.reference}</td>
               <td className="px-4 py-2.5 text-navy">{r.customerName}</td>
@@ -640,7 +640,7 @@ function ReceivableSummaryReport({ from, to }: { from?: string; to?: string }) {
   const { data, isLoading, isFetching, isError, refetch } = useReceivableSummary(from, to);
   if (isError) return <ErrorState onRetry={() => refetch()} />;
   const rows: Array<{
-    id: string; customerName: string; date: string; transactionNumber: string;
+    customerName: string; date: string; transactionNumber: string;
     type: string; status: string; total: number; balance: number;
   }> = data?.data ?? [];
   return (
@@ -657,8 +657,8 @@ function ReceivableSummaryReport({ from, to }: { from?: string; to?: string }) {
       <tbody className="divide-y divide-surface-border">
         {(isLoading || isFetching) ? <SkeletonRows cols={7} /> : rows.length === 0 ? (
           <tr><td colSpan={7} className="px-4 py-10 text-center text-sm text-navy/40">No receivables in this period</td></tr>
-        ) : rows.map((r) => (
-          <tr key={r.id} className="hover:bg-surface-raised/50">
+        ) : rows.map((r, idx) => (
+          <tr key={`${r.transactionNumber}-${r.type}-${idx}`} className="hover:bg-surface-raised/50">
             <td className="px-4 py-2.5 font-medium text-brand-600">{r.customerName}</td>
             <td className="px-4 py-2.5 text-navy/70">{fmtDate(r.date)}</td>
             <td className="px-4 py-2.5 font-medium text-navy">{r.transactionNumber}</td>

@@ -616,9 +616,10 @@ export class BookkeepingService implements OnModuleInit {
         })()
       : new Date();
 
+    const { PaymentStatus: CfPayStatus } = await import("@prisma/client");
     const [payments, expenses, bills] = await Promise.all([
       this.prisma.forTenant().invoicePayment.findMany({
-        where: { paidAt: { gte: fromDate, lte: toDate } },
+        where: { status: CfPayStatus.PAID, paidAt: { gte: fromDate, lte: toDate } },
         orderBy: { paidAt: "asc" },
       }),
       this.prisma.forTenant().expense.findMany({
@@ -929,7 +930,7 @@ export class BookkeepingService implements OnModuleInit {
       : new Date();
     const invoices = await this.prisma.forTenant().invoice.findMany({
       where: {
-        status: { notIn: [InvoiceStatus.DRAFT, InvoiceStatus.VOID, "WRITTEN_OFF" as any] },
+        status: { notIn: [InvoiceStatus.DRAFT, InvoiceStatus.VOID, InvoiceStatus.WRITTEN_OFF] },
         issueDate: { gte: fromDate, lte: toDate },
       },
       include: { customer: { select: { id: true, businessName: true } } },
@@ -969,7 +970,7 @@ export class BookkeepingService implements OnModuleInit {
     const items = await this.prisma.forTenant().invoiceItem.findMany({
       where: {
         invoice: {
-          status: { notIn: [InvoiceStatus.DRAFT, InvoiceStatus.VOID, "WRITTEN_OFF" as any] },
+          status: { notIn: [InvoiceStatus.DRAFT, InvoiceStatus.VOID, InvoiceStatus.WRITTEN_OFF] },
           issueDate: { gte: fromDate, lte: toDate },
         },
       },
@@ -1147,8 +1148,9 @@ export class BookkeepingService implements OnModuleInit {
           return d;
         })()
       : new Date();
+    const { PaymentStatus } = await import("@prisma/client");
     const payments = await this.prisma.forTenant().invoicePayment.findMany({
-      where: { createdAt: { gte: fromDate, lte: toDate } },
+      where: { status: PaymentStatus.PAID, paidAt: { gte: fromDate, lte: toDate } },
       include: {
         invoice: {
           select: {
@@ -1159,12 +1161,12 @@ export class BookkeepingService implements OnModuleInit {
           },
         },
       },
-      orderBy: { createdAt: "desc" },
+      orderBy: { paidAt: "desc" },
     });
     return {
       data: payments.map((p) => ({
         id: p.id,
-        createdAt: p.createdAt,
+        createdAt: p.paidAt ?? p.createdAt,
         amount: Number(p.amount),
         method: p.method,
         reference: p.reference,
