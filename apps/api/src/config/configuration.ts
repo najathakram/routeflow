@@ -59,7 +59,7 @@ export const configuration = (): AppConfig => ({
     secret: process.env.JWT_SECRET ?? "",
     refreshSecret: process.env.JWT_REFRESH_SECRET ?? "",
     expiresIn: process.env.JWT_EXPIRES_IN ?? "15m",
-    refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN ?? "7d",
+    refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN ?? "3d",
   },
   redis: {
     url: process.env.REDIS_URL ?? "redis://localhost:6379",

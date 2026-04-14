@@ -29,6 +29,7 @@ class UpdateOrderItemDto {
 
   @IsOptional()
   @IsNumber()
+  @Min(0)
   unitPrice?: number;
 
   @IsOptional()

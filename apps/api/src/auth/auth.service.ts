@@ -336,7 +336,10 @@ export class AuthService {
       data: { password: newHash, forcePasswordChange: false },
     });
 
-    return { message: "Password changed successfully" };
+    // Revoke all refresh tokens so compromised sessions are invalidated
+    await this.prisma.refreshToken.deleteMany({ where: { userId } });
+
+    return { message: "Password changed successfully. All sessions have been invalidated." };
   }
 
   // ─── Helpers ─────────────────────────────────────────────────────────────────

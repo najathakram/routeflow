@@ -37,6 +37,31 @@ export class CreditNotesService {
   async create(dto: { customerId: string; invoiceId?: string; amount: number; reason?: string }) {
     if (!dto.amount || dto.amount <= 0)
       throw new BadRequestException("Amount must be greater than 0");
+
+    // If linked to an invoice, validate credit note amount doesn't exceed invoice total
+    if (dto.invoiceId) {
+      const invoice = await this.prisma.forTenant().invoice.findUnique({
+        where: { id: dto.invoiceId },
+        select: { total: true, customerId: true },
+      });
+      if (!invoice) throw new BadRequestException("Invoice not found");
+      if (invoice.customerId !== dto.customerId)
+        throw new BadRequestException("Invoice does not belong to this customer");
+
+      // Sum existing credit notes for this invoice
+      const existingCredits = await this.prisma.forTenant().creditNote.aggregate({
+        where: { invoiceId: dto.invoiceId, status: { not: "VOID" } },
+        _sum: { amount: true },
+      });
+      const totalExisting = Number(existingCredits._sum.amount ?? 0);
+      const invoiceTotal = Number(invoice.total);
+      if (totalExisting + dto.amount > invoiceTotal) {
+        throw new BadRequestException(
+          `Credit note amount (${dto.amount}) would exceed invoice total (${invoiceTotal}). Already credited: ${totalExisting}.`,
+        );
+      }
+    }
+
     const cn = await this.prisma.forTenant().creditNote.create({
       data: {
         creditNoteNumber: await this.nextCnNumber(),

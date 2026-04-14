@@ -615,6 +615,22 @@ export class RoutesService {
       }
     }
 
+    // Require all stops to be completed or skipped before marking run as COMPLETED
+    if (dto.status === RouteRunStatus.COMPLETED) {
+      const stops = await this.prisma.forTenant().routeRunStop.findMany({
+        where: { routeRunId: id },
+        select: { status: true },
+      });
+      const incomplete = stops.filter(
+        (s) => s.status !== "COMPLETED" && s.status !== "SKIPPED",
+      );
+      if (incomplete.length > 0) {
+        throw new BadRequestException(
+          `Cannot complete run: ${incomplete.length} stop(s) are still pending. Complete or skip all stops first.`,
+        );
+      }
+    }
+
     const updates: any = { status: dto.status };
     if (dto.status === RouteRunStatus.IN_PROGRESS && !run.startedAt) updates.startedAt = new Date();
     if (dto.status === RouteRunStatus.COMPLETED) updates.completedAt = new Date();

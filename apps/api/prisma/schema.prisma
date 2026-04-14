@@ -398,7 +398,7 @@ model User {
   email               String
   username            String
   password            String?
-  googleId            String?    @unique
+  googleId            String?
   role                UserRole
   status              UserStatus @default(ACTIVE)
   forcePasswordChange Boolean    @default(false)
@@ -421,6 +421,7 @@ model User {
 
   @@unique([tenantId, email])
   @@unique([tenantId, username])
+  @@unique([tenantId, googleId])
   @@index([tenantId])
   @@index([role])
   @@index([status])

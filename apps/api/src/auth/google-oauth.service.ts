@@ -213,14 +213,14 @@ export class GoogleOAuthService {
     const { linkUserId, googleId, email } = profile;
     if (!linkUserId) throw new BadRequestException("linkUserId required");
 
-    // Check if this Google ID is already claimed by a different user
-    const existingByGoogleId = await this.prisma.user.findFirst({
-      where: { googleId, id: { not: linkUserId }, deletedAt: null },
-    });
-    if (existingByGoogleId) throw new ForbiddenException("google_id_taken");
-
     const user = await this.prisma.user.findUnique({ where: { id: linkUserId } });
     if (!user || user.deletedAt) throw new ForbiddenException("unauthorized");
+
+    // Check if this Google ID is already claimed by a different user within the same tenant
+    const existingByGoogleId = await this.prisma.user.findFirst({
+      where: { googleId, tenantId: user.tenantId, id: { not: linkUserId }, deletedAt: null },
+    });
+    if (existingByGoogleId) throw new ForbiddenException("google_id_taken");
     if (user.googleId) throw new ForbiddenException("google_already_linked");
 
     await this.prisma.user.update({

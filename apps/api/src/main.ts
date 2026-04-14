@@ -2,6 +2,7 @@ import { NestFactory } from "@nestjs/core";
 import { ValidationPipe } from "@nestjs/common";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import { json } from "express";
+import helmet from "helmet";
 import { AppModule } from "./app.module";
 import { RedisIoAdapter } from "./gateways/redis-io.adapter";
 
@@ -30,16 +31,13 @@ function buildWildcardPatterns(): RegExp[] {
 }
 
 function assertSecrets() {
-  const isProd = process.env.NODE_ENV === "production";
   const missing: string[] = [];
   if (!process.env.JWT_SECRET) missing.push("JWT_SECRET");
   if (!process.env.JWT_REFRESH_SECRET) missing.push("JWT_REFRESH_SECRET");
-  if (isProd && missing.length > 0) {
+  if (missing.length > 0) {
     console.error(`\n❌ FATAL: Missing required environment variables: ${missing.join(", ")}`);
-    console.error("   Refusing to start in production with empty JWT secrets.\n");
+    console.error("   JWT secrets must be set in ALL environments (including development).\n");
     process.exit(1);
-  } else if (missing.length > 0) {
-    console.warn(`\n⚠️  WARNING: ${missing.join(", ")} not set — using empty string (dev only).\n`);
   }
 }
 
@@ -58,6 +56,9 @@ async function bootstrap() {
   // different Fastly node and gets its own counter).
   // trust proxy = 2 skips both hops → req.ip = real client IP from XFF.
   app.getHttpAdapter().getInstance().set("trust proxy", 2);
+
+  // ─── Security headers (helmet) ──────────────────────────────────────────────
+  app.use(helmet());
 
   // ─── Body size limit (default 100kb is too small for bulk imports) ───────────
   app.use(json({ limit: "10mb" }));

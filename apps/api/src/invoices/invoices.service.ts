@@ -102,6 +102,15 @@ export class InvoicesService {
       };
     });
 
+    // Validate no line item has a negative subtotal (discount > line total)
+    for (const item of itemsData) {
+      if (item.subtotal < 0) {
+        throw new BadRequestException(
+          `Line item "${item.description}" has a negative subtotal (${item.subtotal}). Discount cannot exceed line total.`,
+        );
+      }
+    }
+
     const invDiscount = dto.discount ?? 0;
     const shipping = dto.shippingFee ?? 0;
     const taxTotal = dto.items.reduce((sum, item) => {
@@ -109,6 +118,18 @@ export class InvoicesService {
       return sum + lineSub * (item.taxRate ?? 0);
     }, 0);
     const total = subtotal - invDiscount + shipping + taxTotal;
+
+    // Validate invoice-level discount doesn't exceed subtotal and total is non-negative
+    if (invDiscount > subtotal) {
+      throw new BadRequestException(
+        `Invoice discount (${invDiscount}) cannot exceed subtotal (${subtotal}).`,
+      );
+    }
+    if (total < 0) {
+      throw new BadRequestException(
+        `Invoice total cannot be negative (calculated: ${total}).`,
+      );
+    }
 
     const invoice = await this.prisma.forTenant().invoice.create({
       data: {

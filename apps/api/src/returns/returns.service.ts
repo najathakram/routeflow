@@ -57,7 +57,21 @@ export class ReturnsService {
       }
     }
 
-    // Validate return qty does not exceed ordered qty per item
+    // Query existing returns for this order to prevent cumulative over-return
+    const existingReturns = await this.prisma.forTenant().return.findMany({
+      where: { orderId: dto.orderId, status: { not: "REJECTED" } },
+      include: { items: { select: { productId: true, qty: true } } },
+    });
+
+    // Build a map of already-returned quantities per product
+    const alreadyReturned: Record<string, number> = {};
+    for (const ret of existingReturns) {
+      for (const ri of ret.items) {
+        alreadyReturned[ri.productId] = (alreadyReturned[ri.productId] ?? 0) + Number(ri.qty);
+      }
+    }
+
+    // Validate return qty does not exceed ordered qty per item (cumulative)
     for (const item of dto.items) {
       if (!item.qty || item.qty <= 0)
         throw new BadRequestException("Return item quantity must be greater than zero");
@@ -66,9 +80,12 @@ export class ReturnsService {
       );
       if (!orderLine)
         throw new BadRequestException(`Product ${item.productId} was not in the original order`);
-      if (item.qty > Number(orderLine.qty))
+      const orderedQty = Number(orderLine.qty);
+      const previouslyReturned = alreadyReturned[item.productId] ?? 0;
+      const remaining = orderedQty - previouslyReturned;
+      if (item.qty > remaining)
         throw new BadRequestException(
-          `Return qty (${item.qty}) exceeds ordered qty (${Number(orderLine.qty)}) for product ${item.productId}`,
+          `Return qty (${item.qty}) exceeds remaining returnable qty (${remaining}) for product ${item.productId}. Already returned: ${previouslyReturned} of ${orderedQty}.`,
         );
     }
 
