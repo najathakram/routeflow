@@ -15,6 +15,9 @@ export interface Route {
   name: string;
   isActive: boolean;
   createdAt: string;
+  depotLat?: number | null;
+  depotLng?: number | null;
+  depotAddress?: string | null;
   _count?: { stops: number };
   runs?: RouteRun[];
   stops?: RouteTemplateStop[];
@@ -28,6 +31,10 @@ export interface RouteRun {
   driver?: { id: string; contactName: string };
   status: 'SCHEDULED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
   scheduledDate: string;
+  startTime?: string | null;
+  depotLat?: number | null;
+  depotLng?: number | null;
+  depotAddress?: string | null;
   startedAt?: string;
   completedAt?: string;
   notes?: string;
@@ -69,7 +76,7 @@ export function useRoute(id: string) {
 }
 
 export function useCreateRoute() {
-  return useMutation<Route, Error, { name: string; driverId?: string }>({
+  return useMutation<Route, Error, { name: string; driverId?: string; depotLat?: number; depotLng?: number; depotAddress?: string }>({
     mutationFn: (dto) => apiClient.post('/routes', dto).then((r) => r.data),
     // NOTE: No auto-invalidation — caller must invalidate after stops are added
     // to avoid the race condition where the route list refreshes before stops exist.
@@ -95,7 +102,7 @@ export function useAddStopToRoute() {
 
 export function useUpdateRoute() {
   const qc = useQueryClient();
-  return useMutation<Route, Error, { id: string; name?: string; driverId?: string; isActive?: boolean }>({
+  return useMutation<Route, Error, { id: string; name?: string; driverId?: string; isActive?: boolean; depotLat?: number | null; depotLng?: number | null; depotAddress?: string | null }>({
     mutationFn: ({ id, ...dto }) => apiClient.patch(`/routes/${id}`, dto).then((r) => r.data),
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ['routes', id] });
@@ -206,7 +213,7 @@ export function useRouteRun(id: string) {
 
 export function useCreateRouteRun() {
   const qc = useQueryClient();
-  return useMutation<RouteRun, Error, { routeId: string; scheduledDate: string; driverId?: string; notes?: string }>({
+  return useMutation<RouteRun, Error, { routeId: string; scheduledDate: string; driverId?: string; startTime?: string; notes?: string }>({
     mutationFn: (dto) => apiClient.post('/route-runs', dto).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['route-runs'] }),
   });
@@ -307,5 +314,71 @@ export function useOptimizeTemplate() {
       qc.invalidateQueries({ queryKey: ['routes', id] });
       qc.invalidateQueries({ queryKey: ['routes'] });
     },
+  });
+}
+
+// ─── Route Analysis (AI + ETAs) ───────────────────────────────────────────────
+
+export interface StopETA {
+  stopId: string;
+  stopNumber: number;
+  customerName: string;
+  arrivalTime: string;
+  departureTime: string;
+  travelTimeMinutes: number;
+  deliveryWindowStart?: string | null;
+  deliveryWindowEnd?: string | null;
+  withinWindow: boolean | null;
+}
+
+export interface RouteAnalysisResult {
+  configured: boolean;
+  summary?: string;
+  stops?: Array<{
+    stopNumber: number;
+    status: 'ok' | 'warning' | 'critical';
+    message: string;
+  }>;
+  suggestions?: string[];
+  etas: StopETA[];
+}
+
+export function useAnalyzeRoute() {
+  return useMutation<RouteAnalysisResult, Error, { routeId: string; startTime?: string }>({
+    mutationFn: ({ routeId, startTime }) =>
+      apiClient.post<RouteAnalysisResult>(`/routes/${routeId}/analyze`, { startTime }).then((r) => r.data),
+  });
+}
+
+export function useAnalyzeRouteRun() {
+  return useMutation<RouteAnalysisResult, Error, { runId: string; startTime?: string }>({
+    mutationFn: ({ runId, startTime }) =>
+      apiClient.post<RouteAnalysisResult>(`/route-runs/${runId}/analyze`, { startTime }).then((r) => r.data),
+  });
+}
+
+// ─── Route Settings ───────────────────────────────────────────────────────────
+
+export interface RouteSettings {
+  averageSpeedKmh: number;
+  serviceTimeMinutes: number;
+  defaultStartTime: string;
+  depotLat: number | null;
+  depotLng: number | null;
+  depotAddress: string;
+}
+
+export function useRouteSettings() {
+  return useQuery<RouteSettings>({
+    queryKey: ['route-settings'],
+    queryFn: () => apiClient.get('/settings/route').then((r) => r.data),
+  });
+}
+
+export function useUpdateRouteSettings() {
+  const qc = useQueryClient();
+  return useMutation<RouteSettings, Error, Partial<Pick<RouteSettings, 'averageSpeedKmh' | 'serviceTimeMinutes' | 'defaultStartTime'>>>({
+    mutationFn: (dto) => apiClient.patch('/settings/route', dto).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['route-settings'] }),
   });
 }

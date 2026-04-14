@@ -12,7 +12,7 @@ import { useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useCustomers } from "@/lib/api/customers";
 import { useDrivers } from "@/lib/api/drivers";
-import { useCreateRoute, useCustomerRouteAssignments } from "@/lib/api/routes";
+import { useCreateRoute, useCustomerRouteAssignments, useRouteSettings } from "@/lib/api/routes";
 import { apiClient } from "@/lib/api-client";
 import { CreateRouteLeftPanel } from "./CreateRouteLeftPanel";
 import { CreateRouteMap } from "./CreateRouteMap";
@@ -125,18 +125,34 @@ function twoOpt(stops: StopEntry[]): StopEntry[] {
   return route;
 }
 
-function nearestNeighborOrder(stops: StopEntry[]): StopEntry[] {
+function nearestNeighborOrder(
+  stops: StopEntry[],
+  depot?: { lat: number; lng: number } | null,
+): StopEntry[] {
   const withCoords = stops.filter((s) => s.lat != null && s.lng != null);
   const withoutCoords = stops.filter((s) => s.lat == null || s.lng == null);
   if (withCoords.length < 2) return stops;
 
-  // Best nearest-neighbour across all starting points
-  let best = nnFrom(withCoords, 0);
-  let bestDist = pathKm(best);
-  for (let i = 1; i < withCoords.length; i++) {
-    const candidate = nnFrom(withCoords, i);
-    const dist = pathKm(candidate);
-    if (dist < bestDist) { bestDist = dist; best = candidate; }
+  let best: StopEntry[];
+
+  if (depot) {
+    // With depot: start NN from the stop nearest to the depot
+    let nearestIdx = 0;
+    let minDist = haversineKm(depot.lat, depot.lng, withCoords[0].lat!, withCoords[0].lng!);
+    for (let i = 1; i < withCoords.length; i++) {
+      const d = haversineKm(depot.lat, depot.lng, withCoords[i].lat!, withCoords[i].lng!);
+      if (d < minDist) { minDist = d; nearestIdx = i; }
+    }
+    best = nnFrom(withCoords, nearestIdx);
+  } else {
+    // No depot: try all starting points, keep shortest
+    best = nnFrom(withCoords, 0);
+    let bestDist = pathKm(best);
+    for (let i = 1; i < withCoords.length; i++) {
+      const candidate = nnFrom(withCoords, i);
+      const dist = pathKm(candidate);
+      if (dist < bestDist) { bestDist = dist; best = candidate; }
+    }
   }
 
   // 2-opt improvement pass
@@ -160,6 +176,7 @@ export default function CreateRoutePage() {
   const { data: customersData, isLoading: customersLoading } = useCustomers({ page: 1, limit: 500 } as any);
   const { data: driversData } = useDrivers({ page: 1, limit: 100 });
   const { data: assignments } = useCustomerRouteAssignments();
+  const { data: routeSettings } = useRouteSettings();
 
   const customers: CustomerForMap[] = customersData?.data ?? [];
 
@@ -194,9 +211,16 @@ export default function CreateRoutePage() {
     setStops((prev) => prev.filter((s) => s.customerId !== customerId));
   }, []);
 
+  const depot = React.useMemo(() => {
+    if (routeSettings?.depotLat != null && routeSettings?.depotLng != null) {
+      return { lat: routeSettings.depotLat, lng: routeSettings.depotLng };
+    }
+    return null;
+  }, [routeSettings]);
+
   const handleOptimize = React.useCallback(() => {
-    setStops((prev) => nearestNeighborOrder(prev));
-  }, []);
+    setStops((prev) => nearestNeighborOrder(prev, depot));
+  }, [depot]);
 
   // ── Submit ──
   const onSubmit = async (data: FormValues) => {
@@ -205,6 +229,9 @@ export default function CreateRoutePage() {
       const route = await createRoute.mutateAsync({
         name: data.name,
         driverId: data.defaultDriverId || undefined,
+        depotLat: routeSettings?.depotLat ?? undefined,
+        depotLng: routeSettings?.depotLng ?? undefined,
+        depotAddress: routeSettings?.depotAddress || undefined,
       });
       // Add stops sequentially
       for (let i = 0; i < stops.length; i++) {
@@ -289,6 +316,9 @@ export default function CreateRoutePage() {
               assignments={assignments ?? {}}
               onAddStop={addStop}
               onRemoveStop={removeStop}
+              depotLat={routeSettings?.depotLat}
+              depotLng={routeSettings?.depotLng}
+              depotAddress={routeSettings?.depotAddress}
             />
           )}
         </div>

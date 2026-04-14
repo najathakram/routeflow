@@ -68,7 +68,15 @@ export class RoutesService {
   }
 
   async createRoute(dto: CreateRouteDto) {
-    return this.prisma.forTenant().route.create({ data: { name: dto.name } });
+    return this.prisma.forTenant().route.create({
+      data: {
+        name: dto.name,
+        driverId: dto.driverId || undefined,
+        depotLat: dto.depotLat,
+        depotLng: dto.depotLng,
+        depotAddress: dto.depotAddress,
+      },
+    });
   }
 
   async updateRoute(id: string, dto: UpdateRouteDto) {
@@ -330,11 +338,25 @@ export class RoutesService {
         );
       }
 
+      // Resolve depot for snapshot: route-level → system default → geocoded tenant address
+      let depotLat: number | undefined;
+      let depotLng: number | undefined;
+      let depotAddress: string | undefined;
+      if (route.depotLat != null && route.depotLng != null) {
+        depotLat = route.depotLat;
+        depotLng = route.depotLng;
+        depotAddress = route.depotAddress ?? undefined;
+      }
+
       return tx.routeRun.create({
         data: {
           routeId: dto.routeId,
           driverId: resolvedDriverId,
           scheduledDate: new Date(dto.scheduledDate),
+          startTime: dto.startTime,
+          depotLat,
+          depotLng,
+          depotAddress,
           notes: dto.notes,
           stops: {
             create: route.stops.map((s) => ({

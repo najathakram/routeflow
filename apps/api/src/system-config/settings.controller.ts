@@ -8,6 +8,8 @@ import {
   Patch,
   Post,
   UseGuards,
+  UsePipes,
+  ValidationPipe,
 } from "@nestjs/common";
 import { UserRole } from "@prisma/client";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
@@ -17,6 +19,7 @@ import { SystemConfigService } from "./system-config.service";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
+import { UpdateRouteSettingsDto } from "./dto/update-route-settings.dto";
 
 @Controller("settings")
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -238,5 +241,63 @@ export class SettingsController {
       await tx.payment.deleteMany({});
     });
     return { success: true, message: "All financial data cleared successfully" };
+  }
+
+  // ─── Route Settings ───────────────────────────────────────────────────────────
+
+  @Get("route")
+  async getRouteSettings() {
+    const speedRaw = await this.svc.get("route.averageSpeedKmh");
+    const serviceRaw = await this.svc.get("route.serviceTimeMinutes");
+    const startTimeRaw = await this.svc.get("route.defaultStartTime");
+    const depotLatRaw = await this.svc.get("route.defaultDepotLat");
+    const depotLngRaw = await this.svc.get("route.defaultDepotLng");
+
+    // Build depot address from TenantConfig
+    let depotAddress = "";
+    const tenantId = this.prisma.getTenantId();
+    if (tenantId) {
+      const config = await this.prisma.tenantConfig.findUnique({
+        where: { tenantId },
+        select: {
+          addressLine1: true,
+          city: true,
+          state: true,
+          zip: true,
+        },
+      });
+      if (config) {
+        const parts = [
+          config.addressLine1,
+          config.city,
+          [config.state, config.zip].filter(Boolean).join(" "),
+        ].filter(Boolean);
+        depotAddress = parts.join(", ");
+      }
+    }
+
+    return {
+      averageSpeedKmh: speedRaw != null ? parseFloat(speedRaw) : 50,
+      serviceTimeMinutes: serviceRaw != null ? parseFloat(serviceRaw) : 15,
+      defaultStartTime: startTimeRaw ?? "08:00",
+      depotLat: depotLatRaw != null ? parseFloat(depotLatRaw) : null,
+      depotLng: depotLngRaw != null ? parseFloat(depotLngRaw) : null,
+      depotAddress,
+    };
+  }
+
+  @Patch("route")
+  @UsePipes(new ValidationPipe({ whitelist: true }))
+  async updateRouteSettings(@Body() dto: UpdateRouteSettingsDto) {
+    if (dto.averageSpeedKmh !== undefined) {
+      await this.svc.set("route.averageSpeedKmh", String(dto.averageSpeedKmh));
+    }
+    if (dto.serviceTimeMinutes !== undefined) {
+      await this.svc.set("route.serviceTimeMinutes", String(dto.serviceTimeMinutes));
+    }
+    if (dto.defaultStartTime !== undefined) {
+      await this.svc.set("route.defaultStartTime", dto.defaultStartTime);
+    }
+    return this.getRouteSettings();
   }
 }

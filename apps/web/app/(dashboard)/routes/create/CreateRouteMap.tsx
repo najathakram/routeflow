@@ -9,7 +9,7 @@ import {
   useMap,
   useMapsLibrary,
 } from "@vis.gl/react-google-maps";
-import { MapPin, Plus, Minus, Loader2 } from "lucide-react";
+import { Home, MapPin, Plus, Minus, Loader2 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { StopEntry, CustomerForMap } from "./page";
 import { useGoogleMapsKey } from "@/hooks/useGoogleMapsKey";
@@ -23,6 +23,9 @@ interface CreateRouteMapProps {
   assignments: Record<string, { routeId: string; routeName: string }[]>;
   onAddStop: (customer: CustomerForMap) => void;
   onRemoveStop: (customerId: string) => void;
+  depotLat?: number | null;
+  depotLng?: number | null;
+  depotAddress?: string | null;
 }
 
 interface GeoCustomer {
@@ -81,18 +84,53 @@ function MarkerBubble({
   );
 }
 
-// ─── Polyline connecting selected stops ────────────────────────────────────────
+// ─── Depot marker bubble ──────────────────────────────────────────────────────
 
-function PolylineLayer({ stops }: { stops: StopEntry[] }) {
+function DepotMarkerBubble() {
+  return (
+    <div
+      style={{
+        width: 36,
+        height: 36,
+        borderRadius: "50%",
+        background: "#059669",
+        border: "3px solid white",
+        boxShadow: "0 2px 6px rgba(0,0,0,0.35)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        color: "white",
+      }}
+    >
+      <Home style={{ width: 16, height: 16 }} />
+    </div>
+  );
+}
+
+// ─── Polyline connecting selected stops (with depot) ───────────────────────────
+
+function PolylineLayer({
+  stops,
+  depot,
+}: {
+  stops: StopEntry[];
+  depot?: { lat: number; lng: number } | null;
+}) {
   const map = useMap();
   const mapsLib = useMapsLibrary("maps");
 
   React.useEffect(() => {
     if (!map || !mapsLib) return;
 
-    const path = stops
+    const stopCoords = stops
       .filter((s) => s.lat != null && s.lng != null)
       .map((s) => ({ lat: s.lat!, lng: s.lng! }));
+
+    // Build path: depot → stops → depot (if depot)
+    const path: Array<{ lat: number; lng: number }> = [];
+    if (depot) path.push({ lat: depot.lat, lng: depot.lng });
+    path.push(...stopCoords);
+    if (depot && stopCoords.length > 0) path.push({ lat: depot.lat, lng: depot.lng });
 
     if (path.length < 2) return;
 
@@ -106,7 +144,7 @@ function PolylineLayer({ stops }: { stops: StopEntry[] }) {
     });
 
     return () => polyline.setMap(null);
-  }, [map, mapsLib, stops]);
+  }, [map, mapsLib, stops, depot]);
 
   return null;
 }
@@ -242,11 +280,18 @@ export function CreateRouteMap({
   assignments,
   onAddStop,
   onRemoveStop,
+  depotLat,
+  depotLng,
+  depotAddress,
 }: CreateRouteMapProps) {
   const { key: MAPS_KEY, loading: mapsKeyLoading } = useGoogleMapsKey();
   const queryClient = useQueryClient();
   const [selectedCustomerId, setSelectedCustomerId] = React.useState<string | null>(null);
+  const [depotInfoOpen, setDepotInfoOpen] = React.useState(false);
   const [isGeocoding, setIsGeocoding] = React.useState(false);
+
+  const depot =
+    depotLat != null && depotLng != null ? { lat: depotLat, lng: depotLng } : null;
   const geocodeTriggeredRef = React.useRef(false);
 
   // Split customers: those with lat/lng and those with addresses but no coords
@@ -334,7 +379,33 @@ export function CreateRouteMap({
           onClick={() => setSelectedCustomerId(null)}
         >
           <FitBoundsLayer geoCustomers={geoCustomers} />
-          <PolylineLayer stops={stops} />
+          <PolylineLayer stops={stops} depot={depot} />
+
+          {/* Depot marker */}
+          {depot && (
+            <>
+              <AdvancedMarker
+                position={depot}
+                onClick={() => setDepotInfoOpen((v) => !v)}
+              >
+                <DepotMarkerBubble />
+              </AdvancedMarker>
+              {depotInfoOpen && (
+                <InfoWindow
+                  position={depot}
+                  onCloseClick={() => setDepotInfoOpen(false)}
+                  pixelOffset={[0, -42]}
+                >
+                  <div style={{ padding: "4px 0", minWidth: 140 }}>
+                    <p style={{ fontWeight: 700, fontSize: 13, margin: 0, color: "#0f172a" }}>Depot</p>
+                    {depotAddress && (
+                      <p style={{ fontSize: 11, color: "#64748b", margin: "2px 0 0" }}>{depotAddress}</p>
+                    )}
+                  </div>
+                </InfoWindow>
+              )}
+            </>
+          )}
 
           {geoCustomers.map((gc) => {
             const stopIdx = stops.findIndex((s) => s.customerId === gc.customer.id);

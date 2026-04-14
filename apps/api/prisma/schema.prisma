@@ -611,13 +611,16 @@ model Product {
 }
 
 model Route {
-  id        String   @id @default(uuid())
-  name      String
-  driverId  String?
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  tenantId  String?
+  id           String   @id @default(uuid())
+  name         String
+  driverId     String?
+  isActive     Boolean  @default(true)
+  depotLat     Float?
+  depotLng     Float?
+  depotAddress String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  tenantId     String?
 
   driver    Driver?         @relation(fields: [driverId], references: [id])
   tenant    Tenant?         @relation(fields: [tenantId], references: [id])
@@ -678,6 +681,10 @@ model RouteRun {
   driverId          String?
   status            RouteRunStatus @default(SCHEDULED)
   scheduledDate     DateTime
+  startTime         String?
+  depotLat          Float?
+  depotLng          Float?
+  depotAddress      String?
   startedAt         DateTime?
   completedAt       DateTime?
   manuallyReordered Boolean        @default(false)

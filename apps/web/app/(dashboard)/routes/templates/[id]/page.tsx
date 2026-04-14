@@ -18,6 +18,11 @@ import {
   ToggleRight,
   Trash2,
   Sparkles,
+  Clock,
+  Home,
+  AlertTriangle,
+  CheckCircle,
+  XCircle,
 } from "lucide-react";
 import * as Tabs from "@radix-ui/react-tabs";
 import {
@@ -51,7 +56,10 @@ import {
   useRoutePackingList,
   useDeleteRoute,
   useOptimizeTemplate,
+  useAnalyzeRoute,
+  useRouteSettings,
   type RouteTemplateStop,
+  type RouteAnalysisResult,
 } from "@/lib/api/routes";
 import { TemplateRouteMap } from "./TemplateRouteMap";
 
@@ -278,14 +286,22 @@ function DispatchModal({
   const { data: driversResult } = useDrivers({ status: "ACTIVE", limit: 100 });
   const drivers = driversResult?.data ?? [];
   const createRun = useCreateRouteRun();
+  const { data: routeSettings } = useRouteSettings();
 
   const today = new Date().toISOString().split("T")[0];
   const [date, setDate] = React.useState(today);
   const [driverId, setDriverId] = React.useState("");
+  const [startTime, setStartTime] = React.useState("");
+
+  React.useEffect(() => {
+    if (routeSettings?.defaultStartTime && !startTime) {
+      setStartTime(routeSettings.defaultStartTime);
+    }
+  }, [routeSettings?.defaultStartTime]);
 
   const handleDispatch = () => {
     createRun.mutate(
-      { routeId, scheduledDate: date, driverId: driverId || undefined },
+      { routeId, scheduledDate: date, driverId: driverId || undefined, startTime: startTime || undefined },
       {
         onSuccess: (run) => {
           toast({ title: "Route run dispatched", variant: "success" });
@@ -323,6 +339,16 @@ function DispatchModal({
             onChange={(e) => setDate(e.target.value)}
             className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
           />
+        </div>
+        <div>
+          <label className="mb-1 block text-sm font-medium text-navy">Departure Time</label>
+          <input
+            type="time"
+            value={startTime}
+            onChange={(e) => setStartTime(e.target.value)}
+            className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+          />
+          <p className="mt-1 text-xs text-navy/50">When the driver leaves the depot</p>
         </div>
         <div>
           <label className="mb-1 block text-sm font-medium text-navy">Driver (optional)</label>
@@ -363,8 +389,12 @@ export default function RouteTemplateDetailPage({
   const reorderStops = useReorderStops();
   const deleteRoute = useDeleteRoute();
   const optimizeTemplate = useOptimizeTemplate();
+  const analyzeRoute = useAnalyzeRoute();
+  const { data: routeSettings } = useRouteSettings();
 
   const [confirmDelete, setConfirmDelete] = React.useState(false);
+  const [analysisResult, setAnalysisResult] = React.useState<RouteAnalysisResult | null>(null);
+  const [analysisStartTime, setAnalysisStartTime] = React.useState("");
 
   const [selectedStopId, setSelectedStopId] = React.useState<string | null>(null);
   const [dispatchOpen, setDispatchOpen] = React.useState(false);
@@ -585,6 +615,14 @@ export default function RouteTemplateDetailPage({
 
         <Badge variant={route.isActive ? "success" : "neutral"} label={route.isActive ? "Active" : "Inactive"} />
 
+        {/* Depot badge */}
+        {(route.depotAddress || routeSettings?.depotAddress) && (
+          <span className="flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700 border border-emerald-200">
+            <Home className="h-3 w-3" />
+            {route.depotAddress ? `Depot: ${route.depotAddress}` : "Default depot"}
+          </span>
+        )}
+
         {/* Driver selector + actions */}
         <div className="ml-auto flex items-center gap-2">
           <select
@@ -683,6 +721,12 @@ export default function RouteTemplateDetailPage({
                 <span className="flex items-center gap-1.5">
                   <Package className="h-3.5 w-3.5" />
                   Packing List
+                </span>
+              </TabTrigger>
+              <TabTrigger value="analysis">
+                <span className="flex items-center gap-1.5">
+                  <Sparkles className="h-3.5 w-3.5" />
+                  Analysis
                 </span>
               </TabTrigger>
             </Tabs.List>
@@ -824,6 +868,142 @@ export default function RouteTemplateDetailPage({
                 </div>
               )}
             </Tabs.Content>
+
+            {/* ── Analysis Tab ── */}
+            <Tabs.Content value="analysis" className="flex-1 overflow-y-auto p-4">
+              <div className="space-y-4">
+                {/* Controls */}
+                <div className="flex items-end gap-3">
+                  <div className="flex-1">
+                    <label className="mb-1 block text-xs font-medium text-navy/60">Departure Time</label>
+                    <input
+                      type="time"
+                      value={analysisStartTime || routeSettings?.defaultStartTime || "08:00"}
+                      onChange={(e) => setAnalysisStartTime(e.target.value)}
+                      className="h-9 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    />
+                  </div>
+                  <Button
+                    leftIcon={analyzeRoute.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                    onClick={() => {
+                      analyzeRoute.mutate(
+                        { routeId: params.id, startTime: analysisStartTime || undefined },
+                        { onSuccess: (result) => setAnalysisResult(result) },
+                      );
+                    }}
+                    disabled={analyzeRoute.isPending || localStops.length < 1}
+                  >
+                    {analyzeRoute.isPending ? "Analyzing..." : "Analyze Route"}
+                  </Button>
+                </div>
+
+                {/* Results */}
+                {analysisResult && (
+                  <div className="space-y-3">
+                    {/* Summary */}
+                    {analysisResult.summary && (
+                      <div className="rounded-lg border border-brand-200 bg-brand-50 p-3">
+                        <p className="text-sm font-medium text-brand-700">{analysisResult.summary}</p>
+                      </div>
+                    )}
+
+                    {!analysisResult.configured && (
+                      <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+                        <p className="text-xs text-amber-700">
+                          Configure an Anthropic API key in Settings for AI-powered route insights.
+                        </p>
+                      </div>
+                    )}
+
+                    {/* ETA rows */}
+                    <div className="overflow-hidden rounded-lg border border-surface-border">
+                      <table className="w-full text-sm">
+                        <thead className="bg-surface-raised text-xs text-navy/50">
+                          <tr>
+                            <th className="px-3 py-2 text-left font-medium">#</th>
+                            <th className="px-3 py-2 text-left font-medium">Customer</th>
+                            <th className="px-3 py-2 text-left font-medium">ETA</th>
+                            <th className="px-3 py-2 text-left font-medium">Window</th>
+                            <th className="px-3 py-2 text-center font-medium">Status</th>
+                            {analysisResult.stops && <th className="px-3 py-2 text-left font-medium">AI Note</th>}
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-surface-border bg-white">
+                          {analysisResult.etas.map((eta) => {
+                            const aiStop = analysisResult.stops?.find((s) => s.stopNumber === eta.stopNumber);
+                            return (
+                              <tr key={eta.stopId}>
+                                <td className="px-3 py-2 font-bold text-navy">{eta.stopNumber}</td>
+                                <td className="px-3 py-2 text-navy">{eta.customerName}</td>
+                                <td className="px-3 py-2">
+                                  <span className="font-mono text-navy">{eta.arrivalTime}</span>
+                                  <span className="ml-1 text-xs text-navy/40">({eta.travelTimeMinutes}m)</span>
+                                </td>
+                                <td className="px-3 py-2 text-navy/60">
+                                  {eta.deliveryWindowStart && eta.deliveryWindowEnd
+                                    ? `${eta.deliveryWindowStart}–${eta.deliveryWindowEnd}`
+                                    : "—"}
+                                </td>
+                                <td className="px-3 py-2 text-center">
+                                  {aiStop ? (
+                                    <span className={cn(
+                                      "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium",
+                                      aiStop.status === "ok" && "bg-emerald-50 text-emerald-700",
+                                      aiStop.status === "warning" && "bg-amber-50 text-amber-700",
+                                      aiStop.status === "critical" && "bg-red-50 text-red-700",
+                                    )}>
+                                      {aiStop.status === "ok" && <CheckCircle className="h-3 w-3" />}
+                                      {aiStop.status === "warning" && <AlertTriangle className="h-3 w-3" />}
+                                      {aiStop.status === "critical" && <XCircle className="h-3 w-3" />}
+                                      {aiStop.status}
+                                    </span>
+                                  ) : eta.withinWindow === true ? (
+                                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
+                                      <CheckCircle className="h-3 w-3" /> on time
+                                    </span>
+                                  ) : eta.withinWindow === false ? (
+                                    <span className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700">
+                                      <XCircle className="h-3 w-3" /> late
+                                    </span>
+                                  ) : (
+                                    <span className="text-xs text-navy/30">—</span>
+                                  )}
+                                </td>
+                                {analysisResult.stops && (
+                                  <td className="px-3 py-2 text-xs text-navy/60">{aiStop?.message ?? ""}</td>
+                                )}
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Suggestions */}
+                    {analysisResult.suggestions && analysisResult.suggestions.length > 0 && (
+                      <div className="rounded-lg border border-surface-border bg-white p-3">
+                        <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-navy/50">Suggestions</h4>
+                        <ul className="space-y-1">
+                          {analysisResult.suggestions.map((s, i) => (
+                            <li key={i} className="flex items-start gap-2 text-sm text-navy/70">
+                              <span className="mt-0.5 text-brand-500">•</span>
+                              {s}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {!analysisResult && !analyzeRoute.isPending && (
+                  <div className="flex flex-col items-center gap-3 py-12 text-navy/40">
+                    <Clock className="h-8 w-8" />
+                    <p className="text-sm text-center">Click "Analyze Route" to calculate ETAs and get AI-powered delivery window insights.</p>
+                  </div>
+                )}
+              </div>
+            </Tabs.Content>
           </Tabs.Root>
         </div>
 
@@ -834,6 +1014,9 @@ export default function RouteTemplateDetailPage({
             selectedStopId={selectedStopId}
             onSelectStop={(id) => setSelectedStopId(selectedStopId === id ? null : id)}
             onRemoveStop={handleRemoveStop}
+            depotLat={route.depotLat ?? routeSettings?.depotLat ?? undefined}
+            depotLng={route.depotLng ?? routeSettings?.depotLng ?? undefined}
+            depotAddress={route.depotAddress ?? routeSettings?.depotAddress ?? undefined}
           />
         </div>
       </div>

@@ -9,7 +9,7 @@ import {
   useMap,
   useMapsLibrary,
 } from '@vis.gl/react-google-maps';
-import { MapPin, Trash2 } from 'lucide-react';
+import { Home, MapPin, Trash2 } from 'lucide-react';
 import { cn } from '@routeflow/ui/web';
 import type { RouteTemplateStop } from '@/lib/api/routes';
 import { useGoogleMapsKey } from '@/hooks/useGoogleMapsKey';
@@ -42,19 +42,54 @@ function MarkerBubble({ stop, selected }: { stop: RouteTemplateStop; selected: b
   );
 }
 
-// ─── Polyline between stops ────────────────────────────────────────────────────
+// ─── Depot marker bubble ──────────────────────────────────────────────────────
 
-function PolylineLayer({ stops }: { stops: RouteTemplateStop[] }) {
+function DepotMarkerBubble() {
+  return (
+    <div
+      style={{
+        width: 36,
+        height: 36,
+        borderRadius: '50%',
+        background: '#059669',
+        border: '3px solid white',
+        boxShadow: '0 2px 6px rgba(0,0,0,0.35)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        color: 'white',
+      }}
+    >
+      <Home style={{ width: 16, height: 16 }} />
+    </div>
+  );
+}
+
+// ─── Polyline between stops (with depot round-trip) ───────────────────────────
+
+function PolylineLayer({
+  stops,
+  depot,
+}: {
+  stops: RouteTemplateStop[];
+  depot?: { lat: number; lng: number } | null;
+}) {
   const map = useMap();
   const mapsLib = useMapsLibrary('maps');
   const polylineRef = React.useRef<google.maps.Polyline | null>(null);
 
   React.useEffect(() => {
     if (!map || !mapsLib) return;
-    const coords = stops
+    const stopCoords = stops
       .filter((s) => s.customerAddress?.lat != null && s.customerAddress?.lng != null)
       .sort((a, b) => a.stopNumber - b.stopNumber)
       .map((s) => ({ lat: s.customerAddress!.lat!, lng: s.customerAddress!.lng! }));
+
+    // Build path: depot → stops → depot (if depot exists)
+    const coords: Array<{ lat: number; lng: number }> = [];
+    if (depot) coords.push({ lat: depot.lat, lng: depot.lng });
+    coords.push(...stopCoords);
+    if (depot && stopCoords.length > 0) coords.push({ lat: depot.lat, lng: depot.lng });
 
     if (polylineRef.current) polylineRef.current.setMap(null);
     polylineRef.current = new mapsLib.Polyline({
@@ -65,14 +100,20 @@ function PolylineLayer({ stops }: { stops: RouteTemplateStop[] }) {
       map,
     });
     return () => { polylineRef.current?.setMap(null); };
-  }, [map, mapsLib, stops]);
+  }, [map, mapsLib, stops, depot]);
 
   return null;
 }
 
 // ─── Auto-fit bounds ───────────────────────────────────────────────────────────
 
-function FitBoundsLayer({ stops }: { stops: RouteTemplateStop[] }) {
+function FitBoundsLayer({
+  stops,
+  depot,
+}: {
+  stops: RouteTemplateStop[];
+  depot?: { lat: number; lng: number } | null;
+}) {
   const map = useMap();
   const mapsLib = useMapsLibrary('maps');
   const fitted = React.useRef(false);
@@ -80,12 +121,13 @@ function FitBoundsLayer({ stops }: { stops: RouteTemplateStop[] }) {
   React.useEffect(() => {
     if (!map || !mapsLib || fitted.current) return;
     const geo = stops.filter((s) => s.customerAddress?.lat != null);
-    if (!geo.length) return;
+    if (!geo.length && !depot) return;
     const bounds = new (google.maps as any).LatLngBounds();
     geo.forEach((s) => bounds.extend({ lat: s.customerAddress!.lat!, lng: s.customerAddress!.lng! }));
+    if (depot) bounds.extend({ lat: depot.lat, lng: depot.lng });
     map.fitBounds(bounds, 80);
     fitted.current = true;
-  }, [map, mapsLib, stops]);
+  }, [map, mapsLib, stops, depot]);
 
   return null;
 }
@@ -108,6 +150,9 @@ export interface TemplateRouteMapProps {
   selectedStopId?: string | null;
   onSelectStop?: (stopId: string) => void;
   onRemoveStop?: (stopId: string) => void;
+  depotLat?: number | null;
+  depotLng?: number | null;
+  depotAddress?: string | null;
 }
 
 function MapContent({
@@ -115,8 +160,17 @@ function MapContent({
   selectedStopId,
   onSelectStop,
   onRemoveStop,
+  depotLat,
+  depotLng,
+  depotAddress,
 }: TemplateRouteMapProps) {
   const [openInfoId, setOpenInfoId] = React.useState<string | null>(null);
+  const [depotInfoOpen, setDepotInfoOpen] = React.useState(false);
+
+  const depot =
+    depotLat != null && depotLng != null
+      ? { lat: depotLat, lng: depotLng }
+      : null;
 
   const geoStops = stops.filter(
     (s) => s.customerAddress?.lat != null && s.customerAddress?.lng != null,
@@ -124,8 +178,34 @@ function MapContent({
 
   return (
     <>
-      <FitBoundsLayer stops={geoStops} />
-      <PolylineLayer stops={stops} />
+      <FitBoundsLayer stops={geoStops} depot={depot} />
+      <PolylineLayer stops={stops} depot={depot} />
+
+      {/* Depot marker */}
+      {depot && (
+        <>
+          <AdvancedMarker
+            position={depot}
+            onClick={() => setDepotInfoOpen((v) => !v)}
+          >
+            <DepotMarkerBubble />
+          </AdvancedMarker>
+          {depotInfoOpen && (
+            <InfoWindow
+              position={depot}
+              onCloseClick={() => setDepotInfoOpen(false)}
+              pixelOffset={[0, -42]}
+            >
+              <div className="min-w-[160px] p-1 text-sm">
+                <p className="font-semibold text-navy">Depot</p>
+                {depotAddress && (
+                  <p className="mt-0.5 text-xs text-navy/60">{depotAddress}</p>
+                )}
+              </div>
+            </InfoWindow>
+          )}
+        </>
+      )}
 
       {geoStops.map((stop) => (
         <React.Fragment key={stop.id}>
@@ -178,9 +258,13 @@ export function TemplateRouteMap({
   selectedStopId,
   onSelectStop,
   onRemoveStop,
+  depotLat,
+  depotLng,
+  depotAddress,
 }: TemplateRouteMapProps) {
   const { key: MAPS_KEY, loading: mapsKeyLoading } = useGoogleMapsKey();
   const geoStops = stops.filter((s) => s.customerAddress?.lat != null);
+  const hasDepot = depotLat != null && depotLng != null;
 
   if (mapsKeyLoading) {
     return (
@@ -195,14 +279,13 @@ export function TemplateRouteMap({
     return <MapPlaceholder message="Google Maps API key not configured." />;
   }
 
-  if (!geoStops.length) {
+  if (!geoStops.length && !hasDepot) {
     return <MapPlaceholder message="No geocoded stops to display on map." />;
   }
 
-  const center = {
-    lat: geoStops[0].customerAddress!.lat!,
-    lng: geoStops[0].customerAddress!.lng!,
-  };
+  const center = hasDepot
+    ? { lat: depotLat!, lng: depotLng! }
+    : { lat: geoStops[0].customerAddress!.lat!, lng: geoStops[0].customerAddress!.lng! };
 
   return (
     <APIProvider apiKey={MAPS_KEY}>
@@ -219,6 +302,9 @@ export function TemplateRouteMap({
           selectedStopId={selectedStopId}
           onSelectStop={onSelectStop}
           onRemoveStop={onRemoveStop}
+          depotLat={depotLat}
+          depotLng={depotLng}
+          depotAddress={depotAddress}
         />
       </Map>
     </APIProvider>

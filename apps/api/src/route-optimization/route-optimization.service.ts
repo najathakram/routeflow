@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
+import { SystemConfigService } from "../system-config/system-config.service";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -26,6 +27,25 @@ export interface OptimizeResult {
   usedFallback: boolean;
 }
 
+export interface StopETA {
+  stopId: string;
+  stopNumber: number;
+  customerName: string;
+  arrivalTime: string;       // "HH:mm"
+  departureTime: string;     // "HH:mm"
+  travelTimeMinutes: number;
+  deliveryWindowStart?: string | null;
+  deliveryWindowEnd?: string | null;
+  withinWindow: boolean | null;
+}
+
+/** Convert seconds from midnight to "HH:mm" */
+function secToTime(sec: number): string {
+  const h = Math.floor(sec / 3600) % 24;
+  const m = Math.floor((sec % 3600) / 60);
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
 // ─── Service ──────────────────────────────────────────────────────────────────
 
 @Injectable()
@@ -35,7 +55,122 @@ export class RouteOptimizationService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    private readonly systemConfig: SystemConfigService,
   ) {}
+
+  // ─── Depot resolution ──────────────────────────────────────────────────────
+
+  async resolveDepot(
+    routeId: string,
+  ): Promise<{ lat: number; lng: number; address: string } | null> {
+    const route = await this.prisma.forTenant().route.findUnique({
+      where: { id: routeId },
+    });
+    if (!route) return null;
+
+    // 1. Route-level depot override
+    if (route.depotLat != null && route.depotLng != null) {
+      return {
+        lat: route.depotLat,
+        lng: route.depotLng,
+        address: route.depotAddress ?? "",
+      };
+    }
+
+    // 2. System-wide default depot (cached in SystemConfig)
+    const cachedLat = await this.systemConfig.get("route.defaultDepotLat");
+    const cachedLng = await this.systemConfig.get("route.defaultDepotLng");
+    if (cachedLat != null && cachedLng != null) {
+      return {
+        lat: parseFloat(cachedLat),
+        lng: parseFloat(cachedLng),
+        address: "",
+      };
+    }
+
+    // 3. Geocode the tenant's business address and cache
+    const tenantId = route.tenantId;
+    if (!tenantId) return null;
+
+    const tenantConfig = await this.prisma.forTenant().tenantConfig.findFirst({
+      where: { tenantId },
+    });
+    if (
+      !tenantConfig ||
+      !tenantConfig.addressLine1 ||
+      !tenantConfig.city ||
+      !tenantConfig.state ||
+      !tenantConfig.zip
+    ) {
+      return null;
+    }
+
+    const coords = await this.geocodeAddress({
+      line1: tenantConfig.addressLine1,
+      city: tenantConfig.city,
+      state: tenantConfig.state,
+      zip: tenantConfig.zip,
+    });
+    if (!coords) return null;
+
+    // Cache for future calls
+    await this.systemConfig.set("route.defaultDepotLat", String(coords.lat));
+    await this.systemConfig.set("route.defaultDepotLng", String(coords.lng));
+
+    return {
+      lat: coords.lat,
+      lng: coords.lng,
+      address: `${tenantConfig.addressLine1}, ${tenantConfig.city}, ${tenantConfig.state} ${tenantConfig.zip}`,
+    };
+  }
+
+  // ─── ETA calculation ───────────────────────────────────────────────────────
+
+  calculateETAs(
+    depot: { lat: number; lng: number } | null,
+    stops: StopWithCoords[],
+    startTime: string,
+    avgSpeedKmh: number,
+    serviceTimeMinutes: number,
+  ): StopETA[] {
+    if (stops.length === 0) return [];
+    let currentTimeSec = timeToSec(startTime);
+    let currentLoc: { lat: number; lng: number } = depot ?? stops[0];
+    const etas: StopETA[] = [];
+
+    for (const stop of stops) {
+      const travelKm = this.haversineKm(currentLoc, stop);
+      const travelTimeSec = (travelKm / avgSpeedKmh) * 3600;
+      const arrivalSec = currentTimeSec + travelTimeSec;
+      const departureSec = arrivalSec + serviceTimeMinutes * 60;
+
+      let withinWindow: boolean | null = null;
+      if (stop.deliveryWindowStart && stop.deliveryWindowEnd) {
+        const windowStartSec = timeToSec(stop.deliveryWindowStart);
+        const windowEndSec = timeToSec(stop.deliveryWindowEnd);
+        withinWindow = arrivalSec >= windowStartSec && arrivalSec <= windowEndSec;
+      }
+
+      etas.push({
+        stopId: stop.id,
+        stopNumber: stop.stopNumber,
+        customerName: stop.customerName,
+        arrivalTime: secToTime(arrivalSec),
+        departureTime: secToTime(departureSec),
+        travelTimeMinutes: Math.round(travelTimeSec / 60),
+        deliveryWindowStart: stop.deliveryWindowStart ?? null,
+        deliveryWindowEnd: stop.deliveryWindowEnd ?? null,
+        withinWindow,
+      });
+
+      currentTimeSec = departureSec;
+      currentLoc = stop;
+    }
+
+    return etas;
+  }
+
+  // ─── Route optimization ─────────────────────────────────────────────────────
 
   async optimizeTemplate(routeId: string): Promise<OptimizeResult> {
     const route = await this.prisma.forTenant().route.findUnique({
@@ -98,17 +233,20 @@ export class RouteOptimizationService {
       deliveryWindowEnd: s.customer?.deliveryWindowEnd,
     }));
 
+    // Resolve depot for route-aware optimization
+    const depot = await this.resolveDepot(routeId);
+
     let optimizedIds: string[];
     let usedFallback = false;
 
     try {
-      optimizedIds = await this.callOrsOptimization(stops);
+      optimizedIds = await this.callOrsOptimization(stops, depot);
     } catch (err: unknown) {
       this.logger.warn(
         "ORS optimization failed — applying nearest-neighbor fallback",
         err instanceof Error ? err.message : String(err),
       );
-      optimizedIds = this.nearestNeighborFallback(stops);
+      optimizedIds = this.nearestNeighborFallback(stops, depot);
       usedFallback = true;
     }
 
@@ -210,17 +348,20 @@ export class RouteOptimizationService {
       deliveryWindowEnd: s.routeStop.customer?.deliveryWindowEnd,
     }));
 
+    // Resolve depot from the parent route
+    const depot = await this.resolveDepot(run.routeId);
+
     let optimizedIds: string[];
     let usedFallback = false;
 
     try {
-      optimizedIds = await this.callOrsOptimization(stops);
+      optimizedIds = await this.callOrsOptimization(stops, depot);
     } catch (err: unknown) {
       this.logger.warn(
         "ORS optimization failed — applying nearest-neighbor fallback",
         err instanceof Error ? err.message : String(err),
       );
-      optimizedIds = this.nearestNeighborFallback(stops);
+      optimizedIds = this.nearestNeighborFallback(stops, depot);
       usedFallback = true;
     }
 
@@ -261,19 +402,28 @@ export class RouteOptimizationService {
 
   // ─── ORS Vroom API ────────────────────────────────────────────────────────
 
-  private async callOrsOptimization(stops: StopWithCoords[]): Promise<string[]> {
+  private async callOrsOptimization(
+    stops: StopWithCoords[],
+    depot?: { lat: number; lng: number } | null,
+  ): Promise<string[]> {
     const apiKey = this.config.get<string>("ors.apiKey") ?? "";
     if (!apiKey) throw new Error("ORS_API_KEY not configured");
 
-    const first = stops[0];
+    const vehicleDef: Record<string, unknown> = {
+      id: 1,
+      profile: "driving-car",
+    };
+
+    if (depot) {
+      vehicleDef.start = [depot.lng, depot.lat]; // ORS: [lng, lat]
+      vehicleDef.end = [depot.lng, depot.lat];
+    } else {
+      const first = stops[0];
+      vehicleDef.start = [first.lng, first.lat];
+    }
+
     const body = {
-      vehicles: [
-        {
-          id: 1,
-          profile: "driving-car",
-          start: [first.lng, first.lat], // ORS: [lng, lat]
-        },
-      ],
+      vehicles: [vehicleDef],
       jobs: stops.map((s, i) => ({
         id: i + 1,
         location: [s.lng, s.lat],
@@ -320,24 +470,48 @@ export class RouteOptimizationService {
   // 2-opt fixes crossed edges and typically closes that gap completely for
   // ≤ 30 stops in a few dozen iterations.
 
-  private nearestNeighborFallback(stops: StopWithCoords[]): string[] {
-    if (stops.length <= 2) return stops.map((s) => s.id);
+  private nearestNeighborFallback(
+    stops: StopWithCoords[],
+    depot?: { lat: number; lng: number } | null,
+  ): string[] {
+    if (stops.length <= 2) {
+      if (!depot) return stops.map((s) => s.id);
+      // With depot and <=2 stops, still pick the nearest-to-depot first
+      const sorted = [...stops].sort(
+        (a, b) => this.haversineKm(depot, a) - this.haversineKm(depot, b),
+      );
+      return sorted.map((s) => s.id);
+    }
 
-    // ── Step 1: best nearest-neighbour across all starting points ──────────
-    let bestRoute = this.nnFrom(stops, 0);
-    let bestDist = this.pathKm(bestRoute);
+    let bestRoute: StopWithCoords[];
 
-    for (let start = 1; start < stops.length; start++) {
-      const route = this.nnFrom(stops, start);
-      const dist = this.pathKm(route);
-      if (dist < bestDist) {
-        bestDist = dist;
-        bestRoute = route;
+    if (depot) {
+      // ── Depot mode: single NN pass starting from depot ─────────────────
+      // Find the stop nearest to the depot, use that as the starting point
+      let nearestIdx = 0;
+      let minDist = this.haversineKm(depot, stops[0]);
+      for (let i = 1; i < stops.length; i++) {
+        const d = this.haversineKm(depot, stops[i]);
+        if (d < minDist) { minDist = d; nearestIdx = i; }
+      }
+      bestRoute = this.nnFrom(stops, nearestIdx);
+    } else {
+      // ── No depot: try all starting points, keep shortest ───────────────
+      bestRoute = this.nnFrom(stops, 0);
+      let bestDist = this.pathKm(bestRoute);
+
+      for (let start = 1; start < stops.length; start++) {
+        const route = this.nnFrom(stops, start);
+        const dist = this.pathKm(route);
+        if (dist < bestDist) {
+          bestDist = dist;
+          bestRoute = route;
+        }
       }
     }
 
-    // ── Step 2: 2-opt improvement ──────────────────────────────────────────
-    bestRoute = this.twoOpt(bestRoute);
+    // ── 2-opt improvement ──────────────────────────────────────────────────
+    bestRoute = this.twoOpt(bestRoute, depot);
 
     return bestRoute.map((s) => s.id);
   }
@@ -361,45 +535,100 @@ export class RouteOptimizationService {
     return result;
   }
 
-  /** 2-opt local search on an open path (no wrap-around edge). */
-  private twoOpt(stops: StopWithCoords[]): StopWithCoords[] {
+  /**
+   * 2-opt local search.
+   *
+   * Without depot: open path, no wrap-around edge (original behaviour).
+   * With depot: fixed-endpoint tour depot → stops[0] → ... → stops[n-1] → depot.
+   *   Only interior segments are reversed; the depot endpoints stay pinned.
+   */
+  private twoOpt(
+    stops: StopWithCoords[],
+    depot?: { lat: number; lng: number } | null,
+  ): StopWithCoords[] {
     const n = stops.length;
     if (n < 4) return stops;
 
     let route = [...stops];
     let improved = true;
 
-    while (improved) {
-      improved = false;
-      // i..n-3 so that i+1 and j+1 are both valid indices (j ≤ n-2)
-      outer: for (let i = 0; i <= n - 3; i++) {
-        for (let j = i + 2; j <= n - 2; j++) {
-          const a = route[i], b = route[i + 1], c = route[j], d = route[j + 1];
-          // Improvement: replacing edges (a→b, c→d) with (a→c, b→d)
-          const delta =
-            this.haversineKm(a, b) + this.haversineKm(c, d) -
-            this.haversineKm(a, c) - this.haversineKm(b, d);
-          if (delta > 0.001) {
-            // Reverse segment [i+1 .. j]
-            route = [
-              ...route.slice(0, i + 1),
-              ...route.slice(i + 1, j + 1).reverse(),
-              ...route.slice(j + 1),
-            ];
-            improved = true;
-            break outer; // restart after any improvement
+    if (depot) {
+      // ── Depot-pinned 2-opt ───────────────────────────────────────────────
+      // Tour: depot → route[0] → ... → route[n-1] → depot
+      // Reversing segment [i..j] affects edges:
+      //   prevI → route[i]  becomes  prevI → route[j]
+      //   route[j] → nextJ  becomes  route[i] → nextJ
+      // Where prevI = route[i-1] if i>0, else depot
+      //       nextJ = route[j+1] if j<n-1, else depot
+      while (improved) {
+        improved = false;
+        outer: for (let i = 0; i <= n - 2; i++) {
+          for (let j = i + 1; j <= n - 1; j++) {
+            if (i === 0 && j === n - 1) continue; // reversing entire route is pointless for round trip
+            const prevI = i > 0 ? route[i - 1] : depot;
+            const nextJ = j < n - 1 ? route[j + 1] : depot;
+            const oldDist =
+              this.haversineKm(prevI, route[i]) + this.haversineKm(route[j], nextJ);
+            const newDist =
+              this.haversineKm(prevI, route[j]) + this.haversineKm(route[i], nextJ);
+            if (newDist < oldDist - 0.001) {
+              // Reverse segment [i..j]
+              route = [
+                ...route.slice(0, i),
+                ...route.slice(i, j + 1).reverse(),
+                ...route.slice(j + 1),
+              ];
+              improved = true;
+              break outer;
+            }
+          }
+        }
+      }
+    } else {
+      // ── Open-path 2-opt (original) ───────────────────────────────────────
+      while (improved) {
+        improved = false;
+        outer2: for (let i = 0; i <= n - 3; i++) {
+          for (let j = i + 2; j <= n - 2; j++) {
+            const a = route[i], b = route[i + 1], c = route[j], d = route[j + 1];
+            const delta =
+              this.haversineKm(a, b) + this.haversineKm(c, d) -
+              this.haversineKm(a, c) - this.haversineKm(b, d);
+            if (delta > 0.001) {
+              route = [
+                ...route.slice(0, i + 1),
+                ...route.slice(i + 1, j + 1).reverse(),
+                ...route.slice(j + 1),
+              ];
+              improved = true;
+              break outer2;
+            }
           }
         }
       }
     }
+
     return route;
   }
 
-  /** Total path distance in km for an ordered stop array. */
-  private pathKm(stops: StopWithCoords[]): number {
+  /**
+   * Total path distance in km for an ordered stop array.
+   * With depot: includes depot→first and last→depot edges.
+   */
+  private pathKm(
+    stops: StopWithCoords[],
+    depot?: { lat: number; lng: number } | null,
+  ): number {
+    if (stops.length === 0) return 0;
     let total = 0;
+    if (depot) {
+      total += this.haversineKm(depot, stops[0]);
+    }
     for (let i = 0; i < stops.length - 1; i++) {
       total += this.haversineKm(stops[i], stops[i + 1]);
+    }
+    if (depot) {
+      total += this.haversineKm(stops[stops.length - 1], depot);
     }
     return total;
   }
