@@ -43,10 +43,10 @@ ENV NEXT_PUBLIC_GOOGLE_MAPS_KEY=$NEXT_PUBLIC_GOOGLE_MAPS_KEY
 ARG NEXT_PUBLIC_DEFAULT_TENANT=""
 ENV NEXT_PUBLIC_DEFAULT_TENANT=$NEXT_PUBLIC_DEFAULT_TENANT
 
-# Build the Next.js application (output: standalone is set in next.config.mjs)
-# The echo ensures Docker invalidates this layer whenever BUILD_DATE changes.
+# Purge any Next.js build cache to ensure a completely fresh build.
+# Then build the Next.js application (output: standalone is set in next.config.mjs)
 WORKDIR /app/apps/web
-RUN echo "Build: $BUILD_DATE" && npm run build
+RUN rm -rf .next && npm run build
 
 # ─── Stage 2: Runner ──────────────────────────────────────────────────────────
 FROM node:20-alpine AS runner
