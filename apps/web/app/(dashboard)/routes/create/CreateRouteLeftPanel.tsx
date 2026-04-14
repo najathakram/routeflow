@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import type { UseFormReturn } from "react-hook-form";
-import { Plus, X, GripVertical, AlertTriangle, Loader2 } from "lucide-react";
+import { Plus, X, GripVertical, AlertTriangle, Loader2, Sparkles } from "lucide-react";
 import { Input, Select, Button, cn } from "@routeflow/ui/web";
 import type { StopEntry, CustomerForMap } from "./page";
 
@@ -17,6 +17,7 @@ interface CreateRouteLeftPanelProps {
   assignments: Record<string, { routeId: string; routeName: string }[]>;
   onAddStop: (customer: CustomerForMap) => void;
   onRemoveStop: (customerId: string) => void;
+  onOptimize: () => void;
   onSubmit: () => void;
   isSubmitting: boolean;
 }
@@ -31,6 +32,7 @@ export function CreateRouteLeftPanel({
   assignments,
   onAddStop,
   onRemoveStop,
+  onOptimize,
   onSubmit,
   isSubmitting,
 }: CreateRouteLeftPanelProps) {
@@ -96,13 +98,30 @@ export function CreateRouteLeftPanel({
         </div>
       </div>
 
-      {/* Stops header + search */}
+      {/* Stops header */}
       <div className="shrink-0 border-b border-surface-border bg-surface-raised px-4 py-2.5">
         <p className="text-xs font-semibold uppercase tracking-wider text-navy/50">
           Stops ({stops.length})
         </p>
       </div>
 
+      {/* Optimize button — shown when 2+ stops have geocoded coordinates */}
+      {stops.filter((s) => s.lat != null && s.lng != null).length >= 2 && (
+        <div className="shrink-0 border-b border-surface-border bg-white px-4 py-2">
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            leftIcon={<Sparkles className="h-3.5 w-3.5" />}
+            onClick={onOptimize}
+            className="w-full"
+          >
+            Optimize Stop Order
+          </Button>
+        </div>
+      )}
+
+      {/* Customer search */}
       <div className="shrink-0 border-b border-surface-border bg-white px-4 py-3">
         <div className="relative" ref={searchRef}>
           <input

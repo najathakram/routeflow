@@ -444,6 +444,19 @@ export default function RouteTemplateDetailPage({
   const handleOptimize = () => {
     optimizeTemplate.mutate(params.id, {
       onSuccess: (result) => {
+        // Build stopId → new stopNumber lookup from the optimization result
+        const newNumberByStopId = new Map(
+          result.stopOrder.map(({ stopId, stopNumber }) => [stopId, stopNumber]),
+        );
+        // Immediately remap and re-sort localStops so the list updates
+        // without waiting for the React Query re-fetch triggered by the hook's onSuccess
+        setLocalStops((prev) => {
+          const remapped = prev.map((s) => ({
+            ...s,
+            stopNumber: newNumberByStopId.get(s.id) ?? s.stopNumber,
+          }));
+          return [...remapped].sort((a, b) => a.stopNumber - b.stopNumber);
+        });
         toast({
           title: result.usedFallback ? "Route optimized (local fallback)" : "Route optimized",
           description: result.reorderedCount > 0

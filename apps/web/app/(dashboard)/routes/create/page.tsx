@@ -55,6 +55,40 @@ export interface CustomerForMap {
   }>;
 }
 
+// ─── Client-side nearest-neighbour optimisation ────────────────────────────────
+
+function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function nearestNeighborOrder(stops: StopEntry[]): StopEntry[] {
+  const withCoords = stops.filter((s) => s.lat != null && s.lng != null);
+  const withoutCoords = stops.filter((s) => s.lat == null || s.lng == null);
+  if (withCoords.length < 2) return stops;
+  const remaining = [...withCoords];
+  const ordered: StopEntry[] = [remaining.splice(0, 1)[0]];
+  while (remaining.length > 0) {
+    const last = ordered[ordered.length - 1];
+    let nearestIdx = 0;
+    let minDist = Infinity;
+    remaining.forEach((s, i) => {
+      const dist = haversineKm(last.lat!, last.lng!, s.lat!, s.lng!);
+      if (dist < minDist) { minDist = dist; nearestIdx = i; }
+    });
+    ordered.push(remaining.splice(nearestIdx, 1)[0]);
+  }
+  // Stops without coordinates are appended at the end in their original relative order
+  return [...ordered, ...withoutCoords];
+}
+
 // ─── Page ──────────────────────────────────────────────────────────────────────
 
 export default function CreateRoutePage() {
@@ -101,6 +135,10 @@ export default function CreateRoutePage() {
 
   const removeStop = React.useCallback((customerId: string) => {
     setStops((prev) => prev.filter((s) => s.customerId !== customerId));
+  }, []);
+
+  const handleOptimize = React.useCallback(() => {
+    setStops((prev) => nearestNeighborOrder(prev));
   }, []);
 
   // ── Submit ──
@@ -175,6 +213,7 @@ export default function CreateRoutePage() {
             assignments={assignments ?? {}}
             onAddStop={addStop}
             onRemoveStop={removeStop}
+            onOptimize={handleOptimize}
             onSubmit={form.handleSubmit(onSubmit)}
             isSubmitting={isSubmitting}
           />
