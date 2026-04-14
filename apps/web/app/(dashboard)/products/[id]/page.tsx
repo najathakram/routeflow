@@ -124,7 +124,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
   // ── Variant modal state ──────────────────────────────────────────────────
   const [variantModalOpen, setVariantModalOpen] = React.useState(false);
   const [editingVariant, setEditingVariant] = React.useState<ApiProduct | null>(null);
-  const [variantForm, setVariantForm] = React.useState({ variantName: "", sku: "", price: "", unit: "" });
+  const [variantForm, setVariantForm] = React.useState({ variantName: "", sku: "", price: "", unit: "", priceTier2: "", priceTier3: "", priceTier4: "", priceTier5: "" });
   const variantSkuRef = React.useRef<HTMLInputElement>(null);
 
   // ── "Make variant of" modal state ────────────────────────────────────────
@@ -132,11 +132,13 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
   const [makeVariantParentId, setMakeVariantParentId] = React.useState("");
   const [makeVariantName, setMakeVariantName] = React.useState("");
   const [makeVariantScanLoading, setMakeVariantScanLoading] = React.useState(false);
+  const [makeVariantParentOwnName, setMakeVariantParentOwnName] = React.useState("");
 
   // ── "Link existing product as variant" modal state ──────────────────────
   const [linkExistingOpen, setLinkExistingOpen] = React.useState(false);
   const [linkExistingProductId, setLinkExistingProductId] = React.useState("");
   const [linkExistingVariantName, setLinkExistingVariantName] = React.useState("");
+  const [linkExistingParentVariantName, setLinkExistingParentVariantName] = React.useState("");
   const [linkExistingSearch, setLinkExistingSearch] = React.useState("");
 
   // ── Auth ──────────────────────────────────────────────────────────────────
@@ -327,12 +329,17 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
 
   const openVariantModal = (variant?: ApiProduct) => {
     if (variant) {
+      const vp = parseFloat(String(variant.pricePerUnit));
       setEditingVariant(variant);
       setVariantForm({
         variantName: variant.variantName ?? "",
         sku: variant.sku ?? "",
-        price: String(parseFloat(String(variant.pricePerUnit))),
+        price: String(vp),
         unit: variant.unit ?? product.unit,
+        priceTier2: String(parseFloat(String((variant as any).priceTier2 ?? vp))),
+        priceTier3: String(parseFloat(String((variant as any).priceTier3 ?? vp))),
+        priceTier4: String(parseFloat(String((variant as any).priceTier4 ?? vp))),
+        priceTier5: String(parseFloat(String((variant as any).priceTier5 ?? vp))),
       });
     } else {
       setEditingVariant(null);
@@ -341,6 +348,10 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
         sku: "",
         price: String(priceNumber),
         unit: product.unit,
+        priceTier2: String(parseFloat(String((product as any).priceTier2 ?? priceNumber))),
+        priceTier3: String(parseFloat(String((product as any).priceTier3 ?? priceNumber))),
+        priceTier4: String(parseFloat(String((product as any).priceTier4 ?? priceNumber))),
+        priceTier5: String(parseFloat(String((product as any).priceTier5 ?? priceNumber))),
       });
     }
     setVariantModalOpen(true);
@@ -363,6 +374,10 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
           variantName: variantForm.variantName,
           sku: variantForm.sku || undefined,
           pricePerUnit: variantForm.price,
+          priceTier2: variantForm.priceTier2,
+          priceTier3: variantForm.priceTier3,
+          priceTier4: variantForm.priceTier4,
+          priceTier5: variantForm.priceTier5,
         },
         {
           onSuccess: () => {
@@ -381,6 +396,10 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
           sku: variantForm.sku || undefined,
           unit: variantForm.unit || product.unit,
           pricePerUnit: variantForm.price || String(product.pricePerUnit),
+          priceTier2: variantForm.priceTier2 || variantForm.price || String(product.pricePerUnit),
+          priceTier3: variantForm.priceTier3 || variantForm.price || String(product.pricePerUnit),
+          priceTier4: variantForm.priceTier4 || variantForm.price || String(product.pricePerUnit),
+          priceTier5: variantForm.priceTier5 || variantForm.price || String(product.pricePerUnit),
           category: product.category || undefined,
         },
         {
@@ -414,6 +433,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
   const openMakeVariantModal = () => {
     setMakeVariantParentId("");
     setMakeVariantName(product.variantName ?? "");
+    setMakeVariantParentOwnName("");
     setMakeVariantOpen(true);
   };
 
@@ -446,14 +466,13 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
       return;
     }
     const parentProduct = allProducts.find((p: any) => p.id === makeVariantParentId) as any;
-    const newName = parentProduct ? `${parentProduct.name} - ${makeVariantName.trim()}` : product.name;
-    updateProduct.mutate(
-      {
-        id: params.id,
-        parentProductId: makeVariantParentId,
-        variantName: makeVariantName.trim(),
-        name: newName,
-      },
+    const baseName = parentProduct?.name ?? product.name;
+    const newName = `${baseName} - ${makeVariantName.trim()}`;
+
+    // If the parent has no variantName yet, assign it one first
+    const parentNeedsName = parentProduct && !parentProduct.variantName && makeVariantParentOwnName.trim();
+    const doLink = () => updateProduct.mutate(
+      { id: params.id, parentProductId: makeVariantParentId, variantName: makeVariantName.trim(), name: newName },
       {
         onSuccess: () => {
           toast({ title: "Product linked as variant", variant: "success" });
@@ -462,6 +481,16 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
         onError: () => toast({ title: "Failed to link as variant", variant: "error" }),
       },
     );
+
+    if (parentNeedsName) {
+      const parentNewName = `${baseName} - ${makeVariantParentOwnName.trim()}`;
+      updateProduct.mutate(
+        { id: makeVariantParentId, variantName: makeVariantParentOwnName.trim(), name: parentNewName },
+        { onSuccess: doLink, onError: () => toast({ title: "Failed to update parent variant name", variant: "error" }) },
+      );
+    } else {
+      doLink();
+    }
   };
 
   // ── "Link existing product as variant" helpers ────────────────────────────
@@ -469,6 +498,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
   const openLinkExistingModal = () => {
     setLinkExistingProductId("");
     setLinkExistingVariantName("");
+    setLinkExistingParentVariantName(product.variantName ?? "");
     setLinkExistingSearch("");
     setLinkExistingOpen(true);
   };
@@ -497,14 +527,12 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
       toast({ title: "Flavor / variety name is required", variant: "error" });
       return;
     }
-    const composedName = `${product.name} - ${linkExistingVariantName.trim()}`;
-    updateProduct.mutate(
-      {
-        id: linkExistingProductId,
-        parentProductId: product.id,
-        variantName: linkExistingVariantName.trim(),
-        name: composedName,
-      },
+    const baseName = product.name;
+    const composedName = `${baseName} - ${linkExistingVariantName.trim()}`;
+
+    // Link the selected product as a child variant
+    const doLinkChild = () => updateProduct.mutate(
+      { id: linkExistingProductId, parentProductId: product.id, variantName: linkExistingVariantName.trim(), name: composedName },
       {
         onSuccess: () => {
           toast({ title: "Product linked as variant", variant: "success" });
@@ -513,6 +541,18 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
         onError: () => toast({ title: "Failed to link product", variant: "error" }),
       },
     );
+
+    // If the current (parent) product has no variantName yet, assign it one first
+    const parentNeedsName = !product.variantName && linkExistingParentVariantName.trim();
+    if (parentNeedsName) {
+      const parentNewName = `${baseName} - ${linkExistingParentVariantName.trim()}`;
+      updateProduct.mutate(
+        { id: product.id, variantName: linkExistingParentVariantName.trim(), name: parentNewName },
+        { onSuccess: doLinkChild, onError: () => toast({ title: "Failed to update parent variant name", variant: "error" }) },
+      );
+    } else {
+      doLinkChild();
+    }
   };
 
   // ── Unlink from parent ────────────────────────────────────────────────────
@@ -1088,22 +1128,40 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                   ["Tier 3", "priceTier3", product.priceTier3],
                   ["Tier 4", "priceTier4", product.priceTier4],
                   ["Tier 5", "priceTier5", product.priceTier5],
-                ] as [string, string, any][]).map(([label, field, productVal]) => (
-                  <div key={field}>
-                    <p className="mb-1 text-xs text-navy/40">{label}</p>
-                    {isEditing ? (
-                      <EditableNumber
-                        value={parseFloat(String(editDraft[field] ?? parseFloat(String(productVal ?? priceNumber))))}
-                        onChange={(v) => setEditDraft((d) => ({ ...d, [field]: String(v) }))}
-                      />
-                    ) : (
-                      <p className="text-sm font-medium text-navy">
-                        ${parseFloat(String(productVal ?? priceNumber)).toFixed(2)}
-                      </p>
-                    )}
-                  </div>
-                ))}
+                ] as [string, string, any][]).map(([label, field, productVal], idx) => {
+                  const prevFields = ["pricePerUnit", "priceTier2", "priceTier3", "priceTier4"];
+                  const prevField = prevFields[idx];
+                  const curVal = isEditing ? parseFloat(String(editDraft[field] ?? parseFloat(String(productVal ?? priceNumber)))) : parseFloat(String(productVal ?? priceNumber));
+                  const prevVal = isEditing ? parseFloat(String(editDraft[prevField] ?? priceNumber)) : parseFloat(String(idx === 0 ? priceNumber : (product as any)[prevField] ?? priceNumber));
+                  const warn = isEditing && curVal > prevVal;
+                  return (
+                    <div key={field}>
+                      <p className={cn("mb-1 text-xs", warn ? "text-warning font-medium" : "text-navy/40")}>{label}{warn ? " ⚠" : ""}</p>
+                      {isEditing ? (
+                        <EditableNumber
+                          value={curVal}
+                          onChange={(v) => setEditDraft((d) => ({ ...d, [field]: String(v) }))}
+                        />
+                      ) : (
+                        <p className="text-sm font-medium text-navy">
+                          ${parseFloat(String(productVal ?? priceNumber)).toFixed(2)}
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
+              {isEditing && (() => {
+                const t1 = parseFloat(String(editDraft.pricePerUnit ?? priceNumber));
+                const t2 = parseFloat(String(editDraft.priceTier2 ?? (product as any).priceTier2 ?? t1));
+                const t3 = parseFloat(String(editDraft.priceTier3 ?? (product as any).priceTier3 ?? t1));
+                const t4 = parseFloat(String(editDraft.priceTier4 ?? (product as any).priceTier4 ?? t1));
+                const t5 = parseFloat(String(editDraft.priceTier5 ?? (product as any).priceTier5 ?? t1));
+                const hasViolation = t2 > t1 || t3 > t2 || t4 > t3 || t5 > t4;
+                return hasViolation ? (
+                  <p className="mt-1.5 text-xs text-warning">Higher tier prices should be ≤ the tier above (volume discounts are lower).</p>
+                ) : null;
+              })()}
             </div>
 
             <div className="mt-4">
@@ -1183,7 +1241,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                 )}
               </div>
 
-              {!product.variants || product.variants.length === 0 ? (
+              {(!product.variants || product.variants.length === 0) && !product.variantName ? (
                 <p className="text-sm text-navy/40 text-center py-8">
                   No variants yet. Add flavors, sizes, or other variations.
                 </p>
@@ -1192,15 +1250,55 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-surface-border text-left">
-                        <th className="pb-2 pr-4 text-xs font-medium text-navy/50">Variant Name</th>
+                        <th className="pb-2 pr-4 text-xs font-medium text-navy/50">Variant</th>
                         <th className="pb-2 pr-4 text-xs font-medium text-navy/50">SKU</th>
-                        <th className="pb-2 pr-4 text-xs font-medium text-navy/50">Price</th>
+                        <th className="pb-2 pr-4 text-xs font-medium text-navy/50">Tier 1</th>
+                        <th className="pb-2 pr-4 text-xs font-medium text-navy/50">Tier 2</th>
                         <th className="pb-2 pr-4 text-xs font-medium text-navy/50">Status</th>
                         {isOperator && <th className="pb-2 text-xs font-medium text-navy/50">Actions</th>}
                       </tr>
                     </thead>
                     <tbody>
-                      {product.variants.map((variant: ApiProduct) => (
+                      {/* Parent product itself as first row */}
+                      <tr className="border-b border-surface-border bg-surface-raised/30">
+                        <td className="py-2.5 pr-4">
+                          <span className="font-medium text-navy">
+                            {product.variantName || <span className="italic text-navy/40">this product</span>}
+                          </span>
+                          {!product.variantName && isOperator && (
+                            <button
+                              onClick={startEdit}
+                              className="ml-2 text-xs text-brand-500 hover:underline"
+                            >
+                              assign name
+                            </button>
+                          )}
+                        </td>
+                        <td className="py-2.5 pr-4 font-mono text-xs text-navy/60">
+                          {product.sku || <span className="text-navy/30">&mdash;</span>}
+                        </td>
+                        <td className="py-2.5 pr-4 text-navy">
+                          ${priceNumber.toFixed(2)}
+                        </td>
+                        <td className="py-2.5 pr-4 text-navy">
+                          ${parseFloat(String((product as any).priceTier2 ?? priceNumber)).toFixed(2)}
+                        </td>
+                        <td className="py-2.5 pr-4">
+                          <Badge variant={product.isActive ? "success" : "neutral"} label={product.isActive ? "Active" : "Inactive"} />
+                        </td>
+                        {isOperator && (
+                          <td className="py-2.5">
+                            <button
+                              onClick={startEdit}
+                              title="Edit this product"
+                              className="rounded p-1.5 text-navy/40 hover:bg-surface-raised hover:text-navy transition-colors"
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </button>
+                          </td>
+                        )}
+                      </tr>
+                      {(product.variants ?? []).map((variant: ApiProduct) => (
                         <tr key={variant.id} className="border-b border-surface-border last:border-0">
                           <td className="py-2.5 pr-4">
                             <Link
@@ -1215,6 +1313,9 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                           </td>
                           <td className="py-2.5 pr-4 text-navy">
                             ${parseFloat(String(variant.pricePerUnit)).toFixed(2)}
+                          </td>
+                          <td className="py-2.5 pr-4 text-navy">
+                            ${parseFloat(String((variant as any).priceTier2 ?? variant.pricePerUnit)).toFixed(2)}
                           </td>
                           <td className="py-2.5 pr-4">
                             <Badge
@@ -1307,15 +1408,39 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
         </div>
 
         <div>
-          <label className="mb-1 block text-xs font-medium text-navy/60">Price</label>
-          <input
-            type="number"
-            min={0}
-            step={0.01}
-            value={variantForm.price}
-            onChange={(e) => setVariantForm((f) => ({ ...f, price: e.target.value }))}
-            className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-          />
+          <label className="mb-1 block text-xs font-medium text-navy/60">Pricing Tiers</label>
+          <div className="grid grid-cols-5 gap-2">
+            {([
+              ["T1 (List)", "price"],
+              ["T2", "priceTier2"],
+              ["T3", "priceTier3"],
+              ["T4", "priceTier4"],
+              ["T5", "priceTier5"],
+            ] as [string, keyof typeof variantForm][]).map(([label, field], idx) => {
+              const val = parseFloat(variantForm[field]) || 0;
+              const prevField = idx > 0 ? (["price","priceTier2","priceTier3","priceTier4","priceTier5"] as const)[idx - 1] : null;
+              const prevVal = prevField ? (parseFloat(variantForm[prevField]) || 0) : Infinity;
+              const warn = idx > 0 && val > prevVal;
+              return (
+                <div key={field}>
+                  <p className="mb-1 text-xs text-navy/40">{label}</p>
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.01}
+                    value={variantForm[field]}
+                    onChange={(e) => setVariantForm((f) => ({ ...f, [field]: e.target.value }))}
+                    className={cn(
+                      "w-full rounded border px-2 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500",
+                      warn ? "border-warning text-warning" : "border-surface-border",
+                    )}
+                  />
+                  {warn && <p className="mt-0.5 text-xs text-warning">Higher than {label.split(" ")[0] === "T2" ? "T1" : `T${idx}`}</p>}
+                </div>
+              );
+            })}
+          </div>
+          <p className="mt-1.5 text-xs text-navy/40">Higher tiers (volume) are typically equal to or lower than Tier 1.</p>
         </div>
 
         {!editingVariant && (
@@ -1396,13 +1521,39 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
           />
         </div>
 
+        {/* If parent has no variantName yet, ask for one */}
+        {makeVariantParentId && (() => {
+          const parent = allProducts.find((p: any) => p.id === makeVariantParentId) as any;
+          if (!parent || parent.variantName) return null;
+          return (
+            <div>
+              <label className="mb-1 block text-xs font-medium text-navy/60">
+                Variant name for <span className="text-navy">{parent.name}</span>
+                <span className="ml-1 text-navy/40">(optional)</span>
+              </label>
+              <input
+                value={makeVariantParentOwnName}
+                onChange={(e) => setMakeVariantParentOwnName(e.target.value)}
+                placeholder='e.g. "Original", "Regular", "Standard"'
+                className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+              />
+              <p className="mt-1 text-xs text-navy/40">
+                Since {parent.name} doesn&apos;t have a variant name, you can assign one now so it appears alongside its variants.
+              </p>
+            </div>
+          );
+        })()}
+
         {/* Preview of composed name */}
         {makeVariantParentId && makeVariantName.trim() && (() => {
           const parent = allProducts.find((p: any) => p.id === makeVariantParentId) as any;
           return parent ? (
-            <p className="rounded bg-surface-raised px-3 py-2 text-xs text-navy/60">
-              New name: <span className="font-medium text-navy">{parent.name} - {makeVariantName.trim()}</span>
-            </p>
+            <div className="rounded bg-surface-raised px-3 py-2 text-xs text-navy/60 space-y-0.5">
+              <p>This product: <span className="font-medium text-navy">{parent.name} - {makeVariantName.trim()}</span></p>
+              {makeVariantParentOwnName.trim() && !parent.variantName && (
+                <p>{parent.name}: <span className="font-medium text-navy">{parent.name} - {makeVariantParentOwnName.trim()}</span></p>
+              )}
+            </div>
           ) : null;
         })()}
       </div>
@@ -1478,11 +1629,33 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
           />
         </div>
 
+        {/* If this (parent) product has no variantName yet, ask for one */}
+        {!product.variantName && (
+          <div>
+            <label className="mb-1 block text-xs font-medium text-navy/60">
+              Variant name for <span className="text-navy">{product.name}</span>
+              <span className="ml-1 text-navy/40">(optional)</span>
+            </label>
+            <input
+              value={linkExistingParentVariantName}
+              onChange={(e) => setLinkExistingParentVariantName(e.target.value)}
+              placeholder='e.g. "Original", "Regular", "Standard"'
+              className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+            />
+            <p className="mt-1 text-xs text-navy/40">
+              Assign a variant name to this product too, so both appear in the variants table with their own identifiers.
+            </p>
+          </div>
+        )}
+
         {/* Name preview */}
         {linkExistingProductId && linkExistingVariantName.trim() && (
-          <p className="rounded bg-surface-raised px-3 py-2 text-xs text-navy/60">
-            Will be renamed: <span className="font-medium text-navy">{product.name} - {linkExistingVariantName.trim()}</span>
-          </p>
+          <div className="rounded bg-surface-raised px-3 py-2 text-xs text-navy/60 space-y-0.5">
+            <p>Selected product: <span className="font-medium text-navy">{product.name} - {linkExistingVariantName.trim()}</span></p>
+            {linkExistingParentVariantName.trim() && !product.variantName && (
+              <p>This product: <span className="font-medium text-navy">{product.name} - {linkExistingParentVariantName.trim()}</span></p>
+            )}
+          </div>
         )}
       </div>
     </Modal>
