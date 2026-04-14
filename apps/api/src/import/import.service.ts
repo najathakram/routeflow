@@ -1,15 +1,29 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { parse } from "csv-parse/sync";
 import { InvoiceStatus, UserRole } from "@prisma/client";
 import * as bcrypt from "bcrypt";
 import * as crypto from "crypto";
 
+/** Category name substrings (lower-cased) that map to the INVENTORY_PURCHASE system code */
+const INVENTORY_PURCHASE_KEYWORDS = [
+  "inventor",      // "inventory", "inventory purchase", "inventory purchases"
+  "stock purchase",
+  "purchase of stock",
+  "purchase of goods",
+  "cost of goods",
+  "goods purchase",
+];
+
 @Injectable()
 export class ImportService {
   private readonly logger = new Logger(ImportService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly vendorBillsService: VendorBillsService,
+  ) {}
 
   private parseCsv(buffer: Buffer): any[] {
     try {
@@ -845,10 +859,33 @@ export class ImportService {
 
     // ── Step 1: Ensure expense categories exist ──────────────────────────────
     const catMap: Record<string, string> = {};
+    // Also record which category IDs are INVENTORY_PURCHASE for vendor bill creation later
+    const inventoryCatIds = new Set<string>();
+
     const catNames = [
       ...new Set(rows.map((r: any) => r["Expense Category"]).filter(Boolean)),
     ] as string[];
     for (const catName of catNames) {
+      const nameLower = catName.toLowerCase();
+      const isInventoryPurchase = INVENTORY_PURCHASE_KEYWORDS.some((kw) =>
+        nameLower.includes(kw),
+      );
+
+      if (isInventoryPurchase) {
+        // Always map to the canonical INVENTORY_PURCHASE system category
+        let cat = await this.prisma
+          .forTenant()
+          .expenseCategory.findFirst({ where: { code: "INVENTORY_PURCHASE" } });
+        if (!cat) {
+          cat = await this.prisma.forTenant().expenseCategory.create({
+            data: { name: "Inventory Purchase", code: "INVENTORY_PURCHASE", isCustom: false },
+          });
+        }
+        catMap[catName] = cat.id;
+        inventoryCatIds.add(cat.id);
+        continue;
+      }
+
       const code = catName
         .toUpperCase()
         .replace(/[^A-Z0-9]/g, "_")
@@ -975,7 +1012,7 @@ export class ImportService {
       }
 
       try {
-        await this.prisma.forTenant().expense.create({
+        const expense = await this.prisma.forTenant().expense.create({
           data: {
             categoryId,
             importBatchId,
@@ -988,6 +1025,30 @@ export class ImportService {
             ...(supplierId ? { supplierId } : {}),
           },
         });
+
+        // If this is an inventory purchase, create a vendor bill so it appears
+        // in the Inventory Purchases tab rather than the Other Expenses tab.
+        if (inventoryCatIds.has(categoryId)) {
+          try {
+            const bill = await this.vendorBillsService.create({
+              requireSupplier: false,
+              supplierId: supplierId ?? undefined,
+              totalOwed: amount,
+              billDate: date.toISOString(),
+              notes: description ?? undefined,
+              items: [],
+            });
+            await this.prisma.forTenant().expense.update({
+              where: { id: expense.id },
+              data: { vendorBillId: bill.id },
+            });
+          } catch (billErr: any) {
+            this.logger.warn(
+              `Could not create vendor bill for imported expense ${expense.id}: ${billErr.message}`,
+            );
+          }
+        }
+
         imported++;
       } catch (e: any) {
         errors.push(e.message);
@@ -1034,6 +1095,48 @@ export class ImportService {
       latestExpenseDate: r._max.date,
       importedAt: r._min.createdAt,
     }));
+  }
+
+  // ── Inventory purchase repair ─────────────────────────────────────────────
+
+  /**
+   * Retroactively create vendor bills for any INVENTORY_PURCHASE expenses that
+   * were imported before this logic existed (i.e. vendorBillId is null).
+   * Safe to call multiple times — already-converted expenses are skipped.
+   */
+  async repairInventoryPurchaseExpenses(): Promise<{ converted: number; skipped: number }> {
+    const invCat = await this.prisma
+      .forTenant()
+      .expenseCategory.findFirst({ where: { code: "INVENTORY_PURCHASE" } });
+    if (!invCat) return { converted: 0, skipped: 0 };
+
+    const unconverted = await this.prisma.forTenant().expense.findMany({
+      where: { categoryId: invCat.id, vendorBillId: null, deletedAt: null },
+    });
+
+    let converted = 0;
+    let skipped = 0;
+    for (const expense of unconverted) {
+      try {
+        const bill = await this.vendorBillsService.create({
+          requireSupplier: false,
+          supplierId: (expense as any).supplierId ?? undefined,
+          totalOwed: Number(expense.amount),
+          billDate: expense.date?.toISOString(),
+          notes: expense.description ?? undefined,
+          items: [],
+        });
+        await this.prisma.forTenant().expense.update({
+          where: { id: expense.id },
+          data: { vendorBillId: bill.id },
+        });
+        converted++;
+      } catch (e: any) {
+        this.logger.warn(`repairInventoryPurchaseExpenses: skipped ${expense.id}: ${e.message}`);
+        skipped++;
+      }
+    }
+    return { converted, skipped };
   }
 
   // ── Orphaned customer repair ────────────────────────────────────────────────

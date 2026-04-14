@@ -27,9 +27,14 @@ export class VendorBillsService {
   }
 
   async create(dto: any) {
-    if (!dto.supplierId || typeof dto.supplierId !== "string" || dto.supplierId.trim() === "") {
-      throw new BadRequestException("Please select a supplier before creating the bill.");
+    // supplierId is required when creating manually from the UI, but optional for import-created bills
+    if (dto.requireSupplier !== false) {
+      if (!dto.supplierId || typeof dto.supplierId !== "string" || dto.supplierId.trim() === "") {
+        throw new BadRequestException("Please select a supplier before creating the bill.");
+      }
     }
+    const supplierId = (dto.supplierId && dto.supplierId.trim()) ? dto.supplierId.trim() : null;
+
     // Calculate totalOwed from line items if provided, otherwise use dto.totalOwed
     let totalOwed = dto.totalOwed ?? 0;
     if (dto.items && Array.isArray(dto.items) && dto.items.length > 0) {
@@ -43,7 +48,7 @@ export class VendorBillsService {
     const bill = await this.prisma.forTenant().vendorBill.create({
       data: {
         billNumber: await this.nextBillNumber(),
-        supplierId: dto.supplierId,
+        ...(supplierId ? { supplierId } : {}),
         status: "DRAFT",
         totalOwed,
         billDate: dto.billDate ? new Date(dto.billDate) : null,

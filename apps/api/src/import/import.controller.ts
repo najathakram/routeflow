@@ -66,6 +66,16 @@ export class ImportController {
   }
 
   /**
+   * Repair: convert any existing INVENTORY_PURCHASE expenses that were imported
+   * before vendor-bill creation was added. Safe to call multiple times.
+   */
+  @Post("expenses/repair-inventory")
+  @HttpCode(HttpStatus.OK)
+  repairInventoryPurchaseExpenses() {
+    return this.importService.repairInventoryPurchaseExpenses();
+  }
+
+  /**
    * Roll back an entire expense import batch by soft-deleting every expense
    * that was created in that batch. Safe to call multiple times.
    */

@@ -497,6 +497,7 @@ export class BookkeepingService implements OnModuleInit {
       .expenseLineItem.findMany({ where: { expenseId: expense.id } });
 
     const bill = await this.vendorBillsService.create({
+      requireSupplier: false,
       supplierId: expense.supplierId ?? undefined,
       totalOwed: Number(expense.amount),
       billDate: expense.date?.toISOString(),

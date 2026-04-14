@@ -1509,7 +1509,7 @@ model EstimateItem {
 model VendorBill {
   id           String           @id @default(uuid())
   billNumber   String
-  supplierId   String
+  supplierId   String?
   status       VendorBillStatus @default(RECEIVED)
   totalOwed    Decimal          @db.Decimal(10, 2)
   totalPaid    Decimal          @default(0) @db.Decimal(10, 2)
@@ -1521,7 +1521,7 @@ model VendorBill {
   updatedAt    DateTime         @updatedAt
   tenantId     String?
 
-  supplier Supplier        @relation(fields: [supplierId], references: [id])
+  supplier Supplier?       @relation(fields: [supplierId], references: [id])
   tenant   Tenant?         @relation(fields: [tenantId], references: [id])
   payments BillPayment[]
   items    VendorBillItem[]
