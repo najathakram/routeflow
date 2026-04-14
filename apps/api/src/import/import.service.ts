@@ -429,8 +429,15 @@ export class ImportService {
 
         created++;
       } catch (e: any) {
-        errors.push(`${name}: ${e.message}`);
-        skipped++;
+        // P2002 = unique constraint violation — the customer (or their user account)
+        // already exists in the database. Treat as a silent skip rather than an error
+        // so re-importing the same CSV doesn't flood the UI with noise.
+        if (e?.code === "P2002") {
+          skipped++;
+        } else {
+          errors.push(`${name}: ${e.message}`);
+          skipped++;
+        }
       }
     }
     return { created, updated, skipped, errors };
