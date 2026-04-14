@@ -1037,25 +1037,30 @@ export class BookkeepingService implements OnModuleInit {
           return d;
         })()
       : new Date();
-    const items = await this.prisma.forTenant().invoiceItem.findMany({
+    // Query via Invoice (correct tenantId) and include items via relation.
+    // Direct invoiceItem.findMany with forTenant() would inject tenantId on InvoiceItem,
+    // but nested-created items have tenantId=null (bypass extension), so we go through Invoice.
+    const invoices = await this.prisma.forTenant().invoice.findMany({
       where: {
-        invoice: {
-          status: { notIn: [InvoiceStatus.DRAFT, InvoiceStatus.VOID, InvoiceStatus.WRITTEN_OFF] },
-          issueDate: { gte: fromDate, lte: toDate },
-        },
+        status: { notIn: [InvoiceStatus.DRAFT, InvoiceStatus.VOID, InvoiceStatus.WRITTEN_OFF] },
+        issueDate: { gte: fromDate, lte: toDate },
       },
-      include: { product: { select: { id: true, name: true } } },
+      include: {
+        items: { include: { product: { select: { id: true, name: true } } } },
+      },
     });
     const byItem: Record<
       string,
       { productId: string | null; name: string; qty: number; amount: number }
     > = {};
-    for (const item of items) {
-      const key = item.productId ?? `desc:${item.description}`;
-      const name = item.product?.name ?? item.description;
-      if (!byItem[key]) byItem[key] = { productId: item.productId, name, qty: 0, amount: 0 };
-      byItem[key].qty += Number(item.qty);
-      byItem[key].amount += Number(item.subtotal);
+    for (const inv of invoices) {
+      for (const item of inv.items) {
+        const key = item.productId ?? `desc:${item.description}`;
+        const name = item.product?.name ?? item.description;
+        if (!byItem[key]) byItem[key] = { productId: item.productId, name, qty: 0, amount: 0 };
+        byItem[key].qty += Number(item.qty);
+        byItem[key].amount += Number(item.subtotal);
+      }
     }
     return {
       data: Object.values(byItem).sort((a, b) => b.amount - a.amount),
