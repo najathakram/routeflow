@@ -9,9 +9,11 @@ import {
   useMap,
   useMapsLibrary,
 } from "@vis.gl/react-google-maps";
-import { MapPin, Plus, Minus } from "lucide-react";
+import { MapPin, Plus, Minus, Loader2 } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 import type { StopEntry, CustomerForMap } from "./page";
 import { useGoogleMapsKey } from "@/hooks/useGoogleMapsKey";
+import { apiClient } from "@/lib/api-client";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -242,18 +244,37 @@ export function CreateRouteMap({
   onRemoveStop,
 }: CreateRouteMapProps) {
   const { key: MAPS_KEY, loading: mapsKeyLoading } = useGoogleMapsKey();
+  const queryClient = useQueryClient();
   const [selectedCustomerId, setSelectedCustomerId] = React.useState<string | null>(null);
+  const [isGeocoding, setIsGeocoding] = React.useState(false);
+  const geocodeTriggeredRef = React.useRef(false);
 
-  // Build geocoded customer list
-  const geoCustomers = React.useMemo<GeoCustomer[]>(() => {
-    return customers
-      .map((c) => {
-        const addr = (c.addresses ?? []).find((a) => a.isDefault) ?? c.addresses?.[0];
-        if (!addr?.lat || !addr?.lng) return null;
-        return { customer: c, lat: addr.lat, lng: addr.lng, addressId: addr.id };
-      })
-      .filter(Boolean) as GeoCustomer[];
+  // Split customers: those with lat/lng and those with addresses but no coords
+  const { geoCustomers, needsGeocodingCount } = React.useMemo(() => {
+    const geo: GeoCustomer[] = [];
+    let ungeo = 0;
+    for (const c of customers) {
+      const addr = (c.addresses ?? []).find((a) => a.isDefault) ?? c.addresses?.[0];
+      if (addr?.lat && addr?.lng) {
+        geo.push({ customer: c, lat: addr.lat, lng: addr.lng, addressId: addr.id });
+      } else if (addr?.line1) {
+        ungeo++;
+      }
+    }
+    return { geoCustomers: geo, needsGeocodingCount: ungeo };
   }, [customers]);
+
+  // Auto-trigger backend geocoding when un-geocoded addresses are detected
+  React.useEffect(() => {
+    if (needsGeocodingCount === 0 || geocodeTriggeredRef.current) return;
+    geocodeTriggeredRef.current = true;
+    setIsGeocoding(true);
+    apiClient
+      .post("/customers/geocode-all")
+      .then(() => queryClient.invalidateQueries({ queryKey: ["customers"] }))
+      .catch(() => {}) // silent — map still shows whatever is already geocoded
+      .finally(() => setIsGeocoding(false));
+  }, [needsGeocodingCount, queryClient]);
 
   const selectedGc = selectedCustomerId
     ? geoCustomers.find((gc) => gc.customer.id === selectedCustomerId)
@@ -274,59 +295,85 @@ export function CreateRouteMap({
     );
   }
   if (!MAPS_KEY) return <MapPlaceholder customerCount={customers.length} reason="no-key" />;
+
+  // If geocoding is in progress and we have no pins yet, show a progress indicator
+  if (geoCustomers.length === 0 && isGeocoding) {
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center gap-3 bg-surface-raised">
+        <Loader2 className="h-10 w-10 animate-spin text-brand-500" />
+        <p className="text-sm font-medium text-navy/70">
+          Geocoding {needsGeocodingCount} address{needsGeocodingCount !== 1 ? "es" : ""}…
+        </p>
+        <p className="text-xs text-navy/40">Resolving locations from address text</p>
+      </div>
+    );
+  }
+
   if (geoCustomers.length === 0) return <MapPlaceholder customerCount={customers.length} reason="no-geocoded" />;
 
   return (
     <APIProvider apiKey={MAPS_KEY}>
-      <Map
-        mapId="CREATE_ROUTE_MAP"
-        defaultCenter={{ lat: 37.7749, lng: -122.4194 }}
-        defaultZoom={12}
-        gestureHandling="greedy"
-        disableDefaultUI={false}
-        style={{ width: "100%", height: "100%" }}
-        onClick={() => setSelectedCustomerId(null)}
-      >
-        <FitBoundsLayer geoCustomers={geoCustomers} />
-        <PolylineLayer stops={stops} />
-
-        {geoCustomers.map((gc) => {
-          const stopIdx = stops.findIndex((s) => s.customerId === gc.customer.id);
-          const isStop = stopIdx >= 0;
-
-          return (
-            <AdvancedMarker
-              key={gc.customer.id}
-              position={{ lat: gc.lat, lng: gc.lng }}
-              onClick={() => {
-                setSelectedCustomerId((prev) =>
-                  prev === gc.customer.id ? null : gc.customer.id,
-                );
-              }}
-            >
-              <MarkerBubble selected={isStop} stopNumber={isStop ? stopIdx + 1 : undefined} />
-            </AdvancedMarker>
-          );
-        })}
-
-        {selectedGc && (
-          <CustomerInfoWindow
-            gc={selectedGc}
-            isSelected={isSelectedAdded}
-            stopNumber={isSelectedAdded ? selectedStopIdx + 1 : undefined}
-            routeAssigns={assignments[selectedGc.customer.id]}
-            onAdd={() => {
-              onAddStop(selectedGc.customer);
-              setSelectedCustomerId(null);
-            }}
-            onRemove={() => {
-              onRemoveStop(selectedGc.customer.id);
-              setSelectedCustomerId(null);
-            }}
-            onClose={() => setSelectedCustomerId(null)}
-          />
+      <div style={{ position: "relative", width: "100%", height: "100%" }}>
+        {isGeocoding && (
+          <div className="absolute left-1/2 top-3 z-10 -translate-x-1/2 rounded-full border border-brand-200 bg-white/95 px-4 py-1.5 shadow-md backdrop-blur-sm">
+            <div className="flex items-center gap-2">
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-brand-500" />
+              <span className="text-xs font-medium text-navy/70">
+                Geocoding {needsGeocodingCount} more address{needsGeocodingCount !== 1 ? "es" : ""}…
+              </span>
+            </div>
+          </div>
         )}
-      </Map>
+        <Map
+          mapId="CREATE_ROUTE_MAP"
+          defaultCenter={{ lat: 37.7749, lng: -122.4194 }}
+          defaultZoom={12}
+          gestureHandling="greedy"
+          disableDefaultUI={false}
+          style={{ width: "100%", height: "100%" }}
+          onClick={() => setSelectedCustomerId(null)}
+        >
+          <FitBoundsLayer geoCustomers={geoCustomers} />
+          <PolylineLayer stops={stops} />
+
+          {geoCustomers.map((gc) => {
+            const stopIdx = stops.findIndex((s) => s.customerId === gc.customer.id);
+            const isStop = stopIdx >= 0;
+
+            return (
+              <AdvancedMarker
+                key={gc.customer.id}
+                position={{ lat: gc.lat, lng: gc.lng }}
+                onClick={() => {
+                  setSelectedCustomerId((prev) =>
+                    prev === gc.customer.id ? null : gc.customer.id,
+                  );
+                }}
+              >
+                <MarkerBubble selected={isStop} stopNumber={isStop ? stopIdx + 1 : undefined} />
+              </AdvancedMarker>
+            );
+          })}
+
+          {selectedGc && (
+            <CustomerInfoWindow
+              gc={selectedGc}
+              isSelected={isSelectedAdded}
+              stopNumber={isSelectedAdded ? selectedStopIdx + 1 : undefined}
+              routeAssigns={assignments[selectedGc.customer.id]}
+              onAdd={() => {
+                onAddStop(selectedGc.customer);
+                setSelectedCustomerId(null);
+              }}
+              onRemove={() => {
+                onRemoveStop(selectedGc.customer.id);
+                setSelectedCustomerId(null);
+              }}
+              onClose={() => setSelectedCustomerId(null)}
+            />
+          )}
+        </Map>
+      </div>
     </APIProvider>
   );
 }
