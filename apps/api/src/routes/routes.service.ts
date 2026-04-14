@@ -111,11 +111,23 @@ export class RoutesService {
 
   async reorderStops(routeId: string, order: { id: string; stopNumber: number }[]) {
     await this.findRouteOrThrow(routeId);
-    await this.prisma.$transaction(
-      order.map(({ id, stopNumber }) =>
+    // Two-phase update to avoid @@unique([routeId, stopNumber]) constraint violations:
+    // Phase 1 — shift all stops to temporary positions (current target + large offset)
+    // Phase 2 — set the actual target positions
+    // Without this, updating stop A from 2→5 while stop B still sits at 5 causes a
+    // unique-constraint violation mid-transaction.
+    const offset = order.length + 100;
+    await this.prisma.$transaction([
+      ...order.map(({ id, stopNumber }) =>
+        this.prisma.forTenant().routeStop.update({
+          where: { id },
+          data: { stopNumber: stopNumber + offset },
+        }),
+      ),
+      ...order.map(({ id, stopNumber }) =>
         this.prisma.forTenant().routeStop.update({ where: { id }, data: { stopNumber } }),
       ),
-    );
+    ]);
     return { success: true };
   }
 
@@ -167,11 +179,21 @@ export class RoutesService {
     if (run.status === "IN_PROGRESS" || run.status === "COMPLETED") {
       throw new BadRequestException("Cannot reorder stops on an active or completed route run");
     }
-    await this.prisma.$transaction(
-      order.map(({ id, stopNumber }) =>
+    // Two-phase update to avoid @@unique([routeRunId, stopNumber]) constraint violations:
+    // Phase 1 — shift all stops to temporary positions (current target + large offset)
+    // Phase 2 — set the actual target positions
+    const offset = order.length + 100;
+    await this.prisma.$transaction([
+      ...order.map(({ id, stopNumber }) =>
+        this.prisma.forTenant().routeRunStop.update({
+          where: { id },
+          data: { stopNumber: stopNumber + offset },
+        }),
+      ),
+      ...order.map(({ id, stopNumber }) =>
         this.prisma.forTenant().routeRunStop.update({ where: { id }, data: { stopNumber } }),
       ),
-    );
+    ]);
     return { success: true };
   }
 
