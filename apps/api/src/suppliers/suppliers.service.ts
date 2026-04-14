@@ -32,8 +32,40 @@ export class SuppliersService {
       this.prisma.forTenant().supplier.count({ where }),
     ]);
 
+    // Aggregate outstanding balances from vendor bills (non-voided) per supplier
+    const supplierIds = data.map((s) => s.id).filter(Boolean);
+    let balanceMap: Record<string, { totalOwed: number; totalPaid: number; billCount: number }> = {};
+    if (supplierIds.length > 0) {
+      const billAgg = await this.prisma.forTenant().vendorBill.groupBy({
+        by: ["supplierId"],
+        where: { supplierId: { in: supplierIds }, status: { not: "VOID" } },
+        _sum: { totalOwed: true, totalPaid: true },
+        _count: { id: true },
+      });
+      for (const row of billAgg) {
+        if (row.supplierId) {
+          balanceMap[row.supplierId] = {
+            totalOwed: Number(row._sum.totalOwed ?? 0),
+            totalPaid: Number(row._sum.totalPaid ?? 0),
+            billCount: row._count.id,
+          };
+        }
+      }
+    }
+
+    const enriched = data.map((s) => {
+      const agg = balanceMap[s.id] ?? { totalOwed: 0, totalPaid: 0, billCount: 0 };
+      return {
+        ...s,
+        totalOwed: agg.totalOwed,
+        totalPaid: agg.totalPaid,
+        outstandingBalance: Math.max(0, agg.totalOwed - agg.totalPaid),
+        billCount: agg.billCount,
+      };
+    });
+
     return {
-      data,
+      data: enriched,
       meta: {
         total,
         page: fetchAll ? 1 : page,

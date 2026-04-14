@@ -20,6 +20,11 @@ export interface Supplier {
   country?: string;
   createdAt: string;
   updatedAt: string;
+  // Aggregated from vendor bills
+  outstandingBalance?: number;
+  totalOwed?: number;
+  totalPaid?: number;
+  billCount?: number;
 }
 
 export interface SuppliersResult {

@@ -1,12 +1,25 @@
 "use client";
 
 import * as React from "react";
-import { Plus, Search, Building2, Phone, Mail, Clock, Pencil, X, Check, CheckSquare, Trash2, MapPin, Globe, Smartphone } from "lucide-react";
+import {
+  Plus, Search, Building2, Phone, Mail, Clock, Pencil, X, CheckSquare,
+  Trash2, MapPin, Globe, LayoutGrid, LayoutList, DollarSign,
+} from "lucide-react";
 import { PageHeader, Badge, Button, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useToast } from "@routeflow/ui/web";
 import { useDebounce } from "@/lib/hooks/useDebounce";
-import { useSuppliers, useCreateSupplier, useUpdateSupplier, useDeleteSupplier, useDeactivateSupplier, type Supplier } from "@/lib/api/suppliers";
+import {
+  useSuppliers, useCreateSupplier, useUpdateSupplier,
+  useDeleteSupplier, useDeactivateSupplier, type Supplier,
+} from "@/lib/api/suppliers";
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function fmt(n?: number) {
+  if (n == null || n === 0) return null;
+  return `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
 
 // ─── Supplier form modal ───────────────────────────────────────────────────────
 
@@ -98,11 +111,11 @@ function SupplierModal({
                 <label className="mb-1 block text-xs font-medium text-navy/60 uppercase tracking-wide">Mobile</label>
                 <input type="tel" value={form.mobile} onChange={(e) => set("mobile", e.target.value)} className={inputCls} />
               </div>
-              <div>
+              <div className="col-span-2">
                 <label className="mb-1 block text-xs font-medium text-navy/60 uppercase tracking-wide">Email</label>
                 <input type="email" value={form.email} onChange={(e) => set("email", e.target.value)} className={inputCls} />
               </div>
-              <div>
+              <div className="col-span-2">
                 <label className="mb-1 block text-xs font-medium text-navy/60 uppercase tracking-wide">Website</label>
                 <input type="url" value={form.website} onChange={(e) => set("website", e.target.value)} placeholder="https://" className={inputCls} />
               </div>
@@ -110,47 +123,35 @@ function SupplierModal({
 
             {/* Address */}
             <div>
-              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-navy/40">Address</p>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="col-span-2">
-                  <label className="mb-1 block text-xs font-medium text-navy/60 uppercase tracking-wide">Street address</label>
-                  <input value={form.addressLine1} onChange={(e) => set("addressLine1", e.target.value)} placeholder="123 Main St" className={inputCls} />
+              <p className="mb-2 text-xs font-medium text-navy/60 uppercase tracking-wide">Address</p>
+              <div className="space-y-2">
+                <input placeholder="Street address" value={form.addressLine1} onChange={(e) => set("addressLine1", e.target.value)} className={inputCls} />
+                <input placeholder="Address line 2" value={form.addressLine2} onChange={(e) => set("addressLine2", e.target.value)} className={inputCls} />
+                <div className="grid grid-cols-3 gap-2">
+                  <input placeholder="City" value={form.city} onChange={(e) => set("city", e.target.value)} className={inputCls} />
+                  <input placeholder="State" value={form.state} onChange={(e) => set("state", e.target.value)} className={inputCls} />
+                  <input placeholder="ZIP" value={form.zip} onChange={(e) => set("zip", e.target.value)} className={inputCls} />
                 </div>
-                <div className="col-span-2">
-                  <label className="mb-1 block text-xs font-medium text-navy/60 uppercase tracking-wide">Suite / Unit</label>
-                  <input value={form.addressLine2} onChange={(e) => set("addressLine2", e.target.value)} placeholder="Suite 100" className={inputCls} />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-navy/60 uppercase tracking-wide">City</label>
-                  <input value={form.city} onChange={(e) => set("city", e.target.value)} className={inputCls} />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-navy/60 uppercase tracking-wide">State</label>
-                  <input value={form.state} onChange={(e) => set("state", e.target.value)} className={inputCls} />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-navy/60 uppercase tracking-wide">ZIP</label>
-                  <input value={form.zip} onChange={(e) => set("zip", e.target.value)} className={inputCls} />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-navy/60 uppercase tracking-wide">Country</label>
-                  <input value={form.country} onChange={(e) => set("country", e.target.value)} placeholder="US" className={inputCls} />
-                </div>
+                <input placeholder="Country" value={form.country} onChange={(e) => set("country", e.target.value)} className={inputCls} />
               </div>
             </div>
 
             {/* Notes */}
             <div>
               <label className="mb-1 block text-xs font-medium text-navy/60 uppercase tracking-wide">Notes</label>
-              <textarea rows={2} value={form.notes} onChange={(e) => set("notes", e.target.value)} className={`${inputCls} resize-y`} />
+              <textarea
+                rows={3}
+                value={form.notes}
+                onChange={(e) => set("notes", e.target.value)}
+                className={inputCls}
+                placeholder="Internal notes about this supplier…"
+              />
             </div>
           </div>
 
-          <div className="flex justify-end gap-2 pt-4">
-            <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
-            <Button type="submit" loading={isSaving}>
-              {isEdit ? "Save changes" : "Add Supplier"}
-            </Button>
+          <div className="mt-6 flex justify-end gap-2 border-t border-surface-border pt-4">
+            <Button type="button" variant="secondary" onClick={onClose} disabled={isSaving}>Cancel</Button>
+            <Button type="submit" loading={isSaving}>{isEdit ? "Save changes" : "Add Supplier"}</Button>
           </div>
         </form>
       </div>
@@ -158,18 +159,11 @@ function SupplierModal({
   );
 }
 
-// ─── Supplier card ─────────────────────────────────────────────────────────────
+// ─── Supplier card (grid view) ─────────────────────────────────────────────────
 
 function SupplierCard({
-  supplier,
-  onEdit,
-  onDeactivate,
-  onReactivate,
-  onDelete,
-  isUpdating,
-  selectMode,
-  selected,
-  onSelect,
+  supplier, onEdit, onDeactivate, onReactivate, onDelete,
+  isUpdating, selectMode, selected, onSelect,
 }: {
   supplier: Supplier;
   onEdit: () => void;
@@ -183,6 +177,8 @@ function SupplierCard({
 }) {
   const [confirmDeactivate, setConfirmDeactivate] = React.useState(false);
   const [confirmDelete, setConfirmDelete] = React.useState(false);
+  const outstanding = supplier.outstandingBalance ?? 0;
+
   return (
     <div
       className={cn(
@@ -204,6 +200,7 @@ function SupplierCard({
           />
         </div>
       )}
+
       {/* Header row */}
       <div className={cn("flex items-start justify-between gap-2", selectMode && "pl-6")}>
         <div className="flex items-start gap-2 min-w-0">
@@ -231,6 +228,23 @@ function SupplierCard({
           </button>
         </div>
       </div>
+
+      {/* Outstanding balance */}
+      {outstanding > 0 && (
+        <div className="flex items-center gap-1.5 rounded-lg bg-warning/10 px-3 py-2">
+          <DollarSign className="h-3.5 w-3.5 shrink-0 text-warning" />
+          <div className="min-w-0">
+            <span className="text-xs font-semibold text-warning">
+              {fmt(outstanding)} outstanding
+            </span>
+            {(supplier.billCount ?? 0) > 0 && (
+              <span className="ml-1 text-xs text-navy/40">
+                across {supplier.billCount} bill{supplier.billCount !== 1 ? "s" : ""}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Contact details */}
       <div className="space-y-1">
@@ -272,71 +286,175 @@ function SupplierCard({
       </div>
 
       {/* Footer */}
-      <div className="border-t border-surface-border pt-2">
+      <div className="border-t border-surface-border pt-2 mt-auto">
         {confirmDelete ? (
           <div className="flex items-center gap-2">
             <span className="text-xs text-danger">Permanently delete?</span>
-            <button
-              onClick={() => { setConfirmDelete(false); onDelete(); }}
-              disabled={isUpdating}
-              className="text-xs font-medium text-danger hover:underline disabled:opacity-40"
-            >
-              Delete
-            </button>
-            <button
-              onClick={() => setConfirmDelete(false)}
-              className="text-xs text-navy/40 hover:text-navy transition-colors"
-            >
-              Cancel
-            </button>
+            <button onClick={() => { setConfirmDelete(false); onDelete(); }} disabled={isUpdating} className="text-xs font-medium text-danger hover:underline disabled:opacity-40">Delete</button>
+            <button onClick={() => setConfirmDelete(false)} className="text-xs text-navy/40 hover:text-navy transition-colors">Cancel</button>
           </div>
         ) : confirmDeactivate ? (
           <div className="flex items-center gap-2">
             <span className="text-xs text-warning">Deactivate supplier?</span>
-            <button
-              onClick={() => { setConfirmDeactivate(false); onDeactivate(); }}
-              disabled={isUpdating}
-              className="text-xs font-medium text-warning hover:underline disabled:opacity-40"
-            >
-              Yes
-            </button>
-            <button
-              onClick={() => setConfirmDeactivate(false)}
-              className="text-xs text-navy/40 hover:text-navy transition-colors"
-            >
-              Cancel
-            </button>
+            <button onClick={() => { setConfirmDeactivate(false); onDeactivate(); }} disabled={isUpdating} className="text-xs font-medium text-warning hover:underline disabled:opacity-40">Yes</button>
+            <button onClick={() => setConfirmDeactivate(false)} className="text-xs text-navy/40 hover:text-navy transition-colors">Cancel</button>
           </div>
         ) : (
           <div className="flex items-center justify-between">
             {supplier.isActive ? (
-              <button
-                onClick={() => setConfirmDeactivate(true)}
-                disabled={isUpdating}
-                className="text-xs text-navy/40 hover:text-warning transition-colors disabled:opacity-40"
-              >
-                Deactivate
-              </button>
+              <button onClick={() => setConfirmDeactivate(true)} disabled={isUpdating} className="text-xs text-navy/40 hover:text-warning transition-colors disabled:opacity-40">Deactivate</button>
             ) : (
-              <button
-                onClick={onReactivate}
-                disabled={isUpdating}
-                className="text-xs font-medium text-brand-500 hover:text-brand-600 transition-colors disabled:opacity-40"
-              >
-                Reactivate
-              </button>
+              <button onClick={onReactivate} disabled={isUpdating} className="text-xs font-medium text-brand-500 hover:text-brand-600 transition-colors disabled:opacity-40">Reactivate</button>
             )}
-            <button
-              onClick={() => setConfirmDelete(true)}
-              disabled={isUpdating}
-              className="text-xs text-danger/50 hover:text-danger transition-colors disabled:opacity-40"
-            >
-              Delete
-            </button>
+            <button onClick={() => setConfirmDelete(true)} disabled={isUpdating} className="text-xs text-danger/50 hover:text-danger transition-colors disabled:opacity-40">Delete</button>
           </div>
         )}
       </div>
     </div>
+  );
+}
+
+// ─── Supplier row (list view) ──────────────────────────────────────────────────
+
+function SupplierRow({
+  supplier, onEdit, onDeactivate, onReactivate, onDelete,
+  isUpdating, selectMode, selected, onSelect,
+}: {
+  supplier: Supplier;
+  onEdit: () => void;
+  onDeactivate: () => void;
+  onReactivate: () => void;
+  onDelete: () => void;
+  isUpdating: boolean;
+  selectMode?: boolean;
+  selected?: boolean;
+  onSelect?: () => void;
+}) {
+  const [menuOpen, setMenuOpen] = React.useState(false);
+  const [confirmDelete, setConfirmDelete] = React.useState(false);
+  const outstanding = supplier.outstandingBalance ?? 0;
+
+  return (
+    <tr
+      className={cn(
+        "group border-b border-surface-border transition-colors hover:bg-surface-raised/50",
+        !supplier.isActive && "opacity-60",
+        selected && "bg-brand-50/40",
+      )}
+    >
+      {/* Checkbox */}
+      {selectMode && (
+        <td className="w-10 px-4 py-3">
+          <input
+            type="checkbox"
+            checked={selected ?? false}
+            onChange={() => onSelect?.()}
+            onClick={(e) => e.stopPropagation()}
+            className="h-4 w-4 cursor-pointer rounded border-navy/30 accent-brand-500"
+          />
+        </td>
+      )}
+
+      {/* Name + contact */}
+      <td className="px-4 py-3">
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-brand-50">
+            <Building2 className="h-3.5 w-3.5 text-brand-500" />
+          </div>
+          <div>
+            <p className="font-medium text-navy text-sm">{supplier.name}</p>
+            {supplier.contactName && (
+              <p className="text-xs text-navy/50">{supplier.contactName}</p>
+            )}
+          </div>
+        </div>
+      </td>
+
+      {/* Phone / email */}
+      <td className="px-4 py-3">
+        <div className="space-y-0.5">
+          {(supplier.phone || supplier.mobile) && (
+            <div className="flex items-center gap-1 text-xs text-navy/70">
+              <Phone className="h-3 w-3 shrink-0 text-navy/30" />
+              {supplier.phone || supplier.mobile}
+            </div>
+          )}
+          {supplier.email && (
+            <div className="flex items-center gap-1 text-xs text-navy/70">
+              <Mail className="h-3 w-3 shrink-0 text-navy/30" />
+              {supplier.email}
+            </div>
+          )}
+          {!supplier.phone && !supplier.mobile && !supplier.email && (
+            <span className="text-xs text-navy/30">—</span>
+          )}
+        </div>
+      </td>
+
+      {/* City / state */}
+      <td className="px-4 py-3 text-xs text-navy/60">
+        {supplier.city || supplier.state
+          ? [supplier.city, supplier.state].filter(Boolean).join(", ")
+          : <span className="text-navy/30">—</span>
+        }
+      </td>
+
+      {/* Lead time */}
+      <td className="px-4 py-3 text-center text-xs text-navy/70">
+        {supplier.leadTimeDays != null ? `${supplier.leadTimeDays}d` : <span className="text-navy/30">—</span>}
+      </td>
+
+      {/* Outstanding balance */}
+      <td className="px-4 py-3 text-right">
+        {outstanding > 0 ? (
+          <div>
+            <span className="text-sm font-semibold text-warning">{fmt(outstanding)}</span>
+            {(supplier.billCount ?? 0) > 0 && (
+              <p className="text-[10px] text-navy/40 leading-tight">
+                {supplier.billCount} bill{supplier.billCount !== 1 ? "s" : ""}
+              </p>
+            )}
+          </div>
+        ) : (
+          <span className="text-xs text-navy/30">—</span>
+        )}
+      </td>
+
+      {/* Status */}
+      <td className="px-4 py-3">
+        <Badge
+          variant={supplier.isActive ? "success" : "neutral"}
+          label={supplier.isActive ? "Active" : "Inactive"}
+        />
+      </td>
+
+      {/* Actions */}
+      <td className="px-4 py-3">
+        <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          <button
+            onClick={onEdit}
+            className="rounded p-1 text-navy/40 hover:bg-surface-raised hover:text-navy transition-colors"
+            title="Edit"
+          >
+            <Pencil className="h-3.5 w-3.5" />
+          </button>
+          {confirmDelete ? (
+            <div className="flex items-center gap-1">
+              <button onClick={() => { setConfirmDelete(false); onDelete(); }} className="text-xs text-danger hover:underline">Delete</button>
+              <button onClick={() => setConfirmDelete(false)} className="text-xs text-navy/40 hover:text-navy">✕</button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setConfirmDelete(true)}
+              className="rounded p-1 text-navy/30 hover:bg-danger/10 hover:text-danger transition-colors"
+              title="Delete"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+      </td>
+    </tr>
   );
 }
 
@@ -350,6 +468,7 @@ export default function SuppliersPage() {
   const [search, setSearch] = React.useState("");
   const debouncedSearch = useDebounce(search, 300);
   const [activeFilter, setActiveFilter] = React.useState<"all" | "active" | "inactive">("all");
+  const [viewMode, setViewMode] = React.useState<"grid" | "list">("list");
   const [showModal, setShowModal] = React.useState(false);
   const [editTarget, setEditTarget] = React.useState<Supplier | undefined>(undefined);
   const [selectMode, setSelectMode] = React.useState(false);
@@ -388,6 +507,7 @@ export default function SuppliersPage() {
 
   const suppliers: Supplier[] = result?.data ?? [];
   const total = result?.meta?.total ?? 0;
+  const totalOutstanding = suppliers.reduce((sum, s) => sum + (s.outstandingBalance ?? 0), 0);
 
   const handleSave = async (data: Partial<Supplier>) => {
     try {
@@ -434,11 +554,26 @@ export default function SuppliersPage() {
     }
   };
 
+  const sharedRowProps = (s: Supplier) => ({
+    supplier: s,
+    onEdit: () => { if (!selectMode) { setEditTarget(s); setShowModal(true); } },
+    onDeactivate: () => { if (!selectMode) handleDeactivate(s); },
+    onReactivate: () => { if (!selectMode) handleReactivate(s); },
+    onDelete: () => { if (!selectMode) handleDelete(s); },
+    isUpdating: updateSupplier.isPending || deactivateSupplier.isPending || deleteSupplier.isPending,
+    selectMode,
+    selected: selected.has(s.id),
+    onSelect: () => toggleSelect(s.id),
+  });
+
+  const allSelected = suppliers.length > 0 && suppliers.every((s) => selected.has(s.id));
+  const someSelected = !allSelected && suppliers.some((s) => selected.has(s.id));
+
   return (
     <div className="space-y-5 p-6">
       <PageHeader
         title="Suppliers"
-        subtitle={`${total} supplier${total !== 1 ? "s" : ""}`}
+        subtitle={`${total} supplier${total !== 1 ? "s" : ""}${totalOutstanding > 0 ? ` · ${fmt(totalOutstanding)} outstanding` : ""}`}
         action={
           <div className="flex items-center gap-2">
             <Button
@@ -486,14 +621,15 @@ export default function SuppliersPage() {
 
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-3">
-        {selectMode && suppliers.length > 0 && (
+        {/* Select-all checkbox (list view) */}
+        {selectMode && viewMode === "list" && suppliers.length > 0 && (
           <label className="flex items-center gap-2 cursor-pointer select-none">
             <input
               type="checkbox"
-              checked={suppliers.length > 0 && suppliers.every((s) => selected.has(s.id))}
-              ref={(el) => { if (el) el.indeterminate = suppliers.some((s) => selected.has(s.id)) && !suppliers.every((s) => selected.has(s.id)); }}
+              checked={allSelected}
+              ref={(el) => { if (el) el.indeterminate = someSelected; }}
               onChange={() => {
-                if (suppliers.every((s) => selected.has(s.id))) setSelected(new Set());
+                if (allSelected) setSelected(new Set());
                 else setSelected(new Set(suppliers.map((s) => s.id)));
               }}
               className="h-4 w-4 cursor-pointer rounded border-navy/30 accent-brand-500"
@@ -501,6 +637,8 @@ export default function SuppliersPage() {
             <span className="text-sm text-navy/60">Select all</span>
           </label>
         )}
+
+        {/* Search */}
         <div className="relative">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-navy/30" />
           <input
@@ -511,6 +649,8 @@ export default function SuppliersPage() {
             className="h-10 w-64 rounded border border-surface-border bg-white pl-9 pr-3 text-sm text-navy placeholder:text-navy/40 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
           />
         </div>
+
+        {/* Status filter */}
         <div className="flex rounded-lg border border-surface-border bg-white p-1">
           {(["all", "active", "inactive"] as const).map((f) => (
             <button
@@ -525,15 +665,49 @@ export default function SuppliersPage() {
             </button>
           ))}
         </div>
+
+        {/* View toggle */}
+        <div className="ml-auto flex rounded-lg border border-surface-border bg-white p-1">
+          <button
+            onClick={() => setViewMode("list")}
+            className={cn("rounded p-1.5 transition-colors", viewMode === "list" ? "bg-navy text-white" : "text-navy/40 hover:text-navy")}
+            title="List view"
+          >
+            <LayoutList className="h-4 w-4" />
+          </button>
+          <button
+            onClick={() => setViewMode("grid")}
+            className={cn("rounded p-1.5 transition-colors", viewMode === "grid" ? "bg-navy text-white" : "text-navy/40 hover:text-navy")}
+            title="Grid view"
+          >
+            <LayoutGrid className="h-4 w-4" />
+          </button>
+        </div>
       </div>
 
-      {/* Grid */}
+      {/* Loading skeleton */}
       {isLoading ? (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {Array.from({ length: 8 }).map((_, i) => (
-            <div key={i} className="h-40 animate-pulse rounded-xl border border-surface-border bg-surface-raised" />
-          ))}
-        </div>
+        viewMode === "list" ? (
+          <div className="overflow-hidden rounded-xl border border-surface-border bg-white">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="flex items-center gap-4 border-b border-surface-border px-4 py-3">
+                <div className="h-7 w-7 animate-pulse rounded-md bg-surface-raised" />
+                <div className="flex-1 space-y-1.5">
+                  <div className="h-3.5 w-40 animate-pulse rounded bg-surface-raised" />
+                  <div className="h-3 w-24 animate-pulse rounded bg-surface-raised" />
+                </div>
+                <div className="h-3 w-28 animate-pulse rounded bg-surface-raised" />
+                <div className="h-5 w-20 animate-pulse rounded-full bg-surface-raised" />
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <div key={i} className="h-48 animate-pulse rounded-xl border border-surface-border bg-surface-raised" />
+            ))}
+          </div>
+        )
       ) : isError ? (
         <div className="flex items-center gap-2 rounded-lg border border-danger/30 bg-danger-bg px-4 py-3">
           <span className="text-sm text-danger">Failed to load data. Please try refreshing.</span>
@@ -545,36 +719,51 @@ export default function SuppliersPage() {
             {(search || activeFilter !== "all") ? "No suppliers match your filters." : "No suppliers yet. Add your first supplier to get started."}
           </p>
           {(search || activeFilter !== "all") ? (
-            <button
-              onClick={() => { setSearch(""); setActiveFilter("active"); }}
-              className="mt-2 text-sm text-brand-500 hover:underline"
-            >
+            <button onClick={() => { setSearch(""); setActiveFilter("all"); }} className="mt-2 text-sm text-brand-500 hover:underline">
               Clear filters
             </button>
           ) : (
-            <button
-              onClick={() => setShowModal(true)}
-              className="mt-2 text-sm text-brand-500 hover:underline"
-            >
+            <button onClick={() => setShowModal(true)} className="mt-2 text-sm text-brand-500 hover:underline">
               Add your first supplier →
             </button>
           )}
         </div>
+      ) : viewMode === "list" ? (
+        /* ── List view ── */
+        <div className="overflow-hidden rounded-xl border border-surface-border bg-white">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-surface-border bg-surface-raised/60">
+                {selectMode && <th className="w-10 px-4 py-2.5" />}
+                <th className="px-4 py-2.5 text-left text-xs font-semibold text-navy/50 uppercase tracking-wide">Supplier</th>
+                <th className="px-4 py-2.5 text-left text-xs font-semibold text-navy/50 uppercase tracking-wide">Contact</th>
+                <th className="px-4 py-2.5 text-left text-xs font-semibold text-navy/50 uppercase tracking-wide">Location</th>
+                <th className="px-4 py-2.5 text-center text-xs font-semibold text-navy/50 uppercase tracking-wide">Lead</th>
+                <th className="px-4 py-2.5 text-right text-xs font-semibold text-navy/50 uppercase tracking-wide">Outstanding</th>
+                <th className="px-4 py-2.5 text-left text-xs font-semibold text-navy/50 uppercase tracking-wide">Status</th>
+                <th className="w-20 px-4 py-2.5" />
+              </tr>
+            </thead>
+            <tbody>
+              {suppliers.map((s) => (
+                <SupplierRow key={s.id} {...sharedRowProps(s)} />
+              ))}
+            </tbody>
+          </table>
+
+          {/* Total outstanding footer */}
+          {totalOutstanding > 0 && (
+            <div className="flex items-center justify-between border-t border-surface-border bg-surface-raised/40 px-4 py-2.5">
+              <span className="text-xs text-navy/50">Total outstanding across all suppliers</span>
+              <span className="text-sm font-semibold text-warning">{fmt(totalOutstanding)}</span>
+            </div>
+          )}
+        </div>
       ) : (
+        /* ── Grid view ── */
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {suppliers.map((s) => (
-            <SupplierCard
-              key={s.id}
-              supplier={s}
-              onEdit={() => { if (!selectMode) { setEditTarget(s); setShowModal(true); } }}
-              onDeactivate={() => { if (!selectMode) handleDeactivate(s); }}
-              onReactivate={() => { if (!selectMode) handleReactivate(s); }}
-              onDelete={() => { if (!selectMode) handleDelete(s); }}
-              isUpdating={updateSupplier.isPending || deactivateSupplier.isPending || deleteSupplier.isPending}
-              selectMode={selectMode}
-              selected={selected.has(s.id)}
-              onSelect={() => toggleSelect(s.id)}
-            />
+            <SupplierCard key={s.id} {...sharedRowProps(s)} />
           ))}
         </div>
       )}
