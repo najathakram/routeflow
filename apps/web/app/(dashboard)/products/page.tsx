@@ -9,6 +9,7 @@ import { usePageTitle } from "@/lib/page-title-context";
 import { useToast } from "@routeflow/ui/web";
 import { useDebounce } from "@/lib/hooks/useDebounce";
 import { useProducts, useCreateProduct, useUpdateProduct, useBulkDeleteProducts, uploadProductImages } from "@/lib/api/products";
+import { apiClient } from "@/lib/api-client";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { QuickEditCell, type EditRecord } from "./_components/QuickEditCell";
 import { UnitCombobox } from "@/components/UnitCombobox";
@@ -487,8 +488,23 @@ function CreateProductModal({
   const [pendingImages, setPendingImages] = React.useState<File[]>([]);
   const [previews, setPreviews] = React.useState<string[]>([]);
   const [isUploading, setIsUploading] = React.useState(false);
+  const [variantOfScanLoading, setVariantOfScanLoading] = React.useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const barcodeInputRef = React.useRef<HTMLInputElement>(null);
+
+  // Resolve a scanned barcode to a parent product for the "Variant of" field
+  const handleVariantOfScan = async (code: string) => {
+    setVariantOfScanLoading(true);
+    try {
+      const found = await apiClient.get(`/products/barcode/${encodeURIComponent(code)}`).then((r) => r.data);
+      const parentId: string = found.parentProductId || found.id;
+      set("parentProductId", parentId);
+    } catch {
+      // toast not available here — use a subtle error signal
+    } finally {
+      setVariantOfScanLoading(false);
+    }
+  };
 
   const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
 
@@ -516,8 +532,14 @@ function CreateProductModal({
       return;
     }
     setPriceError("");
+    // Auto-compose the product name when creating a variant
+    let productName = form.name.trim();
+    if (form.parentProductId && form.variantName.trim()) {
+      const parent = allProducts?.find(p => p.id === form.parentProductId);
+      productName = parent ? `${parent.name} - ${form.variantName.trim()}` : form.variantName.trim();
+    }
     const product = await onCreate({
-      name: form.name,
+      name: productName,
       sku: form.sku || undefined,
       unit: form.unit,
       pricePerUnit: form.pricePerUnit,
@@ -602,16 +624,23 @@ function CreateProductModal({
               {allProducts && allProducts.filter(p => !p.parentProductId).length > 0 && (
                 <div className="col-span-2">
                   <label className="mb-1 block text-sm font-medium text-navy">Variant of <span className="font-normal text-navy/40">(optional)</span></label>
-                  <select
-                    value={form.parentProductId}
-                    onChange={(e) => set("parentProductId", e.target.value)}
-                    className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  >
-                    <option value="">— Standalone product —</option>
-                    {allProducts.filter(p => !p.parentProductId).map((p) => (
-                      <option key={p.id} value={p.id}>{p.name}</option>
-                    ))}
-                  </select>
+                  <div className="flex gap-2">
+                    <select
+                      value={form.parentProductId}
+                      onChange={(e) => set("parentProductId", e.target.value)}
+                      className="flex-1 rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    >
+                      <option value="">— Standalone product —</option>
+                      {allProducts.filter(p => !p.parentProductId).map((p) => (
+                        <option key={p.id} value={p.id}>{p.name}</option>
+                      ))}
+                    </select>
+                    <BarcodeScannerButton
+                      onScan={handleVariantOfScan}
+                      title="Scan a variant's barcode to auto-select its parent"
+                    />
+                  </div>
+                  {variantOfScanLoading && <p className="mt-1 text-xs text-navy/50">Looking up product…</p>}
                   {form.parentProductId && (
                     <p className="mt-0.5 text-xs text-navy/40">Fields below have been pre-filled from the parent. Adjust as needed.</p>
                   )}
@@ -619,25 +648,36 @@ function CreateProductModal({
               )}
               {form.parentProductId && (
                 <div className="col-span-2">
-                  <label className="mb-1 block text-sm font-medium text-navy">Variant name *</label>
+                  <label className="mb-1 block text-sm font-medium text-navy">Flavor / variety <span className="text-danger">*</span></label>
                   <input
                     required={!!form.parentProductId}
-                    placeholder="e.g. Chocolate, Large, Plain…"
+                    autoFocus
+                    placeholder='e.g. "Chocolate", "Large", "500ml"'
                     value={form.variantName}
                     onChange={(e) => set("variantName", e.target.value)}
                     className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
                   />
+                  {form.variantName.trim() && allProducts?.find(p => p.id === form.parentProductId) && (
+                    <p className="mt-1 rounded bg-surface-raised px-2.5 py-1.5 text-xs text-navy/60">
+                      Will be named: <span className="font-medium text-navy">
+                        {allProducts.find(p => p.id === form.parentProductId)!.name} - {form.variantName.trim()}
+                      </span>
+                    </p>
+                  )}
                 </div>
               )}
-              <div className="col-span-2">
-                <label className="mb-1 block text-sm font-medium text-navy">Name *</label>
-                <input
-                  required
-                  value={form.name}
-                  onChange={(e) => set("name", e.target.value)}
-                  className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                />
-              </div>
+              {/* Name — only for standalone products; variants use auto-composed name */}
+              {!form.parentProductId && (
+                <div className="col-span-2">
+                  <label className="mb-1 block text-sm font-medium text-navy">Name *</label>
+                  <input
+                    required
+                    value={form.name}
+                    onChange={(e) => set("name", e.target.value)}
+                    className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  />
+                </div>
+              )}
               <div className="col-span-2">
                 <label className="mb-1 block text-sm font-medium text-navy">SKU / Barcode</label>
                 <div className="flex gap-2">
