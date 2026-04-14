@@ -35,7 +35,7 @@ COPY apps/web/ apps/web/
 # ARG declared in the Dockerfile.
 # BUILD_DATE forces a cache miss on the next build layer whenever it changes,
 # ensuring NEXT_PUBLIC vars are always freshly evaluated.
-ARG BUILD_DATE=2026-04-14b
+ARG BUILD_DATE=2026-04-14c
 ARG NEXT_PUBLIC_API_URL=https://routeflowapi-production.up.railway.app/api/v1
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ARG NEXT_PUBLIC_GOOGLE_MAPS_KEY=""
@@ -44,8 +44,9 @@ ARG NEXT_PUBLIC_DEFAULT_TENANT=""
 ENV NEXT_PUBLIC_DEFAULT_TENANT=$NEXT_PUBLIC_DEFAULT_TENANT
 
 # Build the Next.js application (output: standalone is set in next.config.mjs)
+# The echo ensures Docker invalidates this layer whenever BUILD_DATE changes.
 WORKDIR /app/apps/web
-RUN npm run build
+RUN echo "Build: $BUILD_DATE" && npm run build
 
 # ─── Stage 2: Runner ──────────────────────────────────────────────────────────
 FROM node:20-alpine AS runner
