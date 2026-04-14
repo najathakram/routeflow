@@ -30,6 +30,7 @@ import { Badge, Button, Card, Modal, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useToast } from "@routeflow/ui/web";
 import { useProduct, useProducts, useUpdateProduct, useDeleteProduct, useUploadProductImages, useDeleteProductImage, useCreateProduct, type ApiProduct } from "@/lib/api/products";
+import { apiClient } from "@/lib/api-client";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { useAuth } from "@/lib/auth-context";
 import { CropModal } from "./CropModal";
@@ -125,6 +126,12 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
   const [editingVariant, setEditingVariant] = React.useState<ApiProduct | null>(null);
   const [variantForm, setVariantForm] = React.useState({ variantName: "", sku: "", price: "", unit: "" });
   const variantSkuRef = React.useRef<HTMLInputElement>(null);
+
+  // ── "Make variant of" modal state ────────────────────────────────────────
+  const [makeVariantOpen, setMakeVariantOpen] = React.useState(false);
+  const [makeVariantParentId, setMakeVariantParentId] = React.useState("");
+  const [makeVariantName, setMakeVariantName] = React.useState("");
+  const [makeVariantScanLoading, setMakeVariantScanLoading] = React.useState(false);
 
   // ── Auth ──────────────────────────────────────────────────────────────────
   const { user } = useAuth();
@@ -380,6 +387,61 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
         { onSuccess: () => toast({ title: "Variant reactivated", variant: "success" }) },
       );
     }
+  };
+
+  // ── "Make variant of" helpers ─────────────────────────────────────────────
+
+  const openMakeVariantModal = () => {
+    setMakeVariantParentId("");
+    setMakeVariantName(product.variantName ?? "");
+    setMakeVariantOpen(true);
+  };
+
+  const handleMakeVariantScan = async (code: string) => {
+    setMakeVariantScanLoading(true);
+    try {
+      const found = await apiClient.get(`/products/barcode/${encodeURIComponent(code)}`).then((r) => r.data);
+      // If the scanned product is itself a variant, resolve to its parent
+      const parentId: string = found.parentProductId || found.id;
+      // Don't allow linking to self
+      if (parentId === params.id) {
+        toast({ title: "Cannot link a product to itself", variant: "error" });
+        return;
+      }
+      setMakeVariantParentId(parentId);
+    } catch {
+      toast({ title: "Product not found for that barcode", variant: "error" });
+    } finally {
+      setMakeVariantScanLoading(false);
+    }
+  };
+
+  const handleMakeVariantSubmit = () => {
+    if (!makeVariantParentId) {
+      toast({ title: "Please select a parent product", variant: "error" });
+      return;
+    }
+    if (!makeVariantName.trim()) {
+      toast({ title: "Flavor / variety name is required", variant: "error" });
+      return;
+    }
+    const parentProduct = allProducts.find((p: any) => p.id === makeVariantParentId) as any;
+    const newName = parentProduct ? `${parentProduct.name} - ${makeVariantName.trim()}` : product.name;
+    updateProduct.mutate(
+      {
+        id: params.id,
+        parentProductId: makeVariantParentId,
+        variantName: makeVariantName.trim(),
+        name: newName,
+      },
+      {
+        onSuccess: () => {
+          toast({ title: "Product linked as variant", variant: "success" });
+          setMakeVariantOpen(false);
+        },
+        onError: () => toast({ title: "Failed to link as variant", variant: "error" }),
+      },
+    );
   };
 
   return (
@@ -748,6 +810,16 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                     >
                       <Pencil className="h-4 w-4" />
                     </button>
+                    {isOperator && !product.parentProductId && (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={openMakeVariantModal}
+                        title="Link this product as a variant of another product"
+                      >
+                        Make variant of…
+                      </Button>
+                    )}
                     <Button
                       size="sm"
                       variant="secondary"
@@ -1095,6 +1167,82 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
             />
           </div>
         )}
+      </div>
+    </Modal>
+
+    {/* ── Make Variant Of Modal ── */}
+    <Modal
+      open={makeVariantOpen}
+      onClose={() => setMakeVariantOpen(false)}
+      title="Make variant of…"
+      footer={
+        <>
+          <Button variant="secondary" onClick={() => setMakeVariantOpen(false)}>Cancel</Button>
+          <Button
+            onClick={handleMakeVariantSubmit}
+            loading={updateProduct.isPending}
+          >
+            Link as variant
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <p className="text-sm text-navy/60">
+          Link <span className="font-medium text-navy">{product.name}</span> as a variant (flavor, size, etc.) of another product.
+          The product name will be updated to match the parent.
+        </p>
+
+        {/* Parent selection */}
+        <div>
+          <label className="mb-1 block text-xs font-medium text-navy/60">
+            Parent product <span className="text-danger">*</span>
+          </label>
+          <div className="flex gap-2">
+            <select
+              value={makeVariantParentId}
+              onChange={(e) => setMakeVariantParentId(e.target.value)}
+              className="flex-1 rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+            >
+              <option value="">— Select a product —</option>
+              {allProducts
+                .filter((p: any) => !p.parentProductId && p.id !== params.id)
+                .map((p: any) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+            </select>
+            <BarcodeScannerButton
+              onScan={handleMakeVariantScan}
+              title="Scan another product's barcode to auto-select it as the parent"
+            />
+          </div>
+          {makeVariantScanLoading && (
+            <p className="mt-1 text-xs text-navy/50">Looking up product…</p>
+          )}
+        </div>
+
+        {/* Flavor / variety name */}
+        <div>
+          <label className="mb-1 block text-xs font-medium text-navy/60">
+            Flavor / variety <span className="text-danger">*</span>
+          </label>
+          <input
+            value={makeVariantName}
+            onChange={(e) => setMakeVariantName(e.target.value)}
+            placeholder='e.g. "Chocolate", "Large", "500ml"'
+            className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+          />
+        </div>
+
+        {/* Preview of composed name */}
+        {makeVariantParentId && makeVariantName.trim() && (() => {
+          const parent = allProducts.find((p: any) => p.id === makeVariantParentId) as any;
+          return parent ? (
+            <p className="rounded bg-surface-raised px-3 py-2 text-xs text-navy/60">
+              New name: <span className="font-medium text-navy">{parent.name} - {makeVariantName.trim()}</span>
+            </p>
+          ) : null;
+        })()}
       </div>
     </Modal>
     </>

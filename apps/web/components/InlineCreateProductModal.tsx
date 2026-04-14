@@ -4,6 +4,7 @@ import * as React from "react";
 import { X } from "lucide-react";
 import { Button, useToast } from "@routeflow/ui/web";
 import { useCreateProduct, useProducts } from "@/lib/api/products";
+import { apiClient } from "@/lib/api-client";
 import { BarcodeScannerButton } from "./BarcodeScannerButton";
 import { UnitCombobox } from "./UnitCombobox";
 
@@ -49,9 +50,15 @@ export function InlineCreateProductModal({
     variantName: "",
   });
 
-  // Fetch existing products for the "Variant of" dropdown
+  // Loading state while resolving a scanned barcode → parent product
+  const [variantOfScanLoading, setVariantOfScanLoading] = React.useState(false);
+
+  // Fetch existing non-variant products for the "Variant of" dropdown
   const { data: allProductsData } = useProducts({ limit: 0, isActive: true });
   const parentCandidates = (allProductsData?.data ?? []).filter((p: any) => !p.parentProductId);
+
+  // Derived: the selected parent product object (for name preview)
+  const selectedParent = parentCandidates.find((p: any) => p.id === form.parentProductId) as any;
 
   // Sync initialName / initialSku when modal opens
   React.useEffect(() => {
@@ -62,13 +69,51 @@ export function InlineCreateProductModal({
 
   if (!isOpen) return null;
 
+  /**
+   * Scanning a barcode in the "Variant of" field:
+   * - Look up the product by barcode
+   * - If the result is itself a variant, resolve to its parent
+   * - Auto-select that parent in the dropdown
+   */
+  const handleVariantOfScan = async (code: string) => {
+    setVariantOfScanLoading(true);
+    try {
+      const found = await apiClient.get(`/products/barcode/${encodeURIComponent(code)}`).then((r) => r.data);
+      // If the scanned product is a variant, use its parentProductId; otherwise use its own id
+      const parentId: string = found.parentProductId || found.id;
+      setForm((f) => ({ ...f, parentProductId: parentId }));
+    } catch {
+      toast({
+        title: "Product not found",
+        description: "No product matches that barcode. Select a parent from the list manually.",
+        variant: "error",
+      });
+    } finally {
+      setVariantOfScanLoading(false);
+    }
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.name.trim()) return;
+
+    // When creating a variant, auto-compose the product name
+    let productName = form.name.trim();
+    if (form.parentProductId) {
+      if (!form.variantName.trim()) {
+        toast({ title: "Variant name is required", variant: "error" });
+        return;
+      }
+      const parentName = selectedParent?.name ?? "";
+      productName = parentName
+        ? `${parentName} - ${form.variantName.trim()}`
+        : form.variantName.trim();
+    } else if (!productName) {
+      return;
+    }
 
     createProduct.mutate(
       {
-        name: form.name.trim(),
+        name: productName,
         sku: form.sku.trim() || undefined,
         unit: form.unit,
         pricePerUnit: form.pricePerUnit || "0",
@@ -91,6 +136,8 @@ export function InlineCreateProductModal({
     );
   };
 
+  const isVariant = !!form.parentProductId;
+
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50 p-4">
       <div className="w-full max-w-md rounded-xl bg-white shadow-xl">
@@ -107,50 +154,79 @@ export function InlineCreateProductModal({
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4 px-6 py-4">
-          {/* Variant of — optional parent */}
+          {/* ── Variant of — optional parent ── */}
           {parentCandidates.length > 0 && (
             <div>
-              <label className="mb-1 block text-xs font-medium text-navy">Variant of <span className="font-normal text-navy/40">(optional)</span></label>
-              <select
-                value={form.parentProductId}
-                onChange={(e) => setForm((f) => ({ ...f, parentProductId: e.target.value }))}
-                className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-              >
-                <option value="">— Standalone product —</option>
-                {parentCandidates.map((p: any) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
+              <label className="mb-1 block text-xs font-medium text-navy">
+                Variant of <span className="font-normal text-navy/40">(optional)</span>
+              </label>
+              <div className="flex gap-2">
+                <select
+                  value={form.parentProductId}
+                  onChange={(e) => setForm((f) => ({ ...f, parentProductId: e.target.value }))}
+                  className="flex-1 rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                >
+                  <option value="">— Standalone product —</option>
+                  {parentCandidates.map((p: any) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+                <BarcodeScannerButton
+                  onScan={handleVariantOfScan}
+                  title="Scan a product barcode to auto-select its master"
+                />
+              </div>
+              {variantOfScanLoading && (
+                <p className="mt-1 text-xs text-navy/50">Looking up product…</p>
+              )}
             </div>
           )}
-          {form.parentProductId && (
+
+          {/* ── Variant name (required when a parent is selected) ── */}
+          {isVariant && (
             <div>
-              <label className="mb-1 block text-xs font-medium text-navy">Variant name *</label>
+              <label className="mb-1 block text-xs font-medium text-navy">
+                Flavor / Variety <span className="text-danger">*</span>
+              </label>
               <input
-                required={!!form.parentProductId}
+                required
+                autoFocus
                 type="text"
                 value={form.variantName}
                 onChange={(e) => setForm((f) => ({ ...f, variantName: e.target.value }))}
                 className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                placeholder="e.g. Chocolate, Large, Plain…"
+                placeholder='e.g. "Chocolate", "Large", "500ml"'
+              />
+              {/* Auto-composed name preview */}
+              {selectedParent && (
+                <p className="mt-1.5 rounded bg-surface-raised px-2.5 py-1.5 text-xs text-navy/60">
+                  Will be named:{" "}
+                  <span className="font-medium text-navy">
+                    {selectedParent.name}
+                    {form.variantName.trim() ? ` - ${form.variantName.trim()}` : " - …"}
+                  </span>
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* ── Name — only for standalone products ── */}
+          {!isVariant && (
+            <div>
+              <label className="mb-1 block text-xs font-medium text-navy">Name *</label>
+              <input
+                required
+                autoFocus
+                type="text"
+                value={form.name}
+                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+                className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                placeholder="e.g. Sourdough Bread"
               />
             </div>
           )}
-          {/* Name */}
-          <div>
-            <label className="mb-1 block text-xs font-medium text-navy">Name *</label>
-            <input
-              required
-              autoFocus
-              type="text"
-              value={form.name}
-              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-              className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-              placeholder="e.g. Sourdough Bread"
-            />
-          </div>
 
-          {/* SKU (barcode scanner) + Unit */}
+          {/* ── SKU (barcode scanner) + Unit ── */}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="mb-1 block text-xs font-medium text-navy">SKU / Barcode</label>
@@ -180,7 +256,7 @@ export function InlineCreateProductModal({
             </div>
           </div>
 
-          {/* Price + Category */}
+          {/* ── Price + Category ── */}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="mb-1 block text-xs font-medium text-navy">Price ($)</label>
@@ -206,7 +282,7 @@ export function InlineCreateProductModal({
             </div>
           </div>
 
-          {/* Units per box */}
+          {/* ── Units per box ── */}
           <div>
             <label className="mb-1 block text-xs font-medium text-navy">Units per box</label>
             <input
