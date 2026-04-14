@@ -170,9 +170,9 @@ export class InvoicesService {
   async createInvoiceFromOrder(orderId: string, txClient?: any) {
     const db = txClient ?? this.prisma;
 
-    // Idempotency: skip if a manual (non-delivery-batch) invoice already exists for this order
+    // Idempotency: skip if ANY invoice already exists for this order (manual or batch)
     const existing = await db.invoice.findFirst({
-      where: { orderId, deliveryBatchId: null },
+      where: { orderId },
     });
     if (existing) return existing;
 
@@ -1397,6 +1397,13 @@ export class InvoicesService {
       include: { items: true },
     });
     if (!invoice) throw new NotFoundException("Invoice not found");
+
+    // Block adjustments on fully PAID invoices — create a credit note instead
+    if (invoice.status === InvoiceStatus.PAID || invoice.status === InvoiceStatus.WRITTEN_OFF) {
+      throw new BadRequestException(
+        `Cannot adjust prices on a ${invoice.status} invoice. Issue a credit note instead.`,
+      );
+    }
 
     // Build a map of itemId → newUnitPrice for quick lookup
     const priceMap = new Map(dto.items.map((i) => [i.itemId, i.newUnitPrice]));

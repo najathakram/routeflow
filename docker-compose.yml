@@ -47,6 +47,8 @@ services:
       retries: 5
 
   # ─── Redis Commander (dev UI) ────────────────────────────────────────────────
+  # Only started with: docker compose --profile tools up
+  # REDIS_COMMANDER_PASSWORD must be set — no default provided to prevent accidental exposure.
   redis-commander:
     image: rediscommander/redis-commander:latest
     container_name: routeflow_redis_ui
@@ -54,9 +56,9 @@ services:
     environment:
       REDIS_HOSTS: "local:redis:6379"
       HTTP_USER: admin
-      HTTP_PASSWORD: ${REDIS_COMMANDER_PASSWORD:-admin}
+      HTTP_PASSWORD: ${REDIS_COMMANDER_PASSWORD:?REDIS_COMMANDER_PASSWORD must be set}
     ports:
-      - "8082:8081"
+      - "127.0.0.1:8082:8081"  # bind to localhost only, not 0.0.0.0
     depends_on:
       redis:
         condition: service_healthy

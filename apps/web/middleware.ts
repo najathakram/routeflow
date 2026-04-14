@@ -25,10 +25,11 @@ export function middleware(request: NextRequest) {
 
   // Allow manual override via request header (useful in dev / mobile apps).
   // In production this header is stripped by the reverse proxy; only local dev uses it.
+  const isProd = process.env.NODE_ENV === "production";
   const headerSlug = request.headers.get("x-tenant-slug");
   if (headerSlug) {
     response.cookies.set("tenant-slug", headerSlug, {
-      httpOnly: false, // client-side reads needed in dev
+      httpOnly: !isProd, // readable client-side only in dev (prod reads happen server-side)
       sameSite: "lax",
       path: "/",
       maxAge: 60 * 60 * 24 * 7, // 7 days
@@ -70,11 +71,11 @@ export function middleware(request: NextRequest) {
 
   if (resolvedSlug) {
     response.cookies.set("tenant-slug", resolvedSlug, {
-      httpOnly: false, // TenantProvider reads via document.cookie; consider server-side reads
+      httpOnly: isProd, // httpOnly in production; dev needs client-side reads for TenantProvider
       sameSite: "strict", // prevent cross-site requests from sending tenant context
       path: "/",
       maxAge: 60 * 60 * 24 * 30,
-      secure: process.env.NODE_ENV === "production",
+      secure: isProd,
     });
   }
 

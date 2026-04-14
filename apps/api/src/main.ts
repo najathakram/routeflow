@@ -60,8 +60,10 @@ async function bootstrap() {
   // ─── Security headers (helmet) ──────────────────────────────────────────────
   app.use(helmet());
 
-  // ─── Body size limit (default 100kb is too small for bulk imports) ───────────
-  app.use(json({ limit: "10mb" }));
+  // ─── Body size limit ────────────────────────────────────────────────────────
+  // 2mb covers all regular payloads. Bulk-import endpoints that need more
+  // should stream uploads to object storage (R2/S3) directly.
+  app.use(json({ limit: "2mb" }));
 
   // ─── WebSocket adapter (Redis pub/sub) ──────────────────────────────────────
   app.useWebSocketAdapter(new RedisIoAdapter(app));

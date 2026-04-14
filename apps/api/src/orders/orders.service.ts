@@ -476,6 +476,17 @@ export class OrdersService {
         `Only CANCELLED orders can be reopened. Current status: ${order.status}`,
       );
     }
+
+    // Block reopen if any PAID invoices exist for this order (avoid duplicate billing)
+    const paidInvoice = await this.prisma.forTenant().invoice.findFirst({
+      where: { orderId: id, status: { in: ["PAID", "PARTIAL", "WRITTEN_OFF"] } },
+      select: { invoiceNumber: true, status: true },
+    });
+    if (paidInvoice) {
+      throw new BadRequestException(
+        `Cannot reopen order: invoice ${paidInvoice.invoiceNumber} is ${paidInvoice.status}. Void or credit the invoice before reopening.`,
+      );
+    }
     return this.prisma.tenantTransaction(async (tx) => {
       // Revert cancelled line items back to PENDING
       await tx.orderItem.updateMany({
@@ -715,10 +726,18 @@ export class OrdersService {
               performedById: user.sub,
             },
           });
-          await tx.product.update({
+          const updatedProduct = await tx.product.update({
             where: { id: orderItem.productId },
             data: { currentStock: { decrement: saleQty } },
+            select: { id: true, name: true, currentStock: true },
           });
+          // Warn if stock went negative — log for operator review but don't block delivery
+          if (Number(updatedProduct.currentStock) < 0) {
+            this.logger.warn(
+              `Stock went negative for product "${updatedProduct.name}" (${updatedProduct.id}): ` +
+              `currentStock=${updatedProduct.currentStock} after delivery of ${saleQty}`,
+            );
+          }
         }
 
         // Determine new item status and update deliveredQty
