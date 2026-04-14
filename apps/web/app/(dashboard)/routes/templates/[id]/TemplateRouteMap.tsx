@@ -90,7 +90,7 @@ function FitBoundsLayer({ stops }: { stops: RouteTemplateStop[] }) {
   return null;
 }
 
-// ─── Placeholder when no key / no stops ───────────────────────────────────────
+// ─── Placeholder when map cannot render ───────────────────────────────────────
 
 function MapPlaceholder({ message }: { message: string }) {
   return (

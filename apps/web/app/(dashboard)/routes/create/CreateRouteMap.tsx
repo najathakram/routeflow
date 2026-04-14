@@ -201,17 +201,27 @@ function CustomerInfoWindow({
   );
 }
 
-// ─── No-key fallback ───────────────────────────────────────────────────────────
+// ─── Placeholder when map cannot render ─────────────────────────────────────────
 
-function MapPlaceholder({ customerCount }: { customerCount: number }) {
+function MapPlaceholder({
+  customerCount,
+  reason,
+}: {
+  customerCount: number;
+  reason: "no-key" | "no-geocoded";
+}) {
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-4 bg-surface-raised">
       <div className="flex flex-col items-center gap-3 rounded-xl border border-surface-border bg-white p-8 text-center shadow-card">
         <MapPin className="h-10 w-10 text-navy/20" />
         <div>
-          <p className="font-semibold text-navy">Map unavailable</p>
+          <p className="font-semibold text-navy">
+            {reason === "no-key" ? "Map unavailable" : "No addresses to map"}
+          </p>
           <p className="mt-1 text-sm text-navy/50">
-            Set NEXT_PUBLIC_GOOGLE_MAPS_KEY to enable map view.
+            {reason === "no-key"
+              ? "Google Maps API key not configured. Contact your administrator."
+              : "None of your customers have geocoded addresses yet. Add addresses with coordinates to see them on the map."}
           </p>
         </div>
         <span className="rounded-full border border-surface-border bg-surface-raised px-3 py-1 text-xs font-medium text-navy/60">
@@ -263,8 +273,8 @@ export function CreateRouteMap({
       </div>
     );
   }
-  if (!MAPS_KEY) return <MapPlaceholder customerCount={customers.length} />;
-  if (geoCustomers.length === 0) return <MapPlaceholder customerCount={customers.length} />;
+  if (!MAPS_KEY) return <MapPlaceholder customerCount={customers.length} reason="no-key" />;
+  if (geoCustomers.length === 0) return <MapPlaceholder customerCount={customers.length} reason="no-geocoded" />;
 
   return (
     <APIProvider apiKey={MAPS_KEY}>

@@ -169,9 +169,9 @@ function StopInfoWindow({
   );
 }
 
-// ─── No-key fallback ──────────────────────────────────────────────────────────
+// ─── Placeholder when map cannot render ──────────────────────────────────────
 
-function MapPlaceholder({ stops }: { stops: RouteRunStop[] }) {
+function MapPlaceholder({ stops, reason }: { stops: RouteRunStop[]; reason: 'no-key' | 'no-geocoded' }) {
   const done = stops.filter((s) => s.status === 'COMPLETED' || s.status === 'SKIPPED').length;
   const active = stops.filter((s) => s.status === 'IN_PROGRESS').length;
   const pending = stops.filter((s) => s.status === 'PENDING').length;
@@ -181,9 +181,13 @@ function MapPlaceholder({ stops }: { stops: RouteRunStop[] }) {
       <div className="flex flex-col items-center gap-3 rounded-xl border border-surface-border bg-white p-8 text-center shadow-card">
         <MapPin className="h-10 w-10 text-navy/20" />
         <div>
-          <p className="font-semibold text-navy">Map view unavailable</p>
+          <p className="font-semibold text-navy">
+            {reason === 'no-key' ? 'Map view unavailable' : 'No geocoded stops'}
+          </p>
           <p className="mt-1 text-sm text-navy/50">
-            Google Maps is not configured for this deployment. Contact your administrator to enable the map.
+            {reason === 'no-key'
+              ? 'Google Maps API key not configured. Contact your administrator.'
+              : 'None of the stops on this route have geocoded addresses yet.'}
           </p>
         </div>
         <div className="flex flex-wrap justify-center gap-2">
@@ -223,11 +227,11 @@ export function RouteMap({ stops }: { stops: RouteRunStop[] }) {
       </div>
     );
   }
-  if (!MAPS_KEY) return <MapPlaceholder stops={stops} />;
+  if (!MAPS_KEY) return <MapPlaceholder stops={stops} reason="no-key" />;
 
   // If we have a key but no stops have geocoded addresses, show the placeholder
   // instead of rendering an empty map with default San Francisco center
-  if (stopsWithCoords.length === 0) return <MapPlaceholder stops={stops} />;
+  if (stopsWithCoords.length === 0) return <MapPlaceholder stops={stops} reason="no-geocoded" />;
 
   return (
     <>
