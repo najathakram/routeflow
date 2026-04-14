@@ -2,6 +2,9 @@
 import {
   Controller,
   Post,
+  Get,
+  Delete,
+  Param,
   UseGuards,
   UseInterceptors,
   UploadedFile,
@@ -54,6 +57,22 @@ export class ImportController {
   importExpenses(@UploadedFile() file: Express.Multer.File, @CurrentUser() user: JwtPayload) {
     if (!file) throw new BadRequestException("No file uploaded");
     return this.importService.importExpenses(file.buffer, user.sub);
+  }
+
+  /** List the 20 most recent expense import batches (with counts and totals). */
+  @Get("expenses/batches")
+  listExpenseBatches() {
+    return this.importService.listExpenseBatches();
+  }
+
+  /**
+   * Roll back an entire expense import batch by soft-deleting every expense
+   * that was created in that batch. Safe to call multiple times.
+   */
+  @Delete("expenses/batch/:batchId")
+  @HttpCode(HttpStatus.OK)
+  rollbackExpenseBatch(@Param("batchId") batchId: string) {
+    return this.importService.rollbackExpenseBatch(batchId);
   }
 
   @Post("products")

@@ -1252,6 +1252,7 @@ model Expense {
   vendorBillId        String?   @unique
   notes               String?
   referenceNumber     String?
+  importBatchId       String?   // UUID set for all rows in one CSV import; null for manually-created expenses
   performedById       String?
   isItemized          Boolean   @default(false)
   isMileage           Boolean   @default(false)
@@ -1278,6 +1279,7 @@ model Expense {
   @@index([date])
   @@index([deletedAt])
   @@index([tenantId])
+  @@index([importBatchId])
 }
 
 model ExpenseLineItem {

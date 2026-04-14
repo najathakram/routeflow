@@ -824,6 +824,7 @@ export class ImportService {
     errors: string[];
     suppliersCreated: number;
     suppliersUpdated: number;
+    importBatchId: string;
   }> {
     const rows = this.parseCsv(buffer);
     let imported = 0,
@@ -831,6 +832,9 @@ export class ImportService {
       suppliersCreated = 0,
       suppliersUpdated = 0;
     const errors: string[] = [];
+
+    // Generate a unique batch ID for this import run so it can be rolled back later
+    const importBatchId = crypto.randomUUID();
 
     // ── Step 1: Ensure expense categories exist ──────────────────────────────
     const catMap: Record<string, string> = {};
@@ -941,10 +945,33 @@ export class ImportService {
       const vendorName = this.getVendorName(row);
       const supplierId = vendorName ? (vendorMap[vendorName.toLowerCase()] ?? null) : null;
 
+      // ── Deduplication: skip if an identical expense already exists ──────────
+      // Match on same calendar day + amount + category + supplier to avoid
+      // double-importing if the same CSV is uploaded more than once.
+      const dayStart = new Date(date);
+      dayStart.setHours(0, 0, 0, 0);
+      const dayEnd = new Date(date);
+      dayEnd.setHours(23, 59, 59, 999);
+      const duplicate = await this.prisma.forTenant().expense.findFirst({
+        where: {
+          deletedAt: null,
+          date: { gte: dayStart, lte: dayEnd },
+          amount,
+          categoryId,
+          ...(supplierId ? { supplierId } : { supplierId: null }),
+        },
+        select: { id: true },
+      });
+      if (duplicate) {
+        skipped++;
+        continue;
+      }
+
       try {
         await this.prisma.forTenant().expense.create({
           data: {
             categoryId,
+            importBatchId,
             amount,
             date,
             description,
@@ -960,7 +987,46 @@ export class ImportService {
         skipped++;
       }
     }
-    return { imported, skipped, errors, suppliersCreated, suppliersUpdated };
+    return { imported, skipped, errors, suppliersCreated, suppliersUpdated, importBatchId };
+  }
+
+  // ── Import batch rollback ──────────────────────────────────────────────────
+
+  /**
+   * Soft-deletes all expenses that belong to a given import batch.
+   * Safe to call multiple times — already-deleted records are ignored.
+   */
+  async rollbackExpenseBatch(batchId: string): Promise<{ rolledBack: number }> {
+    const result = await this.prisma.forTenant().expense.updateMany({
+      where: { importBatchId: batchId, deletedAt: null },
+      data: { deletedAt: new Date() },
+    });
+    return { rolledBack: result.count };
+  }
+
+  /**
+   * Lists the 20 most recent expense import batches for the current tenant,
+   * ordered newest first. Only counts expenses that have not been rolled back.
+   */
+  async listExpenseBatches() {
+    const rows = await this.prisma.forTenant().expense.groupBy({
+      by: ["importBatchId"],
+      where: { importBatchId: { not: null }, deletedAt: null },
+      _count: { id: true },
+      _sum: { amount: true },
+      _min: { date: true, createdAt: true },
+      _max: { date: true },
+      orderBy: { _min: { createdAt: "desc" } },
+      take: 20,
+    });
+    return rows.map((r) => ({
+      batchId: r.importBatchId,
+      expenseCount: r._count.id,
+      totalAmount: Number(r._sum.amount ?? 0),
+      earliestExpenseDate: r._min.date,
+      latestExpenseDate: r._max.date,
+      importedAt: r._min.createdAt,
+    }));
   }
 
   async importProducts(
