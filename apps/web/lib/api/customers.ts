@@ -19,6 +19,7 @@ export interface Customer {
   lastName?: string;
   taxId?: string;
   isTaxExempt?: boolean;
+  taxExemptDocumentKeys?: string[];
   creditLimit?: number;
   currency?: string;
   pricingTier?: number;
@@ -518,6 +519,49 @@ export function useApprovePortalFromList() {
     onSuccess: (_d, customerId) => {
       qc.invalidateQueries({ queryKey: ["customers", "pending-portal-approvals"] });
       qc.invalidateQueries({ queryKey: ["customers", customerId, "portal-status"] });
+    },
+  });
+}
+
+
+// ── Tax-exempt document hooks ─────────────────────────────────────────────────
+
+export interface TaxDocument {
+  key: string;
+  url: string;
+}
+
+export function useCustomerTaxDocuments(customerId: string) {
+  return useQuery<TaxDocument[]>({
+    queryKey: ["customers", customerId, "tax-documents"],
+    queryFn: () => apiClient.get(`/customers/${customerId}/tax-documents`).then((r) => r.data),
+    enabled: !!customerId,
+  });
+}
+
+export function useUploadCustomerTaxDocuments(customerId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (files: File[]): Promise<{ uploaded: TaxDocument[] }> => {
+      const form = new FormData();
+      files.forEach((f) => form.append("files", f));
+      return apiClient.post(`/customers/${customerId}/tax-documents`, form).then((r) => r.data);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["customers", customerId, "tax-documents"] });
+      qc.invalidateQueries({ queryKey: ["customers", customerId] });
+    },
+  });
+}
+
+export function useDeleteCustomerTaxDocument(customerId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (key: string): Promise<void> =>
+      apiClient.delete(`/customers/${customerId}/tax-documents`, { data: { key } }).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["customers", customerId, "tax-documents"] });
+      qc.invalidateQueries({ queryKey: ["customers", customerId] });
     },
   });
 }

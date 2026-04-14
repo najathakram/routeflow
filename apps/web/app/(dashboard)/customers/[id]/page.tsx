@@ -25,6 +25,8 @@ import {
   MessageSquare,
   User,
   Building2,
+  Camera,
+  ZoomIn,
 } from "lucide-react";
 import {
   Badge,
@@ -82,6 +84,9 @@ import {
   useDisconnectPortal,
   useApprovePortalRequest,
   useDeleteCustomer,
+  useCustomerTaxDocuments,
+  useUploadCustomerTaxDocuments,
+  useDeleteCustomerTaxDocument,
   type AdvancePayment,
   type CustomerPrice,
   type ContactPerson,
@@ -251,6 +256,32 @@ function renderInvoiceStatus(
       {labels[status] ?? status}
     </span>
   );
+}
+
+// ── Image compression (runs in browser before upload) ─────────────────────────
+
+async function compressImage(file: File, maxPx = 1600, quality = 0.72): Promise<File> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      let { width, height } = img;
+      if (width > maxPx || height > maxPx) {
+        if (width > height) { height = Math.round((height * maxPx) / width); width = maxPx; }
+        else { width = Math.round((width * maxPx) / height); height = maxPx; }
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = width; canvas.height = height;
+      canvas.getContext("2d")!.drawImage(img, 0, 0, width, height);
+      canvas.toBlob(
+        (blob) => resolve(blob ? new File([blob], file.name.replace(/\.[^.]+$/, ".jpg"), { type: "image/jpeg" }) : file),
+        "image/jpeg", quality,
+      );
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
+    img.src = url;
+  });
 }
 
 // ── Info row ──────────────────────────────────────────────────────────────────
@@ -1239,6 +1270,13 @@ export default function CustomerDetailPage({
   const [portalInviteEmail, setPortalInviteEmail] = React.useState("");
   const [portalMsg, setPortalMsg] = React.useState<string | null>(null);
 
+  // Tax-exempt documents
+  const { data: taxDocs = [] } = useCustomerTaxDocuments(params.id);
+  const uploadTaxDocs = useUploadCustomerTaxDocuments(params.id);
+  const deleteTaxDoc = useDeleteCustomerTaxDocument(params.id);
+  const [taxDocLightbox, setTaxDocLightbox] = React.useState<string | null>(null);
+  const taxDocInputRef = React.useRef<HTMLInputElement>(null);
+
   const allOrders: ApiOrder[] = ordersResult?.data ?? [];
   const addresses = customer?.addresses ?? [];
   const currentStatus: CustomerStatus =
@@ -1288,6 +1326,13 @@ export default function CustomerDetailPage({
       });
     }
   };
+
+  // Tax-document upload with client-side compression
+  const handleTaxDocFiles = React.useCallback(async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const compressed = await Promise.all(Array.from(files).map(compressImage));
+    uploadTaxDocs.mutate(compressed);
+  }, [uploadTaxDocs]);
 
   // Advance payment
   const [isAdvanceOpen, setIsAdvanceOpen] = React.useState(false);
@@ -1558,6 +1603,68 @@ export default function CustomerDetailPage({
                       </div>
                     )}
                   </div>
+
+                  {/* Tax Exempt Documents */}
+                  {customer.isTaxExempt && (
+                    <div className="mt-5 border-t border-surface-border pt-4">
+                      <div className="flex items-center justify-between mb-3">
+                        <p className="text-xs font-semibold uppercase tracking-wider text-navy/50">
+                          Tax Exempt Documents
+                        </p>
+                        {isOperator && (
+                          <button
+                            onClick={() => taxDocInputRef.current?.click()}
+                            disabled={uploadTaxDocs.isPending}
+                            className="flex items-center gap-1.5 rounded-md border border-surface-border bg-white px-2.5 py-1 text-xs font-medium text-navy hover:bg-surface-50 disabled:opacity-50"
+                          >
+                            <Camera className="h-3.5 w-3.5" />
+                            {uploadTaxDocs.isPending ? "Uploading…" : "Add Photo"}
+                          </button>
+                        )}
+                        {/* Hidden file input — accept images, allow camera on mobile */}
+                        <input
+                          ref={taxDocInputRef}
+                          type="file"
+                          accept="image/*"
+                          capture="environment"
+                          multiple
+                          className="hidden"
+                          onChange={(e) => handleTaxDocFiles(e.target.files)}
+                        />
+                      </div>
+
+                      {taxDocs.length === 0 ? (
+                        <p className="text-xs text-navy/40 italic">No documents uploaded yet.</p>
+                      ) : (
+                        <div className="grid grid-cols-3 gap-2">
+                          {taxDocs.map((doc) => (
+                            <div key={doc.key} className="group relative aspect-square rounded-lg overflow-hidden border border-surface-border bg-surface-50">
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img src={doc.url} alt="Tax exempt doc" className="h-full w-full object-cover" />
+                              <div className="absolute inset-0 flex items-center justify-center gap-1.5 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button
+                                  onClick={() => setTaxDocLightbox(doc.url)}
+                                  className="rounded-full bg-white/90 p-1.5 text-navy hover:bg-white"
+                                  title="View full size"
+                                >
+                                  <ZoomIn className="h-3.5 w-3.5" />
+                                </button>
+                                {isOperator && (
+                                  <button
+                                    onClick={() => deleteTaxDoc.mutate(doc.key)}
+                                    className="rounded-full bg-white/90 p-1.5 text-red-600 hover:bg-white"
+                                    title="Delete"
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {/* Pricing Tier */}
                   <div className="mt-5 border-t border-surface-border pt-4">
@@ -3219,6 +3326,28 @@ export default function CustomerDetailPage({
           />
         </div>
       </Modal>
+
+      {/* ── Tax document lightbox ─────────────────────────────────── */}
+      {taxDocLightbox && (
+        <div
+          className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80 p-4"
+          onClick={() => setTaxDocLightbox(null)}
+        >
+          <button
+            className="absolute right-4 top-4 rounded-full bg-white/10 p-2 text-white hover:bg-white/20"
+            onClick={() => setTaxDocLightbox(null)}
+          >
+            <X className="h-5 w-5" />
+          </button>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={taxDocLightbox}
+            alt="Tax exempt document"
+            className="max-h-full max-w-full rounded-lg object-contain shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
     </div>
   );
 }

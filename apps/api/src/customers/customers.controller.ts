@@ -10,7 +10,11 @@ import {
   Query,
   Res,
   UseGuards,
+  UseInterceptors,
+  UploadedFiles,
 } from "@nestjs/common";
+import { FilesInterceptor } from "@nestjs/platform-express";
+import { memoryStorage } from "multer";
 import { ApiTags, ApiBearerAuth } from "@nestjs/swagger";
 import { UserRole } from "@prisma/client";
 import type { Response } from "express";
@@ -341,5 +345,43 @@ export class CustomersController {
       dto.secondaryCustomerId,
       dto.notes,
     );
+  }
+
+  // ── Tax-exempt document endpoints ────────────────────────────────────────────
+
+  @Get(":id/tax-documents")
+  @Roles(UserRole.OPERATOR)
+  getTaxDocuments(@Param("id") id: string) {
+    return this.customersService.getTaxDocumentUrls(id);
+  }
+
+  @Post(":id/tax-documents")
+  @Roles(UserRole.OPERATOR)
+  @UseInterceptors(
+    FilesInterceptor("files", 5, {
+      storage: memoryStorage(),
+      limits: { fileSize: 15 * 1024 * 1024 }, // 15 MB (frontend compresses first)
+      fileFilter: (_req, file, cb) => {
+        cb(null, file.mimetype.startsWith("image/"));
+      },
+    }),
+  )
+  async uploadTaxDocuments(
+    @Param("id") id: string,
+    @UploadedFiles() files: Express.Multer.File[],
+  ) {
+    const results = await Promise.all(
+      files.map((f) =>
+        this.customersService.uploadTaxDocument(id, f.buffer, f.originalname, f.mimetype),
+      ),
+    );
+    return { uploaded: results };
+  }
+
+  @Delete(":id/tax-documents")
+  @Roles(UserRole.OPERATOR)
+  @HttpCode(204)
+  deleteTaxDocument(@Param("id") id: string, @Body() dto: { key: string }) {
+    return this.customersService.deleteTaxDocument(id, dto.key);
   }
 }

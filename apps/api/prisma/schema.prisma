@@ -465,6 +465,7 @@ model Customer {
   lastName            String?
   taxId               String?
   isTaxExempt         Boolean     @default(false)
+  taxExemptDocumentKeys String[]  @default([])
   creditLimit         Decimal?    @db.Decimal(10, 2)
   currency            String      @default("USD")
   pricingTier         Int         @default(1)

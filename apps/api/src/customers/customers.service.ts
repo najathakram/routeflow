@@ -7,11 +7,12 @@ import {
   ForbiddenException,
   UnprocessableEntityException,
 } from "@nestjs/common";
+import * as crypto from "crypto";
 import { BuyerMergeRequestStatus, MergeInitiator } from "@prisma/client";
 import { ConfigService } from "@nestjs/config";
 import * as bcrypt from "bcrypt";
-import * as crypto from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
+import { StorageService } from "../storage/storage.service";
 import { CreateCustomerDto } from "./dto/create-customer.dto";
 import { UpdateCustomerDto } from "./dto/update-customer.dto";
 import { ChangeCustomerStatusDto } from "./dto/change-customer-status.dto";
@@ -29,6 +30,7 @@ export class CustomersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    private readonly storage: StorageService,
   ) {}
 
   /** Geocode an address string using Google Maps API. Returns null if key missing or call fails. */
@@ -1662,5 +1664,44 @@ export class CustomersService {
       status: mergeRequest.status,
       message: "Merge suggestion submitted for platform admin review.",
     };
+  }
+
+  // ── Tax-exempt document upload ───────────────────────────────────────────────
+
+  async uploadTaxDocument(id: string, buffer: Buffer, originalName: string, mimetype: string) {
+    const customer = await this.prisma.forTenant().customer.findUnique({ where: { id } });
+    if (!customer) throw new NotFoundException("Customer not found");
+
+    const ext = (originalName.split(".").pop() ?? "jpg").toLowerCase();
+    const key = `customers/${id}/tax-documents/${crypto.randomUUID()}.${ext}`;
+    await this.storage.upload(key, buffer, mimetype);
+
+    await this.prisma.forTenant().customer.update({
+      where: { id },
+      data: { taxExemptDocumentKeys: { push: key } },
+    });
+
+    const url = await this.storage.presignedUrl(key);
+    return { key, url };
+  }
+
+  async deleteTaxDocument(id: string, key: string): Promise<void> {
+    const customer = await this.prisma.forTenant().customer.findUnique({ where: { id } });
+    if (!customer) throw new NotFoundException("Customer not found");
+    if (!(customer as any).taxExemptDocumentKeys?.includes(key)) {
+      throw new NotFoundException("Document not found on this customer");
+    }
+    await this.storage.delete(key);
+    await this.prisma.forTenant().customer.update({
+      where: { id },
+      data: { taxExemptDocumentKeys: { set: (customer as any).taxExemptDocumentKeys.filter((k: string) => k !== key) } },
+    });
+  }
+
+  async getTaxDocumentUrls(id: string): Promise<{ key: string; url: string }[]> {
+    const customer = await this.prisma.forTenant().customer.findUnique({ where: { id } });
+    if (!customer) throw new NotFoundException("Customer not found");
+    const keys: string[] = (customer as any).taxExemptDocumentKeys ?? [];
+    return Promise.all(keys.map(async (key) => ({ key, url: await this.storage.presignedUrl(key) })));
   }
 }
