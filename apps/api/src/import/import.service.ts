@@ -1,7 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { parse } from "csv-parse/sync";
-import { InvoiceStatus, UserRole, Prisma } from "@prisma/client";
+import { InvoiceStatus, UserRole } from "@prisma/client";
 import * as bcrypt from "bcrypt";
 import * as crypto from "crypto";
 
@@ -1044,18 +1044,15 @@ export class ImportService {
    * Returns their count so the caller can decide whether to adopt them.
    */
   async diagnoseOrphanedContacts(tenantId: string) {
-    // Use raw (unscoped) prisma to see across all tenants
-    const orphans = await this.prisma.$queryRaw<
-      Array<{ id: string; businessName: string; tenantId: string | null }>
-    >(
-      Prisma.sql`
-        SELECT c."id", c."businessName", c."tenantId"
-        FROM "Customer" c
-        WHERE c."zohoContactId" IS NOT NULL
-          AND (c."tenantId" IS NULL OR c."tenantId" != ${tenantId}::uuid)
-        LIMIT 100
-      `,
-    );
+    // this.prisma (unscoped base client — NOT forTenant()) sees across all tenants
+    const orphans = await this.prisma.customer.findMany({
+      where: {
+        zohoContactId: { not: null },
+        NOT: { tenantId },
+      },
+      select: { id: true, businessName: true, tenantId: true },
+      take: 100,
+    });
     return {
       orphanCount: orphans.length,
       tenantId,
@@ -1072,32 +1069,39 @@ export class ImportService {
    * tenant context (e.g. by a super-admin without active impersonation).
    */
   async adoptOrphanedContacts(tenantId: string): Promise<{ adopted: number }> {
-    // Find all orphaned customers (tenantId IS NULL or != current tenant)
-    const orphans = await this.prisma.$queryRaw<Array<{ id: string; userId: string }>>(
-      Prisma.sql`
-        SELECT c."id", c."userId"
-        FROM "Customer" c
-        WHERE c."zohoContactId" IS NOT NULL
-          AND (c."tenantId" IS NULL OR c."tenantId" != ${tenantId}::uuid)
-      `,
-    );
+    // this.prisma (unscoped) — sees across ALL tenants
+    const orphans = await this.prisma.customer.findMany({
+      where: {
+        zohoContactId: { not: null },
+        NOT: { tenantId },
+      },
+      select: { id: true, userId: true },
+    });
 
     if (orphans.length === 0) return { adopted: 0 };
 
-    // Update each record individually to avoid array parameter serialisation issues
-    for (const o of orphans) {
-      await this.prisma.$executeRaw(
-        Prisma.sql`UPDATE "Customer" SET "tenantId" = ${tenantId}::uuid WHERE "id" = ${o.id}::uuid`,
-      );
-      if (o.userId) {
-        await this.prisma.$executeRaw(
-          Prisma.sql`UPDATE "User" SET "tenantId" = ${tenantId}::uuid WHERE "id" = ${o.userId}::uuid`,
-        );
-      }
-      await this.prisma.$executeRaw(
-        Prisma.sql`UPDATE "CustomerAddress" SET "tenantId" = ${tenantId}::uuid WHERE "customerId" = ${o.id}::uuid`,
-      );
+    const customerIds = orphans.map((o) => o.id);
+    const userIds = orphans.map((o) => o.userId).filter((id): id is string => !!id);
+
+    // Reassign Customer records (unscoped updateMany)
+    await this.prisma.customer.updateMany({
+      where: { id: { in: customerIds } },
+      data: { tenantId },
+    });
+
+    // Reassign associated User records
+    if (userIds.length > 0) {
+      await this.prisma.user.updateMany({
+        where: { id: { in: userIds } },
+        data: { tenantId },
+      });
     }
+
+    // Reassign CustomerAddress records
+    await this.prisma.customerAddress.updateMany({
+      where: { customerId: { in: customerIds } },
+      data: { tenantId },
+    });
 
     return { adopted: orphans.length };
   }
