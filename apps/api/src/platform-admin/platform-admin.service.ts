@@ -19,6 +19,7 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { UpdateTenantStatusDto } from "./dto/update-tenant-status.dto";
 import { UpdateTenantPlanDto } from "./dto/update-tenant-plan.dto";
 import { CreateTenantDto } from "./dto/create-tenant.dto";
+import { IRS_SYSTEM_CATEGORIES } from "../bookkeeping/irs-categories.constant";
 import { ActivateSubscriptionDto } from "./dto/activate-subscription.dto";
 import { UpdateTenantConfigDto } from "./dto/update-tenant-config.dto";
 
@@ -117,6 +118,16 @@ export class PlatformAdminService {
       });
 
       await tx.tenantConfig.create({ data: { tenantId: tenant.id, businessName } });
+
+      await tx.expenseCategory.createMany({
+        data: IRS_SYSTEM_CATEGORIES.map((c) => ({
+          tenantId: tenant.id,
+          name: c.name,
+          code: c.code,
+          isCustom: false,
+        })),
+        skipDuplicates: true,
+      });
 
       const existingUser = await tx.user.findFirst({
         where: { tenantId: tenant.id, OR: [{ email: adminEmail }, { username: adminUsername }] },

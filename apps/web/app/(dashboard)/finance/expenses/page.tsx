@@ -18,6 +18,9 @@ import {
   Paperclip,
   Upload,
   ExternalLink,
+  CheckSquare,
+  PackageCheck,
+  CheckCircle2,
 } from "lucide-react";
 import { PageHeader, Button, cn, Modal, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
@@ -39,6 +42,9 @@ import {
   useDeleteExpenseReceipt,
   useGetExpenseReceiptUrl,
   useExtractExpenseItems,
+  useBatchUpdateExpenseStatus,
+  type Expense,
+  type ExpenseStatus,
 } from "@/lib/api/finance";
 import { usePreferences, useSavePreferences } from "@/lib/api/users";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
@@ -791,6 +797,9 @@ function OtherExpensesTab() {
   const [to, setTo] = React.useState("");
   const [confirmDelete, setConfirmDelete] = React.useState<string | null>(null);
   const [uploadingFor, setUploadingFor] = React.useState<string | null>(null);
+  const [selectMode, setSelectMode] = React.useState(false);
+  const [selected, setSelected] = React.useState<Set<string>>(new Set());
+  const [detailExpense, setDetailExpense] = React.useState<Expense | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   const { data, isLoading } = useExpenses({ categoryId: categoryId || undefined, from: from || undefined, to: to || undefined, page, limit: 25 });
@@ -800,10 +809,38 @@ function OtherExpensesTab() {
   const deleteReceipt = useDeleteExpenseReceipt();
   const getReceiptUrl = useGetExpenseReceiptUrl();
   const extractItems = useExtractExpenseItems();
+  const batchStatus = useBatchUpdateExpenseStatus();
 
-  const expenses = data?.data ?? [];
+  const expenses = (data?.data ?? []) as Expense[];
   const meta = data?.meta;
   const total = expenses.reduce((s, e) => s + Number(e.amount), 0);
+
+  const toggleSelect = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const exitSelect = () => {
+    setSelectMode(false);
+    setSelected(new Set());
+  };
+  const allChecked = expenses.length > 0 && expenses.every((e) => selected.has(e.id));
+
+  const handleBatchStatus = async (status: ExpenseStatus) => {
+    if (selected.size === 0) return;
+    try {
+      const res = await batchStatus.mutateAsync({ ids: Array.from(selected), status });
+      toast({
+        title: `${res.updated} expense${res.updated !== 1 ? "s" : ""} marked ${status.toLowerCase()}`,
+        variant: "success",
+      });
+      exitSelect();
+    } catch {
+      toast({ title: "Failed to update expenses", variant: "error" });
+    }
+  };
 
   const handleDelete = async (id: string) => {
     try {
@@ -874,10 +911,46 @@ function OtherExpensesTab() {
 
       {/* Actions row */}
       <div className="flex items-center justify-end gap-2">
+        <button
+          onClick={() => (selectMode ? exitSelect() : setSelectMode(true))}
+          className="flex items-center gap-2 rounded-lg border border-surface-border bg-white px-3 py-2 text-sm font-medium text-navy hover:bg-surface-raised transition-colors"
+        >
+          {selectMode ? <X className="h-4 w-4" /> : <CheckSquare className="h-4 w-4" />}
+          {selectMode ? "Cancel" : "Select"}
+        </button>
         <Link href="/finance/expenses/new" className="flex items-center gap-2 rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 transition-colors">
           <Plus className="h-4 w-4" /> New Expense
         </Link>
       </div>
+
+      {/* Bulk action bar */}
+      {selectMode && selected.size > 0 && (
+        <div className="flex items-center justify-between rounded-lg border border-brand-300 bg-brand-50 px-4 py-3">
+          <span className="text-sm font-medium text-navy">
+            {selected.size} expense{selected.size !== 1 ? "s" : ""} selected
+          </span>
+          <div className="flex items-center gap-2">
+            <button onClick={() => setSelected(new Set())} className="text-sm text-navy/50 hover:text-navy transition-colors">
+              Deselect all
+            </button>
+            <Button
+              variant="secondary"
+              leftIcon={<PackageCheck className="h-4 w-4" />}
+              loading={batchStatus.isPending}
+              onClick={() => handleBatchStatus("RECEIVED")}
+            >
+              Mark Received
+            </Button>
+            <Button
+              leftIcon={<CheckCircle2 className="h-4 w-4" />}
+              loading={batchStatus.isPending}
+              onClick={() => handleBatchStatus("PAID")}
+            >
+              Mark Paid
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-3 rounded-xl border border-surface-border bg-white p-4">
@@ -907,10 +980,24 @@ function OtherExpensesTab() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-surface-border bg-surface-raised">
+                {selectMode && (
+                  <th className="px-3 py-3 w-10">
+                    <input
+                      type="checkbox"
+                      checked={allChecked}
+                      onChange={() => {
+                        if (allChecked) setSelected(new Set());
+                        else setSelected(new Set(expenses.map((e) => e.id)));
+                      }}
+                      className="h-4 w-4 cursor-pointer rounded border-navy/30 accent-brand-500"
+                    />
+                  </th>
+                )}
                 <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-navy/40">Date</th>
                 <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-navy/40">Category</th>
                 <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-navy/40">Description</th>
                 <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-navy/40">Supplier</th>
+                <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-navy/40">Status</th>
                 <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-navy/40">Receipt</th>
                 <th className="px-5 py-3 text-right text-xs font-semibold uppercase tracking-wide text-navy/40">Amount</th>
                 <th className="px-5 py-3 w-10" />
@@ -918,14 +1005,38 @@ function OtherExpensesTab() {
             </thead>
             <tbody className="divide-y divide-surface-border">
               {expenses.length === 0 && (
-                <tr><td colSpan={7} className="px-5 py-10 text-center text-sm text-navy/40">No expenses found. <Link href="/finance/expenses/new" className="text-brand-500 hover:underline">Record your first expense.</Link></td></tr>
+                <tr><td colSpan={selectMode ? 9 : 8} className="px-5 py-10 text-center text-sm text-navy/40">No expenses found. <Link href="/finance/expenses/new" className="text-brand-500 hover:underline">Record your first expense.</Link></td></tr>
               )}
               {expenses.map((e) => (
-                <tr key={e.id} className="group hover:bg-surface-raised/50 transition-colors">
+                <tr
+                  key={e.id}
+                  className="group hover:bg-surface-raised/50 transition-colors cursor-pointer"
+                  onClick={(ev) => {
+                    // Don't open modal when clicking on action buttons or in select mode
+                    const target = ev.target as HTMLElement;
+                    if (selectMode) {
+                      toggleSelect(e.id);
+                      return;
+                    }
+                    if (target.closest("button,a,input")) return;
+                    setDetailExpense(e);
+                  }}
+                >
+                  {selectMode && (
+                    <td className="px-3 py-3" onClick={(ev) => ev.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={selected.has(e.id)}
+                        onChange={() => toggleSelect(e.id)}
+                        className="h-4 w-4 cursor-pointer rounded border-navy/30 accent-brand-500"
+                      />
+                    </td>
+                  )}
                   <td className="px-5 py-3 text-navy/70">{fmtDate(e.date)}</td>
                   <td className="px-5 py-3 font-medium text-brand-600">{e.category?.name ?? "—"}</td>
                   <td className="px-5 py-3 text-navy/70 max-w-xs truncate">{e.description ?? "—"}</td>
                   <td className="px-5 py-3 text-navy/70">{e.supplier?.name ?? "—"}</td>
+                  <td className="px-5 py-3"><StatusBadge status={e.status ?? "PENDING"} /></td>
                   {/* Receipt column */}
                   <td className="px-5 py-3">
                     {!e.receiptKey ? (
@@ -1012,7 +1123,129 @@ function OtherExpensesTab() {
           </div>
         </div>
       )}
+
+      <ExpenseDetailModal expense={detailExpense} onClose={() => setDetailExpense(null)} />
     </div>
+  );
+}
+
+// ─── Status Badge ─────────────────────────────────────────────────────────────
+
+function StatusBadge({ status }: { status: "PENDING" | "RECEIVED" | "PAID" | "VOID" }) {
+  const styles: Record<string, string> = {
+    PENDING: "bg-navy/5 text-navy/60 border-navy/10",
+    RECEIVED: "bg-blue-50 text-blue-700 border-blue-200",
+    PAID: "bg-emerald-50 text-emerald-700 border-emerald-200",
+    VOID: "bg-navy/5 text-navy/40 border-navy/10 line-through",
+  };
+  const label = status[0] + status.slice(1).toLowerCase();
+  return (
+    <span className={cn("inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium", styles[status])}>
+      {label}
+    </span>
+  );
+}
+
+// ─── Expense Detail Modal ────────────────────────────────────────────────────
+
+function ExpenseDetailModal({ expense, onClose }: { expense: Expense | null; onClose: () => void }) {
+  const getReceiptUrl = useGetExpenseReceiptUrl();
+  const [receiptUrl, setReceiptUrl] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    setReceiptUrl(null);
+    if (expense?.id && expense.receiptKey) {
+      getReceiptUrl.mutateAsync(expense.id).then((r) => setReceiptUrl(r.url)).catch(() => {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expense?.id]);
+
+  if (!expense) return null;
+  const Field = ({ label, value }: { label: string; value: React.ReactNode }) =>
+    value == null || value === "" ? null : (
+      <div>
+        <p className="text-xs uppercase tracking-wide text-navy/40">{label}</p>
+        <p className="mt-0.5 text-sm text-navy">{value}</p>
+      </div>
+    );
+
+  return (
+    <Modal open={!!expense} onClose={onClose} title="Expense Details">
+      <div className="space-y-5">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-2xl font-semibold text-navy">{fmt(Number(expense.amount))}</p>
+            <p className="text-sm text-navy/60">{fmtDate(expense.date)}</p>
+          </div>
+          <StatusBadge status={expense.status ?? "PENDING"} />
+        </div>
+
+        <div className="grid grid-cols-2 gap-4">
+          <Field label="Category" value={expense.category?.name} />
+          <Field label="Supplier" value={expense.supplier?.name} />
+          <Field label="Customer" value={expense.customer?.businessName} />
+          <Field label="Payment Method" value={expense.paymentMethod} />
+          <Field label="Reference #" value={expense.referenceNumber} />
+          <Field label="Employee" value={expense.employeeName} />
+          {expense.isMileage && (
+            <>
+              <Field label="Distance" value={expense.distance != null ? `${expense.distance} ${expense.mileageUnit ?? ""}` : null} />
+              <Field label="Mileage Rate" value={expense.mileageRateSnapshot != null ? `${expense.mileageRateSnapshot}` : null} />
+            </>
+          )}
+          <Field label="Billable" value={expense.isBillable ? "Yes" : null} />
+          <Field label="Received At" value={expense.receivedAt ? fmtDate(expense.receivedAt) : null} />
+          <Field label="Paid At" value={expense.paidAt ? fmtDate(expense.paidAt) : null} />
+          <Field label="Created At" value={expense.createdAt ? fmtDate(expense.createdAt) : null} />
+        </div>
+
+        {expense.description && (
+          <Field label="Description" value={<span className="whitespace-pre-wrap">{expense.description}</span>} />
+        )}
+        {expense.notes && (
+          <Field label="Notes" value={<span className="whitespace-pre-wrap">{expense.notes}</span>} />
+        )}
+
+        {expense.lineItems && expense.lineItems.length > 0 && (
+          <div>
+            <p className="text-xs uppercase tracking-wide text-navy/40 mb-2">Line Items</p>
+            <div className="rounded-lg border border-surface-border divide-y divide-surface-border">
+              {expense.lineItems.map((li, i) => (
+                <div key={i} className="flex items-center justify-between px-3 py-2 text-sm">
+                  <span className="text-navy/80">{li.account || li.notes || "Item"}</span>
+                  <span className="font-medium text-navy">{fmt(Number(li.amount))}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {expense.receiptKey && (
+          <div>
+            <p className="text-xs uppercase tracking-wide text-navy/40 mb-2">Receipt</p>
+            {receiptUrl ? (
+              expense.receiptMimeType === "application/pdf" ? (
+                <a href={receiptUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 rounded-lg border border-surface-border px-3 py-2 text-sm text-brand-600 hover:bg-brand-50">
+                  <FileText className="h-4 w-4" /> Open PDF ({expense.receiptOriginalName ?? "receipt"})
+                </a>
+              ) : (
+                <a href={receiptUrl} target="_blank" rel="noopener noreferrer">
+                  <img src={receiptUrl} alt="receipt" className="max-h-64 rounded-lg border border-surface-border" />
+                </a>
+              )
+            ) : (
+              <p className="text-sm text-navy/40">Loading receipt…</p>
+            )}
+          </div>
+        )}
+
+        {expense.vendorBillId && (
+          <Link href={`/finance/vendor-bills/${expense.vendorBillId}`} className="inline-flex items-center gap-2 text-sm text-brand-600 hover:underline">
+            <ExternalLink className="h-4 w-4" /> View linked vendor bill
+          </Link>
+        )}
+      </div>
+    </Modal>
   );
 }
 

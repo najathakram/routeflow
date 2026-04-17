@@ -2,6 +2,7 @@ import {
   IsArray,
   IsBoolean,
   IsDateString,
+  IsIn,
   IsInt,
   IsNumber,
   IsOptional,
@@ -55,6 +56,14 @@ export class UpdateExpenseDto {
   @IsOptional() @IsString() referenceNumber?: string;
   @IsOptional() @IsBoolean() isBillable?: boolean;
   @IsOptional() @IsString() employeeName?: string;
+  @IsOptional() @IsUUID() categoryId?: string;
+  @IsOptional() @IsIn(["PENDING", "RECEIVED", "PAID", "VOID"]) status?:
+    | "PENDING"
+    | "RECEIVED"
+    | "PAID"
+    | "VOID";
+  @IsOptional() @IsDateString() receivedAt?: string;
+  @IsOptional() @IsDateString() paidAt?: string;
 }
 
 export class ListExpensesDto {

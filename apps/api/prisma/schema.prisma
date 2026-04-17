@@ -252,6 +252,7 @@ model Tenant {
   userPreferences      UserPreference[]
   customers            Customer[]
   customerAddresses    CustomerAddress[]
+  customerDocuments    CustomerDocument[]
   drivers              Driver[]
   products             Product[]
   routes               Route[]
@@ -496,10 +497,30 @@ model Customer {
   customerLink       CustomerLink?
   buyerFavorites     BuyerFavorite[]
   deliveryBatches    DeliveryBatch[]
+  documents          CustomerDocument[]
 
   @@index([zohoContactId])
   @@index([businessName])
   @@index([customerType])
+  @@index([tenantId])
+}
+
+model CustomerDocument {
+  id           String   @id @default(uuid())
+  customerId   String
+  storageKey   String
+  originalName String
+  mimeType     String
+  sizeBytes    Int
+  docType      String
+  uploadedById String?
+  createdAt    DateTime @default(now())
+  tenantId     String?
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  tenant   Tenant?  @relation(fields: [tenantId], references: [id])
+
+  @@index([customerId])
   @@index([tenantId])
 }
 
@@ -1246,33 +1267,43 @@ model ExpenseCategory {
   @@index([tenantId])
 }
 
+enum ExpenseStatus {
+  PENDING
+  RECEIVED
+  PAID
+  VOID
+}
+
 model Expense {
-  id                  String    @id @default(uuid())
+  id                  String        @id @default(uuid())
   categoryId          String?
   supplierId          String?
   customerId          String?
-  amount              Decimal   @db.Decimal(10, 2)
+  amount              Decimal       @db.Decimal(10, 2)
   date                DateTime
   description         String?
   paymentMethod       String?
   receiptKey          String?
   receiptOriginalName String?
   receiptMimeType     String?
-  vendorBillId        String?   @unique
+  vendorBillId        String?       @unique
   notes               String?
   referenceNumber     String?
-  importBatchId       String?   // UUID set for all rows in one CSV import; null for manually-created expenses
+  importBatchId       String?       // UUID set for all rows in one CSV import; null for manually-created expenses
   performedById       String?
-  isItemized          Boolean   @default(false)
-  isMileage           Boolean   @default(false)
-  isBillable          Boolean   @default(false)
+  isItemized          Boolean       @default(false)
+  isMileage           Boolean       @default(false)
+  isBillable          Boolean       @default(false)
   employeeName        String?
   mileageUnit         String?
-  distance            Decimal?  @db.Decimal(10, 2)
-  mileageRateSnapshot Decimal?  @db.Decimal(10, 4)
+  distance            Decimal?      @db.Decimal(10, 2)
+  mileageRateSnapshot Decimal?      @db.Decimal(10, 4)
+  status              ExpenseStatus @default(PENDING)
+  receivedAt          DateTime?
+  paidAt              DateTime?
   deletedAt           DateTime?
-  createdAt           DateTime  @default(now())
-  updatedAt           DateTime  @updatedAt
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
   tenantId            String?
 
   category    ExpenseCategory? @relation(fields: [categoryId], references: [id])
@@ -1289,6 +1320,7 @@ model Expense {
   @@index([deletedAt])
   @@index([tenantId])
   @@index([importBatchId])
+  @@index([tenantId, status])
 }
 
 model ExpenseLineItem {

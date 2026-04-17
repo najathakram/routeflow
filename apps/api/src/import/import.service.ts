@@ -1009,8 +1009,10 @@ export class ImportService {
         /* ignore */
       }
 
-      const description = row["Expense Description"] || row["Reference#"] || null;
-      const notes = row["Reference#"] || null;
+      const referenceNumber =
+        (row["Reference#"] || row["Reference Number"] || "").trim() || null;
+      const description = row["Expense Description"] || referenceNumber || null;
+      const notes = row["Notes"] || null;
 
       // Resolve supplier from the vendor name column (Merchant Name / Vendor Name / Customer Name …)
       const vendorName = this.getVendorName(row);
@@ -1048,6 +1050,7 @@ export class ImportService {
             description,
             paymentMethod: "CASH",
             notes,
+            referenceNumber,
             performedById: userId,
             ...(supplierId ? { supplierId } : {}),
           },

@@ -114,6 +114,14 @@ export class BookkeepingController {
     return this.bookkeepingService.bulkCreateExpenses(dto.expenses, user.sub);
   }
 
+  @Post("expenses/batch-status")
+  @HttpCode(200)
+  batchUpdateExpenseStatus(
+    @Body() body: { ids: string[]; status: "PENDING" | "RECEIVED" | "PAID" | "VOID" },
+  ) {
+    return this.bookkeepingService.batchUpdateExpenseStatus(body?.ids ?? [], body?.status);
+  }
+
   @Post("expenses")
   createExpense(@Body() dto: CreateExpenseDto, @CurrentUser() user: JwtPayload) {
     return this.bookkeepingService.createExpense(dto, user.sub);

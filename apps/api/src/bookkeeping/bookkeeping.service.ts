@@ -10,6 +10,7 @@ import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import Anthropic from "@anthropic-ai/sdk";
 import * as sharp from "sharp";
+import { IRS_SYSTEM_CATEGORIES } from "./irs-categories.constant";
 
 @Injectable()
 export class BookkeepingService implements OnModuleInit {
@@ -212,6 +213,18 @@ export class BookkeepingService implements OnModuleInit {
     // Exclude INVENTORY_PURCHASE — those expenses are handled in the Vendor Bills /
     // Inventory Purchases tab and should never appear in the Other Expenses filter.
     const tenantId = this.prisma.getTenantId();
+
+    // Defensive lazy seed: if this tenant has no system (non-custom) categories,
+    // bring in the IRS Schedule C list. Cheap and idempotent.
+    if (tenantId) {
+      const systemCount = await this.prisma.expenseCategory.count({
+        where: { tenantId, isCustom: false },
+      });
+      if (systemCount === 0) {
+        await this.ensureSystemCategories(tenantId);
+      }
+    }
+
     return this.prisma.expenseCategory.findMany({
       where: {
         OR: [{ tenantId }, { tenantId: null }],
@@ -225,6 +238,33 @@ export class BookkeepingService implements OnModuleInit {
     return this.prisma.forTenant().expenseCategory.create({
       data: { name: dto.name, code: dto.code, isCustom: true },
     });
+  }
+
+  /**
+   * Idempotent per-tenant seed of the IRS Schedule C category list.
+   * Safe to call multiple times: only inserts codes that don't already
+   * exist for this tenant.
+   */
+  async ensureSystemCategories(tenantId?: string): Promise<{ inserted: number }> {
+    const tid = tenantId ?? this.prisma.getTenantId();
+    if (!tid) return { inserted: 0 };
+    const existing = await this.prisma.expenseCategory.findMany({
+      where: { tenantId: tid },
+      select: { code: true },
+    });
+    const have = new Set(existing.map((c) => c.code));
+    const toInsert = IRS_SYSTEM_CATEGORIES.filter((c) => !have.has(c.code));
+    if (toInsert.length === 0) return { inserted: 0 };
+    await this.prisma.expenseCategory.createMany({
+      data: toInsert.map((c) => ({
+        name: c.name,
+        code: c.code,
+        isCustom: false,
+        tenantId: tid,
+      })),
+      skipDuplicates: true,
+    });
+    return { inserted: toInsert.length };
   }
 
   // ── Mileage Rates ──
@@ -381,6 +421,14 @@ export class BookkeepingService implements OnModuleInit {
   }
 
   async updateExpense(id: string, dto: any) {
+    const existing = await this.prisma.forTenant().expense.findFirst({
+      where: { id, deletedAt: null },
+      select: { id: true, status: true, receivedAt: true, paidAt: true, vendorBillId: true },
+    });
+    if (!existing) throw new NotFoundException("Expense not found");
+
+    const statusPatch = this.buildStatusPatch(existing, dto);
+
     const updated = await this.prisma.forTenant().expense.update({
       where: { id },
       data: {
@@ -392,11 +440,56 @@ export class BookkeepingService implements OnModuleInit {
         ...(dto.isBillable !== undefined && { isBillable: dto.isBillable }),
         ...(dto.employeeName !== undefined && { employeeName: dto.employeeName }),
         ...(dto.categoryId !== undefined && { categoryId: dto.categoryId }),
+        ...statusPatch,
       },
       include: this.expenseInclude,
     });
     await this.maybeConvertToVendorBill(updated);
     return updated;
+  }
+
+  /**
+   * Derive the {status, receivedAt, paidAt} patch from an update DTO.
+   * Auto-stamps timestamps on first transition into RECEIVED or PAID.
+   */
+  private buildStatusPatch(
+    existing: { status: string; receivedAt: Date | null; paidAt: Date | null },
+    dto: { status?: string; receivedAt?: string | Date | null; paidAt?: string | Date | null },
+  ): { status?: string; receivedAt?: Date | null; paidAt?: Date | null } {
+    const patch: { status?: string; receivedAt?: Date | null; paidAt?: Date | null } = {};
+    if (dto.status && dto.status !== existing.status) {
+      patch.status = dto.status;
+      if (dto.status === "RECEIVED" && !existing.receivedAt) patch.receivedAt = new Date();
+      if (dto.status === "PAID") {
+        if (!existing.receivedAt) patch.receivedAt = new Date();
+        if (!existing.paidAt) patch.paidAt = new Date();
+      }
+    }
+    if (dto.receivedAt !== undefined) {
+      patch.receivedAt = dto.receivedAt ? new Date(dto.receivedAt as string) : null;
+    }
+    if (dto.paidAt !== undefined) {
+      patch.paidAt = dto.paidAt ? new Date(dto.paidAt as string) : null;
+    }
+    return patch;
+  }
+
+  /** Bulk status transition — used by the expenses-page selection action bar. */
+  async batchUpdateExpenseStatus(
+    ids: string[],
+    status: "PENDING" | "RECEIVED" | "PAID" | "VOID",
+  ): Promise<{ updated: number; failed: { id: string; reason: string }[] }> {
+    const failed: { id: string; reason: string }[] = [];
+    let updated = 0;
+    for (const id of ids) {
+      try {
+        await this.updateExpense(id, { status });
+        updated++;
+      } catch (e: any) {
+        failed.push({ id, reason: e?.message ?? "unknown" });
+      }
+    }
+    return { updated, failed };
   }
 
   async deleteExpense(id: string) {

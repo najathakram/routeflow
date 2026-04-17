@@ -84,6 +84,9 @@ export interface Expense {
   receiptOriginalName?: string | null;
   receiptMimeType?: string | null;
   vendorBillId?: string | null;
+  status?: 'PENDING' | 'RECEIVED' | 'PAID' | 'VOID';
+  receivedAt?: string | null;
+  paidAt?: string | null;
 }
 
 export interface CustomerBalance {
@@ -296,6 +299,24 @@ export function useDeleteExpense() {
   const qc = useQueryClient();
   return useMutation<void, Error, string>({
     mutationFn: (id) => apiClient.post(`/bookkeeping/expenses/${id}/delete`).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['expenses'] });
+      qc.invalidateQueries({ queryKey: ['finance-dashboard'] });
+    },
+  });
+}
+
+export type ExpenseStatus = 'PENDING' | 'RECEIVED' | 'PAID' | 'VOID';
+
+export function useBatchUpdateExpenseStatus() {
+  const qc = useQueryClient();
+  return useMutation<
+    { updated: number; failed: { id: string; reason: string }[] },
+    Error,
+    { ids: string[]; status: ExpenseStatus }
+  >({
+    mutationFn: (body) =>
+      apiClient.post('/bookkeeping/expenses/batch-status', body).then((r) => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['expenses'] });
       qc.invalidateQueries({ queryKey: ['finance-dashboard'] });

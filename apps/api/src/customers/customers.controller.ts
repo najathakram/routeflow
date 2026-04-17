@@ -404,4 +404,54 @@ export class CustomersController {
   deleteTaxDocument(@Param("id") id: string, @Body() dto: { key: string }) {
     return this.customersService.deleteTaxDocument(id, dto.key);
   }
+
+  // ── Generic customer documents (tax forms, agreements, other) ──────────────
+
+  @Get(":id/documents")
+  @Roles(UserRole.OPERATOR)
+  listCustomerDocuments(@Param("id") id: string) {
+    return this.customersService.listCustomerDocuments(id);
+  }
+
+  @Post(":id/documents")
+  @Roles(UserRole.OPERATOR)
+  @UseInterceptors(
+    FilesInterceptor("files", 10, {
+      storage: memoryStorage(),
+      limits: { fileSize: 15 * 1024 * 1024 },
+      fileFilter: (_req, file, cb) => {
+        const ok =
+          file.mimetype.startsWith("image/") || file.mimetype === "application/pdf";
+        cb(null, ok);
+      },
+    }),
+  )
+  async uploadCustomerDocuments(
+    @Param("id") id: string,
+    @UploadedFiles() files: Express.Multer.File[],
+    @Body() body: { docType?: string },
+    @CurrentUser() user: JwtPayload,
+  ) {
+    const docType = (body?.docType || "Other").trim() || "Other";
+    const results = await Promise.all(
+      files.map((f) =>
+        this.customersService.uploadCustomerDocument(
+          id,
+          f.buffer,
+          f.originalname,
+          f.mimetype,
+          docType,
+          user.sub,
+        ),
+      ),
+    );
+    return { uploaded: results };
+  }
+
+  @Delete(":id/documents/:docId")
+  @Roles(UserRole.OPERATOR)
+  @HttpCode(204)
+  deleteCustomerDocument(@Param("id") id: string, @Param("docId") docId: string) {
+    return this.customersService.deleteCustomerDocument(id, docId);
+  }
 }

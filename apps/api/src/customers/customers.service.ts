@@ -13,6 +13,7 @@ import { ConfigService } from "@nestjs/config";
 import * as bcrypt from "bcrypt";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
+import { compressDocument } from "../storage/compress.util";
 import { CreateCustomerDto } from "./dto/create-customer.dto";
 import { UpdateCustomerDto } from "./dto/update-customer.dto";
 import { ChangeCustomerStatusDto } from "./dto/change-customer-status.dto";
@@ -1878,5 +1879,75 @@ export class CustomersService {
     if (!customer) throw new NotFoundException("Customer not found");
     const keys: string[] = (customer as any).taxExemptDocumentKeys ?? [];
     return Promise.all(keys.map(async (key) => ({ key, url: await this.storage.presignedUrl(key) })));
+  }
+
+  // ── Generic customer documents ──────────────────────────────────────────────
+
+  async uploadCustomerDocument(
+    id: string,
+    buffer: Buffer,
+    originalName: string,
+    mimetype: string,
+    docType: string,
+    uploadedById?: string,
+  ) {
+    const customer = await this.prisma.forTenant().customer.findUnique({ where: { id } });
+    if (!customer) throw new NotFoundException("Customer not found");
+
+    const compressed = await compressDocument(buffer, mimetype);
+    const key = `customers/${id}/documents/${crypto.randomUUID()}.${compressed.ext}`;
+    await this.storage.upload(key, compressed.buffer, compressed.mimeType);
+
+    const doc = await this.prisma.forTenant().customerDocument.create({
+      data: {
+        customerId: id,
+        storageKey: key,
+        originalName,
+        mimeType: compressed.mimeType,
+        sizeBytes: compressed.buffer.length,
+        docType,
+        uploadedById: uploadedById ?? null,
+      },
+    });
+
+    const url = await this.storage.presignedUrl(key);
+    return {
+      id: doc.id,
+      docType: doc.docType,
+      originalName: doc.originalName,
+      mimeType: doc.mimeType,
+      sizeBytes: doc.sizeBytes,
+      createdAt: doc.createdAt,
+      url,
+    };
+  }
+
+  async listCustomerDocuments(id: string) {
+    const customer = await this.prisma.forTenant().customer.findUnique({ where: { id } });
+    if (!customer) throw new NotFoundException("Customer not found");
+    const docs = await this.prisma.forTenant().customerDocument.findMany({
+      where: { customerId: id },
+      orderBy: { createdAt: "desc" },
+    });
+    return Promise.all(
+      docs.map(async (d) => ({
+        id: d.id,
+        docType: d.docType,
+        originalName: d.originalName,
+        mimeType: d.mimeType,
+        sizeBytes: d.sizeBytes,
+        createdAt: d.createdAt,
+        url: await this.storage.presignedUrl(d.storageKey),
+      })),
+    );
+  }
+
+  async deleteCustomerDocument(customerId: string, docId: string): Promise<void> {
+    const doc = await this.prisma.forTenant().customerDocument.findFirst({
+      where: { id: docId, customerId },
+    });
+    if (!doc) throw new NotFoundException("Document not found");
+    await this.storage.delete(doc.storageKey).catch(() => {});
+    await this.prisma.forTenant().customerDocument.delete({ where: { id: docId } });
   }
 }

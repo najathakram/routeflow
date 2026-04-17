@@ -13,6 +13,7 @@ import { EncryptionService } from "../common/encryption.service";
 import { StorageService } from "../storage/storage.service";
 import { EmailService } from "../email/email.service";
 import { RegisterTenantDto } from "./dto/register-tenant.dto";
+import { IRS_SYSTEM_CATEGORIES } from "../bookkeeping/irs-categories.constant";
 import { UpdateEmailConfigDto } from "./dto/update-email-config.dto";
 import { UpdateGoogleOAuthConfigDto } from "./dto/update-google-oauth-config.dto";
 import { UpdateBrandingDto } from "./dto/update-branding.dto";
@@ -98,6 +99,18 @@ export class TenantsService {
       });
 
       await tx.tenantConfig.create({ data: { tenantId: tenant.id, businessName } });
+
+      // Seed IRS Schedule C expense categories so new tenants have a curated
+      // list to pick from immediately.
+      await tx.expenseCategory.createMany({
+        data: IRS_SYSTEM_CATEGORIES.map((c) => ({
+          tenantId: tenant.id,
+          name: c.name,
+          code: c.code,
+          isCustom: false,
+        })),
+        skipDuplicates: true,
+      });
 
       const existingUser = await tx.user.findFirst({
         where: { tenantId: tenant.id, OR: [{ email: adminEmail }, { username: adminUsername }] },

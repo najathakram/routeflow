@@ -278,6 +278,54 @@ export function useDeleteCustomer() {
   });
 }
 
+export interface CustomerDocument {
+  id: string;
+  docType: string;
+  originalName: string;
+  mimeType: string;
+  sizeBytes: number;
+  createdAt: string;
+  url: string;
+}
+
+export function useCustomerDocuments(customerId: string) {
+  return useQuery<CustomerDocument[]>({
+    queryKey: ["customers", customerId, "documents"],
+    queryFn: () => apiClient.get(`/customers/${customerId}/documents`).then((r) => r.data),
+    enabled: !!customerId,
+  });
+}
+
+export function useUploadCustomerDocuments(customerId: string) {
+  const qc = useQueryClient();
+  return useMutation<
+    { uploaded: CustomerDocument[] },
+    Error,
+    { files: File[]; docType: string }
+  >({
+    mutationFn: ({ files, docType }) => {
+      const form = new FormData();
+      files.forEach((f) => form.append("files", f));
+      form.append("docType", docType);
+      return apiClient
+        .post(`/customers/${customerId}/documents`, form)
+        .then((r) => r.data);
+    },
+    onSuccess: () =>
+      qc.invalidateQueries({ queryKey: ["customers", customerId, "documents"] }),
+  });
+}
+
+export function useDeleteCustomerDocument(customerId: string) {
+  const qc = useQueryClient();
+  return useMutation<void, Error, string>({
+    mutationFn: (docId) =>
+      apiClient.delete(`/customers/${customerId}/documents/${docId}`).then(() => undefined),
+    onSuccess: () =>
+      qc.invalidateQueries({ queryKey: ["customers", customerId, "documents"] }),
+  });
+}
+
 export function useBatchDeleteCustomers() {
   const qc = useQueryClient();
   return useMutation({

@@ -27,6 +27,7 @@ import {
   Building2,
   Camera,
   ZoomIn,
+  Upload,
 } from "lucide-react";
 import {
   Badge,
@@ -37,6 +38,7 @@ import {
   Modal,
   Input,
   cn,
+  useToast,
   type BadgeStatus,
 } from "@routeflow/ui/web";
 import {
@@ -87,6 +89,9 @@ import {
   useCustomerTaxDocuments,
   useUploadCustomerTaxDocuments,
   useDeleteCustomerTaxDocument,
+  useCustomerDocuments,
+  useUploadCustomerDocuments,
+  useDeleteCustomerDocument,
   type AdvancePayment,
   type CustomerPrice,
   type ContactPerson,
@@ -1192,6 +1197,176 @@ function CommentsTab({ customerId }: { customerId: string }) {
   );
 }
 
+// ── Documents Tab ─────────────────────────────────────────────────────────────
+
+const DOC_TYPES = [
+  "Tax Exempt Certificate",
+  "Resale Certificate",
+  "W-9",
+  "Signed Agreement",
+  "Other",
+];
+
+function DocumentsTab({ customerId }: { customerId: string }) {
+  const { toast } = useToast();
+  const { data: docs, isLoading } = useCustomerDocuments(customerId);
+  const upload = useUploadCustomerDocuments(customerId);
+  const del = useDeleteCustomerDocument(customerId);
+  const [uploadOpen, setUploadOpen] = React.useState(false);
+  const [files, setFiles] = React.useState<File[]>([]);
+  const [docType, setDocType] = React.useState(DOC_TYPES[0]);
+
+  const handleUpload = async () => {
+    if (files.length === 0) return;
+    try {
+      await upload.mutateAsync({ files, docType });
+      toast({ title: `Uploaded ${files.length} document${files.length !== 1 ? "s" : ""}`, variant: "success" });
+      setFiles([]);
+      setUploadOpen(false);
+    } catch (e: any) {
+      toast({ title: "Upload failed", description: e?.response?.data?.message ?? "", variant: "error" });
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    try {
+      await del.mutateAsync(id);
+      toast({ title: "Document deleted", variant: "success" });
+    } catch {
+      toast({ title: "Delete failed", variant: "error" });
+    }
+  };
+
+  const fmtSize = (b: number) =>
+    b < 1024 ? `${b} B` : b < 1_048_576 ? `${Math.round(b / 1024)} KB` : `${(b / 1_048_576).toFixed(1)} MB`;
+
+  return (
+    <Tabs.Content value="documents" className="mt-5 focus:outline-none">
+      <Card>
+        <div className="mb-4 flex items-center justify-between">
+          <h3 className="text-base font-semibold text-navy">Documents</h3>
+          <Button size="sm" leftIcon={<Upload className="h-4 w-4" />} onClick={() => setUploadOpen(true)}>
+            Upload Document
+          </Button>
+        </div>
+
+        {isLoading ? (
+          <p className="text-sm text-navy/40">Loading…</p>
+        ) : !docs || docs.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-surface-border bg-surface-raised py-10 text-center">
+            <FileText className="mx-auto h-8 w-8 text-navy/20" />
+            <p className="mt-2 text-sm text-navy/40">
+              No documents uploaded. Use the Upload button to add tax forms, signed agreements, or other files.
+            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {docs.map((d) => (
+              <div key={d.id} className="group relative overflow-hidden rounded-lg border border-surface-border bg-white">
+                {d.mimeType.startsWith("image/") ? (
+                  <a href={d.url} target="_blank" rel="noopener noreferrer">
+                    <img src={d.url} alt={d.originalName} className="h-40 w-full object-cover" />
+                  </a>
+                ) : (
+                  <a
+                    href={d.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex h-40 w-full items-center justify-center bg-surface-raised"
+                  >
+                    <FileText className="h-12 w-12 text-navy/30" />
+                  </a>
+                )}
+                <div className="p-3">
+                  <p className="text-xs font-medium uppercase tracking-wide text-brand-600">{d.docType}</p>
+                  <p className="mt-0.5 truncate text-sm text-navy" title={d.originalName}>
+                    {d.originalName}
+                  </p>
+                  <p className="mt-0.5 text-xs text-navy/40">
+                    {fmtSize(d.sizeBytes)} · {fmtDate(d.createdAt)}
+                  </p>
+                </div>
+                <button
+                  onClick={() => handleDelete(d.id)}
+                  title="Delete document"
+                  className="absolute right-2 top-2 rounded-full bg-white/90 p-1.5 text-navy/40 opacity-0 shadow transition hover:text-danger group-hover:opacity-100"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+
+      <Modal
+        open={uploadOpen}
+        onClose={() => {
+          setUploadOpen(false);
+          setFiles([]);
+        }}
+        title="Upload Document"
+        footer={
+          <>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setUploadOpen(false);
+                setFiles([]);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button loading={upload.isPending} disabled={files.length === 0} onClick={handleUpload}>
+              Upload {files.length > 0 ? `(${files.length})` : ""}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <div>
+            <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-navy/40">
+              Document Type
+            </label>
+            <select
+              value={docType}
+              onChange={(e) => setDocType(e.target.value)}
+              className="w-full rounded-lg border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+            >
+              {DOC_TYPES.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-navy/40">
+              Files (images or PDF)
+            </label>
+            <input
+              type="file"
+              multiple
+              accept="image/*,application/pdf"
+              onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
+              className="block w-full text-sm text-navy file:mr-3 file:rounded-lg file:border-0 file:bg-brand-500 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-white hover:file:bg-brand-600"
+            />
+            {files.length > 0 && (
+              <ul className="mt-2 space-y-1">
+                {files.map((f, i) => (
+                  <li key={i} className="truncate text-xs text-navy/60">
+                    {f.name} ({fmtSize(f.size)})
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      </Modal>
+    </Tabs.Content>
+  );
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 const STATUS_CYCLE = ["ACTIVE", "INACTIVE", "SUSPENDED"] as const;
@@ -1525,6 +1700,12 @@ export default function CustomerDetailPage({
             <span className="flex items-center gap-1.5">
               <MessageSquare className="h-3.5 w-3.5" />
               Comments
+            </span>
+          </TabTrigger>
+          <TabTrigger value="documents">
+            <span className="flex items-center gap-1.5">
+              <FileText className="h-3.5 w-3.5" />
+              Documents
             </span>
           </TabTrigger>
         </Tabs.List>
@@ -3192,6 +3373,9 @@ export default function CustomerDetailPage({
 
         {/* ── Comments tab ───────────────────────────────────────── */}
         <CommentsTab customerId={params.id} />
+
+        {/* ── Documents tab ──────────────────────────────────────── */}
+        <DocumentsTab customerId={params.id} />
       </Tabs.Root>
 
       {/* Modals */}
