@@ -28,6 +28,7 @@ import {
   Camera,
   ZoomIn,
   Upload,
+  Download,
 } from "lucide-react";
 import {
   Badge,
@@ -92,6 +93,7 @@ import {
   useCustomerDocuments,
   useUploadCustomerDocuments,
   useDeleteCustomerDocument,
+  type CustomerDocument,
   type AdvancePayment,
   type CustomerPrice,
   type ContactPerson,
@@ -1199,19 +1201,12 @@ function CommentsTab({ customerId }: { customerId: string }) {
 
 // ── Documents Tab ─────────────────────────────────────────────────────────────
 
-/**
- * Thumbnail for a customer document.
- * - Images: render the presigned URL; if it fails (503, stale, etc.) fall
- *   back to a clean photo-icon placeholder so the card never looks broken.
- * - PDFs: dedicated red-tinted PDF icon card with the file extension label.
- * - Anything else: generic file icon.
- * Clicking anywhere on the thumb opens the original in a new tab — so even
- * when the inline preview fails, the user can still get to the file.
- */
 function DocumentThumb({
   doc,
+  onView,
 }: {
   doc: { url: string; mimeType: string; originalName: string };
+  onView: () => void;
 }) {
   const [imgFailed, setImgFailed] = React.useState(false);
   const isImage = doc.mimeType.startsWith("image/");
@@ -1255,15 +1250,90 @@ function DocumentThumb({
   );
 
   return (
-    <a
-      href={doc.url}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="block"
-      title={doc.originalName}
+    <button
+      onClick={onView}
+      className="block w-full cursor-pointer focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-inset"
+      title={`View ${doc.originalName}`}
     >
       {body}
-    </a>
+    </button>
+  );
+}
+
+function DocumentViewer({
+  doc,
+  onClose,
+}: {
+  doc: CustomerDocument | null;
+  onClose: () => void;
+}) {
+  const [zoomed, setZoomed] = React.useState(false);
+  React.useEffect(() => { setZoomed(false); }, [doc]);
+  if (!doc) return null;
+  const isImage = doc.mimeType.startsWith("image/");
+  const isPdf = doc.mimeType === "application/pdf";
+  return (
+    <Modal
+      open={!!doc}
+      onClose={onClose}
+      title={doc.originalName}
+      description={doc.docType}
+      className="max-w-4xl overflow-hidden p-0"
+    >
+      {/* Action bar */}
+      <div className="flex items-center gap-1 border-b border-surface-border px-4 py-2">
+        {isImage && (
+          <button
+            onClick={() => setZoomed((z) => !z)}
+            className="flex items-center gap-1 rounded px-2 py-1 text-xs text-navy/60 transition-colors hover:bg-surface-raised hover:text-navy"
+          >
+            <ZoomIn className="h-3.5 w-3.5" />
+            {zoomed ? "Fit" : "Zoom"}
+          </button>
+        )}
+        <a
+          href={doc.url}
+          download={doc.originalName}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="ml-auto flex items-center gap-1 rounded px-2 py-1 text-xs text-navy/60 transition-colors hover:bg-surface-raised hover:text-navy"
+        >
+          <Download className="h-3.5 w-3.5" />
+          Download
+        </a>
+      </div>
+      {/* Content */}
+      {isImage ? (
+        <div
+          className={cn(
+            "flex items-center justify-center overflow-auto bg-surface-raised",
+            zoomed ? "h-[75vh]" : "h-[60vh]",
+          )}
+        >
+          <img
+            src={doc.url}
+            alt={doc.originalName}
+            className={cn(
+              "object-contain transition-all",
+              zoomed ? "h-full max-w-none" : "max-h-full max-w-full",
+            )}
+          />
+        </div>
+      ) : isPdf ? (
+        <div className="h-[75vh]">
+          <iframe
+            src={doc.url}
+            className="h-full w-full border-0"
+            title={doc.originalName}
+          />
+        </div>
+      ) : (
+        <div className="flex h-48 flex-col items-center justify-center gap-2 text-navy/40">
+          <FileText className="h-12 w-12" />
+          <p className="text-sm">Preview not available</p>
+        </div>
+      )}
+    </Modal>
   );
 }
 
@@ -1283,6 +1353,7 @@ function DocumentsTab({ customerId }: { customerId: string }) {
   const [uploadOpen, setUploadOpen] = React.useState(false);
   const [files, setFiles] = React.useState<File[]>([]);
   const [docType, setDocType] = React.useState(DOC_TYPES[0]);
+  const [viewing, setViewing] = React.useState<CustomerDocument | null>(null);
 
   const handleUpload = async () => {
     if (files.length === 0) return;
@@ -1331,7 +1402,7 @@ function DocumentsTab({ customerId }: { customerId: string }) {
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {docs.map((d) => (
               <div key={d.id} className="group relative overflow-hidden rounded-lg border border-surface-border bg-white">
-                <DocumentThumb doc={d} />
+                <DocumentThumb doc={d} onView={() => setViewing(d)} />
                 <div className="p-3">
                   <p className="text-xs font-medium uppercase tracking-wide text-brand-600">{d.docType}</p>
                   <p className="mt-0.5 truncate text-sm text-navy" title={d.originalName}>
@@ -1418,6 +1489,8 @@ function DocumentsTab({ customerId }: { customerId: string }) {
           </div>
         </div>
       </Modal>
+
+      <DocumentViewer doc={viewing} onClose={() => setViewing(null)} />
     </Tabs.Content>
   );
 }
