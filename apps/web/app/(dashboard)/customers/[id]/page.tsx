@@ -1199,6 +1199,74 @@ function CommentsTab({ customerId }: { customerId: string }) {
 
 // ── Documents Tab ─────────────────────────────────────────────────────────────
 
+/**
+ * Thumbnail for a customer document.
+ * - Images: render the presigned URL; if it fails (503, stale, etc.) fall
+ *   back to a clean photo-icon placeholder so the card never looks broken.
+ * - PDFs: dedicated red-tinted PDF icon card with the file extension label.
+ * - Anything else: generic file icon.
+ * Clicking anywhere on the thumb opens the original in a new tab — so even
+ * when the inline preview fails, the user can still get to the file.
+ */
+function DocumentThumb({
+  doc,
+}: {
+  doc: { url: string; mimeType: string; originalName: string };
+}) {
+  const [imgFailed, setImgFailed] = React.useState(false);
+  const isImage = doc.mimeType.startsWith("image/");
+  const isPdf = doc.mimeType === "application/pdf";
+
+  const base =
+    "flex h-40 w-full items-center justify-center bg-gradient-to-br from-surface-raised to-white";
+
+  const body = isImage && !imgFailed ? (
+    <img
+      src={doc.url}
+      alt={doc.originalName}
+      className="h-40 w-full object-cover"
+      onError={() => setImgFailed(true)}
+      loading="lazy"
+    />
+  ) : isImage ? (
+    <div className={cn(base, "flex-col gap-1.5 text-navy/40")}>
+      <Camera className="h-10 w-10" />
+      <span className="text-[10px] font-medium uppercase tracking-wide">Image preview</span>
+    </div>
+  ) : isPdf ? (
+    <div
+      className={cn(
+        base,
+        "flex-col gap-1.5 bg-gradient-to-br from-red-50 to-white text-red-600",
+      )}
+    >
+      <FileText className="h-10 w-10" />
+      <span className="rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">
+        PDF
+      </span>
+    </div>
+  ) : (
+    <div className={cn(base, "flex-col gap-1.5 text-navy/40")}>
+      <FileText className="h-10 w-10" />
+      <span className="text-[10px] font-medium uppercase tracking-wide">
+        {(doc.originalName.split(".").pop() || "File").slice(0, 6)}
+      </span>
+    </div>
+  );
+
+  return (
+    <a
+      href={doc.url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="block"
+      title={doc.originalName}
+    >
+      {body}
+    </a>
+  );
+}
+
 const DOC_TYPES = [
   "Tax Exempt Certificate",
   "Resale Certificate",
@@ -1263,20 +1331,7 @@ function DocumentsTab({ customerId }: { customerId: string }) {
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {docs.map((d) => (
               <div key={d.id} className="group relative overflow-hidden rounded-lg border border-surface-border bg-white">
-                {d.mimeType.startsWith("image/") ? (
-                  <a href={d.url} target="_blank" rel="noopener noreferrer">
-                    <img src={d.url} alt={d.originalName} className="h-40 w-full object-cover" />
-                  </a>
-                ) : (
-                  <a
-                    href={d.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex h-40 w-full items-center justify-center bg-surface-raised"
-                  >
-                    <FileText className="h-12 w-12 text-navy/30" />
-                  </a>
-                )}
+                <DocumentThumb doc={d} />
                 <div className="p-3">
                   <p className="text-xs font-medium uppercase tracking-wide text-brand-600">{d.docType}</p>
                   <p className="mt-0.5 truncate text-sm text-navy" title={d.originalName}>
