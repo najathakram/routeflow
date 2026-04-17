@@ -9,9 +9,12 @@
  *   node apps/api/scripts/backfill-expense-status.js
  */
 const { PrismaClient } = require("@prisma/client");
+const { PrismaPg } = require("@prisma/adapter-pg");
+const { Pool } = require("pg");
 
 (async () => {
-  const prisma = new PrismaClient();
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
   const expenses = await prisma.expense.findMany({
     where: { vendorBillId: { not: null } },
     select: { id: true, vendorBillId: true, receivedAt: true, paidAt: true, createdAt: true },

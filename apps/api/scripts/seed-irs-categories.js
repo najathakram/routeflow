@@ -7,6 +7,8 @@
  *   node apps/api/scripts/seed-irs-categories.js
  */
 const { PrismaClient } = require("@prisma/client");
+const { PrismaPg } = require("@prisma/adapter-pg");
+const { Pool } = require("pg");
 
 const IRS = [
   ["ADVERTISING", "Advertising"],
@@ -32,7 +34,8 @@ const IRS = [
 ];
 
 (async () => {
-  const prisma = new PrismaClient();
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
   const tenants = await prisma.tenant.findMany({ select: { id: true, slug: true } });
   let total = 0;
   for (const t of tenants) {
