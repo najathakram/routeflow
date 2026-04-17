@@ -290,7 +290,7 @@ export class OrdersService {
     });
 
     const orderDiscount = dto.discountAmount ?? 0;
-    const tax = subtotal * await this.getTaxRate();
+    const tax = subtotal * (await this.getTaxRate());
     const total = subtotal + tax - orderDiscount;
 
     const order = await this.prisma.forTenant().order.create({
@@ -455,7 +455,7 @@ export class OrdersService {
         body: `Your order #${order.orderNumber} has been cancelled.`,
       },
     };
-    const notif = notifMap[dto.status as OrderStatus];
+    const notif = notifMap[dto.status];
     if (notif) {
       this.notifications
         .sendToCustomer(order.customerId, notif.title, notif.body, { orderId: id })
@@ -516,7 +516,9 @@ export class OrdersService {
     });
     if (!order) throw new NotFoundException("Order not found");
     if (!["DRAFT", "PENDING", "CONFIRMED"].includes(order.status)) {
-      throw new BadRequestException("Items can only be edited on DRAFT, PENDING, or CONFIRMED orders");
+      throw new BadRequestException(
+        "Items can only be edited on DRAFT, PENDING, or CONFIRMED orders",
+      );
     }
 
     // Customer/Driver path: replace items by productId
@@ -620,7 +622,7 @@ export class OrdersService {
       where: { orderId, status: { not: "CANCELLED" } },
     });
     const subtotal = activeItems.reduce((s, li) => s + Number(li.subtotal), 0);
-    const tax = subtotal * await this.getTaxRate();
+    const tax = subtotal * (await this.getTaxRate());
     await this.prisma.forTenant().order.update({
       where: { id: orderId },
       data: {
@@ -688,7 +690,15 @@ export class OrdersService {
       // Track which items were delivered in this batch, grouped by orderId
       const batchDeliveredItems = new Map<
         string,
-        Array<{ orderItemId: string; productId: string; qty: number; unitPrice: number; productName: string; priceType: string; originalPrice: number | null }>
+        Array<{
+          orderItemId: string;
+          productId: string;
+          qty: number;
+          unitPrice: number;
+          productName: string;
+          priceType: string;
+          originalPrice: number | null;
+        }>
       >();
 
       for (const delivery of dto.deliveries) {
@@ -739,7 +749,7 @@ export class OrdersService {
           if (Number(updatedProduct.currentStock) < 0) {
             this.logger.warn(
               `Stock went negative for product "${updatedProduct.name}" (${updatedProduct.id}): ` +
-              `currentStock=${updatedProduct.currentStock} after delivery of ${saleQty}`,
+                `currentStock=${String(updatedProduct.currentStock)} after delivery of ${String(saleQty)}`,
             );
           }
         }
@@ -753,9 +763,10 @@ export class OrdersService {
           deliveredQtyIncrement = orderItem.qty; // full delivery
         } else if (delivery.type === MutationType.PARTIAL) {
           newItemStatus = ItemStatus.PARTIAL;
-          deliveredQtyIncrement = delivery.quantityDelivered != null
-            ? new Prisma.Decimal(delivery.quantityDelivered.toString())
-            : new Prisma.Decimal(0);
+          deliveredQtyIncrement =
+            delivery.quantityDelivered != null
+              ? new Prisma.Decimal(delivery.quantityDelivered.toString())
+              : new Prisma.Decimal(0);
         } else if (delivery.type === MutationType.REFUSED) {
           newItemStatus = ItemStatus.CANCELLED;
         }
@@ -781,9 +792,10 @@ export class OrdersService {
               productId: orderItem.productId,
               qty: deliveredQty,
               unitPrice: Number(orderItem.unitPrice),
-              productName: (orderItem as any).product?.name ?? "Product",
+              productName: orderItem.product?.name ?? "Product",
               priceType: orderItem.priceType ?? PriceType.STANDARD,
-              originalPrice: orderItem.originalPrice != null ? Number(orderItem.originalPrice) : null,
+              originalPrice:
+                orderItem.originalPrice != null ? Number(orderItem.originalPrice) : null,
             });
             batchDeliveredItems.set(orderItem.orderId, items);
           }
@@ -807,9 +819,7 @@ export class OrdersService {
             i.status === ItemStatus.PARTIAL ||
             i.deliveredQty.gt(0),
         );
-        const allCancelledOrRefused = updatedItems.every(
-          (i) => i.status === ItemStatus.CANCELLED,
-        );
+        const allCancelledOrRefused = updatedItems.every((i) => i.status === ItemStatus.CANCELLED);
 
         let newOrderStatus: OrderStatus;
         if (allCancelledOrRefused) {
@@ -892,8 +902,7 @@ export class OrdersService {
                   productId: li.productId,
                   qty: li.qty,
                   unitPrice: li.unitPrice,
-                  discount:
-                    li.originalPrice != null ? li.originalPrice - li.unitPrice : 0,
+                  discount: li.originalPrice != null ? li.originalPrice - li.unitPrice : 0,
                   originalPrice: li.originalPrice,
                   priceType: li.priceType as any,
                   taxRate: 0,
@@ -1071,7 +1080,11 @@ export class OrdersService {
     });
     if (!order) throw new NotFoundException("Order not found");
 
-    const deletableStatuses: OrderStatus[] = [OrderStatus.DRAFT, OrderStatus.PENDING, OrderStatus.CANCELLED];
+    const deletableStatuses: OrderStatus[] = [
+      OrderStatus.DRAFT,
+      OrderStatus.PENDING,
+      OrderStatus.CANCELLED,
+    ];
     if (!deletableStatuses.includes(order.status)) {
       throw new BadRequestException(
         `Only DRAFT, PENDING, or CANCELLED orders can be deleted. This order is ${order.status}.`,
@@ -1086,9 +1099,9 @@ export class OrdersService {
         await tx.invoice.delete({ where: { id: inv.id } });
       }
       if (order.transaction) {
-        await tx.transactionItem.deleteMany({ where: { transactionId: order.transaction!.id } });
-        await tx.payment.deleteMany({ where: { transactionId: order.transaction!.id } });
-        await tx.transaction.delete({ where: { id: order.transaction!.id } });
+        await tx.transactionItem.deleteMany({ where: { transactionId: order.transaction.id } });
+        await tx.payment.deleteMany({ where: { transactionId: order.transaction.id } });
+        await tx.transaction.delete({ where: { id: order.transaction.id } });
       }
       await tx.deliveryMutation.deleteMany({ where: { orderId: id } });
       await tx.orderItem.deleteMany({ where: { orderId: id } });
@@ -1102,11 +1115,7 @@ export class OrdersService {
     const results = await Promise.allSettled(ids.map((id) => this.deleteOrder(id)));
     const deleted = results.filter((r) => r.status === "fulfilled").length;
     const errors = results
-      .map((r, i) =>
-        r.status === "rejected"
-          ? `${ids[i]}: ${(r as PromiseRejectedResult).reason?.message}`
-          : null,
-      )
+      .map((r, i) => (r.status === "rejected" ? `${ids[i]}: ${r.reason?.message}` : null))
       .filter(Boolean) as string[];
     return { deleted, errors };
   }

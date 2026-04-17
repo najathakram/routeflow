@@ -1505,7 +1505,7 @@ export default function CustomerDetailPage({
   // Tax-document upload with client-side compression
   const handleTaxDocFiles = React.useCallback(async (files: FileList | null) => {
     if (!files || files.length === 0) return;
-    const compressed = await Promise.all(Array.from(files).map(compressImage));
+    const compressed = await Promise.all(Array.from(files).map((f) => compressImage(f)));
     uploadTaxDocs.mutate(compressed);
   }, [uploadTaxDocs]);
 

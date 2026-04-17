@@ -82,20 +82,14 @@ export class PlatformConfigService implements OnModuleInit {
     return {
       configured,
       source: storedKey ? "database" : envKey ? "environment" : "none",
-      keyPreview: effectiveKey
-        ? `${effectiveKey.slice(0, 14)}...${effectiveKey.slice(-4)}`
-        : null,
+      keyPreview: effectiveKey ? `${effectiveKey.slice(0, 14)}...${effectiveKey.slice(-4)}` : null,
       model: storedModel ?? "claude-sonnet-4-5",
       maxTokens: storedMaxTokens ? parseInt(storedMaxTokens) : 4096,
       availableModels: CLAUDE_MODELS,
     };
   }
 
-  async updateAiConfig(dto: {
-    apiKey?: string;
-    model?: string;
-    maxTokens?: number;
-  }) {
+  async updateAiConfig(dto: { apiKey?: string; model?: string; maxTokens?: number }) {
     const tasks: Promise<void>[] = [];
 
     if (dto.apiKey !== undefined) {

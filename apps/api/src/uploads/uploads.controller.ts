@@ -38,7 +38,7 @@ export class UploadsController {
     // Fallback: derive from the raw URL path — works regardless of Express version.
     // req.path in NestJS includes the global prefix (e.g. /api/v1/uploads/products/foo.png).
     // Extract everything after the last /uploads/ segment.
-    const urlMatch = (req.path as string).match(/\/uploads\/(.+)$/);
+    const urlMatch = req.path.match(/\/uploads\/(.+)$/);
     const urlKey = urlMatch ? urlMatch[1] : "";
 
     const key = namedKey || urlKey;

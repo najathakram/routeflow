@@ -1423,7 +1423,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
           </Card>
 
           {/* Invoice link(s) */}
-          {(localStatus === "DELIVERED" || localStatus === "PARTIALLY_DELIVERED") && (
+          {(localStatus === "DELIVERED" || (localStatus as string) === "PARTIALLY_DELIVERED") && (
             <Card title={`Invoice${((order as any).invoices?.length ?? 0) > 1 ? "s" : ""}`}>
               {(order as any).invoices?.length > 0 ? (
                 <div className="space-y-3">

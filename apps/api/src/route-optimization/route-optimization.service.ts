@@ -31,8 +31,8 @@ export interface StopETA {
   stopId: string;
   stopNumber: number;
   customerName: string;
-  arrivalTime: string;       // "HH:mm"
-  departureTime: string;     // "HH:mm"
+  arrivalTime: string; // "HH:mm"
+  departureTime: string; // "HH:mm"
   travelTimeMinutes: number;
   deliveryWindowStart?: string | null;
   deliveryWindowEnd?: string | null;
@@ -492,7 +492,10 @@ export class RouteOptimizationService {
       let minDist = this.haversineKm(depot, stops[0]);
       for (let i = 1; i < stops.length; i++) {
         const d = this.haversineKm(depot, stops[i]);
-        if (d < minDist) { minDist = d; nearestIdx = i; }
+        if (d < minDist) {
+          minDist = d;
+          nearestIdx = i;
+        }
       }
       bestRoute = this.nnFrom(stops, nearestIdx);
     } else {
@@ -527,7 +530,10 @@ export class RouteOptimizationService {
       let minDist = this.haversineKm(current, unvisited[0]);
       for (let i = 1; i < unvisited.length; i++) {
         const d = this.haversineKm(current, unvisited[i]);
-        if (d < minDist) { minDist = d; nearestIdx = i; }
+        if (d < minDist) {
+          minDist = d;
+          nearestIdx = i;
+        }
       }
       current = unvisited.splice(nearestIdx, 1)[0];
       result.push(current);
@@ -567,10 +573,8 @@ export class RouteOptimizationService {
             if (i === 0 && j === n - 1) continue; // reversing entire route is pointless for round trip
             const prevI = i > 0 ? route[i - 1] : depot;
             const nextJ = j < n - 1 ? route[j + 1] : depot;
-            const oldDist =
-              this.haversineKm(prevI, route[i]) + this.haversineKm(route[j], nextJ);
-            const newDist =
-              this.haversineKm(prevI, route[j]) + this.haversineKm(route[i], nextJ);
+            const oldDist = this.haversineKm(prevI, route[i]) + this.haversineKm(route[j], nextJ);
+            const newDist = this.haversineKm(prevI, route[j]) + this.haversineKm(route[i], nextJ);
             if (newDist < oldDist - 0.001) {
               // Reverse segment [i..j]
               route = [
@@ -590,10 +594,15 @@ export class RouteOptimizationService {
         improved = false;
         outer2: for (let i = 0; i <= n - 3; i++) {
           for (let j = i + 2; j <= n - 2; j++) {
-            const a = route[i], b = route[i + 1], c = route[j], d = route[j + 1];
+            const a = route[i],
+              b = route[i + 1],
+              c = route[j],
+              d = route[j + 1];
             const delta =
-              this.haversineKm(a, b) + this.haversineKm(c, d) -
-              this.haversineKm(a, c) - this.haversineKm(b, d);
+              this.haversineKm(a, b) +
+              this.haversineKm(c, d) -
+              this.haversineKm(a, c) -
+              this.haversineKm(b, d);
             if (delta > 0.001) {
               route = [
                 ...route.slice(0, i + 1),
@@ -615,10 +624,7 @@ export class RouteOptimizationService {
    * Total path distance in km for an ordered stop array.
    * With depot: includes depot→first and last→depot edges.
    */
-  private pathKm(
-    stops: StopWithCoords[],
-    depot?: { lat: number; lng: number } | null,
-  ): number {
+  private pathKm(stops: StopWithCoords[], depot?: { lat: number; lng: number } | null): number {
     if (stops.length === 0) return 0;
     let total = 0;
     if (depot) {

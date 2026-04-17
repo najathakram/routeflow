@@ -12,10 +12,7 @@ export interface CompressResult {
  * - PDFs  → passthrough
  * Throws if the mime type is not image/* or application/pdf.
  */
-export async function compressDocument(
-  buffer: Buffer,
-  mimeType: string,
-): Promise<CompressResult> {
+export async function compressDocument(buffer: Buffer, mimeType: string): Promise<CompressResult> {
   if (mimeType === "application/pdf") {
     return { buffer, mimeType: "application/pdf", ext: "pdf" };
   }

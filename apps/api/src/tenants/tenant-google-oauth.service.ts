@@ -69,7 +69,7 @@ export class TenantGoogleOAuthService {
     const ticket = await client.verifyIdToken({
       idToken: tokens.id_token!,
       audience: (await this.prisma.tenantGoogleOAuth.findFirst({ where: { tenantId: tenant.id } }))!
-        .clientId!,
+        .clientId,
     });
     const payload = ticket.getPayload();
     if (!payload?.email) throw new BadRequestException("Could not retrieve email from Google");

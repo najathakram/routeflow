@@ -292,7 +292,9 @@ export class AuthService {
     try {
       payload = this.jwtService.verify(token, { secret: jwtConfig.secret });
     } catch {
-      throw new BadRequestException("Verification link is invalid or has expired. Please sign up again or request a new link.");
+      throw new BadRequestException(
+        "Verification link is invalid or has expired. Please sign up again or request a new link.",
+      );
     }
 
     if (payload.type !== "email_verify") {
@@ -350,7 +352,7 @@ export class AuthService {
 
   private async storeRefreshToken(userId: string, token: string, deviceInfo?: DeviceInfo) {
     const tokenHash = this.hashToken(token);
-    const decoded = this.jwtService.decode(token) as { exp: number };
+    const decoded = this.jwtService.decode(token);
     const expiresAt = new Date(decoded.exp * 1000);
     await this.prisma.refreshToken.upsert({
       where: { tokenHash },

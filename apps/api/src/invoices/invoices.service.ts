@@ -143,9 +143,7 @@ export class InvoicesService {
       );
     }
     if (total < 0) {
-      throw new BadRequestException(
-        `Invoice total cannot be negative (calculated: ${total}).`,
-      );
+      throw new BadRequestException(`Invoice total cannot be negative (calculated: ${total}).`);
     }
 
     const invoice = await this.prisma.forTenant().invoice.create({
@@ -1040,14 +1038,14 @@ export class InvoicesService {
       const payment = inv.payments.find((p) => p.id === paymentId);
       if (!payment) throw new NotFoundException("Payment not found");
 
-      const newPaymentStatus = dto.status ?? (payment as any).status ?? "PAID";
+      const newPaymentStatus = dto.status ?? payment.status ?? "PAID";
 
       // When voiding: treat the payment as $0 for balance checks
       const effectiveAmount = newPaymentStatus === "VOID" ? 0 : dto.amount;
 
       // Sum all other non-void payments plus the effective new amount
       const othersTotal = inv.payments
-        .filter((p) => p.id !== paymentId && (p as any).status !== "VOID")
+        .filter((p) => p.id !== paymentId && p.status !== "VOID")
         .reduce((s, p) => s + Number(p.amount), 0);
       const total = Number(inv.total);
       if (newPaymentStatus !== "VOID" && dto.amount > total - othersTotal + 0.001) {
@@ -1063,7 +1061,7 @@ export class InvoicesService {
           notes: dto.notes,
           ...(dto.paidAt && { paidAt: new Date(dto.paidAt) }),
           ...(dto.bankCharges !== undefined && { bankCharges: dto.bankCharges }),
-          status: newPaymentStatus as any,
+          status: newPaymentStatus,
         },
       });
 
@@ -1289,8 +1287,7 @@ export class InvoicesService {
         where: { id: paymentId, invoiceId },
       });
       if (!payment) throw new NotFoundException("Payment not found");
-      if ((payment as any).status === "VOID")
-        throw new BadRequestException("Payment already voided");
+      if (payment.status === "VOID") throw new BadRequestException("Payment already voided");
 
       await tx.invoicePayment.update({
         where: { id: paymentId },

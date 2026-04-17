@@ -386,10 +386,7 @@ export class CustomersController {
       },
     }),
   )
-  async uploadTaxDocuments(
-    @Param("id") id: string,
-    @UploadedFiles() files: Express.Multer.File[],
-  ) {
+  async uploadTaxDocuments(@Param("id") id: string, @UploadedFiles() files: Express.Multer.File[]) {
     const results = await Promise.all(
       files.map((f) =>
         this.customersService.uploadTaxDocument(id, f.buffer, f.originalname, f.mimetype),
@@ -420,8 +417,7 @@ export class CustomersController {
       storage: memoryStorage(),
       limits: { fileSize: 15 * 1024 * 1024 },
       fileFilter: (_req, file, cb) => {
-        const ok =
-          file.mimetype.startsWith("image/") || file.mimetype === "application/pdf";
+        const ok = file.mimetype.startsWith("image/") || file.mimetype === "application/pdf";
         cb(null, ok);
       },
     }),

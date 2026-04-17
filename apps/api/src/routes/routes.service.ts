@@ -665,9 +665,7 @@ export class RoutesService {
         where: { routeRunId: id },
         select: { status: true },
       });
-      const incomplete = stops.filter(
-        (s) => s.status !== "COMPLETED" && s.status !== "SKIPPED",
-      );
+      const incomplete = stops.filter((s) => s.status !== "COMPLETED" && s.status !== "SKIPPED");
       if (incomplete.length > 0) {
         throw new BadRequestException(
           `Cannot complete run: ${incomplete.length} stop(s) are still pending. Complete or skip all stops first.`,

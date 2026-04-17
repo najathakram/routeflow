@@ -361,7 +361,7 @@ export default function BuyerDetailPage() {
         }
       >
         <p className="text-sm text-slate-300">
-          This will remove the connection between <strong className="text-white">{buyer?.name}</strong> and <strong className="text-white">{removeLinkConfirm?.tenant.name}</strong>. The buyer will lose access to that seller's portal.
+          This will remove the connection between <strong className="text-white">{buyer?.name}</strong> and <strong className="text-white">{removeLinkConfirm?.tenant.name}</strong>. The buyer will lose access to that seller&apos;s portal.
         </p>
       </AdminModal>
 

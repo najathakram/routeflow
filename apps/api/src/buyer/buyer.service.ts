@@ -435,7 +435,7 @@ export class BuyerService {
     for (const op of operators.filter((o) => o.email)) {
       await this.emailService
         .send({
-          to: op.email!,
+          to: op.email,
           subject: `Buyer portal connection request from ${requestEmail}`,
           html: `
           <div style="font-family: Arial, sans-serif; max-width: 600px;">

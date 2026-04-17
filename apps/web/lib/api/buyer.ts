@@ -220,6 +220,7 @@ export function useBuyerCreateOrder() {
       urgent?: boolean;
       requestedDeliveryDate?: string;
       status?: "DRAFT" | "PENDING";
+      forceNew?: boolean;
     }) => buyerApiClient.post("/buyer/orders", data).then((r) => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["buyer", "orders"] });

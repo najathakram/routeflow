@@ -56,7 +56,7 @@ function CheckEmailInner() {
           </p>
 
           <div className="mt-6 rounded-lg bg-surface-raised px-4 py-3 text-left text-xs text-navy/60 space-y-1">
-            <p className="font-medium text-navy">Didn't receive it?</p>
+            <p className="font-medium text-navy">Didn&apos;t receive it?</p>
             <ul className="list-disc pl-4 space-y-0.5">
               <li>Check your spam or junk folder</li>
               <li>Make sure you entered the right email</li>

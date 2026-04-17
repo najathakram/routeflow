@@ -578,15 +578,15 @@ ${paymentSection}
       trialEndsAt: t.trialEndsAt,
       createdAt: t.createdAt,
       deletedAt: t.deletedAt,
-      businessName: t.config?.businessName  ?? null,
-      primaryColor: t.config?.primaryColor  ?? null,
-      logoKey:      t.config?.logoKey       ?? null,
-      addressLine1: t.config?.addressLine1  ?? null,
-      city:         t.config?.city          ?? null,
-      state:        t.config?.state         ?? null,
-      zip:          t.config?.zip           ?? null,
-      country:      t.config?.country       ?? null,
-      phone:        t.config?.phone         ?? null,
+      businessName: t.config?.businessName ?? null,
+      primaryColor: t.config?.primaryColor ?? null,
+      logoKey: t.config?.logoKey ?? null,
+      addressLine1: t.config?.addressLine1 ?? null,
+      city: t.config?.city ?? null,
+      state: t.config?.state ?? null,
+      zip: t.config?.zip ?? null,
+      country: t.config?.country ?? null,
+      phone: t.config?.phone ?? null,
       subscription: t.subscription ?? null,
       counts: t._count ?? null,
     };
@@ -632,7 +632,7 @@ ${paymentSection}
     const tenant = await this.prisma.tenant.findUnique({
       where: { id: tenantId },
       select: { id: true, slug: true, name: true },
-    })!;
+    });
 
     // Check that no TENANT_ADMIN already exists
     const existing = await this.prisma.user.findFirst({

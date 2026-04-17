@@ -134,7 +134,7 @@ export class OrderTemplatesService {
 
     return this.prisma.forTenant().orderTemplate.create({
       data: {
-        customerId: dto.customerId!,
+        customerId: dto.customerId,
         name: dto.name,
         daysOfWeek: dto.daysOfWeek,
         notes: dto.notes,

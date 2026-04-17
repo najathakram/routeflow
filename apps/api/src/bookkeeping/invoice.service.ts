@@ -58,7 +58,6 @@ export class InvoiceService {
     // error surfaces a clear message rather than a generic unhandled rejection.
     let pdfBuffer: Buffer;
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const element = React.createElement(InvoiceTemplate as any, { transaction: txn });
       pdfBuffer = await renderToBuffer(element as any);
     } catch (err) {

@@ -324,12 +324,11 @@ export class BuyerController {
   @UseInterceptors(BuyerTenantInterceptor)
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "Dashboard data: recent orders, frequent items, spend stats" })
-  getDashboard(
-    @CurrentBuyerCustomer() ctx: any,
-    @Query("frequentWindow") frequentWindow?: string,
-  ) {
+  getDashboard(@CurrentBuyerCustomer() ctx: any, @Query("frequentWindow") frequentWindow?: string) {
     const validWindows = ["30d", "90d", "all"];
-    const window = validWindows.includes(frequentWindow ?? "") ? frequentWindow as "30d" | "90d" | "all" : "all";
+    const window = validWindows.includes(frequentWindow ?? "")
+      ? (frequentWindow as "30d" | "90d" | "all")
+      : "all";
     return this.dashboardService.getDashboard(ctx.customerId, window);
   }
 
@@ -350,10 +349,7 @@ export class BuyerController {
   @UseInterceptors(BuyerTenantInterceptor)
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "Generate a new order from a standing order template" })
-  async reorderFromTemplate(
-    @Param("id") id: string,
-    @CurrentBuyerCustomer() ctx: any,
-  ) {
+  async reorderFromTemplate(@Param("id") id: string, @CurrentBuyerCustomer() ctx: any) {
     // Ownership check: verify the template belongs to this buyer's customer
     const template = await this.prisma
       .forTenant()

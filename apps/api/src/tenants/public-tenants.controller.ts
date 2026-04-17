@@ -1,4 +1,14 @@
-import { Controller, Get, Post, Param, Body, Query, NotFoundException, HttpCode, HttpStatus } from "@nestjs/common";
+import {
+  Controller,
+  Get,
+  Post,
+  Param,
+  Body,
+  Query,
+  NotFoundException,
+  HttpCode,
+  HttpStatus,
+} from "@nestjs/common";
 import { ApiTags, ApiOperation } from "@nestjs/swagger";
 import { Throttle } from "@nestjs/throttler";
 import { TenantsService } from "./tenants.service";
@@ -16,7 +26,9 @@ export class PublicTenantsController {
 
   @Post("register")
   @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: "Self-service tenant signup — creates a new tenant and admin user (14-day trial)" })
+  @ApiOperation({
+    summary: "Self-service tenant signup — creates a new tenant and admin user (14-day trial)",
+  })
   @Throttle({ default: { ttl: 60_000, limit: 5 } })
   async register(@Body() dto: RegisterTenantDto) {
     const result = await this.tenantsService.register(dto);
@@ -33,7 +45,11 @@ export class PublicTenantsController {
   checkUsernameAvailability(@Query("username") username: string) {
     if (!username) return { available: false, reason: "Username is required" };
     const available = this.tenantsService.isUsernameAvailable(username);
-    return { username, available, ...(available ? {} : { reason: "This username is reserved. Please choose a different one." }) };
+    return {
+      username,
+      available,
+      ...(available ? {} : { reason: "This username is reserved. Please choose a different one." }),
+    };
   }
 
   @Post("resend-verification")
@@ -43,7 +59,9 @@ export class PublicTenantsController {
   async resendVerification(@Body() body: { email: string }) {
     // Always returns 200 — don't leak whether the email exists
     await this.tenantsService.resendVerification(body.email ?? "").catch(() => {});
-    return { message: "If an account with that email is pending verification, a new link has been sent." };
+    return {
+      message: "If an account with that email is pending verification, a new link has been sent.",
+    };
   }
 
   @Get(":slug/available")

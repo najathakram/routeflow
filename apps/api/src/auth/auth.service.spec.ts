@@ -37,12 +37,20 @@ const MOCK_USER = {
 describe("AuthService", () => {
   let service: AuthService;
   let prisma: ReturnType<typeof createMockPrisma>;
-  let usersService: { findByUsername: jest.Mock };
+  let usersService: {
+    findByUsername: jest.Mock;
+    findByUsernameCrossTenant: jest.Mock;
+    findByEmailCrossTenant: jest.Mock;
+  };
   let jwtService: { sign: jest.Mock; verify: jest.Mock; decode: jest.Mock };
 
   beforeEach(async () => {
     prisma = createMockPrisma();
-    usersService = { findByUsername: jest.fn() };
+    usersService = {
+      findByUsername: jest.fn(),
+      findByUsernameCrossTenant: jest.fn().mockResolvedValue(null),
+      findByEmailCrossTenant: jest.fn().mockResolvedValue(null),
+    };
     jwtService = {
       sign: jest.fn().mockReturnValue("mock-token"),
       verify: jest.fn(),
@@ -169,7 +177,9 @@ describe("AuthService", () => {
 
       const result = await service.changePassword("user-1", "old", "new");
 
-      expect(result).toEqual({ message: "Password changed successfully" });
+      expect(result).toEqual(
+        expect.objectContaining({ message: expect.stringMatching(/Password changed successfully/) }),
+      );
       expect(prisma.user.update).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({

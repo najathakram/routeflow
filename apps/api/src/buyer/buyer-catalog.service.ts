@@ -59,11 +59,12 @@ export class BuyerCatalogService {
 
     // Load per-product tier overrides for all products in this page
     const productIds = result.data.map((p: any) => p.id);
-    const customerPrices = productIds.length > 0
-      ? await this.prisma.forTenant().customerPrice.findMany({
-          where: { customerId, productId: { in: productIds } },
-        })
-      : [];
+    const customerPrices =
+      productIds.length > 0
+        ? await this.prisma.forTenant().customerPrice.findMany({
+            where: { customerId, productId: { in: productIds } },
+          })
+        : [];
     const cpMap = new Map(customerPrices.map((cp) => [cp.productId, cp.pricingTier]));
 
     // Map to buyer-safe objects with resolved pricing

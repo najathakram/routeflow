@@ -38,6 +38,20 @@ const MOCK_TXN = {
   updatedAt: new Date(),
 };
 
+// Invoice row matching what BookkeepingService.findAll / findOne expect back
+// from Prisma (the service maps invoices into the transaction-shaped response).
+const MOCK_INVOICE = {
+  id: "txn-1",
+  customerId: "cust-1",
+  invoiceNumber: "INV-0001",
+  status: "SENT" as const,
+  issueDate: new Date(),
+  total: 100,
+  customer: { id: "cust-1", businessName: "Acme" },
+  order: { id: "ord-1", orderNumber: "ORD-0001", status: "DELIVERED" },
+  payments: [],
+};
+
 describe("BookkeepingService", () => {
   let service: BookkeepingService;
   let prisma: ReturnType<typeof createMockPrisma>;
@@ -88,8 +102,8 @@ describe("BookkeepingService", () => {
 
   describe("findAll", () => {
     it("should return paginated transactions", async () => {
-      prisma.transaction.findMany.mockResolvedValue([MOCK_TXN]);
-      prisma.transaction.count.mockResolvedValue(1);
+      prisma.invoice.findMany.mockResolvedValue([MOCK_INVOICE]);
+      prisma.invoice.count.mockResolvedValue(1);
 
       const result = await service.findAll({ page: 1, limit: 20 });
 
@@ -98,25 +112,28 @@ describe("BookkeepingService", () => {
     });
 
     it("should filter by status", async () => {
-      prisma.transaction.findMany.mockResolvedValue([]);
-      prisma.transaction.count.mockResolvedValue(0);
+      prisma.invoice.findMany.mockResolvedValue([]);
+      prisma.invoice.count.mockResolvedValue(0);
 
       await service.findAll({ status: "UNPAID" as any, page: 1, limit: 20 });
 
-      expect(prisma.transaction.findMany).toHaveBeenCalledWith(
+      // UNPAID maps to { in: [SENT, VIEWED, OVERDUE] } on the invoice.status column
+      expect(prisma.invoice.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({ status: "UNPAID" }),
+          where: expect.objectContaining({
+            status: expect.objectContaining({ in: expect.any(Array) }),
+          }),
         }),
       );
     });
 
     it("should filter by customerId", async () => {
-      prisma.transaction.findMany.mockResolvedValue([]);
-      prisma.transaction.count.mockResolvedValue(0);
+      prisma.invoice.findMany.mockResolvedValue([]);
+      prisma.invoice.count.mockResolvedValue(0);
 
       await service.findAll({ customerId: "cust-1", page: 1, limit: 20 });
 
-      expect(prisma.transaction.findMany).toHaveBeenCalledWith(
+      expect(prisma.invoice.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({ customerId: "cust-1" }),
         }),
@@ -124,8 +141,8 @@ describe("BookkeepingService", () => {
     });
 
     it("should filter by date range", async () => {
-      prisma.transaction.findMany.mockResolvedValue([]);
-      prisma.transaction.count.mockResolvedValue(0);
+      prisma.invoice.findMany.mockResolvedValue([]);
+      prisma.invoice.count.mockResolvedValue(0);
 
       await service.findAll({
         dateFrom: "2025-01-01",
@@ -134,10 +151,10 @@ describe("BookkeepingService", () => {
         limit: 20,
       });
 
-      expect(prisma.transaction.findMany).toHaveBeenCalledWith(
+      expect(prisma.invoice.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
-            createdAt: expect.objectContaining({
+            issueDate: expect.objectContaining({
               gte: expect.any(Date),
               lte: expect.any(Date),
             }),
@@ -151,13 +168,14 @@ describe("BookkeepingService", () => {
 
   describe("findOne", () => {
     it("should return a transaction with customer and items", async () => {
-      prisma.transaction.findUnique.mockResolvedValue(MOCK_TXN);
+      prisma.invoice.findUnique.mockResolvedValue(MOCK_INVOICE);
       const result = await service.findOne("txn-1");
-      expect(result).toEqual(MOCK_TXN);
+      expect(result.id).toBe("txn-1");
+      expect(result.customer).toEqual(MOCK_INVOICE.customer);
     });
 
     it("should throw NotFoundException when transaction does not exist", async () => {
-      prisma.transaction.findUnique.mockResolvedValue(null);
+      prisma.invoice.findUnique.mockResolvedValue(null);
       await expect(service.findOne("nonexistent")).rejects.toThrow(NotFoundException);
     });
   });

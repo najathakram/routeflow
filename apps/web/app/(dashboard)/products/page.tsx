@@ -386,6 +386,9 @@ function makeTableColumns(
         if (quickEditMode) {
           return (
             <QuickEditCell
+              productId={p.id}
+              productName={p.name}
+              field="unitsPerBox"
               value={p.unitsPerBox != null ? String(p.unitsPerBox) : ""}
               quickEditMode={quickEditMode}
               onSave={(val, rec) => onQuickSave(p, "unitsPerBox", val, rec)}
@@ -847,7 +850,7 @@ export default function ProductsPage() {
   const barcodeRefs = React.useRef<Record<string, React.RefObject<HTMLInputElement | null>>>({});
 
   const handleQuickSave = React.useCallback(async (product: ApiProduct, field: string, newVal: string, record: EditRecord) => {
-    const updates: Record<string, any> = { id: product.id, [field]: newVal || null };
+    const updates: { id: string; [k: string]: unknown } = { id: product.id, [field]: newVal || null };
 
     // Auto-copy pricePerUnit to all tiers if they were all the same as the old price
     if (field === "pricePerUnit" && newVal) {
@@ -924,7 +927,7 @@ export default function ProductsPage() {
       const product = productList.find((p: ApiProduct) => p.id === id);
       const newPriceStr = parseFloat(editPriceValue).toFixed(2);
       const newPrice = parseFloat(newPriceStr);
-      const updates: Record<string, any> = { id, pricePerUnit: newPriceStr };
+      const updates: { id: string; [k: string]: unknown } = { id, pricePerUnit: newPriceStr };
       if (product) {
         const oldPrice = parseFloat(String(product.pricePerUnit)).toFixed(2);
         const allSameAsOld = [product.priceTier2, product.priceTier3, product.priceTier4, product.priceTier5].every(

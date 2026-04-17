@@ -552,7 +552,7 @@ export class GoogleOAuthService {
       { secret: jwtConfig.refreshSecret, expiresIn: jwtConfig.refreshExpiresIn as any },
     );
     const tokenHash = crypto.createHash("sha256").update(refreshToken).digest("hex");
-    const decoded = this.jwtService.decode(refreshToken) as { exp: number };
+    const decoded = this.jwtService.decode(refreshToken);
     const expiresAt = new Date(decoded.exp * 1000);
     await this.prisma.buyerRefreshToken.upsert({
       where: { tokenHash },
@@ -564,7 +564,7 @@ export class GoogleOAuthService {
 
   private async storeUserRefreshToken(userId: string, token: string): Promise<void> {
     const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
-    const decoded = this.jwtService.decode(token) as { exp: number };
+    const decoded = this.jwtService.decode(token);
     const expiresAt = new Date(decoded.exp * 1000);
     await this.prisma.refreshToken.upsert({
       where: { tokenHash },

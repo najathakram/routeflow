@@ -46,10 +46,10 @@ export class SettingsController {
 
     // Address / phone resolved below (TenantConfig takes precedence over SystemConfig)
     let street = all["settings.street"] ?? "";
-    let city   = all["settings.city"]   ?? "";
-    let state  = all["settings.state"]  ?? "";
-    let zip    = all["settings.zip"]    ?? "";
-    let phone  = all["settings.phone"]  ?? "";
+    let city = all["settings.city"] ?? "";
+    let state = all["settings.state"] ?? "";
+    let zip = all["settings.zip"] ?? "";
+    let phone = all["settings.phone"] ?? "";
 
     if (tenantId) {
       const config = await this.prisma.tenantConfig.findUnique({
@@ -70,10 +70,10 @@ export class SettingsController {
       if (config?.customerEmail) customerEmail = config.customerEmail;
       // Address from TenantConfig overrides any legacy SystemConfig values
       if (config?.addressLine1 != null) street = config.addressLine1;
-      if (config?.city != null)         city   = config.city;
-      if (config?.state != null)        state  = config.state;
-      if (config?.zip != null)          zip    = config.zip;
-      if (config?.phone != null)        phone  = config.phone;
+      if (config?.city != null) city = config.city;
+      if (config?.state != null) state = config.state;
+      if (config?.zip != null) zip = config.zip;
+      if (config?.phone != null) phone = config.phone;
 
       // If account email is not explicitly set in system config, source it from
       // the TENANT_ADMIN user's email — this is the email used when the tenant
@@ -124,12 +124,10 @@ export class SettingsController {
       // Address / phone — map frontend field names to TenantConfig column names
       if (dto.street !== undefined)
         configUpdate.addressLine1 = typeof dto.street === "string" ? dto.street : "";
-      if (dto.city !== undefined)
-        configUpdate.city = typeof dto.city === "string" ? dto.city : "";
+      if (dto.city !== undefined) configUpdate.city = typeof dto.city === "string" ? dto.city : "";
       if (dto.state !== undefined)
         configUpdate.state = typeof dto.state === "string" ? dto.state : "";
-      if (dto.zip !== undefined)
-        configUpdate.zip = typeof dto.zip === "string" ? dto.zip : "";
+      if (dto.zip !== undefined) configUpdate.zip = typeof dto.zip === "string" ? dto.zip : "";
       if (dto.phone !== undefined)
         configUpdate.phone = typeof dto.phone === "string" ? dto.phone : "";
       if (Object.keys(configUpdate).length > 0) {

@@ -123,11 +123,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
             if (POST_FILTER_METHODS.has(method)) {
               return async (args: any = {}) => {
                 const result = await fn.call(modelTarget, args);
-                if (
-                  result &&
-                  (result as any).tenantId !== undefined &&
-                  (result as any).tenantId !== tenantId
-                ) {
+                if (result && result.tenantId !== undefined && result.tenantId !== tenantId) {
                   return null;
                 }
                 return result;
@@ -150,11 +146,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
             // can't inject tenantId there. Instead, run the query and then
             // verify the returned row belongs to this tenant.
             const result = await query(args);
-            if (
-              result &&
-              (result as any).tenantId !== undefined &&
-              (result as any).tenantId !== tenantId
-            ) {
+            if (result && result.tenantId !== undefined && result.tenantId !== tenantId) {
               return null; // treat cross-tenant row as not found
             }
             return result;

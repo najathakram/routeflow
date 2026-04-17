@@ -1,9 +1,4 @@
-import {
-  Injectable,
-  CanActivate,
-  ExecutionContext,
-  Logger,
-} from "@nestjs/common";
+import { Injectable, CanActivate, ExecutionContext, Logger } from "@nestjs/common";
 
 /**
  * Impersonation audit-trail guard.

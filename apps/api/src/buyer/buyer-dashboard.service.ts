@@ -14,7 +14,7 @@ export class BuyerDashboardService {
    * Aggregated dashboard data for a buyer at a specific seller.
    * @param frequentWindow - time window for frequently ordered: '30d', '90d', or 'all' (default: 'all')
    */
-  async getDashboard(customerId: string, frequentWindow: '30d' | '90d' | 'all' = 'all') {
+  async getDashboard(customerId: string, frequentWindow: "30d" | "90d" | "all" = "all") {
     const now = new Date();
     const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
     const ninetyDaysAgo = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
@@ -84,9 +84,9 @@ export class BuyerDashboardService {
           order: {
             customerId,
             status: { not: "CANCELLED" },
-            ...(frequentWindow === '30d'
+            ...(frequentWindow === "30d"
               ? { createdAt: { gte: thirtyDaysAgo } }
-              : frequentWindow === '90d'
+              : frequentWindow === "90d"
                 ? { createdAt: { gte: ninetyDaysAgo } }
                 : {}),
           },
@@ -213,11 +213,12 @@ export class BuyerDashboardService {
 
     // ─── Featured Items ──────────────────────────────────────────────────────
     const featuredProductIds = featuredProducts.map((p) => p.id);
-    const featCpOverrides = featuredProductIds.length > 0
-      ? await this.prisma.forTenant().customerPrice.findMany({
-          where: { customerId, productId: { in: featuredProductIds } },
-        })
-      : [];
+    const featCpOverrides =
+      featuredProductIds.length > 0
+        ? await this.prisma.forTenant().customerPrice.findMany({
+            where: { customerId, productId: { in: featuredProductIds } },
+          })
+        : [];
     const featCpMap = new Map(featCpOverrides.map((cp) => [cp.productId, cp.pricingTier]));
 
     const featuredItems = await Promise.all(
@@ -239,43 +240,53 @@ export class BuyerDashboardService {
 
     // ─── Suggested Items (category affinity) ──────────────────────────────────
     // Products in categories the buyer orders from, but hasn't tried yet
-    const orderedProductIds = freqProductIds.length > 0
-      ? freqProductIds
-      : (await this.prisma.forTenant().orderItem.findMany({
-          where: { order: { customerId, status: { not: "CANCELLED" } } },
-          select: { productId: true },
-          distinct: ["productId"],
-        })).map((oi) => oi.productId);
+    const orderedProductIds =
+      freqProductIds.length > 0
+        ? freqProductIds
+        : (
+            await this.prisma.forTenant().orderItem.findMany({
+              where: { order: { customerId, status: { not: "CANCELLED" } } },
+              select: { productId: true },
+              distinct: ["productId"],
+            })
+          ).map((oi) => oi.productId);
 
     // Get categories the buyer has ordered from
-    const orderedCategories = orderedProductIds.length > 0
-      ? (await this.prisma.forTenant().product.findMany({
-          where: { id: { in: orderedProductIds }, category: { not: null } },
-          select: { category: true },
-          distinct: ["category"],
-        })).map((p) => p.category).filter(Boolean) as string[]
-      : [];
+    const orderedCategories =
+      orderedProductIds.length > 0
+        ? ((
+            await this.prisma.forTenant().product.findMany({
+              where: { id: { in: orderedProductIds }, category: { not: null } },
+              select: { category: true },
+              distinct: ["category"],
+            })
+          )
+            .map((p) => p.category)
+            .filter(Boolean) as string[])
+        : [];
 
     // Find products in those categories that the buyer hasn't ordered
-    const suggestedProducts = orderedCategories.length > 0
-      ? await this.prisma.forTenant().product.findMany({
-          where: {
-            isActive: true,
-            category: { in: orderedCategories },
-            id: { notIn: orderedProductIds },
-          },
-          orderBy: { createdAt: "desc" },
-          take: 8,
-        })
-      : [];
+    const suggestedProducts =
+      orderedCategories.length > 0
+        ? await this.prisma.forTenant().product.findMany({
+            where: {
+              isActive: true,
+              category: { in: orderedCategories },
+              id: { notIn: orderedProductIds },
+            },
+            orderBy: { createdAt: "desc" },
+            take: 8,
+          })
+        : [];
 
     // Enrich suggested products with buyer pricing + thumbnails
     const suggestedProductIds = suggestedProducts.map((p) => p.id);
-    const sugCpOverrides = suggestedProductIds.length > 0
-      ? await this.prisma.forTenant().customerPrice.findMany({
-          where: { customerId, productId: { in: suggestedProductIds } },
-        })
-      : [];
+    const sugCpOverrides =
+      suggestedProductIds.length > 0
+        ? await this.prisma.forTenant().customerPrice.findMany({
+            where: { customerId, productId: { in: suggestedProductIds } },
+          })
+        : [];
     const sugCpMap = new Map(sugCpOverrides.map((cp) => [cp.productId, cp.pricingTier]));
 
     const suggestedItems = await Promise.all(

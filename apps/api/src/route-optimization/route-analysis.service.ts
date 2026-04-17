@@ -36,10 +36,7 @@ export class RouteAnalysisService {
    * Analyze a route template for delivery window compliance.
    * Calculates ETAs and optionally uses Claude for natural language insights.
    */
-  async analyzeRoute(
-    routeId: string,
-    startTime?: string,
-  ): Promise<RouteAnalysisResult> {
+  async analyzeRoute(routeId: string, startTime?: string): Promise<RouteAnalysisResult> {
     // Load route with stops + customer delivery windows
     const route = await this.prisma.forTenant().route.findUnique({
       where: { id: routeId },
@@ -158,7 +155,10 @@ Status guide:
       const rawText = textBlock?.type === "text" ? textBlock.text : "";
 
       // Parse JSON — handle potential markdown fences
-      const jsonStr = rawText.replace(/```(?:json)?\s*/g, "").replace(/```/g, "").trim();
+      const jsonStr = rawText
+        .replace(/```(?:json)?\s*/g, "")
+        .replace(/```/g, "")
+        .trim();
       const analysis = JSON.parse(jsonStr) as {
         summary?: string;
         stops?: Array<{ stopNumber: number; status: string; message: string }>;
@@ -185,10 +185,7 @@ Status guide:
   /**
    * Analyze a route run using its snapshotted depot and start time.
    */
-  async analyzeRouteRun(
-    routeRunId: string,
-    startTime?: string,
-  ): Promise<RouteAnalysisResult> {
+  async analyzeRouteRun(routeRunId: string, startTime?: string): Promise<RouteAnalysisResult> {
     const run = await this.prisma.forTenant().routeRun.findUnique({
       where: { id: routeRunId },
       include: {
@@ -223,7 +220,10 @@ Status guide:
         : await this.optimizationService.resolveDepot(run.routeId);
 
     const effectiveStartTime =
-      startTime ?? run.startTime ?? (await this.systemConfig.get("route.defaultStartTime")) ?? "08:00";
+      startTime ??
+      run.startTime ??
+      (await this.systemConfig.get("route.defaultStartTime")) ??
+      "08:00";
 
     // Delegate to analyzeRoute logic using the run's route
     // But since the run has its own stop order, we use its stops directly
@@ -234,9 +234,7 @@ Status guide:
 
     const stopsWithCoords = run.stops
       .filter(
-        (s) =>
-          s.routeStop.customerAddress?.lat != null &&
-          s.routeStop.customerAddress?.lng != null,
+        (s) => s.routeStop.customerAddress?.lat != null && s.routeStop.customerAddress?.lng != null,
       )
       .map((s) => ({
         id: s.id,
@@ -311,7 +309,10 @@ Status guide:
 
       const textBlock = response.content.find((b) => b.type === "text");
       const rawText = textBlock?.type === "text" ? textBlock.text : "";
-      const jsonStr = rawText.replace(/```(?:json)?\s*/g, "").replace(/```/g, "").trim();
+      const jsonStr = rawText
+        .replace(/```(?:json)?\s*/g, "")
+        .replace(/```/g, "")
+        .trim();
       const analysis = JSON.parse(jsonStr) as {
         summary?: string;
         stops?: Array<{ stopNumber: number; status: string; message: string }>;

@@ -999,7 +999,7 @@ export default function RouteTemplateDetailPage({
                 {!analysisResult && !analyzeRoute.isPending && (
                   <div className="flex flex-col items-center gap-3 py-12 text-navy/40">
                     <Clock className="h-8 w-8" />
-                    <p className="text-sm text-center">Click "Analyze Route" to calculate ETAs and get AI-powered delivery window insights.</p>
+                    <p className="text-sm text-center">Click &quot;Analyze Route&quot; to calculate ETAs and get AI-powered delivery window insights.</p>
                   </div>
                 )}
               </div>

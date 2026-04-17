@@ -8,7 +8,7 @@ import * as crypto from "crypto";
 
 /** Category name substrings (lower-cased) that map to the INVENTORY_PURCHASE system code */
 const INVENTORY_PURCHASE_KEYWORDS = [
-  "inventor",      // "inventory", "inventory purchase", "inventory purchases"
+  "inventor", // "inventory", "inventory purchase", "inventory purchases"
   "stock purchase",
   "purchase of stock",
   "purchase of goods",
@@ -264,81 +264,81 @@ export class ImportService {
       }
 
       if (existing) {
-          // Update the existing customer with any missing/new fields
-          try {
-            await this.prisma.forTenant().customer.update({
-              where: { id: existing.id },
+        // Update the existing customer with any missing/new fields
+        try {
+          await this.prisma.forTenant().customer.update({
+            where: { id: existing.id },
+            data: {
+              ...(zohoContactId && !existing.zohoContactId && { zohoContactId }),
+              ...(displayName !== null && { displayName }),
+              ...(salutation !== null && { salutation }),
+              ...(firstName !== null && { firstName }),
+              ...(lastName !== null && { lastName }),
+              ...(phone !== null && !existing.phone && { phone }),
+              ...(mobile !== null && { mobile }),
+              ...(csvEmail !== null && { email: csvEmail }),
+              ...(notes !== null && { notes }),
+              currency,
+              contactName:
+                existing.contactName === existing.businessName
+                  ? contactName || existing.contactName
+                  : existing.contactName,
+            },
+          });
+
+          // Add billing address if not already present
+          const existingBilling = existing.addresses.find((a) => a.addressType === "BILLING");
+          if (!existingBilling && hasBilling) {
+            await this.prisma.forTenant().customerAddress.create({
               data: {
-                ...(zohoContactId && !existing.zohoContactId && { zohoContactId }),
-                ...(displayName !== null && { displayName }),
-                ...(salutation !== null && { salutation }),
-                ...(firstName !== null && { firstName }),
-                ...(lastName !== null && { lastName }),
-                ...(phone !== null && !existing.phone && { phone }),
-                ...(mobile !== null && { mobile }),
-                ...(csvEmail !== null && { email: csvEmail }),
-                ...(notes !== null && { notes }),
-                currency,
-                contactName:
-                  existing.contactName === existing.businessName
-                    ? contactName || existing.contactName
-                    : existing.contactName,
+                customerId: existing.id,
+                label: "Billing",
+                line1: billingLine1 || billingCity || "Unknown",
+                city: billingCity || "Unknown",
+                state: billingState || "Unknown",
+                zip: billingZip || "00000",
+                lat: billingLat,
+                lng: billingLng,
+                addressType: "BILLING",
+                isDefault: true,
               },
             });
+          }
 
-            // Add billing address if not already present
-            const existingBilling = existing.addresses.find((a) => a.addressType === "BILLING");
-            if (!existingBilling && hasBilling) {
-              await this.prisma.forTenant().customerAddress.create({
-                data: {
-                  customerId: existing.id,
-                  label: "Billing",
-                  line1: billingLine1 || billingCity || "Unknown",
-                  city: billingCity || "Unknown",
-                  state: billingState || "Unknown",
-                  zip: billingZip || "00000",
-                  lat: billingLat,
-                  lng: billingLng,
-                  addressType: "BILLING",
-                  isDefault: true,
-                },
-              });
-            }
+          // Add shipping address if not already present and differs from billing
+          const existingShipping = existing.addresses.find((a) => a.addressType === "SHIPPING");
+          if (!existingShipping && hasShipping) {
+            await this.prisma.forTenant().customerAddress.create({
+              data: {
+                customerId: existing.id,
+                label: "Shipping",
+                line1: shippingLine1 || shippingCity || "Unknown",
+                city: shippingCity || "Unknown",
+                state: shippingState || "Unknown",
+                zip: shippingZip || "00000",
+                lat: shippingLat,
+                lng: shippingLng,
+                addressType: "SHIPPING",
+                isDefault: false,
+              },
+            });
+          }
 
-            // Add shipping address if not already present and differs from billing
-            const existingShipping = existing.addresses.find((a) => a.addressType === "SHIPPING");
-            if (!existingShipping && hasShipping) {
-              await this.prisma.forTenant().customerAddress.create({
-                data: {
-                  customerId: existing.id,
-                  label: "Shipping",
-                  line1: shippingLine1 || shippingCity || "Unknown",
-                  city: shippingCity || "Unknown",
-                  state: shippingState || "Unknown",
-                  zip: shippingZip || "00000",
-                  lat: shippingLat,
-                  lng: shippingLng,
-                  addressType: "SHIPPING",
-                  isDefault: false,
-                },
-              });
-            }
-
-            // Add contact person if we have a name and none exists yet
-            if ((firstName || lastName) && existing.contactPersons.length === 0) {
-              await this.prisma.forTenant().contactPerson.create({
-                data: {
-                  customerId: existing.id,
-                  salutation: salutation || null,
-                  firstName: firstName || contactName,
-                  lastName: lastName || null,
-                  email: csvEmail || null,
-                  phone: phone || null,
-                  mobile: mobile || null,
-                  isPrimary: true,
-                },
-              });
-            }
+          // Add contact person if we have a name and none exists yet
+          if ((firstName || lastName) && existing.contactPersons.length === 0) {
+            await this.prisma.forTenant().contactPerson.create({
+              data: {
+                customerId: existing.id,
+                salutation: salutation || null,
+                firstName: firstName || contactName,
+                lastName: lastName || null,
+                email: csvEmail || null,
+                phone: phone || null,
+                mobile: mobile || null,
+                isPrimary: true,
+              },
+            });
+          }
 
           updated++;
         } catch (e: any) {
@@ -877,9 +877,7 @@ export class ImportService {
     ] as string[];
     for (const catName of catNames) {
       const nameLower = catName.toLowerCase();
-      const isInventoryPurchase = INVENTORY_PURCHASE_KEYWORDS.some((kw) =>
-        nameLower.includes(kw),
-      );
+      const isInventoryPurchase = INVENTORY_PURCHASE_KEYWORDS.some((kw) => nameLower.includes(kw));
 
       if (isInventoryPurchase) {
         // Always map to the canonical INVENTORY_PURCHASE system category
@@ -935,9 +933,7 @@ export class ImportService {
       }
     }
 
-    const vendorNames = Object.keys(vendorRowsMap).map((k) =>
-      this.getVendorName(vendorRowsMap[k]),
-    ) as string[];
+    const vendorNames = Object.keys(vendorRowsMap).map((k) => this.getVendorName(vendorRowsMap[k]));
 
     for (const name of vendorNames) {
       try {
@@ -1009,8 +1005,7 @@ export class ImportService {
         /* ignore */
       }
 
-      const referenceNumber =
-        (row["Reference#"] || row["Reference Number"] || "").trim() || null;
+      const referenceNumber = (row["Reference#"] || row["Reference Number"] || "").trim() || null;
       const description = row["Expense Description"] || referenceNumber || null;
       const notes = row["Notes"] || null;
 
@@ -1458,9 +1453,7 @@ export class ImportService {
       if (n && !vendorRowMap[n.toLowerCase()]) vendorRowMap[n.toLowerCase()] = row;
     }
 
-    const supplierNames = Object.keys(vendorRowMap).map((k) =>
-      this.getVendorName(vendorRowMap[k]),
-    ) as string[];
+    const supplierNames = Object.keys(vendorRowMap).map((k) => this.getVendorName(vendorRowMap[k]));
 
     for (const name of supplierNames) {
       try {

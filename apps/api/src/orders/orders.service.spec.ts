@@ -203,6 +203,10 @@ describe("OrdersService", () => {
       prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
       prisma.product.findMany.mockResolvedValue([MOCK_PRODUCT]);
       prisma.order.create.mockResolvedValue(MOCK_ORDER);
+      // Tax rate is read from SystemConfigService at request time; seed 10%
+      (service as any).systemConfig.get.mockImplementation((key: string) =>
+        key === "settings.taxRate" ? "0.1" : null,
+      );
 
       const result = await service.create(
         { items: [{ productId: "prod-1", qty: 3 }], urgent: false },

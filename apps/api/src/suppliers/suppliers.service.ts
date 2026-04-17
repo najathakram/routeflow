@@ -34,7 +34,8 @@ export class SuppliersService {
 
     // Aggregate outstanding balances from vendor bills (non-voided) per supplier
     const supplierIds = data.map((s) => s.id).filter(Boolean);
-    let balanceMap: Record<string, { totalOwed: number; totalPaid: number; billCount: number }> = {};
+    const balanceMap: Record<string, { totalOwed: number; totalPaid: number; billCount: number }> =
+      {};
     if (supplierIds.length > 0) {
       const billAgg = await this.prisma.forTenant().vendorBill.groupBy({
         by: ["supplierId"],

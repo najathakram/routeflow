@@ -119,7 +119,7 @@ export default function SellerLandingPage() {
               href="/buyer"
               className="flex items-center gap-2 rounded-xl border border-white/15 bg-white/5 px-8 py-3.5 text-base font-medium text-white transition-colors hover:bg-white/10"
             >
-              I'm a Buyer
+              I&apos;m a Buyer
             </Link>
           </div>
 

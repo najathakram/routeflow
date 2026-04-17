@@ -1332,7 +1332,9 @@ export class CustomersService {
     return { success: true };
   }
 
-  async batchDelete(ids: string[]): Promise<{ deleted: number; failed: { id: string; reason: string }[] }> {
+  async batchDelete(
+    ids: string[],
+  ): Promise<{ deleted: number; failed: { id: string; reason: string }[] }> {
     const failed: { id: string; reason: string }[] = [];
     let deleted = 0;
     for (const id of ids) {
@@ -1870,7 +1872,11 @@ export class CustomersService {
     await this.storage.delete(key);
     await this.prisma.forTenant().customer.update({
       where: { id },
-      data: { taxExemptDocumentKeys: { set: (customer as any).taxExemptDocumentKeys.filter((k: string) => k !== key) } },
+      data: {
+        taxExemptDocumentKeys: {
+          set: (customer as any).taxExemptDocumentKeys.filter((k: string) => k !== key),
+        },
+      },
     });
   }
 
@@ -1878,7 +1884,9 @@ export class CustomersService {
     const customer = await this.prisma.forTenant().customer.findUnique({ where: { id } });
     if (!customer) throw new NotFoundException("Customer not found");
     const keys: string[] = (customer as any).taxExemptDocumentKeys ?? [];
-    return Promise.all(keys.map(async (key) => ({ key, url: await this.storage.presignedUrl(key) })));
+    return Promise.all(
+      keys.map(async (key) => ({ key, url: await this.storage.presignedUrl(key) })),
+    );
   }
 
   // ── Generic customer documents ──────────────────────────────────────────────

@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException, OnModuleInit } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
-import { InvoiceStatus, TxnStatus } from "@prisma/client";
+import { InvoiceStatus, TxnStatus, PaymentStatus, CreditNoteStatus } from "@prisma/client";
 import { ListTransactionsDto } from "./dto/list-transactions.dto";
 import { RecordPaymentDto } from "./dto/record-payment.dto";
 import { InvoiceService } from "./invoice.service";
@@ -31,7 +31,6 @@ export class BookkeepingService implements OnModuleInit {
   }
 
   async findAll(query: ListTransactionsDto) {
-    const { InvoiceStatus } = await import("@prisma/client");
     const { status, customerId, dateFrom, dateTo, page = 1, limit = 20 } = query;
     const skip = (page - 1) * limit;
 
@@ -98,7 +97,6 @@ export class BookkeepingService implements OnModuleInit {
   }
 
   async findOne(id: string) {
-    const { InvoiceStatus } = await import("@prisma/client");
     const inv = await this.prisma.forTenant().invoice.findUnique({
       where: { id },
       include: {
@@ -128,7 +126,6 @@ export class BookkeepingService implements OnModuleInit {
   }
 
   async recordPayment(id: string, dto: RecordPaymentDto) {
-    const { InvoiceStatus, PaymentStatus } = await import("@prisma/client");
     return this.prisma.tenantTransaction(async (tx) => {
       const inv = await tx.invoice.findUnique({
         where: { id },
@@ -779,7 +776,7 @@ export class BookkeepingService implements OnModuleInit {
         })()
       : new Date();
 
-    const { PaymentStatus: CfPayStatus } = await import("@prisma/client");
+    const CfPayStatus = PaymentStatus;
     const [payments, expenses, bills] = await Promise.all([
       this.prisma.forTenant().invoicePayment.findMany({
         where: { status: CfPayStatus.PAID, paidAt: { gte: fromDate, lte: toDate } },
@@ -1018,7 +1015,6 @@ export class BookkeepingService implements OnModuleInit {
   }
 
   async getArAgingInvoices(intervalDays = 30) {
-    const { InvoiceStatus } = await import("@prisma/client");
     const now = new Date();
     const interval = Math.max(1, intervalDays);
     const invoices = await this.prisma.forTenant().invoice.findMany({
@@ -1082,7 +1078,6 @@ export class BookkeepingService implements OnModuleInit {
   }
 
   async getSalesByCustomer(from?: string, to?: string) {
-    const { InvoiceStatus } = await import("@prisma/client");
     const fromDate = from ? new Date(from) : new Date(new Date().getFullYear(), 0, 1);
     const toDate = to
       ? (() => {
@@ -1121,7 +1116,6 @@ export class BookkeepingService implements OnModuleInit {
   }
 
   async getSalesByItem(from?: string, to?: string) {
-    const { InvoiceStatus } = await import("@prisma/client");
     const fromDate = from ? new Date(from) : new Date(new Date().getFullYear(), 0, 1);
     const toDate = to
       ? (() => {
@@ -1162,8 +1156,6 @@ export class BookkeepingService implements OnModuleInit {
   }
 
   async getCustomerBalanceSummary() {
-    const { InvoiceStatus } = await import("@prisma/client");
-
     // Get all non-draft/non-void invoices for full invoiced + received calculation
     const allInvoices = await this.prisma.forTenant().invoice.findMany({
       where: {
@@ -1240,7 +1232,6 @@ export class BookkeepingService implements OnModuleInit {
   }
 
   async getInvoiceDetailsReport(from?: string, to?: string, status?: string, customerId?: string) {
-    const { InvoiceStatus } = await import("@prisma/client");
     const fromDate = from ? new Date(from) : new Date(new Date().getFullYear(), 0, 1);
     const toDate = to
       ? (() => {
@@ -1277,7 +1268,6 @@ export class BookkeepingService implements OnModuleInit {
   }
 
   async getBadDebtsReport() {
-    const { InvoiceStatus } = await import("@prisma/client");
     const invoices = await this.prisma.forTenant().invoice.findMany({
       where: { status: InvoiceStatus.WRITTEN_OFF },
       include: { customer: { select: { id: true, businessName: true } }, payments: true },
@@ -1316,7 +1306,6 @@ export class BookkeepingService implements OnModuleInit {
           return d;
         })()
       : new Date();
-    const { PaymentStatus } = await import("@prisma/client");
     const payments = await this.prisma.forTenant().invoicePayment.findMany({
       where: { status: PaymentStatus.PAID, paidAt: { gte: fromDate, lte: toDate } },
       include: {
@@ -1348,7 +1337,6 @@ export class BookkeepingService implements OnModuleInit {
   }
 
   async getTimeToGetPaid(from?: string, to?: string) {
-    const { InvoiceStatus } = await import("@prisma/client");
     const fromDate = from ? new Date(from) : new Date(new Date().getFullYear(), 0, 1);
     const toDate = to
       ? (() => {
@@ -1517,7 +1505,6 @@ export class BookkeepingService implements OnModuleInit {
 
   // ── Sales by Driver Report ──
   async getSalesByDriver(from?: string, to?: string) {
-    const { InvoiceStatus } = await import("@prisma/client");
     const fromDate = from ? new Date(from) : new Date(new Date().getFullYear(), 0, 1);
     const toDate = to
       ? (() => {
@@ -1583,7 +1570,6 @@ export class BookkeepingService implements OnModuleInit {
 
   // ── AR Aging Details Report ──
   async getArAgingDetails(from?: string, to?: string, customerId?: string) {
-    const { InvoiceStatus } = await import("@prisma/client");
     const now = new Date();
     const where: any = {
       status: { in: [InvoiceStatus.SENT, InvoiceStatus.PARTIAL, InvoiceStatus.OVERDUE] },
@@ -1668,7 +1654,6 @@ export class BookkeepingService implements OnModuleInit {
 
   // ── Refund History Report ──
   async getRefundHistory(from?: string, to?: string) {
-    const { PaymentStatus, CreditNoteStatus } = await import("@prisma/client");
     const fromDate = from ? new Date(from) : new Date(new Date().getFullYear(), 0, 1);
     const toDate = to
       ? (() => {
@@ -1744,7 +1729,6 @@ export class BookkeepingService implements OnModuleInit {
 
   // ── Receivable Summary Report ──
   async getReceivableSummary(from?: string, to?: string) {
-    const { InvoiceStatus } = await import("@prisma/client");
     const fromDate = from ? new Date(from) : new Date(new Date().getFullYear(), 0, 1);
     const toDate = to
       ? (() => {

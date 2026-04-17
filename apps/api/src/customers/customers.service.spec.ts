@@ -3,6 +3,7 @@ import { NotFoundException, ForbiddenException, BadRequestException } from "@nes
 import { ConfigService } from "@nestjs/config";
 import { CustomersService } from "./customers.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { StorageService } from "../storage/storage.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 const MOCK_CUSTOMER = {
@@ -45,6 +46,14 @@ describe("CustomersService", () => {
         CustomersService,
         { provide: PrismaService, useValue: prisma },
         { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(null) } },
+        {
+          provide: StorageService,
+          useValue: {
+            upload: jest.fn().mockResolvedValue("mock-key"),
+            delete: jest.fn().mockResolvedValue(undefined),
+            presignedUrl: jest.fn().mockResolvedValue("https://mock-url"),
+          },
+        },
       ],
     }).compile();
 

@@ -4,7 +4,7 @@ import { renderToBuffer } from "@react-pdf/renderer";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { InvoicePdfTemplate } from "./invoice-pdf-template";
-// eslint-disable-next-line @typescript-eslint/no-require-imports
+
 import bwipjs from "bwip-js";
 
 @Injectable()
@@ -84,7 +84,6 @@ export class InvoicePdfService {
 
     let pdfBuffer: Buffer;
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const element = React.createElement(InvoicePdfTemplate as any, { invoice: invWithBarcodes });
       pdfBuffer = await renderToBuffer(element as any);
     } catch (err) {

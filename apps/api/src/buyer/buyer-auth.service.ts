@@ -288,7 +288,7 @@ export class BuyerAuthService {
     deviceInfo?: BuyerDeviceInfo,
   ) {
     const tokenHash = this.hashToken(token);
-    const decoded = this.jwtService.decode(token) as { exp: number };
+    const decoded = this.jwtService.decode(token);
     const expiresAt = new Date(decoded.exp * 1000);
     await this.prisma.buyerRefreshToken.upsert({
       where: { tokenHash },

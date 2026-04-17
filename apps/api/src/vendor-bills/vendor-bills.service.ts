@@ -33,7 +33,7 @@ export class VendorBillsService {
         throw new BadRequestException("Please select a supplier before creating the bill.");
       }
     }
-    const supplierId = (dto.supplierId && dto.supplierId.trim()) ? dto.supplierId.trim() : null;
+    const supplierId = dto.supplierId && dto.supplierId.trim() ? dto.supplierId.trim() : null;
 
     // Calculate totalOwed from line items if provided, otherwise use dto.totalOwed
     let totalOwed = dto.totalOwed ?? 0;
