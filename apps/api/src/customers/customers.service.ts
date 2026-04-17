@@ -1453,6 +1453,172 @@ export class CustomersService {
     return { deleted: customers.length };
   }
 
+  // ─── Cleanup Imported Customers ───────────────────────────────────────────────
+
+  async previewImportedCleanup(): Promise<{
+    toDelete: number;
+    toKeep: number;
+    buyers: { id: string; businessName: string }[];
+  }> {
+    const all = await this.prisma.forTenant().customer.findMany({
+      select: {
+        id: true,
+        businessName: true,
+        customerLink: { select: { status: true } },
+      },
+    });
+    const buyers = all.filter((c) => c.customerLink?.status === "ACTIVE");
+    const toDelete = all.filter((c) => c.customerLink?.status !== "ACTIVE");
+    return {
+      toDelete: toDelete.length,
+      toKeep: buyers.length,
+      buyers: buyers.map((b) => ({ id: b.id, businessName: b.businessName })),
+    };
+  }
+
+  async deleteImportedCustomers(): Promise<{ deleted: number; preserved: number }> {
+    const all = await this.prisma.forTenant().customer.findMany({
+      select: {
+        id: true,
+        userId: true,
+        customerLink: { select: { status: true } },
+      },
+    });
+
+    const toDelete = all.filter((c) => c.customerLink?.status !== "ACTIVE");
+    const preserved = all.length - toDelete.length;
+    if (toDelete.length === 0) return { deleted: 0, preserved };
+
+    const ids = toDelete.map((c) => c.id);
+    const uids = toDelete.map((c) => c.userId);
+
+    await this.prisma.tenantTransaction(
+      async (tx) => {
+        // Invoices
+        const invoices = await tx.invoice.findMany({
+          where: { customerId: { in: ids } },
+          select: { id: true },
+        });
+        const invoiceIds = invoices.map((i) => i.id);
+        if (invoiceIds.length) {
+          await tx.invoicePayment.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
+          await tx.invoiceItem.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
+        }
+        await tx.invoice.deleteMany({ where: { customerId: { in: ids } } });
+
+        // Credit notes
+        await tx.creditNote.deleteMany({ where: { customerId: { in: ids } } });
+
+        // Returns (must precede orders due to FK)
+        const returns = await tx.return.findMany({
+          where: { customerId: { in: ids } },
+          select: { id: true },
+        });
+        if (returns.length) {
+          await tx.returnItem.deleteMany({ where: { returnId: { in: returns.map((r) => r.id) } } });
+          await tx.return.deleteMany({ where: { customerId: { in: ids } } });
+        }
+
+        // Orders
+        const orders = await tx.order.findMany({
+          where: { customerId: { in: ids } },
+          select: { id: true },
+        });
+        if (orders.length) {
+          const orderIds = orders.map((o) => o.id);
+          await tx.deliveryMutation.deleteMany({ where: { orderId: { in: orderIds } } });
+          const txns = await tx.transaction.findMany({
+            where: { orderId: { in: orderIds } },
+            select: { id: true },
+          });
+          if (txns.length) {
+            const txnIds = txns.map((t) => t.id);
+            await tx.payment.deleteMany({ where: { transactionId: { in: txnIds } } });
+            await tx.transactionItem.deleteMany({ where: { transactionId: { in: txnIds } } });
+            await tx.transaction.deleteMany({ where: { id: { in: txnIds } } });
+          }
+          await tx.orderItem.deleteMany({ where: { orderId: { in: orderIds } } });
+          await tx.order.deleteMany({ where: { customerId: { in: ids } } });
+        }
+
+        // Estimates
+        const estimates = await tx.estimate.findMany({
+          where: { customerId: { in: ids } },
+          select: { id: true },
+        });
+        if (estimates.length) {
+          await tx.estimateItem.deleteMany({
+            where: { estimateId: { in: estimates.map((e) => e.id) } },
+          });
+          await tx.estimate.deleteMany({ where: { customerId: { in: ids } } });
+        }
+
+        // Recurring invoices
+        const recurrings = await tx.recurringInvoice.findMany({
+          where: { customerId: { in: ids } },
+          select: { id: true },
+        });
+        if (recurrings.length) {
+          await tx.recurringInvoiceItem.deleteMany({
+            where: { recurringInvoiceId: { in: recurrings.map((r) => r.id) } },
+          });
+          await tx.recurringInvoice.deleteMany({ where: { customerId: { in: ids } } });
+        }
+
+        // Order templates
+        const templates = await tx.orderTemplate.findMany({
+          where: { customerId: { in: ids } },
+          select: { id: true },
+        });
+        if (templates.length) {
+          await tx.orderTemplateItem.deleteMany({
+            where: { templateId: { in: templates.map((t) => t.id) } },
+          });
+          await tx.orderTemplate.deleteMany({ where: { customerId: { in: ids } } });
+        }
+
+        // Route associations
+        await tx.routeRunStop.deleteMany({ where: { customerId: { in: ids } } });
+        await tx.routeCustomer.deleteMany({ where: { customerId: { in: ids } } });
+        await tx.routeStop.deleteMany({ where: { customerId: { in: ids } } });
+
+        // Remaining transactions
+        const remainingTxns = await tx.transaction.findMany({
+          where: { customerId: { in: ids } },
+          select: { id: true },
+        });
+        if (remainingTxns.length) {
+          const txnIds = remainingTxns.map((t) => t.id);
+          await tx.payment.deleteMany({ where: { transactionId: { in: txnIds } } });
+          await tx.transactionItem.deleteMany({ where: { transactionId: { in: txnIds } } });
+          await tx.transaction.deleteMany({ where: { customerId: { in: ids } } });
+        }
+        await tx.advancePayment.deleteMany({ where: { customerId: { in: ids } } });
+        await tx.customerPrice.deleteMany({ where: { customerId: { in: ids } } });
+        await tx.customerAddress.deleteMany({ where: { customerId: { in: ids } } });
+        await tx.contactPerson.deleteMany({ where: { customerId: { in: ids } } });
+        await tx.customerTagAssignment.deleteMany({ where: { customerId: { in: ids } } });
+        await tx.customerComment.deleteMany({ where: { customerId: { in: ids } } });
+
+        // Expenses — detach rather than delete
+        await tx.expense.updateMany({
+          where: { customerId: { in: ids } },
+          data: { customerId: null },
+        });
+
+        // CustomerLink records (FK constraint — must delete before customer rows)
+        await tx.customerLink.deleteMany({ where: { customerId: { in: ids } } });
+
+        // Finally delete customer + user rows
+        await tx.customer.deleteMany({ where: { id: { in: ids } } });
+        await tx.user.deleteMany({ where: { id: { in: uids } } });
+      },
+      { timeout: 120_000 },
+    );
+
+    return { deleted: toDelete.length, preserved };
+  }
+
   // ─── Buyer Portal Management ──────────────────────────────────────────────────
   // Direct Prisma queries — no BuyerModule dependency to avoid circular imports
 

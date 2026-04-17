@@ -8,7 +8,7 @@ import { PageHeader, Table, Badge, Button, Select, Modal, cn, type BadgeStatus }
 import { useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { CustomerFormModal } from "./_components/CustomerFormModal";
-import { useCustomers, useUpdateCustomerStatus, useDeleteCustomer, useCustomerTags, useExportCustomers, useMergeCustomers, usePendingPortalApprovals, useApprovePortalFromList } from "@/lib/api/customers";
+import { useCustomers, useUpdateCustomerStatus, useDeleteCustomer, useCustomerTags, useExportCustomers, useMergeCustomers, usePendingPortalApprovals, useApprovePortalFromList, useCleanupPreview, useDeleteImportedCustomers } from "@/lib/api/customers";
 import { apiClient } from "@/lib/api-client";
 import { useCustomerRouteAssignments } from "@/lib/api/routes";
 import { useDebounce } from "@/lib/hooks/useDebounce";
@@ -222,6 +222,11 @@ export default function CustomersPage() {
 
   const updateStatus = useUpdateCustomerStatus();
   const deleteCustomer = useDeleteCustomer();
+
+  // ── Cleanup imported customers ────────────────────────────────────────────
+  const [cleanupOpen, setCleanupOpen] = React.useState(false);
+  const { refetch: fetchPreview, data: preview, isFetching: previewLoading } = useCleanupPreview();
+  const deleteImported = useDeleteImportedCustomers();
 
   // ── Pending portal approvals ──────────────────────────────────────────────
   const { data: pendingApprovals = [] } = usePendingPortalApprovals();
@@ -475,6 +480,14 @@ export default function CustomersPage() {
               onClick={() => setIsImportOpen(true)}
             >
               Import
+            </Button>
+            <Button
+              variant="secondary"
+              leftIcon={<Trash2 className="h-4 w-4 text-red-500" />}
+              className="border-red-200 text-red-600 hover:bg-red-50"
+              onClick={() => { setCleanupOpen(true); fetchPreview(); }}
+            >
+              Clean Up
             </Button>
             <Button
               variant="secondary"
@@ -823,6 +836,63 @@ export default function CustomersPage() {
         mode="edit"
         initialData={editingCustomer ?? undefined}
       />
+
+      {/* Clean Up Imported Customers modal */}
+      <Modal
+        open={cleanupOpen}
+        onClose={() => setCleanupOpen(false)}
+        title="Delete Imported Customers"
+        description="This permanently deletes all customers who have not connected a buyer account. This cannot be undone."
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setCleanupOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              disabled={previewLoading || deleteImported.isPending || !preview || preview.toDelete === 0}
+              loading={deleteImported.isPending}
+              onClick={() =>
+                deleteImported.mutate(undefined, {
+                  onSuccess: () => {
+                    setCleanupOpen(false);
+                    toast({ title: `Deleted ${preview?.toDelete ?? 0} imported customers`, variant: "success" });
+                  },
+                })
+              }
+            >
+              Delete {preview?.toDelete ?? "…"} Customers
+            </Button>
+          </>
+        }
+      >
+        {previewLoading ? (
+          <p className="py-6 text-center text-sm text-navy/60">Calculating…</p>
+        ) : preview ? (
+          <div className="space-y-3 pt-2">
+            {preview.toDelete > 0 ? (
+              <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                <strong>{preview.toDelete}</strong> customer{preview.toDelete !== 1 ? "s" : ""} will
+                be permanently deleted along with all their orders, invoices, and history.
+              </div>
+            ) : (
+              <p className="text-sm text-navy/60">Nothing to delete — all customers are active buyers.</p>
+            )}
+            {preview.toKeep > 0 && (
+              <div className="rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-700">
+                <p className="font-medium">
+                  {preview.toKeep} active buyer{preview.toKeep !== 1 ? "s" : ""} will be kept:
+                </p>
+                <ul className="mt-1 list-inside list-disc">
+                  {preview.buyers.map((b) => (
+                    <li key={b.id}>{b.businessName}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        ) : null}
+      </Modal>
     </div>
   );
 }

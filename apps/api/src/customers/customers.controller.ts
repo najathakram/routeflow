@@ -125,6 +125,19 @@ export class CustomersController {
     return this.customersService.deleteAllCustomers();
   }
 
+  @Get("cleanup-preview")
+  @Roles(UserRole.OPERATOR)
+  cleanupPreview() {
+    return this.customersService.previewImportedCleanup();
+  }
+
+  @Delete("cleanup-imported")
+  @Roles(UserRole.OPERATOR)
+  @HttpCode(200)
+  cleanupImported() {
+    return this.customersService.deleteImportedCustomers();
+  }
+
   // ─── :id param routes ─────────────────────────────────────────────────────
 
   @Get(":id")
