@@ -278,6 +278,15 @@ export function useDeleteCustomer() {
   });
 }
 
+export function useBatchDeleteCustomers() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: string[]) =>
+      apiClient.post("/customers/batch-delete", { ids }).then((r) => r.data as { deleted: number; failed: { id: string; reason: string }[] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["customers"] }); },
+  });
+}
+
 export function useDeleteAllCustomers() {
   const qc = useQueryClient();
   return useMutation({

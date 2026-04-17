@@ -8,7 +8,7 @@ import { PageHeader, Table, Badge, Button, Select, Modal, cn, type BadgeStatus }
 import { useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { CustomerFormModal } from "./_components/CustomerFormModal";
-import { useCustomers, useUpdateCustomerStatus, useDeleteCustomer, useCustomerTags, useExportCustomers, useMergeCustomers, usePendingPortalApprovals, useApprovePortalFromList } from "@/lib/api/customers";
+import { useCustomers, useUpdateCustomerStatus, useDeleteCustomer, useBatchDeleteCustomers, useCustomerTags, useExportCustomers, useMergeCustomers, usePendingPortalApprovals, useApprovePortalFromList } from "@/lib/api/customers";
 import { apiClient } from "@/lib/api-client";
 import { useCustomerRouteAssignments } from "@/lib/api/routes";
 import { useDebounce } from "@/lib/hooks/useDebounce";
@@ -222,6 +222,7 @@ export default function CustomersPage() {
 
   const updateStatus = useUpdateCustomerStatus();
   const deleteCustomer = useDeleteCustomer();
+  const batchDelete = useBatchDeleteCustomers();
 
   // ── Pending portal approvals ──────────────────────────────────────────────
   const { data: pendingApprovals = [] } = usePendingPortalApprovals();
@@ -243,11 +244,15 @@ export default function CustomersPage() {
     if (isDeleting || selected.size === 0) return;
     setIsDeleting(true);
     try {
-      await Promise.all(Array.from(selected).map((id) => deleteCustomer.mutateAsync(id)));
-      toast({ title: `${selected.size} customer${selected.size !== 1 ? "s" : ""} deleted`, variant: "success" });
+      const res = await batchDelete.mutateAsync(Array.from(selected));
+      if (res.failed.length === 0) {
+        toast({ title: `${res.deleted} customer${res.deleted !== 1 ? "s" : ""} deleted`, variant: "success" });
+      } else {
+        toast({ title: `Deleted ${res.deleted}, failed ${res.failed.length}`, variant: res.deleted > 0 ? "success" : "error" });
+      }
       exitSelectMode();
     } catch {
-      toast({ title: "Failed to delete some customers", variant: "error" });
+      toast({ title: "Failed to delete customers", variant: "error" });
     } finally {
       setIsDeleting(false);
     }
@@ -346,7 +351,12 @@ export default function CustomersPage() {
         header: "Email",
         enableSorting: false,
         cell: ({ row }) => (
-          <span className="text-navy/70 text-xs">{row.original.email ?? row.original.user?.email ?? "—"}</span>
+          <span className="text-navy/70 text-xs">
+            {row.original.email ??
+              (row.original.user?.email && !row.original.user.email.endsWith("@imported.local")
+                ? row.original.user.email
+                : "—")}
+          </span>
         ),
       },
       {

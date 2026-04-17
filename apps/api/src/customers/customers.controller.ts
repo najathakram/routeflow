@@ -125,6 +125,13 @@ export class CustomersController {
     return this.customersService.deleteAllCustomers();
   }
 
+  @Post("batch-delete")
+  @Roles(UserRole.OPERATOR)
+  @HttpCode(200)
+  batchDelete(@Body() body: { ids: string[] }) {
+    return this.customersService.batchDelete(body?.ids ?? []);
+  }
+
   @Get("cleanup-preview")
   @Roles(UserRole.OPERATOR)
   cleanupPreview() {

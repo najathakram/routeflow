@@ -1331,6 +1331,20 @@ export class CustomersService {
     return { success: true };
   }
 
+  async batchDelete(ids: string[]): Promise<{ deleted: number; failed: { id: string; reason: string }[] }> {
+    const failed: { id: string; reason: string }[] = [];
+    let deleted = 0;
+    for (const id of ids) {
+      try {
+        await this.deleteCustomer(id);
+        deleted++;
+      } catch (e: any) {
+        failed.push({ id, reason: e?.message ?? "unknown" });
+      }
+    }
+    return { deleted, failed };
+  }
+
   async deleteAllCustomers(): Promise<{ deleted: number }> {
     const customers = await this.prisma
       .forTenant()

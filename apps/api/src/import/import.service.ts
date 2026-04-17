@@ -247,18 +247,29 @@ export class ImportService {
           shippingCity !== billingCity ||
           shippingZip !== billingZip);
 
-      // Check if this customer was already imported (by Zoho ID)
-      if (zohoContactId) {
-        const existing = await this.prisma.forTenant().customer.findFirst({
-          where: { zohoContactId },
+      // Find existing customer: prefer Zoho ID match, then fall back to
+      // case-insensitive businessName match for customers imported before
+      // zohoContactId tracking was wired up.
+      let existing = zohoContactId
+        ? await this.prisma.forTenant().customer.findFirst({
+            where: { zohoContactId },
+            include: { addresses: true, contactPersons: true },
+          })
+        : null;
+      if (!existing) {
+        existing = await this.prisma.forTenant().customer.findFirst({
+          where: { businessName: { equals: name, mode: "insensitive" } },
           include: { addresses: true, contactPersons: true },
         });
-        if (existing) {
+      }
+
+      if (existing) {
           // Update the existing customer with any missing/new fields
           try {
             await this.prisma.forTenant().customer.update({
               where: { id: existing.id },
               data: {
+                ...(zohoContactId && !existing.zohoContactId && { zohoContactId }),
                 ...(displayName !== null && { displayName }),
                 ...(salutation !== null && { salutation }),
                 ...(firstName !== null && { firstName }),
@@ -329,12 +340,11 @@ export class ImportService {
               });
             }
 
-            updated++;
-          } catch (e: any) {
-            errors.push(`${name} (update): ${e.message}`);
-          }
-          continue;
+          updated++;
+        } catch (e: any) {
+          errors.push(`${name} (update): ${e.message}`);
         }
+        continue;
       }
 
       // Generate a unique username from business name
