@@ -1071,10 +1071,10 @@ export class OrdersService {
     });
     if (!order) throw new NotFoundException("Order not found");
 
-    const deletableStatuses: OrderStatus[] = [OrderStatus.PENDING, OrderStatus.CANCELLED];
+    const deletableStatuses: OrderStatus[] = [OrderStatus.DRAFT, OrderStatus.PENDING, OrderStatus.CANCELLED];
     if (!deletableStatuses.includes(order.status)) {
       throw new BadRequestException(
-        `Only PENDING or CANCELLED orders can be deleted. This order is ${order.status}.`,
+        `Only DRAFT, PENDING, or CANCELLED orders can be deleted. This order is ${order.status}.`,
       );
     }
 
