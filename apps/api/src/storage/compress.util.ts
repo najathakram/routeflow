@@ -1,4 +1,5 @@
-import * as sharp from "sharp";
+// eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
+const sharp: (buf: Buffer) => any = require("sharp");
 
 export interface CompressResult {
   buffer: Buffer;
@@ -17,10 +18,10 @@ export async function compressDocument(buffer: Buffer, mimeType: string): Promis
     return { buffer, mimeType: "application/pdf", ext: "pdf" };
   }
   if (mimeType.startsWith("image/")) {
-    const out = await (sharp as any)(buffer)
+    const out = (await sharp(buffer)
       .resize({ width: 1600, withoutEnlargement: true })
       .jpeg({ quality: 80 })
-      .toBuffer();
+      .toBuffer()) as Buffer;
     return { buffer: out, mimeType: "image/jpeg", ext: "jpg" };
   }
   throw new Error(`Unsupported mime type: ${mimeType}`);
