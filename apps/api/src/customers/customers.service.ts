@@ -1211,11 +1211,6 @@ export class CustomersService {
       include: { user: { select: { status: true } } },
     });
     if (!customer) throw new NotFoundException("Customer not found");
-    if (customer.user?.status !== "SUSPENDED") {
-      throw new BadRequestException(
-        "Customer must be suspended before they can be deleted. Suspend the customer first.",
-      );
-    }
 
     // Delete all dependent records in correct order before removing the customer
     await this.prisma.tenantTransaction(async (tx) => {
