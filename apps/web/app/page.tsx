@@ -10,6 +10,7 @@ import {
   Route,
 } from "lucide-react";
 import { ProductVideo } from "./(marketing)/product-video";
+import { InstallAppButton } from "@/components/InstallAppButton";
 
 // ─── Feature Card ────────────────────────────────────────────────────────────
 
@@ -120,6 +121,27 @@ export default function SellerLandingPage() {
             >
               I&apos;m a Buyer
             </Link>
+          </div>
+
+          <div className="mt-6">
+            <InstallAppButton
+              variant="tenant"
+              className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/5 px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-white/10"
+            >
+              <svg
+                className="h-4 w-4"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <rect x="5" y="2" width="14" height="20" rx="2" ry="2" />
+                <line x1="12" y1="18" x2="12" y2="18" />
+              </svg>
+              Get the mobile app
+            </InstallAppButton>
           </div>
 
           <div className="mt-12 flex items-center justify-center gap-8 text-blue-300/70 text-sm">

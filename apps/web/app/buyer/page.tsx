@@ -9,6 +9,7 @@ import {
   Zap,
   Shield,
 } from "lucide-react";
+import { InstallAppButton } from "@/components/InstallAppButton";
 
 // ─── Feature Card ────────────────────────────────────────────────────────────
 
@@ -118,6 +119,27 @@ export default function BuyerLandingPage() {
             >
               Sign In
             </Link>
+          </div>
+
+          <div className="mt-6">
+            <InstallAppButton
+              variant="buyer"
+              className="inline-flex items-center gap-2 rounded-full border border-buyer-400/30 bg-buyer-800/30 px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-buyer-700/50"
+            >
+              <svg
+                className="h-4 w-4"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <rect x="5" y="2" width="14" height="20" rx="2" ry="2" />
+                <line x1="12" y1="18" x2="12" y2="18" />
+              </svg>
+              Get the mobile app
+            </InstallAppButton>
           </div>
 
           <div className="mt-12 flex items-center justify-center gap-8 text-buyer-300/80 text-sm">
