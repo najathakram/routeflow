@@ -38,11 +38,7 @@ export class ProductsService {
     } else if (query.stockStatus === StockStatusFilter.LOW) {
       where.isActive = true;
       // Include null (never set) and > 0 but <= threshold — null stock = unknown, needs attention
-      where.OR = [
-        ...(where.OR ?? []),
-        { currentStock: null },
-        { currentStock: { gt: 0, lte: 5 } },
-      ];
+      where.OR = [...(where.OR ?? []), { currentStock: null }, { currentStock: { gt: 0, lte: 5 } }];
     } else if (query.stockStatus === StockStatusFilter.IN_STOCK) {
       where.isActive = true;
       where.currentStock = { gt: 5 };
