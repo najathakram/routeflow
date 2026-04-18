@@ -85,7 +85,7 @@ export default function SellerLandingPage() {
       </nav>
 
       {/* Hero */}
-      <section className="relative overflow-hidden bg-gradient-to-br from-[#0f1b2d] via-[#152238] to-[#1a2d4a] py-24 lg:py-32">
+      <section className="relative overflow-hidden bg-gradient-to-br from-[#0f1b2d] via-[#152238] to-[#1a2d4a] min-h-screen flex flex-col justify-center py-16">
         {/* Decorative elements */}
         <div className="absolute -top-32 -right-32 h-[500px] w-[500px] rounded-full bg-brand-600/15 blur-3xl" />
         <div className="absolute -bottom-24 -left-24 h-[400px] w-[400px] rounded-full bg-brand-500/10 blur-3xl" />
