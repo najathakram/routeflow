@@ -622,6 +622,7 @@ model Product {
   parent                  Product?  @relation("ProductVariants", fields: [parentProductId], references: [id])
   variants                Product[] @relation("ProductVariants")
 
+  @@unique([tenantId, name])
   @@unique([tenantId, sku])
   @@unique([tenantId, barcode])
   @@index([category])

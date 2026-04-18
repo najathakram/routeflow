@@ -1,4 +1,9 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { CreateProductDto } from "./dto/create-product.dto";
@@ -144,6 +149,11 @@ export class ProductsService {
   }
 
   async create(dto: CreateProductDto) {
+    const nameTaken = await this.prisma.forTenant().product.findFirst({
+      where: { name: { equals: dto.name, mode: "insensitive" } },
+      select: { id: true },
+    });
+    if (nameTaken) throw new ConflictException(`A product named "${dto.name}" already exists`);
     if (dto.sku) {
       const existing = await this.prisma.forTenant().product.findFirst({ where: { sku: dto.sku } });
       if (existing) throw new BadRequestException("SKU already exists");
@@ -186,6 +196,13 @@ export class ProductsService {
 
   async update(id: string, dto: UpdateProductDto) {
     await this.findOne(id);
+    if (dto.name) {
+      const nameTaken = await this.prisma.forTenant().product.findFirst({
+        where: { name: { equals: dto.name, mode: "insensitive" }, id: { not: id } },
+        select: { id: true },
+      });
+      if (nameTaken) throw new ConflictException(`A product named "${dto.name}" already exists`);
+    }
     if (dto.sku) {
       const existing = await this.prisma.forTenant().product.findFirst({
         where: { sku: dto.sku, id: { not: id } },
@@ -261,6 +278,16 @@ export class ProductsService {
       const rowNum = i + 1;
 
       try {
+        // Check for duplicate name
+        const nameTaken = await this.prisma.forTenant().product.findFirst({
+          where: { name: { equals: item.name, mode: "insensitive" } },
+          select: { id: true },
+        });
+        if (nameTaken) {
+          skipped++;
+          continue;
+        }
+
         // Check for duplicate SKU
         if (item.sku) {
           const existing = await this.prisma

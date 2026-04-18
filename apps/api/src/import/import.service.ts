@@ -1296,6 +1296,16 @@ export class ImportService {
       const sku = row["SKU"] || null;
 
       try {
+        // Skip if a product with this name already exists (case-insensitive)
+        const existing = await this.prisma.forTenant().product.findFirst({
+          where: { name: { equals: name, mode: "insensitive" } },
+          select: { id: true },
+        });
+        if (existing) {
+          skipped++;
+          continue;
+        }
+
         await this.prisma.forTenant().product.create({
           data: {
             name,
