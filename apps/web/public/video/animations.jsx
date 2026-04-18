@@ -328,6 +328,7 @@ function Stage({
   fps = 60,
   loop = true,
   autoplay = true,
+  hideControls = false,
   persistKey = 'animstage',
   children,
 }) {
@@ -426,12 +427,26 @@ function Stage({
     [displayTime, duration, playing]
   );
 
-  // Expose play/pause to parent window via postMessage
+  // Expose play/pause/seekTo to parent window via postMessage
   React.useEffect(() => {
     window.__rfStagePlay  = () => setPlaying(true);
     window.__rfStagePause = () => setPlaying(false);
-    return () => { delete window.__rfStagePlay; delete window.__rfStagePause; };
-  }, []);
+    const onMessage = (e) => {
+      if (!e.data) return;
+      if (e.data === 'play') { setPlaying(true); return; }
+      if (e.data === 'pause') { setPlaying(false); return; }
+      if (e.data.type === 'seekTo' && typeof e.data.time === 'number') {
+        setTime(clamp(e.data.time, 0, duration));
+        setPlaying(false);
+      }
+    };
+    window.addEventListener('message', onMessage);
+    return () => {
+      delete window.__rfStagePlay;
+      delete window.__rfStagePause;
+      window.removeEventListener('message', onMessage);
+    };
+  }, [duration]);
 
   return (
     <div
@@ -471,17 +486,19 @@ function Stage({
         </div>
       </div>
 
-      {/* Playback bar — stacked below canvas, never overlapping */}
-      <PlaybackBar
-        time={displayTime}
-        actualTime={time}
-        duration={duration}
-        playing={playing}
-        onPlayPause={() => setPlaying(p => !p)}
-        onReset={() => { setTime(0); }}
-        onSeek={(t) => setTime(t)}
-        onHover={(t) => setHoverTime(t)}
-      />
+      {/* Playback bar — hidden in scroll-driven mode */}
+      {!hideControls && (
+        <PlaybackBar
+          time={displayTime}
+          actualTime={time}
+          duration={duration}
+          playing={playing}
+          onPlayPause={() => setPlaying(p => !p)}
+          onReset={() => { setTime(0); }}
+          onSeek={(t) => setTime(t)}
+          onHover={(t) => setHoverTime(t)}
+        />
+      )}
     </div>
   );
 }

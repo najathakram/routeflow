@@ -8,7 +8,6 @@ import {
   Users,
   Zap,
   Route,
-  Play,
 } from "lucide-react";
 import { ProductVideo } from "./(marketing)/product-video";
 
@@ -140,30 +139,8 @@ export default function SellerLandingPage() {
         </div>
       </section>
 
-      {/* Product Tour Video */}
-      <section className="py-20 bg-white">
-        <div className="mx-auto max-w-6xl px-6">
-          <div className="text-center mb-10">
-            <div className="inline-flex items-center gap-2 rounded-full bg-brand-50 px-4 py-1.5 text-sm font-medium text-brand-700 mb-4">
-              <Play className="h-3.5 w-3.5" />
-              Product tour
-            </div>
-            <h2 className="text-3xl font-bold text-navy">
-              See the whole picture in 60 seconds
-            </h2>
-            <p className="mt-3 text-navy/60 max-w-xl mx-auto">
-              From a morning&apos;s worth of paperwork to a day&apos;s worth of deliveries.
-              Watch how RouteFlow fits together.
-            </p>
-          </div>
-
-          <ProductVideo />
-
-          <p className="mt-4 text-center text-xs text-navy/40">
-            Use Space to play/pause, arrow keys to scrub
-          </p>
-        </div>
-      </section>
+      {/* Scroll-driven product tour — full screen, sticky */}
+      <ProductVideo />
 
       {/* Features */}
       <section className="py-20 bg-surface-raised">

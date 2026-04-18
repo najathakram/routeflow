@@ -23,22 +23,10 @@
 <script type="text/babel" src="scenes.jsx"></script>
 
 <script type="text/babel">
-/*
-  Timeline (seconds):
-  0.0  – 5.5   Chaos hook
-  5.5  – 11.0  Logo reveal
-  11.0 – 17.0  Pitch — built for wholesalers & jobbers
-  17.0 – 25.0  Operator dashboard
-  25.0 – 31.0  Route optimization
-  31.0 – 39.0  Driver app
-  39.0 – 47.0  Customer portal
-  47.0 – 54.0  Features grid
-  54.0 – 60.0  Value metrics
-  60.0 – 66.0  CTA
-*/
+const _params = new URLSearchParams(window.location.search);
+const _scrollMode = _params.get('scroll') === '1';
 
 function VideoRoot() {
-  const { time } = useTimeline();
   return (
     <div style={{ position: 'absolute', inset: 0 }}>
       <Sprite start={0}    end={5.5}>  <SceneChaos />    </Sprite>
@@ -56,20 +44,18 @@ function VideoRoot() {
 }
 
 const App = () => (
-  <Stage width={1920} height={1080} duration={66} background="#F8FAFC" persistKey="routeflow-marketing" autoplay={false}>
+  <Stage
+    width={1920} height={1080} duration={66} background="#F8FAFC"
+    persistKey="routeflow-marketing"
+    autoplay={!_scrollMode}
+    hideControls={_scrollMode}
+    loop={!_scrollMode}
+  >
     <VideoRoot />
   </Stage>
 );
 
 ReactDOM.createRoot(document.getElementById('root')).render(<App />);
-
-window.addEventListener('message', (e) => {
-  if (e.data === 'play') {
-    window.__rfStagePlay && window.__rfStagePlay();
-  } else if (e.data === 'pause') {
-    window.__rfStagePause && window.__rfStagePause();
-  }
-});
 </script>
 </body>
 </html>
