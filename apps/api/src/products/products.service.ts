@@ -42,8 +42,8 @@ export class ProductsService {
       where.OR = [...(where.OR ?? []), { isActive: false }, { currentStock: { lte: 0 } }];
     } else if (query.stockStatus === StockStatusFilter.LOW) {
       where.isActive = true;
-      // Include null (never set) and <= threshold (includes 0/out-of-stock) — all need attention
-      where.OR = [...(where.OR ?? []), { currentStock: null }, { currentStock: { lte: 5 } }];
+      // lte:5 covers 0, negatives, and low stock; null check invalid for Decimal in Prisma 7.7
+      where.currentStock = { lte: 5 };
     } else if (query.stockStatus === StockStatusFilter.IN_STOCK) {
       where.isActive = true;
       where.currentStock = { gt: 5 };

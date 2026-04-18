@@ -251,13 +251,21 @@ export default function SellerLandingPage() {
             Start a free 14-day trial today. No credit card, no setup fees.
             Bring your data and you can be live in a day.
           </p>
-          <Link
-            href="/signup"
-            className="inline-flex items-center gap-2 rounded-xl bg-white px-8 py-3.5 text-base font-semibold text-navy shadow-lg transition-all hover:shadow-xl hover:bg-brand-50"
-          >
-            <Users className="h-5 w-5" />
-            Start Your Free Trial
-          </Link>
+          <div className="flex flex-col items-center gap-4 sm:flex-row sm:justify-center">
+            <Link
+              href="/signup"
+              className="inline-flex items-center gap-2 rounded-xl bg-white px-8 py-3.5 text-base font-semibold text-navy shadow-lg transition-all hover:shadow-xl hover:bg-brand-50"
+            >
+              <Users className="h-5 w-5" />
+              Start Free Trial
+            </Link>
+            <Link
+              href="/contact"
+              className="inline-flex items-center gap-2 rounded-xl border border-white/20 bg-white/5 px-8 py-3.5 text-base font-medium text-white transition-colors hover:bg-white/10"
+            >
+              Book a Demo
+            </Link>
+          </div>
         </div>
       </section>
 
