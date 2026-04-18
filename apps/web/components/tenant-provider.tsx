@@ -31,7 +31,16 @@ function getTenantSlugFromCookie(): string | null {
   return match ? decodeURIComponent(match[1]) : (process.env.NEXT_PUBLIC_DEFAULT_TENANT ?? null);
 }
 
-const DEFAULT_PRIMARY = "#3B82F6"; // Tailwind blue-500
+const DEFAULT_PRIMARY = "#2563eb"; // brand-600
+
+/** Convert a #rrggbb hex string to "r, g, b" for CSS rgba() */
+function hexToRgb(hex: string): string {
+  const clean = hex.replace("#", "");
+  const r = parseInt(clean.slice(0, 2), 16);
+  const g = parseInt(clean.slice(2, 4), 16);
+  const b = parseInt(clean.slice(4, 6), 16);
+  return isNaN(r) ? "37, 99, 235" : `${r}, ${g}, ${b}`;
+}
 
 /**
  * Fetches the tenant's branding from the public API and injects it as CSS
@@ -64,6 +73,8 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
         const primary = data.primaryColor ?? DEFAULT_PRIMARY;
         root.style.setProperty("--primary", primary);
         root.style.setProperty("--primary-foreground", "#ffffff");
+        // RGB breakdown for rgba() tinting e.g. rgba(var(--primary-rgb), 0.1)
+        root.style.setProperty("--primary-rgb", hexToRgb(primary));
 
         // Store business name for page title composition — don't overwrite
         // here because individual pages set their own title via usePageTitle.

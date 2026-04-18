@@ -55,7 +55,7 @@ export default function DriverLayout() {
       <OfflineBanner />
       <Tabs
         screenOptions={{
-          tabBarActiveTintColor: "#2563EB",
+          tabBarActiveTintColor: colors.brand[600],
           tabBarInactiveTintColor: "#94a3b8",
           tabBarStyle: {
             borderTopColor: colors.surface.border,

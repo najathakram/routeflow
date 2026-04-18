@@ -152,7 +152,7 @@ export default function LoginPage() {
             />
           ) : (
             <img
-              src="/logo-seller.png"
+              src="/logo.svg"
               alt={businessName}
               className="h-12 w-12 object-contain"
             />

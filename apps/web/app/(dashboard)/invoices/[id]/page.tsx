@@ -49,6 +49,8 @@ import {
 } from "@/lib/api/invoices";
 import { useRouter } from "next/navigation";
 import { fmt, fmtDate } from "@/lib/formatting";
+import { TenantLogo } from "@/components/TenantLogo";
+import { useTenant } from "@/components/tenant-provider";
 
 function methodLabel(method: string) {
   switch (method) {
@@ -1207,10 +1209,8 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
             <div className="mb-6 flex items-start justify-between gap-4">
               <div>
                 <div className="flex items-center gap-2">
-                  <img src="/logo-seller.png" alt="RouteFlow" className="h-8 w-8 object-contain" />
-                  <span className="text-lg font-bold text-navy">RouteFlow</span>
+                  <TenantLogo className="h-8 w-8" showName nameClassName="text-lg font-bold text-navy" />
                 </div>
-                <p className="mt-1 text-xs text-navy/50">Austin, TX · routeflow.io</p>
               </div>
               <div className="text-right">
                 <p className="text-xl font-bold uppercase tracking-wide text-navy">Invoice</p>

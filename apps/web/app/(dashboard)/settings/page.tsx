@@ -58,6 +58,7 @@ import { apiClient } from "@/lib/api-client";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
 import { useImportProducts, type ZohoImportItem } from "@/lib/api/products";
 import { useInvoiceSettings, useUpdateInvoiceSettings } from "@/lib/api/invoices";
+import { useTenant } from "@/components/tenant-provider";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -102,6 +103,7 @@ type ProfileFormValues = z.infer<typeof profileSchema>;
 function BusinessProfileTab() {
   const { toast } = useToast();
   const qc = useQueryClient();
+  const { branding } = useTenant();
   const [logoPreview, setLogoPreview] = React.useState<string | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
@@ -223,12 +225,14 @@ function BusinessProfileTab() {
 
       <Card title="Logo">
         <div className="flex items-center gap-5">
-          {/* Preview */}
+          {/* Preview — local upload takes priority; otherwise show saved tenant logo */}
           <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-surface-border bg-surface-raised">
             {logoPreview ? (
               <img src={logoPreview} alt="Logo preview" className="h-full w-full object-cover" />
+            ) : branding?.logoUrl ? (
+              <img src={branding.logoUrl} alt={branding.businessName} className="h-full w-full object-contain p-2" />
             ) : (
-              <img src="/logo-seller.png" alt="RouteFlow" className="h-10 w-10 object-contain" />
+              <img src="/logo.svg" alt="RouteFlow" className="h-10 w-10 object-contain" />
             )}
           </div>
           <div className="space-y-2">

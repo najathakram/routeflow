@@ -7,11 +7,22 @@ const preset: Omit<Config, "content"> = {
     extend: {
       colors: {
         brand: {
-          50: "#eff6ff",
+          50:  "#eff6ff",
           100: "#dbeafe",
+          200: "#bfdbfe",
+          300: "#93c5fd",
+          400: "#60a5fa",
           500: "#3b82f6",
+          600: "#2563eb",
           700: "#1d4ed8",
+          800: "#1e40af",
           900: "#1e3a8a",
+        },
+        // Dark-navy canvas colours used in hero / CTA sections
+        canvas: {
+          DEFAULT: "#0f1b2d",
+          mid:     "#152238",
+          light:   "#1a2d4a",
         },
         buyer: {
           50: "#ecfdf5",
@@ -49,6 +60,16 @@ const preset: Omit<Config, "content"> = {
       },
       fontFamily: {
         sans: ["var(--font-inter)", "Inter", "system-ui", "sans-serif"],
+      },
+      // Semantic 6-step type scale — mirrors packages/ui/src/typography.ts for mobile
+      fontSize: {
+        "display":    ["2rem",    { lineHeight: "2.5rem",  letterSpacing: "-0.03em", fontWeight: "700" }],
+        "heading-1":  ["1.5rem",  { lineHeight: "2rem",    letterSpacing: "-0.02em", fontWeight: "600" }],
+        "heading-2":  ["1.25rem", { lineHeight: "1.75rem", letterSpacing: "-0.01em", fontWeight: "600" }],
+        "body":       ["1rem",    { lineHeight: "1.5rem",  letterSpacing: "0" }],
+        "body-sm":    ["0.875rem",{ lineHeight: "1.25rem", letterSpacing: "0" }],
+        "label":      ["0.875rem",{ lineHeight: "1.25rem", letterSpacing: "0.005em", fontWeight: "500" }],
+        "caption":    ["0.75rem", { lineHeight: "1rem",    letterSpacing: "0.01em" }],
       },
       borderRadius: {
         sm: "4px",

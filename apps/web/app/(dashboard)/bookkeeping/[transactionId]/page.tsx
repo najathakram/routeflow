@@ -240,7 +240,7 @@ export default function TransactionDetailPage({ params }: { params: { transactio
             <div className="mb-6 flex items-start justify-between gap-4">
               <div>
                 <div className="flex items-center gap-2">
-                  <img src="/logo-seller.png" alt="RouteFlow" className="h-8 w-8 object-contain" />
+                  <img src="/logo.svg" alt="RouteFlow" className="h-8 w-8 object-contain" />
                   <span className="text-lg font-bold text-navy">RouteFlow</span>
                 </div>
                 <p className="mt-1 text-xs text-navy/50">Austin, TX · routeflow.io</p>

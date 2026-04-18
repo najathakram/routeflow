@@ -219,7 +219,7 @@ function SignupInner() {
 
         {/* Brand */}
         <div className="mb-8 flex flex-col items-center gap-3">
-          <img src="/logo-seller.png" alt="RouteFlow" className="h-12 w-12 object-contain" />
+          <img src="/logo.svg" alt="RouteFlow" className="h-12 w-12 object-contain" />
           <h1 className="text-2xl font-bold text-navy">Start Your Free Trial</h1>
           <div className="flex items-center gap-2">
             <span className="rounded-full bg-brand-50 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-brand-600">

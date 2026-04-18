@@ -17,6 +17,8 @@ import {
   DollarSign,
   FileMinus,
   Plus,
+  AlertCircle,
+  ExternalLink,
 } from "lucide-react";
 import { StatCard, Badge, Table, Button, Card, cn } from "@routeflow/ui/web";
 import { useQuery } from "@tanstack/react-query";
@@ -28,7 +30,7 @@ import { useRouteRuns, type RouteRun } from "@/lib/api/routes";
 import { useDrivers, type Driver } from "@/lib/api/drivers";
 import { useProducts } from "@/lib/api/products";
 import { useFinanceDashboard } from "@/lib/api/finance";
-import { useInvoices } from "@/lib/api/invoices";
+import { useInvoices, type Invoice } from "@/lib/api/invoices";
 
 // ─── Column definitions (stable refs, defined outside component) ───────────────
 
@@ -145,6 +147,24 @@ function timeAgo(dateStr: string): string {
   return m > 0 ? `${h}h ${m}m ago` : `${h}h ago`;
 }
 
+function daysOverdue(dueDateStr?: string): number {
+  if (!dueDateStr) return 0;
+  const diff = Date.now() - new Date(dueDateStr).getTime();
+  return Math.max(0, Math.floor(diff / 86_400_000));
+}
+
+function fmt(n: number): string {
+  return n.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+}
+
+function fmtMoney(n: number | null | undefined): string {
+  const v = Number(n ?? 0);
+  if (!Number.isFinite(v)) return "$0";
+  if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`;
+  if (v >= 1_000) return `$${(v / 1_000).toFixed(1)}k`;
+  return `$${v.toFixed(0)}`;
+}
+
 function StatSkeleton() {
   return (
     <div className="animate-pulse rounded-xl border border-surface-border bg-white p-5">
@@ -159,6 +179,235 @@ function ErrorBanner({ message = "Failed to load data" }: { message?: string }) 
     <div className="flex items-center gap-2 rounded-lg border border-danger/30 bg-danger-bg px-4 py-3">
       <AlertTriangle className="h-4 w-4 shrink-0 text-danger" />
       <p className="text-sm text-danger">{message}</p>
+    </div>
+  );
+}
+
+// ─── AR Aging Widget ──────────────────────────────────────────────────────────
+
+interface AgingData {
+  total: number;
+  current: number;
+  days1_15: number;
+  days16_30: number;
+  days31_45: number;
+  days45plus: number;
+}
+
+function ArAgingWidget({ aging }: { aging: AgingData }) {
+  const num = (v: unknown) => {
+    const n = Number(v ?? 0);
+    return Number.isFinite(n) ? n : 0;
+  };
+  const totalValue = num(aging.total);
+  const total = totalValue || 1;
+  const buckets = [
+    { label: "Current",  value: num(aging.current),   color: "bg-success",   textColor: "text-success" },
+    { label: "1–15d",    value: num(aging.days1_15),   color: "bg-warning",   textColor: "text-warning" },
+    { label: "16–30d",   value: num(aging.days16_30),  color: "bg-orange-400",textColor: "text-orange-500" },
+    { label: "31–45d",   value: num(aging.days31_45),  color: "bg-danger",    textColor: "text-danger" },
+    { label: "45d+",     value: num(aging.days45plus), color: "bg-danger/80", textColor: "text-danger" },
+  ].filter((b) => b.value > 0);
+
+  return (
+    <div className="overflow-hidden rounded-lg border border-surface-border bg-white">
+      <div className="flex items-center justify-between border-b border-surface-border px-4 py-2.5">
+        <div className="flex items-center gap-2">
+          <DollarSign className="h-4 w-4 text-navy/40" />
+          <span className="text-xs font-semibold uppercase tracking-wider text-navy/50">AR Aging</span>
+        </div>
+        <Link href="/finance/reports/ar-aging" className="flex items-center gap-1 text-xs text-brand-500 hover:underline">
+          Full report <ArrowRight className="h-3 w-3" />
+        </Link>
+      </div>
+
+      <div className="p-4 space-y-3">
+        {/* Total */}
+        <div className="flex items-baseline justify-between">
+          <span className="text-2xl font-bold text-navy">
+            ${totalValue.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </span>
+          <span className="text-xs text-navy/50">total outstanding</span>
+        </div>
+
+        {/* Stacked bar */}
+        <div className="flex h-2.5 w-full overflow-hidden rounded-full bg-surface-border">
+          {buckets.map((b) => (
+            <div
+              key={b.label}
+              className={cn("h-full transition-all", b.color)}
+              style={{ width: `${(b.value / total) * 100}%` }}
+            />
+          ))}
+        </div>
+
+        {/* Legend */}
+        <div className="grid grid-cols-3 gap-x-4 gap-y-1.5">
+          {buckets.map((b) => (
+            <div key={b.label} className="flex items-center gap-1.5">
+              <span className={cn("h-2 w-2 shrink-0 rounded-full", b.color)} />
+              <div className="min-w-0">
+                <p className="text-xs text-navy/50 truncate">{b.label}</p>
+                <p className={cn("text-xs font-semibold", b.textColor)}>{fmtMoney(b.value)}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Overdue Invoices Panel ───────────────────────────────────────────────────
+
+function OverdueInvoicesPanel({ invoices, isLoading }: { invoices: Invoice[]; isLoading: boolean }) {
+  if (isLoading) {
+    return (
+      <div className="overflow-hidden rounded-lg border border-surface-border bg-white">
+        <div className="border-b border-surface-border px-4 py-2.5">
+          <div className="h-4 w-32 animate-pulse rounded bg-navy/10" />
+        </div>
+        <div className="space-y-3 p-4">
+          {[1, 2, 3].map((i) => <div key={i} className="h-12 animate-pulse rounded bg-navy/10" />)}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="overflow-hidden rounded-lg border border-surface-border bg-white">
+      <div className="flex items-center justify-between border-b border-surface-border px-4 py-2.5">
+        <div className="flex items-center gap-2">
+          <AlertCircle className="h-4 w-4 text-danger" />
+          <span className="text-xs font-semibold uppercase tracking-wider text-navy/50">
+            Overdue Invoices
+          </span>
+          {invoices.length > 0 && (
+            <span className="rounded-full bg-danger px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">
+              {invoices.length}
+            </span>
+          )}
+        </div>
+        <Link href="/invoices?status=OVERDUE" className="flex items-center gap-1 text-xs text-brand-500 hover:underline">
+          View all <ArrowRight className="h-3 w-3" />
+        </Link>
+      </div>
+
+      {invoices.length === 0 ? (
+        <div className="flex items-center gap-3 px-4 py-5">
+          <CheckCircle2 className="h-5 w-5 shrink-0 text-success" />
+          <div>
+            <p className="text-sm font-semibold text-success">No overdue invoices</p>
+            <p className="mt-0.5 text-xs text-success/70">All invoices are up to date.</p>
+          </div>
+        </div>
+      ) : (
+        <ul className="divide-y divide-surface-border">
+          {invoices.map((inv) => {
+            const days = daysOverdue(inv.dueDate);
+            const balance = Number(inv.balanceDue ?? inv.total ?? 0);
+            return (
+              <li key={inv.id} className="flex items-center gap-3 px-4 py-3">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium text-navy">
+                    {inv.customer?.businessName ?? "Unknown"}
+                  </p>
+                  <p className="mt-0.5 text-xs text-navy/50">
+                    #{inv.invoiceNumber} &middot;{" "}
+                    <span className="font-semibold text-danger">{days}d overdue</span>
+                  </p>
+                </div>
+                <div className="text-right">
+                  <p className="text-sm font-semibold text-danger">
+                    ${(Number.isFinite(balance) ? balance : 0).toLocaleString("en-US", { minimumFractionDigits: 2 })}
+                  </p>
+                  <Link
+                    href={`/invoices/${inv.id}`}
+                    className="flex items-center gap-0.5 text-xs text-brand-500 hover:underline"
+                  >
+                    View <ExternalLink className="h-2.5 w-2.5" />
+                  </Link>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+// ─── Low Stock Panel ─────────────────────────────────────────────────────────
+
+interface Product {
+  id: string;
+  name: string;
+  stockQty?: number;
+  lowStockThreshold?: number;
+  unit?: string;
+}
+
+function LowStockPanel({ products, total, isLoading }: { products: Product[]; total: number; isLoading: boolean }) {
+  if (isLoading) {
+    return (
+      <div className="overflow-hidden rounded-lg border border-surface-border bg-white">
+        <div className="border-b border-surface-border px-4 py-2.5">
+          <div className="h-4 w-32 animate-pulse rounded bg-navy/10" />
+        </div>
+        <div className="space-y-3 p-4">
+          {[1, 2, 3].map((i) => <div key={i} className="h-10 animate-pulse rounded bg-navy/10" />)}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="overflow-hidden rounded-lg border border-surface-border bg-white">
+      <div className="flex items-center justify-between border-b border-surface-border px-4 py-2.5">
+        <div className="flex items-center gap-2">
+          <AlertTriangle className="h-4 w-4 text-warning" />
+          <span className="text-xs font-semibold uppercase tracking-wider text-navy/50">Low Stock</span>
+          {total > 0 && (
+            <span className="rounded-full bg-warning px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">
+              {fmt(total)}
+            </span>
+          )}
+        </div>
+        <Link href="/products?lowStock=true" className="flex items-center gap-1 text-xs text-brand-500 hover:underline">
+          View all <ArrowRight className="h-3 w-3" />
+        </Link>
+      </div>
+
+      {products.length === 0 ? (
+        <div className="flex items-center gap-3 px-4 py-5">
+          <CheckCircle2 className="h-5 w-5 shrink-0 text-success" />
+          <p className="text-sm font-semibold text-success">All stock levels healthy</p>
+        </div>
+      ) : (
+        <ul className="divide-y divide-surface-border">
+          {products.map((p) => {
+            const qty = p.stockQty ?? 0;
+            const threshold = p.lowStockThreshold ?? 5;
+            const pct = Math.min(100, Math.max(0, (qty / (threshold * 2)) * 100));
+            return (
+              <li key={p.id} className="px-4 py-3">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-sm font-medium text-navy truncate max-w-[60%]">{p.name}</span>
+                  <span className={cn("text-xs font-semibold", qty === 0 ? "text-danger" : "text-warning")}>
+                    {qty} {p.unit ?? "units"}
+                  </span>
+                </div>
+                <div className="h-1 w-full overflow-hidden rounded-full bg-surface-border">
+                  <div
+                    className={cn("h-full rounded-full transition-all", qty === 0 ? "bg-danger" : "bg-warning")}
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </div>
   );
 }
@@ -180,13 +429,13 @@ export default function DashboardPage() {
 
   // ── Data fetching ──
   const { data: allOrdersData, isLoading: ordersLoading, isError: ordersError } = useOrders({ page: 1, limit: 100 });
-  const { data: urgentOrdersData, isLoading: urgentLoading, isError: urgentError } = useOrders({ urgent: true, limit: 5 });
+  const { data: urgentOrdersData, isLoading: urgentLoading } = useOrders({ urgent: true, limit: 5 });
   const { data: recentOrdersData, isLoading: recentLoading, isError: recentError } = useOrders({ page: 1, limit: 5 });
-  const { data: routeRunsData, isLoading: runsLoading, isError: runsError } = useRouteRuns({ status: "SCHEDULED" });
-  const { data: driversData, isLoading: driversLoading, isError: driversError } = useDrivers({ page: 1, limit: 20 });
-  const { data: lowStockData, isLoading: lowStockLoading, isError: lowStockError } = useProducts({ isActive: true, stockStatus: "LOW", limit: 1 });
-  const { data: financeData, isLoading: financeLoading, isError: financeError } = useFinanceDashboard();
-  const { data: overdueData, isLoading: overdueLoading, isError: overdueError } = useInvoices({ status: "OVERDUE", limit: 1 });
+  const { data: routeRunsData, isLoading: runsLoading } = useRouteRuns({ status: "SCHEDULED" });
+  const { data: driversData, isLoading: driversLoading } = useDrivers({ page: 1, limit: 20 });
+  const { data: lowStockData, isLoading: lowStockLoading } = useProducts({ isActive: true, stockStatus: "LOW", limit: 5 });
+  const { data: financeData, isLoading: financeLoading } = useFinanceDashboard();
+  const { data: overdueData, isLoading: overdueLoading } = useInvoices({ status: "OVERDUE", limit: 5, sortBy: "dueDate", sortOrder: "asc" });
 
   // ── KPI calculations ──
   const activeOrders = React.useMemo(() => {
@@ -194,7 +443,6 @@ export default function DashboardPage() {
     return (allOrdersData?.data ?? []).filter((o) => activeStatuses.includes(o.status)).length;
   }, [allOrdersData]);
 
-  // Order pipeline counts
   const orderPipeline = React.useMemo(() => {
     const all = allOrdersData?.data ?? [];
     return {
@@ -211,11 +459,11 @@ export default function DashboardPage() {
     () => (driversData?.data ?? []).filter((d: Driver) => d.status === "ACTIVE").length,
     [driversData]
   );
-  const lowStockItems = lowStockData?.meta?.total ?? 0;
+  const lowStockTotal = lowStockData?.meta?.total ?? 0;
   const todayRevenue = financeData?.summaryTable?.today?.sales ?? 0;
   const overdueCount = overdueData?.meta?.total ?? 0;
-
-  const isLoading = ordersLoading || runsLoading || driversLoading || lowStockLoading;
+  const overdueInvoices = overdueData?.data ?? [];
+  const lowStockProducts: Product[] = lowStockData?.data ?? [];
 
   const urgentOrders = urgentOrdersData?.data ?? [];
   const activeRoutes = routeRunsData?.data ?? [];
@@ -244,42 +492,48 @@ export default function DashboardPage() {
 
       {/* ── Greeting ── */}
       {isOperator && (
-        <div>
-          <h2 className="text-xl font-bold text-navy">
-            {greeting}{ownerName ? `, ${ownerName}` : ""}!
-          </h2>
-          {businessName && (
-            <p className="text-sm text-navy/50">
-              Here&apos;s what&apos;s happening at {businessName} today.
-            </p>
-          )}
+        <div className="flex items-start justify-between">
+          <div>
+            <h2 className="text-xl font-bold text-navy">
+              {greeting}{ownerName ? `, ${ownerName}` : ""}!
+            </h2>
+            {businessName && (
+              <p className="text-sm text-navy/50">
+                Here&apos;s what&apos;s happening at {businessName} today.
+              </p>
+            )}
+          </div>
+          {/* Quick-create shortcuts */}
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium text-navy/40 hidden sm:block">Quick create</span>
+            <Button href="/orders?action=new" size="sm" variant="secondary">
+              <Plus className="mr-1.5 h-3.5 w-3.5" />
+              Order
+            </Button>
+            <Button href="/routes/create" size="sm" variant="secondary">
+              <Plus className="mr-1.5 h-3.5 w-3.5" />
+              Route
+            </Button>
+            <Button href="/invoices/new" size="sm" variant="secondary">
+              <Plus className="mr-1.5 h-3.5 w-3.5" />
+              Invoice
+            </Button>
+          </div>
         </div>
       )}
 
-      {/* ── Quick-create shortcuts (role-gated) ── */}
-      {!isDriver && (
+      {/* Customer / driver quick-create */}
+      {!isDriver && !isOperator && (
         <div className="flex flex-wrap items-center gap-2">
           <span className="mr-1 text-sm font-medium text-navy/50">Quick create:</span>
           <Button href="/orders?action=new" size="sm" variant="secondary">
             <Plus className="mr-1.5 h-3.5 w-3.5" />
             New Order
           </Button>
-          {isOperator && (
-            <>
-              <Button href="/routes/create" size="sm" variant="secondary">
-                <Plus className="mr-1.5 h-3.5 w-3.5" />
-                New Route
-              </Button>
-              <Button href="/invoices/new" size="sm" variant="secondary">
-                <Plus className="mr-1.5 h-3.5 w-3.5" />
-                New Invoice
-              </Button>
-            </>
-          )}
         </div>
       )}
 
-      {/* ── KPI stat cards (role-gated) ── */}
+      {/* ── KPI stat cards ── */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-6">
         {isOperator && (
           financeLoading ? <StatSkeleton /> : (
@@ -300,9 +554,7 @@ export default function DashboardPage() {
                 label="Overdue Invoices"
                 value={overdueCount}
                 icon={
-                  <FileMinus
-                    className={cn("h-5 w-5", overdueCount > 0 ? "text-danger" : "")}
-                  />
+                  <FileMinus className={cn("h-5 w-5", overdueCount > 0 ? "text-danger" : "")} />
                 }
                 className={cn(
                   "cursor-pointer transition-shadow hover:shadow-md",
@@ -354,15 +606,13 @@ export default function DashboardPage() {
             <Link href="/products?lowStock=true" className="block">
               <StatCard
                 label="Low Stock Items"
-                value={lowStockItems}
+                value={lowStockTotal}
                 icon={
-                  <AlertTriangle
-                    className={cn("h-5 w-5", lowStockItems > 0 ? "text-warning" : "")}
-                  />
+                  <AlertTriangle className={cn("h-5 w-5", lowStockTotal > 0 ? "text-warning" : "")} />
                 }
                 className={cn(
                   "cursor-pointer transition-shadow hover:shadow-md",
-                  lowStockItems > 0 ? "ring-1 ring-inset ring-warning/20" : ""
+                  lowStockTotal > 0 ? "ring-1 ring-inset ring-warning/20" : ""
                 )}
               />
             </Link>
@@ -382,11 +632,11 @@ export default function DashboardPage() {
           </div>
           <div className="grid grid-cols-5 divide-x divide-surface-border">
             {[
-              { label: "Pending", key: "PENDING" as const, color: "text-warning", bg: "bg-warning-bg" },
-              { label: "Confirmed", key: "CONFIRMED" as const, color: "text-brand-600", bg: "bg-brand-50" },
-              { label: "Out for Delivery", key: "OUT_FOR_DELIVERY" as const, color: "text-blue-600", bg: "bg-blue-50" },
-              { label: "Delivered", key: "DELIVERED" as const, color: "text-success", bg: "bg-success-bg" },
-              { label: "Cancelled", key: "CANCELLED" as const, color: "text-navy/60", bg: "" },
+              { label: "Pending",          key: "PENDING" as const,          color: "text-warning",   bg: "bg-warning-bg" },
+              { label: "Confirmed",        key: "CONFIRMED" as const,        color: "text-brand-600", bg: "bg-brand-50" },
+              { label: "Out for Delivery", key: "OUT_FOR_DELIVERY" as const, color: "text-blue-600",  bg: "bg-blue-50" },
+              { label: "Delivered",        key: "DELIVERED" as const,        color: "text-success",   bg: "bg-success-bg" },
+              { label: "Cancelled",        key: "CANCELLED" as const,        color: "text-navy/60",   bg: "" },
             ].map(({ label, key, color, bg }) => (
               <Link
                 key={key}
@@ -403,14 +653,32 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* ── Middle row: Urgent Orders + Route Runs + Driver Status (role-gated) ── */}
+      {/* ── Finance insights row (operator only) ── */}
+      {isOperator && (
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+          {/* AR Aging */}
+          {financeLoading ? (
+            <div className="animate-pulse rounded-lg border border-surface-border bg-white p-5">
+              <div className="h-4 w-24 rounded bg-navy/10 mb-4" />
+              <div className="h-24 rounded bg-navy/10" />
+            </div>
+          ) : financeData?.arAging ? (
+            <ArAgingWidget aging={financeData.arAging} />
+          ) : null}
+
+          {/* Overdue invoices action list */}
+          <OverdueInvoicesPanel invoices={overdueInvoices} isLoading={overdueLoading} />
+        </div>
+      )}
+
+      {/* ── Middle row: Urgent Orders + Route Runs + Right column (operator/driver) ── */}
       {(isOperator || isDriver) && (
         <div className={cn("grid grid-cols-1 gap-6", isOperator ? "lg:grid-cols-3" : "")}>
 
-          {/* Left: Urgent Orders (operator only) + Route Runs (operator + driver) */}
+          {/* Left 2/3: Urgent Orders + Route Runs */}
           <div className={cn("flex flex-col gap-6", isOperator ? "lg:col-span-2" : "")}>
 
-            {/* Urgent orders alert panel — operator only */}
+            {/* Urgent orders alert panel */}
             {isOperator && (
               urgentLoading ? (
                 <div className="animate-pulse rounded-lg border border-surface-border bg-white p-5">
@@ -454,7 +722,7 @@ export default function DashboardPage() {
               )
             )}
 
-            {/* Scheduled route runs — operator + driver */}
+            {/* Scheduled route runs */}
             <Card title="Scheduled Route Runs">
               {runsLoading ? (
                 <div className="animate-pulse space-y-3 py-4">
@@ -474,9 +742,9 @@ export default function DashboardPage() {
             </Card>
           </div>
 
-          {/* Right: Driver Status — operator only */}
+          {/* Right 1/3: Driver Status + Low Stock */}
           {isOperator && (
-            <div>
+            <div className="flex flex-col gap-6">
               <Card title="Driver Status">
                 {driversLoading ? (
                   <div className="animate-pulse space-y-4 py-2">
@@ -517,6 +785,13 @@ export default function DashboardPage() {
                   </ul>
                 )}
               </Card>
+
+              {/* Low stock items */}
+              <LowStockPanel
+                products={lowStockProducts}
+                total={lowStockTotal}
+                isLoading={lowStockLoading}
+              />
             </div>
           )}
         </div>

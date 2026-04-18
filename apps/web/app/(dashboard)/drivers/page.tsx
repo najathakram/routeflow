@@ -4,7 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Eye, Pencil, Trash2, CheckSquare, X } from "lucide-react";
-import { PageHeader, Table, Badge, Button, cn } from "@routeflow/ui/web";
+import { PageHeader, Table, Badge, Button, cn, EmptyState } from "@routeflow/ui/web";
 import { useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { AddDriverModal } from "./_components/AddDriverModal";
@@ -332,15 +332,16 @@ export default function DriversPage() {
                 </button>
               </div>
             ) :
-            <div className="flex flex-col items-center gap-2">
-              <p className="text-sm text-navy/40">No drivers yet. Add your first driver to get started.</p>
-              <button
-                className="text-sm text-brand-500 hover:underline"
-                onClick={() => setIsAddOpen(true)}
-              >
-                Add a driver
-              </button>
-            </div>
+            <EmptyState
+              variant="drivers"
+              title="No drivers yet"
+              description="Add your first driver to get started assigning routes."
+              action={
+                <button className="text-sm text-brand-600 hover:underline" onClick={() => setIsAddOpen(true)}>
+                  Add a driver
+                </button>
+              }
+            />
           }
         />
       )}

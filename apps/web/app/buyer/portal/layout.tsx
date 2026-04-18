@@ -25,6 +25,7 @@ import { useBuyerCart } from "@/lib/buyer-cart";
 import { useBuyerNotifications, type BuyerNotification } from "@/lib/hooks/useBuyerNotifications";
 import type { BuyerSeller } from "@/lib/buyer-auth";
 import { BuyerPortalErrorBoundary } from "./error-boundary";
+import { PwaInstallPrompt } from "@/components/PwaInstallPrompt";
 
 // ─── Status badge variant helper ─────────────────────────────────────────────
 
@@ -195,7 +196,7 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
         <div className="border-b border-white/10 px-4 py-4">
           <div className="flex items-center gap-2">
             <img
-              src="/logo-buyer.png"
+              src="/logo-buyer.svg"
               alt="RouteFlow"
               className="h-8 w-8 rounded-lg object-contain"
             />
@@ -363,6 +364,9 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
       <main className="flex-1 overflow-auto">
         <BuyerPortalErrorBoundary>{children}</BuyerPortalErrorBoundary>
       </main>
+
+      {/* PWA install prompt */}
+      <PwaInstallPrompt />
     </div>
   );
 }

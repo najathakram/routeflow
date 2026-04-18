@@ -3149,7 +3149,7 @@ export default function CustomerDetailPage({
                 <div className="mb-6 flex items-start justify-between">
                   <div>
                     <div className="flex items-center gap-2">
-                      <img src="/logo-seller.png" alt="RouteFlow" className="h-7 w-7 object-contain" />
+                      <img src="/logo.svg" alt="RouteFlow" className="h-7 w-7 object-contain" />
                       <span className="text-base font-bold text-navy">
                         RouteFlow
                       </span>

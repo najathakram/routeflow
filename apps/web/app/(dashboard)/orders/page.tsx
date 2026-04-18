@@ -2,11 +2,26 @@
 
 import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { AlertTriangle, Eye, Loader2, Calendar, X, CheckSquare, Trash2, ChevronUp, ChevronDown, ChevronsUpDown } from "lucide-react";
+import { AlertTriangle, Eye, Loader2, Calendar, X, CheckSquare, Trash2, ChevronUp, ChevronDown, ChevronsUpDown, Download } from "lucide-react";
 import { PageHeader, Badge, Select, Button, cn, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useOrders, useUpdateOrderStatus, useBulkDeleteOrders, type Order } from "@/lib/api/orders";
+import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
+import { downloadCsv, csvDate } from "@/lib/export";
+import { apiClient } from "@/lib/api-client";
 import { CreateOrderModal } from "./_components/CreateOrderModal";
+
+// ─── Saved view definitions ───────────────────────────────────────────────────
+
+const SAVED_VIEWS = [
+  { id: "all",      label: "All",              filters: {} as Record<string, string | boolean> },
+  { id: "pending",  label: "Pending",           filters: { status: "PENDING" } },
+  { id: "confirmed",label: "Confirmed",         filters: { status: "CONFIRMED" } },
+  { id: "delivery", label: "Out for Delivery",  filters: { status: "OUT_FOR_DELIVERY" } },
+  { id: "urgent",   label: "Urgent",            filters: { urgent: true } },
+  { id: "delivered",label: "Delivered",         filters: { status: "DELIVERED" } },
+  { id: "cancelled",label: "Cancelled",         filters: { status: "CANCELLED" } },
+];
 
 // ─── Status filter options ────────────────────────────────────────────────────
 
@@ -29,12 +44,17 @@ export default function OrdersPage() {
   const { setTitle } = usePageTitle();
   React.useEffect(() => { setTitle("Orders"); }, [setTitle]);
 
-  const statusParam = searchParams.get("status") ?? "";
-  const [statusFilter, setStatusFilter] = React.useState(statusParam);
+  // URL-backed filter state
+  const [urlFilters, setFilter, clearFilters] = useUrlFilters({
+    status: "", urgent: false, dateFrom: "", dateTo: "",
+  });
+  const statusFilter = (urlFilters.status as string) ?? "";
+  const urgentOnly   = (urlFilters.urgent as boolean) ?? false;
+  const dateFrom     = (urlFilters.dateFrom as string) ?? "";
+  const dateTo       = (urlFilters.dateTo as string) ?? "";
+
+  // Customer search stays local (too transient for URL)
   const [customerSearch, setCustomerSearch] = React.useState("");
-  const [urgentOnly, setUrgentOnly] = React.useState(false);
-  const [dateFrom, setDateFrom] = React.useState("");
-  const [dateTo, setDateTo] = React.useState("");
   const [isCreateOpen, setIsCreateOpen] = React.useState(searchParams.get("action") === "new");
 
   // Strip ?action=new from the URL once the modal has been opened so that
@@ -107,8 +127,26 @@ export default function OrdersPage() {
     }
   };
 
-  // Reset page when filters change
+  // Reset page when filters change (page state stays local)
   React.useEffect(() => { setPage(1); }, [statusFilter, urgentOnly, dateFrom, dateTo]);
+
+  // Active saved view detection
+  const activeSavedView = React.useMemo(() => {
+    return SAVED_VIEWS.find((v) => {
+      const keys = Object.keys(v.filters);
+      if (keys.length === 0) {
+        return !statusFilter && !urgentOnly && !dateFrom && !dateTo;
+      }
+      return keys.every((k) => String((urlFilters as Record<string, unknown>)[k]) === String((v.filters as Record<string, unknown>)[k]));
+    })?.id ?? null;
+  }, [urlFilters, statusFilter, urgentOnly, dateFrom, dateTo]);
+
+  const applyView = (view: (typeof SAVED_VIEWS)[0]) => {
+    clearFilters();
+    for (const [k, val] of Object.entries(view.filters)) {
+      setFilter(k as never, val as string | boolean);
+    }
+  };
 
   const { data, isLoading, isError } = useOrders({
     status: statusFilter || undefined,
@@ -145,12 +183,74 @@ export default function OrdersPage() {
 
   const urgentCount = orders.filter((o) => o.urgent).length;
 
+  const [isExporting, setIsExporting] = React.useState(false);
+
+  const handleExport = async () => {
+    if (isExporting) return;
+    setIsExporting(true);
+    try {
+      const EXPORT_LIMIT = 1000;
+      const res = await apiClient.get("/orders", {
+        params: {
+          status: statusFilter || undefined,
+          urgent: urgentOnly || undefined,
+          deliveryDateFrom: dateFrom || undefined,
+          deliveryDateTo: dateTo || undefined,
+          page: 1,
+          limit: EXPORT_LIMIT,
+        },
+      });
+      const payload = res.data as { data: Order[]; meta?: { total?: number } };
+      const allOrders = payload.data ?? [];
+      const q = customerSearch.toLowerCase();
+      const rows = allOrders.filter((o) => {
+        if (q && !o.customer?.businessName?.toLowerCase().includes(q) && !o.orderNumber?.toLowerCase().includes(q)) return false;
+        return true;
+      });
+      downloadCsv(
+        `orders-${new Date().toISOString().split("T")[0]}.csv`,
+        ["Order #", "Customer", "Items", "Total", "Status", "Delivery Date", "Created"],
+        rows.map((o) => [
+          o.orderNumber ?? o.id.slice(0, 8).toUpperCase(),
+          o.customer?.businessName ?? "",
+          o.lineItems?.length ?? 0,
+          Number(o.total ?? 0).toFixed(2),
+          o.status,
+          csvDate(o.requestedDeliveryDate),
+          csvDate(o.createdAt),
+        ]),
+      );
+      const total = payload.meta?.total ?? rows.length;
+      if (total > EXPORT_LIMIT) {
+        toast({
+          title: `Exported first ${EXPORT_LIMIT} rows`,
+          description: `Narrow filters to export the remaining ${total - EXPORT_LIMIT}.`,
+          variant: "warning",
+        });
+      }
+    } catch (err) {
+      toast({ title: "Export failed", description: (err as Error).message, variant: "error" });
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   return (
     <div className="space-y-5 p-6">
       <PageHeader
         title="Orders"
         action={
           <div className="flex items-center gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              leftIcon={isExporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+              onClick={handleExport}
+              disabled={isExporting}
+              title="Export filtered orders as CSV"
+            >
+              {isExporting ? "Exporting…" : "Export"}
+            </Button>
             <Button
               variant="secondary"
               leftIcon={selectMode ? <X className="h-4 w-4" /> : <CheckSquare className="h-4 w-4" />}
@@ -195,6 +295,24 @@ export default function OrdersPage() {
         </div>
       )}
 
+      {/* Saved view chips */}
+      <div className="flex items-center gap-2 overflow-x-auto pb-1">
+        {SAVED_VIEWS.map((view) => (
+          <button
+            key={view.id}
+            onClick={() => applyView(view)}
+            className={cn(
+              "shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition-colors",
+              activeSavedView === view.id
+                ? "bg-brand-600 text-white"
+                : "bg-surface-raised text-navy/60 hover:bg-brand-50 hover:text-brand-700",
+            )}
+          >
+            {view.label}
+          </button>
+        ))}
+      </div>
+
       {/* Filter bar */}
       <div className="flex flex-wrap items-center gap-3">
         {selectMode && filtered.length > 0 && (
@@ -223,12 +341,12 @@ export default function OrdersPage() {
           <Select
             options={STATUS_OPTIONS}
             value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
+            onChange={(e) => setFilter("status", e.target.value)}
           />
         </div>
         {/* Urgent toggle */}
         <button
-          onClick={() => setUrgentOnly((v) => !v)}
+          onClick={() => setFilter("urgent", !urgentOnly)}
           className={cn(
             "flex h-10 items-center gap-2 rounded border px-3 text-sm font-medium transition-colors",
             urgentOnly
@@ -252,7 +370,7 @@ export default function OrdersPage() {
           <input
             type="date"
             value={dateFrom}
-            onChange={(e) => setDateFrom(e.target.value)}
+            onChange={(e) => setFilter("dateFrom", e.target.value)}
             max={dateTo || undefined}
             className="h-10 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             title="Delivery date from"
@@ -261,14 +379,14 @@ export default function OrdersPage() {
           <input
             type="date"
             value={dateTo}
-            onChange={(e) => setDateTo(e.target.value)}
+            onChange={(e) => setFilter("dateTo", e.target.value)}
             min={dateFrom || undefined}
             className="h-10 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             title="Delivery date to"
           />
           {(dateFrom || dateTo) && (
             <button
-              onClick={() => { setDateFrom(""); setDateTo(""); }}
+              onClick={() => { setFilter("dateFrom", ""); setFilter("dateTo", ""); }}
               className="rounded p-1.5 text-navy/40 hover:text-danger transition-colors"
               title="Clear dates"
             >
@@ -276,6 +394,17 @@ export default function OrdersPage() {
             </button>
           )}
         </div>
+
+        {/* Clear active filters */}
+        {(statusFilter || urgentOnly || dateFrom || dateTo || customerSearch) && (
+          <button
+            onClick={() => { clearFilters(); setCustomerSearch(""); }}
+            className="flex items-center gap-1 text-sm text-brand-500 hover:underline"
+          >
+            <X className="h-3.5 w-3.5" />
+            Clear all
+          </button>
+        )}
       </div>
 
       {/* Table — urgent rows get red left border via wrapper trick */}
@@ -314,7 +443,7 @@ export default function OrdersPage() {
                   No orders match your filters.{" "}
                   <button
                     className="text-brand-500 hover:underline"
-                    onClick={() => { setCustomerSearch(""); setStatusFilter(""); setUrgentOnly(false); setDateFrom(""); setDateTo(""); }}
+                    onClick={() => { setCustomerSearch(""); clearFilters(); }}
                   >
                     Clear filters
                   </button>

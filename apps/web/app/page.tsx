@@ -64,7 +64,7 @@ export default function SellerLandingPage() {
       <nav className="sticky top-0 z-50 border-b border-navy/5 bg-white/80 backdrop-blur-md">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
           <div className="flex items-center gap-2">
-            <img src="/logo-seller.png" alt="RouteFlow" className="h-8 w-8 object-contain" />
+            <img src="/logo.svg" alt="RouteFlow" className="h-8 w-8 object-contain" />
             <span className="text-lg font-bold text-navy">RouteFlow</span>
           </div>
           <div className="flex items-center gap-4">
@@ -265,7 +265,7 @@ export default function SellerLandingPage() {
         <div className="mx-auto max-w-6xl px-6 flex flex-col items-center gap-4 sm:flex-row sm:justify-between">
           <div className="flex items-center gap-2">
             <img
-              src="/logo-seller.png"
+              src="/logo.svg"
               alt="RouteFlow"
               className="h-6 w-6 object-contain"
             />

@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Plus, Eye, Loader2, FileText, Trash2, RotateCcw, DollarSign, Calendar } from "lucide-react";
-import { PageHeader, Button, cn, Modal, useToast } from "@routeflow/ui/web";
+import { PageHeader, Button, cn, Modal, useToast, EmptyState } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useDebounce } from "@/lib/hooks/useDebounce";
 import {
@@ -559,13 +559,16 @@ export default function ReturnsPage() {
                       </>
                     ) : (
                       <>
-                        <p className="text-sm text-navy/40">No returns yet.</p>
-                        <button
-                          className="text-sm text-brand-500 hover:underline"
-                          onClick={() => setIsCreateOpen(true)}
-                        >
-                          Create your first return
-                        </button>
+                        <EmptyState
+                          variant="returns"
+                          title="No returns yet"
+                          description="Returns will appear here when customers report damaged, wrong, or excess items."
+                          action={
+                            <button className="text-sm text-brand-600 hover:underline" onClick={() => setIsCreateOpen(true)}>
+                              Create a return
+                            </button>
+                          }
+                        />
                       </>
                     )}
                   </div>

@@ -14,9 +14,9 @@ import {
   ChevronRight,
   Store,
 } from "lucide-react";
-import { Badge, Button } from "@routeflow/ui/web";
+import { Badge, Button, cn } from "@routeflow/ui/web";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
-import { useBuyerDashboard } from "@/lib/api/buyer";
+import { useBuyerDashboard, useBuyerTemplates, useBuyerReorder, type OrderTemplate } from "@/lib/api/buyer";
 import { useBuyerCart } from "@/lib/buyer-cart";
 
 function fmt(n: number) {
@@ -38,6 +38,116 @@ function formatStatus(s: string) {
   return s.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const DAY_FULL  = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+function nextDeliveryLabel(daysOfWeek: number[]): string {
+  if (!daysOfWeek.length) return "No schedule";
+  const today = new Date().getDay();
+  // Find the soonest upcoming day (including today)
+  const sorted = [...daysOfWeek].sort((a, b) => {
+    const da = (a - today + 7) % 7;
+    const db = (b - today + 7) % 7;
+    return da - db;
+  });
+  const next = sorted[0];
+  const daysAway = (next - today + 7) % 7;
+  if (daysAway === 0) return "Today";
+  if (daysAway === 1) return "Tomorrow";
+  return `This ${DAY_FULL[next]}`;
+}
+
+function StandingOrdersPanel({
+  sellerSlug,
+  templates,
+  isLoading,
+}: {
+  sellerSlug: string;
+  templates: OrderTemplate[];
+  isLoading: boolean;
+}) {
+  const reorder = useBuyerReorder();
+  const [reordering, setReordering] = React.useState<string | null>(null);
+
+  const handleReorder = async (templateId: string) => {
+    if (reordering) return;
+    setReordering(templateId);
+    try {
+      await reorder.mutateAsync(templateId);
+    } finally {
+      setReordering(null);
+    }
+  };
+
+  if (isLoading) return null;
+
+  const active = templates.filter((t) => t.isActive);
+  if (!active.length) return null;
+
+  return (
+    <div className="rounded-xl border border-buyer-200 bg-buyer-50/30 overflow-hidden">
+      <div className="flex items-center justify-between border-b border-buyer-200 px-4 py-3">
+        <div className="flex items-center gap-2">
+          <Repeat className="h-4 w-4 text-buyer-600" />
+          <h2 className="text-sm font-semibold text-navy">Standing Orders</h2>
+          <span className="rounded-full bg-buyer-500 px-2 py-0.5 text-[10px] font-bold text-white">
+            {active.length}
+          </span>
+        </div>
+        <button
+          onClick={() => window.location.href = `/buyer/portal/${sellerSlug}/templates`}
+          className="text-xs text-buyer-500 hover:text-buyer-600 font-medium flex items-center gap-1"
+        >
+          Manage <ArrowRight className="h-3 w-3" />
+        </button>
+      </div>
+      <div className="divide-y divide-buyer-100">
+        {active.map((t) => {
+          const nextLabel = nextDeliveryLabel(t.daysOfWeek);
+          const dayChips = t.daysOfWeek.sort().map((d) => DAY_NAMES[d]);
+          const isReordering = reordering === t.id;
+          return (
+            <div key={t.id} className="flex items-center gap-4 px-4 py-3">
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-navy truncate">{t.name}</p>
+                <div className="mt-1 flex items-center gap-2">
+                  <div className="flex items-center gap-1">
+                    {dayChips.map((d) => (
+                      <span key={d} className="rounded bg-buyer-100 px-1.5 py-0.5 text-[10px] font-medium text-buyer-700">{d}</span>
+                    ))}
+                  </div>
+                  <span className="text-xs text-navy/50">·</span>
+                  <span className="text-xs text-navy/60">{t.items.length} item{t.items.length !== 1 ? "s" : ""}</span>
+                </div>
+              </div>
+              <div className="text-right shrink-0">
+                <p className={cn(
+                  "text-xs font-semibold",
+                  nextLabel === "Today" ? "text-buyer-600" : "text-navy/60"
+                )}>
+                  {nextLabel}
+                </p>
+                <button
+                  onClick={() => handleReorder(t.id)}
+                  disabled={isReordering}
+                  className="mt-1 flex items-center gap-1 rounded-lg bg-buyer-500 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-buyer-600 transition-colors disabled:opacity-50"
+                >
+                  {isReordering ? (
+                    <span className="h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                  ) : (
+                    <ShoppingCart className="h-3 w-3" />
+                  )}
+                  Reorder
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function BuyerDashboardPage() {
   const params = useParams();
   const router = useRouter();
@@ -46,7 +156,9 @@ export default function BuyerDashboardPage() {
 
   const [frequentWindow, setFrequentWindow] = React.useState<"30d" | "90d" | "all">("all");
   const { data: dashboard, isLoading, isError } = useBuyerDashboard(frequentWindow);
+  const { data: templatesData, isLoading: templatesLoading } = useBuyerTemplates();
   const cart = useBuyerCart(buyer?.id, sellerSlug);
+  const templates: OrderTemplate[] = templatesData?.data ?? [];
 
   React.useEffect(() => {
     if (!authLoading && !activeSeller) router.push("/buyer/portal");
@@ -123,6 +235,13 @@ export default function BuyerDashboardPage() {
           </div>
         ))}
       </div>
+
+      {/* Standing Orders — front and centre */}
+      <StandingOrdersPanel
+        sellerSlug={sellerSlug}
+        templates={templates}
+        isLoading={templatesLoading}
+      />
 
       {/* Frequently Ordered */}
       {dashboard.frequentlyOrdered.length > 0 && (

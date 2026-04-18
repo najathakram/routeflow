@@ -7,12 +7,25 @@ import { TenantProvider } from "@/components/tenant-provider";
 const inter = Inter({
   subsets: ["latin"],
   variable: "--font-inter",
+  weight: ["400", "500", "600", "700"],
   display: "swap",
 });
 
 export const metadata: Metadata = {
-  title: "RouteFlow",
-  description: "RouteFlow logistics dashboard",
+  title: { default: "RouteFlow", template: "%s · RouteFlow" },
+  description: "The all-in-one platform for wholesale distribution. Manage orders, plan routes, track deliveries, and invoice customers.",
+  icons: {
+    icon: [
+      { url: "/favicon.svg", type: "image/svg+xml" },
+    ],
+    apple: "/favicon.svg",
+  },
+  openGraph: {
+    title: "RouteFlow",
+    description: "Wholesale distribution, simplified.",
+    siteName: "RouteFlow",
+    type: "website",
+  },
 };
 
 export default function RootLayout({

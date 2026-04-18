@@ -25,6 +25,7 @@ import {
   type EstimateStatus,
 } from "@/lib/api/estimates";
 import { fmt, fmtDate } from "@/lib/formatting";
+import { DocumentLetterhead } from "@/components/DocumentLetterhead";
 
 // ─── Status badge ─────────────────────────────────────────────────────────────
 
@@ -322,11 +323,7 @@ export default function EstimateDetailPage({ params }: { params: { id: string } 
             {/* Letterhead */}
             <div className="mb-6 flex items-start justify-between gap-4">
               <div>
-                <div className="flex items-center gap-2">
-                  <img src="/logo-seller.png" alt="RouteFlow" className="h-8 w-8 object-contain" />
-                  <span className="text-lg font-bold text-navy">RouteFlow</span>
-                </div>
-                <p className="mt-1 text-xs text-navy/50">Austin, TX · routeflow.io</p>
+                <DocumentLetterhead />
               </div>
               <div className="text-right">
                 <p className="text-xl font-bold text-navy">ESTIMATE</p>

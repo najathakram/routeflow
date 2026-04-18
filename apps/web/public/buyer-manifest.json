@@ -1,0 +1,29 @@
+{
+  "name": "RouteFlow Buyer Portal",
+  "short_name": "RouteFlow",
+  "description": "Order directly from your suppliers. Track deliveries, view invoices, manage standing orders.",
+  "start_url": "/buyer/portal",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#064e3b",
+  "theme_color": "#047857",
+  "scope": "/buyer",
+  "lang": "en",
+  "categories": ["business", "shopping"],
+  "icons": [
+    {
+      "src": "/logo-buyer.svg",
+      "type": "image/svg+xml",
+      "sizes": "any",
+      "purpose": "any maskable"
+    }
+  ],
+  "screenshots": [],
+  "shortcuts": [
+    {
+      "name": "Shop",
+      "url": "/buyer/portal",
+      "description": "Browse and order products"
+    }
+  ]
+}

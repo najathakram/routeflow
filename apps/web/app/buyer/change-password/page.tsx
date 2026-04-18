@@ -87,7 +87,7 @@ export default function BuyerChangePasswordPage() {
       <div className="w-full max-w-sm">
         {/* Logo / Brand */}
         <div className="mb-8 flex flex-col items-center gap-3">
-          <img src="/logo-buyer.png" alt="RouteFlow" className="h-12 w-12 object-contain" />
+          <img src="/logo-buyer.svg" alt="RouteFlow" className="h-12 w-12 object-contain" />
           <h1 className="text-2xl font-bold text-navy">Change Password</h1>
           <p className="text-center text-sm text-navy/60">
             {buyer?.email ? `Updating password for ${buyer.email}` : "Update your buyer portal password"}

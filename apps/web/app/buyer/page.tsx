@@ -63,7 +63,7 @@ export default function BuyerLandingPage() {
       <nav className="sticky top-0 z-50 border-b border-buyer-800/10 bg-white/80 backdrop-blur-md">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
           <div className="flex items-center gap-2">
-            <img src="/logo-buyer.png" alt="RouteFlow" className="h-8 w-8 object-contain" />
+            <img src="/logo-buyer.svg" alt="RouteFlow" className="h-8 w-8 object-contain" />
             <span className="text-lg font-bold text-navy">RouteFlow</span>
           </div>
           <div className="flex items-center gap-4">
@@ -248,7 +248,7 @@ export default function BuyerLandingPage() {
       <footer className="border-t border-surface-border bg-white py-8">
         <div className="mx-auto max-w-6xl px-6 flex flex-col items-center gap-4 sm:flex-row sm:justify-between">
           <div className="flex items-center gap-2">
-            <img src="/logo-buyer.png" alt="RouteFlow" className="h-6 w-6 object-contain" />
+            <img src="/logo-buyer.svg" alt="RouteFlow" className="h-6 w-6 object-contain" />
             <span className="text-sm font-semibold text-navy">RouteFlow</span>
           </div>
           <p className="text-xs text-navy/40">

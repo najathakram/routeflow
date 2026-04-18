@@ -38,3 +38,18 @@ export { PageHeader } from "./PageHeader";
 export type { PageHeaderProps } from "./PageHeader";
 
 export { cn, mergeRefs } from "./utils";
+
+export { EmptyState } from "./EmptyState";
+export type { EmptyStateProps, EmptyStateVariant } from "./EmptyState";
+
+export {
+  IllustrationNoOrders,
+  IllustrationNoRoutes,
+  IllustrationNoCustomers,
+  IllustrationNoProducts,
+  IllustrationNoInvoices,
+  IllustrationNoDrivers,
+  IllustrationNoReturns,
+  IllustrationInboxZero,
+  IllustrationNoData,
+} from "./illustrations";

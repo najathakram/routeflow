@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import {
   Plus,
   Eye,
@@ -14,11 +14,15 @@ import {
   ChevronUp,
   ChevronsUpDown,
   Trash2,
+  Download,
 } from "lucide-react";
 import { Button, cn, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useDebounce } from "@/lib/hooks/useDebounce";
+import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
+import { downloadCsv, csvDate } from "@/lib/export";
 import { useInvoices, useDeleteInvoice, type Invoice, type InvoiceStatus } from "@/lib/api/invoices";
+import { apiClient } from "@/lib/api-client";
 import { useBookkeepingSummary } from "@/lib/api/bookkeeping";
 import { fmt, fmtDate } from "@/lib/formatting";
 import { useAuth } from "@/lib/auth-context";
@@ -249,7 +253,7 @@ const STATUS_TABS = [
 
 export default function InvoicesPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
+
   const { setTitle } = usePageTitle();
   const { user } = useAuth();
   const isCustomer = user?.role === "CUSTOMER";
@@ -259,11 +263,12 @@ export default function InvoicesPage() {
   const deleteInvoice = useDeleteInvoice();
   const [confirmDeleteId, setConfirmDeleteId] = React.useState<string | null>(null);
 
-  const [statusFilter, setStatusFilter] = React.useState(searchParams.get("status") ?? "");
+  const [urlFilters, setFilter] = useUrlFilters({ status: "", dateFrom: "", dateTo: "" });
+  const statusFilter = (urlFilters.status as string) ?? "";
+  const dateFrom = (urlFilters.dateFrom as string) ?? "";
+  const dateTo = (urlFilters.dateTo as string) ?? "";
   const [search, setSearch] = React.useState("");
   const debouncedSearch = useDebounce(search, 300);
-  const [dateFrom, setDateFrom] = React.useState("");
-  const [dateTo, setDateTo] = React.useState("");
   const [page, setPage] = React.useState(1);
   const [limit, setLimit] = React.useState(20);
   const [sortBy, setSortBy] = React.useState("issueDate");
@@ -295,8 +300,57 @@ export default function InvoicesPage() {
   const meta = data?.meta;
   const totalPages = meta?.totalPages ?? 1;
 
+  const [isExporting, setIsExporting] = React.useState(false);
+
+  const handleExport = async () => {
+    if (isExporting) return;
+    setIsExporting(true);
+    try {
+      const EXPORT_LIMIT = 1000;
+      const res = await apiClient.get("/invoices", {
+        params: {
+          status: statusFilter || undefined,
+          search: debouncedSearch || undefined,
+          dateFrom: dateFrom || undefined,
+          dateTo: dateTo || undefined,
+          sortBy,
+          sortOrder,
+          page: 1,
+          limit: EXPORT_LIMIT,
+        },
+      });
+      const payload = res.data as { data: Invoice[]; meta?: { total?: number } };
+      const rows = payload.data ?? [];
+      downloadCsv(
+        `invoices-${new Date().toISOString().split("T")[0]}.csv`,
+        ["Invoice #", "Customer", "Issue Date", "Due Date", "Total", "Balance Due", "Status"],
+        rows.map((inv) => [
+          inv.invoiceNumber,
+          inv.customer?.businessName ?? "",
+          csvDate(inv.issueDate),
+          csvDate(inv.dueDate),
+          Number(inv.total ?? 0).toFixed(2),
+          Number(inv.balanceDue ?? 0).toFixed(2),
+          inv.status,
+        ]),
+      );
+      const total = payload.meta?.total ?? rows.length;
+      if (total > EXPORT_LIMIT) {
+        toast({
+          title: `Exported first ${EXPORT_LIMIT} rows`,
+          description: `Narrow filters to export the remaining ${total - EXPORT_LIMIT}.`,
+          variant: "warning",
+        });
+      }
+    } catch (err) {
+      toast({ title: "Export failed", description: (err as Error).message, variant: "error" });
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   function handleFilterChange(status: string) {
-    setStatusFilter(status);
+    setFilter("status", status);
     setPage(1);
   }
 
@@ -310,6 +364,16 @@ export default function InvoicesPage() {
         </div>
         {!isCustomer && (
           <div className="flex items-center gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              leftIcon={isExporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+              onClick={handleExport}
+              disabled={isExporting}
+              title="Export filtered invoices as CSV"
+            >
+              {isExporting ? "Exporting…" : "Export"}
+            </Button>
             <Button
               variant="secondary"
               size="sm"
@@ -370,7 +434,7 @@ export default function InvoicesPage() {
           <input
             type="date"
             value={dateFrom}
-            onChange={(e) => { setDateFrom(e.target.value); setPage(1); }}
+            onChange={(e) => { setFilter("dateFrom", e.target.value); setPage(1); }}
             max={dateTo || undefined}
             className="h-9 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             title="Issue date from"
@@ -380,13 +444,13 @@ export default function InvoicesPage() {
             type="date"
             value={dateTo}
             min={dateFrom || undefined}
-            onChange={(e) => { setDateTo(e.target.value); setPage(1); }}
+            onChange={(e) => { setFilter("dateTo", e.target.value); setPage(1); }}
             className="h-9 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             title="Issue date to"
           />
           {(dateFrom || dateTo) && (
             <button
-              onClick={() => { setDateFrom(""); setDateTo(""); setPage(1); }}
+              onClick={() => { setFilter("dateFrom", ""); setFilter("dateTo", ""); setPage(1); }}
               className="rounded p-1 text-navy/40 hover:text-danger transition-colors"
               title="Clear dates"
             >
@@ -448,9 +512,9 @@ export default function InvoicesPage() {
                       className="text-sm text-brand-500 hover:underline"
                       onClick={() => {
                         setSearch("");
-                        setStatusFilter("");
-                        setDateFrom("");
-                        setDateTo("");
+                        setFilter("status", "");
+                        setFilter("dateFrom", "");
+                        setFilter("dateTo", "");
                         setPage(1);
                       }}
                     >

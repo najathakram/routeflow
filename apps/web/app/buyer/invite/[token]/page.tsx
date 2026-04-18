@@ -153,7 +153,7 @@ export default function BuyerInvitePage() {
       <div className="w-full max-w-sm">
         {/* Header */}
         <div className="mb-8 flex flex-col items-center gap-3">
-          <img src="/logo-buyer.png" alt="RouteFlow" className="h-12 w-12 object-contain" />
+          <img src="/logo-buyer.svg" alt="RouteFlow" className="h-12 w-12 object-contain" />
           <h1 className="text-2xl font-bold text-navy">RouteFlow</h1>
           <p className="text-sm text-navy/60">Buyer Portal Invite</p>
         </div>

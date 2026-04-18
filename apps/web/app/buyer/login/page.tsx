@@ -129,7 +129,7 @@ function BuyerLoginInner() {
 
         <div className="relative z-10 max-w-md px-12 text-center">
           <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-white/10 backdrop-blur-sm p-2">
-            <img src="/logo-buyer.png" alt="RouteFlow" className="h-full w-full object-contain" />
+            <img src="/logo-buyer.svg" alt="RouteFlow" className="h-full w-full object-contain" />
           </div>
           <h2 className="text-3xl font-bold text-white mb-4">
             Order smarter with RouteFlow
@@ -159,7 +159,7 @@ function BuyerLoginInner() {
         <div className="w-full max-w-sm">
           {/* Mobile logo (hidden on large screens where left panel shows) */}
           <div className="mb-8 flex flex-col items-center gap-3 lg:hidden">
-            <img src="/logo-buyer.png" alt="RouteFlow" className="h-12 w-12 object-contain" />
+            <img src="/logo-buyer.svg" alt="RouteFlow" className="h-12 w-12 object-contain" />
             <h1 className="text-2xl font-bold text-navy">RouteFlow</h1>
           </div>
 

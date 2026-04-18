@@ -2,31 +2,64 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Semantic design tokens ─────────────────────────────────────────────────── */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-  /* Tenant brand color — overridden at runtime by TenantProvider */
-  --primary: #3B82F6;
-  --primary-foreground: #ffffff;
+  /* Surface */
+  --background:           #ffffff;
+  --foreground:           #1B3A5C;   /* navy */
+  --surface-raised:       #f8fafc;
+  --surface-border:       #e2e8f0;
+
+  /* Tenant brand — overridden at runtime by TenantProvider */
+  --primary:              #2563eb;   /* brand-600 */
+  --primary-foreground:   #ffffff;
+
+  /* Status */
+  --success:              #16a34a;
+  --success-bg:           #dcfce7;
+  --warning:              #d97706;
+  --warning-bg:           #fef3c7;
+  --danger:               #dc2626;
+  --danger-bg:            #fee2e2;
+  --info:                 #0284c7;
+  --info-bg:              #e0f2fe;
 }
 
-/* Dark mode disabled — app is light-mode only */
+/* Dark mode variables — ready to activate with class="dark" on <html> */
+/* Uncomment when dark mode is enabled:
+.dark {
+  --background:           #0f1b2d;
+  --foreground:           #f1f5f9;
+  --surface-raised:       #152238;
+  --surface-border:       #1e3a5c;
+  --primary:              #60a5fa;
+  --primary-foreground:   #0f1b2d;
+}
+*/
 
+/* ── Base styles ────────────────────────────────────────────────────────────── */
 body {
   color: var(--foreground);
   background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
+  /* font-family set via Tailwind font-sans + Inter variable in layout.tsx */
 }
 
+/* ── Utilities ──────────────────────────────────────────────────────────────── */
 @layer utilities {
   .text-balance {
     text-wrap: balance;
   }
+
   .scrollbar-hide {
     -ms-overflow-style: none;
     scrollbar-width: none;
   }
   .scrollbar-hide::-webkit-scrollbar {
     display: none;
+  }
+
+  /* Smooth focus ring — consistent across all interactive elements */
+  .focus-ring {
+    @apply outline-none ring-2 ring-brand-500 ring-offset-2;
   }
 }

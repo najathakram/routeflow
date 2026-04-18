@@ -34,10 +34,13 @@ import {
   BarChart3,
   PieChart,
   ShoppingBag,
+  Search,
   type LucideIcon,
 } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { cn, Avatar, ToastProvider } from "@routeflow/ui/web";
+import { TenantLogo } from "@/components/TenantLogo";
+import { CommandPalette, useCommandPalette } from "@/components/CommandPalette";
 import { useAuth } from "@/lib/auth-context";
 import { clearTenantCookie } from "@/lib/tenant-cookie";
 import { PageTitleProvider, usePageTitle } from "@/lib/page-title-context";
@@ -333,7 +336,7 @@ function NotificationIcon({ type }: { type: AppNotification["type"] }) {
 
 // ─── Header ───────────────────────────────────────────────────────────────────
 
-function Header() {
+function Header({ onOpenPalette }: { onOpenPalette: () => void }) {
   const { title } = usePageTitle();
   const { user, logout } = useAuth();
   const pathname = usePathname();
@@ -361,7 +364,27 @@ function Header() {
         {title && <h1 className="text-base font-semibold text-navy">{title}</h1>}
       </div>
 
-      <div className="flex items-center gap-1">
+      <div className="flex items-center gap-2">
+        {/* Command palette trigger */}
+        <button
+          onClick={onOpenPalette}
+          className="hidden items-center gap-2 rounded-lg border border-surface-border bg-surface-raised px-3 py-1.5 text-sm text-navy/50 transition-colors hover:border-brand-300 hover:text-navy md:flex"
+          aria-label="Open command palette"
+        >
+          <Search className="h-3.5 w-3.5" />
+          <span>Search…</span>
+          <kbd className="ml-1 rounded border border-surface-border bg-white px-1 py-0.5 text-[10px] font-medium">
+            ⌘K
+          </kbd>
+        </button>
+        <button
+          onClick={onOpenPalette}
+          className="flex items-center justify-center rounded-lg p-2 text-navy/60 transition-colors hover:bg-surface-raised hover:text-navy md:hidden"
+          aria-label="Open command palette"
+        >
+          <Search className="h-5 w-5" />
+        </button>
+
         {/* Notification bell */}
         <DropdownMenu.Root onOpenChange={(open) => { if (open) markAllRead(); }}>
           <DropdownMenu.Trigger asChild>
@@ -518,6 +541,7 @@ function ImpersonationBanner() {
 
 function DashboardShell({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
+  const { open: paletteOpen, setOpen: setPaletteOpen } = useCommandPalette();
   const navStructure = getNavForRole(user?.role, (user as any)?.canActAsDriver);
   const [collapsed, setCollapsed] = React.useState(() => {
     if (typeof window !== "undefined") {
@@ -547,6 +571,54 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
 
   useRealtimeUpdates();
 
+  const shellRouter = useRouter();
+
+  // ── Keyboard shortcuts ──
+  const [shortcutHelpOpen, setShortcutHelpOpen] = React.useState(false);
+  React.useEffect(() => {
+    let sequence = "";
+    let seqTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const handler = (e: KeyboardEvent) => {
+      // Skip if user is typing in an input/textarea
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || (e.target as HTMLElement)?.isContentEditable) return;
+      // Skip if modifier keys held (except shift for ?)
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+      if (e.key === "?") { setShortcutHelpOpen((v) => !v); return; }
+
+      // Sequence shortcuts (g + letter)
+      sequence += e.key.toLowerCase();
+      if (seqTimer) clearTimeout(seqTimer);
+      seqTimer = setTimeout(() => { sequence = ""; }, 800);
+
+      if (sequence === "go") { shellRouter.push("/orders");    sequence = ""; }
+      else if (sequence === "gr") { shellRouter.push("/routes");    sequence = ""; }
+      else if (sequence === "gd") { shellRouter.push("/drivers");   sequence = ""; }
+      else if (sequence === "gc") { shellRouter.push("/customers"); sequence = ""; }
+      else if (sequence === "gi") { shellRouter.push("/invoices");  sequence = ""; }
+      else if (sequence === "gf") { shellRouter.push("/finance/dashboard"); sequence = ""; }
+      else if (sequence === "gs") { shellRouter.push("/settings");  sequence = ""; }
+      else if (sequence === "gh") { shellRouter.push("/dashboard"); sequence = ""; }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [shellRouter]);
+
+  const SHORTCUTS = [
+    { keys: ["g", "h"], label: "Go to Dashboard" },
+    { keys: ["g", "o"], label: "Go to Orders" },
+    { keys: ["g", "r"], label: "Go to Routes" },
+    { keys: ["g", "d"], label: "Go to Drivers" },
+    { keys: ["g", "c"], label: "Go to Customers" },
+    { keys: ["g", "i"], label: "Go to Invoices" },
+    { keys: ["g", "f"], label: "Go to Finance" },
+    { keys: ["g", "s"], label: "Go to Settings" },
+    { keys: ["⌘", "K"], label: "Open Command Palette" },
+    { keys: ["?"], label: "Show Keyboard Shortcuts" },
+  ];
+
   return (
     <div className="flex h-screen overflow-hidden">
       <a
@@ -569,14 +641,11 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
             collapsed ? "justify-center" : "gap-3",
           )}
         >
-          <img
-            src="/logo-seller.png"
-            alt="RouteFlow"
-            className="h-8 w-8 shrink-0 rounded-lg object-contain"
+          <TenantLogo
+            className="h-8 w-8"
+            showName={!collapsed}
+            nameClassName="text-lg font-bold text-white truncate"
           />
-          {!collapsed && (
-            <span className="text-lg font-bold text-white">RouteFlow</span>
-          )}
         </div>
 
         {/* Nav */}
@@ -632,11 +701,51 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
       {/* Right column */}
       <div className="flex flex-1 flex-col overflow-hidden">
         <ImpersonationBanner />
-        <Header />
+        <Header onOpenPalette={() => setPaletteOpen(true)} />
         <main id="main-content" className="flex-1 overflow-x-hidden overflow-y-auto bg-surface-raised">
           {children}
         </main>
       </div>
+
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+
+      {/* Keyboard shortcuts help modal */}
+      {shortcutHelpOpen && (
+        <div
+          className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm"
+          onClick={() => setShortcutHelpOpen(false)}
+        >
+          <div
+            className="w-full max-w-sm overflow-hidden rounded-xl border border-surface-border bg-white shadow-modal"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-surface-border px-5 py-3.5">
+              <p className="text-sm font-semibold text-navy">Keyboard Shortcuts</p>
+              <button
+                onClick={() => setShortcutHelpOpen(false)}
+                className="rounded p-1 text-navy/40 hover:bg-surface-raised hover:text-navy transition-colors"
+                aria-label="Close"
+              >
+                <ChevronRight className="h-4 w-4 rotate-90" />
+              </button>
+            </div>
+            <ul className="divide-y divide-surface-border">
+              {SHORTCUTS.map((s) => (
+                <li key={s.label} className="flex items-center justify-between px-5 py-3">
+                  <span className="text-sm text-navy/70">{s.label}</span>
+                  <div className="flex items-center gap-1">
+                    {s.keys.map((k) => (
+                      <kbd key={k} className="rounded border border-surface-border bg-surface-raised px-1.5 py-0.5 text-xs font-medium text-navy">
+                        {k}
+                      </kbd>
+                    ))}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
