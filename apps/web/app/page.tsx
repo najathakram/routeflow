@@ -3,13 +3,14 @@ import {
   Truck,
   ClipboardList,
   Receipt,
-  MapPin,
   ArrowRight,
   CheckCircle2,
   Users,
   Zap,
   Route,
+  Play,
 } from "lucide-react";
+import { ProductVideo } from "./(marketing)/product-video";
 
 // ─── Feature Card ────────────────────────────────────────────────────────────
 
@@ -94,7 +95,7 @@ export default function SellerLandingPage() {
         <div className="relative z-10 mx-auto max-w-4xl px-6 text-center">
           <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-brand-400/20 bg-white/5 px-4 py-1.5 text-sm text-blue-200">
             <Zap className="h-3.5 w-3.5" />
-            Wholesale distribution, simplified
+            Built for wholesale distributors and jobbers
           </div>
 
           <h1 className="text-4xl font-extrabold tracking-tight text-white sm:text-5xl lg:text-6xl">
@@ -103,9 +104,8 @@ export default function SellerLandingPage() {
           </h1>
 
           <p className="mx-auto mt-6 max-w-2xl text-lg text-blue-200/80 leading-relaxed">
-            The all-in-one platform for wholesale distribution. Manage orders,
-            plan routes, track deliveries, and invoice customers. All from a
-            single dashboard.
+            RouteFlow brings your orders, routes, drivers, invoices, and customers
+            into one place. Less chasing, less guessing, more delivering.
           </p>
 
           <div className="mt-10 flex flex-col items-center gap-4 sm:flex-row sm:justify-center">
@@ -140,17 +140,41 @@ export default function SellerLandingPage() {
         </div>
       </section>
 
+      {/* Product Tour Video */}
+      <section className="py-20 bg-white">
+        <div className="mx-auto max-w-6xl px-6">
+          <div className="text-center mb-10">
+            <div className="inline-flex items-center gap-2 rounded-full bg-brand-50 px-4 py-1.5 text-sm font-medium text-brand-700 mb-4">
+              <Play className="h-3.5 w-3.5" />
+              Product tour
+            </div>
+            <h2 className="text-3xl font-bold text-navy">
+              See the whole picture in 60 seconds
+            </h2>
+            <p className="mt-3 text-navy/60 max-w-xl mx-auto">
+              From a morning&apos;s worth of paperwork to a day&apos;s worth of deliveries.
+              Watch how RouteFlow fits together.
+            </p>
+          </div>
+
+          <ProductVideo />
+
+          <p className="mt-4 text-center text-xs text-navy/40">
+            Use Space to play/pause, arrow keys to scrub
+          </p>
+        </div>
+      </section>
+
       {/* Features */}
       <section className="py-20 bg-surface-raised">
         <div className="mx-auto max-w-6xl px-6">
           <div className="text-center mb-12">
             <h2 className="text-3xl font-bold text-navy">
-              Everything you need to run your distribution
+              Everything you need, in one place
             </h2>
             <p className="mt-3 text-navy/60 max-w-2xl mx-auto">
-              From taking orders to delivering them, RouteFlow streamlines
-              your entire wholesale operation so you can focus on growing your
-              business.
+              From taking an order to getting paid, RouteFlow handles the whole
+              cycle so your team can focus on what matters.
             </p>
           </div>
 
@@ -168,12 +192,12 @@ export default function SellerLandingPage() {
             <FeatureCard
               icon={Receipt}
               title="Smart Invoicing"
-              description="Auto-generate invoices from deliveries. Send by email, track payments, and manage credit notes."
+              description="Invoices generate automatically when a delivery is signed off. Send by email, track payments, and manage credit notes."
             />
             <FeatureCard
               icon={Truck}
               title="Delivery Tracking"
-              description="Live driver tracking, proof of delivery photos, and automatic customer notifications on every run."
+              description="Live driver tracking, proof of delivery, and automatic customer notifications on every run."
             />
           </div>
         </div>
@@ -208,32 +232,32 @@ export default function SellerLandingPage() {
             <Step
               number={3}
               title="Deliver"
-              description="Track runs in real time, capture proof of delivery, and auto-generate invoices."
+              description="Track runs in real time, capture proof of delivery, and invoices take care of themselves."
             />
           </div>
         </div>
       </section>
 
-      {/* Social proof / stats */}
+      {/* Stats */}
       <section className="py-16 bg-brand-50">
         <div className="mx-auto max-w-4xl px-6">
           <div className="grid gap-8 sm:grid-cols-3 text-center">
             <div>
               <p className="text-3xl font-bold text-brand-700">Efficient</p>
               <p className="text-sm text-navy/60 mt-1">
-                Optimized routes save hours every week
+                Optimized routes save your drivers hours every week
               </p>
             </div>
             <div>
               <p className="text-3xl font-bold text-brand-700">Connected</p>
               <p className="text-sm text-navy/60 mt-1">
-                Your customers order directly from their portal
+                Customers order from their own portal, any time
               </p>
             </div>
             <div>
               <p className="text-3xl font-bold text-brand-700">Scalable</p>
               <p className="text-sm text-navy/60 mt-1">
-                From 10 customers to 10,000. We grow with you.
+                From 10 customers to 10,000. RouteFlow grows with you.
               </p>
             </div>
           </div>
@@ -244,11 +268,11 @@ export default function SellerLandingPage() {
       <section className="py-20 bg-gradient-to-br from-[#0f1b2d] to-[#152238]">
         <div className="mx-auto max-w-2xl px-6 text-center">
           <h2 className="text-3xl font-bold text-white mb-4">
-            Ready to transform your distribution?
+            Ready to run your rounds like the best in the business?
           </h2>
           <p className="text-blue-200/80 mb-8">
-            Join RouteFlow today and give your team the tools to deliver faster,
-            invoice smarter, and grow without limits.
+            Start a free 14-day trial today. No credit card, no setup fees.
+            Bring your data and you can be live in a day.
           </p>
           <Link
             href="/signup"
@@ -275,16 +299,10 @@ export default function SellerLandingPage() {
             &copy; {new Date().getFullYear()} RouteFlow. All rights reserved.
           </p>
           <div className="flex items-center gap-4 text-xs text-navy/50">
-            <Link
-              href="/login"
-              className="hover:text-navy transition-colors"
-            >
+            <Link href="/login" className="hover:text-navy transition-colors">
               Sign In
             </Link>
-            <Link
-              href="/buyer"
-              className="hover:text-navy transition-colors"
-            >
+            <Link href="/buyer" className="hover:text-navy transition-colors">
               Buyer Portal
             </Link>
           </div>
