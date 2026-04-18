@@ -131,7 +131,9 @@ describe("ProductsService", () => {
     });
 
     it("should throw BadRequestException when SKU is duplicate", async () => {
-      prisma.product.findFirst.mockResolvedValue(MOCK_PRODUCT); // SKU exists — service uses findFirst
+      prisma.product.findFirst
+        .mockResolvedValueOnce(null) // name check — no conflict
+        .mockResolvedValueOnce(MOCK_PRODUCT); // SKU check — conflict
 
       await expect(
         service.create({ name: "Test", sku: "TOM-001", unit: "kg", pricePerUnit: 1 } as any),
