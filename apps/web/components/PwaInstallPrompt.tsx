@@ -13,7 +13,15 @@ interface BeforeInstallPromptEvent extends Event {
  * Shows a banner when the browser fires the `beforeinstallprompt` event.
  * On iOS (no beforeinstallprompt), shows a "Add to Home Screen" tip instead.
  */
-export function PwaInstallPrompt({ appName = "RouteFlow" }: { appName?: string }) {
+export function PwaInstallPrompt({
+  appName = "RouteFlow",
+  logoSrc = "/logo-buyer.svg",
+  accentClass = "bg-buyer-600 hover:bg-buyer-700",
+}: {
+  appName?: string;
+  logoSrc?: string;
+  accentClass?: string;
+}) {
   const [deferredPrompt, setDeferredPrompt] = React.useState<BeforeInstallPromptEvent | null>(null);
   const [isIos, setIsIos] = React.useState(false);
   const [dismissed, setDismissed] = React.useState(false);
@@ -68,7 +76,7 @@ export function PwaInstallPrompt({ appName = "RouteFlow" }: { appName?: string }
     return (
       <div className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 w-[calc(100%-2rem)] max-w-sm">
         <div className="flex items-center gap-3 rounded-xl border border-surface-border bg-white px-4 py-3 shadow-modal">
-          <img src="/logo-buyer.svg" alt="" className="h-9 w-9 shrink-0 rounded-lg" />
+          <img src={logoSrc} alt="" className="h-9 w-9 shrink-0 rounded-lg" />
           <div className="flex-1 min-w-0">
             <p className="text-sm font-semibold text-navy">Install {appName}</p>
             <p className="text-xs text-navy/50">Add to your home screen for quick access</p>
@@ -83,7 +91,7 @@ export function PwaInstallPrompt({ appName = "RouteFlow" }: { appName?: string }
             </button>
             <button
               onClick={install}
-              className="flex items-center gap-1.5 rounded-lg bg-buyer-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-buyer-700 transition-colors"
+              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-white transition-colors ${accentClass}`}
             >
               <Download className="h-3.5 w-3.5" />
               Install
@@ -99,7 +107,7 @@ export function PwaInstallPrompt({ appName = "RouteFlow" }: { appName?: string }
     return (
       <div className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 w-[calc(100%-2rem)] max-w-sm">
         <div className="flex items-start gap-3 rounded-xl border border-surface-border bg-white px-4 py-3 shadow-modal">
-          <img src="/logo-buyer.svg" alt="" className="h-9 w-9 shrink-0 rounded-lg" />
+          <img src={logoSrc} alt="" className="h-9 w-9 shrink-0 rounded-lg" />
           <div className="flex-1 min-w-0">
             <p className="text-sm font-semibold text-navy">Install {appName}</p>
             <p className="text-xs text-navy/50">

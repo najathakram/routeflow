@@ -46,6 +46,7 @@ import { clearTenantCookie } from "@/lib/tenant-cookie";
 import { PageTitleProvider, usePageTitle } from "@/lib/page-title-context";
 import { useRealtimeUpdates } from "@/lib/hooks/useRealtimeUpdates";
 import { useNotifications, type AppNotification } from "@/lib/hooks/useNotifications";
+import { PwaInstallPrompt } from "@/components/PwaInstallPrompt";
 
 // ─── Nav types & structure ────────────────────────────────────────────────────
 
@@ -708,6 +709,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
       </div>
 
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      <PwaInstallPrompt logoSrc="/logo.svg" accentClass="bg-brand-600 hover:bg-brand-700" />
 
       {/* Keyboard shortcuts help modal */}
       {shortcutHelpOpen && (

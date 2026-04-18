@@ -1,0 +1,39 @@
+{
+  "name": "RouteFlow",
+  "short_name": "RouteFlow",
+  "description": "Manage orders, routes, drivers, inventory, and invoices for your wholesale distribution business.",
+  "start_url": "/dashboard",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#f8fafc",
+  "theme_color": "#2563eb",
+  "scope": "/",
+  "lang": "en",
+  "categories": ["business", "logistics"],
+  "icons": [
+    {
+      "src": "/logo.svg",
+      "type": "image/svg+xml",
+      "sizes": "any",
+      "purpose": "any maskable"
+    }
+  ],
+  "screenshots": [],
+  "shortcuts": [
+    {
+      "name": "Orders",
+      "url": "/orders",
+      "description": "View and manage orders"
+    },
+    {
+      "name": "Routes",
+      "url": "/routes",
+      "description": "Plan delivery routes"
+    },
+    {
+      "name": "Customers",
+      "url": "/customers",
+      "description": "Manage customers"
+    }
+  ]
+}

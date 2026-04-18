@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
@@ -11,14 +11,26 @@ const inter = Inter({
   display: "swap",
 });
 
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+  themeColor: "#2563eb",
+};
+
 export const metadata: Metadata = {
   title: { default: "RouteFlow", template: "%s · RouteFlow" },
   description: "The all-in-one platform for wholesale distribution. Manage orders, plan routes, track deliveries, and invoice customers.",
+  manifest: "/operator-manifest.json",
+  appleWebApp: {
+    capable: true,
+    title: "RouteFlow",
+    statusBarStyle: "black-translucent",
+  },
   icons: {
-    icon: [
-      { url: "/favicon.svg", type: "image/svg+xml" },
-    ],
-    apple: "/favicon.svg",
+    icon: [{ url: "/logo.svg", type: "image/svg+xml" }],
+    apple: "/logo.svg",
   },
   openGraph: {
     title: "RouteFlow",
