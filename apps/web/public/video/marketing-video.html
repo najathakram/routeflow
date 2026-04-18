@@ -8,7 +8,8 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet"/>
 <style>
-  html, body { margin: 0; padding: 0; height: 100%; background: #0a0a0a; overflow: hidden; font-family: 'Inter', sans-serif; }
+  html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; font-family: 'Inter', sans-serif; }
+  body { background: var(--bg, #0a0a0a); }
   #root { position: fixed; inset: 0; }
 </style>
 </head>
@@ -25,6 +26,7 @@
 <script type="text/babel">
 const _params = new URLSearchParams(window.location.search);
 const _scrollMode = _params.get('scroll') === '1';
+if (_scrollMode) document.documentElement.style.setProperty('--bg', 'transparent');
 
 function VideoRoot() {
   return (

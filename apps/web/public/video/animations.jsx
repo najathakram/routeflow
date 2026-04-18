@@ -352,16 +352,15 @@ function Stage({
     try { localStorage.setItem(persistKey + ':t', String(time)); } catch {}
   }, [time, persistKey]);
 
-  // Auto-scale to fit viewport
+  // Auto-scale: "cover" in scroll mode (fills viewport, clips edges), "fit" otherwise
   React.useEffect(() => {
     if (!stageRef.current) return;
     const el = stageRef.current;
     const measure = () => {
-      const barH = 44; // playback bar height
-      const s = Math.min(
-        el.clientWidth / width,
-        (el.clientHeight - barH) / height
-      );
+      const barH = hideControls ? 0 : 44;
+      const s = hideControls
+        ? Math.max(el.clientWidth / width, el.clientHeight / height)
+        : Math.min(el.clientWidth / width, (el.clientHeight - barH) / height);
       setScale(Math.max(0.05, s));
     };
     measure();
@@ -455,7 +454,7 @@ function Stage({
         position: 'absolute', inset: 0,
         display: 'flex', flexDirection: 'column',
         alignItems: 'center',
-        background: '#0a0a0a',
+        background: hideControls ? 'transparent' : '#0a0a0a',
         fontFamily: 'Inter, system-ui, sans-serif',
       }}
     >
