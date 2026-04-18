@@ -42,9 +42,9 @@ export class PublicTenantsController {
   @Get("username-available")
   @ApiOperation({ summary: "Check if a username is available for self-service signup" })
   @Throttle({ default: { ttl: 60_000, limit: 20 } })
-  checkUsernameAvailability(@Query("username") username: string) {
+  async checkUsernameAvailability(@Query("username") username: string) {
     if (!username) return { available: false, reason: "Username is required" };
-    const available = this.tenantsService.isUsernameAvailable(username);
+    const available = await this.tenantsService.isUsernameAvailable(username);
     return {
       username,
       available,

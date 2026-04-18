@@ -67,8 +67,13 @@ export class TenantsService {
     private readonly jwt: JwtService,
   ) {}
 
-  isUsernameAvailable(username: string): boolean {
-    return !RESERVED_USERNAMES.has(username.toLowerCase());
+  async isUsernameAvailable(username: string): Promise<boolean> {
+    if (RESERVED_USERNAMES.has(username.toLowerCase())) return false;
+    const existing = await this.prisma.user.findFirst({
+      where: { username: { equals: username, mode: "insensitive" } },
+      select: { id: true },
+    });
+    return !existing;
   }
 
   async isSlugAvailable(slug: string): Promise<boolean> {

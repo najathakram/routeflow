@@ -342,8 +342,8 @@ function OverdueInvoicesPanel({ invoices, isLoading }: { invoices: Invoice[]; is
 interface Product {
   id: string;
   name: string;
-  stockQty?: number;
-  lowStockThreshold?: number;
+  currentStock?: number | null;
+  lowStockThreshold?: number | null;
   unit?: string;
 }
 
@@ -386,21 +386,22 @@ function LowStockPanel({ products, total, isLoading }: { products: Product[]; to
       ) : (
         <ul className="divide-y divide-surface-border">
           {products.map((p) => {
-            const qty = p.stockQty ?? 0;
+            const stockUnset = p.currentStock == null;
+            const qty = p.currentStock ?? 0;
             const threshold = p.lowStockThreshold ?? 5;
-            const pct = Math.min(100, Math.max(0, (qty / (threshold * 2)) * 100));
+            const pct = stockUnset ? 0 : Math.min(100, Math.max(0, (qty / (threshold * 2)) * 100));
             return (
               <li key={p.id} className="px-4 py-3">
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-sm font-medium text-navy truncate max-w-[60%]">{p.name}</span>
-                  <span className={cn("text-xs font-semibold", qty === 0 ? "text-danger" : "text-warning")}>
-                    {qty} {p.unit ?? "units"}
+                  <span className={cn("text-xs font-semibold", stockUnset ? "text-navy/40" : qty === 0 ? "text-danger" : "text-warning")}>
+                    {stockUnset ? "Not set" : `${qty} ${p.unit ?? "units"}`}
                   </span>
                 </div>
                 <div className="h-1 w-full overflow-hidden rounded-full bg-surface-border">
                   <div
-                    className={cn("h-full rounded-full transition-all", qty === 0 ? "bg-danger" : "bg-warning")}
-                    style={{ width: `${pct}%` }}
+                    className={cn("h-full rounded-full transition-all", stockUnset ? "bg-navy/20" : qty === 0 ? "bg-danger" : "bg-warning")}
+                    style={{ width: stockUnset ? "100%" : `${pct}%` }}
                   />
                 </div>
               </li>
