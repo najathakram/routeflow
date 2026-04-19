@@ -16,16 +16,15 @@ const config: Config = {
         foreground: "var(--foreground)",
         // Tenant-branded primary — overridden at runtime by TenantProvider
         primary: {
-          DEFAULT: "var(--primary, #2563eb)",
+          DEFAULT: "var(--primary, #0b6e6b)",
           foreground: "var(--primary-foreground, #ffffff)",
         },
-        // Full brand scale (preset only has 50/100/500/700/900 — extend with rest)
         brand: {
-          200: "#bfdbfe",
-          300: "#93c5fd",
-          400: "#60a5fa",
-          600: "#2563eb",
-          800: "#1e40af",
+          200: "#9adedd",
+          300: "#67cecc",
+          400: "#34bebb",
+          600: "#0b6e6b",
+          800: "#063836",
         },
         // Dark-navy canvas colours used in hero / CTA sections
         canvas: {

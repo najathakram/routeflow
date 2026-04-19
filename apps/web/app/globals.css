@@ -11,7 +11,7 @@
   --surface-border:       #e2e8f0;
 
   /* Tenant brand — overridden at runtime by TenantProvider */
-  --primary:              #2563eb;   /* brand-600 */
+  --primary:              #0b6e6b;   /* brand-600 teal */
   --primary-foreground:   #ffffff;
 
   /* Status */

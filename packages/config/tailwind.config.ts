@@ -7,16 +7,16 @@ const preset: Omit<Config, "content"> = {
     extend: {
       colors: {
         brand: {
-          50:  "#eff6ff",
-          100: "#dbeafe",
-          200: "#bfdbfe",
-          300: "#93c5fd",
-          400: "#60a5fa",
-          500: "#3b82f6",
-          600: "#2563eb",
-          700: "#1d4ed8",
-          800: "#1e40af",
-          900: "#1e3a8a",
+          50:  "#f0faf9",
+          100: "#ccefee",
+          200: "#9adedd",
+          300: "#67cecc",
+          400: "#34bebb",
+          500: "#0b9e9b",
+          600: "#0b6e6b",
+          700: "#08524f",
+          800: "#063836",
+          900: "#042523",
         },
         // Dark-navy canvas colours used in hero / CTA sections
         canvas: {

@@ -38,6 +38,13 @@
       "runtimeArgs": ["serve", "--listen", "4500", "--no-clipboard", "."],
       "cwd": "mockups",
       "port": 4500
+    },
+    {
+      "name": "routeflow-app",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["serve", "--listen", "4600", "--no-clipboard", "."],
+      "cwd": "routeflow-app",
+      "port": 4600
     }
   ]
 }
