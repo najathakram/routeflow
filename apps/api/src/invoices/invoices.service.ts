@@ -262,8 +262,7 @@ export class InvoicesService {
         dueDate,
         terms: tenantDefaults.terms ?? defaultTerms,
         issueDate: new Date(),
-        notes:
-          tenantDefaults.notes ?? (order.orderNumber ? `Order #${order.orderNumber}` : null),
+        notes: tenantDefaults.notes ?? (order.orderNumber ? `Order #${order.orderNumber}` : null),
         items: { create: itemsData },
       },
       include: {
