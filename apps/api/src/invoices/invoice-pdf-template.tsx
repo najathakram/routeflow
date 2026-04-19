@@ -49,6 +49,18 @@ export interface InvoicePdfData {
     notes?: string | null;
     paidAt: Date | string;
   }>;
+  tenant?: {
+    businessName?: string | null;
+    addressLine1?: string | null;
+    addressLine2?: string | null;
+    city?: string | null;
+    state?: string | null;
+    zip?: string | null;
+    country?: string | null;
+    phone?: string | null;
+    website?: string | null;
+    customerEmail?: string | null;
+  } | null;
 }
 
 const toNum = (val: DecimalLike): number => {
@@ -230,19 +242,50 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
   const addr =
     invoice.customer.addresses?.find((a) => a.isDefault) ?? invoice.customer.addresses?.[0];
 
+  const tenant = invoice.tenant ?? null;
+  const hasTenant = !!tenant?.businessName;
+  const tenantAddrLine = [tenant?.city, [tenant?.state, tenant?.zip].filter(Boolean).join(" ")]
+    .filter(Boolean)
+    .join(", ");
+
   return (
-    <Document title={`Invoice ${invoice.invoiceNumber}`} author="RouteFlow">
+    <Document
+      title={`Invoice ${invoice.invoiceNumber}`}
+      author={tenant?.businessName ?? "RouteFlow"}
+    >
       <Page size="A4" style={styles.page}>
         {/* Header */}
         <View style={styles.header}>
           <View>
-            <View style={styles.logoBox}>
-              <View style={styles.logoSquare}>
-                <Text style={{ fontSize: 9, fontFamily: "Helvetica-Bold", color: "#fff" }}>RF</Text>
-              </View>
-              <Text style={styles.logoText}>RouteFlow</Text>
-            </View>
-            <Text style={styles.logoSub}>routeflow.io</Text>
+            {hasTenant ? (
+              <>
+                <Text style={styles.logoText}>{tenant!.businessName}</Text>
+                {tenant!.addressLine1 ? (
+                  <Text style={styles.logoSub}>{tenant!.addressLine1}</Text>
+                ) : null}
+                {tenant!.addressLine2 ? (
+                  <Text style={styles.logoSub}>{tenant!.addressLine2}</Text>
+                ) : null}
+                {tenantAddrLine ? <Text style={styles.logoSub}>{tenantAddrLine}</Text> : null}
+                {tenant!.phone ? <Text style={styles.logoSub}>{tenant!.phone}</Text> : null}
+                {tenant!.customerEmail ? (
+                  <Text style={styles.logoSub}>{tenant!.customerEmail}</Text>
+                ) : null}
+                {tenant!.website ? <Text style={styles.logoSub}>{tenant!.website}</Text> : null}
+              </>
+            ) : (
+              <>
+                <View style={styles.logoBox}>
+                  <View style={styles.logoSquare}>
+                    <Text style={{ fontSize: 9, fontFamily: "Helvetica-Bold", color: "#fff" }}>
+                      RF
+                    </Text>
+                  </View>
+                  <Text style={styles.logoText}>RouteFlow</Text>
+                </View>
+                <Text style={styles.logoSub}>routeflow.io</Text>
+              </>
+            )}
           </View>
           <View style={{ alignItems: "flex-end" }}>
             <Text style={styles.invoiceTitle}>INVOICE</Text>
@@ -400,7 +443,11 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
 
         {/* Footer */}
         <View style={styles.footer} fixed>
-          <Text style={styles.footerText}>RouteFlow · routeflow.io</Text>
+          <Text style={styles.footerText}>
+            {hasTenant
+              ? [tenant!.businessName, tenant!.website].filter(Boolean).join(" · ")
+              : "RouteFlow · routeflow.io"}
+          </Text>
           <Text style={styles.footerText}>Generated {fmtDate(new Date())}</Text>
         </View>
       </Page>

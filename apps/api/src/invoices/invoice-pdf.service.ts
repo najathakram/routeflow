@@ -52,6 +52,28 @@ export class InvoicePdfService {
     });
     if (!inv) throw new NotFoundException("Invoice not found");
 
+    // Load tenant's business info to render a "Bill From" block on the PDF
+    const invTenantId = (inv as any).tenantId as string | null | undefined;
+    let tenantInfo: Record<string, any> | null = null;
+    if (invTenantId) {
+      const cfg = await this.prisma.tenantConfig.findUnique({
+        where: { tenantId: invTenantId },
+        select: {
+          businessName: true,
+          addressLine1: true,
+          addressLine2: true,
+          city: true,
+          state: true,
+          zip: true,
+          country: true,
+          phone: true,
+          website: true,
+          customerEmail: true,
+        },
+      });
+      if (cfg) tenantInfo = cfg;
+    }
+
     this.logger.log(`Generating PDF for invoice ${invoiceId}`);
 
     // Generate barcodes for each line item
@@ -80,7 +102,7 @@ export class InvoicePdfService {
       }),
     );
 
-    const invWithBarcodes = { ...inv, items: itemsWithBarcodes };
+    const invWithBarcodes = { ...inv, items: itemsWithBarcodes, tenant: tenantInfo };
 
     let pdfBuffer: Buffer;
     try {

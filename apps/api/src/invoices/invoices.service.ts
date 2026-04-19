@@ -49,6 +49,20 @@ export class InvoicesService {
     return { terms, dueDays: TERM_DAYS[terms] ?? 30 };
   }
 
+  /** Resolve the tenant's customer-facing invoice Notes and Terms & Conditions defaults. */
+  private async resolveTenantInvoiceDefaults(): Promise<{
+    notes: string | null;
+    terms: string | null;
+  }> {
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) return { notes: null, terms: null };
+    const cfg = await this.prisma.tenantConfig.findUnique({
+      where: { tenantId },
+      select: { invoiceNotes: true, invoiceTerms: true },
+    });
+    return { notes: cfg?.invoiceNotes ?? null, terms: cfg?.invoiceTerms ?? null };
+  }
+
   // ─── Helpers ──────────────────────────────────────────────────────────────
 
   private async nextInvoiceNumber(): Promise<string> {
@@ -146,6 +160,7 @@ export class InvoicesService {
       throw new BadRequestException(`Invoice total cannot be negative (calculated: ${total}).`);
     }
 
+    const tenantDefaults = await this.resolveTenantInvoiceDefaults();
     const invoice = await this.prisma.forTenant().invoice.create({
       data: {
         invoiceNumber: await this.nextInvoiceNumber(),
@@ -158,8 +173,8 @@ export class InvoicesService {
         total,
         dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
         issueDate: dto.issueDate ? new Date(dto.issueDate) : new Date(),
-        notes: dto.notes,
-        terms: dto.terms,
+        notes: dto.notes ?? tenantDefaults.notes,
+        terms: dto.terms ?? tenantDefaults.terms,
         items: { create: itemsData },
       },
       include: {
@@ -222,10 +237,13 @@ export class InvoicesService {
     const taxAmount = Number(order.tax);
     const total = Number(order.total);
 
-    // Due date from configured terms
+    // Due date from configured payment terms (e.g. "Net 30")
     const { terms: defaultTerms, dueDays } = await this.resolveDefaultTerms();
     const dueDate = new Date();
     dueDate.setDate(dueDate.getDate() + dueDays);
+
+    // Customer-facing invoice Notes and T&C from tenant settings
+    const tenantDefaults = await this.resolveTenantInvoiceDefaults();
 
     // Generate invoice number
     const invoiceNumber = await this.generateInvoiceNumber(db);
@@ -242,9 +260,10 @@ export class InvoicesService {
         shippingFee: 0,
         total,
         dueDate,
-        terms: defaultTerms,
+        terms: tenantDefaults.terms ?? defaultTerms,
         issueDate: new Date(),
-        notes: order.orderNumber ? `Order #${order.orderNumber}` : null,
+        notes:
+          tenantDefaults.notes ?? (order.orderNumber ? `Order #${order.orderNumber}` : null),
         items: { create: itemsData },
       },
       include: {
@@ -317,6 +336,18 @@ export class InvoicesService {
     const dueDate = new Date();
     dueDate.setDate(dueDate.getDate() + dueDays);
 
+    // Customer-facing invoice Notes and T&C from tenant settings
+    let tenantNotes: string | null = null;
+    let tenantTerms: string | null = null;
+    if (tenantId) {
+      const cfg = await this.prisma.tenantConfig.findUnique({
+        where: { tenantId },
+        select: { invoiceNotes: true, invoiceTerms: true },
+      });
+      tenantNotes = cfg?.invoiceNotes ?? null;
+      tenantTerms = cfg?.invoiceTerms ?? null;
+    }
+
     const invoiceNumber = await this.generateInvoiceNumber();
 
     return this.prisma.invoice.create({
@@ -331,9 +362,9 @@ export class InvoicesService {
         shippingFee: 0,
         total,
         dueDate,
-        terms: defaultTerms,
+        terms: tenantTerms ?? defaultTerms,
         issueDate: new Date(),
-        notes: order.orderNumber ? `Order #${order.orderNumber}` : null,
+        notes: tenantNotes ?? (order.orderNumber ? `Order #${order.orderNumber}` : null),
         items: { create: itemsData },
         ...(tenantId ? { tenantId } : {}),
       },

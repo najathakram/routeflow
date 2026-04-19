@@ -43,6 +43,8 @@ export class SettingsController {
     let ownerName = all["settings.ownerName"] ?? "";
     let accountEmail = all["settings.email"] ?? "";
     let customerEmail = "";
+    let invoiceNotes = "";
+    let invoiceTerms = "";
 
     // Address / phone resolved below (TenantConfig takes precedence over SystemConfig)
     let street = all["settings.street"] ?? "";
@@ -63,6 +65,8 @@ export class SettingsController {
           state: true,
           zip: true,
           phone: true,
+          invoiceNotes: true,
+          invoiceTerms: true,
         },
       });
       if (config?.businessName) businessName = config.businessName;
@@ -74,6 +78,8 @@ export class SettingsController {
       if (config?.state != null) state = config.state;
       if (config?.zip != null) zip = config.zip;
       if (config?.phone != null) phone = config.phone;
+      if (config?.invoiceNotes != null) invoiceNotes = config.invoiceNotes;
+      if (config?.invoiceTerms != null) invoiceTerms = config.invoiceTerms;
 
       // If account email is not explicitly set in system config, source it from
       // the TENANT_ADMIN user's email — this is the email used when the tenant
@@ -99,6 +105,8 @@ export class SettingsController {
       zip,
       taxRate: all["settings.taxRate"] != null ? parseFloat(all["settings.taxRate"]) : 0,
       logoUrl: all["settings.logoUrl"] ?? null,
+      invoiceNotes,
+      invoiceTerms,
     };
   }
 
@@ -130,6 +138,10 @@ export class SettingsController {
       if (dto.zip !== undefined) configUpdate.zip = typeof dto.zip === "string" ? dto.zip : "";
       if (dto.phone !== undefined)
         configUpdate.phone = typeof dto.phone === "string" ? dto.phone : "";
+      if (dto.invoiceNotes !== undefined)
+        configUpdate.invoiceNotes = typeof dto.invoiceNotes === "string" ? dto.invoiceNotes : "";
+      if (dto.invoiceTerms !== undefined)
+        configUpdate.invoiceTerms = typeof dto.invoiceTerms === "string" ? dto.invoiceTerms : "";
       if (Object.keys(configUpdate).length > 0) {
         await this.prisma.tenantConfig.upsert({
           where: { tenantId },

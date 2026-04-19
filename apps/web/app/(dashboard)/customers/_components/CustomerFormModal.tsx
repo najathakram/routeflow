@@ -263,6 +263,7 @@ export function CustomerFormModal({
       updateCustomer.mutate(
         {
           id: initialData.id,
+          email: data.email || undefined,
           businessName: resolvedBusinessName,
           contactName: resolvedContactName,
           phone: data.phone || undefined,
@@ -432,7 +433,6 @@ export function CustomerFormModal({
               placeholder={isBusiness ? "billing@acmeco.com" : "jane.doe@email.com"}
               register={register("email")}
               error={errors.email?.message}
-              disabled={mode === "edit"}
             />
           </section>
 

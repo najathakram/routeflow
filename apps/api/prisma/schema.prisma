@@ -338,6 +338,8 @@ model TenantConfig {
   smtpFromEmail  String?
   customerEmail  String?
   ownerName      String?
+  invoiceNotes   String?
+  invoiceTerms   String?
   updatedAt      DateTime @updatedAt
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)

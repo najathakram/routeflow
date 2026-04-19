@@ -3,6 +3,7 @@ import { ValidationPipe } from "@nestjs/common";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import { json } from "express";
 import helmet from "helmet";
+import { Pool } from "pg";
 import { AppModule } from "./app.module";
 import { RedisIoAdapter } from "./gateways/redis-io.adapter";
 
@@ -41,7 +42,28 @@ function assertSecrets() {
   }
 }
 
+/** One-time idempotent migration: add invoiceNotes/invoiceTerms to TenantConfig. */
+async function runStartupMigration() {
+  const url = process.env.DATABASE_URL;
+  if (!url) return;
+  const pool = new Pool({ connectionString: url });
+  try {
+    await pool.query(
+      `ALTER TABLE "TenantConfig"
+         ADD COLUMN IF NOT EXISTS "invoiceNotes" TEXT,
+         ADD COLUMN IF NOT EXISTS "invoiceTerms" TEXT`,
+    );
+    console.log("✅ TenantConfig migration: invoiceNotes/invoiceTerms ready");
+  } catch (err) {
+    // Table may not exist yet in non-multi-tenant envs — safe to ignore
+    console.warn("⚠️  TenantConfig migration skipped:", (err as Error).message);
+  } finally {
+    await pool.end();
+  }
+}
+
 async function bootstrap() {
+  await runStartupMigration();
   assertSecrets();
   const app = await NestFactory.create(AppModule, {
     // rawBody: true preserves req.rawBody for Stripe webhook signature verification

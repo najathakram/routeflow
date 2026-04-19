@@ -97,6 +97,8 @@ const profileSchema = z.object({
   state: z.string().optional(),
   zip: z.string().regex(/^\d{5}(-\d{4})?$/, "Enter a valid ZIP code"),
   taxRate: z.coerce.number().min(0).max(100),
+  invoiceNotes: z.string().optional(),
+  invoiceTerms: z.string().optional(),
 });
 type ProfileFormValues = z.infer<typeof profileSchema>;
 
@@ -132,6 +134,8 @@ function BusinessProfileTab() {
       state: "",
       zip: "",
       taxRate: 0,
+      invoiceNotes: "",
+      invoiceTerms: "",
     },
   });
 
@@ -146,6 +150,8 @@ function BusinessProfileTab() {
         state: savedSettings.state ?? "",
         zip: savedSettings.zip ?? "",
         taxRate: savedSettings.taxRate ?? 0,
+        invoiceNotes: savedSettings.invoiceNotes ?? "",
+        invoiceTerms: savedSettings.invoiceTerms ?? "",
       });
     }
   }, [savedSettings, reset]);
@@ -270,6 +276,37 @@ function BusinessProfileTab() {
               error={errors.taxRate?.message}
             />
             <span className="absolute right-3 top-[34px] text-sm text-navy/40">%</span>
+          </div>
+        </div>
+      </Card>
+
+      <Card title="Invoice Defaults">
+        <div className="space-y-4">
+          <div>
+            <label className="text-sm font-medium text-navy">Customer Notes</label>
+            <textarea
+              {...register("invoiceNotes")}
+              rows={5}
+              placeholder={
+                "Thank you for your business.\n\nPlease write check in favor of\nYOUR COMPANY NAME\nZelle: billing@yourcompany.com"
+              }
+              className="mt-1 w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+            />
+            <p className="mt-1 text-xs text-navy/40">
+              Printed on every new invoice under &quot;Notes&quot;. Preserves line breaks.
+            </p>
+          </div>
+          <div>
+            <label className="text-sm font-medium text-navy">Terms &amp; Conditions</label>
+            <textarea
+              {...register("invoiceTerms")}
+              rows={8}
+              placeholder="Your standard terms & conditions shown on every invoice."
+              className="mt-1 w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+            />
+            <p className="mt-1 text-xs text-navy/40">
+              Printed on every new invoice under &quot;Terms &amp; Conditions&quot;. Preserves line breaks.
+            </p>
           </div>
         </div>
       </Card>

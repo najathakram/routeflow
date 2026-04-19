@@ -439,33 +439,48 @@ function AdjustStockModal({
         </div>
         <form onSubmit={handleSubmit} className="space-y-4 px-6 py-4">
           <div>
-            <label className="mb-1 block text-xs text-navy">Search product</label>
+            <label className="mb-1 block text-xs text-navy">Product *</label>
             <input
               ref={barcodeInputRef}
               type="text"
-              value={productSearch}
-              onChange={(e) => setProductSearch(e.target.value)}
+              value={
+                selectedProduct && !productSearch
+                  ? `${selectedProduct.name}${selectedProduct.sku ? ` (${selectedProduct.sku})` : ""}`
+                  : productSearch
+              }
+              onChange={(e) => {
+                setProductSearch(e.target.value);
+                if (form.productId) setForm((f) => ({ ...f, productId: "" }));
+              }}
               placeholder="Type name or SKU, or scan barcode…"
               className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
             />
-          </div>
-          <div>
-            <label className="mb-1 block text-xs text-navy">Product *</label>
-            <select
-              required
-              value={form.productId}
-              onChange={(e) => setForm((f) => ({ ...f, productId: e.target.value }))}
-              className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-            >
-              <option value="">Select product…</option>
-              {filteredProducts.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}{p.sku ? ` (${p.sku})` : ""}
-                </option>
-              ))}
-            </select>
-            {productSearch && filteredProducts.length === 0 && (
-              <p className="mt-1 text-xs text-navy/40">No products match &quot;{productSearch}&quot;</p>
+            {productSearch && !form.productId && (
+              <div className="mt-1 max-h-48 overflow-y-auto rounded border border-surface-border bg-white shadow-sm">
+                {filteredProducts.length === 0 ? (
+                  <p className="px-3 py-2 text-xs text-navy/40">
+                    No products match &quot;{productSearch}&quot;
+                  </p>
+                ) : (
+                  filteredProducts.map((p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => {
+                        setForm((f) => ({ ...f, productId: p.id }));
+                        setProductSearch("");
+                      }}
+                      className="block w-full cursor-pointer px-3 py-2 text-left text-sm text-navy hover:bg-surface-raised"
+                    >
+                      {p.name}
+                      {p.sku ? <span className="text-navy/50"> ({p.sku})</span> : null}
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+            {!form.productId && !productSearch && (
+              <p className="mt-1 text-xs text-navy/40">Type to search products</p>
             )}
             {selectedProduct && (
               <p className="mt-1 text-xs text-navy/50">
@@ -473,6 +488,14 @@ function AdjustStockModal({
                 {form.quantity !== "" && !isNaN(qty) && (
                   <> → <strong>{Number((selectedProduct.currentStock + qty).toFixed(2))} {selectedProduct.unit}</strong></>
                 )}
+                {" · "}
+                <button
+                  type="button"
+                  className="underline"
+                  onClick={() => setForm((f) => ({ ...f, productId: "" }))}
+                >
+                  change
+                </button>
               </p>
             )}
           </div>
@@ -530,7 +553,7 @@ function AdjustStockModal({
 
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="secondary" onClick={onClose} type="button">Cancel</Button>
-            <Button type="submit" loading={recordAdjustment.isPending}>Save Adjustment</Button>
+            <Button type="submit" disabled={!form.productId} loading={recordAdjustment.isPending}>Save Adjustment</Button>
           </div>
         </form>
       </div>
