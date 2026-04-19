@@ -295,8 +295,8 @@ function DesktopInstructions({ styles }: { styles: (typeof STYLES)[Variant] }) {
       <div className="mb-5 flex items-start gap-3 rounded-xl bg-surface-raised p-4">
         <Monitor className={`h-6 w-6 shrink-0 ${styles.accentIcon}`} />
         <div className="text-sm text-navy/70">
-          You're on a desktop. Open this page on your phone to install the mobile app, or install
-          the desktop app from your browser's address bar.
+          You&apos;re on a desktop. Open this page on your phone to install the mobile app, or install
+          the desktop app from your browser&apos;s address bar.
         </div>
       </div>
       <div className="rounded-xl border border-surface-border p-4">
@@ -309,7 +309,7 @@ function DesktopInstructions({ styles }: { styles: (typeof STYLES)[Variant] }) {
       <div className="mt-3 rounded-xl border border-surface-border p-4">
         <h4 className="mb-2 text-sm font-semibold text-navy">On this computer</h4>
         <p className="text-xs text-navy/60">
-          Click the install icon (a small screen with a down arrow) in your browser's address bar.
+          Click the install icon (a small screen with a down arrow) in your browser&apos;s address bar.
           Available in Chrome, Edge, and Brave.
         </p>
       </div>
