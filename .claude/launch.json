@@ -11,11 +11,10 @@
     },
     {
       "name": "web",
-      "runtimeExecutable": "node",
-      "runtimeArgs": ["node_modules/next/dist/bin/next", "dev"],
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["next", "dev", "--port", "3001"],
       "cwd": "apps/web",
-      "port": 3001,
-      "autoPort": true
+      "port": 3001
     },
     {
       "name": "mobile",
