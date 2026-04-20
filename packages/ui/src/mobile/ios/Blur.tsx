@@ -1,5 +1,5 @@
 import React from "react";
-import { Platform, View, type ViewProps, type ViewStyle } from "react-native";
+import { Platform, View, type StyleProp, type ViewProps, type ViewStyle } from "react-native";
 import { BlurView } from "expo-blur";
 
 export interface BlurProps extends ViewProps {
@@ -44,7 +44,7 @@ export function Blur({
       intensity={intensity}
       tint={tint}
       experimentalBlurMethod={Platform.OS === "android" ? "dimezisBlurView" : undefined}
-      style={style as any}
+      style={style as StyleProp<ViewStyle>}
       {...rest}
     >
       {children}

@@ -204,7 +204,7 @@ export class AuthController {
     // atomically on the success path.
     const peekedMobile = this.peekMobileFlag(state);
     const base = peekedMobile
-      ? this.configService.get<string>("GOOGLE_MOBILE_SCHEME") ?? "routeflow://auth/callback"
+      ? (this.configService.get<string>("GOOGLE_MOBILE_SCHEME") ?? "routeflow://auth/callback")
       : `${this.webUrl}/auth/google/callback`;
 
     if (oauthError) {
@@ -217,7 +217,7 @@ export class AuthController {
     try {
       const profile = await this.googleOAuth.verifyCallback(code, state);
       const callbackBase = profile.mobile
-        ? this.configService.get<string>("GOOGLE_MOBILE_SCHEME") ?? "routeflow://auth/callback"
+        ? (this.configService.get<string>("GOOGLE_MOBILE_SCHEME") ?? "routeflow://auth/callback")
         : `${this.webUrl}/auth/google/callback`;
 
       // ── Link-account flow ────────────────────────────────────────────────────
