@@ -5,19 +5,24 @@ import Svg, { Path, Rect } from "react-native-svg";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { Pill } from "@routeflow/ui/mobile/ios";
+import { useAdminRoutes } from "../../lib/api/admin";
 
-// TODO: wire live driver GPS feed (/routes/live) + polyline + markers.
-const DRIVERS = [
-  { name: "Marcus R.", route: "R07", progress: "5 / 12 stops · on time", color: ios.brand, init: "MR" },
-  { name: "Samira H.", route: "R05", progress: "3 / 11 stops · +18m late", color: ios.system.orange, init: "SH" },
-  { name: "Dmitri K.", route: "R11", progress: "2 / 14 stops · on time", color: ios.system.indigo, init: "DK" },
-];
-
+// UI-shell map backdrop; the live driver list + status pulls real data.
+// TODO: wire GPS polylines once /routes/live endpoint exists.
 export default function FleetScreen() {
   const router = useRouter();
+  const { data: routesData } = useAdminRoutes({ limit: 50 });
+  const routes = routesData?.data ?? [];
+
+  const live = routes.filter(
+    (r) => r.activeRun?.status === "IN_PROGRESS",
+  );
+  const home = routes.filter(
+    (r) => r.activeRun?.status === "COMPLETED",
+  );
+
   return (
     <View style={styles.screen}>
-      {/* Mock map backdrop */}
       <View style={styles.mapBg}>
         <Svg width="100%" height="100%" viewBox="0 0 393 852" preserveAspectRatio="none">
           <Path d="M-20 180 Q 100 200 200 240 T 420 280" stroke="#fff" strokeWidth={14} fill="none" />
@@ -30,76 +35,84 @@ export default function FleetScreen() {
             fill="#A9C8D2"
             opacity={0.8}
           />
-          {/* Trails */}
-          <Path
-            d="M110 300 Q 140 380 200 440 T 300 620"
-            stroke="#0B6E6B"
-            strokeWidth={3}
-            fill="none"
-            strokeLinecap="round"
-            opacity={0.8}
-          />
-          <Path
-            d="M260 210 Q 240 320 220 450 T 180 700"
-            stroke="#5856D6"
-            strokeWidth={3}
-            fill="none"
-            strokeLinecap="round"
-            opacity={0.8}
-          />
         </Svg>
       </View>
 
       <SafeAreaView style={styles.overlay} edges={["top", "left", "right"]}>
-        {/* Top search */}
         <View style={styles.searchBar}>
           <Ionicons name="search" size={16} color="#636366" />
           <Text style={styles.searchPlaceholder}>Search driver, route, customer…</Text>
-          <Pill variant="green" dot small>4 live</Pill>
+          <Pill variant="green" dot small>
+            {live.length} live
+          </Pill>
         </View>
 
-        {/* Legend */}
         <View style={styles.legend}>
-          <LegendChip color={ios.brand} label="On time · 3" />
-          <LegendChip color={ios.system.orange} label="Late · 1" />
-          <LegendChip color={ios.system.green} label="Home · 1" />
+          <LegendChip color={ios.brand} label={`On route · ${live.length}`} />
+          <LegendChip color={ios.system.green} label={`Home · ${home.length}`} />
         </View>
 
         <View style={{ flex: 1 }} />
 
-        {/* Bottom sheet — driver list */}
         <View style={styles.sheet}>
           <View style={styles.sheetHandle} />
           <View style={styles.sheetHead}>
             <Text style={styles.sheetTitle}>Live drivers</Text>
-            <Text style={styles.msgAll}>Message all</Text>
           </View>
-          {DRIVERS.map((d, i) => (
-            <Pressable
-              key={d.name}
-              onPress={() => router.push(`/(operator)/driver?id=${encodeURIComponent(d.name)}`)}
-              style={[
-                styles.driverRow,
-                i > 0 && {
-                  borderTopWidth: StyleSheet.hairlineWidth,
-                  borderTopColor: "rgba(60,60,67,0.12)",
-                },
-              ]}
-            >
-              <View style={[styles.avatar, { backgroundColor: d.color }]}>
-                <Text style={styles.avatarText}>{d.init}</Text>
-              </View>
-              <View style={{ flex: 1, minWidth: 0 }}>
-                <Text style={styles.driverName}>
-                  {d.name} <Text style={styles.driverRoute}>· {d.route}</Text>
-                </Text>
-                <Text style={styles.driverProgress}>{d.progress}</Text>
-              </View>
-              <View style={styles.msgBtn}>
-                <Ionicons name="chatbubble-outline" size={15} color={ios.brand} />
-              </View>
-            </Pressable>
-          ))}
+
+          {routes.length === 0 ? (
+            <Text style={styles.empty}>No routes configured.</Text>
+          ) : (
+            routes.slice(0, 5).map((r, i) => {
+              const name = r.driver?.user
+                ? `${r.driver.user.firstName} ${r.driver.user.lastName}`
+                : "Unassigned";
+              const initials = r.driver?.user
+                ? `${r.driver.user.firstName?.[0] ?? ""}${r.driver.user.lastName?.[0] ?? ""}`.toUpperCase()
+                : "—";
+              const stateLabel =
+                r.activeRun?.status === "IN_PROGRESS"
+                  ? "On route"
+                  : r.activeRun?.status === "COMPLETED"
+                    ? "Home"
+                    : "Scheduled";
+              return (
+                <Pressable
+                  key={r.id}
+                  onPress={() =>
+                    r.driverId
+                      ? router.push(
+                          `/(operator)/driver?id=${encodeURIComponent(r.driverId)}`,
+                        )
+                      : null
+                  }
+                  style={[
+                    styles.driverRow,
+                    i > 0 && {
+                      borderTopWidth: StyleSheet.hairlineWidth,
+                      borderTopColor: "rgba(60,60,67,0.12)",
+                    },
+                  ]}
+                >
+                  <View style={[styles.avatar, { backgroundColor: ios.brand }]}>
+                    <Text style={styles.avatarText}>{initials}</Text>
+                  </View>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={styles.driverName} numberOfLines={1}>
+                      {name} <Text style={styles.driverRoute}>· {r.name}</Text>
+                    </Text>
+                    <Text style={styles.driverProgress}>
+                      {stateLabel}
+                      {r.stops?.length ? ` · ${r.stops.length} stops` : ""}
+                    </Text>
+                  </View>
+                  <View style={styles.msgBtn}>
+                    <Ionicons name="chevron-forward" size={15} color={ios.brand} />
+                  </View>
+                </Pressable>
+              );
+            })
+          )}
         </View>
       </SafeAreaView>
     </View>
@@ -135,12 +148,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   searchPlaceholder: { flex: 1, fontSize: 15, color: "#636366", fontFamily: "Inter_400Regular" },
-  legend: {
-    flexDirection: "row",
-    gap: 6,
-    marginTop: 12,
-    flexWrap: "wrap",
-  },
+  legend: { flexDirection: "row", gap: 6, marginTop: 12, flexWrap: "wrap" },
   legendChip: {
     backgroundColor: "rgba(255,255,255,0.94)",
     paddingHorizontal: 10,
@@ -174,20 +182,20 @@ const styles = StyleSheet.create({
     alignSelf: "center",
     marginBottom: 10,
   },
-  sheetHead: {
-    paddingHorizontal: 16,
-    paddingBottom: 10,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "baseline",
-  },
+  sheetHead: { paddingHorizontal: 16, paddingBottom: 10 },
   sheetTitle: {
     fontSize: 17,
     fontFamily: "Inter_700Bold",
     color: "#000",
     letterSpacing: -0.3,
   },
-  msgAll: { fontSize: 13, fontFamily: "Inter_500Medium", color: ios.brand },
+  empty: {
+    textAlign: "center",
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    color: "#636366",
+    paddingVertical: 16,
+  },
   driverRow: {
     paddingHorizontal: 16,
     paddingVertical: 10,

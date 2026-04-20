@@ -13,14 +13,65 @@ const HOSTING_PROVIDER_DOMAINS = new Set([
   "render.com", "fly.dev", "onrender.com", "herokuapp.com",
 ]);
 
+// Mobile-web build served by the @routeflow/mobile Railway service. Phones that
+// hit the Next.js web app get a 302 here so they see the iOS-reskinned app
+// instead of the desktop dashboard.
+const MOBILE_WEB_URL =
+  process.env.NEXT_PUBLIC_MOBILE_WEB_URL ?? "https://routeflowmobile-production.up.railway.app";
+
+/** Rough mobile UA detection — matches phones + small tablets, not desktop. */
+function isMobileUserAgent(ua: string): boolean {
+  // "Mobi" covers Firefox/Chrome mobile; "Android" covers Android WebViews.
+  // iPad UAs say "Macintosh" in iPadOS 13+, so we also check for touch via
+  // the viewport hint below. This is intentionally coarse — desktop browsers
+  // in DevTools mobile mode will still match, which is fine.
+  return /Mobi|Android|iPhone|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua);
+}
+
 /**
  * Extracts the tenant slug from the subdomain of the Host header and stores it
  * as a cookie so the TenantProvider can fetch branding on the client side.
+ * Also redirects mobile browsers to the mobile-web Railway deployment.
  *
  * e.g.  acme.routeflow.io  →  cookie tenant-slug=acme
  *       localhost:3001      →  no cookie set (dev: use X-Tenant-Slug header instead)
  */
 export function middleware(request: NextRequest) {
+  // Redirect phones to the mobile-web build. Skip API routes, Next.js
+  // internals, and anyone who opts out via `?desktop=1` (escape hatch for
+  // people intentionally using the desktop UI on a phone).
+  const pathname = request.nextUrl.pathname;
+  const url = request.nextUrl;
+  const optedOutOfMobile =
+    url.searchParams.get("desktop") === "1" ||
+    request.cookies.get("prefer-desktop")?.value === "1";
+  const skipMobileRedirect =
+    optedOutOfMobile ||
+    pathname.startsWith("/api/") ||
+    pathname.startsWith("/_next/");
+
+  if (!skipMobileRedirect) {
+    const ua = request.headers.get("user-agent") ?? "";
+    if (isMobileUserAgent(ua)) {
+      // Preserve the path + query so /login on phone lands on /login in mobile.
+      const redirectTarget = new URL(MOBILE_WEB_URL);
+      redirectTarget.pathname = pathname;
+      redirectTarget.search = url.search;
+      return NextResponse.redirect(redirectTarget, { status: 302 });
+    }
+  }
+
+  // Remember the desktop opt-out so subsequent nav on the phone stays here.
+  if (url.searchParams.get("desktop") === "1") {
+    const res = NextResponse.next();
+    res.cookies.set("prefer-desktop", "1", {
+      sameSite: "lax",
+      path: "/",
+      maxAge: 60 * 60 * 24 * 30,
+    });
+    return res;
+  }
+
   const response = NextResponse.next();
 
   // Allow manual override via request header (useful in dev / mobile apps).

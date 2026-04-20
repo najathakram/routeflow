@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useMemo } from "react";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
@@ -7,50 +7,85 @@ import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import {
   InlineStats,
-  ListGroup,
-  ListRow,
   NavBar,
   Pill,
   ProgressTrack,
   StopCard,
 } from "@routeflow/ui/mobile/ios";
-
-type RouteState = "pre-depart" | "on-route";
-
-// TODO: replace with live RouteRun data from useRouteStore() / /routes API
-const STOPS = [
-  { n: 1, name: "North Deli", addr: "18 North Parade · $246 collected", status: "done" as const, pill: "Delivered" },
-  { n: 2, name: "Bayside Bistro", addr: "7 Bay Rd · $312 cash", status: "done" as const, pill: "Delivered" },
-  { n: 3, name: "Atlas Catering", addr: "92 River St · $198", status: "done" as const, pill: "Delivered" },
-  { n: 4, name: "Green Market", addr: "14 Ferry Lane · Left at door", status: "done" as const, pill: "Unattended" },
-  { n: 5, name: "Luna Roastery", addr: "6 Grove St · $312", status: "done" as const, pill: "Delivered" },
-  { n: 6, name: "Harbor Café", addr: "42 Harbour St · 3 items · $184", status: "next" as const, pill: "Up next" },
-  { n: 7, name: "Westpark Grill", addr: "15 West End Blvd · 5 items", status: "pending" as const, pill: undefined },
-  { n: 8, name: "Central Kitchen", addr: "3 Market Sq · 4 items", status: "pending" as const, pill: "Call ahead" },
-];
+import {
+  useActiveRouteRun,
+  useScheduledRouteRuns,
+  useUpdateRunStatus,
+  type RouteRun,
+  type RouteRunStop,
+} from "../../../lib/api/routes";
+import { useAuthStore } from "../../../lib/auth-store";
 
 export default function DriverRouteScreen() {
   const router = useRouter();
-  // TODO: derive from useRouteStore() — active RouteRun? Pre-depart state shows SOD; otherwise today's route.
-  const [state] = useState<RouteState>("on-route");
+  const { data: activeData, isLoading: activeLoading } = useActiveRouteRun();
+  const { data: scheduledData, isLoading: scheduledLoading } = useScheduledRouteRuns();
 
-  if (state === "pre-depart") return <StartOfDay />;
-  return <TodaysRoute onOpenStop={(id) => router.push(`/(driver)/route/stop/${id}`)} />;
+  const active = activeData?.data?.[0] ?? null;
+  const upcoming = scheduledData?.data?.[0] ?? null;
+
+  if (activeLoading || scheduledLoading) {
+    return (
+      <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
+        <NavBar largeTitle="Today" />
+        <View style={styles.center}>
+          <ActivityIndicator color={ios.brand} />
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (active) {
+    return <TodaysRoute run={active} onOpenStop={(id) => router.push(`/(driver)/route/stop/${id}`)} />;
+  }
+  if (upcoming) {
+    return <StartOfDay run={upcoming} />;
+  }
+  return <NoRoute />;
 }
 
-function StartOfDay() {
+function StartOfDay({ run }: { run: RouteRun }) {
+  const user = useAuthStore((s) => s.user);
+  const updateStatus = useUpdateRunStatus();
+
+  const firstName = user?.username?.split(/[._\s]/)[0] ?? "driver";
+  const greetingName = firstName.charAt(0).toUpperCase() + firstName.slice(1);
+
+  const stopCount = run.stops?.length ?? 0;
+  const totalValue = (run.stops ?? []).reduce((sum, stop) => {
+    const orderTotal = (stop.orders ?? []).reduce((t, o) => {
+      return t + (o.lineItems ?? []).reduce((s, li) => s + li.qty * li.unitPrice, 0);
+    }, 0);
+    return sum + orderTotal;
+  }, 0);
+  const dateLabel = new Date(run.scheduledDate).toLocaleDateString(undefined, {
+    weekday: "long",
+    month: "short",
+    day: "numeric",
+  }).toUpperCase();
+
+  const onStart = () => updateStatus.mutate({ id: run.id, status: "IN_PROGRESS" });
+
+  const initials =
+    greetingName.slice(0, 2).toUpperCase() || "ME";
+
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <NavBar
-        largeTitle="Good morning, Marcus"
+        largeTitle={`Good morning, ${greetingName}`}
         trailing={
           <View style={styles.avatar}>
-            <Text style={styles.avatarText}>MR</Text>
+            <Text style={styles.avatarText}>{initials}</Text>
           </View>
         }
       />
       <ScrollView showsVerticalScrollIndicator={false}>
-        <Text style={styles.dateEyebrow}>THURSDAY · APR 19</Text>
+        <Text style={styles.dateEyebrow}>{dateLabel}</Text>
 
         <View style={{ padding: 16, paddingTop: 0 }}>
           <LinearGradient
@@ -59,78 +94,67 @@ function StartOfDay() {
             end={{ x: 1, y: 1 }}
             style={styles.heroCard}
           >
-            <Text style={styles.heroEyebrow}>ROUTE 07 — NORTH SHORE</Text>
-            <Text style={styles.heroTitle}>12 stops · $3,480</Text>
-            <Text style={styles.heroSub}>Est. 7h 10m · 148 km</Text>
+            <Text style={styles.heroEyebrow}>
+              {(run.route?.name ?? "ROUTE").toUpperCase()}
+            </Text>
+            <Text style={styles.heroTitle}>
+              {stopCount} stop{stopCount === 1 ? "" : "s"} · ${totalValue.toFixed(0)}
+            </Text>
+            <Text style={styles.heroSub}>Scheduled · ready to depart</Text>
             <View style={styles.heroActions}>
-              <Pressable style={styles.heroBtnFilled}>
+              <Pressable
+                style={styles.heroBtnFilled}
+                onPress={onStart}
+                disabled={updateStatus.isPending}
+              >
                 <Ionicons name="play" size={14} color={ios.brandInk} />
-                <Text style={styles.heroBtnFilledText}>Start day</Text>
-              </Pressable>
-              <Pressable style={styles.heroBtnGhost}>
-                <Text style={styles.heroBtnGhostText}>View manifest</Text>
+                <Text style={styles.heroBtnFilledText}>
+                  {updateStatus.isPending ? "Starting…" : "Start day"}
+                </Text>
               </Pressable>
             </View>
           </LinearGradient>
         </View>
-
-        <SectionHeader title="Preflight" action="Skip" />
-        <ListGroup>
-          <ListRow
-            icon={<Ionicons name="checkmark" size={16} color={ios.system.greenInk} />}
-            iconBg={ios.system.greenWash}
-            title="Van inspection"
-            subtitle="Tyres · Mirrors · Fuel 78% · 142,308 km"
-            trailing={<Pill variant="green">Done</Pill>}
-          />
-          <ListRow
-            icon={<Ionicons name="barcode-outline" size={16} color={ios.brand} />}
-            iconBg={ios.brandWash}
-            title="Scan pick list"
-            subtitle="78 / 84 items loaded · 6 short"
-            trailing={<Pill variant="orange">Review</Pill>}
-          />
-          <ListRow
-            icon={<Ionicons name="wallet-outline" size={16} color={ios.gray[1]} />}
-            iconBg={ios.fill3}
-            title="Opening float"
-            subtitle="$200 cash · petty"
-            chevron
-          />
-        </ListGroup>
-
-        <SectionHeader title="Heads up" />
-        <ListGroup>
-          <ListRow
-            icon={<Ionicons name="alert-circle-outline" size={16} color={ios.system.red} />}
-            iconBg={ios.system.redWash}
-            title="Harbor Café — overdue $420"
-            subtitle="Collect before delivery per dispatch"
-            chevron
-          />
-          <ListRow
-            icon={<Ionicons name="warning-outline" size={16} color={ios.system.yellowInk} />}
-            iconBg={ios.system.yellowWash}
-            title="Road closure · King St"
-            subtitle="Auto-rerouted stops 9–11"
-            chevron
-          />
-        </ListGroup>
-        <View style={{ height: 16 }} />
+        <View style={{ height: 24 }} />
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-function TodaysRoute({ onOpenStop }: { onOpenStop: (id: string | number) => void }) {
+function TodaysRoute({
+  run,
+  onOpenStop,
+}: {
+  run: RouteRun;
+  onOpenStop: (id: string) => void;
+}) {
+  const stops = run.stops ?? [];
+  const { done, pending, nextStop, totalStops } = useMemo(() => {
+    const completed = stops.filter((s) => s.status === "COMPLETED" || s.status === "SKIPPED");
+    const remaining = stops.filter(
+      (s) => s.status === "PENDING" || s.status === "IN_PROGRESS",
+    );
+    const sortedRemaining = remaining.sort((a, b) => a.stopNumber - b.stopNumber);
+    return {
+      done: completed.length,
+      pending: remaining.length,
+      nextStop: sortedRemaining[0] ?? null,
+      totalStops: stops.length,
+    };
+  }, [stops]);
+
+  const pct = totalStops ? Math.round((done / totalStops) * 100) : 0;
+
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <NavBar
         largeTitle="Today's Route"
         leading={
           <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-            <Pill variant="green" dot>On time</Pill>
-            <Pill variant="gray">Route 07</Pill>
+            <Pill variant="green" dot>
+              On route
+            </Pill>
+            {run.route?.name ? <Pill variant="gray">{run.route.name}</Pill> : null}
           </View>
         }
         trailing={<Ionicons name="ellipsis-vertical" size={20} color={ios.brand} />}
@@ -140,73 +164,63 @@ function TodaysRoute({ onOpenStop }: { onOpenStop: (id: string | number) => void
         <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
           <InlineStats
             stats={[
-              { value: "12", label: "Stops" },
-              { value: "5", label: "Done", color: ios.system.greenInk },
-              { value: "7", label: "Left", color: ios.brand },
-              { value: "2h10", label: "ETA home" },
+              { value: String(totalStops), label: "Stops" },
+              { value: String(done), label: "Done", color: ios.system.greenInk },
+              { value: String(pending), label: "Left", color: ios.brand },
             ]}
           />
           <View style={styles.progressRow}>
             <View style={{ flex: 1 }}>
-              <ProgressTrack percent={42} fill="green" />
+              <ProgressTrack percent={pct} fill="green" />
             </View>
-            <Text style={styles.progressText}>42%</Text>
+            <Text style={styles.progressText}>{pct}%</Text>
           </View>
         </View>
 
-        <View style={{ padding: 16, paddingTop: 14 }}>
-          <LinearGradient
-            colors={[ios.brandGradient[0]!, ios.brandGradient[1]!, ios.brandGradient[2]!]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.heroCard}
-          >
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-              <View style={styles.heroNumBadge}>
-                <Text style={styles.heroNumText}>6</Text>
+        {nextStop ? (
+          <View style={{ padding: 16, paddingTop: 14 }}>
+            <LinearGradient
+              colors={[ios.brandGradient[0]!, ios.brandGradient[1]!, ios.brandGradient[2]!]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.heroCard}
+            >
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <View style={styles.heroNumBadge}>
+                  <Text style={styles.heroNumText}>{nextStop.stopNumber}</Text>
+                </View>
+                <Text style={styles.heroEyebrowLow}>UP NEXT</Text>
               </View>
-              <Text style={styles.heroEyebrowLow}>UP NEXT · 0.8 MI</Text>
-            </View>
-            <Text style={styles.heroTitleLg}>Harbor Café</Text>
-            <Text style={styles.heroSub}>42 Harbour St · 3 items · $184</Text>
-            <View style={styles.heroActions}>
-              <Pressable style={[styles.heroBtnFilled, { flex: 1, justifyContent: "center" }]}>
-                <Text style={styles.heroBtnFilledText}>Navigate</Text>
-              </Pressable>
-              <Pressable
-                style={[styles.heroBtnGhost, { flex: 1, justifyContent: "center", alignItems: "center" }]}
-                onPress={() => onOpenStop(6)}
-              >
-                <Text style={styles.heroBtnGhostText}>Open stop</Text>
-              </Pressable>
-              <Pressable style={styles.heroBtnIcon}>
-                <Ionicons name="call-outline" size={18} color="#fff" />
-              </Pressable>
-            </View>
-          </LinearGradient>
+              <Text style={styles.heroTitleLg}>
+                {nextStop.customer?.businessName ?? "Stop"}
+              </Text>
+              <Text style={styles.heroSub}>{formatStopSub(nextStop)}</Text>
+              <View style={styles.heroActions}>
+                <Pressable
+                  style={[styles.heroBtnGhost, { flex: 1, alignItems: "center" }]}
+                  onPress={() => onOpenStop(nextStop.id)}
+                >
+                  <Text style={styles.heroBtnGhostText}>Open stop</Text>
+                </Pressable>
+              </View>
+            </LinearGradient>
+          </View>
+        ) : null}
+
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Stops</Text>
         </View>
 
-        <SectionHeader
-          title="Stops"
-          rightSlot={
-            <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
-              <Text style={styles.linkText}>Reorder</Text>
-              <Text style={styles.linkDot}>·</Text>
-              <Text style={styles.linkText}>Map</Text>
-            </View>
-          }
-        />
-
-        <View style={{ paddingHorizontal: 16, gap: 8, paddingBottom: 16 }}>
-          {STOPS.map((s) => (
+        <View style={{ paddingHorizontal: 16, gap: 8, paddingBottom: 24 }}>
+          {stops.map((stop) => (
             <StopCard
-              key={s.n}
-              number={s.n}
-              name={s.name}
-              subtitle={s.addr}
-              status={s.status}
-              pillLabel={s.pill}
-              onPress={() => onOpenStop(s.n)}
+              key={stop.id}
+              number={stop.stopNumber}
+              name={stop.customer?.businessName ?? "Stop"}
+              subtitle={formatStopSub(stop)}
+              status={stopStatus(stop, nextStop?.id)}
+              pillLabel={stopPill(stop, nextStop?.id)}
+              onPress={() => onOpenStop(stop.id)}
             />
           ))}
         </View>
@@ -215,25 +229,48 @@ function TodaysRoute({ onOpenStop }: { onOpenStop: (id: string | number) => void
   );
 }
 
-function SectionHeader({
-  title,
-  action,
-  rightSlot,
-}: {
-  title: string;
-  action?: string;
-  rightSlot?: React.ReactNode;
-}) {
+function formatStopSub(stop: RouteRunStop): string {
+  const parts: string[] = [];
+  if (stop.customerAddress?.line1) parts.push(stop.customerAddress.line1);
+  const itemCount = (stop.orders ?? []).reduce(
+    (t, o) => t + (o.lineItems?.length ?? 0),
+    0,
+  );
+  if (itemCount) parts.push(`${itemCount} item${itemCount === 1 ? "" : "s"}`);
+  return parts.join(" · ");
+}
+
+function stopStatus(stop: RouteRunStop, nextId?: string): "done" | "next" | "pending" {
+  if (stop.status === "COMPLETED" || stop.status === "SKIPPED") return "done";
+  if (stop.id === nextId) return "next";
+  return "pending";
+}
+
+function stopPill(stop: RouteRunStop, nextId?: string): string | undefined {
+  if (stop.status === "COMPLETED") return "Delivered";
+  if (stop.status === "SKIPPED") return "Skipped";
+  if (stop.id === nextId) return "Up next";
+  return undefined;
+}
+
+function NoRoute() {
   return (
-    <View style={styles.sectionHeader}>
-      <Text style={styles.sectionTitle}>{title}</Text>
-      {rightSlot ?? (action ? <Text style={styles.linkText}>{action}</Text> : null)}
-    </View>
+    <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
+      <NavBar largeTitle="Today" />
+      <View style={styles.center}>
+        <Ionicons name="map-outline" size={48} color={ios.label3} />
+        <Text style={styles.emptyTitle}>No route assigned</Text>
+        <Text style={styles.emptySub}>Check back with dispatch for today's manifest.</Text>
+      </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: ios.bg },
+  center: { flex: 1, alignItems: "center", justifyContent: "center", gap: 10, paddingHorizontal: 40 },
+  emptyTitle: { fontSize: 18, fontFamily: "Inter_600SemiBold", color: ios.label, marginTop: 6 },
+  emptySub: { fontSize: 14, fontFamily: "Inter_400Regular", color: ios.label2, textAlign: "center" },
   avatar: {
     width: 34,
     height: 34,
@@ -251,11 +288,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingBottom: 14,
   },
-  heroCard: {
-    borderRadius: 20,
-    padding: 18,
-    overflow: "hidden",
-  },
+  heroCard: { borderRadius: 20, padding: 18, overflow: "hidden" },
   heroEyebrow: {
     fontSize: 12,
     fontFamily: "Inter_600SemiBold",
@@ -288,11 +321,7 @@ const styles = StyleSheet.create({
     color: "rgba(255,255,255,0.85)",
     marginTop: 2,
   },
-  heroActions: {
-    flexDirection: "row",
-    gap: 8,
-    marginTop: 16,
-  },
+  heroActions: { flexDirection: "row", gap: 8, marginTop: 16 },
   heroBtnFilled: {
     backgroundColor: "#fff",
     paddingHorizontal: 14,
@@ -302,30 +331,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 6,
   },
-  heroBtnFilledText: {
-    color: ios.brandInk,
-    fontSize: 15,
-    fontFamily: "Inter_600SemiBold",
-  },
+  heroBtnFilledText: { color: ios.brandInk, fontSize: 15, fontFamily: "Inter_600SemiBold" },
   heroBtnGhost: {
     backgroundColor: "rgba(255,255,255,0.18)",
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: 12,
   },
-  heroBtnGhostText: {
-    color: "#fff",
-    fontSize: 15,
-    fontFamily: "Inter_600SemiBold",
-  },
-  heroBtnIcon: {
-    width: 44,
-    height: 40,
-    backgroundColor: "rgba(255,255,255,0.18)",
-    borderRadius: 12,
-    alignItems: "center",
-    justifyContent: "center",
-  },
+  heroBtnGhostText: { color: "#fff", fontSize: 15, fontFamily: "Inter_600SemiBold" },
   heroNumBadge: {
     width: 26,
     height: 26,
@@ -334,17 +347,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  heroNumText: {
-    color: "#fff",
-    fontSize: 13,
-    fontFamily: "Inter_700Bold",
-  },
-  progressRow: {
-    marginTop: 10,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
+  heroNumText: { color: "#fff", fontSize: 13, fontFamily: "Inter_700Bold" },
+  progressRow: { marginTop: 10, flexDirection: "row", alignItems: "center", gap: 10 },
   progressText: {
     fontSize: 13,
     fontFamily: "Inter_400Regular",
@@ -365,10 +369,4 @@ const styles = StyleSheet.create({
     color: ios.label,
     letterSpacing: -0.3,
   },
-  linkText: {
-    fontSize: 15,
-    fontFamily: "Inter_400Regular",
-    color: ios.brand,
-  },
-  linkDot: { color: ios.label3 },
 });

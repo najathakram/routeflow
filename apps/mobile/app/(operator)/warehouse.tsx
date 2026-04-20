@@ -1,104 +1,166 @@
-import { ScrollView, StyleSheet, Text, View } from "react-native";
+import { useMemo, useState } from "react";
+import {
+  ActivityIndicator,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { ios } from "@routeflow/ui/tokens";
 import {
   KpiCard,
-  ListGroup,
-  NavAction,
   NavBar,
   ProgressTrack,
   SearchBar,
 } from "@routeflow/ui/mobile/ios";
-
-// TODO: wire /products + stock + low-stock thresholds.
-const LOW = [
-  { name: "Butter (500g)", sku: "1108", bin: "B3·14", have: 24, min: 48, pct: 50 },
-  { name: "Croissants (6pk)", sku: "3302", bin: "A2·11", have: 8, min: 40, pct: 20 },
-  { name: "Pain au chocolat", sku: "3308", bin: "A2·12", have: 4, min: 30, pct: 13 },
-  { name: "Raw milk 2L", sku: "2201", bin: "C2·03", have: 18, min: 36, pct: 50 },
-];
+import { useAdminProducts } from "../../lib/api/admin";
 
 export default function WarehouseScreen() {
+  const [search, setSearch] = useState("");
+  const { data: allData, isLoading } = useAdminProducts({ limit: 100 });
+  const products = allData?.data ?? [];
+
+  const stats = useMemo(() => {
+    const low = products.filter(
+      (p) => p.reorderLevel != null && p.currentStock <= p.reorderLevel,
+    );
+    const out = products.filter((p) => p.currentStock <= 0);
+    return {
+      low: low.length,
+      out: out.length,
+      total: products.length,
+      lowRows: low.sort((a, b) => a.currentStock - b.currentStock),
+    };
+  }, [products]);
+
+  const filtered = useMemo(() => {
+    const s = search.trim().toLowerCase();
+    if (!s) return stats.lowRows;
+    return stats.lowRows.filter(
+      (p) =>
+        p.name.toLowerCase().includes(s) ||
+        (p.sku ?? "").toLowerCase().includes(s) ||
+        (p.barcode ?? "").toLowerCase().includes(s),
+    );
+  }, [stats.lowRows, search]);
+
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <NavBar
         largeTitle="Warehouse"
-        leading={<Text style={styles.eyebrow}>NORTH DEPOT</Text>}
-        trailing={<Ionicons name="barcode-outline" size={20} color={ios.brand} />}
+        leading={<Text style={styles.eyebrow}>STOCK & LOW-STOCK</Text>}
       />
 
       <ScrollView showsVerticalScrollIndicator={false}>
-        <SearchBar placeholder="Search SKU, name or bin…" />
+        <SearchBar
+          placeholder="Search SKU, name or barcode…"
+          value={search}
+          onChangeText={setSearch}
+        />
 
-        <View style={styles.kpiRow}>
-          <KpiCard
-            icon={<Ionicons name="archive-outline" size={18} color={ios.system.orangeInk} />}
-            iconBg={ios.system.orangeWash}
-            value="14"
-            label="Low stock"
-          />
-          <KpiCard
-            icon={<Ionicons name="close-circle-outline" size={18} color={ios.system.redInk} />}
-            iconBg={ios.system.redWash}
-            value="3"
-            label="Out of stock"
-          />
-        </View>
-        <View style={[styles.kpiRow, { marginTop: 12 }]}>
-          <KpiCard
-            icon={<Ionicons name="checkmark" size={18} color={ios.brand} />}
-            iconBg={ios.brandWash}
-            value="1,284"
-            label="SKUs tracked"
-          />
-          <KpiCard
-            icon={<Ionicons name="cube-outline" size={18} color={ios.system.purpleInk} />}
-            iconBg={ios.system.purpleWash}
-            value="6"
-            label="Inbound POs"
-          />
-        </View>
-
-        <SectionRow title="Low-stock alerts" action="Reorder all" />
-        <ListGroup>
-          {LOW.map((p) => (
-            <View key={p.sku} style={styles.lowRow}>
-              <View style={{ flex: 1 }}>
-                <View style={styles.lowTop}>
-                  <Text style={styles.lowName}>{p.name}</Text>
-                  <Text style={styles.lowQty}>
-                    {p.have}{" "}
-                    <Text style={styles.lowMin}>/ {p.min}</Text>
-                  </Text>
-                </View>
-                <View style={styles.lowProgress}>
-                  <View style={{ flex: 1 }}>
-                    <ProgressTrack percent={p.pct} height={3} fill={p.pct <= 25 ? "orange" : "brand"} />
-                  </View>
-                  <Text style={styles.lowBin}>{p.bin}</Text>
-                </View>
-              </View>
+        {isLoading ? (
+          <View style={styles.center}>
+            <ActivityIndicator color={ios.brand} />
+          </View>
+        ) : (
+          <>
+            <View style={styles.kpiRow}>
+              <KpiCard
+                icon={<Ionicons name="archive-outline" size={18} color={ios.system.orangeInk} />}
+                iconBg={ios.system.orangeWash}
+                value={String(stats.low)}
+                label="Low stock"
+              />
+              <KpiCard
+                icon={<Ionicons name="close-circle-outline" size={18} color={ios.system.redInk} />}
+                iconBg={ios.system.redWash}
+                value={String(stats.out)}
+                label="Out of stock"
+              />
             </View>
-          ))}
-        </ListGroup>
+            <View style={[styles.kpiRow, { marginTop: 12 }]}>
+              <KpiCard
+                icon={<Ionicons name="checkmark" size={18} color={ios.brand} />}
+                iconBg={ios.brandWash}
+                value={String(stats.total)}
+                label="SKUs tracked"
+              />
+              <KpiCard
+                icon={<Ionicons name="cube-outline" size={18} color={ios.system.purpleInk} />}
+                iconBg={ios.system.purpleWash}
+                value={String(products.filter((p) => p.isActive).length)}
+                label="Active"
+              />
+            </View>
+
+            <SectionRow title={stats.low > 0 ? "Low-stock alerts" : "No low stock"} />
+
+            <View style={styles.list}>
+              {filtered.length === 0 ? (
+                <Text style={styles.empty}>
+                  {stats.total === 0
+                    ? "No products configured."
+                    : search
+                      ? "No matches for that search."
+                      : "All stock levels healthy."}
+                </Text>
+              ) : (
+                filtered.map((p) => {
+                  const minLevel = p.reorderLevel ?? 0;
+                  const pct =
+                    minLevel > 0
+                      ? Math.min(100, Math.round((p.currentStock / minLevel) * 100))
+                      : 100;
+                  return (
+                    <View key={p.id} style={styles.row}>
+                      <View style={{ flex: 1 }}>
+                        <View style={styles.topRow}>
+                          <Text style={styles.name} numberOfLines={1}>
+                            {p.name}
+                          </Text>
+                          <Text style={styles.qty}>
+                            {p.currentStock} <Text style={styles.min}>/ {minLevel}</Text>
+                          </Text>
+                        </View>
+                        <View style={styles.progressRow}>
+                          <View style={{ flex: 1 }}>
+                            <ProgressTrack
+                              percent={pct}
+                              height={3}
+                              fill={pct <= 25 ? "orange" : "brand"}
+                            />
+                          </View>
+                          <Text style={styles.sku}>
+                            {p.sku ?? p.barcode ?? ""} · {p.unit}
+                          </Text>
+                        </View>
+                      </View>
+                    </View>
+                  );
+                })
+              )}
+            </View>
+          </>
+        )}
         <View style={{ height: 20 }} />
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-function SectionRow({ title, action }: { title: string; action?: string }) {
+function SectionRow({ title }: { title: string }) {
   return (
     <View style={styles.sectionRow}>
       <Text style={styles.sectionTitle}>{title}</Text>
-      {action ? <Text style={styles.sectionLink}>{action}</Text> : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: ios.bg },
+  center: { padding: 40, alignItems: "center" },
   eyebrow: {
     fontSize: 13,
     fontFamily: "Inter_600SemiBold",
@@ -114,25 +176,42 @@ const styles = StyleSheet.create({
     paddingTop: 24,
     paddingBottom: 8,
   },
-  sectionTitle: { fontSize: 17, fontFamily: "Inter_700Bold", color: ios.label, letterSpacing: -0.3 },
-  sectionLink: { fontSize: 15, fontFamily: "Inter_400Regular", color: ios.brand },
-  lowRow: {
+  sectionTitle: {
+    fontSize: 17,
+    fontFamily: "Inter_700Bold",
+    color: ios.label,
+    letterSpacing: -0.3,
+  },
+  list: {
+    marginHorizontal: 16,
+    backgroundColor: ios.bgElev,
+    borderRadius: 12,
+    overflow: "hidden",
+  },
+  empty: {
+    textAlign: "center",
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    color: ios.label2,
+    padding: 16,
+  },
+  row: {
     paddingHorizontal: 16,
     paddingVertical: 12,
-    flexDirection: "row",
-    backgroundColor: ios.bgElev,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: ios.separator,
   },
-  lowTop: { flexDirection: "row", justifyContent: "space-between", alignItems: "baseline" },
-  lowName: { fontSize: 15, fontFamily: "Inter_500Medium", color: ios.label },
-  lowQty: {
+  topRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "baseline" },
+  name: { fontSize: 15, fontFamily: "Inter_500Medium", color: ios.label, flex: 1, marginRight: 8 },
+  qty: {
     fontSize: 13,
     fontFamily: "Inter_600SemiBold",
     color: ios.label,
     fontVariant: ["tabular-nums"],
   },
-  lowMin: { color: ios.label2, fontFamily: "Inter_400Regular" },
-  lowProgress: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 6 },
-  lowBin: {
+  min: { color: ios.label2, fontFamily: "Inter_400Regular" },
+  progressRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 6 },
+  sku: {
     fontSize: 12,
     fontFamily: "Inter_400Regular",
     color: ios.label2,

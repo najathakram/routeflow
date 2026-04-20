@@ -1,43 +1,84 @@
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useMemo } from "react";
+import {
+  ActivityIndicator,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
-import {
-  KpiCard,
-  NavBar,
-  Pill,
-  ProgressTrack,
-} from "@routeflow/ui/mobile/ios";
+import { KpiCard, NavBar, Pill, ProgressTrack } from "@routeflow/ui/mobile/ios";
+import { useAdminDashboard, useAdminRoutes, type AdminRoute } from "../../lib/api/admin";
+import { useAuthStore } from "../../lib/auth-store";
 
-// TODO: wire /admin/dashboard KPI endpoints (existing)
-const ROUTES = [
-  { n: "Route 07", who: "Marcus R.", stops: "12 stops · 148 km", pct: 100, status: "Rolled", color: ios.system.green, variant: "green" as const },
-  { n: "Route 03", who: "Ana P.", stops: "9 stops · 92 km", pct: 100, status: "Rolled", color: ios.system.green, variant: "green" as const },
-  { n: "Route 11", who: "Dmitri K.", stops: "14 stops · 176 km", pct: 74, status: "Loading", color: ios.brand, variant: "brand" as const },
-  { n: "Route 05", who: "Samira H.", stops: "11 stops · 112 km", pct: 42, status: "Picking", color: ios.system.orange, variant: "orange" as const },
-  { n: "Route 02", who: "— unassigned", stops: "8 stops · 86 km", pct: 0, status: "No driver", color: ios.system.red, variant: "red" as const },
-];
+function routeStatusLabel(r: AdminRoute): { label: string; variant: "green" | "brand" | "orange" | "red" | "gray"; pct: number } {
+  if (r.activeRun?.status === "IN_PROGRESS") return { label: "On route", variant: "brand", pct: 50 };
+  if (r.activeRun?.status === "COMPLETED") return { label: "Rolled", variant: "green", pct: 100 };
+  if (!r.driverId) return { label: "No driver", variant: "red", pct: 0 };
+  return { label: "Scheduled", variant: "gray", pct: 0 };
+}
 
 export default function OperatorHomeScreen() {
   const router = useRouter();
+  const { user } = useAuthStore();
+  const { data: stats, isLoading: statsLoading } = useAdminDashboard();
+  const { data: routesData, isLoading: routesLoading } = useAdminRoutes({ limit: 10 });
+  const routes = routesData?.data ?? [];
+
+  const initials =
+    user?.username
+      ?.split(/[._\s]/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((p) => p[0]?.toUpperCase())
+      .join("") ?? "OP";
+
+  const now = new Date();
+  const dateLabel = now
+    .toLocaleDateString(undefined, {
+      weekday: "long",
+      month: "short",
+      day: "numeric",
+    })
+    .toUpperCase();
+
+  const readiness = useMemo(() => {
+    if (routes.length === 0) return { pct: 0, loaded: 0, total: 0 };
+    const loaded = routes.filter(
+      (r) =>
+        r.activeRun?.status === "IN_PROGRESS" || r.activeRun?.status === "COMPLETED",
+    ).length;
+    return {
+      pct: Math.round((loaded / routes.length) * 100),
+      loaded,
+      total: routes.length,
+    };
+  }, [routes]);
+
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <NavBar
         largeTitle="Warehouse"
-        subtitle="North Depot · 6 routes ready to roll"
-        leading={
-          <Text style={styles.dateEyebrow}>THURSDAY · APR 19 · 06:42</Text>
+        subtitle={
+          routesLoading ? " " : `${routes.length} route${routes.length === 1 ? "" : "s"} today`
         }
+        leading={<Text style={styles.dateEyebrow}>{dateLabel}</Text>}
         trailing={
           <View style={{ flexDirection: "row", gap: 10, alignItems: "center" }}>
-            <Pressable style={styles.navIcon}>
+            <Pressable
+              style={styles.navIcon}
+              onPress={() => router.push("/(operator)/exceptions")}
+            >
               <Ionicons name="notifications-outline" size={17} color={ios.label} />
-              <View style={styles.badge} />
+              {stats && stats.returnsToProcess > 0 ? <View style={styles.badge} /> : null}
             </Pressable>
             <View style={styles.navAvatar}>
-              <Text style={styles.navAvatarText}>JL</Text>
+              <Text style={styles.navAvatarText}>{initials}</Text>
             </View>
           </View>
         }
@@ -54,62 +95,69 @@ export default function OperatorHomeScreen() {
           >
             <Text style={styles.heroEyebrow}>DISPATCH READINESS</Text>
             <View style={styles.heroRow}>
-              <Text style={styles.heroValue}>83%</Text>
-              <Text style={styles.heroSub}>4 of 6 routes loaded</Text>
+              <Text style={styles.heroValue}>{readiness.pct}%</Text>
+              <Text style={styles.heroSub}>
+                {readiness.loaded} of {readiness.total} routes rolling
+              </Text>
             </View>
             <View style={styles.heroTrack}>
-              <View style={[styles.heroTrackFill, { width: "83%" }]} />
+              <View style={[styles.heroTrackFill, { width: `${readiness.pct}%` }]} />
             </View>
             <View style={styles.heroActions}>
-              <Pressable style={styles.heroBtnFilled}>
-                <Text style={styles.heroBtnFilledText}>Release all</Text>
+              <Pressable
+                style={styles.heroBtnFilled}
+                onPress={() => router.push("/(operator)/dispatch")}
+              >
+                <Text style={styles.heroBtnFilledText}>Dispatch</Text>
               </Pressable>
-              <Pressable style={styles.heroBtnGhost}>
-                <Text style={styles.heroBtnGhostText}>Run sheet</Text>
+              <Pressable
+                style={styles.heroBtnGhost}
+                onPress={() => router.push("/(operator)/fleet")}
+              >
+                <Text style={styles.heroBtnGhostText}>Live fleet</Text>
               </Pressable>
             </View>
           </LinearGradient>
         </View>
 
         {/* KPIs */}
-        <View style={styles.kpiGrid}>
-          <KpiCard
-            icon={<Ionicons name="people-outline" size={18} color={ios.brand} />}
-            iconBg={ios.brandWash}
-            value="6 / 7"
-            label="Drivers checked in"
-            delta="Rita — no show"
-            deltaTone="neutral"
-          />
-          <KpiCard
-            icon={<Ionicons name="checkmark" size={18} color={ios.system.greenInk} />}
-            iconBg={ios.system.greenWash}
-            value="74"
-            label="Stops scheduled"
-            delta="↑ 12 vs yesterday"
-            deltaTone="up"
-          />
-        </View>
-        <View style={[styles.kpiGrid, { marginTop: 12 }]}>
-          <KpiCard
-            icon={<Ionicons name="time-outline" size={18} color={ios.system.orangeInk} />}
-            iconBg={ios.system.orangeWash}
-            value="7"
-            label="Short-picks"
-            delta="3 need substitution"
-            deltaTone="down"
-          />
-          <KpiCard
-            icon={<Ionicons name="cube-outline" size={18} color={ios.system.purpleInk} />}
-            iconBg={ios.system.purpleWash}
-            value="$28.4k"
-            label="Out for delivery"
-            delta="148 invoices"
-            deltaTone="neutral"
-          />
-        </View>
+        {statsLoading || !stats ? (
+          <View style={styles.kpiLoading}>
+            <ActivityIndicator color={ios.brand} />
+          </View>
+        ) : (
+          <>
+            <View style={styles.kpiGrid}>
+              <KpiCard
+                icon={<Ionicons name="receipt-outline" size={18} color={ios.brand} />}
+                iconBg={ios.brandWash}
+                value={String(stats.pendingOrders)}
+                label="Pending orders"
+              />
+              <KpiCard
+                icon={<Ionicons name="people-outline" size={18} color={ios.system.greenInk} />}
+                iconBg={ios.system.greenWash}
+                value={String(stats.activeDrivers)}
+                label="Active drivers"
+              />
+            </View>
+            <View style={[styles.kpiGrid, { marginTop: 12 }]}>
+              <KpiCard
+                icon={<Ionicons name="alert-circle-outline" size={18} color={ios.system.orangeInk} />}
+                iconBg={ios.system.orangeWash}
+                value={String(stats.lowStockProducts)}
+                label="Low stock"
+              />
+              <KpiCard
+                icon={<Ionicons name="card-outline" size={18} color={ios.system.redInk} />}
+                iconBg={ios.system.redWash}
+                value={String(stats.invoicesOverdue)}
+                label="Overdue invoices"
+              />
+            </View>
+          </>
+        )}
 
-        {/* Routes list */}
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Routes today</Text>
           <Pressable onPress={() => router.push("/(operator)/dispatch")}>
@@ -117,35 +165,73 @@ export default function OperatorHomeScreen() {
           </Pressable>
         </View>
 
-        <View style={{ paddingHorizontal: 16, gap: 8, paddingBottom: 20 }}>
-          {ROUTES.map((r) => (
-            <View key={r.n} style={styles.routeCard}>
-              <View style={styles.routeHead}>
-                <View style={[styles.routeBadge, { backgroundColor: r.color }]}>
-                  <Text style={styles.routeBadgeText}>{r.n.split(" ")[1]}</Text>
+        {routesLoading ? (
+          <View style={styles.center}>
+            <ActivityIndicator color={ios.brand} />
+          </View>
+        ) : routes.length === 0 ? (
+          <View style={styles.center}>
+            <Text style={styles.emptyTitle}>No routes scheduled</Text>
+          </View>
+        ) : (
+          <View style={{ paddingHorizontal: 16, gap: 8, paddingBottom: 20 }}>
+            {routes.slice(0, 6).map((r) => {
+              const driverName = r.driver?.user
+                ? `${r.driver.user.firstName} ${r.driver.user.lastName}`
+                : "Unassigned";
+              const status = routeStatusLabel(r);
+              const badgeColor =
+                status.variant === "green"
+                  ? ios.system.green
+                  : status.variant === "brand"
+                    ? ios.brand
+                    : status.variant === "orange"
+                      ? ios.system.orange
+                      : status.variant === "red"
+                        ? ios.system.red
+                        : ios.gray[3];
+              return (
+                <View key={r.id} style={styles.routeCard}>
+                  <View style={styles.routeHead}>
+                    <View style={[styles.routeBadge, { backgroundColor: badgeColor }]}>
+                      <Text style={styles.routeBadgeText}>
+                        {r.name?.replace(/\D/g, "").slice(0, 2) || r.name?.slice(0, 2)?.toUpperCase()}
+                      </Text>
+                    </View>
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text style={styles.routeName} numberOfLines={1}>
+                        {r.name} · {driverName}
+                      </Text>
+                      <Text style={styles.routeMeta}>
+                        {(r.stops?.length ?? 0)} stop{(r.stops?.length ?? 0) === 1 ? "" : "s"}
+                      </Text>
+                    </View>
+                    <Pill variant={status.variant} dot>
+                      {status.label}
+                    </Pill>
+                  </View>
+                  <View style={styles.routeProgress}>
+                    <View style={{ flex: 1 }}>
+                      <ProgressTrack
+                        percent={status.pct}
+                        fill={
+                          status.variant === "brand"
+                            ? "brand"
+                            : status.variant === "green"
+                              ? "green"
+                              : status.variant === "red"
+                                ? "red"
+                                : "orange"
+                        }
+                      />
+                    </View>
+                    <Text style={styles.routePct}>{status.pct}%</Text>
+                  </View>
                 </View>
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={styles.routeName}>
-                    {r.n} · {r.who}
-                  </Text>
-                  <Text style={styles.routeMeta}>{r.stops}</Text>
-                </View>
-                <Pill variant={r.variant} dot>
-                  {r.status}
-                </Pill>
-              </View>
-              <View style={styles.routeProgress}>
-                <View style={{ flex: 1 }}>
-                  <ProgressTrack
-                    percent={r.pct}
-                    fill={r.variant === "brand" ? "brand" : r.variant === "green" ? "green" : r.variant === "red" ? "red" : "orange"}
-                  />
-                </View>
-                <Text style={styles.routePct}>{r.pct}%</Text>
-              </View>
-            </View>
-          ))}
-        </View>
+              );
+            })}
+          </View>
+        )}
       </ScrollView>
     </SafeAreaView>
   );
@@ -153,6 +239,8 @@ export default function OperatorHomeScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: ios.bg },
+  center: { alignItems: "center", justifyContent: "center", padding: 24, gap: 6 },
+  emptyTitle: { fontSize: 16, fontFamily: "Inter_600SemiBold", color: ios.label2 },
   dateEyebrow: {
     fontSize: 13,
     fontFamily: "Inter_600SemiBold",
@@ -200,11 +288,7 @@ const styles = StyleSheet.create({
     letterSpacing: -1.2,
     fontVariant: ["tabular-nums"],
   },
-  heroSub: {
-    fontSize: 14,
-    fontFamily: "Inter_400Regular",
-    color: "rgba(255,255,255,0.85)",
-  },
+  heroSub: { fontSize: 14, fontFamily: "Inter_400Regular", color: "rgba(255,255,255,0.85)" },
   heroTrack: {
     height: 6,
     backgroundColor: "rgba(255,255,255,0.24)",
@@ -212,11 +296,7 @@ const styles = StyleSheet.create({
     marginTop: 12,
     overflow: "hidden",
   },
-  heroTrackFill: {
-    height: "100%",
-    backgroundColor: "#fff",
-    borderRadius: 999,
-  },
+  heroTrackFill: { height: "100%", backgroundColor: "#fff", borderRadius: 999 },
   heroActions: { flexDirection: "row", gap: 6, marginTop: 14 },
   heroBtnFilled: {
     backgroundColor: "#fff",
@@ -232,12 +312,8 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   heroBtnGhostText: { color: "#fff", fontSize: 13, fontFamily: "Inter_600SemiBold" },
-  kpiGrid: {
-    flexDirection: "row",
-    gap: 12,
-    paddingHorizontal: 16,
-    marginTop: 14,
-  },
+  kpiGrid: { flexDirection: "row", gap: 12, paddingHorizontal: 16, marginTop: 14 },
+  kpiLoading: { padding: 24, alignItems: "center" },
   sectionHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -253,7 +329,12 @@ const styles = StyleSheet.create({
     letterSpacing: -0.3,
   },
   sectionLink: { fontSize: 15, fontFamily: "Inter_400Regular", color: ios.brand },
-  routeCard: { backgroundColor: ios.bgElev, borderRadius: 14, padding: 12, paddingHorizontal: 14 },
+  routeCard: {
+    backgroundColor: ios.bgElev,
+    borderRadius: 14,
+    padding: 12,
+    paddingHorizontal: 14,
+  },
   routeHead: { flexDirection: "row", alignItems: "center", gap: 10 },
   routeBadge: {
     width: 34,

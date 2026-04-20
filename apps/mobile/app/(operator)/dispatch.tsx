@@ -1,140 +1,184 @@
-import { useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useMemo, useState } from "react";
+import {
+  ActivityIndicator,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { ios } from "@routeflow/ui/tokens";
+import { NavBar, Pill, SegmentedControl } from "@routeflow/ui/mobile/ios";
 import {
-  NavAction,
-  NavBar,
-  Pill,
-  SegmentedControl,
-} from "@routeflow/ui/mobile/ios";
-
-// TODO: wire /routes + /drivers + POST /routes/{id}/assign
-const DRIVERS = [
-  { name: "Jordan M.", status: "Available · checked in 06:32", badge: "Recommended", state: "available" as const, dist: "Home zone: East" },
-  { name: "Priya S.", status: "Available · checked in 06:40", state: "available" as const, dist: "Home zone: Central" },
-  { name: "Leo K.", status: "On break · ETA 20 min", state: "available" as const, dist: "Home zone: East" },
-  { name: "Rita A.", status: "Not checked in", state: "unavailable" as const, dist: "Was on Route 02" },
-];
+  useAdminDrivers,
+  useAdminRoutes,
+  type AdminDriver,
+  type AdminRoute,
+} from "../../lib/api/admin";
 
 export default function DispatchScreen() {
   const [tab, setTab] = useState("Routes");
+  const { data: routesData, isLoading: routesLoading } = useAdminRoutes({ limit: 50 });
+  const { data: driversData, isLoading: driversLoading } = useAdminDrivers();
+
+  const routes = routesData?.data ?? [];
+  const drivers = driversData?.data ?? [];
+
+  const unassigned = routes.filter((r) => !r.driverId);
+
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
-      <NavBar
-        largeTitle="Dispatch"
-        inlineTitle="Assign"
-        trailing={<NavAction label="Release" bold />}
-      />
+      <NavBar largeTitle="Dispatch" inlineTitle="Assign" />
 
       <ScrollView showsVerticalScrollIndicator={false}>
         <View style={{ paddingHorizontal: 16, paddingTop: 6 }}>
           <SegmentedControl
-            items={["Routes", "Drivers", "Conflicts · 2"]}
+            items={["Routes", "Drivers"]}
             value={tab}
             onChange={setTab}
           />
         </View>
 
-        {/* Unassigned warning */}
-        <View style={styles.warn}>
-          <Ionicons name="alert-circle-outline" size={16} color={ios.system.redInk} />
-          <Text style={styles.warnText}>
-            Route 02 has no driver · 8 stops · departing 08:00
-          </Text>
-        </View>
-
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Assign driver → Route 02</Text>
-        </View>
-
-        <View style={{ paddingHorizontal: 16 }}>
-          <View style={styles.driversCard}>
-            {DRIVERS.map((d, i) => (
-              <View
-                key={d.name}
-                style={[
-                  styles.driverRow,
-                  i > 0 && {
-                    borderTopWidth: StyleSheet.hairlineWidth,
-                    borderTopColor: ios.separator,
-                  },
-                ]}
-              >
-                <View style={[styles.avatar, { backgroundColor: ios.brand }]}>
-                  <Text style={styles.avatarText}>
-                    {d.name.split(" ").map((n) => n[0]).join("")}
-                  </Text>
-                </View>
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                    <Text style={styles.driverName}>{d.name}</Text>
-                    {d.badge ? <Pill variant="brand" small>{d.badge}</Pill> : null}
-                  </View>
-                  <Text style={styles.driverStatus}>{d.status}</Text>
-                  <Text style={styles.driverDist}>{d.dist}</Text>
-                </View>
-                {d.state === "unavailable" ? (
-                  <Pill variant="red">Unavailable</Pill>
-                ) : (
-                  <Pressable
-                    style={[
-                      styles.assignBtn,
-                      d.badge ? styles.assignBtnPrimary : styles.assignBtnSecondary,
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.assignBtnText,
-                        d.badge ? styles.assignBtnTextOn : styles.assignBtnTextOff,
-                      ]}
-                    >
-                      Assign
-                    </Text>
-                  </Pressable>
-                )}
-              </View>
-            ))}
-          </View>
-        </View>
-
-        {/* Route summary */}
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Route 02 preview</Text>
-        </View>
-        <View style={{ paddingHorizontal: 16 }}>
-          <View style={styles.previewCard}>
-            <View style={styles.previewRow}>
-              <PreviewStat label="STOPS" value="8" />
-              <PreviewStat label="VALUE" value="$2,140" />
-              <PreviewStat label="DISTANCE" value="86 km" />
-              <PreviewStat label="ETA" value="5h 20" />
-            </View>
-            <View style={styles.previewPills}>
-              <Pill variant="gray">Van 02 · 3.5t</Pill>
-              <Pill variant="gray">Chilled req.</Pill>
-              <Pill variant="orange">1 fragile stop</Pill>
-            </View>
-          </View>
-        </View>
-        <View style={{ height: 20 }} />
+        {tab === "Routes" ? (
+          <RoutesTab routes={routes} unassigned={unassigned} loading={routesLoading} />
+        ) : (
+          <DriversTab drivers={drivers} loading={driversLoading} />
+        )}
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-function PreviewStat({ label, value }: { label: string; value: string }) {
+function RoutesTab({
+  routes,
+  unassigned,
+  loading,
+}: {
+  routes: AdminRoute[];
+  unassigned: AdminRoute[];
+  loading: boolean;
+}) {
+  if (loading) {
+    return (
+      <View style={styles.center}>
+        <ActivityIndicator color={ios.brand} />
+      </View>
+    );
+  }
   return (
     <View>
-      <Text style={styles.previewLabel}>{label}</Text>
-      <Text style={styles.previewValue}>{value}</Text>
+      {unassigned.length > 0 ? (
+        <View style={styles.warn}>
+          <Ionicons name="alert-circle-outline" size={16} color={ios.system.redInk} />
+          <Text style={styles.warnText}>
+            {unassigned.length} route{unassigned.length === 1 ? "" : "s"} without a driver
+          </Text>
+        </View>
+      ) : null}
+
+      <SectionHeader title="All routes" />
+      <View style={{ paddingHorizontal: 16, gap: 8, paddingBottom: 20 }}>
+        {routes.length === 0 ? (
+          <Text style={styles.empty}>No routes defined yet.</Text>
+        ) : (
+          routes.map((r) => (
+            <View key={r.id} style={styles.routeRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.routeName}>{r.name}</Text>
+                <Text style={styles.routeSub}>
+                  {r.driver?.user
+                    ? `${r.driver.user.firstName} ${r.driver.user.lastName}`
+                    : "Unassigned"}
+                  {" · "}
+                  {r.stops?.length ?? 0} stop{(r.stops?.length ?? 0) === 1 ? "" : "s"}
+                </Text>
+              </View>
+              {r.driverId ? (
+                <Pill variant="green" dot>
+                  Assigned
+                </Pill>
+              ) : (
+                <Pill variant="red">No driver</Pill>
+              )}
+            </View>
+          ))
+        )}
+      </View>
+    </View>
+  );
+}
+
+function DriversTab({
+  drivers,
+  loading,
+}: {
+  drivers: AdminDriver[];
+  loading: boolean;
+}) {
+  if (loading) {
+    return (
+      <View style={styles.center}>
+        <ActivityIndicator color={ios.brand} />
+      </View>
+    );
+  }
+  return (
+    <View>
+      <SectionHeader title="Drivers" />
+      <View style={{ paddingHorizontal: 16, gap: 8, paddingBottom: 20 }}>
+        {drivers.length === 0 ? (
+          <Text style={styles.empty}>No drivers on this tenant.</Text>
+        ) : (
+          drivers.map((d) => {
+            const name = d.user
+              ? `${d.user.firstName} ${d.user.lastName}`
+              : "Unknown driver";
+            const initials = d.user
+              ? `${d.user.firstName?.[0] ?? ""}${d.user.lastName?.[0] ?? ""}`.toUpperCase()
+              : "??";
+            return (
+              <View key={d.id} style={styles.driverRow}>
+                <View style={[styles.avatar, { backgroundColor: ios.brand }]}>
+                  <Text style={styles.avatarText}>{initials}</Text>
+                </View>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={styles.driverName}>{name}</Text>
+                  <Text style={styles.driverStatus}>
+                    {d.vehicleMake ? `${d.vehicleMake} ${d.vehicleModel ?? ""}` : d.status}
+                  </Text>
+                </View>
+                <Pill variant={d.status === "ACTIVE" ? "green" : "gray"}>
+                  {d.status.toLowerCase()}
+                </Pill>
+              </View>
+            );
+          })
+        )}
+      </View>
+    </View>
+  );
+}
+
+function SectionHeader({ title }: { title: string }) {
+  return (
+    <View style={styles.sectionHeader}>
+      <Text style={styles.sectionTitle}>{title}</Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: ios.bg },
+  center: { padding: 40, alignItems: "center" },
+  empty: {
+    textAlign: "center",
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    color: ios.label2,
+    padding: 20,
+  },
   warn: {
     marginHorizontal: 16,
     marginTop: 14,
@@ -168,14 +212,27 @@ const styles = StyleSheet.create({
     color: ios.label,
     letterSpacing: -0.3,
   },
-  driversCard: {
+  routeRow: {
     backgroundColor: ios.bgElev,
-    borderRadius: 16,
-    overflow: "hidden",
-  },
-  driverRow: {
+    borderRadius: 14,
+    padding: 12,
     paddingHorizontal: 14,
-    paddingVertical: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  routeName: {
+    fontSize: 15,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label,
+    letterSpacing: -0.2,
+  },
+  routeSub: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
+  driverRow: {
+    backgroundColor: ios.bgElev,
+    borderRadius: 14,
+    padding: 12,
+    paddingHorizontal: 14,
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
@@ -189,31 +246,10 @@ const styles = StyleSheet.create({
   },
   avatarText: { color: "#fff", fontSize: 14, fontFamily: "Inter_700Bold" },
   driverName: {
-    fontSize: 16,
+    fontSize: 15,
     fontFamily: "Inter_600SemiBold",
     color: ios.label,
+    letterSpacing: -0.2,
   },
-  driverStatus: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 1 },
-  driverDist: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 1 },
-  assignBtn: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10 },
-  assignBtnPrimary: { backgroundColor: ios.brand },
-  assignBtnSecondary: { backgroundColor: ios.fill2 },
-  assignBtnText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
-  assignBtnTextOn: { color: "#fff" },
-  assignBtnTextOff: { color: ios.brand },
-  previewCard: { backgroundColor: ios.bgElev, borderRadius: 16, padding: 14 },
-  previewRow: { flexDirection: "row", gap: 14 },
-  previewLabel: {
-    fontSize: 11,
-    fontFamily: "Inter_600SemiBold",
-    color: ios.label2,
-    letterSpacing: 0.6,
-  },
-  previewValue: {
-    fontSize: 20,
-    fontFamily: "Inter_700Bold",
-    color: ios.label,
-    fontVariant: ["tabular-nums"],
-  },
-  previewPills: { flexDirection: "row", gap: 6, marginTop: 12, flexWrap: "wrap" },
+  driverStatus: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
 });
