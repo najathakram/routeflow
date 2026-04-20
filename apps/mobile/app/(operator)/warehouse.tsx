@@ -55,15 +55,20 @@ export default function WarehouseScreen() {
 
   const isLoading = lowQuery.isLoading;
   const lowProducts = lowQuery.data?.data ?? [];
-  const lowTotal = Number(lowQuery.data?.meta?.total ?? lowProducts.length);
+  const lowTotalServer = Number(lowQuery.data?.meta?.total ?? lowProducts.length);
   const outTotal = Number(outQuery.data?.meta?.total ?? 0);
   const allTotal = Number(allQuery.data?.meta?.total ?? 0);
+  // The server's LOW filter includes out-of-stock rows (currentStock <= 5
+  // matches zeros and negatives). Subtract OOS so the Low KPI reflects
+  // products that are actually low-but-still-sellable.
+  const lowTotal = Math.max(0, lowTotalServer - outTotal);
 
+  // Same idea for the displayed rows — only show items with positive stock.
   const sorted = useMemo(
     () =>
-      [...lowProducts].sort(
-        (a, b) => toNumber(a.currentStock) - toNumber(b.currentStock),
-      ),
+      lowProducts
+        .filter((p) => toNumber(p.currentStock) > 0)
+        .sort((a, b) => toNumber(a.currentStock) - toNumber(b.currentStock)),
     [lowProducts],
   );
 

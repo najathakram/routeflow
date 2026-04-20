@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { Platform, StyleSheet, View } from "react-native";
 import { Slot, useRouter, useSegments } from "expo-router";
 import {
   Inter_400Regular,
@@ -12,6 +13,7 @@ import * as Notifications from "expo-notifications";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { UserRole } from "@routeflow/types";
+import { ios } from "@routeflow/ui/tokens";
 import { useAuthStore } from "../lib/auth-store";
 import { useTenantStore } from "../lib/tenant-store";
 
@@ -107,8 +109,35 @@ function RootLayoutNav() {
     }
   }, [user, isLoading, tenantSlug, tenantLoading, activeRole, segments]);
 
+  // On web viewed from a desktop browser the phone-sized layout stretches
+  // uncomfortably wide. Clamp the app to a phone-ish width and center it
+  // on a neutral backdrop. Native builds ignore this entirely.
+  if (Platform.OS === "web") {
+    return (
+      <View style={webStyles.page}>
+        <View style={webStyles.phoneFrame}>
+          <Slot />
+        </View>
+      </View>
+    );
+  }
+
   return <Slot />;
 }
+
+const webStyles = StyleSheet.create({
+  page: {
+    flex: 1,
+    backgroundColor: "#E5E7EB",
+    alignItems: "center",
+  },
+  phoneFrame: {
+    flex: 1,
+    width: "100%",
+    maxWidth: 480,
+    backgroundColor: ios.bg,
+  },
+});
 
 export default function RootLayout() {
   const [fontsLoaded] = useFonts({

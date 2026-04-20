@@ -17,6 +17,11 @@ type IosTabBarProps = {
         title?: string;
         tabBarLabel?: string | ((props: { focused: boolean; color: string; position?: unknown; children?: string }) => React.ReactNode);
         tabBarIcon?: (props: { focused: boolean; color: string; size: number }) => React.ReactNode;
+        // Expo Router sets `tabBarButton: () => null` when a screen has `href: null`.
+        // The default @react-navigation tabs filter on that; we replicate here.
+        tabBarButton?: unknown;
+        tabBarItemStyle?: { display?: "none" | "flex" } | unknown;
+        href?: string | null;
       };
     }
   >;
@@ -26,6 +31,20 @@ type IosTabBarProps = {
   };
 };
 
+function shouldRenderTab(
+  options: IosTabBarProps["descriptors"][string]["options"],
+): boolean {
+  // Hide screens explicitly marked as non-tab (href: null) — Expo Router
+  // translates those to either tabBarButton === null or display: "none".
+  if (options.tabBarButton === null) return false;
+  if (options.href === null) return false;
+  const style = options.tabBarItemStyle as { display?: string } | undefined;
+  if (style && style.display === "none") return false;
+  // Require an explicit icon so ad-hoc / nested routes don't sneak in.
+  if (!options.tabBarIcon) return false;
+  return true;
+}
+
 /**
  * iOS-style bottom tab bar for use with Expo Router's <Tabs tabBar={...}/>.
  * Uses a blurred translucent background with brand-tinted active icons.
@@ -34,10 +53,14 @@ export function IosTabBar({ state, descriptors, navigation }: IosTabBarProps) {
   const insets = useSafeAreaInsets();
   const bottomPad = Math.max(insets.bottom, 8);
 
+  const visibleRoutes = state.routes
+    .map((route, index) => ({ route, index }))
+    .filter(({ route }) => shouldRenderTab(descriptors[route.key]!.options));
+
   return (
     <Blur intensity={80} tint="light" style={[styles.wrap, { paddingBottom: bottomPad }]}>
       <View style={styles.inner}>
-        {state.routes.map((route, index) => {
+        {visibleRoutes.map(({ route, index }) => {
           const { options } = descriptors[route.key]!;
           const label =
             typeof options.tabBarLabel === "string"

@@ -43,7 +43,8 @@ async function fetchDashboardStats(): Promise<AdminDashboardStats> {
     activeDrivers,
     totalCustomers,
     invoicesOverdue,
-    lowStockProducts,
+    lowTotal,
+    outOfStockTotal,
     returnsToProcess,
     routesResp,
     bookkeeping,
@@ -52,7 +53,11 @@ async function fetchDashboardStats(): Promise<AdminDashboardStats> {
     safeTotal('/drivers', { status: 'ACTIVE' }),
     safeTotal('/customers'),
     safeTotal('/invoices', { status: 'OVERDUE' }),
+    // Server's LOW filter matches `currentStock <= 5` which includes zeros /
+    // negatives (out-of-stock). Subtract OUT_OF_STOCK to get items that are
+    // actually low but still available to sell (1–5 units).
     safeTotal('/products', { stockStatus: 'LOW' }),
+    safeTotal('/products', { stockStatus: 'OUT_OF_STOCK' }),
     safeTotal('/returns', { status: 'PENDING' }),
     apiClient
       .get('/routes', { params: { limit: 100 } })
@@ -72,7 +77,7 @@ async function fetchDashboardStats(): Promise<AdminDashboardStats> {
     totalCustomers,
     revenueThisMonth: Number(bookkeeping?.revenue ?? 0),
     invoicesOverdue,
-    lowStockProducts,
+    lowStockProducts: Math.max(0, lowTotal - outOfStockTotal),
     returnsToProcess,
   };
 }
