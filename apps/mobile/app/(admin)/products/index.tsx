@@ -11,7 +11,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { colors } from "@routeflow/ui/tokens";
+import { ios } from "@routeflow/ui/tokens";
 import { useAdminProducts, AdminProduct } from "../../../lib/api/admin";
 import { useDebounce } from "../../../lib/use-debounce";
 
@@ -79,11 +79,11 @@ export default function AdminProductsScreen() {
     <SafeAreaView style={styles.container} edges={["top"]}>
       {/* Search */}
       <View style={styles.searchContainer}>
-        <Ionicons name="search-outline" size={18} color="#94a3b8" style={styles.searchIcon} />
+        <Ionicons name="search-outline" size={18} color={ios.label2} style={styles.searchIcon} />
         <TextInput
           style={styles.searchInput}
           placeholder="Search products..."
-          placeholderTextColor="#94a3b8"
+          placeholderTextColor={ios.label2}
           value={search}
           onChangeText={(t) => {
             setSearch(t);
@@ -92,7 +92,7 @@ export default function AdminProductsScreen() {
         />
         {search.length > 0 && (
           <Pressable onPress={() => setSearch("")}>
-            <Ionicons name="close-circle" size={18} color="#94a3b8" />
+            <Ionicons name="close-circle" size={18} color={ios.label2} />
           </Pressable>
         )}
       </View>
@@ -118,10 +118,10 @@ export default function AdminProductsScreen() {
       </View>
 
       {isLoading ? (
-        <ActivityIndicator style={{ marginTop: 48 }} color="#2563EB" />
+        <ActivityIndicator style={{ marginTop: 48 }} color={ios.brand} />
       ) : isError ? (
         <View style={styles.emptyState}>
-          <Ionicons name="cloud-offline-outline" size={40} color="#cbd5e1" />
+          <Ionicons name="cloud-offline-outline" size={40} color={ios.gray[3]} />
           <Text style={styles.emptyText}>Failed to load products</Text>
           <Pressable style={styles.retryBtn} onPress={() => refetch()}>
             <Text style={styles.retryText}>Retry</Text>
@@ -129,7 +129,7 @@ export default function AdminProductsScreen() {
         </View>
       ) : products.length === 0 ? (
         <View style={styles.emptyState}>
-          <Ionicons name="cube-outline" size={40} color="#cbd5e1" />
+          <Ionicons name="cube-outline" size={40} color={ios.gray[3]} />
           <Text style={styles.emptyText}>No products found</Text>
         </View>
       ) : (
@@ -148,7 +148,7 @@ export default function AdminProductsScreen() {
                 onPress={() => setPage((p) => p + 1)}
               >
                 {isFetching ? (
-                  <ActivityIndicator size="small" color="#2563EB" />
+                  <ActivityIndicator size="small" color={ios.brand} />
                 ) : (
                   <Text style={styles.loadMoreText}>Load More</Text>
                 )}
@@ -173,7 +173,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     paddingHorizontal: 12,
     borderWidth: 1,
-    borderColor: colors.surface.border,
+    borderColor: ios.separator,
     height: 44,
   },
   searchIcon: { marginRight: 8 },
@@ -181,7 +181,7 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 15,
     fontFamily: "Inter_400Regular",
-    color: colors.navy.DEFAULT,
+    color: ios.label,
   },
   filterRow: {
     paddingHorizontal: 16,
@@ -229,7 +229,7 @@ const styles = StyleSheet.create({
   productName: {
     fontSize: 14,
     fontFamily: "Inter_600SemiBold",
-    color: colors.navy.DEFAULT,
+    color: ios.label,
   },
   inactiveBadge: {
     backgroundColor: "#f1f5f9",
@@ -237,12 +237,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     paddingVertical: 2,
   },
-  inactiveBadgeText: { fontSize: 10, fontFamily: "Inter_500Medium", color: "#64748b" },
-  metaText: { fontSize: 12, fontFamily: "Inter_400Regular", color: "#94a3b8" },
-  supplierText: { fontSize: 12, fontFamily: "Inter_400Regular", color: "#64748b" },
+  inactiveBadgeText: { fontSize: 10, fontFamily: "Inter_500Medium", color: ios.label2 },
+  metaText: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2 },
+  supplierText: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2 },
   rowRight: { alignItems: "flex-end", gap: 2 },
-  price: { fontSize: 14, fontFamily: "Inter_700Bold", color: colors.navy.DEFAULT },
-  unit: { fontSize: 11, fontFamily: "Inter_400Regular", color: "#94a3b8" },
+  price: { fontSize: 14, fontFamily: "Inter_700Bold", color: ios.label },
+  unit: { fontSize: 11, fontFamily: "Inter_400Regular", color: ios.label2 },
   stock: { fontSize: 12, fontFamily: "Inter_500Medium", color: "#059669" },
   stockLow: { color: "#dc2626" },
   emptyState: {
@@ -252,11 +252,11 @@ const styles = StyleSheet.create({
     gap: 12,
     paddingBottom: 80,
   },
-  emptyText: { fontSize: 15, fontFamily: "Inter_400Regular", color: "#94a3b8" },
+  emptyText: { fontSize: 15, fontFamily: "Inter_400Regular", color: ios.label2 },
   retryBtn: {
     paddingHorizontal: 20,
     paddingVertical: 10,
-    backgroundColor: "#2563EB",
+    backgroundColor: ios.brand,
     borderRadius: 8,
   },
   retryText: { color: "#fff", fontFamily: "Inter_600SemiBold", fontSize: 14 },
@@ -268,7 +268,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: colors.surface.border,
+    borderColor: ios.separator,
   },
-  loadMoreText: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: "#2563EB" },
+  loadMoreText: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: ios.brand },
 });

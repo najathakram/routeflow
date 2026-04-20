@@ -29,6 +29,8 @@ interface OAuthState {
   context?: "portal" | "staff" | "buyer-standalone";
   /** When set, this is a link-account flow for an already-authenticated user. */
   linkUserId?: string;
+  /** When true, the callback redirects to a mobile deep link (routeflow://) instead of the web URL. */
+  mobile?: boolean;
 }
 
 export interface GoogleProfile {
@@ -42,6 +44,8 @@ export interface GoogleProfile {
   context?: "portal" | "staff" | "buyer-standalone";
   /** When set, this is a link-account flow — attach Google to this existing user ID. */
   linkUserId?: string;
+  /** When true, the callback should redirect to a mobile deep link. */
+  mobile?: boolean;
 }
 
 interface TokenPair {
@@ -152,6 +156,7 @@ export class GoogleOAuthService {
     tenantSlug?: string,
     inviteToken?: string,
     context?: "portal" | "staff" | "buyer-standalone",
+    mobile?: boolean,
   ): Promise<string> {
     const nonce = crypto.randomUUID();
     const stateObj: OAuthState = {
@@ -160,6 +165,7 @@ export class GoogleOAuthService {
       ...(tenantSlug && { tenantSlug }),
       ...(inviteToken && { inviteToken }),
       ...(context && { context }),
+      ...(mobile && { mobile: true }),
     };
     const state = Buffer.from(JSON.stringify(stateObj)).toString("base64url");
 
@@ -308,6 +314,7 @@ export class GoogleOAuthService {
       inviteToken: stateObj.inviteToken,
       context: stateObj.context,
       linkUserId: stateObj.linkUserId,
+      mobile: stateObj.mobile,
     };
   }
 

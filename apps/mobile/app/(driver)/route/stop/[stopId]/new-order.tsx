@@ -13,7 +13,7 @@ import {
 } from "react-native";
 import { router, Stack, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { colors, borderRadius, shadows } from "@routeflow/ui/tokens";
+import { ios, borderRadius, shadows } from "@routeflow/ui/tokens";
 import { useRouteRun } from "../../../../../lib/api/routes";
 import { useProducts } from "../../../../../lib/api/products";
 import { useCreateOrderAsDriver } from "../../../../../lib/api/orders";
@@ -118,7 +118,7 @@ export default function NewOrderAtStopScreen() {
         <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
           {/* Customer */}
           <View style={styles.infoCard}>
-            <Ionicons name="business-outline" size={18} color={colors.brand[500]} />
+            <Ionicons name="business-outline" size={18} color={ios.brand} />
             <Text style={styles.infoText} numberOfLines={1} ellipsizeMode="tail">{stop?.customer?.businessName ?? "Loading…"}</Text>
           </View>
 
@@ -136,18 +136,18 @@ export default function NewOrderAtStopScreen() {
               <Switch
                 value={immediateDelivery}
                 onValueChange={setImmediateDelivery}
-                trackColor={{ true: colors.brand[500], false: colors.surface.border }}
+                trackColor={{ true: ios.brand, false: ios.separator }}
               />
             </View>
           </View>
 
           {/* Product search */}
           <View style={styles.searchBox}>
-            <Ionicons name="search-outline" size={18} color="#94a3b8" />
+            <Ionicons name="search-outline" size={18} color={ios.label2} />
             <TextInput
               style={styles.searchInput}
               placeholder="Search products…"
-              placeholderTextColor="#94a3b8"
+              placeholderTextColor={ios.label2}
               value={search}
               onChangeText={setSearch}
               returnKeyType="search"
@@ -156,7 +156,7 @@ export default function NewOrderAtStopScreen() {
 
           {/* Product list */}
           {loadingProducts ? (
-            <ActivityIndicator color={colors.brand[500]} style={{ marginTop: 16 }} />
+            <ActivityIndicator color={ios.brand} style={{ marginTop: 16 }} />
           ) : (
             <View style={styles.productList}>
               {products.map((p: any) => {
@@ -176,7 +176,7 @@ export default function NewOrderAtStopScreen() {
                           onPress={() => updateQty(p.id, -1)}
                           accessibilityLabel={`Remove ${p.name}`}
                         >
-                          <Ionicons name="remove" size={18} color={colors.brand[500]} />
+                          <Ionicons name="remove" size={18} color={ios.brand} />
                         </Pressable>
                         <Text style={styles.qtyText}>{inCart.qty}</Text>
                         <Pressable
@@ -184,7 +184,7 @@ export default function NewOrderAtStopScreen() {
                           onPress={() => updateQty(p.id, 1)}
                           accessibilityLabel={`Add ${p.name}`}
                         >
-                          <Ionicons name="add" size={18} color={colors.brand[500]} />
+                          <Ionicons name="add" size={18} color={ios.brand} />
                         </Pressable>
                       </View>
                     ) : (
@@ -193,7 +193,7 @@ export default function NewOrderAtStopScreen() {
                         onPress={() => addToCart(p)}
                         accessibilityLabel={`Add ${p.name}`}
                       >
-                        <Ionicons name="add-circle-outline" size={22} color={colors.brand[500]} />
+                        <Ionicons name="add-circle-outline" size={22} color={ios.brand} />
                       </Pressable>
                     )}
                   </View>
@@ -227,7 +227,7 @@ export default function NewOrderAtStopScreen() {
           <TextInput
             style={styles.notesInput}
             placeholder="Order notes (optional)…"
-            placeholderTextColor="#94a3b8"
+            placeholderTextColor={ios.label2}
             value={notes}
             onChangeText={setNotes}
             multiline
@@ -262,23 +262,23 @@ export default function NewOrderAtStopScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.surface.raised },
+  container: { flex: 1, backgroundColor: ios.bg },
   scroll: { padding: 16, gap: 12, paddingBottom: 24 },
   infoCard: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    backgroundColor: colors.brand[50],
+    backgroundColor: ios.brandWash,
     borderRadius: borderRadius.DEFAULT,
     padding: 12,
     borderWidth: 1,
-    borderColor: colors.brand[200] ?? colors.brand[500] + "33",
+    borderColor: ios.brand ?? ios.brand + "33",
   },
   infoText: {
     flex: 1,
     fontSize: 15,
     fontFamily: "Inter_600SemiBold",
-    color: colors.navy.DEFAULT,
+    color: ios.label,
   },
   toggleCard: {
     backgroundColor: "#fff",
@@ -295,12 +295,12 @@ const styles = StyleSheet.create({
   toggleTitle: {
     fontSize: 15,
     fontFamily: "Inter_600SemiBold",
-    color: colors.navy.DEFAULT,
+    color: ios.label,
   },
   toggleSub: {
     fontSize: 12,
     fontFamily: "Inter_400Regular",
-    color: "#64748b",
+    color: ios.label2,
   },
   searchBox: {
     flexDirection: "row",
@@ -311,13 +311,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     borderWidth: 1,
-    borderColor: colors.surface.border,
+    borderColor: ios.separator,
   },
   searchInput: {
     flex: 1,
     fontSize: 15,
     fontFamily: "Inter_400Regular",
-    color: colors.navy.DEFAULT,
+    color: ios.label,
   },
   productList: { gap: 8 },
   productRow: {
@@ -333,12 +333,12 @@ const styles = StyleSheet.create({
   productName: {
     fontSize: 15,
     fontFamily: "Inter_600SemiBold",
-    color: colors.navy.DEFAULT,
+    color: ios.label,
   },
   productPrice: {
     fontSize: 13,
     fontFamily: "Inter_400Regular",
-    color: "#64748b",
+    color: ios.label2,
   },
   qtyControl: {
     flexDirection: "row",
@@ -349,14 +349,14 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: colors.brand[50],
+    backgroundColor: ios.brandWash,
     alignItems: "center",
     justifyContent: "center",
   },
   qtyText: {
     fontSize: 17,
     fontFamily: "Inter_700Bold",
-    color: colors.navy.DEFAULT,
+    color: ios.label,
     minWidth: 24,
     textAlign: "center",
   },
@@ -365,7 +365,7 @@ const styles = StyleSheet.create({
   },
   noProducts: {
     textAlign: "center",
-    color: "#94a3b8",
+    color: ios.label2,
     fontFamily: "Inter_400Regular",
     fontSize: 14,
     paddingVertical: 16,
@@ -380,7 +380,7 @@ const styles = StyleSheet.create({
   cartTitle: {
     fontSize: 13,
     fontFamily: "Inter_600SemiBold",
-    color: "#64748b",
+    color: ios.label2,
     textTransform: "uppercase",
     letterSpacing: 0.5,
     marginBottom: 4,
@@ -394,17 +394,17 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 14,
     fontFamily: "Inter_400Regular",
-    color: colors.navy.DEFAULT,
+    color: ios.label,
   },
   cartQty: {
     fontSize: 13,
     fontFamily: "Inter_400Regular",
-    color: "#64748b",
+    color: ios.label2,
   },
   cartTotal: {
     fontSize: 14,
     fontFamily: "Inter_700Bold",
-    color: colors.navy.DEFAULT,
+    color: ios.label,
     minWidth: 60,
     textAlign: "right",
   },
@@ -412,29 +412,29 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.surface.border,
+    borderTopColor: ios.separator,
     paddingTop: 8,
     marginTop: 4,
   },
   cartTotalLabel: {
     fontSize: 15,
     fontFamily: "Inter_600SemiBold",
-    color: colors.navy.DEFAULT,
+    color: ios.label,
   },
   cartTotalValue: {
     fontSize: 17,
     fontFamily: "Inter_700Bold",
-    color: colors.brand[700] ?? colors.brand[500],
+    color: ios.brandInk ?? ios.brand,
   },
   notesInput: {
     backgroundColor: "#fff",
     borderRadius: borderRadius.DEFAULT,
     borderWidth: 1,
-    borderColor: colors.surface.border,
+    borderColor: ios.separator,
     padding: 12,
     fontSize: 14,
     fontFamily: "Inter_400Regular",
-    color: colors.navy.DEFAULT,
+    color: ios.label,
     minHeight: 64,
   },
   footer: {
@@ -442,13 +442,13 @@ const styles = StyleSheet.create({
     paddingBottom: 32,
     backgroundColor: "#fff",
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.surface.border,
+    borderTopColor: ios.separator,
   },
   submitBtn: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: colors.brand[500],
+    backgroundColor: ios.brand,
     borderRadius: borderRadius.lg,
     padding: 16,
   },

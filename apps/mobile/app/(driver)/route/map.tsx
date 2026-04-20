@@ -1,7 +1,7 @@
 import { ActivityIndicator, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { router, Stack, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { colors, borderRadius, shadows } from "@routeflow/ui/tokens";
+import { ios, borderRadius, shadows } from "@routeflow/ui/tokens";
 import { useActiveRouteRun, useRouteRun, type RouteRunStop } from "../../../lib/api/routes";
 import { NetworkError } from "../../../components/NetworkError";
 
@@ -51,10 +51,10 @@ function buildGoogleMapsUrl(stops: RouteRunStop[]): string {
 // ─── Stop colour by status ────────────────────────────────────────────────────
 
 const STATUS_COLOR: Record<string, string> = {
-  COMPLETED: colors.success.DEFAULT,
-  IN_PROGRESS: colors.brand[500],
-  SKIPPED: "#94a3b8",
-  PENDING: colors.navy.DEFAULT,
+  COMPLETED: ios.system.green,
+  IN_PROGRESS: ios.brand,
+  SKIPPED: ios.label2,
+  PENDING: ios.label,
 };
 
 // ─── Address List Fallback ────────────────────────────────────────────────────
@@ -67,14 +67,14 @@ function AddressFallback({ stops }: { stops: RouteRunStop[] }) {
       showsVerticalScrollIndicator={false}
     >
       <View style={styles.fallbackBanner}>
-        <Ionicons name="map-outline" size={20} color={colors.brand[500]} />
+        <Ionicons name="map-outline" size={20} color={ios.brand} />
         <Text style={styles.fallbackBannerText}>Map view — stops in order</Text>
       </View>
       {stops.map((stop) => {
         const address = stop.customerAddress
           ? `${stop.customerAddress.line1}, ${stop.customerAddress.city}, ${stop.customerAddress.state} ${stop.customerAddress.zip}`
           : null;
-        const color = STATUS_COLOR[stop.status] ?? "#94a3b8";
+        const color = STATUS_COLOR[stop.status] ?? ios.label2;
         return (
           <Pressable
             key={stop.id}
@@ -107,7 +107,7 @@ function AddressFallback({ stops }: { stops: RouteRunStop[] }) {
 function NoApiKeyBanner() {
   return (
     <View style={styles.apiKeyBanner}>
-      <Ionicons name="warning-outline" size={22} color={colors.warning.DEFAULT} />
+      <Ionicons name="warning-outline" size={22} color={ios.system.orange} />
       <Text style={styles.apiKeyBannerTitle}>Map unavailable</Text>
       <Text style={styles.apiKeyBannerBody}>
         Google Maps API key is not configured.{"\n"}
@@ -159,7 +159,7 @@ function StopsMap({ stops, runId }: { stops: RouteRunStop[]; runId: string }) {
         showsMyLocationButton
       >
         {stopsWithCoords.map((stop) => {
-          const color = STATUS_COLOR[stop.status] ?? "#94a3b8";
+          const color = STATUS_COLOR[stop.status] ?? ios.label2;
           return (
             <Marker
               key={stop.id}
@@ -185,10 +185,10 @@ function StopsMap({ stops, runId }: { stops: RouteRunStop[]; runId: string }) {
       {/* Legend */}
       <View style={styles.legend}>
         {[
-          { label: "Pending", color: colors.navy.DEFAULT },
-          { label: "Active", color: colors.brand[500] },
-          { label: "Done", color: colors.success.DEFAULT },
-          { label: "Skipped", color: "#94a3b8" },
+          { label: "Pending", color: ios.label },
+          { label: "Active", color: ios.brand },
+          { label: "Done", color: ios.system.green },
+          { label: "Skipped", color: ios.label2 },
         ].map(({ label, color }) => (
           <View key={label} style={styles.legendItem}>
             <View style={[styles.legendDot, { backgroundColor: color }]} />
@@ -217,7 +217,7 @@ export default function RouteMapScreen() {
       <>
         <Stack.Screen options={{ title: "Route Map", headerBackTitle: "Route" }} />
         <View style={styles.centered}>
-          <ActivityIndicator size="large" color={colors.brand[500]} />
+          <ActivityIndicator size="large" color={ios.brand} />
         </View>
       </>
     );
@@ -239,7 +239,7 @@ export default function RouteMapScreen() {
       <>
         <Stack.Screen options={{ title: "Route Map", headerBackTitle: "Route" }} />
         <View style={styles.centered}>
-          <Ionicons name="map-outline" size={56} color="#cbd5e1" />
+          <Ionicons name="map-outline" size={56} color={ios.gray[3]} />
           <Text style={styles.emptyText}>No stops on this route.</Text>
         </View>
       </>
@@ -261,8 +261,8 @@ export default function RouteMapScreen() {
               accessibilityRole="button"
               accessibilityLabel="Open in Google Maps"
             >
-              <Ionicons name="navigate-outline" size={18} color={colors.brand[500]} />
-              <Text style={{ fontSize: 14, fontFamily: "Inter_600SemiBold", color: colors.brand[500] }}>
+              <Ionicons name="navigate-outline" size={18} color={ios.brand} />
+              <Text style={{ fontSize: 14, fontFamily: "Inter_600SemiBold", color: ios.brand }}>
                 Google Maps
               </Text>
             </Pressable>
@@ -287,12 +287,12 @@ export default function RouteMapScreen() {
 }
 
 const styles = StyleSheet.create({
-  bg: { backgroundColor: colors.surface.raised },
+  bg: { backgroundColor: ios.bg },
   centered: { flex: 1, alignItems: "center", justifyContent: "center", gap: 12 },
   emptyText: {
     fontSize: 15,
     fontFamily: "Inter_400Regular",
-    color: "#94a3b8",
+    color: ios.label2,
   },
   fallbackContent: {
     paddingHorizontal: 16,
@@ -304,7 +304,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    backgroundColor: colors.brand[50],
+    backgroundColor: ios.brandWash,
     borderRadius: borderRadius.lg,
     paddingHorizontal: 14,
     paddingVertical: 10,
@@ -313,7 +313,7 @@ const styles = StyleSheet.create({
   fallbackBannerText: {
     fontSize: 14,
     fontFamily: "Inter_500Medium",
-    color: colors.brand[500],
+    color: ios.brand,
   },
   stopCard: {
     backgroundColor: "#fff",
@@ -341,12 +341,12 @@ const styles = StyleSheet.create({
   stopBusiness: {
     fontSize: 16,
     fontFamily: "Inter_700Bold",
-    color: colors.navy.DEFAULT,
+    color: ios.label,
   },
   stopAddress: {
     fontSize: 13,
     fontFamily: "Inter_400Regular",
-    color: "#64748b",
+    color: ios.label2,
   },
   statusDot: {
     width: 10,
@@ -379,7 +379,7 @@ const styles = StyleSheet.create({
   legendText: {
     fontSize: 11,
     fontFamily: "Inter_500Medium",
-    color: colors.navy.DEFAULT,
+    color: ios.label,
   },
   gmapsBtn: {
     position: "absolute",
@@ -406,10 +406,10 @@ const styles = StyleSheet.create({
   apiKeyBanner: {
     margin: 16,
     marginBottom: 0,
-    backgroundColor: colors.warning.bg ?? "#fef3c7",
+    backgroundColor: ios.system.orangeWash ?? "#fef3c7",
     borderRadius: borderRadius.lg,
     borderWidth: 1,
-    borderColor: colors.warning.DEFAULT + "40",
+    borderColor: ios.system.orange + "40",
     padding: 16,
     gap: 6,
     alignItems: "center",
@@ -417,7 +417,7 @@ const styles = StyleSheet.create({
   apiKeyBannerTitle: {
     fontSize: 15,
     fontFamily: "Inter_700Bold",
-    color: colors.warning.DEFAULT,
+    color: ios.system.orange,
     textAlign: "center",
   },
   apiKeyBannerBody: {

@@ -3,7 +3,7 @@ import { Alert, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, 
 import { router, Stack } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { StatusBadge } from "@routeflow/ui/mobile";
-import { colors, borderRadius, shadows } from "@routeflow/ui/tokens";
+import { ios, borderRadius, shadows } from "@routeflow/ui/tokens";
 import { format, addMinutes } from "date-fns";
 import {
   useActiveRouteRun,
@@ -60,10 +60,10 @@ function getEtaStatus(stop: RouteRunStop, eta: Date | undefined, now: Date): Eta
 
 
 const STATUS_ICON: Record<string, { name: string; color: string }> = {
-  COMPLETED: { name: "checkmark-circle", color: colors.success.DEFAULT },
-  IN_PROGRESS: { name: "arrow-forward-circle", color: colors.brand[500] },
-  PENDING: { name: "ellipse-outline", color: "#94a3b8" },
-  SKIPPED: { name: "close-circle-outline", color: "#94a3b8" },
+  COMPLETED: { name: "checkmark-circle", color: ios.system.green },
+  IN_PROGRESS: { name: "arrow-forward-circle", color: ios.brand },
+  PENDING: { name: "ellipse-outline", color: ios.label2 },
+  SKIPPED: { name: "close-circle-outline", color: ios.label2 },
 };
 
 function ProgressBar({ completed, total }: { completed: number; total: number }) {
@@ -79,13 +79,13 @@ const progressStyles = StyleSheet.create({
   track: {
     height: 8,
     borderRadius: 4,
-    backgroundColor: colors.surface.border,
+    backgroundColor: ios.separator,
     overflow: "hidden",
   },
   fill: {
     height: 8,
     borderRadius: 4,
-    backgroundColor: colors.success.DEFAULT,
+    backgroundColor: ios.system.green,
   },
 });
 
@@ -112,9 +112,9 @@ function StopRow({ stop, runId, eta, etaStatus }: { stop: RouteRunStop; runId: s
     router.push(`/(driver)/route/stop/${stop.id}?runId=${runId}`);
   };
 
-  const windowColor = etaStatus === "late" ? colors.danger?.DEFAULT ?? "#ef4444"
-    : etaStatus === "warn" ? colors.warning.DEFAULT
-    : "#94a3b8";
+  const windowColor = etaStatus === "late" ? ios.system.red
+    : etaStatus === "warn" ? ios.system.orange
+    : ios.label2;
 
   return (
     <Pressable
@@ -162,7 +162,7 @@ function StopRow({ stop, runId, eta, etaStatus }: { stop: RouteRunStop; runId: s
           </View>
         )}
         {etaStatus === "warn" && (
-          <Ionicons name="warning-outline" size={16} color={colors.warning.DEFAULT} />
+          <Ionicons name="warning-outline" size={16} color={ios.system.orange} />
         )}
         <Ionicons name={icon.name as any} size={28} color={icon.color} />
       </View>
@@ -219,7 +219,7 @@ export default function RouteScreen() {
       <>
         <Stack.Screen options={{ title: "My Route" }} />
         <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
-          <ActivityIndicator size="large" color={colors.brand[500]} />
+          <ActivityIndicator size="large" color={ios.brand} />
         </View>
       </>
     );
@@ -251,21 +251,21 @@ export default function RouteScreen() {
                 style={{ padding: 4, paddingRight: 8 }}
                 accessibilityLabel="Schedule a run"
               >
-                <Ionicons name="add-circle-outline" size={26} color={colors.brand[500]} />
+                <Ionicons name="add-circle-outline" size={26} color={ios.brand} />
               </Pressable>
             ),
           }}
         />
-        <View style={{ flex: 1, backgroundColor: colors.surface.raised, alignItems: "center", justifyContent: "center", padding: 32 }}>
-          <Ionicons name="map-outline" size={56} color="#cbd5e1" />
-          <Text style={{ fontSize: 20, fontFamily: "Inter_700Bold", color: colors.navy.DEFAULT, marginTop: 16, textAlign: "center" }}>
+        <View style={{ flex: 1, backgroundColor: ios.bg, alignItems: "center", justifyContent: "center", padding: 32 }}>
+          <Ionicons name="map-outline" size={56} color={ios.gray[3]} />
+          <Text style={{ fontSize: 20, fontFamily: "Inter_700Bold", color: ios.label, marginTop: 16, textAlign: "center" }}>
             No Active Route
           </Text>
-          <Text style={{ fontSize: 15, fontFamily: "Inter_400Regular", color: "#64748b", marginTop: 8, textAlign: "center", lineHeight: 22 }}>
+          <Text style={{ fontSize: 15, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 8, textAlign: "center", lineHeight: 22 }}>
             You have no route running today. Schedule a run or manage your day from the Home tab.
           </Text>
           <Pressable
-            style={{ marginTop: 24, backgroundColor: colors.brand[500], borderRadius: 12, paddingHorizontal: 28, paddingVertical: 14, flexDirection: "row", alignItems: "center", gap: 8 }}
+            style={{ marginTop: 24, backgroundColor: ios.brand, borderRadius: 12, paddingHorizontal: 28, paddingVertical: 14, flexDirection: "row", alignItems: "center", gap: 8 }}
             onPress={() => router.push("/(driver)/route/new-run" as any)}
             accessibilityRole="button"
           >
@@ -406,21 +406,21 @@ export default function RouteScreen() {
                     style={{ padding: 4 }}
                     accessibilityLabel="Map view"
                   >
-                    <Ionicons name="map-outline" size={22} color={colors.brand[500]} />
+                    <Ionicons name="map-outline" size={22} color={ios.brand} />
                   </Pressable>
                   <Pressable
                     onPress={() => router.push(`/(driver)/route/messages?runId=${run.id}` as any)}
                     style={{ padding: 4 }}
                     accessibilityLabel="Messages"
                   >
-                    <Ionicons name="chatbubble-outline" size={22} color={colors.brand[500]} />
+                    <Ionicons name="chatbubble-outline" size={22} color={ios.brand} />
                   </Pressable>
                   <Pressable
                     onPress={() => router.push(`/(driver)/route/packing-list?runId=${run.id}`)}
                     style={{ padding: 4 }}
                     accessibilityLabel="Packing list"
                   >
-                    <Ionicons name="list-outline" size={24} color={colors.brand[500]} />
+                    <Ionicons name="list-outline" size={24} color={ios.brand} />
                   </Pressable>
                 </>
               )}
@@ -429,7 +429,7 @@ export default function RouteScreen() {
                 style={{ padding: 4 }}
                 accessibilityLabel="Schedule a run"
               >
-                <Ionicons name="add-circle-outline" size={26} color={colors.brand[500]} />
+                <Ionicons name="add-circle-outline" size={26} color={ios.brand} />
               </Pressable>
             </View>
           ),
@@ -460,7 +460,7 @@ export default function RouteScreen() {
                   onChangeText={setStartOdoInput}
                   keyboardType="numeric"
                   placeholder="e.g. 45200"
-                  placeholderTextColor="#94a3b8"
+                  placeholderTextColor={ios.label2}
                   autoFocus
                   returnKeyType="next"
                 />
@@ -475,7 +475,7 @@ export default function RouteScreen() {
                   value={startOdoInput}
                   editable={false}
                   keyboardType="numeric"
-                  placeholderTextColor="#94a3b8"
+                  placeholderTextColor={ios.label2}
                 />
               </View>
             )}
@@ -490,7 +490,7 @@ export default function RouteScreen() {
                 onChangeText={setEndOdoInput}
                 keyboardType="numeric"
                 placeholder="e.g. 45348"
-                placeholderTextColor="#94a3b8"
+                placeholderTextColor={ios.label2}
                 autoFocus={mileageMode === "end"}
                 returnKeyType="done"
                 onSubmitEditing={handleMileageSave}
@@ -532,17 +532,17 @@ export default function RouteScreen() {
           {/* Stats row */}
           <View style={styles.statsRow}>
             <View style={styles.statPill}>
-              <Ionicons name="location-outline" size={14} color={colors.brand[500]} />
+              <Ionicons name="location-outline" size={14} color={ios.brand} />
               <Text style={styles.statText}>{totalStops} stops</Text>
             </View>
             <View style={styles.statPill}>
-              <Ionicons name="cube-outline" size={14} color="#64748b" />
+              <Ionicons name="cube-outline" size={14} color={ios.label2} />
               <Text style={styles.statText}>{totalItemCount} items</Text>
             </View>
             {pendingOrderCount > 0 && (
               <View style={[styles.statPill, styles.statPillWarning]}>
-                <Ionicons name="alert-circle-outline" size={14} color={colors.warning.DEFAULT} />
-                <Text style={[styles.statText, { color: colors.warning.DEFAULT }]}>
+                <Ionicons name="alert-circle-outline" size={14} color={ios.system.orange} />
+                <Text style={[styles.statText, { color: ios.system.orange }]}>
                   {pendingOrderCount} to confirm
                 </Text>
               </View>
@@ -577,31 +577,31 @@ export default function RouteScreen() {
         >
           {/* Before You Leave — shown for scheduled (not yet started) runs */}
           {!hasStarted && !allDone && (
-            <View style={{ backgroundColor: colors.brand[50], borderRadius: 12, padding: 16, borderWidth: 1, borderColor: colors.brand[100] ?? colors.brand[500] + "33", gap: 12, marginBottom: 4 }}>
+            <View style={{ backgroundColor: ios.brandWash, borderRadius: 12, padding: 16, borderWidth: 1, borderColor: ios.brandWash ?? ios.brand + "33", gap: 12, marginBottom: 4 }}>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                <Ionicons name="clipboard-outline" size={18} color={colors.brand[500]} />
-                <Text style={{ fontSize: 14, fontFamily: "Inter_700Bold", color: colors.brand[500] }}>Before You Leave</Text>
+                <Ionicons name="clipboard-outline" size={18} color={ios.brand} />
+                <Text style={{ fontSize: 14, fontFamily: "Inter_700Bold", color: ios.brand }}>Before You Leave</Text>
               </View>
               <View style={{ flexDirection: "row", gap: 10 }}>
                 <Pressable
-                  style={{ flex: 1, backgroundColor: "#fff", borderRadius: 10, padding: 14, alignItems: "center", gap: 6, borderWidth: 1, borderColor: colors.brand[100] ?? "#dbeafe" }}
+                  style={{ flex: 1, backgroundColor: "#fff", borderRadius: 10, padding: 14, alignItems: "center", gap: 6, borderWidth: 1, borderColor: ios.brandWash ?? "#dbeafe" }}
                   onPress={() => router.push(`/(driver)/route/packing-list?runId=${run.id}` as any)}
                   accessibilityRole="button"
                   accessibilityLabel="View packing list"
                 >
-                  <Ionicons name="list-outline" size={24} color={colors.brand[500]} />
-                  <Text style={{ fontSize: 13, fontFamily: "Inter_600SemiBold", color: colors.navy.DEFAULT, textAlign: "center" }}>Packing List</Text>
-                  <Text style={{ fontSize: 11, fontFamily: "Inter_400Regular", color: "#64748b", textAlign: "center" }}>{totalItemCount} items</Text>
+                  <Ionicons name="list-outline" size={24} color={ios.brand} />
+                  <Text style={{ fontSize: 13, fontFamily: "Inter_600SemiBold", color: ios.label, textAlign: "center" }}>Packing List</Text>
+                  <Text style={{ fontSize: 11, fontFamily: "Inter_400Regular", color: ios.label2, textAlign: "center" }}>{totalItemCount} items</Text>
                 </Pressable>
                 <Pressable
-                  style={{ flex: 1, backgroundColor: "#fff", borderRadius: 10, padding: 14, alignItems: "center", gap: 6, borderWidth: 1, borderColor: colors.brand[100] ?? "#dbeafe" }}
+                  style={{ flex: 1, backgroundColor: "#fff", borderRadius: 10, padding: 14, alignItems: "center", gap: 6, borderWidth: 1, borderColor: ios.brandWash ?? "#dbeafe" }}
                   onPress={() => router.push(`/(driver)/route/map?runId=${run.id}` as any)}
                   accessibilityRole="button"
                   accessibilityLabel="View route map"
                 >
-                  <Ionicons name="map-outline" size={24} color={colors.brand[500]} />
-                  <Text style={{ fontSize: 13, fontFamily: "Inter_600SemiBold", color: colors.navy.DEFAULT, textAlign: "center" }}>Route Map</Text>
-                  <Text style={{ fontSize: 11, fontFamily: "Inter_400Regular", color: "#64748b", textAlign: "center" }}>{totalStops} stops</Text>
+                  <Ionicons name="map-outline" size={24} color={ios.brand} />
+                  <Text style={{ fontSize: 13, fontFamily: "Inter_600SemiBold", color: ios.label, textAlign: "center" }}>Route Map</Text>
+                  <Text style={{ fontSize: 11, fontFamily: "Inter_400Regular", color: ios.label2, textAlign: "center" }}>{totalStops} stops</Text>
                 </Pressable>
               </View>
             </View>
@@ -621,7 +621,7 @@ export default function RouteScreen() {
               <View style={dashStyles.runPendingCard}>
                 <View style={dashStyles.sectionLabelRow}>
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                    <Ionicons name="alert-circle-outline" size={15} color={colors.warning.DEFAULT} />
+                    <Ionicons name="alert-circle-outline" size={15} color={ios.system.orange} />
                     <Text style={[dashStyles.runPendingTitle]}>Pending Confirmation</Text>
                   </View>
                   <View style={dashStyles.pendingBadge}>
@@ -684,14 +684,14 @@ export default function RouteScreen() {
                 accessibilityRole="button"
                 accessibilityLabel="Log mileage"
               >
-                <Ionicons name="speedometer-outline" size={18} color={colors.brand[500]} />
+                <Ionicons name="speedometer-outline" size={18} color={ios.brand} />
                 <Text style={styles.mileageBtnText}>
                   {mileageEntry ? "Update Mileage" : "Log Mileage"}
                 </Text>
               </Pressable>
               {loggedMiles != null && (
                 <View style={styles.mileageSummary}>
-                  <Ionicons name="car-outline" size={16} color="#64748b" />
+                  <Ionicons name="car-outline" size={16} color={ios.label2} />
                   <Text style={styles.mileageSummaryText}>
                     {loggedMiles.toFixed(1)} mi logged
                   </Text>
@@ -722,14 +722,14 @@ export default function RouteScreen() {
               <Ionicons
                 name="checkmark-done-circle"
                 size={22}
-                color={colors.success.DEFAULT}
+                color={ios.system.green}
                 style={{ marginRight: 10 }}
               />
             )}
             <Text
               style={[
                 styles.primaryBtnText,
-                allDone && { color: colors.success.DEFAULT },
+                allDone && { color: ios.system.green },
               ]}
             >
               {primaryLabel}
@@ -758,20 +758,20 @@ export default function RouteScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.surface.raised,
+    backgroundColor: ios.bg,
   },
   headerCard: {
     backgroundColor: "#fff",
     paddingHorizontal: 20,
     paddingVertical: 18,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.surface.border,
+    borderBottomColor: ios.separator,
     gap: 12,
   },
   todayLabel: {
     fontSize: 12,
     fontFamily: "Inter_600SemiBold",
-    color: "#94a3b8",
+    color: ios.label2,
     textTransform: "uppercase",
     letterSpacing: 0.5,
   },
@@ -783,7 +783,7 @@ const styles = StyleSheet.create({
   routeName: {
     fontSize: 22,
     fontFamily: "Inter_700Bold",
-    color: colors.navy.DEFAULT,
+    color: ios.label,
   },
   statsRow: {
     flexDirection: "row",
@@ -794,16 +794,16 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
-    backgroundColor: colors.surface.raised,
+    backgroundColor: ios.bg,
     borderRadius: 20,
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderWidth: 1,
-    borderColor: colors.surface.border,
+    borderColor: ios.separator,
   },
   statPillWarning: {
-    backgroundColor: colors.warning.bg ?? "#fef3c7",
-    borderColor: colors.warning.DEFAULT + "40",
+    backgroundColor: ios.system.orangeWash ?? "#fef3c7",
+    borderColor: ios.system.orange + "40",
   },
   statPillDanger: {
     backgroundColor: "#fee2e2",
@@ -812,7 +812,7 @@ const styles = StyleSheet.create({
   statText: {
     fontSize: 12,
     fontFamily: "Inter_600SemiBold",
-    color: "#64748b",
+    color: ios.label2,
   },
   progressSection: {
     gap: 8,
@@ -824,12 +824,12 @@ const styles = StyleSheet.create({
   progressLabel: {
     fontSize: 14,
     fontFamily: "Inter_500Medium",
-    color: "#64748b",
+    color: ios.label2,
   },
   progressValue: {
     fontSize: 14,
     fontFamily: "Inter_700Bold",
-    color: colors.navy.DEFAULT,
+    color: ios.label,
   },
   list: {
     flex: 1,
@@ -843,7 +843,7 @@ const styles = StyleSheet.create({
   stopsLabel: {
     fontSize: 12,
     fontFamily: "Inter_600SemiBold",
-    color: "#94a3b8",
+    color: ios.label2,
     textTransform: "uppercase",
     letterSpacing: 0.6,
     marginBottom: 4,
@@ -861,26 +861,26 @@ const styles = StyleSheet.create({
   },
   stopRowActive: {
     borderWidth: 1.5,
-    borderColor: colors.brand[500],
+    borderColor: ios.brand,
   },
   stopNumBubble: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: colors.surface.raised,
+    backgroundColor: ios.bg,
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: colors.surface.border,
+    borderColor: ios.separator,
   },
   stopNumBubbleActive: {
-    backgroundColor: colors.brand[500],
-    borderColor: colors.brand[500],
+    backgroundColor: ios.brand,
+    borderColor: ios.brand,
   },
   stopNum: {
     fontSize: 18,
     fontFamily: "Inter_700Bold",
-    color: colors.navy.DEFAULT,
+    color: ios.label,
   },
   stopNumActive: {
     color: "#fff",
@@ -892,17 +892,17 @@ const styles = StyleSheet.create({
   stopBusiness: {
     fontSize: 17,
     fontFamily: "Inter_700Bold",
-    color: colors.navy.DEFAULT,
+    color: ios.label,
   },
   stopAddress: {
     fontSize: 14,
     fontFamily: "Inter_400Regular",
-    color: "#64748b",
+    color: ios.label2,
   },
   stopItemCount: {
     fontSize: 13,
     fontFamily: "Inter_500Medium",
-    color: "#94a3b8",
+    color: ios.label2,
   },
   stopWindow: {
     fontSize: 12,
@@ -911,7 +911,7 @@ const styles = StyleSheet.create({
   stopWindowAny: {
     fontSize: 12,
     fontFamily: "Inter_400Regular",
-    color: "#94a3b8",
+    color: ios.label2,
   },
   footer: {
     paddingHorizontal: 16,
@@ -919,18 +919,18 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     backgroundColor: "#fff",
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.surface.border,
+    borderTopColor: ios.separator,
   },
   primaryBtn: {
     height: 56,
-    backgroundColor: colors.brand[500],
+    backgroundColor: ios.brand,
     borderRadius: borderRadius.DEFAULT,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
   },
   primaryBtnDone: {
-    backgroundColor: colors.success.bg,
+    backgroundColor: ios.system.greenWash,
   },
   primaryBtnText: {
     fontSize: 17,
@@ -953,13 +953,13 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: borderRadius.DEFAULT,
     borderWidth: 1,
-    borderColor: colors.brand[100],
-    backgroundColor: colors.brand[50],
+    borderColor: ios.brandWash,
+    backgroundColor: ios.brandWash,
   },
   mileageBtnText: {
     fontSize: 13,
     fontFamily: "Inter_600SemiBold",
-    color: colors.brand[500],
+    color: ios.brand,
   },
   mileageSummary: {
     flexDirection: "row",
@@ -969,12 +969,12 @@ const styles = StyleSheet.create({
   mileageSummaryText: {
     fontSize: 13,
     fontFamily: "Inter_500Medium",
-    color: "#64748b",
+    color: ios.label2,
   },
   mileagePending: {
     fontSize: 12,
     fontFamily: "Inter_400Regular",
-    color: "#94a3b8",
+    color: ios.label2,
   },
   endRouteBtn: {
     flexDirection: "row",
@@ -1013,7 +1013,7 @@ const mileageStyles = StyleSheet.create({
   title: {
     fontSize: 18,
     fontFamily: "Inter_700Bold",
-    color: colors.navy.DEFAULT,
+    color: ios.label,
   },
   field: {
     gap: 6,
@@ -1021,22 +1021,22 @@ const mileageStyles = StyleSheet.create({
   fieldLabel: {
     fontSize: 13,
     fontFamily: "Inter_600SemiBold",
-    color: "#64748b",
+    color: ios.label2,
   },
   input: {
     height: 48,
     borderWidth: 1,
-    borderColor: colors.surface.border,
+    borderColor: ios.separator,
     borderRadius: borderRadius.lg,
     paddingHorizontal: 14,
     fontSize: 16,
     fontFamily: "Inter_400Regular",
-    color: colors.navy.DEFAULT,
-    backgroundColor: colors.surface.raised,
+    color: ios.label,
+    backgroundColor: ios.bg,
   },
   inputDisabled: {
     backgroundColor: "#f8fafc",
-    color: "#94a3b8",
+    color: ios.label2,
   },
   actions: {
     flexDirection: "row",
@@ -1048,19 +1048,19 @@ const mileageStyles = StyleSheet.create({
     height: 50,
     borderRadius: borderRadius.DEFAULT,
     borderWidth: 1,
-    borderColor: colors.surface.border,
+    borderColor: ios.separator,
     alignItems: "center",
     justifyContent: "center",
   },
   cancelBtnText: {
     fontSize: 16,
     fontFamily: "Inter_600SemiBold",
-    color: "#64748b",
+    color: ios.label2,
   },
   saveBtn: {
     flex: 2,
     height: 50,
-    backgroundColor: colors.brand[500],
+    backgroundColor: ios.brand,
     borderRadius: borderRadius.DEFAULT,
     alignItems: "center",
     justifyContent: "center",
@@ -1080,7 +1080,7 @@ const dashStyles = StyleSheet.create({
     justifyContent: "space-between",
   },
   pendingBadge: {
-    backgroundColor: colors.warning.DEFAULT,
+    backgroundColor: ios.system.orange,
     borderRadius: 10,
     minWidth: 22,
     height: 22,
@@ -1102,31 +1102,31 @@ const dashStyles = StyleSheet.create({
   },
   pendingDivider: {
     height: StyleSheet.hairlineWidth,
-    backgroundColor: colors.surface.border,
+    backgroundColor: ios.separator,
     marginHorizontal: 16,
   },
   pendingOrderNum: {
     fontSize: 15,
     fontFamily: "Inter_700Bold",
-    color: colors.navy.DEFAULT,
+    color: ios.label,
   },
   pendingItemCount: {
     fontSize: 13,
     fontFamily: "Inter_400Regular",
-    color: "#64748b",
+    color: ios.label2,
     marginTop: 2,
   },
   pendingTapHint: {
     fontSize: 11,
     fontFamily: "Inter_500Medium",
-    color: colors.brand[500],
+    color: ios.brand,
     marginTop: 3,
   },
   confirmBtn: {
     flexDirection: "row",
     alignItems: "center",
     gap: 5,
-    backgroundColor: colors.success.DEFAULT,
+    backgroundColor: ios.system.green,
     borderRadius: 8,
     paddingHorizontal: 12,
     paddingVertical: 8,
@@ -1142,13 +1142,13 @@ const dashStyles = StyleSheet.create({
     padding: 14,
     gap: 10,
     borderWidth: 1,
-    borderColor: colors.warning.DEFAULT + "40",
+    borderColor: ios.system.orange + "40",
     marginBottom: 4,
   },
   runPendingTitle: {
     fontSize: 13,
     fontFamily: "Inter_700Bold",
-    color: colors.warning.DEFAULT,
+    color: ios.system.orange,
     textTransform: "uppercase",
     letterSpacing: 0.4,
   },

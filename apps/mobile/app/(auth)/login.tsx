@@ -6,14 +6,16 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { MobileButton, MobileInput } from "@routeflow/ui/mobile";
+import { LinearGradient } from "expo-linear-gradient";
+import { ios } from "@routeflow/ui/tokens";
+import { BrandGlyph, GoogleButton } from "@routeflow/ui/mobile/ios";
 import { useAuthStore } from "../../lib/auth-store";
-
-const TEAL = "#0b6e6b";
+import { useTenantStore } from "../../lib/tenant-store";
 
 const schema = z.object({
   username: z.string().min(1, "Username is required"),
@@ -22,10 +24,27 @@ const schema = z.object({
 
 type LoginForm = z.infer<typeof schema>;
 
+function BrandMark() {
+  return (
+    <LinearGradient
+      colors={[ios.brandGradient[0]!, ios.brandGradient[1]!, ios.brandGradient[2]!]}
+      start={{ x: 0, y: 0 }}
+      end={{ x: 1, y: 1 }}
+      style={styles.brandMark}
+    >
+      <BrandGlyph />
+    </LinearGradient>
+  );
+}
+
 export default function LoginScreen() {
   const login = useAuthStore((s) => s.login);
+  const loginWithGoogle = useAuthStore((s) => s.loginWithGoogle);
+  const tenantSlug = useTenantStore((s) => s.slug);
+  const tenantBranding = useTenantStore((s) => s.branding);
   const [apiError, setApiError] = useState<string | null>(null);
   const [rememberMe, setRememberMe] = useState(true);
+  const [googleLoading, setGoogleLoading] = useState(false);
 
   const {
     control,
@@ -40,14 +59,42 @@ export default function LoginScreen() {
     setApiError(null);
     try {
       await login(data.username, data.password);
-      // _layout.tsx handles routing based on role / forcePasswordChange
     } catch (err: unknown) {
       const msg =
-        (err as { response?: { data?: { message?: string } } })?.response?.data
-          ?.message ?? "Invalid username or password.";
+        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+        "Invalid username or password.";
       setApiError(typeof msg === "string" ? msg : "Login failed.");
     }
   };
+
+  const onGoogle = async () => {
+    if (!tenantSlug) {
+      setApiError("Company code required before Google sign-in.");
+      return;
+    }
+    setApiError(null);
+    setGoogleLoading(true);
+    try {
+      await loginWithGoogle(tenantSlug);
+    } catch (err: unknown) {
+      const code = (err as Error)?.message ?? "unknown_error";
+      if (code === "cancelled") {
+        // user dismissed — no banner
+      } else if (code === "unauthorized" || code === "google_email_is_staff") {
+        setApiError("This Google account is not authorised for this company.");
+      } else if (code === "google_unavailable") {
+        setApiError("Google sign-in is not available for this company.");
+      } else {
+        setApiError("Google sign-in failed. Try again or use your username and password.");
+      }
+    } finally {
+      setGoogleLoading(false);
+    }
+  };
+
+  const subtitle = tenantBranding?.businessName
+    ? `Sign in to RouteFlow · ${tenantBranding.businessName}`
+    : "Sign in to RouteFlow";
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -56,20 +103,17 @@ export default function LoginScreen() {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        {/* Brand mark */}
-        <View style={styles.brandMark}>
-          <Text style={styles.brandInitials}>RF</Text>
-        </View>
+        <BrandMark />
 
         <Text style={styles.title}>Welcome back</Text>
-        <Text style={styles.subtitle}>Sign in to RouteFlow</Text>
+        <Text style={styles.subtitle}>{subtitle}</Text>
 
         <View style={styles.form}>
-          {apiError && (
+          {apiError ? (
             <View style={styles.errorBanner}>
               <Text style={styles.errorText}>{apiError}</Text>
             </View>
-          )}
+          ) : null}
 
           <View style={styles.fieldBlock}>
             <Text style={styles.fieldLabel}>USERNAME</Text>
@@ -77,17 +121,19 @@ export default function LoginScreen() {
               control={control}
               name="username"
               render={({ field: { onChange, onBlur, value } }) => (
-                <MobileInput
+                <TextInput
                   value={value}
                   onChangeText={onChange}
                   onBlur={onBlur}
-                  keyboardType="default"
                   autoCapitalize="none"
                   autoCorrect={false}
-                  error={errors.username?.message}
+                  style={[styles.input, errors.username && styles.inputError]}
+                  placeholder="jordan.m"
+                  placeholderTextColor={ios.gray[1]}
                 />
               )}
             />
+            {errors.username ? <Text style={styles.fieldError}>{errors.username.message}</Text> : null}
           </View>
 
           <View style={styles.fieldBlock}>
@@ -96,15 +142,18 @@ export default function LoginScreen() {
               control={control}
               name="password"
               render={({ field: { onChange, onBlur, value } }) => (
-                <MobileInput
+                <TextInput
                   value={value}
                   onChangeText={onChange}
                   onBlur={onBlur}
                   secureTextEntry
-                  error={errors.password?.message}
+                  style={[styles.input, errors.password && styles.inputError]}
+                  placeholder="••••••••"
+                  placeholderTextColor={ios.gray[1]}
                 />
               )}
             />
+            {errors.password ? <Text style={styles.fieldError}>{errors.password.message}</Text> : null}
           </View>
 
           <View style={styles.optionsRow}>
@@ -114,23 +163,21 @@ export default function LoginScreen() {
               activeOpacity={0.7}
             >
               <View style={[styles.checkbox, rememberMe && styles.checkboxOn]}>
-                {rememberMe && (
-                  <Text style={styles.checkmark}>✓</Text>
-                )}
+                {rememberMe ? <Text style={styles.checkmark}>✓</Text> : null}
               </View>
               <Text style={styles.rememberText}>Remember me</Text>
             </TouchableOpacity>
             <Text style={styles.forgotText}>Forgot?</Text>
           </View>
 
-          <MobileButton
+          <TouchableOpacity
+            style={[styles.signInBtn, isSubmitting && styles.signInBtnBusy]}
             onPress={handleSubmit(onSubmit)}
-            loading={isSubmitting}
-            size="lg"
-            style={styles.signInBtn}
+            activeOpacity={0.85}
+            disabled={isSubmitting}
           >
-            Sign in
-          </MobileButton>
+            <Text style={styles.signInLabel}>{isSubmitting ? "Signing in…" : "Sign in"}</Text>
+          </TouchableOpacity>
 
           <View style={styles.orRow}>
             <View style={styles.orLine} />
@@ -138,17 +185,13 @@ export default function LoginScreen() {
             <View style={styles.orLine} />
           </View>
 
-          <TouchableOpacity style={styles.googleBtn} activeOpacity={0.85}>
-            <View style={styles.googleLogoWrap}>
-              <Text style={styles.googleLogoG}>G</Text>
-            </View>
-            <Text style={styles.googleBtnText}>Sign in with Google</Text>
-          </TouchableOpacity>
+          <GoogleButton onPress={onGoogle} loading={googleLoading} />
         </View>
 
+        <View style={{ flex: 1 }} />
+
         <Text style={styles.footer}>
-          New driver?{" "}
-          <Text style={styles.footerLink}>Get setup code</Text>
+          New driver? <Text style={styles.footerLink}>Get setup code</Text>
         </Text>
       </ScrollView>
     </SafeAreaView>
@@ -158,62 +201,55 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: "#ffffff",
+    backgroundColor: ios.bgElev,
   },
   container: {
     flexGrow: 1,
     paddingHorizontal: 28,
     paddingTop: 48,
-    paddingBottom: 32,
+    paddingBottom: 20,
   },
   brandMark: {
     width: 72,
     height: 72,
     borderRadius: 22,
-    backgroundColor: TEAL,
     alignItems: "center",
     justifyContent: "center",
-    shadowColor: TEAL,
-    shadowOffset: { width: 0, height: 8 },
+    shadowColor: ios.brand,
+    shadowOffset: { width: 0, height: 12 },
     shadowOpacity: 0.35,
-    shadowRadius: 16,
-    elevation: 8,
-    marginBottom: 20,
-  },
-  brandInitials: {
-    fontSize: 26,
-    fontFamily: "Inter_700Bold",
-    color: "#ffffff",
-    letterSpacing: -0.5,
+    shadowRadius: 24,
+    elevation: 12,
   },
   title: {
     fontSize: 34,
     fontFamily: "Inter_700Bold",
-    color: "#000000",
+    color: ios.label,
     letterSpacing: -1.2,
     lineHeight: 40,
+    marginTop: 20,
   },
   subtitle: {
     fontSize: 17,
     fontFamily: "Inter_400Regular",
-    color: "#636366",
+    color: ios.label2,
     marginTop: 6,
     letterSpacing: -0.2,
-    marginBottom: 32,
   },
   form: {
-    gap: 12,
+    marginTop: 32,
+    gap: 10,
   },
   errorBanner: {
-    backgroundColor: "#fee2e2",
+    backgroundColor: ios.system.redWash,
     borderRadius: 12,
     paddingHorizontal: 14,
     paddingVertical: 10,
   },
   errorText: {
     fontSize: 14,
-    fontFamily: "Inter_400Regular",
-    color: "#dc2626",
+    fontFamily: "Inter_500Medium",
+    color: ios.system.redInk,
   },
   fieldBlock: {
     gap: 6,
@@ -221,10 +257,28 @@ const styles = StyleSheet.create({
   fieldLabel: {
     fontSize: 12,
     fontFamily: "Inter_600SemiBold",
-    color: "#636366",
+    color: ios.label2,
     letterSpacing: 0.8,
     textTransform: "uppercase",
     paddingLeft: 2,
+  },
+  input: {
+    backgroundColor: ios.fill3,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    fontSize: 17,
+    fontFamily: "Inter_400Regular",
+    color: ios.label,
+  },
+  inputError: {
+    backgroundColor: ios.system.redWash,
+  },
+  fieldError: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    color: ios.system.redInk,
+    paddingLeft: 4,
   },
   optionsRow: {
     flexDirection: "row",
@@ -243,13 +297,13 @@ const styles = StyleSheet.create({
     height: 20,
     borderRadius: 6,
     borderWidth: 1.5,
-    borderColor: "#c7c7cc",
+    borderColor: ios.gray[3],
     alignItems: "center",
     justifyContent: "center",
   },
   checkboxOn: {
-    backgroundColor: TEAL,
-    borderColor: TEAL,
+    backgroundColor: ios.brand,
+    borderColor: ios.brand,
   },
   checkmark: {
     color: "#ffffff",
@@ -260,77 +314,57 @@ const styles = StyleSheet.create({
   rememberText: {
     fontSize: 14,
     fontFamily: "Inter_400Regular",
-    color: "#000000",
+    color: ios.label,
   },
   forgotText: {
     fontSize: 14,
     fontFamily: "Inter_500Medium",
-    color: TEAL,
+    color: ios.brand,
   },
   signInBtn: {
-    marginTop: 4,
+    backgroundColor: ios.brand,
+    borderRadius: 14,
+    paddingVertical: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 14,
+  },
+  signInBtnBusy: {
+    opacity: 0.7,
+  },
+  signInLabel: {
+    fontSize: 17,
+    fontFamily: "Inter_600SemiBold",
+    color: "#ffffff",
+    letterSpacing: -0.2,
   },
   orRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
-    marginVertical: 4,
+    marginVertical: 12,
   },
   orLine: {
     flex: 1,
-    height: 0.5,
-    backgroundColor: "#c7c7cc",
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: ios.separator,
   },
   orText: {
     fontSize: 12,
     fontFamily: "Inter_400Regular",
-    color: "#8e8e93",
+    color: ios.label2,
     letterSpacing: 0.6,
     textTransform: "uppercase",
-  },
-  googleBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 10,
-    backgroundColor: "#ffffff",
-    borderWidth: 1,
-    borderColor: "#dadce0",
-    borderRadius: 12,
-    paddingVertical: 14,
-    shadowColor: "#000000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.08,
-    shadowRadius: 3,
-    elevation: 1,
-  },
-  googleLogoWrap: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  googleLogoG: {
-    fontSize: 16,
-    fontFamily: "Inter_700Bold",
-    color: "#4285F4",
-    lineHeight: 20,
-  },
-  googleBtnText: {
-    fontSize: 16,
-    fontFamily: "Inter_500Medium",
-    color: "#3c4043",
   },
   footer: {
     textAlign: "center",
     fontSize: 13,
     fontFamily: "Inter_400Regular",
-    color: "#8e8e93",
-    marginTop: 36,
+    color: ios.label2,
+    marginTop: 24,
   },
   footerLink: {
-    color: TEAL,
+    color: ios.brand,
     fontFamily: "Inter_500Medium",
   },
 });

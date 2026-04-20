@@ -25,7 +25,7 @@ try {
 import * as Linking from "expo-linking";
 import { router, Stack, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { colors, borderRadius, shadows } from "@routeflow/ui/tokens";
+import { ios, borderRadius, shadows } from "@routeflow/ui/tokens";
 import {
   useRouteRun,
   useUpdateStopStatus,
@@ -145,7 +145,7 @@ function ItemRow({
               <Ionicons
                 name={displayQty <= 1 ? "trash-outline" : "remove-outline"}
                 size={18}
-                color={displayQty <= 1 ? colors.danger.DEFAULT : colors.navy.DEFAULT}
+                color={displayQty <= 1 ? ios.system.red : ios.label}
               />
             </Pressable>
             <Text style={itemStyles.editQtyText}>{displayQty}</Text>
@@ -155,7 +155,7 @@ function ItemRow({
               hitSlop={8}
               accessibilityLabel="Increase quantity"
             >
-              <Ionicons name="add-outline" size={18} color={colors.navy.DEFAULT} />
+              <Ionicons name="add-outline" size={18} color={ios.label} />
             </Pressable>
           </View>
         </View>
@@ -188,16 +188,16 @@ function ItemRow({
           : `${deliveryQty} of ${item.qty}`;
   const chipColor =
     deliveryQty <= 0
-      ? colors.danger.DEFAULT
+      ? ios.system.red
       : deliveryQty >= Number(item.qty)
-        ? colors.success.DEFAULT
-        : colors.warning.DEFAULT;
+        ? ios.system.green
+        : ios.system.orange;
   const chipBg =
     deliveryQty <= 0
-      ? (colors.danger.bg ?? "#fee2e2")
+      ? (ios.system.redWash ?? "#fee2e2")
       : deliveryQty >= Number(item.qty)
-        ? colors.success.bg
-        : (colors.warning.bg ?? "#fef3c7");
+        ? ios.system.greenWash
+        : (ios.system.orangeWash ?? "#fef3c7");
 
   return (
     <View style={[itemStyles.container, highlighted && itemStyles.highlighted]}>
@@ -225,7 +225,7 @@ function ItemRow({
                 hitSlop={8}
                 accessibilityLabel="Decrease delivery quantity"
               >
-                <Ionicons name="remove-outline" size={18} color={colors.navy.DEFAULT} />
+                <Ionicons name="remove-outline" size={18} color={ios.label} />
               </Pressable>
               <TextInput
                 style={itemStyles.deliveryQtyInput}
@@ -244,7 +244,7 @@ function ItemRow({
                 hitSlop={8}
                 accessibilityLabel="Increase delivery quantity"
               >
-                <Ionicons name="add-outline" size={18} color={colors.navy.DEFAULT} />
+                <Ionicons name="add-outline" size={18} color={ios.label} />
               </Pressable>
             </View>
             <Pressable
@@ -256,7 +256,7 @@ function ItemRow({
               hitSlop={8}
               accessibilityLabel="Remove item from delivery"
             >
-              <Ionicons name="close-circle-outline" size={24} color={colors.danger.DEFAULT} />
+              <Ionicons name="close-circle-outline" size={24} color={ios.system.red} />
             </Pressable>
           </View>
         </View>
@@ -275,23 +275,23 @@ const itemStyles = StyleSheet.create({
   },
   highlighted: {
     borderWidth: 2,
-    borderColor: colors.brand[500],
-    backgroundColor: colors.brand[50],
+    borderColor: ios.brand,
+    backgroundColor: ios.brandWash,
   },
   header: { gap: 2 },
   name: {
     fontSize: 18,
     fontFamily: "Inter_700Bold",
-    color: colors.navy.DEFAULT,
+    color: ios.label,
   },
   qty: {
     fontSize: 15,
     fontFamily: "Inter_400Regular",
-    color: "#64748b",
+    color: ios.label2,
   },
   qtyBold: {
     fontFamily: "Inter_700Bold",
-    color: colors.navy.DEFAULT,
+    color: ios.label,
   },
   toggleRow: { flexDirection: "row", gap: 8 },
   toggleBtn: {
@@ -299,15 +299,15 @@ const itemStyles = StyleSheet.create({
     height: 56,
     borderRadius: borderRadius.DEFAULT,
     borderWidth: 1.5,
-    borderColor: colors.surface.border,
+    borderColor: ios.separator,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: colors.surface.raised,
+    backgroundColor: ios.bg,
   },
   toggleText: {
     fontSize: 14,
     fontFamily: "Inter_700Bold",
-    color: "#64748b",
+    color: ios.label2,
   },
   partialRow: {
     flexDirection: "row",
@@ -318,24 +318,24 @@ const itemStyles = StyleSheet.create({
   partialLabel: {
     fontSize: 15,
     fontFamily: "Inter_500Medium",
-    color: colors.navy.DEFAULT,
+    color: ios.label,
   },
   partialInput: {
     width: 72,
     height: 48,
     borderWidth: 1.5,
-    borderColor: colors.warning.DEFAULT,
+    borderColor: ios.system.orange,
     borderRadius: borderRadius.DEFAULT,
     textAlign: "center",
     fontSize: 20,
     fontFamily: "Inter_700Bold",
-    color: colors.navy.DEFAULT,
-    backgroundColor: colors.warning.bg,
+    color: ios.label,
+    backgroundColor: ios.system.orangeWash,
   },
   partialMax: {
     fontSize: 15,
     fontFamily: "Inter_400Regular",
-    color: "#64748b",
+    color: ios.label2,
   },
   // ── Edit mode styles ────────────────────────────────────────────────────
   editRow: {
@@ -348,16 +348,16 @@ const itemStyles = StyleSheet.create({
   editPrice: {
     fontSize: 13,
     fontFamily: "Inter_400Regular",
-    color: "#64748b",
+    color: ios.label2,
   },
   editStepper: {
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
-    backgroundColor: colors.surface.raised,
+    backgroundColor: ios.bg,
     borderRadius: borderRadius.full,
     borderWidth: 1,
-    borderColor: colors.surface.border,
+    borderColor: ios.separator,
     paddingHorizontal: 4,
     paddingVertical: 4,
   },
@@ -369,16 +369,16 @@ const itemStyles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: "#fff",
     borderWidth: 1,
-    borderColor: colors.surface.border,
+    borderColor: ios.separator,
   },
   stepBtnRemove: {
-    borderColor: colors.danger.DEFAULT + "60",
-    backgroundColor: colors.danger.bg,
+    borderColor: ios.system.red + "60",
+    backgroundColor: ios.system.redWash,
   },
   editQtyText: {
     fontSize: 16,
     fontFamily: "Inter_700Bold",
-    color: colors.navy.DEFAULT,
+    color: ios.label,
     minWidth: 28,
     textAlign: "center",
   },
@@ -393,7 +393,7 @@ const itemStyles = StyleSheet.create({
   deliveryUnit: {
     fontSize: 13,
     fontFamily: "Inter_400Regular",
-    color: "#64748b",
+    color: ios.label2,
   },
   deliveryRight: {
     alignItems: "flex-end",
@@ -417,17 +417,17 @@ const itemStyles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
-    backgroundColor: colors.surface.raised,
+    backgroundColor: ios.bg,
     borderRadius: borderRadius.full,
     borderWidth: 1,
-    borderColor: colors.surface.border,
+    borderColor: ios.separator,
     paddingHorizontal: 4,
     paddingVertical: 4,
   },
   deliveryQtyInput: {
     fontSize: 16,
     fontFamily: "Inter_700Bold",
-    color: colors.navy.DEFAULT,
+    color: ios.label,
     minWidth: 36,
     textAlign: "center",
     paddingVertical: 0,
@@ -646,7 +646,7 @@ export default function StopDetailScreen() {
       <>
         <Stack.Screen options={{ title: "Stop" }} />
         <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
-          <ActivityIndicator size="large" color={colors.brand[500]} />
+          <ActivityIndicator size="large" color={ios.brand} />
         </View>
       </>
     );
@@ -866,7 +866,7 @@ export default function StopDetailScreen() {
               style={{ paddingRight: 4 }}
               accessibilityLabel="Skip stop"
             >
-              <Text style={{ color: colors.danger.DEFAULT, fontFamily: "Inter_600SemiBold", fontSize: 15 }}>
+              <Text style={{ color: ios.system.red, fontFamily: "Inter_600SemiBold", fontSize: 15 }}>
                 Skip
               </Text>
             </Pressable>
@@ -908,7 +908,7 @@ export default function StopDetailScreen() {
                       accessibilityRole="button"
                       accessibilityLabel="View customer profile"
                     >
-                      <Ionicons name="person-outline" size={18} color={colors.brand[500]} />
+                      <Ionicons name="person-outline" size={18} color={ios.brand} />
                     </Pressable>
                   ) : null}
                   {stop.customer?.phone ? (
@@ -931,7 +931,7 @@ export default function StopDetailScreen() {
               )}
               {stop.notes && (
                 <View style={styles.notesChip}>
-                  <Ionicons name="information-circle-outline" size={14} color={colors.brand[500]} />
+                  <Ionicons name="information-circle-outline" size={14} color={ios.brand} />
                   <Text style={styles.notesChipText}>{stop.notes}</Text>
                 </View>
               )}
@@ -940,7 +940,7 @@ export default function StopDetailScreen() {
             {/* Delivery window warnings (3-H) */}
             {windowStatus === "late" && (
               <View style={styles.bannerLate}>
-                <Ionicons name="warning" size={18} color={colors.danger.DEFAULT} />
+                <Ionicons name="warning" size={18} color={ios.system.red} />
                 <Text style={styles.bannerLateText}>
                   Running late — delivery window has passed
                 </Text>
@@ -948,13 +948,13 @@ export default function StopDetailScreen() {
             )}
             {windowStatus === "soon" && (
               <View style={styles.bannerSoon}>
-                <Ionicons name="time-outline" size={18} color={colors.warning.DEFAULT} />
+                <Ionicons name="time-outline" size={18} color={ios.system.orange} />
                 <Text style={styles.bannerSoonText}>Delivery window ends soon</Text>
               </View>
             )}
             {overtimeWarning && (
               <View style={styles.bannerSoon}>
-                <Ionicons name="hourglass-outline" size={18} color={colors.warning.DEFAULT} />
+                <Ionicons name="hourglass-outline" size={18} color={ios.system.orange} />
                 <Text style={styles.bannerSoonText}>{overtimeWarning}</Text>
               </View>
             )}
@@ -963,7 +963,7 @@ export default function StopDetailScreen() {
             {address ? (
               <View style={styles.addressCard}>
                 <View style={styles.addressLeft}>
-                  <Ionicons name="location-outline" size={20} color={colors.brand[500]} />
+                  <Ionicons name="location-outline" size={20} color={ios.brand} />
                   <Text style={styles.addressText}>{address}</Text>
                 </View>
                 <Pressable
@@ -981,7 +981,7 @@ export default function StopDetailScreen() {
             {/* Mark arrived button (only if PENDING) */}
             {stop.status === "PENDING" && (
               <Pressable style={styles.arrivedBtn} onPress={handleMarkArrived}>
-                <Ionicons name="checkmark-circle-outline" size={20} color={colors.brand[500]} />
+                <Ionicons name="checkmark-circle-outline" size={20} color={ios.brand} />
                 <Text style={styles.arrivedBtnText}>Mark as Arrived</Text>
               </Pressable>
             )}
@@ -994,7 +994,7 @@ export default function StopDetailScreen() {
                 style={styles.scanBtn}
                 accessibilityLabel="Scan barcode to find item"
               >
-                <Ionicons name="barcode-outline" size={18} color={colors.brand[500]} />
+                <Ionicons name="barcode-outline" size={18} color={ios.brand} />
                 <Text style={styles.scanBtnText}>Scan</Text>
               </Pressable>
             </View>
@@ -1034,16 +1034,16 @@ export default function StopDetailScreen() {
                           <View style={[
                             styles.orderStatusBadge,
                             order.status === "PENDING" && { backgroundColor: "#fef3c7" },
-                            order.status === "CONFIRMED" && { backgroundColor: colors.brand[50] },
-                            order.status === "OUT_FOR_DELIVERY" && { backgroundColor: colors.brand[50] },
-                            order.status === "DELIVERED" && { backgroundColor: colors.success.bg },
+                            order.status === "CONFIRMED" && { backgroundColor: ios.brandWash },
+                            order.status === "OUT_FOR_DELIVERY" && { backgroundColor: ios.brandWash },
+                            order.status === "DELIVERED" && { backgroundColor: ios.system.greenWash },
                           ]}>
                             <Text style={[
                               styles.orderStatusText,
-                              order.status === "PENDING" && { color: colors.warning.DEFAULT },
-                              order.status === "CONFIRMED" && { color: colors.brand[500] },
-                              order.status === "OUT_FOR_DELIVERY" && { color: colors.brand[500] },
-                              order.status === "DELIVERED" && { color: colors.success.DEFAULT },
+                              order.status === "PENDING" && { color: ios.system.orange },
+                              order.status === "CONFIRMED" && { color: ios.brand },
+                              order.status === "OUT_FOR_DELIVERY" && { color: ios.brand },
+                              order.status === "DELIVERED" && { color: ios.system.green },
                             ]}>
                               {order.status.replace(/_/g, " ")}
                             </Text>
@@ -1064,7 +1064,7 @@ export default function StopDetailScreen() {
                               accessibilityRole="button"
                               accessibilityLabel="Add item to order"
                             >
-                              <Ionicons name="add-outline" size={16} color={colors.brand[500]} />
+                              <Ionicons name="add-outline" size={16} color={ios.brand} />
                               <Text style={styles.addToOrderBtnText}>Add</Text>
                             </Pressable>
                             {!editsDirty[order.id] && (
@@ -1074,7 +1074,7 @@ export default function StopDetailScreen() {
                                 onPress={() => handleConfirmOrder(order.id)}
                                 accessibilityRole="button"
                               >
-                                <Ionicons name="checkmark-circle-outline" size={16} color={colors.success.DEFAULT} />
+                                <Ionicons name="checkmark-circle-outline" size={16} color={ios.system.green} />
                                 <Text style={styles.confirmOrderBtnText}>Confirm</Text>
                               </Pressable>
                             )}
@@ -1125,7 +1125,7 @@ export default function StopDetailScreen() {
                             accessibilityRole="button"
                             accessibilityLabel="Discard changes"
                           >
-                            <Ionicons name="close-outline" size={16} color={colors.danger.DEFAULT} />
+                            <Ionicons name="close-outline" size={16} color={ios.system.red} />
                             <Text style={styles.discardChangesBtnText}>Discard</Text>
                           </Pressable>
                           <Pressable
@@ -1147,7 +1147,7 @@ export default function StopDetailScreen() {
                             accessibilityRole="button"
                             accessibilityLabel="Save and confirm order"
                           >
-                            <Ionicons name="checkmark-circle-outline" size={16} color={colors.success.DEFAULT} />
+                            <Ionicons name="checkmark-circle-outline" size={16} color={ios.system.green} />
                             <Text style={styles.confirmOrderBtnText}>
                               {isUpdatingItems ? "Saving…" : "Confirm"}
                             </Text>
@@ -1164,8 +1164,8 @@ export default function StopDetailScreen() {
                     <View style={styles.orderGroupHeader}>
                       <View style={styles.orderGroupLeft}>
                         <Text style={styles.orderGroupNum}>Added Items</Text>
-                        <View style={[styles.orderStatusBadge, { backgroundColor: colors.brand[50] }]}>
-                          <Text style={[styles.orderStatusText, { color: colors.brand[500] }]}>ON SPOT</Text>
+                        <View style={[styles.orderStatusBadge, { backgroundColor: ios.brandWash }]}>
+                          <Text style={[styles.orderStatusText, { color: ios.brand }]}>ON SPOT</Text>
                         </View>
                       </View>
                     </View>
@@ -1200,7 +1200,7 @@ export default function StopDetailScreen() {
                     }}
                     accessibilityRole="button"
                   >
-                    <Ionicons name="add-circle-outline" size={22} color={colors.brand[500]} />
+                    <Ionicons name="add-circle-outline" size={22} color={ios.brand} />
                     <Text style={styles.addItemText}>Add item not on order</Text>
                   </Pressable>
                 )}
@@ -1220,14 +1220,14 @@ export default function StopDetailScreen() {
                 <Ionicons
                   name={isRecording ? "stop-circle-outline" : "mic-outline"}
                   size={22}
-                  color={isRecording ? colors.danger.DEFAULT : colors.brand[500]}
+                  color={isRecording ? ios.system.red : ios.brand}
                 />
               </Pressable>
             </View>
             <TextInput
               style={styles.notesInput}
               placeholder="Add a note about this stop…"
-              placeholderTextColor="#94a3b8"
+              placeholderTextColor={ios.label2}
               value={stopNoteFromStore}
               onChangeText={handleNoteChange}
               multiline
@@ -1262,8 +1262,8 @@ export default function StopDetailScreen() {
                 accessibilityLabel="Reopen stop for editing"
               >
                 {isReopening
-                  ? <ActivityIndicator size="small" color={colors.brand[500]} />
-                  : <Ionicons name="refresh-outline" size={20} color={colors.brand[500]} />
+                  ? <ActivityIndicator size="small" color={ios.brand} />
+                  : <Ionicons name="refresh-outline" size={20} color={ios.brand} />
                 }
                 <Text style={styles.reopenBtnText}>{isReopening ? "Reopening…" : "Reopen Stop"}</Text>
               </Pressable>
@@ -1282,7 +1282,7 @@ export default function StopDetailScreen() {
                 accessibilityRole="button"
                 accessibilityLabel="Log Return"
               >
-                <Ionicons name="return-down-back-outline" size={18} color={colors.danger.DEFAULT} />
+                <Ionicons name="return-down-back-outline" size={18} color={ios.system.red} />
                 <Text style={styles.returnBtnText}>Log Return</Text>
               </Pressable>
               <Pressable
@@ -1295,7 +1295,7 @@ export default function StopDetailScreen() {
                 accessibilityRole="button"
                 accessibilityLabel="Add order for this stop"
               >
-                <Ionicons name="add-circle-outline" size={18} color={colors.brand[500]} />
+                <Ionicons name="add-circle-outline" size={18} color={ios.brand} />
                 <Text style={styles.addOrderBtnText}>Add Order</Text>
               </Pressable>
             </View>
@@ -1325,7 +1325,7 @@ export default function StopDetailScreen() {
                     : "ellipse-outline"
                 }
                 size={22}
-                color={allResolved || allOrderItems.length === 0 ? "#fff" : "#94a3b8"}
+                color={allResolved || allOrderItems.length === 0 ? "#fff" : ios.label2}
                 style={{ marginRight: 10 }}
               />
               <Text
@@ -1388,7 +1388,7 @@ export default function StopDetailScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.surface.raised },
+  container: { flex: 1, backgroundColor: ios.bg },
   scroll: {
     paddingHorizontal: 16,
     paddingTop: 16,
@@ -1407,7 +1407,7 @@ const styles = StyleSheet.create({
     width: 48,
     height: 48,
     borderRadius: 24,
-    backgroundColor: colors.success.DEFAULT,
+    backgroundColor: ios.system.green,
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,
@@ -1415,24 +1415,24 @@ const styles = StyleSheet.create({
   businessName: {
     fontSize: 24,
     fontFamily: "Inter_700Bold",
-    color: colors.navy.DEFAULT,
+    color: ios.label,
   },
   stopMeta: {
     fontSize: 15,
     fontFamily: "Inter_400Regular",
-    color: "#64748b",
+    color: ios.label2,
   },
   windowText: {
     fontSize: 13,
     fontFamily: "Inter_500Medium",
-    color: colors.brand[500],
+    color: ios.brand,
     marginTop: 2,
   },
   notesChip: {
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    backgroundColor: colors.brand[50],
+    backgroundColor: ios.brandWash,
     borderRadius: borderRadius.full,
     paddingHorizontal: 10,
     paddingVertical: 4,
@@ -1442,7 +1442,7 @@ const styles = StyleSheet.create({
   notesChipText: {
     fontSize: 13,
     fontFamily: "Inter_400Regular",
-    color: colors.navy.DEFAULT,
+    color: ios.label,
   },
   addressCard: {
     backgroundColor: "#fff",
@@ -1464,14 +1464,14 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 16,
     fontFamily: "Inter_500Medium",
-    color: colors.navy.DEFAULT,
+    color: ios.label,
     lineHeight: 22,
   },
   navigateBtn: {
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    backgroundColor: colors.brand[500],
+    backgroundColor: ios.brand,
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: borderRadius.DEFAULT,
@@ -1488,15 +1488,15 @@ const styles = StyleSheet.create({
     gap: 8,
     borderRadius: borderRadius.lg,
     borderWidth: 1.5,
-    borderColor: colors.brand[500],
-    backgroundColor: colors.brand[50],
+    borderColor: ios.brand,
+    backgroundColor: ios.brandWash,
     paddingHorizontal: 16,
     paddingVertical: 12,
   },
   arrivedBtnText: {
     fontSize: 15,
     fontFamily: "Inter_600SemiBold",
-    color: colors.brand[500],
+    color: ios.brand,
   },
   sectionHeader: {
     flexDirection: "row",
@@ -1507,7 +1507,7 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 13,
     fontFamily: "Inter_600SemiBold",
-    color: "#94a3b8",
+    color: ios.label2,
     textTransform: "uppercase",
     letterSpacing: 0.6,
   },
@@ -1518,14 +1518,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: borderRadius.DEFAULT,
-    backgroundColor: colors.brand[50],
+    backgroundColor: ios.brandWash,
     borderWidth: 1,
-    borderColor: colors.brand[100],
+    borderColor: ios.brandWash,
   },
   scanBtnText: {
     fontSize: 13,
     fontFamily: "Inter_600SemiBold",
-    color: colors.brand[500],
+    color: ios.brand,
   },
   noItemsBox: {
     backgroundColor: "#fff",
@@ -1537,16 +1537,16 @@ const styles = StyleSheet.create({
   noItemsText: {
     fontSize: 15,
     fontFamily: "Inter_400Regular",
-    color: "#94a3b8",
+    color: ios.label2,
   },
   itemsList: { gap: 10 },
   orderGroup: { gap: 8, marginBottom: 4 },
   orderGroupHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 4 },
   orderGroupLeft: { flexDirection: "row", alignItems: "center", gap: 8, flex: 1 },
-  orderGroupNum: { fontSize: 14, fontFamily: "Inter_700Bold", color: colors.navy.DEFAULT },
+  orderGroupNum: { fontSize: 14, fontFamily: "Inter_700Bold", color: ios.label },
   orderStatusBadge: { borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 },
-  orderStatusText: { fontSize: 11, fontFamily: "Inter_600SemiBold", color: "#64748b", textTransform: "uppercase" },
-  orderItemCount: { fontSize: 12, fontFamily: "Inter_400Regular", color: "#94a3b8" },
+  orderStatusText: { fontSize: 11, fontFamily: "Inter_600SemiBold", color: ios.label2, textTransform: "uppercase" },
+  orderItemCount: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2 },
   orderItemsContainer: { gap: 8 },
   addItemBtn: {
     flexDirection: "row",
@@ -1557,24 +1557,24 @@ const styles = StyleSheet.create({
     borderRadius: borderRadius.lg,
     borderWidth: 1.5,
     borderStyle: "dashed",
-    borderColor: colors.brand[500],
-    backgroundColor: colors.brand[50],
+    borderColor: ios.brand,
+    backgroundColor: ios.brandWash,
     minHeight: 56,
     justifyContent: "center",
   },
   addItemText: {
     fontSize: 16,
     fontFamily: "Inter_600SemiBold",
-    color: colors.brand[500],
+    color: ios.brand,
   },
   notesInput: {
     borderWidth: 1,
-    borderColor: colors.surface.border,
+    borderColor: ios.separator,
     borderRadius: borderRadius.lg,
     padding: 14,
     fontSize: 16,
     fontFamily: "Inter_400Regular",
-    color: colors.navy.DEFAULT,
+    color: ios.label,
     minHeight: 96,
     backgroundColor: "#fff",
     textAlignVertical: "top",
@@ -1585,7 +1585,7 @@ const styles = StyleSheet.create({
     paddingTop: 10,
     backgroundColor: "#fff",
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.surface.border,
+    borderTopColor: ios.separator,
     gap: 8,
   },
   returnBtn: {
@@ -1597,13 +1597,13 @@ const styles = StyleSheet.create({
     height: 44,
     borderRadius: borderRadius.DEFAULT,
     borderWidth: 1.5,
-    borderColor: colors.danger.DEFAULT,
-    backgroundColor: colors.danger.bg,
+    borderColor: ios.system.red,
+    backgroundColor: ios.system.redWash,
   },
   returnBtnText: {
     fontSize: 15,
     fontFamily: "Inter_600SemiBold",
-    color: colors.danger.DEFAULT,
+    color: ios.system.red,
   },
   reopenBtn: {
     flexDirection: "row",
@@ -1613,19 +1613,19 @@ const styles = StyleSheet.create({
     height: 52,
     borderRadius: borderRadius.lg,
     borderWidth: 1.5,
-    borderColor: colors.brand[500],
-    backgroundColor: colors.brand[50] ?? "#eff6ff",
+    borderColor: ios.brand,
+    backgroundColor: ios.brandWash ?? "#eff6ff",
   },
   reopenBtnText: {
     fontSize: 16,
     fontFamily: "Inter_600SemiBold",
-    color: colors.brand[500],
+    color: ios.brand,
   },
   resolveHint: {
     textAlign: "center",
     fontSize: 13,
     fontFamily: "Inter_400Regular",
-    color: "#94a3b8",
+    color: ios.label2,
   },
   completeBtn: {
     height: 56,
@@ -1633,13 +1633,13 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: colors.surface.border,
+    backgroundColor: ios.separator,
   },
-  completeBtnReady: { backgroundColor: colors.success.DEFAULT },
+  completeBtnReady: { backgroundColor: ios.system.green },
   completeBtnText: {
     fontSize: 17,
     fontFamily: "Inter_700Bold",
-    color: "#94a3b8",
+    color: ios.label2,
   },
   completeBtnTextReady: { color: "#fff" },
   headerActions: {
@@ -1651,9 +1651,9 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: colors.brand[50],
+    backgroundColor: ios.brandWash,
     borderWidth: 1,
-    borderColor: colors.brand[200] ?? colors.brand[500] + "33",
+    borderColor: ios.brand ?? ios.brand + "33",
     alignItems: "center",
     justifyContent: "center",
   },
@@ -1670,19 +1670,19 @@ const styles = StyleSheet.create({
     height: 44,
     borderRadius: borderRadius.DEFAULT,
     borderWidth: 1.5,
-    borderColor: colors.brand[500],
-    backgroundColor: colors.brand[50],
+    borderColor: ios.brand,
+    backgroundColor: ios.brandWash,
   },
   addOrderBtnText: {
     fontSize: 15,
     fontFamily: "Inter_600SemiBold",
-    color: colors.brand[500],
+    color: ios.brand,
   },
   notFound: { flex: 1, alignItems: "center", justifyContent: "center" },
   notFoundText: {
     fontSize: 16,
     fontFamily: "Inter_400Regular",
-    color: "#94a3b8",
+    color: ios.label2,
   },
   orderActions: { flexDirection: "row", alignItems: "center", gap: 6 },
   editOrderBtn: {
@@ -1690,7 +1690,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 5,
     borderWidth: 1,
-    borderColor: colors.navy.DEFAULT,
+    borderColor: ios.label,
     borderRadius: borderRadius.DEFAULT,
     paddingHorizontal: 10,
     paddingVertical: 6,
@@ -1699,7 +1699,7 @@ const styles = StyleSheet.create({
   editOrderBtnText: {
     fontSize: 13,
     fontFamily: "Inter_700Bold",
-    color: colors.navy.DEFAULT,
+    color: ios.label,
   },
   addToOrderBtn: {
     flexDirection: "row",
@@ -1709,19 +1709,19 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: borderRadius.DEFAULT,
     borderWidth: 1,
-    borderColor: colors.brand[200] ?? colors.brand[500] + "40",
-    backgroundColor: colors.brand[50],
+    borderColor: ios.brand ?? ios.brand + "40",
+    backgroundColor: ios.brandWash,
   },
   addToOrderBtnText: {
     fontSize: 13,
     fontFamily: "Inter_600SemiBold",
-    color: colors.brand[500],
+    color: ios.brand,
   },
   confirmOrderBtn: {
     flexDirection: "row",
     alignItems: "center",
     gap: 5,
-    backgroundColor: colors.success.DEFAULT,
+    backgroundColor: ios.system.green,
     borderRadius: borderRadius.DEFAULT,
     paddingHorizontal: 12,
     paddingVertical: 6,
@@ -1738,7 +1738,7 @@ const styles = StyleSheet.create({
     paddingTop: 10,
     paddingHorizontal: 4,
     borderTopWidth: 1,
-    borderTopColor: colors.surface.border,
+    borderTopColor: ios.separator,
     marginTop: 4,
   },
   discardChangesBtn: {
@@ -1749,13 +1749,13 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: borderRadius.DEFAULT,
     borderWidth: 1,
-    borderColor: colors.danger.DEFAULT + "50",
-    backgroundColor: colors.danger.bg ?? "#fee2e2",
+    borderColor: ios.system.red + "50",
+    backgroundColor: ios.system.redWash ?? "#fee2e2",
   },
   discardChangesBtnText: {
     fontSize: 13,
     fontFamily: "Inter_600SemiBold",
-    color: colors.danger.DEFAULT,
+    color: ios.system.red,
   },
   saveChangesBtn: {
     flex: 1,
@@ -1766,7 +1766,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: borderRadius.DEFAULT,
-    backgroundColor: colors.brand[500],
+    backgroundColor: ios.brand,
   },
   saveChangesBtnText: {
     fontSize: 13,
@@ -1778,10 +1778,10 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    backgroundColor: colors.danger.bg,
+    backgroundColor: ios.system.redWash,
     borderRadius: borderRadius.lg,
     borderWidth: 1,
-    borderColor: colors.danger.DEFAULT,
+    borderColor: ios.system.red,
     paddingHorizontal: 14,
     paddingVertical: 10,
   },
@@ -1789,16 +1789,16 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 14,
     fontFamily: "Inter_600SemiBold",
-    color: colors.danger.DEFAULT,
+    color: ios.system.red,
   },
   bannerSoon: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    backgroundColor: colors.warning.bg,
+    backgroundColor: ios.system.orangeWash,
     borderRadius: borderRadius.lg,
     borderWidth: 1,
-    borderColor: colors.warning.DEFAULT,
+    borderColor: ios.system.orange,
     paddingHorizontal: 14,
     paddingVertical: 10,
   },
@@ -1806,7 +1806,7 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 14,
     fontFamily: "Inter_600SemiBold",
-    color: colors.warning.DEFAULT,
+    color: ios.system.orange,
   },
   // 3-I: voice notes
   notesSectionHeader: {
@@ -1819,14 +1819,14 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: colors.brand[50],
+    backgroundColor: ios.brandWash,
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: colors.brand[100],
+    borderColor: ios.brandWash,
   },
   voiceBtnActive: {
-    backgroundColor: colors.danger.bg,
-    borderColor: colors.danger.DEFAULT,
+    backgroundColor: ios.system.redWash,
+    borderColor: ios.system.red,
   },
 });

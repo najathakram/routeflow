@@ -9,6 +9,7 @@
     "./*": "./src/*.tsx",
     "./web": "./src/web/index.ts",
     "./mobile": "./src/mobile/index.ts",
+    "./mobile/ios": "./src/mobile/ios/index.ts",
     "./tokens": "./src/tokens.ts"
   },
   "scripts": {

@@ -13,7 +13,7 @@ import { useState } from "react";
 import { router, Stack, useLocalSearchParams } from "expo-router";
 import { useQuery } from "@tanstack/react-query";
 import { Ionicons } from "@expo/vector-icons";
-import { colors, borderRadius, shadows } from "@routeflow/ui/tokens";
+import { ios, borderRadius, shadows } from "@routeflow/ui/tokens";
 import { useRouteRun, useCompleteStop, useUpdateRunStatus, type CompleteStopItemDto } from "../../../../../lib/api/routes";
 import { useRouteStore } from "../../../../../store/routeStore";
 import { useRecordInvoicePayment } from "../../../../../lib/api/invoices";
@@ -32,10 +32,10 @@ const PAYMENT_METHODS: { key: PaymentMethod; label: string; icon: string }[] = [
 ];
 
 const STATUS_CONFIG = {
-  DELIVERED: { label: "Delivered", icon: "checkmark-circle", color: colors.success.DEFAULT, bg: colors.success.bg },
-  PARTIAL: { label: "Partial", icon: "alert-circle", color: colors.warning.DEFAULT, bg: colors.warning.bg },
-  REFUSED: { label: "Refused", icon: "close-circle", color: colors.danger.DEFAULT, bg: colors.danger.bg },
-  UNRESOLVED: { label: "Unresolved", icon: "help-circle", color: "#94a3b8", bg: colors.surface.raised },
+  DELIVERED: { label: "Delivered", icon: "checkmark-circle", color: ios.system.green, bg: ios.system.greenWash },
+  PARTIAL: { label: "Partial", icon: "alert-circle", color: ios.system.orange, bg: ios.system.orangeWash },
+  REFUSED: { label: "Refused", icon: "close-circle", color: ios.system.red, bg: ios.system.redWash },
+  UNRESOLVED: { label: "Unresolved", icon: "help-circle", color: ios.label2, bg: ios.bg },
 } as const;
 
 const fmt = (n: number) =>
@@ -393,7 +393,7 @@ export default function StopCompleteScreen() {
             <Ionicons
               name={isAttempted ? "close-circle" : "alert-circle-outline"}
               size={20}
-              color={isAttempted ? colors.danger.DEFAULT : "#64748b"}
+              color={isAttempted ? ios.system.red : ios.label2}
             />
             <Text style={[styles.attemptedToggleText, isAttempted && styles.attemptedToggleTextActive]}>
               {isAttempted ? "Attempted Delivery (tap to cancel)" : "Mark as Attempted Delivery"}
@@ -404,7 +404,7 @@ export default function StopCompleteScreen() {
           {isAttempted ? (
             <View style={styles.attemptedCard}>
               <Text style={styles.attemptedCardTitle}>
-                <Ionicons name="person-remove-outline" size={15} color={colors.danger.DEFAULT} />{" "}
+                <Ionicons name="person-remove-outline" size={15} color={ios.system.red} />{" "}
                 Attempted Delivery
               </Text>
               <Text style={styles.attemptedCardSub}>
@@ -413,7 +413,7 @@ export default function StopCompleteScreen() {
               <TextInput
                 style={styles.attemptedNoteInput}
                 placeholder="Reason (e.g. no answer, premises closed…)"
-                placeholderTextColor="#94a3b8"
+                placeholderTextColor={ios.label2}
                 value={attemptedNote}
                 onChangeText={setAttemptedNote}
                 multiline
@@ -490,7 +490,7 @@ export default function StopCompleteScreen() {
                 />
                 <View style={styles.safeDropRow}>
                   <View style={styles.safeDropLeft}>
-                    <Ionicons name="home-outline" size={18} color="#64748b" />
+                    <Ionicons name="home-outline" size={18} color={ios.label2} />
                     <View>
                       <Text style={styles.safeDropTitle}>Safe Drop</Text>
                       <Text style={styles.safeDropSub}>Left at door — unattended delivery</Text>
@@ -499,7 +499,7 @@ export default function StopCompleteScreen() {
                   <Switch
                     value={safeDropEnabled}
                     onValueChange={setSafeDropEnabled}
-                    trackColor={{ false: colors.surface.border, true: colors.brand[500] }}
+                    trackColor={{ false: ios.separator, true: ios.brand }}
                   />
                 </View>
               </View>
@@ -543,7 +543,7 @@ export default function StopCompleteScreen() {
                             <Ionicons
                               name={selectedCreditNoteId === cn.id ? "checkmark-circle" : "ellipse-outline"}
                               size={18}
-                              color={selectedCreditNoteId === cn.id ? colors.success.DEFAULT : "#94a3b8"}
+                              color={selectedCreditNoteId === cn.id ? ios.system.green : ios.label2}
                             />
                             <Text style={styles.creditLabel}>{cn.creditNoteNumber}</Text>
                             <Text style={styles.creditAmount}>{fmt(Number(cn.amount))}</Text>
@@ -561,7 +561,7 @@ export default function StopCompleteScreen() {
                         <Ionicons
                           name={applyAdvance ? "checkmark-circle" : "ellipse-outline"}
                           size={18}
-                          color={applyAdvance ? colors.success.DEFAULT : "#94a3b8"}
+                          color={applyAdvance ? ios.system.green : ios.label2}
                         />
                         <Text style={styles.creditLabel}>Advance Balance</Text>
                         <Text style={styles.creditAmount}>{fmt(advanceBalance)}</Text>
@@ -585,12 +585,12 @@ export default function StopCompleteScreen() {
                         <Ionicons
                           name={changeAmount >= 0 ? "arrow-up-circle-outline" : "arrow-down-circle-outline"}
                           size={15}
-                          color={changeAmount >= 0 ? colors.success.DEFAULT : colors.warning.DEFAULT}
+                          color={changeAmount >= 0 ? ios.system.green : ios.system.orange}
                         />
                         <Text
                           style={[
                             styles.changeText,
-                            { color: changeAmount >= 0 ? colors.success.DEFAULT : colors.warning.DEFAULT },
+                            { color: changeAmount >= 0 ? ios.system.green : ios.system.orange },
                           ]}
                         >
                           {changeAmount >= 0
@@ -607,7 +607,7 @@ export default function StopCompleteScreen() {
                   <TextInput
                     style={styles.cashInput}
                     placeholder="0.00"
-                    placeholderTextColor="#94a3b8"
+                    placeholderTextColor={ios.label2}
                     value={cashAmount}
                     onChangeText={(v) => setCashAmount(v.replace(/[^0-9.]/g, ""))}
                     keyboardType="decimal-pad"
@@ -625,7 +625,7 @@ export default function StopCompleteScreen() {
                       <Ionicons
                         name={icon as any}
                         size={16}
-                        color={paymentMethod === key ? colors.brand[500] : "#94a3b8"}
+                        color={paymentMethod === key ? ios.brand : ios.label2}
                       />
                       <Text
                         style={[
@@ -642,7 +642,7 @@ export default function StopCompleteScreen() {
                   <TextInput
                     style={styles.referenceInput}
                     placeholder="Reference / cheque number…"
-                    placeholderTextColor="#94a3b8"
+                    placeholderTextColor={ios.label2}
                     value={cashReference}
                     onChangeText={setCashReference}
                     returnKeyType="done"
@@ -655,7 +655,7 @@ export default function StopCompleteScreen() {
               <TextInput
                 style={styles.notesInput}
                 placeholder="Add or edit your note for this stop…"
-                placeholderTextColor="#94a3b8"
+                placeholderTextColor={ios.label2}
                 value={stopNote}
                 onChangeText={(v) => setStopNote(stopId, v)}
                 multiline
@@ -706,7 +706,7 @@ export default function StopCompleteScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.surface.raised },
+  container: { flex: 1, backgroundColor: ios.bg },
   scroll: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 24, gap: 14 },
   identityCard: {
     backgroundColor: "#fff",
@@ -718,16 +718,16 @@ const styles = StyleSheet.create({
   stopLabel: {
     fontSize: 13,
     fontFamily: "Inter_600SemiBold",
-    color: "#94a3b8",
+    color: ios.label2,
     textTransform: "uppercase",
     letterSpacing: 0.5,
   },
-  businessName: { fontSize: 22, fontFamily: "Inter_700Bold", color: colors.navy.DEFAULT },
-  address: { fontSize: 15, fontFamily: "Inter_400Regular", color: "#64748b" },
+  businessName: { fontSize: 22, fontFamily: "Inter_700Bold", color: ios.label },
+  address: { fontSize: 15, fontFamily: "Inter_400Regular", color: ios.label2 },
   sectionTitle: {
     fontSize: 13,
     fontFamily: "Inter_600SemiBold",
-    color: "#94a3b8",
+    color: ios.label2,
     textTransform: "uppercase",
     letterSpacing: 0.6,
   },
@@ -739,55 +739,55 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderRadius: borderRadius.DEFAULT,
     borderWidth: 1.5,
-    borderColor: colors.surface.border,
+    borderColor: ios.separator,
     backgroundColor: "#fff",
   },
   attemptedToggleActive: {
-    borderColor: colors.danger.DEFAULT,
-    backgroundColor: colors.danger.bg,
+    borderColor: ios.system.red,
+    backgroundColor: ios.system.redWash,
   },
   attemptedToggleText: {
     fontSize: 14,
     fontFamily: "Inter_600SemiBold",
-    color: "#64748b",
+    color: ios.label2,
     flex: 1,
   },
-  attemptedToggleTextActive: { color: colors.danger.DEFAULT },
+  attemptedToggleTextActive: { color: ios.system.red },
   attemptedCard: {
     backgroundColor: "#fff",
     borderRadius: borderRadius.lg,
     padding: 16,
     gap: 12,
     borderWidth: 1.5,
-    borderColor: colors.danger.DEFAULT,
+    borderColor: ios.system.red,
     ...shadows.card,
   },
   attemptedCardTitle: {
     fontSize: 15,
     fontFamily: "Inter_700Bold",
-    color: colors.danger.DEFAULT,
+    color: ios.system.red,
   },
   attemptedCardSub: {
     fontSize: 13,
     fontFamily: "Inter_400Regular",
-    color: "#64748b",
+    color: ios.label2,
   },
   attemptedNoteInput: {
     borderWidth: 1,
-    borderColor: colors.surface.border,
+    borderColor: ios.separator,
     borderRadius: borderRadius.DEFAULT,
     padding: 12,
     fontSize: 15,
     fontFamily: "Inter_400Regular",
-    color: colors.navy.DEFAULT,
+    color: ios.label,
     minHeight: 72,
     textAlignVertical: "top",
-    backgroundColor: colors.surface.raised,
+    backgroundColor: ios.bg,
   },
   attemptedPhotoLabel: {
     fontSize: 13,
     fontFamily: "Inter_600SemiBold",
-    color: "#64748b",
+    color: ios.label2,
   },
   summaryRow: { flexDirection: "row", gap: 10 },
   summaryChip: {
@@ -811,12 +811,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingVertical: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.surface.border,
+    borderBottomColor: ios.separator,
   },
   itemRowLast: { borderBottomWidth: 0 },
   itemLeft: { flex: 1, gap: 2, paddingRight: 10 },
-  itemName: { fontSize: 16, fontFamily: "Inter_600SemiBold", color: colors.navy.DEFAULT },
-  itemQty: { fontSize: 13, fontFamily: "Inter_400Regular", color: "#64748b" },
+  itemName: { fontSize: 16, fontFamily: "Inter_600SemiBold", color: ios.label },
+  itemQty: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2 },
   itemStatus: {
     flexDirection: "row",
     alignItems: "center",
@@ -839,11 +839,11 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingTop: 8,
     borderTopWidth: 1,
-    borderTopColor: colors.surface.border,
+    borderTopColor: ios.separator,
   },
   safeDropLeft: { flexDirection: "row", alignItems: "center", gap: 10, flex: 1 },
-  safeDropTitle: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: colors.navy.DEFAULT },
-  safeDropSub: { fontSize: 12, fontFamily: "Inter_400Regular", color: "#94a3b8" },
+  safeDropTitle: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: ios.label },
+  safeDropSub: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2 },
   signatureCard: {
     backgroundColor: "#fff",
     borderRadius: borderRadius.lg,
@@ -861,7 +861,7 @@ const styles = StyleSheet.create({
     gap: 6,
     paddingBottom: 10,
     borderBottomWidth: 1,
-    borderBottomColor: colors.surface.border,
+    borderBottomColor: ios.separator,
   },
   balanceItem: {
     flexDirection: "row",
@@ -871,18 +871,18 @@ const styles = StyleSheet.create({
   balanceLabel: {
     fontSize: 14,
     fontFamily: "Inter_400Regular",
-    color: "#64748b",
+    color: ios.label2,
   },
   balanceAmount: {
     fontSize: 16,
     fontFamily: "Inter_700Bold",
-    color: colors.navy.DEFAULT,
+    color: ios.label,
   },
   creditsSection: { marginTop: 10, gap: 6 },
   creditsSectionTitle: {
     fontSize: 12,
     fontFamily: "Inter_600SemiBold",
-    color: "#64748b",
+    color: ios.label2,
     textTransform: "uppercase",
     letterSpacing: 0.5,
     marginBottom: 2,
@@ -895,12 +895,12 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderRadius: borderRadius.DEFAULT,
     borderWidth: 1.5,
-    borderColor: colors.surface.border,
-    backgroundColor: colors.surface.raised,
+    borderColor: ios.separator,
+    backgroundColor: ios.bg,
   },
-  creditRowSelected: { borderColor: colors.success.DEFAULT, backgroundColor: colors.success.bg },
-  creditLabel: { flex: 1, fontSize: 14, fontFamily: "Inter_600SemiBold", color: colors.navy.DEFAULT },
-  creditAmount: { fontSize: 14, fontFamily: "Inter_700Bold", color: colors.success.DEFAULT },
+  creditRowSelected: { borderColor: ios.system.green, backgroundColor: ios.system.greenWash },
+  creditLabel: { flex: 1, fontSize: 14, fontFamily: "Inter_600SemiBold", color: ios.label },
+  creditAmount: { fontSize: 14, fontFamily: "Inter_700Bold", color: ios.system.green },
   netOutstandingRow: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -908,11 +908,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: borderRadius.DEFAULT,
-    backgroundColor: colors.brand[50],
+    backgroundColor: ios.brandWash,
     marginTop: 4,
   },
-  netOutstandingLabel: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: colors.brand[600] },
-  netOutstandingAmount: { fontSize: 16, fontFamily: "Inter_700Bold", color: colors.brand[600] },
+  netOutstandingLabel: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: ios.brand },
+  netOutstandingAmount: { fontSize: 16, fontFamily: "Inter_700Bold", color: ios.brand },
   changeRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -921,22 +921,22 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: borderRadius.DEFAULT,
   },
-  changeRowPositive: { backgroundColor: colors.success.bg },
-  changeRowNegative: { backgroundColor: colors.warning.bg },
+  changeRowPositive: { backgroundColor: ios.system.greenWash },
+  changeRowNegative: { backgroundColor: ios.system.orangeWash },
   changeText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
   cashAmountRow: { flexDirection: "row", alignItems: "center", gap: 6 },
-  cashDollar: { fontSize: 28, fontFamily: "Inter_700Bold", color: "#64748b" },
+  cashDollar: { fontSize: 28, fontFamily: "Inter_700Bold", color: ios.label2 },
   cashInput: {
     flex: 1,
     fontSize: 32,
     fontFamily: "Inter_700Bold",
-    color: colors.navy.DEFAULT,
+    color: ios.label,
     paddingVertical: 4,
   },
   cashOptional: {
     fontSize: 12,
     fontFamily: "Inter_400Regular",
-    color: "#94a3b8",
+    color: ios.label2,
     alignSelf: "flex-end",
     paddingBottom: 6,
   },
@@ -949,31 +949,31 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: borderRadius.full,
     borderWidth: 1.5,
-    borderColor: colors.surface.border,
-    backgroundColor: colors.surface.raised,
+    borderColor: ios.separator,
+    backgroundColor: ios.bg,
   },
-  methodBtnActive: { borderColor: colors.brand[500], backgroundColor: colors.brand[50] },
-  methodBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: "#94a3b8" },
-  methodBtnTextActive: { color: colors.brand[500] },
+  methodBtnActive: { borderColor: ios.brand, backgroundColor: ios.brandWash },
+  methodBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: ios.label2 },
+  methodBtnTextActive: { color: ios.brand },
   referenceInput: {
     height: 44,
     borderWidth: 1,
-    borderColor: colors.surface.border,
+    borderColor: ios.separator,
     borderRadius: borderRadius.DEFAULT,
     paddingHorizontal: 12,
     fontSize: 15,
     fontFamily: "Inter_400Regular",
-    color: colors.navy.DEFAULT,
-    backgroundColor: colors.surface.raised,
+    color: ios.label,
+    backgroundColor: ios.bg,
   },
   notesInput: {
     borderWidth: 1,
-    borderColor: colors.surface.border,
+    borderColor: ios.separator,
     borderRadius: borderRadius.lg,
     padding: 14,
     fontSize: 16,
     fontFamily: "Inter_400Regular",
-    color: colors.navy.DEFAULT,
+    color: ios.label,
     minHeight: 90,
     backgroundColor: "#fff",
     textAlignVertical: "top",
@@ -984,28 +984,28 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     backgroundColor: "#fff",
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.surface.border,
+    borderTopColor: ios.separator,
     gap: 10,
   },
   backBtn: {
     height: 56,
     borderRadius: borderRadius.DEFAULT,
     borderWidth: 1.5,
-    borderColor: colors.surface.border,
+    borderColor: ios.separator,
     alignItems: "center",
     justifyContent: "center",
   },
-  backBtnText: { fontSize: 16, fontFamily: "Inter_600SemiBold", color: colors.navy.DEFAULT },
+  backBtnText: { fontSize: 16, fontFamily: "Inter_600SemiBold", color: ios.label },
   confirmBtn: {
     height: 56,
-    backgroundColor: colors.brand[500],
+    backgroundColor: ios.brand,
     borderRadius: borderRadius.DEFAULT,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
   },
-  confirmBtnAttempted: { backgroundColor: colors.danger.DEFAULT },
+  confirmBtnAttempted: { backgroundColor: ios.system.red },
   confirmBtnText: { fontSize: 17, fontFamily: "Inter_700Bold", color: "#fff" },
   notFound: { flex: 1, alignItems: "center", justifyContent: "center" },
-  notFoundText: { fontSize: 16, fontFamily: "Inter_400Regular", color: "#94a3b8" },
+  notFoundText: { fontSize: 16, fontFamily: "Inter_400Regular", color: ios.label2 },
 });

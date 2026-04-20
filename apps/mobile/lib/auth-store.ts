@@ -2,6 +2,7 @@ import { create } from "zustand";
 import {
   AuthUser,
   login as apiLogin,
+  loginWithGoogle as apiLoginWithGoogle,
   logout as apiLogout,
   getStoredUser,
   refreshTokens,
@@ -12,6 +13,7 @@ interface AuthState {
   isAuthenticated: boolean;
   isLoading: boolean;
   login: (username: string, password: string) => Promise<AuthUser>;
+  loginWithGoogle: (tenantSlug: string) => Promise<AuthUser>;
   logout: () => Promise<void>;
   setUser: (user: AuthUser | null) => void;
   initialize: () => Promise<void>;
@@ -24,6 +26,12 @@ export const useAuthStore = create<AuthState>((set) => ({
 
   login: async (username, password) => {
     const response = await apiLogin(username, password);
+    set({ user: response.user, isAuthenticated: true });
+    return response.user;
+  },
+
+  loginWithGoogle: async (tenantSlug) => {
+    const response = await apiLoginWithGoogle(tenantSlug);
     set({ user: response.user, isAuthenticated: true });
     return response.user;
   },

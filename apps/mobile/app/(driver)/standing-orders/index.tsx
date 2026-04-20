@@ -9,7 +9,7 @@ import {
 } from "react-native";
 import { router, Stack } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { colors, borderRadius, shadows } from "@routeflow/ui/tokens";
+import { ios, borderRadius, shadows } from "@routeflow/ui/tokens";
 import {
   useMyStandingOrders,
   useTodayStandingOrders,
@@ -65,7 +65,7 @@ function TemplateCard({
     <Pressable style={styles.card} onPress={onPress} accessibilityRole="button">
       {isDue && (
         <View style={styles.dueBadge}>
-          <Ionicons name="today-outline" size={11} color={colors.brand[600]} />
+          <Ionicons name="today-outline" size={11} color={ios.brand} />
           <Text style={styles.dueBadgeText}>Due today</Text>
         </View>
       )}
@@ -75,14 +75,14 @@ function TemplateCard({
           <View
             style={[
               styles.activeIndicator,
-              { backgroundColor: template.isActive ? colors.success.DEFAULT : "#cbd5e1" },
+              { backgroundColor: template.isActive ? ios.system.green : ios.gray[3] },
             ]}
           />
           <Text style={styles.cardTitle} numberOfLines={1}>
             {template.name}
           </Text>
         </View>
-        <Ionicons name="chevron-forward" size={18} color="#cbd5e1" />
+        <Ionicons name="chevron-forward" size={18} color={ios.gray[3]} />
       </View>
 
       {template.customer && (
@@ -160,7 +160,7 @@ export default function StandingOrdersScreen() {
       <>
         <Stack.Screen options={{ title: "Standing Orders" }} />
         <View style={styles.centered}>
-          <ActivityIndicator size="large" color={colors.brand[500]} />
+          <ActivityIndicator size="large" color={ios.brand} />
         </View>
       </>
     );
@@ -240,7 +240,7 @@ export default function StandingOrdersScreen() {
 
         {allTemplates.length === 0 && (
           <View style={styles.emptyState}>
-            <Ionicons name="repeat-outline" size={48} color="#cbd5e1" />
+            <Ionicons name="repeat-outline" size={48} color={ios.gray[3]} />
             <Text style={styles.emptyTitle}>No Standing Orders</Text>
             <Text style={styles.emptySubtitle}>
               Tap + to create a standing order for a customer.
@@ -263,7 +263,7 @@ export default function StandingOrdersScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.surface.raised },
+  container: { flex: 1, backgroundColor: ios.bg },
   content: { paddingBottom: 100 },
   centered: { flex: 1, alignItems: "center", justifyContent: "center" },
 
@@ -271,7 +271,7 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 13,
     fontFamily: "Inter_600SemiBold",
-    color: "#94a3b8",
+    color: ios.label2,
     textTransform: "uppercase",
     letterSpacing: 0.5,
     marginBottom: 2,
@@ -290,7 +290,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 4,
     alignSelf: "flex-start",
-    backgroundColor: colors.brand[50],
+    backgroundColor: ios.brandWash,
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: borderRadius.full,
@@ -299,7 +299,7 @@ const styles = StyleSheet.create({
   dueBadgeText: {
     fontSize: 11,
     fontFamily: "Inter_600SemiBold",
-    color: colors.brand[600],
+    color: ios.brand,
   },
 
   cardHeader: {
@@ -321,13 +321,13 @@ const styles = StyleSheet.create({
   cardTitle: {
     fontSize: 16,
     fontFamily: "Inter_600SemiBold",
-    color: colors.navy.DEFAULT,
+    color: ios.label,
     flex: 1,
   },
   customerName: {
     fontSize: 13,
     fontFamily: "Inter_400Regular",
-    color: "#64748b",
+    color: ios.label2,
     marginTop: -4,
   },
 
@@ -339,24 +339,24 @@ const styles = StyleSheet.create({
     paddingHorizontal: 7,
     paddingVertical: 3,
     borderRadius: borderRadius.full,
-    backgroundColor: colors.surface.raised,
+    backgroundColor: ios.bg,
   },
   dayPillActive: {
-    backgroundColor: colors.brand[50],
+    backgroundColor: ios.brandWash,
   },
   dayPillText: {
     fontSize: 11,
     fontFamily: "Inter_500Medium",
-    color: "#94a3b8",
+    color: ios.label2,
   },
   dayPillTextActive: {
-    color: colors.brand[600],
+    color: ios.brand,
   },
 
   itemCount: {
     fontSize: 13,
     fontFamily: "Inter_400Regular",
-    color: "#64748b",
+    color: ios.label2,
   },
 
   cardActions: {
@@ -367,7 +367,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 6,
-    backgroundColor: colors.brand[600],
+    backgroundColor: ios.brand,
     borderRadius: borderRadius.DEFAULT,
     paddingVertical: 10,
   },
@@ -386,12 +386,12 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontSize: 18,
     fontFamily: "Inter_600SemiBold",
-    color: colors.navy.DEFAULT,
+    color: ios.label,
   },
   emptySubtitle: {
     fontSize: 14,
     fontFamily: "Inter_400Regular",
-    color: "#94a3b8",
+    color: ios.label2,
     textAlign: "center",
   },
 
@@ -402,7 +402,7 @@ const styles = StyleSheet.create({
     width: 60,
     height: 60,
     borderRadius: 30,
-    backgroundColor: colors.brand[600],
+    backgroundColor: ios.brand,
     alignItems: "center",
     justifyContent: "center",
     shadowColor: "#000",

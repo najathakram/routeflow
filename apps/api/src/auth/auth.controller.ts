@@ -141,6 +141,7 @@ export class AuthController {
     @Query("tenant") tenantSlug: string,
     @Query("context") context: "portal" | "staff" | "buyer-standalone" = "staff",
     @Query("invite_token") inviteToken: string | undefined,
+    @Query("mobile") mobileFlag: string | undefined,
     @Res({ passthrough: true }) res: any,
   ) {
     if (!this.googleOAuth.isConfigured()) {
@@ -152,7 +153,14 @@ export class AuthController {
       res.status(400);
       return { message: "tenant query parameter is required", statusCode: 400 };
     }
-    const url = await this.googleOAuth.generateAuthUrl("tenant", tenantSlug, inviteToken, context);
+    const mobile = mobileFlag === "1" || mobileFlag === "true";
+    const url = await this.googleOAuth.generateAuthUrl(
+      "tenant",
+      tenantSlug,
+      inviteToken,
+      context,
+      mobile,
+    );
     return { url };
   }
 
@@ -191,24 +199,33 @@ export class AuthController {
     @Query("error") oauthError: string,
     @Res() res: Response,
   ) {
-    const base = this.webUrl;
+    // Peek at the state blob (without consuming the nonce) to decide web vs mobile redirect
+    // on OAuth-cancelled or invalid-state paths. verifyCallback() still consumes the nonce
+    // atomically on the success path.
+    const peekedMobile = this.peekMobileFlag(state);
+    const base = peekedMobile
+      ? this.configService.get<string>("GOOGLE_MOBILE_SCHEME") ?? "routeflow://auth/callback"
+      : `${this.webUrl}/auth/google/callback`;
 
     if (oauthError) {
-      return res.redirect(`${base}/auth/google/callback?error=oauth_cancelled`);
+      return res.redirect(`${base}?error=oauth_cancelled`);
     }
     if (!code || !state) {
-      return res.redirect(`${base}/auth/google/callback?error=state_invalid`);
+      return res.redirect(`${base}?error=state_invalid`);
     }
 
     try {
       const profile = await this.googleOAuth.verifyCallback(code, state);
+      const callbackBase = profile.mobile
+        ? this.configService.get<string>("GOOGLE_MOBILE_SCHEME") ?? "routeflow://auth/callback"
+        : `${this.webUrl}/auth/google/callback`;
 
       // ── Link-account flow ────────────────────────────────────────────────────
       // When `linkUserId` is present the user is already authenticated and just
       // wants to attach their Google account — don't issue new tokens.
       if (profile.linkUserId) {
         await this.googleOAuth.linkGoogleAccount(profile);
-        return res.redirect(`${base}/auth/google/callback?action=linked`);
+        return res.redirect(`${callbackBase}?action=linked`);
       }
 
       // ── Sign-in flow ─────────────────────────────────────────────────────────
@@ -217,7 +234,7 @@ export class AuthController {
       if (result.kind === "staff" || result.kind === "platform") {
         const r = result as any;
         return res.redirect(
-          `${base}/auth/google/callback` +
+          `${callbackBase}` +
             `?accessToken=${r.accessToken}` +
             `&refreshToken=${r.refreshToken}` +
             `&role=${r.user.role}` +
@@ -229,7 +246,7 @@ export class AuthController {
       const r = result as any;
       const linked = profile.inviteToken ? "true" : "false";
       return res.redirect(
-        `${base}/auth/google/callback` +
+        `${callbackBase}` +
           `?accessToken=${r.accessToken}` +
           `&refreshToken=${r.refreshToken}` +
           `&type=BUYER` +
@@ -239,7 +256,22 @@ export class AuthController {
     } catch (err: any) {
       const errCode = err?.message ?? "unknown_error";
       const safeCode = this.mapErrorCode(errCode);
-      return res.redirect(`${base}/auth/google/callback?error=${safeCode}`);
+      return res.redirect(`${base}?error=${safeCode}`);
+    }
+  }
+
+  /**
+   * Decode the state param without consuming the nonce so we can pick the correct
+   * redirect base (web vs mobile) on error paths. Non-throwing — returns false on
+   * any parse failure and the flow falls back to the web URL.
+   */
+  private peekMobileFlag(state: string | undefined): boolean {
+    if (!state) return false;
+    try {
+      const obj = JSON.parse(Buffer.from(state, "base64url").toString("utf-8"));
+      return obj?.mobile === true;
+    } catch {
+      return false;
     }
   }
 

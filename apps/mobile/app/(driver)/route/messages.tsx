@@ -12,7 +12,7 @@ import {
 import { useRef, useState } from "react";
 import { Stack, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { colors, borderRadius, shadows } from "@routeflow/ui/tokens";
+import { ios } from "@routeflow/ui/tokens";
 import { useMessages, useSendMessage, type Message } from "../../../lib/api/messages";
 import { useAuthStore } from "../../../lib/auth-store";
 
@@ -76,7 +76,7 @@ export default function MessagesScreen() {
         <View style={styles.container}>
           {isLoading ? (
             <View style={styles.centered}>
-              <ActivityIndicator size="large" color={colors.brand[500]} />
+              <ActivityIndicator size="large" color={ios.brand} />
             </View>
           ) : (
             <FlatList
@@ -139,7 +139,7 @@ export default function MessagesScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.surface.raised,
+    backgroundColor: ios.bg,
   },
   centered: {
     flex: 1,
@@ -150,7 +150,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 16,
     paddingBottom: 8,
-    gap: 12,
+    gap: 6,
   },
   emptyState: {
     alignItems: "center",
@@ -160,16 +160,17 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 17,
     fontFamily: "Inter_600SemiBold",
-    color: "#94a3b8",
+    color: ios.label2,
   },
   emptySubtext: {
     fontSize: 14,
     fontFamily: "Inter_400Regular",
-    color: "#94a3b8",
+    color: ios.label2,
   },
   bubbleWrapper: {
     maxWidth: "80%",
     gap: 3,
+    marginBottom: 6,
   },
   bubbleWrapperOwn: {
     alignSelf: "flex-end",
@@ -182,22 +183,21 @@ const styles = StyleSheet.create({
   senderName: {
     fontSize: 11,
     fontFamily: "Inter_500Medium",
-    color: "#94a3b8",
+    color: ios.label2,
     marginBottom: 2,
-    marginLeft: 4,
+    marginLeft: 8,
   },
   bubble: {
-    borderRadius: borderRadius.lg,
+    borderRadius: 18,
     paddingHorizontal: 14,
     paddingVertical: 10,
-    ...shadows.card,
   },
   bubbleOwn: {
-    backgroundColor: colors.brand[500],
+    backgroundColor: ios.brand,
     borderBottomRightRadius: 4,
   },
   bubbleOther: {
-    backgroundColor: "#fff",
+    backgroundColor: ios.fill3,
     borderBottomLeftRadius: 4,
   },
   bubbleText: {
@@ -209,13 +209,13 @@ const styles = StyleSheet.create({
     color: "#fff",
   },
   bubbleTextOther: {
-    color: colors.navy.DEFAULT,
+    color: ios.label,
   },
   bubbleTime: {
     fontSize: 11,
     fontFamily: "Inter_400Regular",
-    color: "#94a3b8",
-    marginHorizontal: 4,
+    color: ios.label2,
+    marginHorizontal: 8,
   },
   bubbleTimeOwn: {
     textAlign: "right",
@@ -227,30 +227,28 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     paddingBottom: 28,
-    backgroundColor: "#fff",
+    backgroundColor: ios.bgElev,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.surface.border,
+    borderTopColor: ios.separator,
   },
   textInput: {
     flex: 1,
     minHeight: 44,
     maxHeight: 120,
-    borderWidth: 1,
-    borderColor: colors.surface.border,
-    borderRadius: borderRadius.lg,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    fontSize: 15,
+    borderRadius: 22,
+    paddingHorizontal: 16,
+    paddingVertical: 11,
+    fontSize: 17,
     fontFamily: "Inter_400Regular",
-    color: colors.navy.DEFAULT,
-    backgroundColor: colors.surface.raised,
+    color: ios.label,
+    backgroundColor: ios.fill3,
     textAlignVertical: "top",
   },
   sendBtn: {
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: colors.brand[500],
+    backgroundColor: ios.brand,
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,

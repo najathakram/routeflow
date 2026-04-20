@@ -9,7 +9,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { colors } from "@routeflow/ui/tokens";
+import { ios } from "@routeflow/ui/tokens";
 import { useRouter } from "expo-router";
 import { useAuthStore } from "../../lib/auth-store";
 import { useAdminDashboard, useAdminOrders } from "../../lib/api/admin";
@@ -50,7 +50,7 @@ interface QuickActionProps {
   color?: string;
 }
 
-function QuickAction({ icon, label, onPress, color = "#2563EB" }: QuickActionProps) {
+function QuickAction({ icon, label, onPress, color = ios.brand }: QuickActionProps) {
   return (
     <Pressable style={styles.quickAction} onPress={onPress}>
       <View style={[styles.quickActionIcon, { backgroundColor: color + "18" }]}>
@@ -101,7 +101,7 @@ export default function AdminDashboardScreen() {
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Overview</Text>
         {statsLoading ? (
-          <ActivityIndicator style={{ marginVertical: 24 }} color="#2563EB" />
+          <ActivityIndicator style={{ marginVertical: 24 }} color={ios.brand} />
         ) : statsError ? (
           <Pressable
             style={styles.errorBanner}
@@ -126,7 +126,7 @@ export default function AdminDashboardScreen() {
               value={stats?.activeRoutes ?? 0}
               icon="map-outline"
               iconBg="#dbeafe"
-              iconColor="#2563EB"
+              iconColor={ios.brand}
               onPress={() => router.push("/(admin)/routes")}
             />
             <KpiCard
@@ -190,10 +190,10 @@ export default function AdminDashboardScreen() {
           </Pressable>
         </View>
         {ordersLoading ? (
-          <ActivityIndicator style={{ marginVertical: 24 }} color="#2563EB" />
+          <ActivityIndicator style={{ marginVertical: 24 }} color={ios.brand} />
         ) : !ordersData?.data?.length ? (
           <View style={styles.emptyState}>
-            <Ionicons name="receipt-outline" size={36} color="#cbd5e1" />
+            <Ionicons name="receipt-outline" size={36} color={ios.gray[3]} />
             <Text style={styles.emptyText}>No orders yet</Text>
           </View>
         ) : (
@@ -238,7 +238,7 @@ export default function AdminDashboardScreen() {
             icon="add-circle-outline"
             label="New Order"
             onPress={() => router.push("/(admin)/orders")}
-            color="#2563EB"
+            color={ios.brand}
           />
           <QuickAction
             icon="map-outline"
@@ -280,7 +280,7 @@ export default function AdminDashboardScreen() {
             icon="settings-outline"
             label="Settings"
             onPress={() => router.push("/(admin)/profile")}
-            color="#64748b"
+            color={ios.label2}
           />
         </View>
       </View>
@@ -302,7 +302,7 @@ const styles = StyleSheet.create({
     paddingBottom: 28,
   },
   headerGreeting: {
-    color: "#94a3b8",
+    color: ios.label2,
     fontSize: 14,
     fontFamily: "Inter_400Regular",
   },
@@ -313,7 +313,7 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   headerSub: {
-    color: "#64748b",
+    color: ios.label2,
     fontSize: 13,
     fontFamily: "Inter_400Regular",
     marginTop: 4,
@@ -339,13 +339,13 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 15,
     fontFamily: "Inter_600SemiBold",
-    color: colors.navy.DEFAULT,
+    color: ios.label,
     marginBottom: 12,
   },
   seeAll: {
     fontSize: 13,
     fontFamily: "Inter_500Medium",
-    color: "#2563EB",
+    color: ios.brand,
     marginBottom: 12,
   },
   kpiGrid: {
@@ -360,7 +360,7 @@ const styles = StyleSheet.create({
     padding: 14,
     alignItems: "flex-start",
     borderWidth: 1,
-    borderColor: colors.surface.border,
+    borderColor: ios.separator,
   },
   kpiIcon: {
     width: 36,
@@ -373,12 +373,12 @@ const styles = StyleSheet.create({
   kpiValue: {
     fontSize: 22,
     fontFamily: "Inter_700Bold",
-    color: colors.navy.DEFAULT,
+    color: ios.label,
   },
   kpiLabel: {
     fontSize: 12,
     fontFamily: "Inter_400Regular",
-    color: "#64748b",
+    color: ios.label2,
     marginTop: 2,
   },
   orderRow: {
@@ -387,7 +387,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingVertical: 12,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.surface.border,
+    borderTopColor: ios.separator,
   },
   orderRowLeft: {
     flex: 1,
@@ -396,12 +396,12 @@ const styles = StyleSheet.create({
   orderNumber: {
     fontSize: 14,
     fontFamily: "Inter_600SemiBold",
-    color: colors.navy.DEFAULT,
+    color: ios.label,
   },
   orderCustomer: {
     fontSize: 13,
     fontFamily: "Inter_400Regular",
-    color: "#64748b",
+    color: ios.label2,
   },
   orderRowRight: {
     alignItems: "flex-end",
@@ -419,7 +419,7 @@ const styles = StyleSheet.create({
   orderAmount: {
     fontSize: 14,
     fontFamily: "Inter_700Bold",
-    color: colors.navy.DEFAULT,
+    color: ios.label,
   },
   quickActionsGrid: {
     flexDirection: "row",
@@ -453,7 +453,7 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 14,
     fontFamily: "Inter_400Regular",
-    color: "#94a3b8",
+    color: ios.label2,
   },
   errorBanner: {
     flexDirection: "row",

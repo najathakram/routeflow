@@ -50,5 +50,6 @@ module.exports = ({ config }) => ({
         androidGoogleMapsApiKey: googleMapsApiKey, // Android manifest
       },
     ],
+    "expo-web-browser", // Required for Google OAuth flow via expo-auth-session
   ],
 });

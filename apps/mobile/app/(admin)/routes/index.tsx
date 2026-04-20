@@ -10,7 +10,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { colors } from "@routeflow/ui/tokens";
+import { ios } from "@routeflow/ui/tokens";
 import { useAdminRoutes, AdminRoute } from "../../../lib/api/admin";
 
 const STATUS_FILTERS = ["ALL", "SCHEDULED", "IN_PROGRESS", "COMPLETED"];
@@ -60,11 +60,11 @@ export default function AdminRoutesScreen() {
             )}
           </View>
           <View style={styles.infoLine}>
-            <Ionicons name="car-outline" size={13} color="#94a3b8" />
+            <Ionicons name="car-outline" size={13} color={ios.label2} />
             <Text style={styles.metaText}>{driverName}</Text>
           </View>
           <View style={styles.infoLine}>
-            <Ionicons name="location-outline" size={13} color="#94a3b8" />
+            <Ionicons name="location-outline" size={13} color={ios.label2} />
             <Text style={styles.metaText}>
               {item.stops?.length ?? 0} stops
             </Text>
@@ -109,10 +109,10 @@ export default function AdminRoutesScreen() {
       />
 
       {isLoading ? (
-        <ActivityIndicator style={{ marginTop: 48 }} color="#2563EB" />
+        <ActivityIndicator style={{ marginTop: 48 }} color={ios.brand} />
       ) : isError ? (
         <View style={styles.emptyState}>
-          <Ionicons name="cloud-offline-outline" size={40} color="#cbd5e1" />
+          <Ionicons name="cloud-offline-outline" size={40} color={ios.gray[3]} />
           <Text style={styles.emptyText}>Failed to load routes</Text>
           <Pressable style={styles.retryBtn} onPress={() => refetch()}>
             <Text style={styles.retryText}>Retry</Text>
@@ -120,7 +120,7 @@ export default function AdminRoutesScreen() {
         </View>
       ) : routes.length === 0 ? (
         <View style={styles.emptyState}>
-          <Ionicons name="map-outline" size={40} color="#cbd5e1" />
+          <Ionicons name="map-outline" size={40} color={ios.gray[3]} />
           <Text style={styles.emptyText}>No routes found</Text>
         </View>
       ) : (
@@ -142,7 +142,7 @@ export default function AdminRoutesScreen() {
                 onPress={() => setPage((p) => p + 1)}
               >
                 {isFetching ? (
-                  <ActivityIndicator size="small" color="#2563EB" />
+                  <ActivityIndicator size="small" color={ios.brand} />
                 ) : (
                   <Text style={styles.loadMoreText}>Load More</Text>
                 )}
@@ -164,10 +164,10 @@ const styles = StyleSheet.create({
     borderRadius: 100,
     backgroundColor: "#fff",
     borderWidth: 1,
-    borderColor: colors.surface.border,
+    borderColor: ios.separator,
   },
-  chipActive: { backgroundColor: "#2563EB", borderColor: "#2563EB" },
-  chipText: { fontSize: 13, fontFamily: "Inter_500Medium", color: "#64748b" },
+  chipActive: { backgroundColor: ios.brand, borderColor: ios.brand },
+  chipText: { fontSize: 13, fontFamily: "Inter_500Medium", color: ios.label2 },
   chipTextActive: { color: "#fff" },
   row: {
     flexDirection: "row",
@@ -196,7 +196,7 @@ const styles = StyleSheet.create({
   routeName: {
     fontSize: 15,
     fontFamily: "Inter_600SemiBold",
-    color: colors.navy.DEFAULT,
+    color: ios.label,
   },
   liveBadge: {
     flexDirection: "row",
@@ -210,8 +210,8 @@ const styles = StyleSheet.create({
   liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#059669" },
   liveText: { fontSize: 10, fontFamily: "Inter_600SemiBold", color: "#059669" },
   infoLine: { flexDirection: "row", alignItems: "center", gap: 4 },
-  metaText: { fontSize: 12, fontFamily: "Inter_400Regular", color: "#64748b" },
-  descriptionText: { fontSize: 12, fontFamily: "Inter_400Regular", color: "#94a3b8" },
+  metaText: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2 },
+  descriptionText: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2 },
   statusBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 100, alignSelf: "flex-start" },
   statusText: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
   emptyState: {
@@ -221,11 +221,11 @@ const styles = StyleSheet.create({
     gap: 12,
     paddingBottom: 80,
   },
-  emptyText: { fontSize: 15, fontFamily: "Inter_400Regular", color: "#94a3b8" },
+  emptyText: { fontSize: 15, fontFamily: "Inter_400Regular", color: ios.label2 },
   retryBtn: {
     paddingHorizontal: 20,
     paddingVertical: 10,
-    backgroundColor: "#2563EB",
+    backgroundColor: ios.brand,
     borderRadius: 8,
   },
   retryText: { color: "#fff", fontFamily: "Inter_600SemiBold", fontSize: 14 },
@@ -237,7 +237,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: colors.surface.border,
+    borderColor: ios.separator,
   },
-  loadMoreText: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: "#2563EB" },
+  loadMoreText: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: ios.brand },
 });

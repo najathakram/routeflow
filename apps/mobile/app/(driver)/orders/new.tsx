@@ -13,7 +13,7 @@ import {
 import { router, Stack } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useQuery } from "@tanstack/react-query";
-import { colors, borderRadius, shadows } from "@routeflow/ui/tokens";
+import { ios, borderRadius, shadows } from "@routeflow/ui/tokens";
 import { useCreateOrderAsDriver } from "../../../lib/api/orders";
 import { useCustomers, type CustomerSummary } from "../../../lib/api/customers";
 import { useProducts } from "../../../lib/api/products";
@@ -56,11 +56,11 @@ function CustomerPicker({
     <View style={{ flex: 1 }}>
       {/* Search input */}
       <View style={styles.searchBar}>
-        <Ionicons name="search-outline" size={18} color="#94a3b8" />
+        <Ionicons name="search-outline" size={18} color={ios.label2} />
         <TextInput
           style={styles.searchInput}
           placeholder="Search customers..."
-          placeholderTextColor="#94a3b8"
+          placeholderTextColor={ios.label2}
           value={search}
           onChangeText={setSearch}
           autoCapitalize="none"
@@ -68,14 +68,14 @@ function CustomerPicker({
         />
         {search.length > 0 && (
           <Pressable onPress={() => setSearch("")}>
-            <Ionicons name="close-circle" size={18} color="#94a3b8" />
+            <Ionicons name="close-circle" size={18} color={ios.label2} />
           </Pressable>
         )}
       </View>
 
       {isLoading ? (
         <View style={styles.centered}>
-          <ActivityIndicator size="large" color={colors.brand[500]} />
+          <ActivityIndicator size="large" color={ios.brand} />
         </View>
       ) : customers.length === 0 ? (
         <View style={styles.centered}>
@@ -99,7 +99,7 @@ function CustomerPicker({
                   </Text>
                 </View>
                 <View style={{ flex: 1, gap: 2 }}>
-                  <Text style={[styles.customerName, isSelected && { color: colors.brand[500] }]}>
+                  <Text style={[styles.customerName, isSelected && { color: ios.brand }]}>
                     {c.businessName}
                   </Text>
                   {c.phone ? (
@@ -107,7 +107,7 @@ function CustomerPicker({
                   ) : null}
                 </View>
                 {isSelected && (
-                  <Ionicons name="checkmark-circle" size={24} color={colors.brand[500]} />
+                  <Ionicons name="checkmark-circle" size={24} color={ios.brand} />
                 )}
               </Pressable>
             );
@@ -124,13 +124,13 @@ function CustomerPicker({
           accessibilityRole="button"
           accessibilityLabel="Continue to product selection"
         >
-          <Text style={[styles.continueBtnText, !selectedId && { color: "#94a3b8" }]}>
+          <Text style={[styles.continueBtnText, !selectedId && { color: ios.label2 }]}>
             Continue
           </Text>
           <Ionicons
             name="arrow-forward"
             size={20}
-            color={selectedId ? "#fff" : "#94a3b8"}
+            color={selectedId ? "#fff" : ios.label2}
           />
         </Pressable>
       </View>
@@ -226,11 +226,11 @@ function ProductPicker({
   return (
     <View style={{ flex: 1 }}>
       <View style={styles.searchBar}>
-        <Ionicons name="search-outline" size={18} color="#94a3b8" />
+        <Ionicons name="search-outline" size={18} color={ios.label2} />
         <TextInput
           style={styles.searchInput}
           placeholder="Search products..."
-          placeholderTextColor="#94a3b8"
+          placeholderTextColor={ios.label2}
           value={search}
           onChangeText={setSearch}
           autoCapitalize="none"
@@ -238,17 +238,17 @@ function ProductPicker({
         />
         {search.length > 0 && (
           <Pressable onPress={() => setSearch("")}>
-            <Ionicons name="close-circle" size={18} color="#94a3b8" />
+            <Ionicons name="close-circle" size={18} color={ios.label2} />
           </Pressable>
         )}
         <Pressable onPress={() => setScannerVisible(true)} accessibilityLabel="Scan barcode">
-          <Ionicons name="barcode-outline" size={22} color={colors.brand[500]} />
+          <Ionicons name="barcode-outline" size={22} color={ios.brand} />
         </Pressable>
       </View>
 
       {isLoading ? (
         <View style={styles.centered}>
-          <ActivityIndicator size="large" color={colors.brand[500]} />
+          <ActivityIndicator size="large" color={ios.brand} />
         </View>
       ) : products.length === 0 ? (
         <View style={styles.centered}>
@@ -266,7 +266,7 @@ function ProductPicker({
                 <View style={{ flex: 1, gap: 2 }}>
                   <Text style={styles.productName}>{product.name}</Text>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                    <Text style={[styles.productMeta, specialPrice !== undefined && { color: colors.brand[500], fontFamily: 'Inter_600SemiBold' }]}>
+                    <Text style={[styles.productMeta, specialPrice !== undefined && { color: ios.brand, fontFamily: 'Inter_600SemiBold' }]}>
                       {product.unit ?? ""}
                       {"  ·  "}${displayPrice.toFixed(2)}
                     </Text>
@@ -284,7 +284,7 @@ function ProductPicker({
                     disabled={qty === 0}
                     accessibilityLabel={`Decrease qty for ${product.name}`}
                   >
-                    <Ionicons name="remove" size={16} color={qty === 0 ? "#94a3b8" : colors.navy.DEFAULT} />
+                    <Ionicons name="remove" size={16} color={qty === 0 ? ios.label2 : ios.label} />
                   </Pressable>
                   <Text style={styles.qtyText}>{qty}</Text>
                   <Pressable
@@ -292,7 +292,7 @@ function ProductPicker({
                     onPress={() => increment(product)}
                     accessibilityLabel={`Increase qty for ${product.name}`}
                   >
-                    <Ionicons name="add" size={16} color={colors.brand[500]} />
+                    <Ionicons name="add" size={16} color={ios.brand} />
                   </Pressable>
                 </View>
               </View>
@@ -363,7 +363,7 @@ export default function NewOrderScreen() {
         }}
       />
 
-      <View style={{ flex: 1, backgroundColor: colors.surface.raised }}>
+      <View style={{ flex: 1, backgroundColor: ios.bg }}>
         {/* Step indicator */}
         <View style={styles.stepIndicator}>
           <View style={[styles.stepDot, step >= 1 && styles.stepDotActive]} />
@@ -389,7 +389,7 @@ export default function NewOrderScreen() {
               accessibilityRole="button"
               accessibilityLabel="Change selected customer"
             >
-              <Ionicons name="arrow-back" size={16} color={colors.brand[500]} />
+              <Ionicons name="arrow-back" size={16} color={ios.brand} />
               <Text style={styles.changeCustomerText}>
                 {selectedCustomer?.businessName ?? "Customer"} — tap to change
               </Text>
@@ -402,7 +402,7 @@ export default function NewOrderScreen() {
               {/* Cart summary */}
               {cart.length > 0 && (
                 <View style={styles.cartSummary}>
-                  <Ionicons name="cart-outline" size={18} color={colors.brand[500]} />
+                  <Ionicons name="cart-outline" size={18} color={ios.brand} />
                   <Text style={styles.cartSummaryText}>
                     {cart.length} product{cart.length !== 1 ? "s" : ""},{" "}
                     {totalItems} item{totalItems !== 1 ? "s" : ""}
@@ -414,7 +414,7 @@ export default function NewOrderScreen() {
               <TextInput
                 style={styles.notesInput}
                 placeholder="Order notes (optional)..."
-                placeholderTextColor="#94a3b8"
+                placeholderTextColor={ios.label2}
                 value={notes}
                 onChangeText={setNotes}
                 multiline
@@ -455,31 +455,31 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     backgroundColor: "#fff",
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.surface.border,
+    borderBottomColor: ios.separator,
   },
   stepDot: {
     width: 10,
     height: 10,
     borderRadius: 5,
-    backgroundColor: colors.surface.border,
+    backgroundColor: ios.separator,
   },
   stepDotActive: {
-    backgroundColor: colors.brand[500],
+    backgroundColor: ios.brand,
   },
   stepLine: {
     flex: 1,
     height: 2,
-    backgroundColor: colors.surface.border,
+    backgroundColor: ios.separator,
     maxWidth: 40,
   },
   stepLineActive: {
-    backgroundColor: colors.brand[500],
+    backgroundColor: ios.brand,
   },
   stepLabel: {
     flex: 1,
     fontSize: 13,
     fontFamily: "Inter_500Medium",
-    color: "#64748b",
+    color: ios.label2,
     marginLeft: 4,
   },
   searchBar: {
@@ -492,14 +492,14 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
     borderRadius: borderRadius.lg,
     borderWidth: 1,
-    borderColor: colors.surface.border,
+    borderColor: ios.separator,
     ...shadows.card,
   },
   searchInput: {
     flex: 1,
     fontSize: 15,
     fontFamily: "Inter_400Regular",
-    color: colors.navy.DEFAULT,
+    color: ios.label,
     padding: 0,
   },
   centered: {
@@ -511,7 +511,7 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 15,
     fontFamily: "Inter_400Regular",
-    color: "#94a3b8",
+    color: ios.label2,
   },
   // Customer rows
   customerRow: {
@@ -526,37 +526,37 @@ const styles = StyleSheet.create({
     ...shadows.card,
   },
   customerRowSelected: {
-    borderColor: colors.brand[500],
-    backgroundColor: colors.brand[50],
+    borderColor: ios.brand,
+    backgroundColor: ios.brandWash,
   },
   customerAvatar: {
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: colors.surface.raised,
+    backgroundColor: ios.bg,
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: colors.surface.border,
+    borderColor: ios.separator,
   },
   customerAvatarSelected: {
-    backgroundColor: colors.brand[500],
-    borderColor: colors.brand[500],
+    backgroundColor: ios.brand,
+    borderColor: ios.brand,
   },
   customerAvatarText: {
     fontSize: 16,
     fontFamily: "Inter_700Bold",
-    color: colors.navy.DEFAULT,
+    color: ios.label,
   },
   customerName: {
     fontSize: 16,
     fontFamily: "Inter_700Bold",
-    color: colors.navy.DEFAULT,
+    color: ios.label,
   },
   customerPhone: {
     fontSize: 13,
     fontFamily: "Inter_400Regular",
-    color: "#64748b",
+    color: ios.label2,
   },
   stepFooter: {
     paddingHorizontal: 16,
@@ -564,11 +564,11 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     backgroundColor: "#fff",
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.surface.border,
+    borderTopColor: ios.separator,
   },
   continueBtn: {
     height: 54,
-    backgroundColor: colors.brand[500],
+    backgroundColor: ios.brand,
     borderRadius: borderRadius.DEFAULT,
     flexDirection: "row",
     alignItems: "center",
@@ -576,7 +576,7 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   continueBtnDisabled: {
-    backgroundColor: colors.surface.border,
+    backgroundColor: ios.separator,
   },
   continueBtnText: {
     fontSize: 17,
@@ -590,14 +590,14 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingHorizontal: 16,
     paddingVertical: 10,
-    backgroundColor: colors.brand[50],
+    backgroundColor: ios.brandWash,
     borderBottomWidth: 1,
-    borderBottomColor: colors.brand[100] ?? "#dbeafe",
+    borderBottomColor: ios.brandWash ?? "#dbeafe",
   },
   changeCustomerText: {
     fontSize: 14,
     fontFamily: "Inter_500Medium",
-    color: colors.brand[500],
+    color: ios.brand,
   },
   productRow: {
     flexDirection: "row",
@@ -611,12 +611,12 @@ const styles = StyleSheet.create({
   productName: {
     fontSize: 15,
     fontFamily: "Inter_600SemiBold",
-    color: colors.navy.DEFAULT,
+    color: ios.label,
   },
   productMeta: {
     fontSize: 12,
     fontFamily: "Inter_400Regular",
-    color: "#64748b",
+    color: ios.label2,
   },
   qtyControl: {
     flexDirection: "row",
@@ -627,9 +627,9 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: colors.surface.raised,
+    backgroundColor: ios.bg,
     borderWidth: 1,
-    borderColor: colors.surface.border,
+    borderColor: ios.separator,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -639,7 +639,7 @@ const styles = StyleSheet.create({
   qtyText: {
     fontSize: 16,
     fontFamily: "Inter_700Bold",
-    color: colors.navy.DEFAULT,
+    color: ios.label,
     minWidth: 24,
     textAlign: "center",
   },
@@ -649,7 +649,7 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     backgroundColor: "#fff",
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.surface.border,
+    borderTopColor: ios.separator,
     gap: 10,
   },
   cartSummary: {
@@ -661,23 +661,23 @@ const styles = StyleSheet.create({
   cartSummaryText: {
     fontSize: 14,
     fontFamily: "Inter_600SemiBold",
-    color: colors.brand[500],
+    color: ios.brand,
   },
   notesInput: {
     borderWidth: 1,
-    borderColor: colors.surface.border,
+    borderColor: ios.separator,
     borderRadius: borderRadius.lg,
     padding: 12,
     fontSize: 15,
     fontFamily: "Inter_400Regular",
-    color: colors.navy.DEFAULT,
+    color: ios.label,
     minHeight: 72,
-    backgroundColor: colors.surface.raised,
+    backgroundColor: ios.bg,
     textAlignVertical: "top",
   },
   submitBtn: {
     height: 54,
-    backgroundColor: colors.brand[500],
+    backgroundColor: ios.brand,
     borderRadius: borderRadius.DEFAULT,
     flexDirection: "row",
     alignItems: "center",
@@ -685,7 +685,7 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   submitBtnDisabled: {
-    backgroundColor: colors.surface.border,
+    backgroundColor: ios.separator,
   },
   submitBtnText: {
     fontSize: 17,

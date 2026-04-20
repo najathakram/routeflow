@@ -11,7 +11,7 @@ import {
 import { useEffect, useRef, useState } from "react";
 import { router, Stack, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { colors, borderRadius, shadows } from "@routeflow/ui/tokens";
+import { ios, borderRadius, shadows } from "@routeflow/ui/tokens";
 import { useRouteRun } from "../../../../../../lib/api/routes";
 import {
   useCreateReturn,
@@ -154,7 +154,7 @@ export default function DriverReturnScreen() {
         >
           {/* Customer */}
           <View style={styles.customerCard}>
-            <Ionicons name="business-outline" size={18} color="#94a3b8" />
+            <Ionicons name="business-outline" size={18} color={ios.label2} />
             <View>
               <Text style={styles.customerName}>{stop.customer?.businessName ?? "Customer"}</Text>
               <Text style={styles.customerSub}>Stop {stop.stopNumber}</Text>
@@ -177,7 +177,7 @@ export default function DriverReturnScreen() {
                   <Ionicons
                     name={icon as any}
                     size={18}
-                    color={globalReason === key ? colors.brand[500] : "#94a3b8"}
+                    color={globalReason === key ? ios.brand : ios.label2}
                   />
                   <Text style={[styles.reasonBtnText, globalReason === key && styles.reasonBtnTextActive]}>
                     {label}
@@ -267,7 +267,7 @@ export default function DriverReturnScreen() {
             <TextInput
               style={styles.notesInput}
               placeholder="Additional notes about this return…"
-              placeholderTextColor="#94a3b8"
+              placeholderTextColor={ios.label2}
               value={notes}
               onChangeText={setNotes}
               multiline
@@ -302,9 +302,9 @@ export default function DriverReturnScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.surface.raised },
+  container: { flex: 1, backgroundColor: ios.bg },
   centered: { flex: 1, alignItems: "center", justifyContent: "center" },
-  notFoundText: { fontSize: 16, fontFamily: "Inter_400Regular", color: "#94a3b8" },
+  notFoundText: { fontSize: 16, fontFamily: "Inter_400Regular", color: ios.label2 },
   scroll: {
     paddingHorizontal: 16,
     paddingTop: 16,
@@ -323,12 +323,12 @@ const styles = StyleSheet.create({
   customerName: {
     fontSize: 16,
     fontFamily: "Inter_700Bold",
-    color: colors.navy.DEFAULT,
+    color: ios.label,
   },
   customerSub: {
     fontSize: 13,
     fontFamily: "Inter_400Regular",
-    color: "#64748b",
+    color: ios.label2,
   },
   section: {
     backgroundColor: "#fff",
@@ -340,7 +340,7 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 13,
     fontFamily: "Inter_600SemiBold",
-    color: "#94a3b8",
+    color: ios.label2,
     textTransform: "uppercase",
     letterSpacing: 0.5,
   },
@@ -357,29 +357,29 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: borderRadius.full,
     borderWidth: 1.5,
-    borderColor: colors.surface.border,
-    backgroundColor: colors.surface.raised,
+    borderColor: ios.separator,
+    backgroundColor: ios.bg,
   },
   reasonBtnActive: {
-    borderColor: colors.brand[500],
-    backgroundColor: colors.brand[50],
+    borderColor: ios.brand,
+    backgroundColor: ios.brandWash,
   },
   reasonBtnText: {
     fontSize: 13,
     fontFamily: "Inter_600SemiBold",
-    color: "#94a3b8",
+    color: ios.label2,
   },
-  reasonBtnTextActive: { color: colors.brand[500] },
+  reasonBtnTextActive: { color: ios.brand },
   emptyText: {
     fontSize: 14,
     fontFamily: "Inter_400Regular",
-    color: "#94a3b8",
+    color: ios.label2,
     textAlign: "center",
     paddingVertical: 8,
   },
   itemCard: {
     borderWidth: 1,
-    borderColor: colors.surface.border,
+    borderColor: ios.separator,
     borderRadius: borderRadius.DEFAULT,
     overflow: "hidden",
   },
@@ -394,30 +394,30 @@ const styles = StyleSheet.create({
     height: 24,
     borderRadius: 6,
     borderWidth: 2,
-    borderColor: colors.surface.border,
+    borderColor: ios.separator,
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,
   },
   checkboxChecked: {
-    backgroundColor: colors.brand[500],
-    borderColor: colors.brand[500],
+    backgroundColor: ios.brand,
+    borderColor: ios.brand,
   },
   itemInfo: { flex: 1, gap: 2 },
   itemName: {
     fontSize: 15,
     fontFamily: "Inter_600SemiBold",
-    color: colors.navy.DEFAULT,
+    color: ios.label,
   },
   itemMeta: {
     fontSize: 12,
     fontFamily: "Inter_400Regular",
-    color: "#94a3b8",
+    color: ios.label2,
   },
   itemDetail: {
     borderTopWidth: 1,
-    borderTopColor: colors.surface.border,
-    backgroundColor: colors.surface.raised,
+    borderTopColor: ios.separator,
+    backgroundColor: ios.bg,
     padding: 12,
     gap: 10,
   },
@@ -429,24 +429,24 @@ const styles = StyleSheet.create({
   qtyLabel: {
     fontSize: 14,
     fontFamily: "Inter_500Medium",
-    color: "#64748b",
+    color: ios.label2,
   },
   qtyInput: {
     width: 64,
     height: 44,
     borderWidth: 1.5,
-    borderColor: colors.brand[500],
+    borderColor: ios.brand,
     borderRadius: borderRadius.DEFAULT,
     textAlign: "center",
     fontSize: 20,
     fontFamily: "Inter_700Bold",
-    color: colors.navy.DEFAULT,
+    color: ios.label,
     backgroundColor: "#fff",
   },
   qtyMax: {
     fontSize: 14,
     fontFamily: "Inter_400Regular",
-    color: "#94a3b8",
+    color: ios.label2,
   },
   itemReasonRow: {
     flexDirection: "row",
@@ -458,28 +458,28 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
     borderRadius: borderRadius.full,
     borderWidth: 1,
-    borderColor: colors.surface.border,
+    borderColor: ios.separator,
   },
   smallReasonBtnActive: {
-    borderColor: colors.brand[500],
-    backgroundColor: colors.brand[50],
+    borderColor: ios.brand,
+    backgroundColor: ios.brandWash,
   },
   smallReasonText: {
     fontSize: 12,
     fontFamily: "Inter_600SemiBold",
-    color: "#94a3b8",
+    color: ios.label2,
   },
-  smallReasonTextActive: { color: colors.brand[500] },
+  smallReasonTextActive: { color: ios.brand },
   notesInput: {
     borderWidth: 1,
-    borderColor: colors.surface.border,
+    borderColor: ios.separator,
     borderRadius: borderRadius.DEFAULT,
     padding: 12,
     fontSize: 15,
     fontFamily: "Inter_400Regular",
-    color: colors.navy.DEFAULT,
+    color: ios.label,
     minHeight: 80,
-    backgroundColor: colors.surface.raised,
+    backgroundColor: ios.bg,
     textAlignVertical: "top",
   },
   footer: {
@@ -488,18 +488,18 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     backgroundColor: "#fff",
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.surface.border,
+    borderTopColor: ios.separator,
     gap: 8,
   },
   selectedCount: {
     fontSize: 13,
     fontFamily: "Inter_500Medium",
-    color: "#94a3b8",
+    color: ios.label2,
     textAlign: "center",
   },
   submitBtn: {
     height: 56,
-    backgroundColor: colors.danger.DEFAULT,
+    backgroundColor: ios.system.red,
     borderRadius: borderRadius.DEFAULT,
     flexDirection: "row",
     alignItems: "center",

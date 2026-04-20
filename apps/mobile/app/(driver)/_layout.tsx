@@ -2,7 +2,8 @@ import { useState } from "react";
 import { Tabs } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { Pressable, View, Text, StyleSheet } from "react-native";
-import { colors } from "@routeflow/ui/tokens";
+import { ios } from "@routeflow/ui/tokens";
+import { IosTabBar } from "@routeflow/ui/mobile/ios";
 import { useNetworkSync } from "../../hooks/useNetworkSync";
 import { DrawerMenu } from "../../components/DrawerMenu";
 import { HeaderBackButton } from "../../components/HeaderBackButton";
@@ -12,7 +13,7 @@ function OfflineBanner() {
   if (isOnline) return null;
   return (
     <View style={styles.offlineBanner}>
-      <Ionicons name="cloud-offline-outline" size={16} color="#fff" />
+      <Ionicons name="cloud-offline-outline" size={14} color={ios.system.orangeInk} />
       <Text style={styles.offlineText}>
         Offline{queueLength > 0 ? ` — ${queueLength} action${queueLength !== 1 ? "s" : ""} queued` : ""}
       </Text>
@@ -22,16 +23,18 @@ function OfflineBanner() {
 
 const styles = StyleSheet.create({
   offlineBanner: {
-    backgroundColor: "#64748b",
+    backgroundColor: ios.system.orangeWash,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "rgba(255,149,0,0.3)",
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 6,
-    paddingVertical: 6,
+    paddingVertical: 8,
     paddingHorizontal: 16,
   },
   offlineText: {
-    color: "#fff",
+    color: ios.system.orangeInk,
     fontSize: 13,
     fontFamily: "Inter_500Medium",
   },
@@ -46,27 +49,24 @@ export default function DriverLayout() {
       style={{ padding: 8, paddingLeft: 16 }}
       accessibilityLabel="Open menu"
     >
-      <Ionicons name="menu-outline" size={24} color={colors.navy.DEFAULT} />
+      <Ionicons name="menu-outline" size={24} color={ios.label} />
     </Pressable>
   );
 
   return (
-    <View style={{ flex: 1 }}>
+    <View style={{ flex: 1, backgroundColor: ios.bg }}>
       <OfflineBanner />
       <Tabs
+        tabBar={(props) => <IosTabBar {...(props as any)} />}
         screenOptions={{
-          tabBarActiveTintColor: colors.brand[600],
-          tabBarInactiveTintColor: "#94a3b8",
-          tabBarStyle: {
-            borderTopColor: colors.surface.border,
-            backgroundColor: "#fff",
-          },
-          headerStyle: { backgroundColor: "#fff" },
+          tabBarActiveTintColor: ios.brand,
+          tabBarInactiveTintColor: ios.gray[1],
+          headerStyle: { backgroundColor: ios.bgElev },
           headerShadowVisible: false,
           headerTitleStyle: {
             fontFamily: "Inter_600SemiBold",
             fontSize: 17,
-            color: colors.navy.DEFAULT,
+            color: ios.label,
           },
           headerLeft: menuButton,
         }}
@@ -76,6 +76,7 @@ export default function DriverLayout() {
           name="dashboard"
           options={{
             title: "Home",
+            headerShown: false,
             tabBarIcon: ({ color, size }) => (
               <Ionicons name="home-outline" size={size} color={color} />
             ),
