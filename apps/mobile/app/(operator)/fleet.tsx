@@ -61,11 +61,12 @@ export default function FleetScreen() {
       </View>
 
       <SafeAreaView style={styles.overlay} edges={["top", "left", "right"]}>
-        <View style={styles.searchBar}>
-          <Ionicons name="search" size={16} color="#636366" />
-          <Text style={styles.searchPlaceholder}>Search driver, route, customer…</Text>
+        <View style={styles.topChip}>
           <Pill variant="green" dot small>
             {live.length} live
+          </Pill>
+          <Pill variant="gray" small>
+            {routes.length} route{routes.length === 1 ? "" : "s"}
           </Pill>
         </View>
 
@@ -153,22 +154,16 @@ const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: "#DCE7E9" },
   mapBg: { ...StyleSheet.absoluteFillObject },
   overlay: { flex: 1, paddingHorizontal: 16 },
-  searchBar: {
-    backgroundColor: "rgba(255,255,255,0.96)",
-    borderRadius: 14,
-    padding: 10,
-    paddingHorizontal: 14,
+  topChip: {
     flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    shadowColor: "#000",
-    shadowOpacity: 0.15,
-    shadowRadius: 20,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 6,
+    gap: 6,
     marginTop: 8,
+    alignSelf: "flex-start",
+    backgroundColor: "rgba(255,255,255,0.94)",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
   },
-  searchPlaceholder: { flex: 1, fontSize: 15, color: "#636366", fontFamily: "Inter_400Regular" },
   legend: { flexDirection: "row", gap: 6, marginTop: 12, flexWrap: "wrap" },
   legendChip: {
     backgroundColor: "rgba(255,255,255,0.94)",
