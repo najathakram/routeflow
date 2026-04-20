@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -5,21 +6,42 @@ import Svg, { Path, Rect } from "react-native-svg";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { Pill } from "@routeflow/ui/mobile/ios";
-import { useAdminRoutes } from "../../lib/api/admin";
+import {
+  useAdminDrivers,
+  useAdminRoutes,
+  type AdminDriver,
+} from "../../lib/api/admin";
+
+function driverDisplayName(driver: AdminDriver | undefined): string {
+  if (!driver) return "Unassigned";
+  if (driver.user?.firstName || driver.user?.lastName) {
+    return `${driver.user.firstName ?? ""} ${driver.user.lastName ?? ""}`.trim();
+  }
+  return driver.user?.username ?? "Driver";
+}
+
+function driverInitials(driver: AdminDriver | undefined): string {
+  if (!driver?.user) return "—";
+  const first = driver.user.firstName?.[0] ?? "";
+  const last = driver.user.lastName?.[0] ?? "";
+  return `${first}${last}`.toUpperCase() || "?";
+}
 
 // UI-shell map backdrop; the live driver list + status pulls real data.
 // TODO: wire GPS polylines once /routes/live endpoint exists.
 export default function FleetScreen() {
   const router = useRouter();
   const { data: routesData } = useAdminRoutes({ limit: 50 });
+  const { data: driversData } = useAdminDrivers();
   const routes = routesData?.data ?? [];
+  const driversById = useMemo(() => {
+    const map = new Map<string, AdminDriver>();
+    for (const d of driversData?.data ?? []) map.set(d.id, d);
+    return map;
+  }, [driversData]);
 
-  const live = routes.filter(
-    (r) => r.activeRun?.status === "IN_PROGRESS",
-  );
-  const home = routes.filter(
-    (r) => r.activeRun?.status === "COMPLETED",
-  );
+  const live = routes.filter((r) => r.runs?.[0]?.status === "IN_PROGRESS");
+  const home = routes.filter((r) => r.runs?.[0]?.status === "COMPLETED");
 
   return (
     <View style={styles.screen}>
@@ -64,18 +86,17 @@ export default function FleetScreen() {
             <Text style={styles.empty}>No routes configured.</Text>
           ) : (
             routes.slice(0, 5).map((r, i) => {
-              const name = r.driver?.user
-                ? `${r.driver.user.firstName} ${r.driver.user.lastName}`
-                : "Unassigned";
-              const initials = r.driver?.user
-                ? `${r.driver.user.firstName?.[0] ?? ""}${r.driver.user.lastName?.[0] ?? ""}`.toUpperCase()
-                : "—";
+              const driver = r.driverId ? driversById.get(r.driverId) : undefined;
+              const name = driverDisplayName(driver);
+              const initials = driverInitials(driver);
+              const runStatus = r.runs?.[0]?.status;
               const stateLabel =
-                r.activeRun?.status === "IN_PROGRESS"
+                runStatus === "IN_PROGRESS"
                   ? "On route"
-                  : r.activeRun?.status === "COMPLETED"
+                  : runStatus === "COMPLETED"
                     ? "Home"
                     : "Scheduled";
+              const stopCount = r._count?.stops ?? 0;
               return (
                 <Pressable
                   key={r.id}
@@ -103,7 +124,7 @@ export default function FleetScreen() {
                     </Text>
                     <Text style={styles.driverProgress}>
                       {stateLabel}
-                      {r.stops?.length ? ` · ${r.stops.length} stops` : ""}
+                      {stopCount ? ` · ${stopCount} stop${stopCount === 1 ? "" : "s"}` : ""}
                     </Text>
                   </View>
                   <View style={styles.msgBtn}>

@@ -1,60 +1,102 @@
-import { useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useMemo, useState } from "react";
+import {
+  ActivityIndicator,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import {
-  FilterChipRow,
   NavAction,
   NavBackButton,
   NavBar,
   SearchBar,
   SegmentedControl,
 } from "@routeflow/ui/mobile/ios";
+import {
+  useActiveRouteRun,
+  useRouteRun,
+} from "../../../../../lib/api/routes";
+import { useProducts } from "../../../../../lib/api/products";
 
-// TODO: wire products endpoint + POST /orders for driver-initiated orders.
-const PRODUCTS = [
-  { name: "Sourdough Loaf", sku: "4021", price: "$6.80", qty: 6, img: ["#C9A27A", "#8B6A44"] as const },
-  { name: "Butter (500g)", sku: "1108", price: "$9.20", qty: 4, img: ["#F5E29A", "#D8B954"] as const },
-  { name: "Croissants (6pk)", sku: "3302", price: "$14.00", qty: 2, img: ["#E3BE83", "#B1833F"] as const },
-  { name: "Pain au chocolat", sku: "3308", price: "$3.50", qty: 0, img: ["#8B5A2B", "#4A2E17"] as const },
-  { name: "Raw milk (2L)", sku: "2201", price: "$5.60", qty: 0, img: ["#F4F4F4", "#D9D9D9"] as const },
-];
+type Product = {
+  id: string;
+  name: string;
+  sku?: string | null;
+  unit?: string;
+  pricePerUnit: number | string;
+  category?: string | null;
+};
+
+function toNumber(v: number | string | null | undefined): number {
+  if (typeof v === "number") return v;
+  if (typeof v === "string") {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  }
+  return 0;
+}
 
 export default function NewOrderScreen() {
   const router = useRouter();
-  const [mode, setMode] = useState("Order");
-  const [category, setCategory] = useState("Favourites");
-  const [items, setItems] = useState<Record<string, number>>({
-    "4021": 6,
-    "1108": 4,
-    "3302": 2,
-  });
+  const params = useLocalSearchParams<{ stopId: string; runId?: string }>();
+  const stopId = params.stopId;
 
-  const chips = [
-    { label: "Favourites" },
-    { label: "Bakery" },
-    { label: "Dairy" },
-    { label: "Produce" },
-    { label: "Dry" },
-  ];
+  const { data: activeData } = useActiveRouteRun();
+  const runId = params.runId ?? activeData?.data?.[0]?.id;
+  const { data: run } = useRouteRun(runId ?? "");
+  const stop = useMemo(
+    () => run?.stops?.find((s) => s.id === stopId),
+    [run, stopId],
+  );
+
+  const [mode, setMode] = useState("Order");
+  const [search, setSearch] = useState("");
+  const [category, setCategory] = useState("All");
+  const [items, setItems] = useState<Record<string, number>>({});
+
+  const { data: productsData, isLoading: productsLoading } = useProducts({
+    search: search.trim() || undefined,
+  });
+  const products: Product[] = productsData?.data ?? [];
+
+  const categories = useMemo(() => {
+    const set = new Set<string>();
+    for (const p of products) if (p.category) set.add(p.category);
+    return ["All", ...Array.from(set).slice(0, 6)];
+  }, [products]);
+
+  const filtered = useMemo(() => {
+    if (category === "All") return products;
+    return products.filter((p) => p.category === category);
+  }, [products, category]);
 
   const totalItems = Object.values(items).reduce((a, b) => a + b, 0);
-  const total = PRODUCTS.reduce((sum, p) => {
-    const q = items[p.sku] ?? 0;
-    return sum + q * Number(p.price.replace("$", ""));
+  const total = products.reduce((sum, p) => {
+    const q = items[p.id] ?? 0;
+    return sum + q * toNumber(p.pricePerUnit);
   }, 0);
 
-  const inc = (sku: string) => setItems((m) => ({ ...m, [sku]: (m[sku] ?? 0) + 1 }));
-  const dec = (sku: string) =>
-    setItems((m) => ({ ...m, [sku]: Math.max(0, (m[sku] ?? 0) - 1) }));
+  const inc = (id: string) =>
+    setItems((m) => ({ ...m, [id]: (m[id] ?? 0) + 1 }));
+  const dec = (id: string) =>
+    setItems((m) => ({ ...m, [id]: Math.max(0, (m[id] ?? 0) - 1) }));
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <NavBar
         inlineTitle="New order"
-        leading={<NavBackButton label="Harbor Café" onPress={() => router.back()} />}
+        leading={
+          <NavBackButton
+            label={stop?.customer?.businessName ?? "Back"}
+            onPress={() => router.back()}
+          />
+        }
         trailing={<NavAction label="Save" bold />}
       />
 
@@ -69,58 +111,90 @@ export default function NewOrderScreen() {
 
         <SearchBar
           placeholder="Search or scan item…"
+          value={search}
+          onChangeText={setSearch}
           trailing={<Ionicons name="barcode-outline" size={18} color={ios.label2} />}
         />
 
-        <FilterChipRow chips={chips} value={category} onChange={setCategory} />
-
-        <View style={{ paddingHorizontal: 16, paddingTop: 14, gap: 10 }}>
-          {PRODUCTS.map((p) => {
-            const q = items[p.sku] ?? 0;
-            return (
-              <View key={p.sku} style={styles.productRow}>
-                <View
+        {categories.length > 1 ? (
+          <View style={styles.chipRow}>
+            {categories.map((c) => (
+              <Pressable
+                key={c}
+                onPress={() => setCategory(c)}
+                style={[styles.chip, category === c ? styles.chipActive : styles.chipInactive]}
+              >
+                <Text
                   style={[
-                    styles.productImg,
-                    { backgroundColor: p.img[0] },
+                    styles.chipText,
+                    category === c ? styles.chipTextActive : styles.chipTextInactive,
                   ]}
-                />
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={styles.productName}>{p.name}</Text>
-                  <Text style={styles.productMeta}>
-                    SKU {p.sku} · {p.price}
-                  </Text>
-                </View>
-                {q > 0 ? (
-                  <View style={styles.stepper}>
-                    <Pressable style={styles.stepBtn} onPress={() => dec(p.sku)}>
-                      <Text style={styles.stepBtnText}>−</Text>
-                    </Pressable>
-                    <Text style={styles.stepQty}>{q}</Text>
-                    <Pressable style={styles.stepBtn} onPress={() => inc(p.sku)}>
-                      <Text style={styles.stepBtnText}>+</Text>
-                    </Pressable>
+                >
+                  {c}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
+
+        {productsLoading ? (
+          <View style={styles.center}>
+            <ActivityIndicator color={ios.brand} />
+          </View>
+        ) : filtered.length === 0 ? (
+          <View style={styles.center}>
+            <Text style={styles.emptyText}>No products{search ? " match your search" : ""}.</Text>
+          </View>
+        ) : (
+          <View style={{ paddingHorizontal: 16, paddingTop: 14, gap: 10 }}>
+            {filtered.map((p) => {
+              const q = items[p.id] ?? 0;
+              const price = toNumber(p.pricePerUnit);
+              return (
+                <View key={p.id} style={styles.productRow}>
+                  <View style={styles.productImg} />
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={styles.productName} numberOfLines={1}>
+                      {p.name}
+                    </Text>
+                    <Text style={styles.productMeta}>
+                      {p.sku ? `SKU ${p.sku} · ` : ""}${price.toFixed(2)}
+                      {p.unit ? ` / ${p.unit}` : ""}
+                    </Text>
                   </View>
-                ) : (
-                  <Pressable style={styles.addBtn} onPress={() => inc(p.sku)}>
-                    <Text style={styles.addBtnText}>+</Text>
-                  </Pressable>
-                )}
-              </View>
-            );
-          })}
-        </View>
+                  {q > 0 ? (
+                    <View style={styles.stepper}>
+                      <Pressable style={styles.stepBtn} onPress={() => dec(p.id)}>
+                        <Text style={styles.stepBtnText}>−</Text>
+                      </Pressable>
+                      <Text style={styles.stepQty}>{q}</Text>
+                      <Pressable style={styles.stepBtn} onPress={() => inc(p.id)}>
+                        <Text style={styles.stepBtnText}>+</Text>
+                      </Pressable>
+                    </View>
+                  ) : (
+                    <Pressable style={styles.addBtn} onPress={() => inc(p.id)}>
+                      <Text style={styles.addBtnText}>+</Text>
+                    </Pressable>
+                  )}
+                </View>
+              );
+            })}
+          </View>
+        )}
         <View style={{ height: 16 }} />
       </ScrollView>
 
-      {/* Sticky cart footer */}
       <View style={styles.footer}>
         <View style={styles.footerRow}>
           <View>
-            <Text style={styles.footerEyebrow}>{totalItems} ITEMS · PO-2041</Text>
+            <Text style={styles.footerEyebrow}>
+              {totalItems} ITEM{totalItems === 1 ? "" : "S"}
+            </Text>
             <Text style={styles.footerTotal}>${total.toFixed(2)}</Text>
           </View>
-          <Pressable style={styles.confirmBtn}>
+          {/* TODO: wire POST /orders with driver-as-creator context + route/stop linkage. */}
+          <Pressable style={[styles.confirmBtn, styles.confirmBtnDisabled]} disabled>
             <Text style={styles.confirmBtnText}>Confirm order</Text>
             <Ionicons name="arrow-forward" size={14} color="#fff" />
           </Pressable>
@@ -132,6 +206,21 @@ export default function NewOrderScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: ios.bgElev },
+  center: { padding: 40, alignItems: "center" },
+  emptyText: { fontSize: 14, fontFamily: "Inter_400Regular", color: ios.label2 },
+  chipRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingTop: 4,
+  },
+  chip: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 999 },
+  chipActive: { backgroundColor: ios.brand },
+  chipInactive: { backgroundColor: ios.fill3 },
+  chipText: { fontSize: 14, fontFamily: "Inter_500Medium" },
+  chipTextActive: { color: "#fff" },
+  chipTextInactive: { color: ios.label },
   productRow: {
     backgroundColor: ios.bg,
     borderRadius: 14,
@@ -140,7 +229,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 12,
   },
-  productImg: { width: 48, height: 48, borderRadius: 10 },
+  productImg: {
+    width: 48,
+    height: 48,
+    borderRadius: 10,
+    backgroundColor: ios.brandWash,
+  },
   productName: {
     fontSize: 15,
     fontFamily: "Inter_600SemiBold",
@@ -181,10 +275,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  addBtnText: {
-    color: ios.brand,
-    fontSize: 20,
-  },
+  addBtnText: { color: ios.brand, fontSize: 20 },
   footer: {
     paddingHorizontal: 16,
     paddingTop: 10,
@@ -216,5 +307,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 6,
   },
+  confirmBtnDisabled: { opacity: 0.55 },
   confirmBtnText: { color: "#fff", fontSize: 16, fontFamily: "Inter_600SemiBold" },
 });

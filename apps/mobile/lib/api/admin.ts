@@ -14,23 +14,73 @@ export interface AdminDashboardStats {
   returnsToProcess: number;
 }
 
+/**
+ * There is no single /dashboard/stats endpoint on the API, so we aggregate
+ * the counts client-side from existing list endpoints using their `meta.total`
+ * values (limit=1 keeps payloads small). The web dashboard does the same kind
+ * of aggregation per-panel.
+ */
+async function fetchDashboardStats(): Promise<AdminDashboardStats> {
+  const safeTotal = async (path: string, params?: Record<string, unknown>): Promise<number> => {
+    try {
+      const r = await apiClient.get(path, { params: { ...(params ?? {}), limit: 1 } });
+      return Number(r.data?.meta?.total ?? 0);
+    } catch {
+      return 0;
+    }
+  };
+  const safeGet = async <T>(path: string): Promise<T | null> => {
+    try {
+      const r = await apiClient.get(path);
+      return r.data as T;
+    } catch {
+      return null;
+    }
+  };
+
+  const [
+    pendingOrders,
+    activeDrivers,
+    totalCustomers,
+    invoicesOverdue,
+    lowStockProducts,
+    returnsToProcess,
+    routesResp,
+    bookkeeping,
+  ] = await Promise.all([
+    safeTotal('/orders', { status: 'PENDING' }),
+    safeTotal('/drivers', { status: 'ACTIVE' }),
+    safeTotal('/customers'),
+    safeTotal('/invoices', { status: 'OVERDUE' }),
+    safeTotal('/products', { stockStatus: 'LOW' }),
+    safeTotal('/returns', { status: 'PENDING' }),
+    apiClient
+      .get('/routes', { params: { limit: 100 } })
+      .then((r) => r.data as { data: Array<{ runs?: Array<{ status?: string }> }> })
+      .catch(() => ({ data: [] as Array<{ runs?: Array<{ status?: string }> }> })),
+    safeGet<{ revenue?: number }>('/bookkeeping/summary'),
+  ]);
+
+  const activeRoutes = (routesResp.data ?? []).filter(
+    (r) => r.runs?.[0]?.status === 'IN_PROGRESS' || r.runs?.[0]?.status === 'COMPLETED',
+  ).length;
+
+  return {
+    pendingOrders,
+    activeRoutes,
+    activeDrivers,
+    totalCustomers,
+    revenueThisMonth: Number(bookkeeping?.revenue ?? 0),
+    invoicesOverdue,
+    lowStockProducts,
+    returnsToProcess,
+  };
+}
+
 export function useAdminDashboard() {
   return useQuery<AdminDashboardStats>({
     queryKey: ['admin', 'dashboard'],
-    queryFn: () =>
-      apiClient
-        .get('/dashboard/stats')
-        .then((r) => r.data)
-        .catch(() => ({
-          pendingOrders: 0,
-          activeRoutes: 0,
-          activeDrivers: 0,
-          totalCustomers: 0,
-          revenueThisMonth: 0,
-          invoicesOverdue: 0,
-          lowStockProducts: 0,
-          returnsToProcess: 0,
-        })),
+    queryFn: fetchDashboardStats,
     staleTime: 60_000,
     refetchInterval: 120_000,
   });
@@ -217,24 +267,34 @@ export function useRecordAdminPayment() {
 
 // ─── Products (Admin) ─────────────────────────────────────────────────────────
 
+/**
+ * Shape returned by `GET /products`. Note that Prisma Decimal columns
+ * (`pricePerUnit`, `currentStock`) serialize to strings over JSON, so the
+ * type reflects that and callers should coerce with `Number(...)` before
+ * arithmetic. The Prisma schema field is `reorderPoint` (not `reorderLevel`).
+ */
 export interface AdminProduct {
   id: string;
   name: string;
   barcode?: string;
   sku?: string;
   unit: string;
-  pricePerUnit: number;
-  currentStock: number;
-  reorderLevel?: number;
+  pricePerUnit: number | string;
+  currentStock: number | string;
+  reorderPoint?: number | null;
+  reorderQty?: number | null;
   isActive: boolean;
   supplier?: { id: string; name: string };
 }
+
+export type StockStatusFilter = "ALL" | "LOW" | "OUT_OF_STOCK";
 
 export function useAdminProducts(params?: {
   search?: string;
   page?: number;
   limit?: number;
-  lowStock?: boolean;
+  stockStatus?: StockStatusFilter;
+  isActive?: boolean;
 }) {
   return useQuery<{ data: AdminProduct[]; meta: any }>({
     queryKey: ['admin', 'products', params],
@@ -245,33 +305,57 @@ export function useAdminProducts(params?: {
 
 // ─── Routes & Drivers (Admin) ─────────────────────────────────────────────────
 
+export interface AdminRouteRunSummary {
+  id: string;
+  status: string; // "SCHEDULED" | "IN_PROGRESS" | "COMPLETED" | "CANCELLED"
+  startedAt?: string;
+  scheduledDate?: string;
+}
+
+/**
+ * Shape returned by `GET /routes` (apps/api/src/routes/routes.service.ts:29).
+ * It includes a `_count.stops` aggregate + the most-recent run (`runs[0]`).
+ * Driver is NOT expanded; only `driverId` is returned.
+ */
 export interface AdminRoute {
   id: string;
   name: string;
   description?: string;
-  status?: string;
+  isActive?: boolean;
   driverId?: string;
-  driver?: {
-    id: string;
-    user?: { firstName: string; lastName: string };
-  };
-  stops?: Array<{
-    id: string;
-    customerId: string;
-    customer?: { businessName: string };
-    order: number;
-  }>;
-  activeRun?: { id: string; status: string; startedAt?: string };
+  _count?: { stops: number };
+  runs?: AdminRouteRunSummary[];
+}
+
+export interface AdminRouteDetailStop {
+  id: string;
+  customerId: string;
+  customer?: { id: string; businessName: string };
+  stopNumber: number;
+}
+
+export interface AdminRouteDetail extends AdminRoute {
+  stops?: AdminRouteDetailStop[];
 }
 
 export function useAdminRoutes(params?: {
-  status?: string;
+  search?: string;
+  isActive?: boolean;
   page?: number;
   limit?: number;
 }) {
   return useQuery<{ data: AdminRoute[]; meta: any }>({
     queryKey: ['admin', 'routes', params],
     queryFn: () => apiClient.get('/routes', { params }).then((r) => r.data),
+    staleTime: 30_000,
+  });
+}
+
+export function useAdminRoute(id: string | null | undefined) {
+  return useQuery<AdminRouteDetail>({
+    queryKey: ['admin', 'routes', id],
+    queryFn: () => apiClient.get(`/routes/${id}`).then((r) => r.data),
+    enabled: !!id,
     staleTime: 30_000,
   });
 }

@@ -15,36 +15,57 @@ import {
   ProgressTrack,
   SearchBar,
 } from "@routeflow/ui/mobile/ios";
-import { useAdminProducts } from "../../lib/api/admin";
+import { useAdminProducts, type AdminProduct } from "../../lib/api/admin";
+
+function toNumber(v: number | string | null | undefined): number {
+  if (typeof v === "number") return v;
+  if (typeof v === "string") {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  }
+  return 0;
+}
+
+function isLowStock(p: AdminProduct): boolean {
+  const stock = toNumber(p.currentStock);
+  // Schema uses Decimal for currentStock and an Int `reorderPoint`. If the
+  // tenant hasn't set a reorderPoint, we treat stock ≤ 5 as the server-side
+  // `LOW` default (apps/api/src/products/products.service.ts).
+  const threshold = p.reorderPoint != null ? p.reorderPoint : 5;
+  return stock > 0 && stock <= threshold;
+}
+
+function isOutOfStock(p: AdminProduct): boolean {
+  return toNumber(p.currentStock) <= 0;
+}
 
 export default function WarehouseScreen() {
   const [search, setSearch] = useState("");
-  const { data: allData, isLoading } = useAdminProducts({ limit: 100 });
-  const products = allData?.data ?? [];
 
-  const stats = useMemo(() => {
-    const low = products.filter(
-      (p) => p.reorderLevel != null && p.currentStock <= p.reorderLevel,
-    );
-    const out = products.filter((p) => p.currentStock <= 0);
-    return {
-      low: low.length,
-      out: out.length,
-      total: products.length,
-      lowRows: low.sort((a, b) => a.currentStock - b.currentStock),
-    };
-  }, [products]);
+  // One query for the low-stock list (the screen's main content) and a tiny
+  // parallel query just for the out-of-stock KPI count. Both are server-side
+  // filters per the API (StockStatusFilter enum).
+  const lowQuery = useAdminProducts({
+    stockStatus: "LOW",
+    limit: 100,
+    search: search.trim() || undefined,
+  });
+  const outQuery = useAdminProducts({ stockStatus: "OUT_OF_STOCK", limit: 1 });
+  const allQuery = useAdminProducts({ limit: 1 });
 
-  const filtered = useMemo(() => {
-    const s = search.trim().toLowerCase();
-    if (!s) return stats.lowRows;
-    return stats.lowRows.filter(
-      (p) =>
-        p.name.toLowerCase().includes(s) ||
-        (p.sku ?? "").toLowerCase().includes(s) ||
-        (p.barcode ?? "").toLowerCase().includes(s),
-    );
-  }, [stats.lowRows, search]);
+  const isLoading = lowQuery.isLoading;
+  const lowProducts = lowQuery.data?.data ?? [];
+  const lowTotal = Number(lowQuery.data?.meta?.total ?? lowProducts.length);
+  const outTotal = Number(outQuery.data?.meta?.total ?? 0);
+  const allTotal = Number(allQuery.data?.meta?.total ?? 0);
+
+  const sorted = useMemo(
+    () =>
+      [...lowProducts].sort(
+        (a, b) => toNumber(a.currentStock) - toNumber(b.currentStock),
+      ),
+    [lowProducts],
+  );
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
@@ -70,13 +91,13 @@ export default function WarehouseScreen() {
               <KpiCard
                 icon={<Ionicons name="archive-outline" size={18} color={ios.system.orangeInk} />}
                 iconBg={ios.system.orangeWash}
-                value={String(stats.low)}
+                value={String(lowTotal)}
                 label="Low stock"
               />
               <KpiCard
                 icon={<Ionicons name="close-circle-outline" size={18} color={ios.system.redInk} />}
                 iconBg={ios.system.redWash}
-                value={String(stats.out)}
+                value={String(outTotal)}
                 label="Out of stock"
               />
             </View>
@@ -84,35 +105,40 @@ export default function WarehouseScreen() {
               <KpiCard
                 icon={<Ionicons name="checkmark" size={18} color={ios.brand} />}
                 iconBg={ios.brandWash}
-                value={String(stats.total)}
+                value={String(allTotal)}
                 label="SKUs tracked"
               />
               <KpiCard
                 icon={<Ionicons name="cube-outline" size={18} color={ios.system.purpleInk} />}
                 iconBg={ios.system.purpleWash}
-                value={String(products.filter((p) => p.isActive).length)}
-                label="Active"
+                value={String(sorted.filter((p) => p.isActive).length)}
+                label="Low & active"
               />
             </View>
 
-            <SectionRow title={stats.low > 0 ? "Low-stock alerts" : "No low stock"} />
+            <SectionRow
+              title={lowTotal > 0 ? "Low-stock alerts" : "No low stock"}
+            />
 
             <View style={styles.list}>
-              {filtered.length === 0 ? (
+              {sorted.length === 0 ? (
                 <Text style={styles.empty}>
-                  {stats.total === 0
+                  {allTotal === 0
                     ? "No products configured."
                     : search
                       ? "No matches for that search."
                       : "All stock levels healthy."}
                 </Text>
               ) : (
-                filtered.map((p) => {
-                  const minLevel = p.reorderLevel ?? 0;
+                sorted.map((p) => {
+                  const stock = toNumber(p.currentStock);
+                  const threshold = p.reorderPoint ?? 5;
                   const pct =
-                    minLevel > 0
-                      ? Math.min(100, Math.round((p.currentStock / minLevel) * 100))
+                    threshold > 0
+                      ? Math.min(100, Math.round((stock / threshold) * 100))
                       : 100;
+                  const out = isOutOfStock(p);
+                  const low = isLowStock(p);
                   return (
                     <View key={p.id} style={styles.row}>
                       <View style={{ flex: 1 }}>
@@ -121,7 +147,10 @@ export default function WarehouseScreen() {
                             {p.name}
                           </Text>
                           <Text style={styles.qty}>
-                            {p.currentStock} <Text style={styles.min}>/ {minLevel}</Text>
+                            {stock}{" "}
+                            <Text style={styles.min}>
+                              / {p.reorderPoint ?? "—"}
+                            </Text>
                           </Text>
                         </View>
                         <View style={styles.progressRow}>
@@ -129,11 +158,12 @@ export default function WarehouseScreen() {
                             <ProgressTrack
                               percent={pct}
                               height={3}
-                              fill={pct <= 25 ? "orange" : "brand"}
+                              fill={out ? "red" : low ? "orange" : "brand"}
                             />
                           </View>
                           <Text style={styles.sku}>
-                            {p.sku ?? p.barcode ?? ""} · {p.unit}
+                            {p.sku ?? p.barcode ?? ""}
+                            {p.unit ? ` · ${p.unit}` : ""}
                           </Text>
                         </View>
                       </View>

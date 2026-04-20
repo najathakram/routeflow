@@ -69,9 +69,9 @@ export default function OperatorDriverDetailScreen() {
   const initials = driver.user
     ? `${driver.user.firstName?.[0] ?? ""}${driver.user.lastName?.[0] ?? ""}`.toUpperCase()
     : "??";
-  const activeRoute = driverRoutes.find((r) => r.activeRun?.status === "IN_PROGRESS");
+  const activeRoute = driverRoutes.find((r) => r.runs?.[0]?.status === "IN_PROGRESS");
   const activeRouteName = activeRoute?.name ?? driverRoutes[0]?.name ?? "No active route";
-  const totalStops = driverRoutes.reduce((t, r) => t + (r.stops?.length ?? 0), 0);
+  const totalStops = driverRoutes.reduce((t, r) => t + (r._count?.stops ?? 0), 0);
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
@@ -114,20 +114,24 @@ export default function OperatorDriverDetailScreen() {
           {driverRoutes.length === 0 ? (
             <Text style={styles.empty}>No routes assigned.</Text>
           ) : (
-            driverRoutes.map((r) => (
-              <View key={r.id} style={styles.routeCard}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.routeName}>{r.name}</Text>
-                  <Text style={styles.routeSub}>
-                    {r.stops?.length ?? 0} stops
-                    {r.activeRun
-                      ? ` · ${r.activeRun.status.toLowerCase().replace("_", " ")}`
-                      : ""}
-                  </Text>
+            driverRoutes.map((r) => {
+              const stopCount = r._count?.stops ?? 0;
+              const runStatus = r.runs?.[0]?.status;
+              return (
+                <View key={r.id} style={styles.routeCard}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.routeName}>{r.name}</Text>
+                    <Text style={styles.routeSub}>
+                      {stopCount} stop{stopCount === 1 ? "" : "s"}
+                      {runStatus
+                        ? ` · ${runStatus.toLowerCase().replace("_", " ")}`
+                        : ""}
+                    </Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={16} color={ios.gray[3]} />
                 </View>
-                <Ionicons name="chevron-forward" size={16} color={ios.gray[3]} />
-              </View>
-            ))
+              );
+            })
           )}
         </View>
       </ScrollView>

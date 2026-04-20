@@ -3,21 +3,27 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { ios } from "@routeflow/ui/tokens";
-import { Pill } from "@routeflow/ui/mobile/ios";
 import { useRouter } from "expo-router";
 import { useAuthStore } from "../../lib/auth-store";
+import { useTenantStore } from "../../lib/tenant-store";
+import { useScheduledRouteRuns } from "../../lib/api/routes";
 
 export default function RolePickerScreen() {
   const router = useRouter();
   const user = useAuthStore((s) => s.user);
   const setActiveRole = useAuthStore((s) => s.setActiveRole);
+  const tenantName = useTenantStore((s) => s.branding?.businessName);
+  const { data: scheduledData } = useScheduledRouteRuns();
+  const nextRun = scheduledData?.data?.[0];
+  const nextRunStops = nextRun?.stops?.length ?? 0;
 
-  const initials = user?.username
-    ?.split(/[._\s]/)
-    .filter(Boolean)
-    .map((p) => p[0]?.toUpperCase())
-    .slice(0, 2)
-    .join("") ?? "JL";
+  const initials =
+    user?.username
+      ?.split(/[._\s]/)
+      .filter(Boolean)
+      .map((p) => p[0]?.toUpperCase())
+      .slice(0, 2)
+      .join("") ?? "--";
 
   const chooseDriver = () => {
     setActiveRole("driver");
@@ -27,6 +33,10 @@ export default function RolePickerScreen() {
     setActiveRole("operator");
     router.replace("/(operator)/home");
   };
+
+  const driverDesc = nextRun
+    ? `${nextRun.route?.name ?? "Your route"} is ready · ${nextRunStops} stop${nextRunStops === 1 ? "" : "s"}`
+    : "No scheduled route for today — you can still log in as driver.";
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
@@ -41,8 +51,10 @@ export default function RolePickerScreen() {
             <Text style={styles.avatarText}>{initials}</Text>
           </LinearGradient>
           <View>
-            <Text style={styles.name}>{user?.username ?? "Jordan Lee"}</Text>
-            <Text style={styles.sub}>Operator + Driver</Text>
+            <Text style={styles.name}>{user?.username ?? "RouteFlow user"}</Text>
+            <Text style={styles.sub}>
+              {tenantName ?? "Tenant"} · multi-role
+            </Text>
           </View>
         </View>
         <Text style={styles.prompt}>
@@ -65,19 +77,28 @@ export default function RolePickerScreen() {
                 <Ionicons name="car-outline" size={26} color="#fff" />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.eyebrowOn}>Recommended</Text>
-                <Text style={styles.roleTitleOn}>Driver</Text>
-                <Text style={styles.roleDescOn}>
-                  Route 07 is loaded & ready · 12 stops · depart 08:00
+                <Text style={styles.eyebrowOn}>
+                  {nextRun ? "Recommended" : "Driver"}
                 </Text>
+                <Text style={styles.roleTitleOn}>Driver</Text>
+                <Text style={styles.roleDescOn}>{driverDesc}</Text>
               </View>
               <Ionicons name="chevron-forward" size={22} color="#fff" />
             </View>
-            <View style={styles.heroStats}>
-              <HeroStat label="Stops" value="12" />
-              <HeroStat label="Value" value="$3.2k" />
-              <HeroStat label="Distance" value="148 km" />
-            </View>
+            {nextRun ? (
+              <View style={styles.heroStats}>
+                <HeroStat label="Stops" value={String(nextRunStops)} />
+                {nextRun.scheduledDate ? (
+                  <HeroStat
+                    label="Date"
+                    value={new Date(nextRun.scheduledDate).toLocaleDateString(
+                      undefined,
+                      { month: "short", day: "numeric" },
+                    )}
+                  />
+                ) : null}
+              </View>
+            ) : null}
           </LinearGradient>
         </Pressable>
 
@@ -93,30 +114,7 @@ export default function RolePickerScreen() {
             </View>
             <Ionicons name="chevron-forward" size={22} color={ios.label3} />
           </View>
-          <View style={styles.plainStatsRow}>
-            <Pill variant="orange" dot>2 urgent</Pill>
-            <Pill variant="gray">6 routes active</Pill>
-          </View>
         </Pressable>
-
-        {/* Yesterday recap */}
-        <View style={[styles.cardPlain, { opacity: 0.88 }]}>
-          <View style={styles.cardHead}>
-            <View style={[styles.roleIcon, { backgroundColor: ios.fill3 }]}>
-              <Ionicons name="time-outline" size={22} color={ios.label2} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.roleTitleSmall}>Yesterday's recap</Text>
-              <Text style={styles.roleDesc}>9 deliveries · $1,486 collected · on-time 100%</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={18} color={ios.label3} />
-          </View>
-        </View>
-
-        <View style={styles.statusBanner}>
-          <View style={styles.statusDot} />
-          <Text style={styles.statusText}>All systems operational · last sync 07:38</Text>
-        </View>
       </ScrollView>
     </SafeAreaView>
   );

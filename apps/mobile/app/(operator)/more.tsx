@@ -5,10 +5,12 @@ import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { ListGroup, ListRow, NavBar } from "@routeflow/ui/mobile/ios";
 import { useAuthStore } from "../../lib/auth-store";
+import { useTenantStore } from "../../lib/tenant-store";
 
 export default function OperatorMoreScreen() {
   const router = useRouter();
   const { user, logout, setActiveRole } = useAuthStore();
+  const tenantName = useTenantStore((s) => s.branding?.businessName);
 
   const initials =
     user?.username
@@ -29,7 +31,9 @@ export default function OperatorMoreScreen() {
           </View>
           <View>
             <Text style={styles.name}>{user?.username ?? "Operator"}</Text>
-            <Text style={styles.sub}>Operator · North Depot</Text>
+            <Text style={styles.sub}>
+              Operator{tenantName ? ` · ${tenantName}` : ""}
+            </Text>
           </View>
         </View>
 
@@ -46,7 +50,7 @@ export default function OperatorMoreScreen() {
             icon={<Ionicons name="scan-outline" size={16} color={ios.brand} />}
             iconBg={ios.brandWash}
             title="Pick & load"
-            subtitle="Active route: R05"
+            subtitle="Warehouse scanning (coming soon)"
             onPress={() => router.push("/(operator)/pick")}
             chevron
           />

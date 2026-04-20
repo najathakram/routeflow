@@ -1,8 +1,16 @@
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useMemo } from "react";
+import {
+  ActivityIndicator,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import {
   ListGroup,
@@ -11,25 +19,126 @@ import {
   NavBar,
   Pill,
 } from "@routeflow/ui/mobile/ios";
+import {
+  useActiveRouteRun,
+  useRouteRun,
+  type RouteRunStop,
+} from "../../../../../lib/api/routes";
 
-const ITEMS = [
-  { name: "Sourdough Loaf", sku: "SKU 4021", qty: 6, done: true },
-  { name: "Butter (500g)", sku: "SKU 1108", qty: 4, done: true },
-  { name: "Croissants (6pk)", sku: "SKU 3302", qty: 2, short: true },
-];
+function initialsFrom(name: string): string {
+  return (
+    name
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((w) => w[0]?.toUpperCase() ?? "")
+      .join("") || "?"
+  );
+}
+
+function itemsFromStop(stop: RouteRunStop): Array<{
+  id: string;
+  name: string;
+  sku: string;
+  qty: number;
+  delivered: boolean;
+  short: boolean;
+}> {
+  const lines: ReturnType<typeof itemsFromStop> = [];
+  for (const order of stop.orders ?? []) {
+    for (const li of order.lineItems ?? []) {
+      lines.push({
+        id: li.id,
+        name: li.product?.name ?? "Item",
+        sku: li.product
+          ? `${li.product.unit ?? ""}${li.product.name ? "" : ""}`
+          : "",
+        qty: Number(li.qty ?? 0),
+        delivered: li.status === "DELIVERED",
+        short: li.status === "PARTIAL" || li.status === "REFUSED",
+      });
+    }
+  }
+  return lines;
+}
 
 export default function StopDetailScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ stopId: string; runId?: string }>();
+  const stopId = params.stopId;
+
+  // runId is optional in the URL — derive from the active route run otherwise.
+  const { data: activeData, isLoading: activeLoading } = useActiveRouteRun();
+  const runIdFromActive = activeData?.data?.[0]?.id;
+  const runId = params.runId ?? runIdFromActive;
+  const { data: run, isLoading: runLoading } = useRouteRun(runId ?? "");
+
+  const stop = useMemo(
+    () => run?.stops?.find((s) => s.id === stopId),
+    [run, stopId],
+  );
+
+  if (activeLoading || runLoading) {
+    return (
+      <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
+        <NavBar
+          inlineTitle="Stop"
+          leading={<NavBackButton label="Route" onPress={() => router.back()} />}
+        />
+        <View style={styles.center}>
+          <ActivityIndicator color={ios.brand} />
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (!stop) {
+    return (
+      <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
+        <NavBar
+          inlineTitle="Stop"
+          leading={<NavBackButton label="Route" onPress={() => router.back()} />}
+        />
+        <View style={styles.center}>
+          <Ionicons name="alert-circle-outline" size={36} color={ios.label3} />
+          <Text style={styles.emptyTitle}>Stop not found</Text>
+          <Text style={styles.emptySub}>It may have been removed from your route.</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  const totalStops = run?.stops?.length ?? 0;
+  const customerName = stop.customer?.businessName ?? "Stop";
+  const address = [
+    stop.customerAddress?.line1,
+    stop.customerAddress?.city,
+    stop.customerAddress?.state,
+    stop.customerAddress?.zip,
+  ]
+    .filter(Boolean)
+    .join(", ");
+  const items = itemsFromStop(stop);
+  const itemCount = items.length;
+  const dollarTotal = (stop.orders ?? []).reduce(
+    (sum, o) =>
+      sum +
+      (o.lineItems ?? []).reduce(
+        (s, li) => s + Number(li.qty ?? 0) * Number(li.unitPrice ?? 0),
+        0,
+      ),
+    0,
+  );
+
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <NavBar
-        inlineTitle="Stop 6 / 12"
+        inlineTitle={`Stop ${stop.stopNumber} / ${totalStops}`}
         leading={<NavBackButton label="Route" onPress={() => router.back()} />}
         trailing={<NavAction label="Call" />}
       />
 
       <ScrollView showsVerticalScrollIndicator={false}>
-        {/* Customer card */}
         <View style={styles.custCard}>
           <View style={styles.custRow}>
             <LinearGradient
@@ -38,15 +147,18 @@ export default function StopDetailScreen() {
               end={{ x: 1, y: 1 }}
               style={styles.avatar}
             >
-              <Text style={styles.avatarText}>HC</Text>
+              <Text style={styles.avatarText}>{initialsFrom(customerName)}</Text>
             </LinearGradient>
             <View style={{ flex: 1 }}>
-              <Text style={styles.custName}>Harbor Café</Text>
-              <Text style={styles.custAddr}>42 Harbour St, Sydney NSW 2000</Text>
+              <Text style={styles.custName}>{customerName}</Text>
+              {address ? <Text style={styles.custAddr}>{address}</Text> : null}
               <View style={styles.pillRow}>
-                <Pill variant="brand">3 items</Pill>
-                <Pill variant="orange">$184 due</Pill>
-                <Pill variant="red">Overdue $420</Pill>
+                <Pill variant="brand">
+                  {itemCount} item{itemCount === 1 ? "" : "s"}
+                </Pill>
+                {dollarTotal > 0 ? (
+                  <Pill variant="orange">${dollarTotal.toFixed(2)} due</Pill>
+                ) : null}
               </View>
             </View>
           </View>
@@ -57,38 +169,45 @@ export default function StopDetailScreen() {
           </View>
         </View>
 
-        {/* Items */}
-        <SectionRow title="Items" action="+ Add on-site" />
-        <ListGroup>
-          {ITEMS.map((i) => (
-            <View key={i.name} style={styles.itemRow}>
-              <View
-                style={[
-                  styles.check,
-                  i.done ? { backgroundColor: ios.system.green, borderWidth: 0 } : null,
-                ]}
-              >
-                {i.done ? (
-                  <Ionicons name="checkmark" size={13} color="#fff" />
-                ) : null}
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.itemName}>{i.name}</Text>
-                <Text style={styles.itemSku}>{i.sku}</Text>
-              </View>
-              {i.short ? (
-                <View style={{ marginRight: 8 }}>
-                  <Pill variant="orange" small>Short</Pill>
+        <SectionRow title="Items" />
+        {items.length === 0 ? (
+          <View style={styles.emptyInline}>
+            <Text style={styles.emptyInlineText}>No items scheduled for this stop.</Text>
+          </View>
+        ) : (
+          <ListGroup>
+            {items.map((i) => (
+              <View key={i.id} style={styles.itemRow}>
+                <View
+                  style={[
+                    styles.check,
+                    i.delivered
+                      ? { backgroundColor: ios.system.green, borderWidth: 0 }
+                      : null,
+                  ]}
+                >
+                  {i.delivered ? (
+                    <Ionicons name="checkmark" size={13} color="#fff" />
+                  ) : null}
                 </View>
-              ) : null}
-              <View style={styles.qtyBadge}>
-                <Text style={styles.qtyText}>×{i.qty}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.itemName}>{i.name}</Text>
+                </View>
+                {i.short ? (
+                  <View style={{ marginRight: 8 }}>
+                    <Pill variant="orange" small>
+                      Short
+                    </Pill>
+                  </View>
+                ) : null}
+                <View style={styles.qtyBadge}>
+                  <Text style={styles.qtyText}>×{i.qty}</Text>
+                </View>
               </View>
-            </View>
-          ))}
-        </ListGroup>
+            ))}
+          </ListGroup>
+        )}
 
-        {/* POD */}
         <SectionRow title="Proof of delivery" />
         <View style={styles.podRow}>
           <PodTile icon="camera-outline" label="Photo" />
@@ -96,11 +215,13 @@ export default function StopDetailScreen() {
           <PodTile icon="chatbubble-outline" label="Note" />
         </View>
 
-        {/* Actions */}
         <View style={styles.actionsBlock}>
           <View style={styles.actionBtnRow}>
             <SecondaryBtn label="Attempted" />
-            <SecondaryBtn label="Partial return" onPress={() => router.push("./return")} />
+            <SecondaryBtn
+              label="Partial return"
+              onPress={() => router.push("./return")}
+            />
           </View>
           <Pressable
             style={styles.greenBtn}
@@ -145,16 +266,21 @@ function PodTile({
   );
 }
 
-function SectionRow({ title, action }: { title: string; action?: string }) {
+function SectionRow({ title }: { title: string }) {
   return (
     <View style={styles.sectionRow}>
       <Text style={styles.sectionTitle}>{title}</Text>
-      {action ? <Text style={styles.sectionLink}>{action}</Text> : null}
     </View>
   );
 }
 
-function SecondaryBtn({ label, onPress }: { label: string; onPress?: () => void }) {
+function SecondaryBtn({
+  label,
+  onPress,
+}: {
+  label: string;
+  onPress?: () => void;
+}) {
   return (
     <Pressable onPress={onPress} style={styles.secondaryBtn}>
       <Text style={styles.secondaryBtnText}>{label}</Text>
@@ -164,6 +290,25 @@ function SecondaryBtn({ label, onPress }: { label: string; onPress?: () => void 
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: ios.bgElev },
+  center: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingHorizontal: 40,
+  },
+  emptyTitle: {
+    fontSize: 17,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label,
+    marginTop: 6,
+  },
+  emptySub: {
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    color: ios.label2,
+    textAlign: "center",
+  },
   custCard: {
     backgroundColor: ios.bgElev,
     paddingHorizontal: 16,
@@ -180,14 +325,24 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  avatarText: { color: "#fff", fontSize: 18, fontFamily: "Inter_700Bold", letterSpacing: -0.5 },
+  avatarText: {
+    color: "#fff",
+    fontSize: 18,
+    fontFamily: "Inter_700Bold",
+    letterSpacing: -0.5,
+  },
   custName: {
     fontSize: 22,
     fontFamily: "Inter_700Bold",
     color: ios.label,
     letterSpacing: -0.4,
   },
-  custAddr: { fontSize: 14, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
+  custAddr: {
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    color: ios.label2,
+    marginTop: 2,
+  },
   pillRow: { flexDirection: "row", gap: 6, marginTop: 8, flexWrap: "wrap" },
   quickActions: { flexDirection: "row", gap: 6, marginTop: 14 },
   qa: {
@@ -209,8 +364,25 @@ const styles = StyleSheet.create({
     paddingTop: 20,
     paddingBottom: 8,
   },
-  sectionTitle: { fontSize: 17, fontFamily: "Inter_700Bold", color: ios.label, letterSpacing: -0.3 },
-  sectionLink: { fontSize: 15, fontFamily: "Inter_400Regular", color: ios.brand },
+  sectionTitle: {
+    fontSize: 17,
+    fontFamily: "Inter_700Bold",
+    color: ios.label,
+    letterSpacing: -0.3,
+  },
+  emptyInline: {
+    marginHorizontal: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    backgroundColor: ios.bgElev,
+    borderRadius: 12,
+  },
+  emptyInlineText: {
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    color: ios.label2,
+    textAlign: "center",
+  },
   itemRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -230,7 +402,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   itemName: { fontSize: 16, fontFamily: "Inter_500Medium", color: ios.label },
-  itemSku: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 1 },
   qtyBadge: {
     backgroundColor: ios.brandWash,
     borderRadius: 8,

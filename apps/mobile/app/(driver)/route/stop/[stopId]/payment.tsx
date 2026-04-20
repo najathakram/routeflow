@@ -1,7 +1,14 @@
-import { useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useMemo, useState } from "react";
+import {
+  ActivityIndicator,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import {
   NavAction,
@@ -9,18 +16,49 @@ import {
   NavBar,
   SegmentedControl,
 } from "@routeflow/ui/mobile/ios";
+import {
+  useActiveRouteRun,
+  useRouteRun,
+  type RouteRunStop,
+} from "../../../../../lib/api/routes";
 
 const METHODS = ["Cash", "Card", "Cheque", "On account"] as const;
-const QUICK = ["$50", "$100", "$164", "$200"];
 const KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "·", "0", "⌫"];
-const INVOICE_TOTAL = 164;
+
+function totalForStop(stop: RouteRunStop): number {
+  return (stop.orders ?? []).reduce(
+    (sum, o) =>
+      sum +
+      (o.lineItems ?? []).reduce(
+        (s, li) => s + Number(li.qty ?? 0) * Number(li.unitPrice ?? 0),
+        0,
+      ),
+    0,
+  );
+}
 
 export default function PaymentScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ stopId: string; runId?: string }>();
+  const stopId = params.stopId;
+
+  const { data: activeData } = useActiveRouteRun();
+  const runId = params.runId ?? activeData?.data?.[0]?.id;
+  const { data: run, isLoading } = useRouteRun(runId ?? "");
+  const stop = useMemo(
+    () => run?.stops?.find((s) => s.id === stopId),
+    [run, stopId],
+  );
+
+  const invoiceTotal = stop ? totalForStop(stop) : 0;
+  const invoiceLabel = stop?.orders?.[0]?.orderNumber
+    ? `ORDER ${stop.orders[0].orderNumber} · ${(stop.customer?.businessName ?? "Customer").toUpperCase()}`
+    : "PAYMENT";
+
   const [method, setMethod] = useState<string>("Cash");
-  // TODO: POST /payments/{invoiceId} on "Receive cash & close".
-  const [received, setReceived] = useState("200.00");
-  const change = Math.max(0, Number(received) - INVOICE_TOTAL);
+  const [received, setReceived] = useState<string>("0");
+  const receivedNum = Number(received);
+  const change = Math.max(0, receivedNum - invoiceTotal);
 
   const press = (k: string) => {
     setReceived((prev) => {
@@ -30,6 +68,24 @@ export default function PaymentScreen() {
       return prev + k;
     });
   };
+
+  const whole = Math.floor(invoiceTotal);
+  const fraction = invoiceTotal.toFixed(2).split(".")[1] ?? "00";
+
+  if (isLoading) {
+    return (
+      <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
+        <NavBar
+          tint="light"
+          inlineTitle="Collect payment"
+          leading={<NavBackButton label="Stop" onPress={() => router.back()} />}
+        />
+        <View style={styles.center}>
+          <ActivityIndicator color={ios.brand} />
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
@@ -42,13 +98,12 @@ export default function PaymentScreen() {
 
       <ScrollView showsVerticalScrollIndicator={false}>
         <View style={styles.totalBlock}>
-          <Text style={styles.eyebrow}>INVOICE #1042 · HARBOR CAFÉ</Text>
+          <Text style={styles.eyebrow}>{invoiceLabel}</Text>
           <View style={styles.totalRow}>
             <Text style={styles.currency}>$</Text>
-            <Text style={styles.totalWhole}>164</Text>
-            <Text style={styles.totalFraction}>.00</Text>
+            <Text style={styles.totalWhole}>{whole}</Text>
+            <Text style={styles.totalFraction}>.{fraction}</Text>
           </View>
-          <Text style={styles.totalSub}>Was $184 · $20 credit applied</Text>
         </View>
 
         <View style={{ paddingHorizontal: 16, paddingTop: 14 }}>
@@ -71,15 +126,22 @@ export default function PaymentScreen() {
         </View>
 
         <View style={styles.quickGrid}>
-          {QUICK.map((q) => (
-            <Pressable
-              key={q}
-              style={styles.quickCell}
-              onPress={() => setReceived(q.replace("$", "") + ".00")}
-            >
-              <Text style={styles.quickText}>{q}</Text>
-            </Pressable>
-          ))}
+          {[
+            Math.max(20, Math.round(invoiceTotal * 0.5)),
+            Math.round(invoiceTotal),
+            Math.round(invoiceTotal) + 20,
+            Math.round(invoiceTotal) + 50,
+          ]
+            .filter((n) => n > 0)
+            .map((n) => (
+              <Pressable
+                key={n}
+                style={styles.quickCell}
+                onPress={() => setReceived(`${n}`)}
+              >
+                <Text style={styles.quickText}>${n}</Text>
+              </Pressable>
+            ))}
         </View>
 
         <View style={styles.keypad}>
@@ -91,8 +153,10 @@ export default function PaymentScreen() {
         </View>
 
         <View style={{ padding: 16 }}>
-          <Pressable style={styles.greenBtn} onPress={() => router.back()}>
-            <Text style={styles.greenBtnText}>Receive cash & close</Text>
+          {/* TODO: wire POST /payments/:invoiceId mutation once the endpoint
+              is built; the button is disabled for now. */}
+          <Pressable style={[styles.greenBtn, styles.greenBtnDisabled]} disabled>
+            <Text style={styles.greenBtnText}>Receive cash & close (coming soon)</Text>
           </Pressable>
         </View>
       </ScrollView>
@@ -102,6 +166,7 @@ export default function PaymentScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: ios.bgElev },
+  center: { flex: 1, alignItems: "center", justifyContent: "center" },
   totalBlock: {
     backgroundColor: ios.bgElev,
     paddingHorizontal: 16,
@@ -116,6 +181,7 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_600SemiBold",
     color: ios.label2,
     letterSpacing: 0.6,
+    textAlign: "center",
   },
   totalRow: { flexDirection: "row", alignItems: "flex-end", marginTop: 12 },
   currency: {
@@ -140,7 +206,6 @@ const styles = StyleSheet.create({
     marginBottom: 4,
     fontVariant: ["tabular-nums"],
   },
-  totalSub: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 4 },
   receivedBlock: {
     marginHorizontal: 16,
     marginTop: 14,
@@ -232,6 +297,9 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     paddingVertical: 16,
     alignItems: "center",
+  },
+  greenBtnDisabled: {
+    opacity: 0.55,
   },
   greenBtnText: {
     color: "#fff",

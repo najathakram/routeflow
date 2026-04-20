@@ -5,10 +5,12 @@ import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { ListGroup, ListRow, NavBar } from "@routeflow/ui/mobile/ios";
 import { useAuthStore } from "../../lib/auth-store";
+import { useTenantStore } from "../../lib/tenant-store";
 
 export default function DriverMoreScreen() {
   const router = useRouter();
   const { user, logout, setActiveRole } = useAuthStore();
+  const tenantName = useTenantStore((s) => s.branding?.businessName);
 
   const initials = user?.username
     ?.split(/[._\s]/)
@@ -28,7 +30,9 @@ export default function DriverMoreScreen() {
           </View>
           <View>
             <Text style={styles.name}>{user?.username ?? "Driver"}</Text>
-            <Text style={styles.sub}>Driver · active</Text>
+            <Text style={styles.sub}>
+              Driver{tenantName ? ` · ${tenantName}` : ""}
+            </Text>
           </View>
         </View>
 

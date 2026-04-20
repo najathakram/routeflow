@@ -10,10 +10,12 @@ import {
   NavBar,
 } from "@routeflow/ui/mobile/ios";
 import { useAuthStore } from "../../lib/auth-store";
+import { useTenantStore } from "../../lib/tenant-store";
 
 export default function DriverProfileScreen() {
   const router = useRouter();
   const { user, logout } = useAuthStore();
+  const tenantName = useTenantStore((s) => s.branding?.businessName);
   const displayName = user?.username ?? "Driver";
   const initials =
     displayName
@@ -35,7 +37,9 @@ export default function DriverProfileScreen() {
             <Text style={styles.avatarText}>{initials}</Text>
           </View>
           <Text style={styles.name}>{displayName}</Text>
-          <Text style={styles.role}>Driver · active</Text>
+          <Text style={styles.role}>
+            Driver{tenantName ? ` · ${tenantName}` : ""}
+          </Text>
         </View>
 
         <ListGroup header="ACCOUNT">

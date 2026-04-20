@@ -13,14 +13,33 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { KpiCard, NavBar, Pill, ProgressTrack } from "@routeflow/ui/mobile/ios";
-import { useAdminDashboard, useAdminRoutes, type AdminRoute } from "../../lib/api/admin";
+import {
+  useAdminDashboard,
+  useAdminDrivers,
+  useAdminRoutes,
+  type AdminDriver,
+  type AdminRoute,
+} from "../../lib/api/admin";
 import { useAuthStore } from "../../lib/auth-store";
 
-function routeStatusLabel(r: AdminRoute): { label: string; variant: "green" | "brand" | "orange" | "red" | "gray"; pct: number } {
-  if (r.activeRun?.status === "IN_PROGRESS") return { label: "On route", variant: "brand", pct: 50 };
-  if (r.activeRun?.status === "COMPLETED") return { label: "Rolled", variant: "green", pct: 100 };
+function routeStatusLabel(r: AdminRoute): {
+  label: string;
+  variant: "green" | "brand" | "orange" | "red" | "gray";
+  pct: number;
+} {
+  const status = r.runs?.[0]?.status;
+  if (status === "IN_PROGRESS") return { label: "On route", variant: "brand", pct: 50 };
+  if (status === "COMPLETED") return { label: "Rolled", variant: "green", pct: 100 };
   if (!r.driverId) return { label: "No driver", variant: "red", pct: 0 };
   return { label: "Scheduled", variant: "gray", pct: 0 };
+}
+
+function driverDisplayName(driver: AdminDriver | undefined): string {
+  if (!driver) return "Unassigned";
+  if (driver.user?.firstName || driver.user?.lastName) {
+    return `${driver.user.firstName ?? ""} ${driver.user.lastName ?? ""}`.trim();
+  }
+  return driver.user?.username ?? "Driver";
 }
 
 export default function OperatorHomeScreen() {
@@ -28,7 +47,13 @@ export default function OperatorHomeScreen() {
   const { user } = useAuthStore();
   const { data: stats, isLoading: statsLoading } = useAdminDashboard();
   const { data: routesData, isLoading: routesLoading } = useAdminRoutes({ limit: 10 });
+  const { data: driversData } = useAdminDrivers();
   const routes = routesData?.data ?? [];
+  const driversById = useMemo(() => {
+    const map = new Map<string, AdminDriver>();
+    for (const d of driversData?.data ?? []) map.set(d.id, d);
+    return map;
+  }, [driversData]);
 
   const initials =
     user?.username
@@ -49,10 +74,10 @@ export default function OperatorHomeScreen() {
 
   const readiness = useMemo(() => {
     if (routes.length === 0) return { pct: 0, loaded: 0, total: 0 };
-    const loaded = routes.filter(
-      (r) =>
-        r.activeRun?.status === "IN_PROGRESS" || r.activeRun?.status === "COMPLETED",
-    ).length;
+    const loaded = routes.filter((r) => {
+      const s = r.runs?.[0]?.status;
+      return s === "IN_PROGRESS" || s === "COMPLETED";
+    }).length;
     return {
       pct: Math.round((loaded / routes.length) * 100),
       loaded,
@@ -176,9 +201,9 @@ export default function OperatorHomeScreen() {
         ) : (
           <View style={{ paddingHorizontal: 16, gap: 8, paddingBottom: 20 }}>
             {routes.slice(0, 6).map((r) => {
-              const driverName = r.driver?.user
-                ? `${r.driver.user.firstName} ${r.driver.user.lastName}`
-                : "Unassigned";
+              const driverName = driverDisplayName(
+                r.driverId ? driversById.get(r.driverId) : undefined,
+              );
               const status = routeStatusLabel(r);
               const badgeColor =
                 status.variant === "green"
@@ -190,12 +215,13 @@ export default function OperatorHomeScreen() {
                       : status.variant === "red"
                         ? ios.system.red
                         : ios.gray[3];
+              const stopCount = r._count?.stops ?? 0;
               return (
                 <View key={r.id} style={styles.routeCard}>
                   <View style={styles.routeHead}>
                     <View style={[styles.routeBadge, { backgroundColor: badgeColor }]}>
                       <Text style={styles.routeBadgeText}>
-                        {r.name?.replace(/\D/g, "").slice(0, 2) || r.name?.slice(0, 2)?.toUpperCase()}
+                        {r.name?.slice(0, 2)?.toUpperCase() ?? "R"}
                       </Text>
                     </View>
                     <View style={{ flex: 1, minWidth: 0 }}>
@@ -203,7 +229,7 @@ export default function OperatorHomeScreen() {
                         {r.name} · {driverName}
                       </Text>
                       <Text style={styles.routeMeta}>
-                        {(r.stops?.length ?? 0)} stop{(r.stops?.length ?? 0) === 1 ? "" : "s"}
+                        {stopCount} stop{stopCount === 1 ? "" : "s"}
                       </Text>
                     </View>
                     <Pill variant={status.variant} dot>

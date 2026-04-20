@@ -47,3 +47,6 @@ export type { ExceptionCardProps, ExceptionSeverity, ExceptionAction } from "./E
 
 export { MessageBubble } from "./MessageBubble";
 export type { MessageBubbleProps } from "./MessageBubble";
+
+export { IosEmptyState } from "./EmptyState";
+export type { IosEmptyStateProps } from "./EmptyState";

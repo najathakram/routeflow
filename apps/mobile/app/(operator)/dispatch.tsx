@@ -1,7 +1,6 @@
 import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -18,6 +17,14 @@ import {
   type AdminRoute,
 } from "../../lib/api/admin";
 
+function driverDisplayName(driver: AdminDriver | undefined): string {
+  if (!driver) return "Unassigned";
+  if (driver.user?.firstName || driver.user?.lastName) {
+    return `${driver.user.firstName ?? ""} ${driver.user.lastName ?? ""}`.trim();
+  }
+  return driver.user?.username ?? "Driver";
+}
+
 export default function DispatchScreen() {
   const [tab, setTab] = useState("Routes");
   const { data: routesData, isLoading: routesLoading } = useAdminRoutes({ limit: 50 });
@@ -25,6 +32,11 @@ export default function DispatchScreen() {
 
   const routes = routesData?.data ?? [];
   const drivers = driversData?.data ?? [];
+  const driversById = useMemo(() => {
+    const map = new Map<string, AdminDriver>();
+    for (const d of drivers) map.set(d.id, d);
+    return map;
+  }, [drivers]);
 
   const unassigned = routes.filter((r) => !r.driverId);
 
@@ -42,7 +54,12 @@ export default function DispatchScreen() {
         </View>
 
         {tab === "Routes" ? (
-          <RoutesTab routes={routes} unassigned={unassigned} loading={routesLoading} />
+          <RoutesTab
+            routes={routes}
+            unassigned={unassigned}
+            loading={routesLoading}
+            driversById={driversById}
+          />
         ) : (
           <DriversTab drivers={drivers} loading={driversLoading} />
         )}
@@ -55,10 +72,12 @@ function RoutesTab({
   routes,
   unassigned,
   loading,
+  driversById,
 }: {
   routes: AdminRoute[];
   unassigned: AdminRoute[];
   loading: boolean;
+  driversById: Map<string, AdminDriver>;
 }) {
   if (loading) {
     return (
@@ -83,27 +102,31 @@ function RoutesTab({
         {routes.length === 0 ? (
           <Text style={styles.empty}>No routes defined yet.</Text>
         ) : (
-          routes.map((r) => (
-            <View key={r.id} style={styles.routeRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.routeName}>{r.name}</Text>
-                <Text style={styles.routeSub}>
-                  {r.driver?.user
-                    ? `${r.driver.user.firstName} ${r.driver.user.lastName}`
-                    : "Unassigned"}
-                  {" · "}
-                  {r.stops?.length ?? 0} stop{(r.stops?.length ?? 0) === 1 ? "" : "s"}
-                </Text>
+          routes.map((r) => {
+            const stopCount = r._count?.stops ?? 0;
+            const driverName = driverDisplayName(
+              r.driverId ? driversById.get(r.driverId) : undefined,
+            );
+            return (
+              <View key={r.id} style={styles.routeRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.routeName}>{r.name}</Text>
+                  <Text style={styles.routeSub}>
+                    {driverName}
+                    {" · "}
+                    {stopCount} stop{stopCount === 1 ? "" : "s"}
+                  </Text>
+                </View>
+                {r.driverId ? (
+                  <Pill variant="green" dot>
+                    Assigned
+                  </Pill>
+                ) : (
+                  <Pill variant="red">No driver</Pill>
+                )}
               </View>
-              {r.driverId ? (
-                <Pill variant="green" dot>
-                  Assigned
-                </Pill>
-              ) : (
-                <Pill variant="red">No driver</Pill>
-              )}
-            </View>
-          ))
+            );
+          })
         )}
       </View>
     </View>
