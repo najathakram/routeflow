@@ -7,12 +7,14 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TouchableOpacity,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import { MobileButton, MobileInput } from "@routeflow/ui/mobile";
+import { BrandGlyph } from "@routeflow/ui/mobile/ios";
+import { ios } from "@routeflow/ui/tokens";
 import { useTenantStore } from "../../lib/tenant-store";
 
 const API_BASE =
@@ -62,7 +64,6 @@ export default function CompanyCodeScreen() {
 
       const branding = await res.json();
       await setSlug(slug, branding);
-      // Navigate to login; _layout.tsx will allow it now that slug is set
       router.replace("/(auth)/login");
     } catch {
       setApiError("Network error. Please check your connection and try again.");
@@ -75,17 +76,23 @@ export default function CompanyCodeScreen() {
         contentContainerStyle={styles.container}
         keyboardShouldPersistTaps="handled"
       >
-        <View style={styles.logoContainer}>
-          <Text style={styles.logoText}>RouteFlow</Text>
-          <Text style={styles.tagline}>Enter your company code to continue.</Text>
-        </View>
+        <LinearGradient
+          colors={[ios.brandGradient[0]!, ios.brandGradient[1]!, ios.brandGradient[2]!]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.brandMark}
+        >
+          <BrandGlyph />
+        </LinearGradient>
+        <Text style={styles.title}>RouteFlow</Text>
+        <Text style={styles.tagline}>Enter your company code to continue.</Text>
 
         <View style={styles.form}>
-          {apiError && (
+          {apiError ? (
             <View style={styles.errorBanner}>
               <Text style={styles.errorText}>{apiError}</Text>
             </View>
-          )}
+          ) : null}
 
           <Controller
             control={control}
@@ -111,114 +118,73 @@ export default function CompanyCodeScreen() {
             size="lg"
             style={styles.submitButton}
           >
-            {isSubmitting ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              "Continue"
-            )}
+            {isSubmitting ? <ActivityIndicator color="#fff" /> : "Continue"}
           </MobileButton>
         </View>
 
         <Text style={styles.hint}>
           {"Don't know your company code? Contact your RouteFlow administrator."}
         </Text>
-
-        <View style={styles.buyerDivider}>
-          <View style={styles.dividerLine} />
-          <Text style={styles.dividerText}>or</Text>
-          <View style={styles.dividerLine} />
-        </View>
-
-        <TouchableOpacity
-          style={styles.buyerLink}
-          onPress={() => router.push("/(buyer-auth)/login")}
-        >
-          <Text style={styles.buyerLinkText}>Sign in as Buyer</Text>
-        </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: "#fff",
-  },
+  safe: { flex: 1, backgroundColor: ios.bgElev },
   container: {
     flexGrow: 1,
     justifyContent: "center",
-    paddingHorizontal: 24,
+    paddingHorizontal: 28,
     paddingVertical: 40,
   },
-  logoContainer: {
+  brandMark: {
+    width: 72,
+    height: 72,
+    borderRadius: 22,
     alignItems: "center",
-    marginBottom: 48,
+    justifyContent: "center",
+    alignSelf: "center",
+    marginBottom: 20,
+    shadowColor: ios.brand,
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.35,
+    shadowRadius: 24,
+    elevation: 12,
   },
-  logoText: {
-    fontSize: 32,
+  title: {
+    fontSize: 34,
     fontFamily: "Inter_700Bold",
-    color: "#1B3A5C",
-    letterSpacing: -0.5,
+    color: ios.label,
+    letterSpacing: -1.2,
+    textAlign: "center",
   },
   tagline: {
     marginTop: 6,
-    fontSize: 14,
+    fontSize: 17,
     fontFamily: "Inter_400Regular",
-    color: "#64748b",
+    color: ios.label2,
     textAlign: "center",
+    marginBottom: 32,
   },
-  form: {
-    gap: 16,
-  },
+  form: { gap: 16 },
   errorBanner: {
-    backgroundColor: "#fef2f2",
-    borderRadius: 8,
-    paddingHorizontal: 12,
+    backgroundColor: ios.system.redWash,
+    borderRadius: 12,
+    paddingHorizontal: 14,
     paddingVertical: 10,
   },
   errorText: {
     fontSize: 14,
-    fontFamily: "Inter_400Regular",
-    color: "#dc2626",
+    fontFamily: "Inter_500Medium",
+    color: ios.system.redInk,
   },
-  submitButton: {
-    marginTop: 8,
-  },
+  submitButton: { marginTop: 8 },
   hint: {
     marginTop: 32,
     textAlign: "center",
     fontSize: 13,
     fontFamily: "Inter_400Regular",
-    color: "#94a3b8",
-  },
-  buyerDivider: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginTop: 32,
-    gap: 12,
-  },
-  dividerLine: {
-    flex: 1,
-    height: StyleSheet.hairlineWidth,
-    backgroundColor: "#e2e8f0",
-  },
-  dividerText: {
-    fontSize: 13,
-    fontFamily: "Inter_400Regular",
-    color: "#94a3b8",
-  },
-  buyerLink: {
-    alignItems: "center",
-    marginTop: 16,
-    paddingVertical: 12,
-    borderRadius: 8,
-    borderWidth: 1.5,
-    borderColor: "#4f46e5",
-  },
-  buyerLinkText: {
-    fontSize: 15,
-    fontFamily: "Inter_600SemiBold",
-    color: "#4f46e5",
+    color: ios.label2,
   },
 });

@@ -1,463 +1,220 @@
 import { useState } from "react";
-import {
-  ActivityIndicator,
-  Alert,
-  FlatList,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Switch,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
-import { router, Stack, useLocalSearchParams } from "expo-router";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { ios, borderRadius, shadows } from "@routeflow/ui/tokens";
-import { useRouteRun } from "../../../../../lib/api/routes";
-import { useProducts } from "../../../../../lib/api/products";
-import { useCreateOrderAsDriver } from "../../../../../lib/api/orders";
+import { useRouter } from "expo-router";
+import { ios } from "@routeflow/ui/tokens";
+import {
+  FilterChipRow,
+  NavAction,
+  NavBackButton,
+  NavBar,
+  SearchBar,
+  SegmentedControl,
+} from "@routeflow/ui/mobile/ios";
 
-interface CartItem {
-  productId: string;
-  name: string;
-  unit: string;
-  pricePerUnit: number;
-  qty: number;
-}
+// TODO: wire products endpoint + POST /orders for driver-initiated orders.
+const PRODUCTS = [
+  { name: "Sourdough Loaf", sku: "4021", price: "$6.80", qty: 6, img: ["#C9A27A", "#8B6A44"] as const },
+  { name: "Butter (500g)", sku: "1108", price: "$9.20", qty: 4, img: ["#F5E29A", "#D8B954"] as const },
+  { name: "Croissants (6pk)", sku: "3302", price: "$14.00", qty: 2, img: ["#E3BE83", "#B1833F"] as const },
+  { name: "Pain au chocolat", sku: "3308", price: "$3.50", qty: 0, img: ["#8B5A2B", "#4A2E17"] as const },
+  { name: "Raw milk (2L)", sku: "2201", price: "$5.60", qty: 0, img: ["#F4F4F4", "#D9D9D9"] as const },
+];
 
-export default function NewOrderAtStopScreen() {
-  const { stopId, runId } = useLocalSearchParams<{ stopId: string; runId: string }>();
-  const { data: run } = useRouteRun(runId ?? "");
-  const stop = run?.stops?.find((s) => s.id === stopId) ?? null;
+export default function NewOrderScreen() {
+  const router = useRouter();
+  const [mode, setMode] = useState("Order");
+  const [category, setCategory] = useState("Favourites");
+  const [items, setItems] = useState<Record<string, number>>({
+    "4021": 6,
+    "1108": 4,
+    "3302": 2,
+  });
 
-  const [search, setSearch] = useState("");
-  const [cart, setCart] = useState<CartItem[]>([]);
-  const [notes, setNotes] = useState("");
-  const [immediateDelivery, setImmediateDelivery] = useState(true);
+  const chips = [
+    { label: "Favourites" },
+    { label: "Bakery" },
+    { label: "Dairy" },
+    { label: "Produce" },
+    { label: "Dry" },
+  ];
 
-  const { data: productsData, isLoading: loadingProducts } = useProducts({ search: search || undefined });
-  const products = (productsData?.data ?? productsData ?? []) as any[];
+  const totalItems = Object.values(items).reduce((a, b) => a + b, 0);
+  const total = PRODUCTS.reduce((sum, p) => {
+    const q = items[p.sku] ?? 0;
+    return sum + q * Number(p.price.replace("$", ""));
+  }, 0);
 
-  const { mutate: createOrder, isPending } = useCreateOrderAsDriver();
-
-  const addToCart = (product: any) => {
-    setCart((prev) => {
-      const existing = prev.find((i) => i.productId === product.id);
-      if (existing) {
-        return prev.map((i) =>
-          i.productId === product.id ? { ...i, qty: i.qty + 1 } : i,
-        );
-      }
-      return [...prev, {
-        productId: product.id,
-        name: product.name,
-        unit: product.unit,
-        pricePerUnit: Number(product.pricePerUnit),
-        qty: 1,
-      }];
-    });
-  };
-
-  const updateQty = (productId: string, delta: number) => {
-    setCart((prev) => {
-      const updated = prev.map((i) =>
-        i.productId === productId ? { ...i, qty: Math.max(0, i.qty + delta) } : i,
-      ).filter((i) => i.qty > 0);
-      return updated;
-    });
-  };
-
-  const cartTotal = cart.reduce((s, i) => s + i.pricePerUnit * i.qty, 0);
-
-  const handleSubmit = () => {
-    if (cart.length === 0) {
-      Alert.alert("Empty Cart", "Add at least one product.");
-      return;
-    }
-    if (!stop?.customerId) {
-      Alert.alert("Error", "Could not determine customer for this stop.");
-      return;
-    }
-
-    createOrder(
-      {
-        customerId: stop.customerId,
-        items: cart.map((i) => ({ productId: i.productId, qty: i.qty })),
-        notes: notes.trim() || undefined,
-        routeRunId: runId,
-        routeRunStopId: stopId,
-        immediateDelivery,
-      },
-      {
-        onSuccess: () => {
-          Alert.alert(
-            "Order Created",
-            immediateDelivery
-              ? "Order confirmed and added to this stop's delivery."
-              : "Order created as pending — it will appear in the schedule.",
-          );
-          router.back();
-        },
-        onError: (err: any) => {
-          Alert.alert("Error", err?.response?.data?.message ?? err.message ?? "Failed to create order.");
-        },
-      },
-    );
-  };
+  const inc = (sku: string) => setItems((m) => ({ ...m, [sku]: (m[sku] ?? 0) + 1 }));
+  const dec = (sku: string) =>
+    setItems((m) => ({ ...m, [sku]: Math.max(0, (m[sku] ?? 0) - 1) }));
 
   return (
-    <>
-      <Stack.Screen
-        options={{
-          title: `New Order — ${stop?.customer?.businessName ?? "Customer"}`,
-          headerBackTitle: "Stop",
-        }}
+    <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
+      <NavBar
+        inlineTitle="New order"
+        leading={<NavBackButton label="Harbor Café" onPress={() => router.back()} />}
+        trailing={<NavAction label="Save" bold />}
       />
-      <View style={styles.container}>
-        <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-          {/* Customer */}
-          <View style={styles.infoCard}>
-            <Ionicons name="business-outline" size={18} color={ios.brand} />
-            <Text style={styles.infoText} numberOfLines={1} ellipsizeMode="tail">{stop?.customer?.businessName ?? "Loading…"}</Text>
-          </View>
 
-          {/* Delivery mode toggle */}
-          <View style={styles.toggleCard}>
-            <View style={styles.toggleRow}>
-              <View style={styles.toggleLeft}>
-                <Text style={styles.toggleTitle}>Deliver Now</Text>
-                <Text style={styles.toggleSub}>
-                  {immediateDelivery
-                    ? "Order confirmed and linked to this stop"
-                    : "Order saved as pending — operator will schedule it"}
-                </Text>
-              </View>
-              <Switch
-                value={immediateDelivery}
-                onValueChange={setImmediateDelivery}
-                trackColor={{ true: ios.brand, false: ios.separator }}
-              />
-            </View>
-          </View>
-
-          {/* Product search */}
-          <View style={styles.searchBox}>
-            <Ionicons name="search-outline" size={18} color={ios.label2} />
-            <TextInput
-              style={styles.searchInput}
-              placeholder="Search products…"
-              placeholderTextColor={ios.label2}
-              value={search}
-              onChangeText={setSearch}
-              returnKeyType="search"
-            />
-          </View>
-
-          {/* Product list */}
-          {loadingProducts ? (
-            <ActivityIndicator color={ios.brand} style={{ marginTop: 16 }} />
-          ) : (
-            <View style={styles.productList}>
-              {products.map((p: any) => {
-                const inCart = cart.find((c) => c.productId === p.id);
-                return (
-                  <View key={p.id} style={styles.productRow}>
-                    <View style={styles.productLeft}>
-                      <Text style={styles.productName}>{p.name}</Text>
-                      <Text style={styles.productPrice}>
-                        ${Number(p.pricePerUnit).toFixed(2)} / {p.unit}
-                      </Text>
-                    </View>
-                    {inCart ? (
-                      <View style={styles.qtyControl}>
-                        <Pressable
-                          style={styles.qtyBtn}
-                          onPress={() => updateQty(p.id, -1)}
-                          accessibilityLabel={`Remove ${p.name}`}
-                        >
-                          <Ionicons name="remove" size={18} color={ios.brand} />
-                        </Pressable>
-                        <Text style={styles.qtyText}>{inCart.qty}</Text>
-                        <Pressable
-                          style={styles.qtyBtn}
-                          onPress={() => updateQty(p.id, 1)}
-                          accessibilityLabel={`Add ${p.name}`}
-                        >
-                          <Ionicons name="add" size={18} color={ios.brand} />
-                        </Pressable>
-                      </View>
-                    ) : (
-                      <Pressable
-                        style={styles.addBtn}
-                        onPress={() => addToCart(p)}
-                        accessibilityLabel={`Add ${p.name}`}
-                      >
-                        <Ionicons name="add-circle-outline" size={22} color={ios.brand} />
-                      </Pressable>
-                    )}
-                  </View>
-                );
-              })}
-              {products.length === 0 && (
-                <Text style={styles.noProducts}>No products found.</Text>
-              )}
-            </View>
-          )}
-
-          {/* Cart summary */}
-          {cart.length > 0 && (
-            <View style={styles.cartCard}>
-              <Text style={styles.cartTitle}>Cart ({cart.length} item{cart.length !== 1 ? "s" : ""})</Text>
-              {cart.map((item) => (
-                <View key={item.productId} style={styles.cartRow}>
-                  <Text style={styles.cartName}>{item.name}</Text>
-                  <Text style={styles.cartQty}>{item.qty} × ${item.pricePerUnit.toFixed(2)}</Text>
-                  <Text style={styles.cartTotal}>${(item.qty * item.pricePerUnit).toFixed(2)}</Text>
-                </View>
-              ))}
-              <View style={styles.cartTotalRow}>
-                <Text style={styles.cartTotalLabel}>Estimated Total</Text>
-                <Text style={styles.cartTotalValue}>${cartTotal.toFixed(2)}</Text>
-              </View>
-            </View>
-          )}
-
-          {/* Notes */}
-          <TextInput
-            style={styles.notesInput}
-            placeholder="Order notes (optional)…"
-            placeholderTextColor={ios.label2}
-            value={notes}
-            onChangeText={setNotes}
-            multiline
-            numberOfLines={2}
-            textAlignVertical="top"
+      <ScrollView showsVerticalScrollIndicator={false}>
+        <View style={{ paddingHorizontal: 16, paddingTop: 10 }}>
+          <SegmentedControl
+            items={["Order", "Return", "Credit note"]}
+            value={mode}
+            onChange={setMode}
           />
-        </ScrollView>
+        </View>
 
-        {/* Submit */}
-        <View style={styles.footer}>
-          <Pressable
-            style={[styles.submitBtn, (isPending || cart.length === 0) && styles.submitBtnDisabled]}
-            onPress={handleSubmit}
-            disabled={isPending || cart.length === 0}
-            accessibilityRole="button"
-          >
-            {isPending ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <>
-                <Ionicons name="checkmark-circle-outline" size={22} color="#fff" style={{ marginRight: 8 }} />
-                <Text style={styles.submitBtnText}>
-                  {immediateDelivery ? "Create & Confirm Order" : "Create Pending Order"}
-                </Text>
-              </>
-            )}
+        <SearchBar
+          placeholder="Search or scan item…"
+          trailing={<Ionicons name="barcode-outline" size={18} color={ios.label2} />}
+        />
+
+        <FilterChipRow chips={chips} value={category} onChange={setCategory} />
+
+        <View style={{ paddingHorizontal: 16, paddingTop: 14, gap: 10 }}>
+          {PRODUCTS.map((p) => {
+            const q = items[p.sku] ?? 0;
+            return (
+              <View key={p.sku} style={styles.productRow}>
+                <View
+                  style={[
+                    styles.productImg,
+                    { backgroundColor: p.img[0] },
+                  ]}
+                />
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={styles.productName}>{p.name}</Text>
+                  <Text style={styles.productMeta}>
+                    SKU {p.sku} · {p.price}
+                  </Text>
+                </View>
+                {q > 0 ? (
+                  <View style={styles.stepper}>
+                    <Pressable style={styles.stepBtn} onPress={() => dec(p.sku)}>
+                      <Text style={styles.stepBtnText}>−</Text>
+                    </Pressable>
+                    <Text style={styles.stepQty}>{q}</Text>
+                    <Pressable style={styles.stepBtn} onPress={() => inc(p.sku)}>
+                      <Text style={styles.stepBtnText}>+</Text>
+                    </Pressable>
+                  </View>
+                ) : (
+                  <Pressable style={styles.addBtn} onPress={() => inc(p.sku)}>
+                    <Text style={styles.addBtnText}>+</Text>
+                  </Pressable>
+                )}
+              </View>
+            );
+          })}
+        </View>
+        <View style={{ height: 16 }} />
+      </ScrollView>
+
+      {/* Sticky cart footer */}
+      <View style={styles.footer}>
+        <View style={styles.footerRow}>
+          <View>
+            <Text style={styles.footerEyebrow}>{totalItems} ITEMS · PO-2041</Text>
+            <Text style={styles.footerTotal}>${total.toFixed(2)}</Text>
+          </View>
+          <Pressable style={styles.confirmBtn}>
+            <Text style={styles.confirmBtnText}>Confirm order</Text>
+            <Ionicons name="arrow-forward" size={14} color="#fff" />
           </Pressable>
         </View>
       </View>
-    </>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: ios.bg },
-  scroll: { padding: 16, gap: 12, paddingBottom: 24 },
-  infoCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    backgroundColor: ios.brandWash,
-    borderRadius: borderRadius.DEFAULT,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: ios.brand ?? ios.brand + "33",
-  },
-  infoText: {
-    flex: 1,
-    fontSize: 15,
-    fontFamily: "Inter_600SemiBold",
-    color: ios.label,
-  },
-  toggleCard: {
-    backgroundColor: "#fff",
-    borderRadius: borderRadius.lg,
-    padding: 14,
-    ...shadows.card,
-  },
-  toggleRow: {
+  safe: { flex: 1, backgroundColor: ios.bgElev },
+  productRow: {
+    backgroundColor: ios.bg,
+    borderRadius: 14,
+    padding: 10,
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
   },
-  toggleLeft: { flex: 1, gap: 2 },
-  toggleTitle: {
-    fontSize: 15,
-    fontFamily: "Inter_600SemiBold",
-    color: ios.label,
-  },
-  toggleSub: {
-    fontSize: 12,
-    fontFamily: "Inter_400Regular",
-    color: ios.label2,
-  },
-  searchBox: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    backgroundColor: "#fff",
-    borderRadius: borderRadius.DEFAULT,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderWidth: 1,
-    borderColor: ios.separator,
-  },
-  searchInput: {
-    flex: 1,
-    fontSize: 15,
-    fontFamily: "Inter_400Regular",
-    color: ios.label,
-  },
-  productList: { gap: 8 },
-  productRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#fff",
-    borderRadius: borderRadius.DEFAULT,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    ...shadows.card,
-  },
-  productLeft: { flex: 1 },
+  productImg: { width: 48, height: 48, borderRadius: 10 },
   productName: {
     fontSize: 15,
     fontFamily: "Inter_600SemiBold",
     color: ios.label,
+    letterSpacing: -0.2,
   },
-  productPrice: {
-    fontSize: 13,
+  productMeta: {
+    fontSize: 12,
     fontFamily: "Inter_400Regular",
     color: ios.label2,
+    marginTop: 1,
+    fontVariant: ["tabular-nums"],
   },
-  qtyControl: {
+  stepper: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
-  },
-  qtyBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: ios.brandWash,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  qtyText: {
-    fontSize: 17,
-    fontFamily: "Inter_700Bold",
-    color: ios.label,
-    minWidth: 24,
-    textAlign: "center",
-  },
-  addBtn: {
-    padding: 4,
-  },
-  noProducts: {
-    textAlign: "center",
-    color: ios.label2,
-    fontFamily: "Inter_400Regular",
-    fontSize: 14,
-    paddingVertical: 16,
-  },
-  cartCard: {
-    backgroundColor: "#fff",
-    borderRadius: borderRadius.lg,
-    padding: 14,
-    gap: 8,
-    ...shadows.card,
-  },
-  cartTitle: {
-    fontSize: 13,
-    fontFamily: "Inter_600SemiBold",
-    color: ios.label2,
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-    marginBottom: 4,
-  },
-  cartRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  cartName: {
-    flex: 1,
-    fontSize: 14,
-    fontFamily: "Inter_400Regular",
-    color: ios.label,
-  },
-  cartQty: {
-    fontSize: 13,
-    fontFamily: "Inter_400Regular",
-    color: ios.label2,
-  },
-  cartTotal: {
-    fontSize: 14,
-    fontFamily: "Inter_700Bold",
-    color: ios.label,
-    minWidth: 60,
-    textAlign: "right",
-  },
-  cartTotalRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: ios.separator,
-    paddingTop: 8,
-    marginTop: 4,
-  },
-  cartTotalLabel: {
-    fontSize: 15,
-    fontFamily: "Inter_600SemiBold",
-    color: ios.label,
-  },
-  cartTotalValue: {
-    fontSize: 17,
-    fontFamily: "Inter_700Bold",
-    color: ios.brandInk ?? ios.brand,
-  },
-  notesInput: {
-    backgroundColor: "#fff",
-    borderRadius: borderRadius.DEFAULT,
-    borderWidth: 1,
+    backgroundColor: ios.bgElev,
+    borderRadius: 10,
+    padding: 3,
+    borderWidth: StyleSheet.hairlineWidth,
     borderColor: ios.separator,
-    padding: 12,
-    fontSize: 14,
-    fontFamily: "Inter_400Regular",
-    color: ios.label,
-    minHeight: 64,
   },
-  footer: {
-    padding: 16,
-    paddingBottom: 32,
-    backgroundColor: "#fff",
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: ios.separator,
-  },
-  submitBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: ios.brand,
-    borderRadius: borderRadius.lg,
-    padding: 16,
-  },
-  submitBtnDisabled: {
-    opacity: 0.5,
-  },
-  submitBtnText: {
+  stepBtn: { width: 30, height: 30, alignItems: "center", justifyContent: "center" },
+  stepBtnText: { color: ios.brand, fontSize: 18 },
+  stepQty: {
+    minWidth: 28,
+    textAlign: "center",
     fontSize: 16,
     fontFamily: "Inter_700Bold",
-    color: "#fff",
+    color: ios.label,
+    fontVariant: ["tabular-nums"],
   },
+  addBtn: {
+    width: 36,
+    height: 36,
+    backgroundColor: ios.brandWash,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  addBtnText: {
+    color: ios.brand,
+    fontSize: 20,
+  },
+  footer: {
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 16,
+    backgroundColor: ios.bgElev,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: ios.separator,
+  },
+  footerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  footerEyebrow: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label2,
+    letterSpacing: 0.4,
+  },
+  footerTotal: {
+    fontSize: 24,
+    fontFamily: "Inter_700Bold",
+    color: ios.label,
+    letterSpacing: -0.6,
+    fontVariant: ["tabular-nums"],
+  },
+  confirmBtn: {
+    backgroundColor: ios.brand,
+    borderRadius: 14,
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  confirmBtnText: { color: "#fff", fontSize: 16, fontFamily: "Inter_600SemiBold" },
 });

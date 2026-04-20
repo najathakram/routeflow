@@ -1,24 +1,6 @@
 import { Stack } from "expo-router";
-import { colors } from "@routeflow/ui/tokens";
-import { HeaderBackButton } from "../../../components/HeaderBackButton";
 
 export default function RouteLayout() {
-  return (
-    <Stack
-      screenOptions={{
-        headerShown: true,
-        headerStyle: { backgroundColor: "#fff" },
-        headerShadowVisible: false,
-        headerTitleStyle: {
-          fontFamily: "Inter_600SemiBold",
-          fontSize: 17,
-          color: colors.navy.DEFAULT,
-        },
-        headerLeft: () => <HeaderBackButton />,
-      }}
-    >
-      {/* Tab root — Tabs navigator owns the header */}
-      <Stack.Screen name="index" options={{ headerShown: false }} />
-    </Stack>
-  );
+  // Each screen renders its own iOS NavBar; stack chrome is suppressed.
+  return <Stack screenOptions={{ headerShown: false }} />;
 }

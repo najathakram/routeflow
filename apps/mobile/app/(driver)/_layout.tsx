@@ -1,12 +1,9 @@
-import { useState } from "react";
 import { Tabs } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { Pressable, View, Text, StyleSheet } from "react-native";
+import { StyleSheet, Text, View } from "react-native";
 import { ios } from "@routeflow/ui/tokens";
 import { IosTabBar } from "@routeflow/ui/mobile/ios";
 import { useNetworkSync } from "../../hooks/useNetworkSync";
-import { DrawerMenu } from "../../components/DrawerMenu";
-import { HeaderBackButton } from "../../components/HeaderBackButton";
 
 function OfflineBanner() {
   const { isOnline, queueLength } = useNetworkSync();
@@ -17,6 +14,68 @@ function OfflineBanner() {
       <Text style={styles.offlineText}>
         Offline{queueLength > 0 ? ` — ${queueLength} action${queueLength !== 1 ? "s" : ""} queued` : ""}
       </Text>
+    </View>
+  );
+}
+
+export default function DriverLayout() {
+  return (
+    <View style={{ flex: 1, backgroundColor: ios.bg }}>
+      <OfflineBanner />
+      <Tabs
+        tabBar={(props) => <IosTabBar {...(props as any)} />}
+        screenOptions={{ headerShown: false, tabBarActiveTintColor: ios.brand, tabBarInactiveTintColor: ios.gray[1] }}
+      >
+        <Tabs.Screen
+          name="route"
+          options={{
+            title: "Route",
+            tabBarIcon: ({ color, size }) => (
+              <Ionicons name="git-branch-outline" size={size} color={color} />
+            ),
+          }}
+        />
+        <Tabs.Screen
+          name="map"
+          options={{
+            title: "Map",
+            tabBarIcon: ({ color, size }) => (
+              <Ionicons name="map-outline" size={size} color={color} />
+            ),
+          }}
+        />
+        <Tabs.Screen
+          name="orders"
+          options={{
+            title: "Orders",
+            tabBarIcon: ({ color, size }) => (
+              <Ionicons name="calendar-outline" size={size} color={color} />
+            ),
+          }}
+        />
+        <Tabs.Screen
+          name="cash"
+          options={{
+            title: "Cash",
+            tabBarIcon: ({ color, size }) => (
+              <Ionicons name="cash-outline" size={size} color={color} />
+            ),
+          }}
+        />
+        <Tabs.Screen
+          name="more"
+          options={{
+            title: "More",
+            tabBarIcon: ({ color, size }) => (
+              <Ionicons name="ellipsis-horizontal" size={size} color={color} />
+            ),
+          }}
+        />
+        {/* Hidden stacks & direct screens */}
+        <Tabs.Screen name="messages" options={{ href: null }} />
+        <Tabs.Screen name="profile" options={{ href: null }} />
+        <Tabs.Screen name="change-password" options={{ href: null }} />
+      </Tabs>
     </View>
   );
 }
@@ -39,79 +98,3 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_500Medium",
   },
 });
-
-export default function DriverLayout() {
-  const [drawerOpen, setDrawerOpen] = useState(false);
-
-  const menuButton = () => (
-    <Pressable
-      onPress={() => setDrawerOpen(true)}
-      style={{ padding: 8, paddingLeft: 16 }}
-      accessibilityLabel="Open menu"
-    >
-      <Ionicons name="menu-outline" size={24} color={ios.label} />
-    </Pressable>
-  );
-
-  return (
-    <View style={{ flex: 1, backgroundColor: ios.bg }}>
-      <OfflineBanner />
-      <Tabs
-        tabBar={(props) => <IosTabBar {...(props as any)} />}
-        screenOptions={{
-          tabBarActiveTintColor: ios.brand,
-          tabBarInactiveTintColor: ios.gray[1],
-          headerStyle: { backgroundColor: ios.bgElev },
-          headerShadowVisible: false,
-          headerTitleStyle: {
-            fontFamily: "Inter_600SemiBold",
-            fontSize: 17,
-            color: ios.label,
-          },
-          headerLeft: menuButton,
-        }}
-      >
-        {/* ── Visible tabs ─────────────────────────────────── */}
-        <Tabs.Screen
-          name="dashboard"
-          options={{
-            title: "Home",
-            headerShown: false,
-            tabBarIcon: ({ color, size }) => (
-              <Ionicons name="home-outline" size={size} color={color} />
-            ),
-          }}
-        />
-        <Tabs.Screen
-          name="route"
-          options={{
-            title: "My Route",
-            headerShown: false,
-            tabBarIcon: ({ color, size }) => (
-              <Ionicons name="map-outline" size={size} color={color} />
-            ),
-          }}
-        />
-        <Tabs.Screen
-          name="profile"
-          options={{
-            title: "Profile",
-            tabBarIcon: ({ color, size }) => (
-              <Ionicons name="person-outline" size={size} color={color} />
-            ),
-          }}
-        />
-        {/* ── Hidden sub-stack screens — Stack owns the header ─ */}
-        <Tabs.Screen name="customers"       options={{ href: null, title: "Customers",        headerShown: false }} />
-        <Tabs.Screen name="inventory"       options={{ href: null, title: "Stock",             headerShown: false }} />
-        <Tabs.Screen name="history"         options={{ href: null, title: "History",           headerShown: false }} />
-        <Tabs.Screen name="orders"          options={{ href: null, title: "Create Order",      headerShown: false }} />
-        <Tabs.Screen name="standing-orders"  options={{ href: null, title: "Standing Orders",   headerShown: false }} />
-        <Tabs.Screen name="purchase-orders"  options={{ href: null, title: "Purchase Orders",   headerShown: false }} />
-        {/* ── Hidden direct screen — Tabs owns the header ────── */}
-        <Tabs.Screen name="change-password" options={{ href: null, title: "Change Password", headerLeft: () => <HeaderBackButton /> }} />
-      </Tabs>
-      <DrawerMenu visible={drawerOpen} onClose={() => setDrawerOpen(false)} />
-    </View>
-  );
-}

@@ -14,9 +14,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { UserRole } from "@routeflow/types";
 import { useAuthStore } from "../lib/auth-store";
 import { useTenantStore } from "../lib/tenant-store";
-import { useBuyerAuthStore } from "../lib/buyer-auth-store";
 
-// Configure how notifications are handled when the app is in the foreground
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowBanner: true,
@@ -31,15 +29,8 @@ SplashScreen.preventAutoHideAsync();
 const queryClient = new QueryClient();
 
 function RootLayoutNav() {
-  const { user, isLoading, initialize } = useAuthStore();
+  const { user, isLoading, activeRole, initialize } = useAuthStore();
   const { slug: tenantSlug, isLoading: tenantLoading, initialize: initTenant } = useTenantStore();
-  const {
-    buyer,
-    isBuyerAuthenticated,
-    isLoading: buyerLoading,
-    activeSeller,
-    initialize: initBuyer,
-  } = useBuyerAuthStore();
   const router = useRouter();
   const segments: string[] = useSegments();
   const notificationListener = useRef<ReturnType<typeof Notifications.addNotificationReceivedListener> | null>(null);
@@ -47,40 +38,19 @@ function RootLayoutNav() {
   useEffect(() => {
     initTenant();
     initialize();
-    initBuyer();
   }, []);
 
-  // Set up foreground notification listener
   useEffect(() => {
-    notificationListener.current = Notifications.addNotificationReceivedListener((_notification) => {
-      // Foreground notifications are shown automatically via the handler above.
-      // Add any custom in-app handling here if needed.
-    });
+    notificationListener.current = Notifications.addNotificationReceivedListener(() => {});
     return () => {
-      if (notificationListener.current) {
-        notificationListener.current.remove();
-      }
+      if (notificationListener.current) notificationListener.current.remove();
     };
   }, []);
 
   useEffect(() => {
-    if (isLoading || tenantLoading || buyerLoading) return;
+    if (isLoading || tenantLoading) return;
 
-    // ── Buyer portal routing (checked before staff routing) ──────────────────
-    if (isBuyerAuthenticated) {
-      const inBuyerAuth = segments[0] === "(buyer-auth)";
-      const inBuyer = segments[0] === "(buyer)";
-      if (!activeSeller && !inBuyerAuth) {
-        router.replace("/(buyer-auth)/sellers");
-      } else if (activeSeller && !inBuyer) {
-        router.replace("/(buyer)/orders");
-      }
-      return; // Don't fall through to staff routing
-    }
-
-    // ── Staff routing ────────────────────────────────────────────────────────
-
-    // Step 1: Require a company code (tenant slug) before anything else
+    // Step 1: company code (tenant slug) required
     if (!tenantSlug) {
       if (segments[0] !== "(auth)" || segments[1] !== "company-code") {
         router.replace("/(auth)/company-code");
@@ -88,50 +58,54 @@ function RootLayoutNav() {
       return;
     }
 
+    // Step 2: login
     if (!user) {
-      // Not logged in — send to login unless already there
       if (segments[0] !== "(auth)" || segments[1] !== "login") {
         router.replace("/(auth)/login");
       }
       return;
     }
 
+    // Step 3: forced password change
     if (user.forcePasswordChange) {
-      if (
-        !(segments[0] === "(auth)" && segments[1] === "force-change-password")
-      ) {
+      if (!(segments[0] === "(auth)" && segments[1] === "force-change-password")) {
         router.replace("/(auth)/force-change-password");
       }
       return;
     }
 
-    // OPERATOR and TENANT_ADMIN both go to the admin dashboard
-    if (user.role === UserRole.OPERATOR || user.role === UserRole.TENANT_ADMIN) {
-      if (segments[0] !== "(admin)") {
-        router.replace("/(admin)/dashboard");
-      }
-      return;
-    }
-
-    // SUPER_ADMIN has no mobile UI — show a friendly not-supported screen
+    // SUPER_ADMIN has no mobile UI
     if ((user.role as string) === "SUPER_ADMIN") {
-      // Reuse the operator-blocked screen for now
       if (segments[0] !== "(auth)" || segments[1] !== "operator-blocked") {
         router.replace("/(auth)/operator-blocked");
       }
       return;
     }
 
+    // CUSTOMER role is no longer supported on mobile (B2B portal removed)
     if (user.role === UserRole.CUSTOMER) {
-      if (segments[0] !== "(customer)") {
-        router.replace("/(customer)/shop");
+      if (segments[0] !== "(auth)" || segments[1] !== "operator-blocked") {
+        router.replace("/(auth)/operator-blocked");
       }
-    } else if (user.role === UserRole.DRIVER) {
+      return;
+    }
+
+    // Step 4: role-aware routing. OPERATOR + TENANT_ADMIN → operator tabs;
+    // DRIVER → driver tabs. activeRole is set by auth-store on login and can
+    // be overridden by the role picker for dual-role users.
+    if (activeRole === "operator") {
+      if (segments[0] !== "(operator)") {
+        router.replace("/(operator)/home");
+      }
+      return;
+    }
+    if (activeRole === "driver") {
       if (segments[0] !== "(driver)") {
         router.replace("/(driver)/route");
       }
+      return;
     }
-  }, [user, isLoading, tenantSlug, tenantLoading, buyer, isBuyerAuthenticated, buyerLoading, activeSeller, segments]);
+  }, [user, isLoading, tenantSlug, tenantLoading, activeRole, segments]);
 
   return <Slot />;
 }
@@ -145,9 +119,7 @@ export default function RootLayout() {
   });
 
   useEffect(() => {
-    if (fontsLoaded) {
-      SplashScreen.hideAsync();
-    }
+    if (fontsLoaded) SplashScreen.hideAsync();
   }, [fontsLoaded]);
 
   if (!fontsLoaded) return null;

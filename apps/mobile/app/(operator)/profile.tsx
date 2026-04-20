@@ -11,17 +11,17 @@ import {
 } from "@routeflow/ui/mobile/ios";
 import { useAuthStore } from "../../lib/auth-store";
 
-export default function DriverProfileScreen() {
+export default function OperatorProfileScreen() {
   const router = useRouter();
   const { user, logout } = useAuthStore();
-  const displayName = user?.username ?? "Driver";
+  const displayName = user?.username ?? "Operator";
   const initials =
     displayName
       .split(/[\s._-]/)
       .filter(Boolean)
       .slice(0, 2)
       .map((w) => w[0]?.toUpperCase() ?? "")
-      .join("") || "D";
+      .join("") || "O";
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
@@ -35,12 +35,12 @@ export default function DriverProfileScreen() {
             <Text style={styles.avatarText}>{initials}</Text>
           </View>
           <Text style={styles.name}>{displayName}</Text>
-          <Text style={styles.role}>Driver · active</Text>
+          <Text style={styles.role}>Operator · North Depot</Text>
         </View>
 
         <ListGroup header="ACCOUNT">
           <ListRow title="Username" value={displayName} />
-          <ListRow title="Role" value="Driver" />
+          <ListRow title="Role" value={user?.role ?? "Operator"} />
         </ListGroup>
 
         <ListGroup header="SETTINGS">
@@ -48,7 +48,7 @@ export default function DriverProfileScreen() {
             icon={<Ionicons name="key-outline" size={16} color={ios.gray[1]} />}
             iconBg={ios.fill3}
             title="Change password"
-            onPress={() => router.push("/(driver)/change-password")}
+            onPress={() => router.push("/(operator)/change-password")}
             chevron
           />
         </ListGroup>
@@ -70,7 +70,12 @@ export default function DriverProfileScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: ios.bg },
-  avatarBlock: { alignItems: "center", paddingVertical: 28, backgroundColor: ios.bgElev, marginBottom: 16 },
+  avatarBlock: {
+    alignItems: "center",
+    paddingVertical: 28,
+    backgroundColor: ios.bgElev,
+    marginBottom: 16,
+  },
   avatar: {
     width: 72,
     height: 72,

@@ -28,7 +28,7 @@ const schema = z
 
 type ChangePasswordForm = z.infer<typeof schema>;
 
-export default function DriverChangePasswordScreen() {
+export default function OperatorChangePasswordScreen() {
   const [apiError, setApiError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const {
@@ -38,11 +38,7 @@ export default function DriverChangePasswordScreen() {
     formState: { errors, isSubmitting },
   } = useForm<ChangePasswordForm>({
     resolver: zodResolver(schema),
-    defaultValues: {
-      currentPassword: "",
-      newPassword: "",
-      confirmPassword: "",
-    },
+    defaultValues: { currentPassword: "", newPassword: "", confirmPassword: "" },
   });
 
   const onSubmit = async (data: ChangePasswordForm) => {
@@ -52,11 +48,9 @@ export default function DriverChangePasswordScreen() {
       await changePassword(data.currentPassword, data.newPassword);
       reset();
       setSuccess(true);
-      // Navigate back after a short delay so the user sees the confirmation
       setTimeout(() => router.back(), 1800);
     } catch (err: any) {
-      const msg =
-        err?.response?.data?.message ?? "Failed to change password.";
+      const msg = err?.response?.data?.message ?? "Failed to change password.";
       setApiError(typeof msg === "string" ? msg : "Failed to change password.");
     }
   };
@@ -73,15 +67,14 @@ export default function DriverChangePasswordScreen() {
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.form}>
-          {success && (
+          {success ? (
             <View style={styles.successBanner}>
-              <Ionicons name="checkmark-circle" size={20} color="#065f46" />
+              <Ionicons name="checkmark-circle" size={20} color={ios.system.greenInk} />
               <Text style={styles.successText}>Password updated successfully!</Text>
             </View>
-          )}
-          {apiError && (
-            <Text style={styles.apiError}>{apiError}</Text>
-          )}
+          ) : null}
+          {apiError ? <Text style={styles.apiError}>{apiError}</Text> : null}
+
           <Controller
             control={control}
             name="currentPassword"
@@ -96,7 +89,6 @@ export default function DriverChangePasswordScreen() {
               />
             )}
           />
-
           <Controller
             control={control}
             name="newPassword"
@@ -111,7 +103,6 @@ export default function DriverChangePasswordScreen() {
               />
             )}
           />
-
           <Controller
             control={control}
             name="confirmPassword"
@@ -126,13 +117,7 @@ export default function DriverChangePasswordScreen() {
               />
             )}
           />
-
-          <MobileButton
-            onPress={handleSubmit(onSubmit)}
-            loading={isSubmitting}
-            size="lg"
-            style={styles.submitButton}
-          >
+          <MobileButton onPress={handleSubmit(onSubmit)} loading={isSubmitting} size="lg">
             Update Password
           </MobileButton>
         </View>
@@ -147,32 +132,26 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingTop: 24,
     paddingBottom: 40,
-    backgroundColor: "#fff",
   },
-  form: {
-    gap: 16,
-  },
-  submitButton: {
-    marginTop: 8,
-  },
+  form: { gap: 16 },
   apiError: {
-    color: "#DC2626",
+    color: ios.system.redInk,
     fontSize: 14,
-    textAlign: "center" as const,
+    textAlign: "center",
     marginBottom: 4,
   },
   successBanner: {
-    flexDirection: "row" as const,
-    alignItems: "center" as const,
+    flexDirection: "row",
+    alignItems: "center",
     gap: 8,
-    backgroundColor: "#d1fae5",
+    backgroundColor: ios.system.greenWash,
     borderRadius: 10,
     padding: 14,
   },
   successText: {
     fontSize: 15,
     fontFamily: "Inter_600SemiBold",
-    color: "#065f46",
+    color: ios.system.greenInk,
     flex: 1,
   },
 });

@@ -1,1155 +1,374 @@
-import React, { useState } from "react";
-import { Alert, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View, ActivityIndicator, KeyboardAvoidingView, Platform } from "react-native";
-import { router, Stack } from "expo-router";
+import { useState } from "react";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
-import { StatusBadge } from "@routeflow/ui/mobile";
-import { ios, borderRadius, shadows } from "@routeflow/ui/tokens";
-import { format, addMinutes } from "date-fns";
+import { useRouter } from "expo-router";
+import { ios } from "@routeflow/ui/tokens";
 import {
-  useActiveRouteRun,
-  useScheduledRouteRuns,
-  useRouteRun,
-  useUpdateRunStatus,
-  useUpdateStopStatus,
-  type RouteRunStop,
-} from "../../../lib/api/routes";
-import { useConfirmOrder } from "../../../lib/api/orders";
-import { useRouteStore } from "../../../store/routeStore";
-import { useMileageStore } from "../../../store/mileageStore";
-import { NetworkError } from "../../../components/NetworkError";
+  InlineStats,
+  ListGroup,
+  ListRow,
+  NavBar,
+  Pill,
+  ProgressTrack,
+  StopCard,
+} from "@routeflow/ui/mobile/ios";
 
-// ─── ETA helpers ──────────────────────────────────────────────────────────────
-const TRAVEL_MINS = 15;
-const SERVICE_MINS = 10;
-const WARN_MINS = 30; // show warning when < 30 min before window closes
+type RouteState = "pre-depart" | "on-route";
 
-function calcStopEtas(stops: RouteRunStop[], startedAt: Date = new Date()): Map<string, Date> {
-  const map = new Map<string, Date>();
-  let idx = 0;
-  for (const stop of stops) {
-    if (stop.status === "COMPLETED" || stop.status === "SKIPPED") continue;
-    idx++;
-    map.set(stop.id, addMinutes(startedAt, idx * (TRAVEL_MINS + SERVICE_MINS)));
-  }
-  return map;
+// TODO: replace with live RouteRun data from useRouteStore() / /routes API
+const STOPS = [
+  { n: 1, name: "North Deli", addr: "18 North Parade · $246 collected", status: "done" as const, pill: "Delivered" },
+  { n: 2, name: "Bayside Bistro", addr: "7 Bay Rd · $312 cash", status: "done" as const, pill: "Delivered" },
+  { n: 3, name: "Atlas Catering", addr: "92 River St · $198", status: "done" as const, pill: "Delivered" },
+  { n: 4, name: "Green Market", addr: "14 Ferry Lane · Left at door", status: "done" as const, pill: "Unattended" },
+  { n: 5, name: "Luna Roastery", addr: "6 Grove St · $312", status: "done" as const, pill: "Delivered" },
+  { n: 6, name: "Harbor Café", addr: "42 Harbour St · 3 items · $184", status: "next" as const, pill: "Up next" },
+  { n: 7, name: "Westpark Grill", addr: "15 West End Blvd · 5 items", status: "pending" as const, pill: undefined },
+  { n: 8, name: "Central Kitchen", addr: "3 Market Sq · 4 items", status: "pending" as const, pill: "Call ahead" },
+];
+
+export default function DriverRouteScreen() {
+  const router = useRouter();
+  // TODO: derive from useRouteStore() — active RouteRun? Pre-depart state shows SOD; otherwise today's route.
+  const [state] = useState<RouteState>("on-route");
+
+  if (state === "pre-depart") return <StartOfDay />;
+  return <TodaysRoute onOpenStop={(id) => router.push(`/(driver)/route/stop/${id}`)} />;
 }
 
-function parseWindowTime(timeStr: string | null | undefined, baseDate: Date): Date | null {
-  if (!timeStr) return null;
-  const [h, m] = timeStr.split(":").map(Number);
-  if (isNaN(h) || isNaN(m)) return null;
-  const d = new Date(baseDate);
-  d.setHours(h, m, 0, 0);
-  return d;
-}
-
-type EtaStatus = "ok" | "warn" | "late" | "anytime";
-
-function getEtaStatus(stop: RouteRunStop, eta: Date | undefined, now: Date): EtaStatus {
-  const windowEnd = stop.customer?.deliveryWindowEnd;
-  const windowStart = stop.customer?.deliveryWindowStart;
-  if (!windowEnd && !windowStart) return "anytime";
-  if (!eta) return "ok";
-  const windowEndDate = parseWindowTime(windowEnd, now);
-  if (!windowEndDate) return "ok";
-  if (eta > windowEndDate) return "late";
-  const minsUntilClose = (windowEndDate.getTime() - eta.getTime()) / 60000;
-  if (minsUntilClose <= WARN_MINS) return "warn";
-  return "ok";
-}
-
-
-const STATUS_ICON: Record<string, { name: string; color: string }> = {
-  COMPLETED: { name: "checkmark-circle", color: ios.system.green },
-  IN_PROGRESS: { name: "arrow-forward-circle", color: ios.brand },
-  PENDING: { name: "ellipse-outline", color: ios.label2 },
-  SKIPPED: { name: "close-circle-outline", color: ios.label2 },
-};
-
-function ProgressBar({ completed, total }: { completed: number; total: number }) {
-  const pct = total === 0 ? 0 : (completed / total) * 100;
+function StartOfDay() {
   return (
-    <View style={progressStyles.track}>
-      <View style={[progressStyles.fill, { width: `${pct}%` as any }]} />
+    <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
+      <NavBar
+        largeTitle="Good morning, Marcus"
+        trailing={
+          <View style={styles.avatar}>
+            <Text style={styles.avatarText}>MR</Text>
+          </View>
+        }
+      />
+      <ScrollView showsVerticalScrollIndicator={false}>
+        <Text style={styles.dateEyebrow}>THURSDAY · APR 19</Text>
+
+        <View style={{ padding: 16, paddingTop: 0 }}>
+          <LinearGradient
+            colors={[ios.brandGradient[0]!, ios.brandGradient[1]!, ios.brandGradient[2]!]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.heroCard}
+          >
+            <Text style={styles.heroEyebrow}>ROUTE 07 — NORTH SHORE</Text>
+            <Text style={styles.heroTitle}>12 stops · $3,480</Text>
+            <Text style={styles.heroSub}>Est. 7h 10m · 148 km</Text>
+            <View style={styles.heroActions}>
+              <Pressable style={styles.heroBtnFilled}>
+                <Ionicons name="play" size={14} color={ios.brandInk} />
+                <Text style={styles.heroBtnFilledText}>Start day</Text>
+              </Pressable>
+              <Pressable style={styles.heroBtnGhost}>
+                <Text style={styles.heroBtnGhostText}>View manifest</Text>
+              </Pressable>
+            </View>
+          </LinearGradient>
+        </View>
+
+        <SectionHeader title="Preflight" action="Skip" />
+        <ListGroup>
+          <ListRow
+            icon={<Ionicons name="checkmark" size={16} color={ios.system.greenInk} />}
+            iconBg={ios.system.greenWash}
+            title="Van inspection"
+            subtitle="Tyres · Mirrors · Fuel 78% · 142,308 km"
+            trailing={<Pill variant="green">Done</Pill>}
+          />
+          <ListRow
+            icon={<Ionicons name="barcode-outline" size={16} color={ios.brand} />}
+            iconBg={ios.brandWash}
+            title="Scan pick list"
+            subtitle="78 / 84 items loaded · 6 short"
+            trailing={<Pill variant="orange">Review</Pill>}
+          />
+          <ListRow
+            icon={<Ionicons name="wallet-outline" size={16} color={ios.gray[1]} />}
+            iconBg={ios.fill3}
+            title="Opening float"
+            subtitle="$200 cash · petty"
+            chevron
+          />
+        </ListGroup>
+
+        <SectionHeader title="Heads up" />
+        <ListGroup>
+          <ListRow
+            icon={<Ionicons name="alert-circle-outline" size={16} color={ios.system.red} />}
+            iconBg={ios.system.redWash}
+            title="Harbor Café — overdue $420"
+            subtitle="Collect before delivery per dispatch"
+            chevron
+          />
+          <ListRow
+            icon={<Ionicons name="warning-outline" size={16} color={ios.system.yellowInk} />}
+            iconBg={ios.system.yellowWash}
+            title="Road closure · King St"
+            subtitle="Auto-rerouted stops 9–11"
+            chevron
+          />
+        </ListGroup>
+        <View style={{ height: 16 }} />
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+function TodaysRoute({ onOpenStop }: { onOpenStop: (id: string | number) => void }) {
+  return (
+    <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
+      <NavBar
+        largeTitle="Today's Route"
+        leading={
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <Pill variant="green" dot>On time</Pill>
+            <Pill variant="gray">Route 07</Pill>
+          </View>
+        }
+        trailing={<Ionicons name="ellipsis-vertical" size={20} color={ios.brand} />}
+      />
+
+      <ScrollView showsVerticalScrollIndicator={false}>
+        <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
+          <InlineStats
+            stats={[
+              { value: "12", label: "Stops" },
+              { value: "5", label: "Done", color: ios.system.greenInk },
+              { value: "7", label: "Left", color: ios.brand },
+              { value: "2h10", label: "ETA home" },
+            ]}
+          />
+          <View style={styles.progressRow}>
+            <View style={{ flex: 1 }}>
+              <ProgressTrack percent={42} fill="green" />
+            </View>
+            <Text style={styles.progressText}>42%</Text>
+          </View>
+        </View>
+
+        <View style={{ padding: 16, paddingTop: 14 }}>
+          <LinearGradient
+            colors={[ios.brandGradient[0]!, ios.brandGradient[1]!, ios.brandGradient[2]!]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.heroCard}
+          >
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <View style={styles.heroNumBadge}>
+                <Text style={styles.heroNumText}>6</Text>
+              </View>
+              <Text style={styles.heroEyebrowLow}>UP NEXT · 0.8 MI</Text>
+            </View>
+            <Text style={styles.heroTitleLg}>Harbor Café</Text>
+            <Text style={styles.heroSub}>42 Harbour St · 3 items · $184</Text>
+            <View style={styles.heroActions}>
+              <Pressable style={[styles.heroBtnFilled, { flex: 1, justifyContent: "center" }]}>
+                <Text style={styles.heroBtnFilledText}>Navigate</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.heroBtnGhost, { flex: 1, justifyContent: "center", alignItems: "center" }]}
+                onPress={() => onOpenStop(6)}
+              >
+                <Text style={styles.heroBtnGhostText}>Open stop</Text>
+              </Pressable>
+              <Pressable style={styles.heroBtnIcon}>
+                <Ionicons name="call-outline" size={18} color="#fff" />
+              </Pressable>
+            </View>
+          </LinearGradient>
+        </View>
+
+        <SectionHeader
+          title="Stops"
+          rightSlot={
+            <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
+              <Text style={styles.linkText}>Reorder</Text>
+              <Text style={styles.linkDot}>·</Text>
+              <Text style={styles.linkText}>Map</Text>
+            </View>
+          }
+        />
+
+        <View style={{ paddingHorizontal: 16, gap: 8, paddingBottom: 16 }}>
+          {STOPS.map((s) => (
+            <StopCard
+              key={s.n}
+              number={s.n}
+              name={s.name}
+              subtitle={s.addr}
+              status={s.status}
+              pillLabel={s.pill}
+              onPress={() => onOpenStop(s.n)}
+            />
+          ))}
+        </View>
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+function SectionHeader({
+  title,
+  action,
+  rightSlot,
+}: {
+  title: string;
+  action?: string;
+  rightSlot?: React.ReactNode;
+}) {
+  return (
+    <View style={styles.sectionHeader}>
+      <Text style={styles.sectionTitle}>{title}</Text>
+      {rightSlot ?? (action ? <Text style={styles.linkText}>{action}</Text> : null)}
     </View>
   );
 }
 
-const progressStyles = StyleSheet.create({
-  track: {
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: ios.separator,
+const styles = StyleSheet.create({
+  safe: { flex: 1, backgroundColor: ios.bg },
+  avatar: {
+    width: 34,
+    height: 34,
+    borderRadius: 999,
+    backgroundColor: ios.brandWash,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  avatarText: { color: ios.brand, fontSize: 13, fontFamily: "Inter_700Bold" },
+  dateEyebrow: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label2,
+    letterSpacing: 0.5,
+    paddingHorizontal: 20,
+    paddingBottom: 14,
+  },
+  heroCard: {
+    borderRadius: 20,
+    padding: 18,
     overflow: "hidden",
   },
-  fill: {
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: ios.system.green,
-  },
-});
-
-function StopRow({ stop, runId, eta, etaStatus }: { stop: RouteRunStop; runId: string; eta?: Date; etaStatus?: EtaStatus }) {
-  const icon = STATUS_ICON[stop.status] ?? STATUS_ICON.PENDING;
-  const isActive = stop.status === "IN_PROGRESS";
-
-  const businessName = stop.customer?.businessName ?? stop.customerId;
-  const address = stop.customerAddress
-    ? `${stop.customerAddress.line1}, ${stop.customerAddress.city}, ${stop.customerAddress.state}`
-    : null;
-
-  const windowStart = stop.customer?.deliveryWindowStart;
-  const windowEnd = stop.customer?.deliveryWindowEnd;
-  const hasWindow = windowStart || windowEnd;
-
-  // Count total items across all orders at this stop
-  const itemCount = (stop.orders ?? []).reduce(
-    (sum, o) => sum + (o.lineItems?.length ?? 0),
-    0,
-  );
-
-  const handlePress = () => {
-    router.push(`/(driver)/route/stop/${stop.id}?runId=${runId}`);
-  };
-
-  const windowColor = etaStatus === "late" ? ios.system.red
-    : etaStatus === "warn" ? ios.system.orange
-    : ios.label2;
-
-  return (
-    <Pressable
-      style={[styles.stopRow, isActive && styles.stopRowActive]}
-      onPress={handlePress}
-      accessibilityRole="button"
-      accessibilityLabel={`Stop ${stop.stopNumber}: ${businessName}`}
-    >
-      {/* Stop number bubble */}
-      <View style={[styles.stopNumBubble, isActive && styles.stopNumBubbleActive]}>
-        <Text style={[styles.stopNum, isActive && styles.stopNumActive]}>
-          {stop.stopNumber}
-        </Text>
-      </View>
-
-      {/* Details */}
-      <View style={styles.stopDetails}>
-        <Text style={styles.stopBusiness}>{businessName}</Text>
-        {address ? (
-          <Text style={styles.stopAddress} numberOfLines={1}>
-            {address}
-          </Text>
-        ) : null}
-        {itemCount > 0 && (
-          <Text style={styles.stopItemCount}>
-            {itemCount} item{itemCount !== 1 ? "s" : ""}
-          </Text>
-        )}
-        {/* Delivery window line */}
-        {hasWindow ? (
-          <Text style={[styles.stopWindow, { color: windowColor }]}>
-            {etaStatus === "late" ? "⚠ Late — " : etaStatus === "warn" ? "⚠ Tight — " : ""}
-            {windowStart && windowEnd ? `${windowStart} – ${windowEnd}` : windowEnd ? `By ${windowEnd}` : `From ${windowStart}`}
-          </Text>
-        ) : (
-          <Text style={styles.stopWindowAny}>Any time</Text>
-        )}
-      </View>
-
-      {/* ETA badge for warn/late, or status icon */}
-      <View style={{ alignItems: "flex-end", gap: 4 }}>
-        {etaStatus === "late" && (
-          <View style={stopBadgeStyles.lateBadge}>
-            <Text style={stopBadgeStyles.lateText}>Late</Text>
-          </View>
-        )}
-        {etaStatus === "warn" && (
-          <Ionicons name="warning-outline" size={16} color={ios.system.orange} />
-        )}
-        <Ionicons name={icon.name as any} size={28} color={icon.color} />
-      </View>
-    </Pressable>
-  );
-}
-
-const stopBadgeStyles = StyleSheet.create({
-  lateBadge: {
-    backgroundColor: "#fee2e2",
-    borderRadius: 4,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-  },
-  lateText: {
-    fontSize: 10,
-    fontFamily: "Inter_700Bold",
-    color: "#ef4444",
-  },
-});
-
-export default function RouteScreen() {
-  const { data, isLoading, isError, refetch } = useActiveRouteRun();
-  const { data: scheduledData, refetch: refetchScheduled } = useScheduledRouteRuns();
-  const setActiveRunId = useRouteStore((s) => s.setActiveRunId);
-  const { logMileage, updateEnd, getEntry, getMiles } = useMileageStore();
-  const { mutate: updateStopStatus } = useUpdateStopStatus();
-
-  // Mileage modal state
-  const [mileageModalVisible, setMileageModalVisible] = useState(false);
-  const [mileageMode, setMileageMode] = useState<"start" | "end">("start");
-  const [startOdoInput, setStartOdoInput] = useState("");
-  const [endOdoInput, setEndOdoInput] = useState("");
-
-  // Prefer in-progress run; fall back to first scheduled run
-  const runRef = data?.data?.[0] ?? scheduledData?.data?.[0] ?? null;
-  const activeRunId = runRef?.id ?? null;
-
-  const { data: fullRun, isLoading: isLoadingRun, refetch: refetchFullRun } = useRouteRun(activeRunId ?? "");
-
-  const [refreshing, setRefreshing] = React.useState(false);
-  const onRefresh = React.useCallback(async () => {
-    setRefreshing(true);
-    await Promise.all([refetch(), refetchScheduled(), refetchFullRun()]);
-    setRefreshing(false);
-  }, [refetch, refetchScheduled, refetchFullRun]);
-  const { mutate: updateStatus, isPending: isUpdating } = useUpdateRunStatus();
-
-  // Pending confirmation from active run stops — used in the active run widget
-  const { mutate: confirmOrder, isPending: isConfirming } = useConfirmOrder();
-
-  if (isLoading || (activeRunId && isLoadingRun)) {
-    return (
-      <>
-        <Stack.Screen options={{ title: "My Route" }} />
-        <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
-          <ActivityIndicator size="large" color={ios.brand} />
-        </View>
-      </>
-    );
-  }
-
-  if (isError) {
-    return (
-      <>
-        <Stack.Screen options={{ title: "My Route" }} />
-        <NetworkError onRetry={() => refetch()} />
-      </>
-    );
-  }
-
-  const run = fullRun ?? runRef;
-
-  // todayLabel must be computed before early returns
-  const todayLabel = format(new Date(), "EEEE, MMM d");
-
-  if (!run) {
-    return (
-      <>
-        <Stack.Screen
-          options={{
-            title: "My Route",
-            headerRight: () => (
-              <Pressable
-                onPress={() => router.push("/(driver)/route/new-run" as any)}
-                style={{ padding: 4, paddingRight: 8 }}
-                accessibilityLabel="Schedule a run"
-              >
-                <Ionicons name="add-circle-outline" size={26} color={ios.brand} />
-              </Pressable>
-            ),
-          }}
-        />
-        <View style={{ flex: 1, backgroundColor: ios.bg, alignItems: "center", justifyContent: "center", padding: 32 }}>
-          <Ionicons name="map-outline" size={56} color={ios.gray[3]} />
-          <Text style={{ fontSize: 20, fontFamily: "Inter_700Bold", color: ios.label, marginTop: 16, textAlign: "center" }}>
-            No Active Route
-          </Text>
-          <Text style={{ fontSize: 15, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 8, textAlign: "center", lineHeight: 22 }}>
-            You have no route running today. Schedule a run or manage your day from the Home tab.
-          </Text>
-          <Pressable
-            style={{ marginTop: 24, backgroundColor: ios.brand, borderRadius: 12, paddingHorizontal: 28, paddingVertical: 14, flexDirection: "row", alignItems: "center", gap: 8 }}
-            onPress={() => router.push("/(driver)/route/new-run" as any)}
-            accessibilityRole="button"
-          >
-            <Ionicons name="calendar-outline" size={18} color="#fff" />
-            <Text style={{ fontSize: 16, fontFamily: "Inter_700Bold", color: "#fff" }}>Schedule a Run</Text>
-          </Pressable>
-        </View>
-      </>
-    );
-  }
-
-  // Store active runId for stop screens
-  if (activeRunId) setActiveRunId(activeRunId);
-
-  const stops = run.stops ?? [];
-  const totalStops = stops.length;
-  const completedCount = stops.filter(
-    (s) => s.status === "COMPLETED" || s.status === "SKIPPED",
-  ).length;
-  const currentStop = stops.find((s) => s.status === "IN_PROGRESS") ?? null;
-  const allDone = run.status === "COMPLETED";
-  const hasStarted = run.status === "IN_PROGRESS" || completedCount > 0 || currentStop !== null;
-
-  // ETA computation (client-side)
-  const now = new Date();
-  const startedAt = run.startedAt ? new Date(run.startedAt) : now;
-  const etaMap = hasStarted ? calcStopEtas(stops, startedAt) : new Map<string, Date>();
-  const etaStatusMap = new Map<string, EtaStatus>();
-  for (const stop of stops) {
-    etaStatusMap.set(stop.id, getEtaStatus(stop, etaMap.get(stop.id), now));
-  }
-  const atRiskCount = Array.from(etaStatusMap.values()).filter(
-    (s) => s === "warn" || s === "late",
-  ).length;
-
-  // Dashboard stats
-  const pendingOrderCount = stops.reduce(
-    (n, s) => n + (s.orders ?? []).filter((o: any) => o.status === "PENDING").length,
-    0,
-  );
-  const totalItemCount = stops.reduce(
-    (n, s) => n + (s.orders ?? []).reduce((sum: number, o: any) => sum + (o.lineItems?.length ?? 0), 0),
-    0,
-  );
-
-  const primaryLabel = allDone
-    ? "Route Complete"
-    : !hasStarted
-      ? "Start Route"
-      : "Next Stop";
-
-  // End Route Early
-  const handleEndRouteEarly = () => {
-    const pendingStops = stops.filter((s) => s.status === "PENDING" || s.status === "IN_PROGRESS");
-    Alert.alert(
-      "End Route Early?",
-      `${pendingStops.length} stop${pendingStops.length !== 1 ? "s" : ""} will be marked as skipped.`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "End Route",
-          style: "destructive",
-          onPress: () => {
-            // Skip all pending/in-progress stops
-            for (const stop of pendingStops) {
-              updateStopStatus({ runId: run.id, stopId: stop.id, status: "SKIPPED" });
-            }
-            // Mark run as completed
-            updateStatus({ id: run.id, status: "COMPLETED" });
-          },
-        },
-      ],
-    );
-  };
-
-  // ─── Mileage logging ──────────────────────────────────────────────────────
-  const mileageEntry = run ? getEntry(run.id) : null;
-  const loggedMiles = run ? getMiles(run.id) : null;
-
-  const handleLogMileage = () => {
-    if (!run) return;
-    const existingEntry = getEntry(run.id);
-    if (existingEntry && existingEntry.endOdometer == null) {
-      setMileageMode("end");
-      setStartOdoInput(String(existingEntry.startOdometer));
-      setEndOdoInput("");
-    } else {
-      setMileageMode("start");
-      setStartOdoInput("");
-      setEndOdoInput("");
-    }
-    setMileageModalVisible(true);
-  };
-
-  const handleMileageSave = () => {
-    if (!run) return;
-    if (mileageMode === "end") {
-      const end = parseFloat(endOdoInput);
-      if (isNaN(end)) {
-        Alert.alert("Invalid", "Please enter a valid number for the end odometer.");
-        return;
-      }
-      updateEnd(run.id, end);
-    } else {
-      const start = parseFloat(startOdoInput);
-      if (isNaN(start)) {
-        Alert.alert("Invalid", "Please enter a valid number for the start odometer.");
-        return;
-      }
-      const end = endOdoInput.trim() ? parseFloat(endOdoInput) : null;
-      logMileage(run.id, start, end != null && !isNaN(end) ? end : null);
-    }
-    setMileageModalVisible(false);
-  };
-
-  const handlePrimaryAction = () => {
-    if (allDone) return;
-    if (!hasStarted) {
-      updateStatus({ id: run.id, status: "IN_PROGRESS" });
-    }
-    const target = currentStop ?? stops.find((s) => s.status === "PENDING");
-    if (target) {
-      router.push(`/(driver)/route/stop/${target.id}?runId=${run.id}`);
-    }
-  };
-
-  return (
-    <>
-      <Stack.Screen
-        options={{
-          title: "My Route",
-          headerRight: () => (
-            <View style={{ flexDirection: "row", gap: 4, paddingRight: 4 }}>
-              {run && (
-                <>
-                  <Pressable
-                    onPress={() => router.push(`/(driver)/route/map?runId=${run.id}` as any)}
-                    style={{ padding: 4 }}
-                    accessibilityLabel="Map view"
-                  >
-                    <Ionicons name="map-outline" size={22} color={ios.brand} />
-                  </Pressable>
-                  <Pressable
-                    onPress={() => router.push(`/(driver)/route/messages?runId=${run.id}` as any)}
-                    style={{ padding: 4 }}
-                    accessibilityLabel="Messages"
-                  >
-                    <Ionicons name="chatbubble-outline" size={22} color={ios.brand} />
-                  </Pressable>
-                  <Pressable
-                    onPress={() => router.push(`/(driver)/route/packing-list?runId=${run.id}`)}
-                    style={{ padding: 4 }}
-                    accessibilityLabel="Packing list"
-                  >
-                    <Ionicons name="list-outline" size={24} color={ios.brand} />
-                  </Pressable>
-                </>
-              )}
-              <Pressable
-                onPress={() => router.push("/(driver)/route/new-run" as any)}
-                style={{ padding: 4 }}
-                accessibilityLabel="Schedule a run"
-              >
-                <Ionicons name="add-circle-outline" size={26} color={ios.brand} />
-              </Pressable>
-            </View>
-          ),
-        }}
-      />
-      {/* ─── Mileage Modal ─────────────────────────────────────────────── */}
-      <Modal
-        visible={mileageModalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setMileageModalVisible(false)}
-      >
-        <KeyboardAvoidingView
-          behavior={Platform.OS === "ios" ? "padding" : "height"}
-          style={mileageStyles.overlay}
-        >
-          <View style={mileageStyles.sheet}>
-            <Text style={mileageStyles.title}>
-              {mileageMode === "end" ? "Update Mileage" : "Log Mileage"}
-            </Text>
-
-            {mileageMode === "start" && (
-              <View style={mileageStyles.field}>
-                <Text style={mileageStyles.fieldLabel}>Start Odometer (mi)</Text>
-                <TextInput
-                  style={mileageStyles.input}
-                  value={startOdoInput}
-                  onChangeText={setStartOdoInput}
-                  keyboardType="numeric"
-                  placeholder="e.g. 45200"
-                  placeholderTextColor={ios.label2}
-                  autoFocus
-                  returnKeyType="next"
-                />
-              </View>
-            )}
-
-            {mileageMode === "end" && (
-              <View style={mileageStyles.field}>
-                <Text style={mileageStyles.fieldLabel}>Start Odometer (mi)</Text>
-                <TextInput
-                  style={[mileageStyles.input, mileageStyles.inputDisabled]}
-                  value={startOdoInput}
-                  editable={false}
-                  keyboardType="numeric"
-                  placeholderTextColor={ios.label2}
-                />
-              </View>
-            )}
-
-            <View style={mileageStyles.field}>
-              <Text style={mileageStyles.fieldLabel}>
-                End Odometer (mi){mileageMode === "start" ? " — optional if still driving" : ""}
-              </Text>
-              <TextInput
-                style={mileageStyles.input}
-                value={endOdoInput}
-                onChangeText={setEndOdoInput}
-                keyboardType="numeric"
-                placeholder="e.g. 45348"
-                placeholderTextColor={ios.label2}
-                autoFocus={mileageMode === "end"}
-                returnKeyType="done"
-                onSubmitEditing={handleMileageSave}
-              />
-            </View>
-
-            <View style={mileageStyles.actions}>
-              <Pressable
-                style={mileageStyles.cancelBtn}
-                onPress={() => setMileageModalVisible(false)}
-              >
-                <Text style={mileageStyles.cancelBtnText}>Cancel</Text>
-              </Pressable>
-              <Pressable style={mileageStyles.saveBtn} onPress={handleMileageSave}>
-                <Text style={mileageStyles.saveBtnText}>Save</Text>
-              </Pressable>
-            </View>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
-
-      <View style={styles.container}>
-        {/* Route header card */}
-        <View style={styles.headerCard}>
-          <Text style={styles.todayLabel}>{todayLabel}</Text>
-          <View style={styles.headerTop}>
-            <Text style={styles.routeName}>{run.route?.name ?? "My Route"}</Text>
-            <StatusBadge
-              status={
-                run.status === "IN_PROGRESS"
-                  ? "IN_PROGRESS"
-                  : run.status === "COMPLETED"
-                    ? "COMPLETED"
-                    : "PENDING"
-              }
-            />
-          </View>
-
-          {/* Stats row */}
-          <View style={styles.statsRow}>
-            <View style={styles.statPill}>
-              <Ionicons name="location-outline" size={14} color={ios.brand} />
-              <Text style={styles.statText}>{totalStops} stops</Text>
-            </View>
-            <View style={styles.statPill}>
-              <Ionicons name="cube-outline" size={14} color={ios.label2} />
-              <Text style={styles.statText}>{totalItemCount} items</Text>
-            </View>
-            {pendingOrderCount > 0 && (
-              <View style={[styles.statPill, styles.statPillWarning]}>
-                <Ionicons name="alert-circle-outline" size={14} color={ios.system.orange} />
-                <Text style={[styles.statText, { color: ios.system.orange }]}>
-                  {pendingOrderCount} to confirm
-                </Text>
-              </View>
-            )}
-            {atRiskCount > 0 && (
-              <View style={[styles.statPill, styles.statPillDanger]}>
-                <Ionicons name="time-outline" size={14} color="#ef4444" />
-                <Text style={[styles.statText, { color: "#ef4444" }]}>
-                  {atRiskCount} at risk
-                </Text>
-              </View>
-            )}
-          </View>
-
-          <View style={styles.progressSection}>
-            <View style={styles.progressLabelRow}>
-              <Text style={styles.progressLabel}>Progress</Text>
-              <Text style={styles.progressValue}>
-                {completedCount} of {totalStops} stops
-              </Text>
-            </View>
-            <ProgressBar completed={completedCount} total={totalStops} />
-          </View>
-        </View>
-
-        {/* Stop list */}
-        <ScrollView
-          style={styles.list}
-          contentContainerStyle={styles.listContent}
-          showsVerticalScrollIndicator={false}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-        >
-          {/* Before You Leave — shown for scheduled (not yet started) runs */}
-          {!hasStarted && !allDone && (
-            <View style={{ backgroundColor: ios.brandWash, borderRadius: 12, padding: 16, borderWidth: 1, borderColor: ios.brandWash ?? ios.brand + "33", gap: 12, marginBottom: 4 }}>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                <Ionicons name="clipboard-outline" size={18} color={ios.brand} />
-                <Text style={{ fontSize: 14, fontFamily: "Inter_700Bold", color: ios.brand }}>Before You Leave</Text>
-              </View>
-              <View style={{ flexDirection: "row", gap: 10 }}>
-                <Pressable
-                  style={{ flex: 1, backgroundColor: "#fff", borderRadius: 10, padding: 14, alignItems: "center", gap: 6, borderWidth: 1, borderColor: ios.brandWash ?? "#dbeafe" }}
-                  onPress={() => router.push(`/(driver)/route/packing-list?runId=${run.id}` as any)}
-                  accessibilityRole="button"
-                  accessibilityLabel="View packing list"
-                >
-                  <Ionicons name="list-outline" size={24} color={ios.brand} />
-                  <Text style={{ fontSize: 13, fontFamily: "Inter_600SemiBold", color: ios.label, textAlign: "center" }}>Packing List</Text>
-                  <Text style={{ fontSize: 11, fontFamily: "Inter_400Regular", color: ios.label2, textAlign: "center" }}>{totalItemCount} items</Text>
-                </Pressable>
-                <Pressable
-                  style={{ flex: 1, backgroundColor: "#fff", borderRadius: 10, padding: 14, alignItems: "center", gap: 6, borderWidth: 1, borderColor: ios.brandWash ?? "#dbeafe" }}
-                  onPress={() => router.push(`/(driver)/route/map?runId=${run.id}` as any)}
-                  accessibilityRole="button"
-                  accessibilityLabel="View route map"
-                >
-                  <Ionicons name="map-outline" size={24} color={ios.brand} />
-                  <Text style={{ fontSize: 13, fontFamily: "Inter_600SemiBold", color: ios.label, textAlign: "center" }}>Route Map</Text>
-                  <Text style={{ fontSize: 11, fontFamily: "Inter_400Regular", color: ios.label2, textAlign: "center" }}>{totalStops} stops</Text>
-                </Pressable>
-              </View>
-            </View>
-          )}
-
-          {/* Pending confirmation widget — derived from run stops, zero extra API calls */}
-          {(() => {
-            const pendingRunOrders = (run?.stops ?? [])
-              .filter((s: any) => s.status !== "COMPLETED" && s.status !== "SKIPPED")
-              .flatMap((s: any) =>
-                (s.orders ?? [])
-                  .filter((o: any) => o.status === "PENDING")
-                  .map((o: any) => ({ ...o, customerName: s.customer?.businessName ?? "Customer" }))
-              );
-            if (pendingRunOrders.length === 0) return null;
-            return (
-              <View style={dashStyles.runPendingCard}>
-                <View style={dashStyles.sectionLabelRow}>
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                    <Ionicons name="alert-circle-outline" size={15} color={ios.system.orange} />
-                    <Text style={[dashStyles.runPendingTitle]}>Pending Confirmation</Text>
-                  </View>
-                  <View style={dashStyles.pendingBadge}>
-                    <Text style={dashStyles.pendingBadgeText}>{pendingRunOrders.length}</Text>
-                  </View>
-                </View>
-                {pendingRunOrders.map((order: any, idx: number) => (
-                  <View key={order.id}>
-                    {idx > 0 && <View style={dashStyles.pendingDivider} />}
-                    <View style={dashStyles.pendingRow}>
-                      <Pressable
-                        style={{ flex: 1 }}
-                        onPress={() => router.push(`/(driver)/orders/${order.id}` as any)}
-                        accessibilityRole="button"
-                        accessibilityLabel={`View order for ${order.customerName}`}
-                      >
-                        <Text style={dashStyles.pendingOrderNum}>{order.customerName}</Text>
-                        <Text style={dashStyles.pendingItemCount}>
-                          {order.orderNumber ?? `ORD-${order.id.slice(-5).toUpperCase()}`} · {order.lineItems?.length ?? 0} item{(order.lineItems?.length ?? 0) !== 1 ? "s" : ""}
-                        </Text>
-                        <Text style={dashStyles.pendingTapHint}>Tap to view →</Text>
-                      </Pressable>
-                      <Pressable
-                        style={[dashStyles.confirmBtn, isConfirming && { opacity: 0.6 }]}
-                        onPress={() => confirmOrder(order.id)}
-                        disabled={isConfirming}
-                        accessibilityRole="button"
-                        accessibilityLabel={`Confirm order for ${order.customerName}`}
-                      >
-                        <Ionicons name="checkmark" size={14} color="#fff" />
-                        <Text style={dashStyles.confirmBtnText}>Confirm</Text>
-                      </Pressable>
-                    </View>
-                  </View>
-                ))}
-              </View>
-            );
-          })()}
-
-          <Text style={styles.stopsLabel}>Stops</Text>
-          {stops.map((stop) => (
-            <StopRow
-              key={stop.id}
-              stop={stop}
-              runId={run.id}
-              eta={etaMap.get(stop.id)}
-              etaStatus={etaStatusMap.get(stop.id)}
-            />
-          ))}
-        </ScrollView>
-
-        {/* Primary action */}
-        <View style={styles.footer}>
-          {/* Mileage row — shown when route is in progress or completed */}
-          {(run.status === "IN_PROGRESS" || allDone) && (
-            <View style={styles.mileageRow}>
-              <Pressable
-                style={styles.mileageBtn}
-                onPress={handleLogMileage}
-                accessibilityRole="button"
-                accessibilityLabel="Log mileage"
-              >
-                <Ionicons name="speedometer-outline" size={18} color={ios.brand} />
-                <Text style={styles.mileageBtnText}>
-                  {mileageEntry ? "Update Mileage" : "Log Mileage"}
-                </Text>
-              </Pressable>
-              {loggedMiles != null && (
-                <View style={styles.mileageSummary}>
-                  <Ionicons name="car-outline" size={16} color={ios.label2} />
-                  <Text style={styles.mileageSummaryText}>
-                    {loggedMiles.toFixed(1)} mi logged
-                  </Text>
-                </View>
-              )}
-              {mileageEntry && mileageEntry.endOdometer == null && (
-                <Text style={styles.mileagePending}>Start: {mileageEntry.startOdometer}</Text>
-              )}
-            </View>
-          )}
-
-          <Pressable
-            style={[styles.primaryBtn, allDone && styles.primaryBtnDone]}
-            onPress={handlePrimaryAction}
-            disabled={allDone || isUpdating}
-            accessibilityRole="button"
-            accessibilityLabel={primaryLabel}
-          >
-            {!allDone && (
-              <Ionicons
-                name={hasStarted ? "navigate" : "play"}
-                size={22}
-                color="#fff"
-                style={{ marginRight: 10 }}
-              />
-            )}
-            {allDone && (
-              <Ionicons
-                name="checkmark-done-circle"
-                size={22}
-                color={ios.system.green}
-                style={{ marginRight: 10 }}
-              />
-            )}
-            <Text
-              style={[
-                styles.primaryBtnText,
-                allDone && { color: ios.system.green },
-              ]}
-            >
-              {primaryLabel}
-            </Text>
-          </Pressable>
-
-          {/* End Route Early */}
-          {hasStarted && !allDone && (
-            <Pressable
-              style={styles.endRouteBtn}
-              onPress={handleEndRouteEarly}
-              accessibilityRole="button"
-              accessibilityLabel="End route early"
-            >
-              <Ionicons name="stop-circle-outline" size={17} color="#ef4444" />
-              <Text style={styles.endRouteBtnText}>End Route Early</Text>
-            </Pressable>
-          )}
-        </View>
-      </View>
-    </>
-  );
-}
-
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: ios.bg,
-  },
-  headerCard: {
-    backgroundColor: "#fff",
-    paddingHorizontal: 20,
-    paddingVertical: 18,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: ios.separator,
-    gap: 12,
-  },
-  todayLabel: {
+  heroEyebrow: {
     fontSize: 12,
     fontFamily: "Inter_600SemiBold",
-    color: ios.label2,
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
+    color: "rgba(255,255,255,0.75)",
+    letterSpacing: 1.2,
   },
-  headerTop: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  routeName: {
-    fontSize: 22,
-    fontFamily: "Inter_700Bold",
-    color: ios.label,
-  },
-  statsRow: {
-    flexDirection: "row",
-    gap: 8,
-    flexWrap: "wrap",
-  },
-  statPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    backgroundColor: ios.bg,
-    borderRadius: 20,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderWidth: 1,
-    borderColor: ios.separator,
-  },
-  statPillWarning: {
-    backgroundColor: ios.system.orangeWash ?? "#fef3c7",
-    borderColor: ios.system.orange + "40",
-  },
-  statPillDanger: {
-    backgroundColor: "#fee2e2",
-    borderColor: "#fca5a5",
-  },
-  statText: {
+  heroEyebrowLow: {
     fontSize: 12,
     fontFamily: "Inter_600SemiBold",
-    color: ios.label2,
+    color: "rgba(255,255,255,0.8)",
+    letterSpacing: 1,
   },
-  progressSection: {
-    gap: 8,
-  },
-  progressLabelRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-  },
-  progressLabel: {
-    fontSize: 14,
-    fontFamily: "Inter_500Medium",
-    color: ios.label2,
-  },
-  progressValue: {
-    fontSize: 14,
-    fontFamily: "Inter_700Bold",
-    color: ios.label,
-  },
-  list: {
-    flex: 1,
-  },
-  listContent: {
-    paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 24,
-    gap: 8,
-  },
-  stopsLabel: {
-    fontSize: 12,
-    fontFamily: "Inter_600SemiBold",
-    color: ios.label2,
-    textTransform: "uppercase",
-    letterSpacing: 0.6,
-    marginBottom: 4,
-  },
-  stopRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#fff",
-    borderRadius: borderRadius.lg,
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    gap: 14,
-    minHeight: 56,
-    ...shadows.card,
-  },
-  stopRowActive: {
-    borderWidth: 1.5,
-    borderColor: ios.brand,
-  },
-  stopNumBubble: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: ios.bg,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1,
-    borderColor: ios.separator,
-  },
-  stopNumBubbleActive: {
-    backgroundColor: ios.brand,
-    borderColor: ios.brand,
-  },
-  stopNum: {
-    fontSize: 18,
-    fontFamily: "Inter_700Bold",
-    color: ios.label,
-  },
-  stopNumActive: {
-    color: "#fff",
-  },
-  stopDetails: {
-    flex: 1,
-    gap: 2,
-  },
-  stopBusiness: {
-    fontSize: 17,
-    fontFamily: "Inter_700Bold",
-    color: ios.label,
-  },
-  stopAddress: {
-    fontSize: 14,
-    fontFamily: "Inter_400Regular",
-    color: ios.label2,
-  },
-  stopItemCount: {
-    fontSize: 13,
-    fontFamily: "Inter_500Medium",
-    color: ios.label2,
-  },
-  stopWindow: {
-    fontSize: 12,
-    fontFamily: "Inter_500Medium",
-  },
-  stopWindowAny: {
-    fontSize: 12,
-    fontFamily: "Inter_400Regular",
-    color: ios.label2,
-  },
-  footer: {
-    paddingHorizontal: 16,
-    paddingBottom: 28,
-    paddingTop: 12,
-    backgroundColor: "#fff",
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: ios.separator,
-  },
-  primaryBtn: {
-    height: 56,
-    backgroundColor: ios.brand,
-    borderRadius: borderRadius.DEFAULT,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  primaryBtnDone: {
-    backgroundColor: ios.system.greenWash,
-  },
-  primaryBtnText: {
-    fontSize: 17,
+  heroTitle: {
+    fontSize: 28,
     fontFamily: "Inter_700Bold",
     color: "#fff",
-  },
-  // 3-N: mileage tracking
-  mileageRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    marginBottom: 8,
-    flexWrap: "wrap",
-  },
-  mileageBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: borderRadius.DEFAULT,
-    borderWidth: 1,
-    borderColor: ios.brandWash,
-    backgroundColor: ios.brandWash,
-  },
-  mileageBtnText: {
-    fontSize: 13,
-    fontFamily: "Inter_600SemiBold",
-    color: ios.brand,
-  },
-  mileageSummary: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-  },
-  mileageSummaryText: {
-    fontSize: 13,
-    fontFamily: "Inter_500Medium",
-    color: ios.label2,
-  },
-  mileagePending: {
-    fontSize: 12,
-    fontFamily: "Inter_400Regular",
-    color: ios.label2,
-  },
-  endRouteBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    marginTop: 10,
-    paddingVertical: 10,
-    borderRadius: borderRadius.DEFAULT,
-    borderWidth: 1,
-    borderColor: "#fca5a5",
-    backgroundColor: "#fee2e2",
-  },
-  endRouteBtnText: {
-    fontSize: 14,
-    fontFamily: "Inter_600SemiBold",
-    color: "#ef4444",
-  },
-});
-
-// ─── Mileage modal styles ─────────────────────────────────────────────────────
-const mileageStyles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.5)",
-    justifyContent: "flex-end",
-  },
-  sheet: {
-    backgroundColor: "#fff",
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 24,
-    gap: 16,
-    paddingBottom: 40,
-  },
-  title: {
-    fontSize: 18,
-    fontFamily: "Inter_700Bold",
-    color: ios.label,
-  },
-  field: {
-    gap: 6,
-  },
-  fieldLabel: {
-    fontSize: 13,
-    fontFamily: "Inter_600SemiBold",
-    color: ios.label2,
-  },
-  input: {
-    height: 48,
-    borderWidth: 1,
-    borderColor: ios.separator,
-    borderRadius: borderRadius.lg,
-    paddingHorizontal: 14,
-    fontSize: 16,
-    fontFamily: "Inter_400Regular",
-    color: ios.label,
-    backgroundColor: ios.bg,
-  },
-  inputDisabled: {
-    backgroundColor: "#f8fafc",
-    color: ios.label2,
-  },
-  actions: {
-    flexDirection: "row",
-    gap: 10,
+    letterSpacing: -0.6,
     marginTop: 4,
   },
-  cancelBtn: {
-    flex: 1,
-    height: 50,
-    borderRadius: borderRadius.DEFAULT,
-    borderWidth: 1,
-    borderColor: ios.separator,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  cancelBtnText: {
-    fontSize: 16,
-    fontFamily: "Inter_600SemiBold",
-    color: ios.label2,
-  },
-  saveBtn: {
-    flex: 2,
-    height: 50,
-    backgroundColor: ios.brand,
-    borderRadius: borderRadius.DEFAULT,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  saveBtnText: {
-    fontSize: 16,
+  heroTitleLg: {
+    fontSize: 22,
     fontFamily: "Inter_700Bold",
     color: "#fff",
+    letterSpacing: -0.4,
+    marginTop: 10,
   },
-});
-
-// ─── Active-run pending confirmation widget styles ────────────────────────────
-const dashStyles = StyleSheet.create({
-  sectionLabelRow: {
+  heroSub: {
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    color: "rgba(255,255,255,0.85)",
+    marginTop: 2,
+  },
+  heroActions: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 16,
+  },
+  heroBtnFilled: {
+    backgroundColor: "#fff",
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 12,
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
+    gap: 6,
   },
-  pendingBadge: {
-    backgroundColor: ios.system.orange,
-    borderRadius: 10,
-    minWidth: 22,
-    height: 22,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 6,
-  },
-  pendingBadgeText: {
-    fontSize: 12,
-    fontFamily: "Inter_700Bold",
-    color: "#fff",
-  },
-  pendingRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 16,
-    paddingVertical: 13,
-    gap: 12,
-  },
-  pendingDivider: {
-    height: StyleSheet.hairlineWidth,
-    backgroundColor: ios.separator,
-    marginHorizontal: 16,
-  },
-  pendingOrderNum: {
+  heroBtnFilledText: {
+    color: ios.brandInk,
     fontSize: 15,
-    fontFamily: "Inter_700Bold",
-    color: ios.label,
+    fontFamily: "Inter_600SemiBold",
   },
-  pendingItemCount: {
+  heroBtnGhost: {
+    backgroundColor: "rgba(255,255,255,0.18)",
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 12,
+  },
+  heroBtnGhostText: {
+    color: "#fff",
+    fontSize: 15,
+    fontFamily: "Inter_600SemiBold",
+  },
+  heroBtnIcon: {
+    width: 44,
+    height: 40,
+    backgroundColor: "rgba(255,255,255,0.18)",
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  heroNumBadge: {
+    width: 26,
+    height: 26,
+    borderRadius: 999,
+    backgroundColor: "rgba(255,255,255,0.22)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  heroNumText: {
+    color: "#fff",
+    fontSize: 13,
+    fontFamily: "Inter_700Bold",
+  },
+  progressRow: {
+    marginTop: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  progressText: {
     fontSize: 13,
     fontFamily: "Inter_400Regular",
     color: ios.label2,
-    marginTop: 2,
+    fontVariant: ["tabular-nums"],
   },
-  pendingTapHint: {
-    fontSize: 11,
-    fontFamily: "Inter_500Medium",
-    color: ios.brand,
-    marginTop: 3,
-  },
-  confirmBtn: {
+  sectionHeader: {
     flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    backgroundColor: ios.system.green,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    justifyContent: "space-between",
+    alignItems: "baseline",
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 8,
   },
-  confirmBtnText: {
-    fontSize: 13,
+  sectionTitle: {
+    fontSize: 17,
     fontFamily: "Inter_700Bold",
-    color: "#fff",
+    color: ios.label,
+    letterSpacing: -0.3,
   },
-  runPendingCard: {
-    backgroundColor: "#fff",
-    borderRadius: 12,
-    padding: 14,
-    gap: 10,
-    borderWidth: 1,
-    borderColor: ios.system.orange + "40",
-    marginBottom: 4,
+  linkText: {
+    fontSize: 15,
+    fontFamily: "Inter_400Regular",
+    color: ios.brand,
   },
-  runPendingTitle: {
-    fontSize: 13,
-    fontFamily: "Inter_700Bold",
-    color: ios.system.orange,
-    textTransform: "uppercase",
-    letterSpacing: 0.4,
-  },
+  linkDot: { color: ios.label3 },
 });

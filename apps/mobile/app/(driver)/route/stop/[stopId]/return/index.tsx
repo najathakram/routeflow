@@ -1,514 +1,227 @@
-import {
-  ActivityIndicator,
-  Alert,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
-import { useEffect, useRef, useState } from "react";
-import { router, Stack, useLocalSearchParams } from "expo-router";
+import { useState } from "react";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
-import { ios, borderRadius, shadows } from "@routeflow/ui/tokens";
-import { useRouteRun } from "../../../../../../lib/api/routes";
+import { useRouter } from "expo-router";
+import { ios } from "@routeflow/ui/tokens";
 import {
-  useCreateReturn,
-  type ReturnReason,
-  type CreateReturnItemDto,
-} from "../../../../../../lib/api/returns";
-import { PhotoCapture } from "../../../../../../components/PhotoCapture";
+  ListGroup,
+  NavAction,
+  NavBackButton,
+  NavBar,
+} from "@routeflow/ui/mobile/ios";
 
-const REASONS: { key: ReturnReason; label: string; icon: string }[] = [
-  { key: "DAMAGED",          label: "Damaged",        icon: "alert-circle-outline" },
-  { key: "WRONG_ITEM",       label: "Wrong Item",     icon: "swap-horizontal-outline" },
-  { key: "CUSTOMER_REFUSED", label: "Refused",        icon: "close-circle-outline" },
-  { key: "QUALITY_ISSUE",    label: "Quality Issue",  icon: "thumbs-down-outline" },
-  { key: "EXCESS_ORDER",     label: "Excess",         icon: "layers-outline" },
+const RETURNED = [
+  { name: "Sourdough Loaf", qty: 2, reason: "Damaged in transit", amt: "$13.60" },
+  { name: "Butter (500g)", qty: 1, reason: "Wrong SKU", amt: "$9.20" },
 ];
 
-interface ReturnLineItem {
-  itemId: string;       // original order item id
-  productId: string;
-  name: string;
-  orderedQty: number;
-  returnQty: string;    // string for input
-  reason: ReturnReason;
-  selected: boolean;
-}
+const REASONS = ["Damaged", "Expired", "Wrong SKU", "Short-dated", "Customer refused", "Quality"];
 
-export default function DriverReturnScreen() {
-  const { stopId, runId } = useLocalSearchParams<{ stopId: string; runId: string }>();
-  const { data: run } = useRouteRun(runId ?? "");
-  const { mutate: createReturn, isPending } = useCreateReturn();
-
-  const stop = run?.stops?.find((s) => s.id === stopId);
-  const allItems = (stop?.orders ?? []).flatMap((o) =>
-    (o.lineItems ?? []).map((i) => ({
-      itemId: i.id,
-      productId: i.productId,
-      name: i.product?.name ?? i.productId,
-      orderedQty: i.qty,
-      orderId: o.id,
-    })),
-  );
-
-  const [globalReason, setGlobalReason] = useState<ReturnReason>("DAMAGED");
-  const [notes, setNotes] = useState("");
-  const [returnPhotos, setReturnPhotos] = useState<string[]>([]);
-  const [lines, setLines] = useState<ReturnLineItem[]>([]);
-  const linesInitialized = useRef(false);
-
-  useEffect(() => {
-    if (!linesInitialized.current && allItems.length > 0) {
-      linesInitialized.current = true;
-      setLines(
-        allItems.map((i) => ({
-          itemId: i.itemId,
-          productId: i.productId,
-          name: i.name,
-          orderedQty: i.orderedQty,
-          returnQty: "",
-          reason: "DAMAGED",
-          selected: false,
-        })),
-      );
-    }
-  }, [allItems]);
-
-  const toggleLine = (itemId: string) =>
-    setLines((prev) =>
-      prev.map((l) =>
-        l.itemId === itemId
-          ? { ...l, selected: !l.selected, returnQty: l.selected ? "" : String(l.orderedQty) }
-          : l,
-      ),
-    );
-
-  const updateQty = (itemId: string, qty: string) =>
-    setLines((prev) => prev.map((l) => (l.itemId === itemId ? { ...l, returnQty: qty } : l)));
-
-  const updateReason = (itemId: string, reason: ReturnReason) =>
-    setLines((prev) => prev.map((l) => (l.itemId === itemId ? { ...l, reason } : l)));
-
-  const selectedLines = lines.filter((l) => l.selected);
-  const isValid = selectedLines.length > 0 && selectedLines.every((l) => {
-    const n = parseInt(l.returnQty, 10);
-    return !isNaN(n) && n > 0 && n <= l.orderedQty;
-  });
-
-  const handleSubmit = () => {
-    if (!isValid || !stop) return;
-
-    // Group by orderId (each stop may have multiple orders; returns are per-order)
-    const orderId = stop.orders?.[0]?.id;
-    if (!orderId) {
-      Alert.alert("Error", "No order linked to this stop.");
-      return;
-    }
-
-    const returnItems: CreateReturnItemDto[] = selectedLines.map((l) => ({
-      productId: l.productId,
-      qty: parseInt(l.returnQty, 10),
-      reason: l.reason,
-      restock: l.reason !== "DAMAGED" && l.reason !== "QUALITY_ISSUE",
-    }));
-
-    createReturn(
-      { orderId, reason: globalReason, notes: notes || undefined, items: returnItems, photoUrls: returnPhotos.length > 0 ? returnPhotos : undefined },
-      {
-        onSuccess: () => {
-          Alert.alert("Return Logged", "The return has been recorded.", [
-            { text: "OK", onPress: () => router.back() },
-          ]);
-        },
-        onError: (err) => {
-          Alert.alert("Error", "Failed to log return.\n" + (err.message || ""));
-        },
-      },
-    );
-  };
-
-  if (!stop) {
-    return (
-      <View style={styles.centered}>
-        <Text style={styles.notFoundText}>Stop not found.</Text>
-      </View>
-    );
-  }
+export default function ReturnScreen() {
+  const router = useRouter();
+  const [activeReason, setActiveReason] = useState<string | null>(null);
 
   return (
-    <>
-      <Stack.Screen
-        options={{
-          title: "Log Return",
-          headerBackTitle: "Stop",
-        }}
+    <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
+      <NavBar
+        inlineTitle="Return & credit"
+        leading={<NavBackButton label="Stop" onPress={() => router.back()} />}
+        trailing={<NavAction label="Issue" bold />}
       />
-      <View style={styles.container}>
-        <ScrollView
-          contentContainerStyle={styles.scroll}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-        >
-          {/* Customer */}
-          <View style={styles.customerCard}>
-            <Ionicons name="business-outline" size={18} color={ios.label2} />
-            <View>
-              <Text style={styles.customerName}>{stop.customer?.businessName ?? "Customer"}</Text>
-              <Text style={styles.customerSub}>Stop {stop.stopNumber}</Text>
-            </View>
+
+      <ScrollView showsVerticalScrollIndicator={false}>
+        <View style={styles.header}>
+          <View style={styles.iconBlock}>
+            <Ionicons name="arrow-undo-outline" size={20} color={ios.system.red} />
           </View>
-
-          {/* Overall reason */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Return Reason</Text>
-            <View style={styles.reasonGrid}>
-              {REASONS.map(({ key, label, icon }) => (
-                <Pressable
-                  key={key}
-                  style={[styles.reasonBtn, globalReason === key && styles.reasonBtnActive]}
-                  onPress={() => {
-                    setGlobalReason(key);
-                    setLines((prev) => prev.map((l) => ({ ...l, reason: key })));
-                  }}
-                >
-                  <Ionicons
-                    name={icon as any}
-                    size={18}
-                    color={globalReason === key ? ios.brand : ios.label2}
-                  />
-                  <Text style={[styles.reasonBtnText, globalReason === key && styles.reasonBtnTextActive]}>
-                    {label}
-                  </Text>
-                </Pressable>
-              ))}
-            </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.custName}>Harbor Café</Text>
+            <Text style={styles.custSub}>Invoice #1042 · $184 originally</Text>
           </View>
+        </View>
 
-          {/* Items */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Items to Return</Text>
-            {lines.length === 0 ? (
-              <Text style={styles.emptyText}>No items in this stop's order.</Text>
-            ) : (
-              lines.map((line) => (
-                <View key={line.itemId} style={styles.itemCard}>
-                  <Pressable style={styles.itemHeader} onPress={() => toggleLine(line.itemId)}>
-                    <View
-                      style={[styles.checkbox, line.selected && styles.checkboxChecked]}
-                    >
-                      {line.selected && <Ionicons name="checkmark" size={14} color="#fff" />}
-                    </View>
-                    <View style={styles.itemInfo}>
-                      <Text style={styles.itemName}>{line.name}</Text>
-                      <Text style={styles.itemMeta}>Ordered: {line.orderedQty}</Text>
-                    </View>
-                  </Pressable>
-
-                  {line.selected && (
-                    <View style={styles.itemDetail}>
-                      <View style={styles.qtyRow}>
-                        <Text style={styles.qtyLabel}>Return qty:</Text>
-                        <TextInput
-                          style={styles.qtyInput}
-                          value={line.returnQty}
-                          onChangeText={(v) => updateQty(line.itemId, v)}
-                          keyboardType="number-pad"
-                          placeholder="0"
-                          maxLength={3}
-                        />
-                        <Text style={styles.qtyMax}>/ {line.orderedQty}</Text>
-                      </View>
-                      <View style={styles.itemReasonRow}>
-                        {REASONS.map(({ key, label }) => (
-                          <Pressable
-                            key={key}
-                            style={[
-                              styles.smallReasonBtn,
-                              line.reason === key && styles.smallReasonBtnActive,
-                            ]}
-                            onPress={() => updateReason(line.itemId, key)}
-                          >
-                            <Text
-                              style={[
-                                styles.smallReasonText,
-                                line.reason === key && styles.smallReasonTextActive,
-                              ]}
-                            >
-                              {label}
-                            </Text>
-                          </Pressable>
-                        ))}
-                      </View>
-                    </View>
-                  )}
+        <SectionRow title="Returned items" action="+ Add" />
+        <ListGroup>
+          {RETURNED.map((r) => (
+            <View key={r.name} style={styles.returnRow}>
+              <View style={styles.returnIcon}>
+                <Ionicons name="trash-outline" size={16} color={ios.system.red} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <View style={styles.returnTopRow}>
+                  <Text style={styles.returnName}>{r.name}</Text>
+                  <Text style={styles.returnAmt}>−{r.amt}</Text>
                 </View>
-              ))
-            )}
-          </View>
+                <Text style={styles.returnSub}>
+                  × {r.qty} · {r.reason}
+                </Text>
+              </View>
+            </View>
+          ))}
+        </ListGroup>
 
-          {/* Photo Evidence */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Photo Evidence (optional)</Text>
-            <PhotoCapture
-              photos={returnPhotos}
-              onAdd={(uri) => setReturnPhotos((prev) => [...prev, uri])}
-              onRemove={(uri) => setReturnPhotos((prev) => prev.filter((p) => p !== uri))}
-              maxPhotos={3}
-              label="Add Photo"
-            />
-          </View>
+        <SectionRow title="Add reason" />
+        <View style={styles.reasons}>
+          {REASONS.map((r) => {
+            const active = r === activeReason;
+            return (
+              <Pressable
+                key={r}
+                onPress={() => setActiveReason(r)}
+                style={[styles.reasonChip, active && styles.reasonChipActive]}
+              >
+                <Text style={[styles.reasonText, active && styles.reasonTextActive]}>{r}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
 
-          {/* Notes */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Notes (optional)</Text>
-            <TextInput
-              style={styles.notesInput}
-              placeholder="Additional notes about this return…"
-              placeholderTextColor={ios.label2}
-              value={notes}
-              onChangeText={setNotes}
-              multiline
-              numberOfLines={3}
-              textAlignVertical="top"
-            />
-          </View>
-        </ScrollView>
-
-        <View style={styles.footer}>
-          <Text style={styles.selectedCount}>
-            {selectedLines.length} item{selectedLines.length !== 1 ? "s" : ""} selected
-          </Text>
-          <Pressable
-            style={[styles.submitBtn, (!isValid || isPending) && styles.submitBtnDisabled]}
-            onPress={handleSubmit}
-            disabled={!isValid || isPending}
+        <View style={{ padding: 16, paddingTop: 20 }}>
+          <LinearGradient
+            colors={[ios.brandGradient[0]!, ios.brandGradient[1]!, ios.brandGradient[2]!]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.creditCard}
           >
-            {isPending ? (
-              <ActivityIndicator size="small" color="#fff" style={{ marginRight: 8 }} />
-            ) : (
-              <Ionicons name="return-down-back" size={22} color="#fff" style={{ marginRight: 8 }} />
-            )}
-            <Text style={styles.submitBtnText}>
-              {isPending ? "Logging…" : "Log Return"}
-            </Text>
+            <Text style={styles.creditEyebrow}>CREDIT NOTE CN-0882</Text>
+            <Text style={styles.creditValue}>−$22.80</Text>
+            <Text style={styles.creditSub}>Applied to next invoice · Harbor Café</Text>
+          </LinearGradient>
+        </View>
+
+        <View style={{ padding: 16, gap: 8 }}>
+          {/* TODO: POST /returns + POST /credit-notes */}
+          <Pressable style={styles.primaryBtn}>
+            <Text style={styles.primaryBtnText}>Issue credit & email</Text>
+          </Pressable>
+          <Pressable style={styles.secondaryBtn}>
+            <Text style={styles.secondaryBtnText}>Save as draft</Text>
           </Pressable>
         </View>
-      </View>
-    </>
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+function SectionRow({ title, action }: { title: string; action?: string }) {
+  return (
+    <View style={styles.sectionRow}>
+      <Text style={styles.sectionTitle}>{title}</Text>
+      {action ? <Text style={styles.sectionLink}>{action}</Text> : null}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: ios.bg },
-  centered: { flex: 1, alignItems: "center", justifyContent: "center" },
-  notFoundText: { fontSize: 16, fontFamily: "Inter_400Regular", color: ios.label2 },
-  scroll: {
+  safe: { flex: 1, backgroundColor: ios.bgElev },
+  header: {
+    backgroundColor: ios.bgElev,
     paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 24,
-    gap: 12,
-  },
-  customerCard: {
+    paddingVertical: 14,
     flexDirection: "row",
+    gap: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: ios.separator,
     alignItems: "center",
+  },
+  iconBlock: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: ios.system.redWash,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  custName: { fontSize: 18, fontFamily: "Inter_700Bold", color: ios.label },
+  custSub: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2 },
+  sectionRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "baseline",
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 8,
+  },
+  sectionTitle: { fontSize: 17, fontFamily: "Inter_700Bold", color: ios.label, letterSpacing: -0.3 },
+  sectionLink: { fontSize: 15, fontFamily: "Inter_400Regular", color: ios.brand },
+  returnRow: {
+    flexDirection: "row",
     gap: 12,
-    backgroundColor: "#fff",
-    borderRadius: borderRadius.lg,
-    padding: 14,
-    ...shadows.card,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    backgroundColor: ios.bgElev,
   },
-  customerName: {
-    fontSize: 16,
-    fontFamily: "Inter_700Bold",
-    color: ios.label,
+  returnIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: 7,
+    backgroundColor: ios.system.redWash,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  customerSub: {
-    fontSize: 13,
-    fontFamily: "Inter_400Regular",
-    color: ios.label2,
+  returnTopRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "baseline",
   },
-  section: {
-    backgroundColor: "#fff",
-    borderRadius: borderRadius.lg,
-    padding: 16,
-    gap: 12,
-    ...shadows.card,
-  },
-  sectionTitle: {
-    fontSize: 13,
+  returnName: { fontSize: 16, fontFamily: "Inter_600SemiBold", color: ios.label },
+  returnAmt: {
+    fontSize: 15,
     fontFamily: "Inter_600SemiBold",
-    color: ios.label2,
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
+    color: ios.label,
+    fontVariant: ["tabular-nums"],
   },
-  reasonGrid: {
+  returnSub: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
+  reasons: {
+    paddingHorizontal: 16,
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 8,
   },
-  reasonBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: borderRadius.full,
-    borderWidth: 1.5,
-    borderColor: ios.separator,
-    backgroundColor: ios.bg,
+  reasonChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: ios.fill3,
   },
-  reasonBtnActive: {
-    borderColor: ios.brand,
-    backgroundColor: ios.brandWash,
-  },
-  reasonBtnText: {
-    fontSize: 13,
-    fontFamily: "Inter_600SemiBold",
-    color: ios.label2,
-  },
-  reasonBtnTextActive: { color: ios.brand },
-  emptyText: {
-    fontSize: 14,
-    fontFamily: "Inter_400Regular",
-    color: ios.label2,
-    textAlign: "center",
-    paddingVertical: 8,
-  },
-  itemCard: {
-    borderWidth: 1,
-    borderColor: ios.separator,
-    borderRadius: borderRadius.DEFAULT,
-    overflow: "hidden",
-  },
-  itemHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    padding: 12,
-  },
-  checkbox: {
-    width: 24,
-    height: 24,
-    borderRadius: 6,
-    borderWidth: 2,
-    borderColor: ios.separator,
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
-  },
-  checkboxChecked: {
-    backgroundColor: ios.brand,
-    borderColor: ios.brand,
-  },
-  itemInfo: { flex: 1, gap: 2 },
-  itemName: {
-    fontSize: 15,
-    fontFamily: "Inter_600SemiBold",
-    color: ios.label,
-  },
-  itemMeta: {
+  reasonChipActive: { backgroundColor: ios.brand },
+  reasonText: { fontSize: 14, fontFamily: "Inter_500Medium", color: ios.label },
+  reasonTextActive: { color: "#fff" },
+  creditCard: { borderRadius: 20, padding: 16 },
+  creditEyebrow: {
     fontSize: 12,
-    fontFamily: "Inter_400Regular",
-    color: ios.label2,
-  },
-  itemDetail: {
-    borderTopWidth: 1,
-    borderTopColor: ios.separator,
-    backgroundColor: ios.bg,
-    padding: 12,
-    gap: 10,
-  },
-  qtyRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
-  qtyLabel: {
-    fontSize: 14,
-    fontFamily: "Inter_500Medium",
-    color: ios.label2,
-  },
-  qtyInput: {
-    width: 64,
-    height: 44,
-    borderWidth: 1.5,
-    borderColor: ios.brand,
-    borderRadius: borderRadius.DEFAULT,
-    textAlign: "center",
-    fontSize: 20,
     fontFamily: "Inter_700Bold",
-    color: ios.label,
-    backgroundColor: "#fff",
+    color: "rgba(255,255,255,0.8)",
+    letterSpacing: 1,
   },
-  qtyMax: {
-    fontSize: 14,
-    fontFamily: "Inter_400Regular",
-    color: ios.label2,
-  },
-  itemReasonRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 6,
-  },
-  smallReasonBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: borderRadius.full,
-    borderWidth: 1,
-    borderColor: ios.separator,
-  },
-  smallReasonBtnActive: {
-    borderColor: ios.brand,
-    backgroundColor: ios.brandWash,
-  },
-  smallReasonText: {
-    fontSize: 12,
-    fontFamily: "Inter_600SemiBold",
-    color: ios.label2,
-  },
-  smallReasonTextActive: { color: ios.brand },
-  notesInput: {
-    borderWidth: 1,
-    borderColor: ios.separator,
-    borderRadius: borderRadius.DEFAULT,
-    padding: 12,
-    fontSize: 15,
-    fontFamily: "Inter_400Regular",
-    color: ios.label,
-    minHeight: 80,
-    backgroundColor: ios.bg,
-    textAlignVertical: "top",
-  },
-  footer: {
-    paddingHorizontal: 16,
-    paddingBottom: 28,
-    paddingTop: 12,
-    backgroundColor: "#fff",
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: ios.separator,
-    gap: 8,
-  },
-  selectedCount: {
-    fontSize: 13,
-    fontFamily: "Inter_500Medium",
-    color: ios.label2,
-    textAlign: "center",
-  },
-  submitBtn: {
-    height: 56,
-    backgroundColor: ios.system.red,
-    borderRadius: borderRadius.DEFAULT,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  submitBtnDisabled: { opacity: 0.4 },
-  submitBtnText: {
-    fontSize: 17,
+  creditValue: {
+    fontSize: 38,
     fontFamily: "Inter_700Bold",
     color: "#fff",
+    letterSpacing: -1,
+    marginTop: 6,
+    fontVariant: ["tabular-nums"],
   },
+  creditSub: {
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    color: "rgba(255,255,255,0.85)",
+    marginTop: 2,
+  },
+  primaryBtn: {
+    backgroundColor: ios.brand,
+    borderRadius: 14,
+    paddingVertical: 15,
+    alignItems: "center",
+  },
+  primaryBtnText: { color: "#fff", fontSize: 17, fontFamily: "Inter_600SemiBold" },
+  secondaryBtn: {
+    backgroundColor: ios.fill2,
+    borderRadius: 14,
+    paddingVertical: 15,
+    alignItems: "center",
+  },
+  secondaryBtnText: { color: ios.brand, fontSize: 17, fontFamily: "Inter_600SemiBold" },
 });
