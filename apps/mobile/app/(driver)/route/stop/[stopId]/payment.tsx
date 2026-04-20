@@ -93,7 +93,7 @@ export default function PaymentScreen() {
         tint="light"
         inlineTitle="Collect payment"
         leading={<NavBackButton label="Stop" onPress={() => router.back()} />}
-        trailing={<NavAction label="Skip" />}
+        trailing={<NavAction label="Skip" onPress={() => router.back()} />}
       />
 
       <ScrollView showsVerticalScrollIndicator={false}>

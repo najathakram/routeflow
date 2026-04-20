@@ -102,9 +102,13 @@ export default function OperatorHomeScreen() {
               <Ionicons name="notifications-outline" size={17} color={ios.label} />
               {stats && stats.returnsToProcess > 0 ? <View style={styles.badge} /> : null}
             </Pressable>
-            <View style={styles.navAvatar}>
+            <Pressable
+              style={styles.navAvatar}
+              onPress={() => router.push("/(operator)/more")}
+              hitSlop={6}
+            >
               <Text style={styles.navAvatarText}>{initials}</Text>
-            </View>
+            </Pressable>
           </View>
         }
       />

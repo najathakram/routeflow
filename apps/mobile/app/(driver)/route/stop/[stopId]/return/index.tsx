@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -105,7 +106,18 @@ export default function ReturnScreen() {
       <NavBar
         inlineTitle="Return & credit"
         leading={<NavBackButton label="Stop" onPress={() => router.back()} />}
-        trailing={<NavAction label="Issue" bold />}
+        trailing={
+          <NavAction
+            label="Issue"
+            bold
+            onPress={() =>
+              Alert.alert(
+                "Issue credit coming soon",
+                "Credit-note issuance isn't wired to the API yet.",
+              )
+            }
+          />
+        }
       />
 
       <ScrollView showsVerticalScrollIndicator={false}>
@@ -189,8 +201,11 @@ export default function ReturnScreen() {
           <Pressable style={[styles.primaryBtn, styles.primaryBtnDisabled]} disabled>
             <Text style={styles.primaryBtnText}>Issue credit & email (coming soon)</Text>
           </Pressable>
-          <Pressable style={styles.secondaryBtn}>
-            <Text style={styles.secondaryBtnText}>Save as draft</Text>
+          <Pressable
+            style={[styles.secondaryBtn, styles.secondaryBtnDisabled]}
+            disabled
+          >
+            <Text style={styles.secondaryBtnText}>Save as draft (coming soon)</Text>
           </Pressable>
         </View>
       </ScrollView>
@@ -336,5 +351,6 @@ const styles = StyleSheet.create({
     paddingVertical: 15,
     alignItems: "center",
   },
+  secondaryBtnDisabled: { opacity: 0.55 },
   secondaryBtnText: { color: ios.brand, fontSize: 17, fontFamily: "Inter_600SemiBold" },
 });

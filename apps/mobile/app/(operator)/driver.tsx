@@ -78,7 +78,7 @@ export default function OperatorDriverDetailScreen() {
       <NavBar
         inlineTitle={`${name} · ${activeRouteName}`}
         leading={<NavBackButton label="Fleet" onPress={() => router.back()} />}
-        trailing={<Ionicons name="ellipsis-vertical" size={20} color={ios.brand} />}
+        trailing={null}
       />
 
       <ScrollView showsVerticalScrollIndicator={false}>

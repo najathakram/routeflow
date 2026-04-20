@@ -42,7 +42,7 @@ export default function DriverMoreScreen() {
             iconBg={ios.brandWash}
             title="Messages"
             subtitle="Dispatch & drivers"
-            onPress={() => router.push("/(driver)/messages")}
+            onPress={() => router.push("/(driver)/driver-messages")}
             chevron
           />
         </ListGroup>
@@ -52,14 +52,14 @@ export default function DriverMoreScreen() {
             icon={<Ionicons name="person-outline" size={16} color={ios.system.purpleInk} />}
             iconBg={ios.system.purpleWash}
             title="Profile"
-            onPress={() => router.push("/(driver)/profile")}
+            onPress={() => router.push("/(driver)/driver-profile")}
             chevron
           />
           <ListRow
             icon={<Ionicons name="key-outline" size={16} color={ios.gray[1]} />}
             iconBg={ios.fill3}
             title="Change password"
-            onPress={() => router.push("/(driver)/change-password")}
+            onPress={() => router.push("/(driver)/driver-change-password")}
             chevron
           />
           <ListRow

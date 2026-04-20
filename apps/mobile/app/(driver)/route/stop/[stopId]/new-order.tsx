@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -97,7 +98,18 @@ export default function NewOrderScreen() {
             onPress={() => router.back()}
           />
         }
-        trailing={<NavAction label="Save" bold />}
+        trailing={
+          <NavAction
+            label="Save"
+            bold
+            onPress={() =>
+              Alert.alert(
+                "Save order coming soon",
+                "Driver-initiated orders will post to the API once the endpoint is wired.",
+              )
+            }
+          />
+        }
       />
 
       <ScrollView showsVerticalScrollIndicator={false}>

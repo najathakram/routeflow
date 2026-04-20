@@ -52,7 +52,7 @@ export default function DriverProfileScreen() {
             icon={<Ionicons name="key-outline" size={16} color={ios.gray[1]} />}
             iconBg={ios.fill3}
             title="Change password"
-            onPress={() => router.push("/(driver)/change-password")}
+            onPress={() => router.push("/(driver)/driver-change-password")}
             chevron
           />
         </ListGroup>

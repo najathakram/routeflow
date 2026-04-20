@@ -63,7 +63,7 @@ export default function DriverLayout() {
           }}
         />
         <Tabs.Screen
-          name="more"
+          name="driver-menu"
           options={{
             title: "More",
             tabBarIcon: ({ color, size }) => (
@@ -71,10 +71,13 @@ export default function DriverLayout() {
             ),
           }}
         />
-        {/* Hidden stacks & direct screens */}
-        <Tabs.Screen name="messages" options={{ href: null }} />
-        <Tabs.Screen name="profile" options={{ href: null }} />
-        <Tabs.Screen name="change-password" options={{ href: null }} />
+        {/* Hidden stacks & direct screens. These use driver-prefixed file
+            names so they don't collide with the operator group's same-named
+            files (both groups would resolve to the same root-level URL
+            otherwise, causing cross-group navigation bugs). */}
+        <Tabs.Screen name="driver-messages" options={{ href: null }} />
+        <Tabs.Screen name="driver-profile" options={{ href: null }} />
+        <Tabs.Screen name="driver-change-password" options={{ href: null }} />
       </Tabs>
     </View>
   );

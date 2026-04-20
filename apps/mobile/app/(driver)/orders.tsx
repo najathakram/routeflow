@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -95,7 +96,19 @@ export default function OrdersScreen() {
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <NavBar
         largeTitle="Standing orders"
-        trailing={<Ionicons name="add" size={22} color={ios.brand} />}
+        trailing={
+          <Pressable
+            onPress={() =>
+              Alert.alert(
+                "Add standing order",
+                "Creating recurring orders on mobile is coming soon. You can add one from the web dashboard in the meantime.",
+              )
+            }
+            hitSlop={8}
+          >
+            <Ionicons name="add" size={22} color={ios.brand} />
+          </Pressable>
+        }
       />
 
       <ScrollView showsVerticalScrollIndicator={false}>
@@ -128,7 +141,18 @@ export default function OrdersScreen() {
               const total = templateTotal(t);
               const itemCount = t.items?.length ?? 0;
               return (
-                <Pressable key={t.id} style={styles.card}>
+                <Pressable
+                  key={t.id}
+                  style={styles.card}
+                  onPress={() =>
+                    Alert.alert(
+                      t.name,
+                      `${customerName} · ${frequencyLabel(t.daysOfWeek)}\n${itemCount} item${
+                        itemCount === 1 ? "" : "s"
+                      } · $${total.toFixed(2)}\n\nDetail editing is coming soon.`,
+                    )
+                  }
+                >
                   <View style={styles.cardHead}>
                     <View style={[styles.avatar, { backgroundColor: color }]}>
                       <Text style={styles.avatarText}>{initialsFromName(customerName)}</Text>

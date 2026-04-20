@@ -3,6 +3,7 @@ import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import {
+  Alert,
   ScrollView,
   StyleSheet,
   Text,
@@ -167,7 +168,17 @@ export default function LoginScreen() {
               </View>
               <Text style={styles.rememberText}>Remember me</Text>
             </TouchableOpacity>
-            <Text style={styles.forgotText}>Forgot?</Text>
+            <TouchableOpacity
+              onPress={() =>
+                Alert.alert(
+                  "Reset your password",
+                  "Please contact your dispatcher to reset your password. Self-serve reset is coming soon.",
+                )
+              }
+              activeOpacity={0.7}
+            >
+              <Text style={styles.forgotText}>Forgot?</Text>
+            </TouchableOpacity>
           </View>
 
           <TouchableOpacity
@@ -190,9 +201,19 @@ export default function LoginScreen() {
 
         <View style={{ flex: 1 }} />
 
-        <Text style={styles.footer}>
-          New driver? <Text style={styles.footerLink}>Get setup code</Text>
-        </Text>
+        <TouchableOpacity
+          onPress={() =>
+            Alert.alert(
+              "New to RouteFlow?",
+              "Your dispatcher can set up your account and give you your company code. Self-serve onboarding is coming soon.",
+            )
+          }
+          activeOpacity={0.7}
+        >
+          <Text style={styles.footer}>
+            New driver? <Text style={styles.footerLink}>Get setup code</Text>
+          </Text>
+        </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
   );

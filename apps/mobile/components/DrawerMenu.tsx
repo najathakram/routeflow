@@ -131,7 +131,7 @@ export function DrawerMenu({ visible, onClose }: DrawerMenuProps) {
 
           <Pressable
             style={styles.navItem}
-            onPress={() => handleNav("/(driver)/change-password")}
+            onPress={() => handleNav("/(driver)/driver-change-password")}
             accessibilityRole="button"
             accessibilityLabel="Change Password"
           >

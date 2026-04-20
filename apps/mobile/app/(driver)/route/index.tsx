@@ -157,7 +157,7 @@ function TodaysRoute({
             {run.route?.name ? <Pill variant="gray">{run.route.name}</Pill> : null}
           </View>
         }
-        trailing={<Ionicons name="ellipsis-vertical" size={20} color={ios.brand} />}
+        trailing={null}
       />
 
       <ScrollView showsVerticalScrollIndicator={false}>

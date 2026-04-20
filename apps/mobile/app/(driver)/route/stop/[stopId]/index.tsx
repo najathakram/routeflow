@@ -1,6 +1,9 @@
 import { useMemo } from "react";
 import {
   ActivityIndicator,
+  Alert,
+  Linking,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -110,6 +113,7 @@ export default function StopDetailScreen() {
 
   const totalStops = run?.stops?.length ?? 0;
   const customerName = stop.customer?.businessName ?? "Stop";
+  const phone = stop.customer?.phone?.trim();
   const address = [
     stop.customerAddress?.line1,
     stop.customerAddress?.city,
@@ -118,6 +122,36 @@ export default function StopDetailScreen() {
   ]
     .filter(Boolean)
     .join(", ");
+
+  const openTel = () => {
+    if (!phone) {
+      Alert.alert("No phone number", "This customer doesn't have a phone on file.");
+      return;
+    }
+    Linking.openURL(`tel:${phone.replace(/[^0-9+]/g, "")}`).catch(() => {});
+  };
+  const openSms = () => {
+    if (!phone) {
+      Alert.alert("No phone number", "This customer doesn't have a phone on file.");
+      return;
+    }
+    const sep = Platform.OS === "ios" ? "&" : "?";
+    Linking.openURL(`sms:${phone.replace(/[^0-9+]/g, "")}${sep}body=`).catch(() => {});
+  };
+  const openMaps = () => {
+    if (!address) {
+      Alert.alert("No address", "This stop doesn't have an address on file.");
+      return;
+    }
+    const q = encodeURIComponent(address);
+    const url =
+      Platform.OS === "ios"
+        ? `http://maps.apple.com/?q=${q}`
+        : `https://www.google.com/maps/search/?api=1&query=${q}`;
+    Linking.openURL(url).catch(() => {});
+  };
+  const comingSoon = (what: string) =>
+    Alert.alert(`${what} coming soon`, "This flow isn't wired to the API yet.");
   const items = itemsFromStop(stop);
   const itemCount = items.length;
   const dollarTotal = (stop.orders ?? []).reduce(
@@ -135,7 +169,7 @@ export default function StopDetailScreen() {
       <NavBar
         inlineTitle={`Stop ${stop.stopNumber} / ${totalStops}`}
         leading={<NavBackButton label="Route" onPress={() => router.back()} />}
-        trailing={<NavAction label="Call" />}
+        trailing={<NavAction label="Call" onPress={openTel} />}
       />
 
       <ScrollView showsVerticalScrollIndicator={false}>
@@ -163,9 +197,9 @@ export default function StopDetailScreen() {
             </View>
           </View>
           <View style={styles.quickActions}>
-            <QuickAction icon="call-outline" label="Call" />
-            <QuickAction icon="chatbubble-outline" label="Text" />
-            <QuickAction icon="location-outline" label="Directions" />
+            <QuickAction icon="call-outline" label="Call" onPress={openTel} />
+            <QuickAction icon="chatbubble-outline" label="Text" onPress={openSms} />
+            <QuickAction icon="location-outline" label="Directions" onPress={openMaps} />
           </View>
         </View>
 
@@ -210,14 +244,21 @@ export default function StopDetailScreen() {
 
         <SectionRow title="Proof of delivery" />
         <View style={styles.podRow}>
-          <PodTile icon="camera-outline" label="Photo" />
-          <PodTile icon="create-outline" label="Signature" />
-          <PodTile icon="chatbubble-outline" label="Note" />
+          <PodTile icon="camera-outline" label="Photo" onPress={() => comingSoon("Photo capture")} />
+          <PodTile
+            icon="create-outline"
+            label="Signature"
+            onPress={() => comingSoon("Signature capture")}
+          />
+          <PodTile icon="chatbubble-outline" label="Note" onPress={() => comingSoon("Driver note")} />
         </View>
 
         <View style={styles.actionsBlock}>
           <View style={styles.actionBtnRow}>
-            <SecondaryBtn label="Attempted" />
+            <SecondaryBtn
+              label="Attempted"
+              onPress={() => comingSoon("Mark as attempted")}
+            />
             <SecondaryBtn
               label="Partial return"
               onPress={() => router.push("./return")}
@@ -239,30 +280,34 @@ export default function StopDetailScreen() {
 function QuickAction({
   icon,
   label,
+  onPress,
 }: {
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
+  onPress?: () => void;
 }) {
   return (
-    <View style={styles.qa}>
+    <Pressable style={styles.qa} onPress={onPress}>
       <Ionicons name={icon} size={15} color={ios.label} />
       <Text style={styles.qaLabel}>{label}</Text>
-    </View>
+    </Pressable>
   );
 }
 
 function PodTile({
   icon,
   label,
+  onPress,
 }: {
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
+  onPress?: () => void;
 }) {
   return (
-    <View style={styles.podTile}>
+    <Pressable style={styles.podTile} onPress={onPress}>
       <Ionicons name={icon} size={22} color={ios.label2} />
       <Text style={styles.podTileLabel}>{label}</Text>
-    </View>
+    </Pressable>
   );
 }
 
