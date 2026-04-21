@@ -84,8 +84,12 @@ export class OrdersController {
   }
 
   @Patch(":id/urgent")
-  toggleUrgent(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
-    return this.ordersService.toggleUrgent(id, user);
+  toggleUrgent(
+    @Param("id") id: string,
+    @Body() body: { urgent?: boolean },
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.ordersService.toggleUrgent(id, user, body.urgent);
   }
 
   @Delete("bulk")

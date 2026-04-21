@@ -67,7 +67,6 @@ function statusActions(current: string): StatusAction[] {
     case "PENDING":
       return [
         { label: "Confirm order", toStatus: "CONFIRMED", style: "primary", icon: "checkmark-circle-outline" },
-        { label: "Quick deliver", toStatus: "DELIVERED", style: "secondary", icon: "flash-outline", confirmMessage: "Mark as delivered without going through dispatch?" },
         { label: "Cancel order", toStatus: "CANCELLED", style: "danger", icon: "close-circle-outline", confirmMessage: "Cancel this order? It cannot be undone easily." },
       ];
     case "CONFIRMED":

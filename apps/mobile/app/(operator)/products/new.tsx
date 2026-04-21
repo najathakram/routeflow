@@ -4,13 +4,14 @@ import {
   ProductForm,
   emptyProductForm,
 } from "../../../components/ProductForm";
-import { useCreateProduct } from "../../../lib/api/products";
+import { useCreateProduct, useUpdateReorderSettings } from "../../../lib/api/products";
 import { showToast } from "../../../lib/toast";
 
 export default function NewProductScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ barcode?: string }>();
   const mut = useCreateProduct();
+  const reorderMut = useUpdateReorderSettings();
 
   const initial = {
     ...emptyProductForm(),
@@ -24,8 +25,13 @@ export default function NewProductScreen() {
       submitting={mut.isPending}
       initial={initial}
       onSubmit={(payload) => {
-        mut.mutate(payload, {
+        const { reorderPoint, reorderQty, ...productDto } = payload;
+        mut.mutate(productDto, {
           onSuccess: (res) => {
+            // Save reorder settings separately (fire-and-forget, don't block nav)
+            if (reorderPoint != null || reorderQty != null) {
+              reorderMut.mutate({ productId: res.id, reorderPoint, reorderQty });
+            }
             showToast("Product created");
             router.replace(`/(operator)/products/${res.id}`);
           },

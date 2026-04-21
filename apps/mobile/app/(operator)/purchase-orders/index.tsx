@@ -156,7 +156,7 @@ function PORow({
         </Pill>
       </View>
       <View style={styles.rowFoot}>
-        <Text style={styles.total}>{fmtCurrency(po.total)}</Text>
+        <Text style={styles.total}>{fmtCurrency(po.totalAmount)}</Text>
         <Text style={styles.itemCount}>
           {po.items.length} item{po.items.length !== 1 ? "s" : ""}
         </Text>

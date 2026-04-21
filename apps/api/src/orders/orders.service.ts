@@ -643,7 +643,7 @@ export class OrdersService {
     });
   }
 
-  async toggleUrgent(id: string, user: JwtPayload) {
+  async toggleUrgent(id: string, user: JwtPayload, urgent?: boolean) {
     const order = await this.findOneOrThrow(id);
     if (user.role === UserRole.CUSTOMER) {
       const customer = await this.prisma
@@ -651,7 +651,9 @@ export class OrdersService {
         .customer.findFirst({ where: { userId: user.sub } });
       if (!customer || customer.id !== order.customerId) throw new ForbiddenException();
     }
-    return this.prisma.forTenant().order.update({ where: { id }, data: { urgent: !order.urgent } });
+    // If caller provides an explicit value, SET it; otherwise toggle (legacy web clients)
+    const newValue = urgent !== undefined ? urgent : !order.urgent;
+    return this.prisma.forTenant().order.update({ where: { id }, data: { urgent: newValue } });
   }
 
   async completeStop(runId: string, stopId: string, dto: CompleteStopDto, user: JwtPayload) {

@@ -244,8 +244,14 @@ export default function InvoiceDetailScreen() {
                   <View style={{ flex: 1 }}>
                     <Text style={styles.payMethod}>{p.method}</Text>
                     <Text style={styles.payMeta}>
-                      {new Date(p.createdAt).toLocaleDateString()}
+                      {new Date(p.paidAt ?? p.createdAt).toLocaleDateString()}
                     </Text>
+                    {p.reference ? (
+                      <Text style={styles.payMeta}>Ref: {p.reference}</Text>
+                    ) : null}
+                    {p.notes ? (
+                      <Text style={styles.payMeta}>{p.notes}</Text>
+                    ) : null}
                   </View>
                   <Text style={styles.payAmount}>+{fmtCurrency(p.amount)}</Text>
                 </View>

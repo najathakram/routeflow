@@ -222,6 +222,12 @@ export interface AdminInvoice {
     id: string;
     amount: number;
     method: string;
+    paymentNumber?: string;
+    reference?: string;
+    notes?: string;
+    status?: string;
+    bankCharges?: number;
+    paidAt: string;
     createdAt: string;
   }>;
   items?: Array<{
@@ -299,7 +305,7 @@ export interface AdminProduct {
   supplier?: { id: string; name: string };
 }
 
-export type StockStatusFilter = "ALL" | "LOW" | "OUT_OF_STOCK";
+export type StockStatusFilter = "IN_STOCK" | "LOW" | "OUT_OF_STOCK";
 
 export function useAdminProducts(params?: {
   search?: string;

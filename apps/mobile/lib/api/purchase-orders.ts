@@ -23,7 +23,7 @@ export interface PurchaseOrder {
   items: POItem[];
   expectedDate?: string;
   notes?: string;
-  total?: number;
+  totalAmount?: number;
   createdAt: string;
 }
 
@@ -75,12 +75,46 @@ export function usePurchaseOrder(id: string) {
   });
 }
 
+export interface Supplier {
+  id: string;
+  name: string;
+  contactName?: string;
+  phone?: string;
+  email?: string;
+  notes?: string;
+}
+
+export interface SupplierDto {
+  name: string;
+  contactName?: string;
+  phone?: string;
+  email?: string;
+  notes?: string;
+}
+
 export function useSuppliers() {
-  return useQuery<any[]>({
+  return useQuery<Supplier[]>({
     queryKey: ['suppliers'],
     queryFn: () =>
       apiClient.get('/inventory/suppliers').then((r) => r.data),
     staleTime: 5 * 60_000,
+  });
+}
+
+export function useCreateSupplier() {
+  const qc = useQueryClient();
+  return useMutation<Supplier, Error, SupplierDto>({
+    mutationFn: (dto) => apiClient.post('/inventory/suppliers', dto).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['suppliers'] }),
+  });
+}
+
+export function useUpdateSupplier() {
+  const qc = useQueryClient();
+  return useMutation<Supplier, Error, { id: string } & Partial<SupplierDto>>({
+    mutationFn: ({ id, ...dto }) =>
+      apiClient.patch(`/inventory/suppliers/${id}`, dto).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['suppliers'] }),
   });
 }
 
@@ -104,5 +138,29 @@ export function useCreatePO() {
     mutationFn: (dto) =>
       apiClient.post('/inventory/purchase-orders', dto).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['purchase-orders'] }),
+  });
+}
+
+export function useSendPO() {
+  const qc = useQueryClient();
+  return useMutation<PurchaseOrder, Error, string>({
+    mutationFn: (id) =>
+      apiClient.post(`/inventory/purchase-orders/${id}/send`).then((r) => r.data),
+    onSuccess: (_, id) => {
+      qc.invalidateQueries({ queryKey: ['purchase-orders'] });
+      qc.invalidateQueries({ queryKey: ['purchase-orders', id] });
+    },
+  });
+}
+
+export function useClosePO() {
+  const qc = useQueryClient();
+  return useMutation<PurchaseOrder, Error, string>({
+    mutationFn: (id) =>
+      apiClient.post(`/inventory/purchase-orders/${id}/close`).then((r) => r.data),
+    onSuccess: (_, id) => {
+      qc.invalidateQueries({ queryKey: ['purchase-orders'] });
+      qc.invalidateQueries({ queryKey: ['purchase-orders', id] });
+    },
   });
 }

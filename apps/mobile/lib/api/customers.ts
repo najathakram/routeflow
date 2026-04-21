@@ -175,6 +175,13 @@ export interface CreateCustomerDto {
   phone?: string;
   status?: string;
   creditLimit?: number;
+  pricingTier?: number;
+  currency?: string;
+  notes?: string;
+  deliveryWindowStart?: string;
+  deliveryWindowEnd?: string;
+  isTaxExempt?: boolean;
+  taxId?: string;
 }
 
 export function useCreateCustomer() {

@@ -1,5 +1,6 @@
 import {
   ActivityIndicator,
+  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -12,9 +13,12 @@ import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar, Pill } from "@routeflow/ui/mobile/ios";
 import {
   usePurchaseOrder,
+  useSendPO,
+  useClosePO,
   type POItem,
   type POStatus,
 } from "../../../lib/api/purchase-orders";
+import { showToast } from "../../../lib/toast";
 
 function statusPill(status: POStatus): {
   variant: "brand" | "green" | "orange" | "red" | "gray";
@@ -44,6 +48,8 @@ export default function PurchaseOrderDetailScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data: po, isLoading } = usePurchaseOrder(id ?? "");
+  const sendMut = useSendPO();
+  const closeMut = useClosePO();
 
   if (isLoading || !po) {
     return (
@@ -61,6 +67,39 @@ export default function PurchaseOrderDetailScreen() {
 
   const s = statusPill(po.status);
   const canReceive = po.status === "SENT" || po.status === "PARTIALLY_RECEIVED";
+  const canSend = po.status === "DRAFT";
+  const canClose = po.status === "RECEIVED";
+
+  const handleSend = () => {
+    Alert.alert("Send PO?", "This will mark the PO as Sent to the supplier.", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Send",
+        onPress: () =>
+          sendMut.mutate(id ?? "", {
+            onSuccess: () => showToast("PO sent to supplier"),
+            onError: (e: any) =>
+              Alert.alert("Error", e?.response?.data?.message ?? e?.message ?? "Try again."),
+          }),
+      },
+    ]);
+  };
+
+  const handleClose = () => {
+    Alert.alert("Close PO?", "Mark as closed. This cannot be undone.", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Close",
+        style: "destructive",
+        onPress: () =>
+          closeMut.mutate(id ?? "", {
+            onSuccess: () => showToast("PO closed"),
+            onError: (e: any) =>
+              Alert.alert("Error", e?.response?.data?.message ?? e?.message ?? "Try again."),
+          }),
+      },
+    ]);
+  };
 
   const totalOrdered = po.items.reduce((sum, it) => sum + it.qtyOrdered, 0);
   const totalReceived = po.items.reduce((sum, it) => sum + it.qtyReceived, 0);
@@ -70,7 +109,7 @@ export default function PurchaseOrderDetailScreen() {
     (sum, it) => sum + it.qtyOrdered * it.unitCost,
     0,
   );
-  const displayTotal = po.total ?? computedTotal;
+  const displayTotal = po.totalAmount ?? computedTotal;
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
@@ -137,6 +176,32 @@ export default function PurchaseOrderDetailScreen() {
               }
             >
               <Text style={styles.receiveBtnText}>Receive Items</Text>
+            </Pressable>
+          ) : null}
+
+          {/* Send PO button (DRAFT → SENT) */}
+          {canSend ? (
+            <Pressable
+              style={[styles.receiveBtn, { backgroundColor: ios.system.orangeInk }]}
+              onPress={handleSend}
+              disabled={sendMut.isPending}
+            >
+              <Text style={styles.receiveBtnText}>
+                {sendMut.isPending ? "Sending…" : "Send to Supplier"}
+              </Text>
+            </Pressable>
+          ) : null}
+
+          {/* Close PO button (RECEIVED → CLOSED) */}
+          {canClose ? (
+            <Pressable
+              style={[styles.receiveBtn, { backgroundColor: ios.label2 }]}
+              onPress={handleClose}
+              disabled={closeMut.isPending}
+            >
+              <Text style={styles.receiveBtnText}>
+                {closeMut.isPending ? "Closing…" : "Close PO"}
+              </Text>
             </Pressable>
           ) : null}
 

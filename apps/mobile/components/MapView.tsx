@@ -124,17 +124,72 @@ function NativeImpl({
   );
 }
 
-function WebFallback({ pins = [] }: MapViewProps) {
-  return (
-    <View style={styles.fallback}>
-      <Text style={styles.fallbackTitle}>Map preview</Text>
-      <Text style={styles.fallbackBody}>
-        {pins.length === 0
-          ? "No locations to show."
-          : `${pins.length} location${pins.length === 1 ? "" : "s"} — open on a device to see the map.`}
-      </Text>
-    </View>
-  );
+function pinHex(color?: MapPin["color"]): string {
+  switch (color) {
+    case "gray":   return "#8e8e93";
+    case "green":  return "#34c759";
+    case "red":    return "#ff3b30";
+    case "orange": return "#ff9500";
+    default:       return "#0B6E6B";
+  }
+}
+
+function WebFallback({ pins = [], polylines = [], initialRegion, style }: MapViewProps) {
+  const center = React.useMemo(() => {
+    if (pins.length > 0) {
+      const lats = pins.map((p) => p.lat);
+      const lngs = pins.map((p) => p.lng);
+      return {
+        lat: (Math.min(...lats) + Math.max(...lats)) / 2,
+        lng: (Math.min(...lngs) + Math.max(...lngs)) / 2,
+      };
+    }
+    return { lat: initialRegion?.latitude ?? 0, lng: initialRegion?.longitude ?? 0 };
+  }, [pins, initialRegion]);
+
+  const src = React.useMemo(() => {
+    const markersJs = pins
+      .map((p) => {
+        const c = pinHex(p.color);
+        const pop = [p.title, p.subtitle].filter(Boolean).join("<br>");
+        const popup = pop ? `.bindPopup("${pop.replace(/"/g, '\\"')}")` : "";
+        return `L.circleMarker([${p.lat},${p.lng}],{radius:9,color:"${c}",fillColor:"${c}",fillOpacity:.9,weight:2}).addTo(map)${popup};`;
+      })
+      .join("");
+
+    const polysJs = (polylines ?? [])
+      .map((pl) => {
+        const coords = pl.coordinates.map((c) => `[${c.lat},${c.lng}]`).join(",");
+        return `L.polyline([${coords}],{color:"${pl.color ?? "#0B6E6B"}",weight:${pl.width ?? 4}}).addTo(map);`;
+      })
+      .join("");
+
+    const boundsJs =
+      pins.length > 1
+        ? `map.fitBounds(L.latLngBounds([${pins.map((p) => `[${p.lat},${p.lng}]`).join(",")}]).pad(.25));`
+        : "";
+
+    const zoom = pins.length === 0 ? 10 : 14;
+
+    const html = `<!DOCTYPE html><html><head>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>html,body,#map{margin:0;padding:0;width:100%;height:100%;overflow:hidden;}</style>
+</head><body><div id="map"></div><script>
+var map=L.map("map",{zoomControl:true}).setView([${center.lat},${center.lng}],${zoom});
+L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{attribution:"\u00a9 OpenStreetMap"}).addTo(map);
+${markersJs}${polysJs}${boundsJs}
+</script></body></html>`;
+
+    return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
+  }, [pins, polylines, center]);
+
+  return React.createElement("iframe", {
+    src,
+    title: "Map",
+    style: { border: "none", flex: 1, width: "100%", height: "100%", minHeight: 300, ...style },
+  });
 }
 
 const styles = StyleSheet.create({

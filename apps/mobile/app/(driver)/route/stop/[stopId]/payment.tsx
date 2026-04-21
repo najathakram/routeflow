@@ -105,10 +105,10 @@ export default function PaymentScreen() {
     const invoiceId = stop.orders?.[0]?.invoiceId;
     const apiMethod = ({
       Cash: "CASH",
-      Card: "OTHER",
+      Card: "CREDIT_CARD",
       Cheque: "CHECK",
-      "On account": "OTHER",
-    }[method] ?? "OTHER") as "CASH" | "CHECK" | "ACH" | "OTHER";
+      "On account": "ADVANCE",
+    }[method] ?? "OTHER") as "CASH" | "CHECK" | "CREDIT_CARD" | "ADVANCE" | "OTHER";
     const collected = method === "On account" ? 0 : Math.min(receivedNum, invoiceTotal);
 
     if (invoiceId && collected > 0) {

@@ -9,17 +9,18 @@ import {
   FormTextInput,
 } from "../../../../../components/FormSheet";
 import { useAdminInvoice } from "../../../../../lib/api/admin";
-import { useRecordInvoicePayment } from "../../../../../lib/api/invoices";
+import { useRecordInvoicePayment, type PaymentMethod } from "../../../../../lib/api/invoices";
 import { showToast } from "../../../../../lib/toast";
 
-const METHODS = [
+const METHODS: { id: PaymentMethod; label: string }[] = [
   { id: "CASH", label: "Cash" },
   { id: "CHECK", label: "Check" },
   { id: "ACH", label: "ACH" },
+  { id: "CREDIT_CARD", label: "Credit card" },
+  { id: "ADVANCE", label: "Advance" },
+  { id: "CREDIT_NOTE", label: "Credit note" },
   { id: "OTHER", label: "Other" },
-] as const;
-
-type Method = (typeof METHODS)[number]["id"];
+];
 
 export default function RecordPaymentScreen() {
   const router = useRouter();
@@ -28,9 +29,12 @@ export default function RecordPaymentScreen() {
   const mut = useRecordInvoicePayment();
 
   const balance = invoice?.balanceDue ?? invoice?.total ?? 0;
-  const [method, setMethod] = useState<Method>("CASH");
-  const [amount, setAmount] = useState<string>(balance ? String(balance) : "");
+  const [method, setMethod] = useState<PaymentMethod>("CASH");
+  const [amount, setAmount] = useState<string>(balance ? String(Number(balance).toFixed(2)) : "");
   const [reference, setReference] = useState("");
+  const [notes, setNotes] = useState("");
+  const [bankCharges, setBankCharges] = useState("");
+  const [paidAt, setPaidAt] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   const submit = () => {
@@ -41,17 +45,23 @@ export default function RecordPaymentScreen() {
       return;
     }
     setError(null);
-    mut.mutate(
-      { invoiceId: id, amount: n, method, reference: reference.trim() || undefined },
-      {
-        onSuccess: () => {
-          showToast("Payment recorded");
-          router.back();
-        },
-        onError: (e: any) =>
-          Alert.alert("Couldn't record", e?.response?.data?.message ?? e?.message ?? "Try again."),
+    const dto: Parameters<typeof mut.mutate>[0] = {
+      invoiceId: id,
+      amount: n,
+      method,
+      reference: reference.trim() || undefined,
+      notes: notes.trim() || undefined,
+      bankCharges: bankCharges.trim() ? Number(bankCharges) || undefined : undefined,
+      paidAt: paidAt.trim() || undefined,
+    };
+    mut.mutate(dto, {
+      onSuccess: () => {
+        showToast("Payment recorded");
+        router.back();
       },
-    );
+      onError: (e: any) =>
+        Alert.alert("Couldn't record", e?.response?.data?.message ?? e?.message ?? "Try again."),
+    });
   };
 
   return (
@@ -99,11 +109,42 @@ export default function RecordPaymentScreen() {
             keyboardType="decimal-pad"
           />
         </FormField>
+        {method === "ACH" || method === "CHECK" ? (
+          <FormField label="Bank charges (optional)">
+            <FormTextInput
+              value={bankCharges}
+              onChangeText={setBankCharges}
+              placeholder="0.00"
+              keyboardType="decimal-pad"
+            />
+          </FormField>
+        ) : null}
         <FormField label="Reference (optional)">
           <FormTextInput
             value={reference}
             onChangeText={setReference}
             placeholder="Check #, txn ID…"
+          />
+        </FormField>
+      </FormSection>
+
+      <FormSection title="Details">
+        <FormField label="Payment date" hint="Format: YYYY-MM-DD (leave blank for today)">
+          <FormTextInput
+            value={paidAt}
+            onChangeText={setPaidAt}
+            placeholder="2025-06-01"
+            keyboardType="numbers-and-punctuation"
+          />
+        </FormField>
+        <FormField label="Notes (optional)">
+          <FormTextInput
+            value={notes}
+            onChangeText={setNotes}
+            placeholder="Any notes about this payment…"
+            multiline
+            numberOfLines={3}
+            style={{ minHeight: 72, textAlignVertical: "top" }}
           />
         </FormField>
       </FormSection>

@@ -35,11 +35,22 @@ export interface CreateProductDto {
   category?: string;
   unit?: string;
   pricePerUnit: number;
-  costPerUnit?: number;
+  standardCost?: number;
   currentStock?: number;
-  reorderPoint?: number;
-  reorderQty?: number;
   isActive?: boolean;
+}
+
+export function useUpdateReorderSettings() {
+  const qc = useQueryClient();
+  return useMutation<unknown, Error, { productId: string; reorderPoint?: number; reorderQty?: number }>({
+    mutationFn: ({ productId, ...dto }) =>
+      apiClient.patch(`/inventory/products/${productId}/reorder-settings`, dto).then((r) => r.data),
+    onSuccess: (_, { productId }) => {
+      qc.invalidateQueries({ queryKey: ["products", productId] });
+      qc.invalidateQueries({ queryKey: ["admin", "products"] });
+      qc.invalidateQueries({ queryKey: ["inventory"] });
+    },
+  });
 }
 
 export function useCreateProduct() {

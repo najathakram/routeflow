@@ -14,12 +14,19 @@ export interface InvoiceItem {
   subtotal: number;
 }
 
+export type PaymentMethod = 'CASH' | 'CHECK' | 'ACH' | 'CREDIT_CARD' | 'CREDIT_NOTE' | 'ADVANCE' | 'OTHER';
+
 export interface InvoicePayment {
   id: string;
+  paymentNumber?: string;
   amount: number;
-  method: 'CASH' | 'CHECK' | 'ACH' | 'OTHER';
+  method: PaymentMethod;
   reference?: string;
+  notes?: string;
+  status?: string;
+  bankCharges?: number;
   paidAt: string;
+  createdAt: string;
 }
 
 export interface Invoice {
@@ -67,19 +74,23 @@ export function useMyInvoice(id: string) {
 export interface RecordPaymentDto {
   invoiceId: string;
   amount: number;
-  method: InvoicePayment['method'];
+  method: PaymentMethod;
   reference?: string;
+  notes?: string;
+  bankCharges?: number;
   paidAt?: string;
 }
 
 export function useRecordInvoicePayment() {
   const qc = useQueryClient();
-  return useMutation<InvoicePayment, Error, RecordPaymentDto>({
+  // Backend returns the updated Invoice (not InvoicePayment)
+  return useMutation<Invoice, Error, RecordPaymentDto>({
     mutationFn: ({ invoiceId, ...body }) =>
       apiClient.post(`/invoices/${invoiceId}/payments`, body).then((r) => r.data),
     onSuccess: (_, { invoiceId }) => {
       qc.invalidateQueries({ queryKey: ['invoices', invoiceId] });
       qc.invalidateQueries({ queryKey: ['invoices', 'mine'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'invoices'] });
     },
   });
 }

@@ -32,15 +32,16 @@ function toNumber(v: number | string | null | undefined): number {
   return 0;
 }
 
-const FILTERS: { id: StockStatusFilter; label: string }[] = [
-  { id: "ALL", label: "All" },
+const FILTERS: { id: StockStatusFilter | undefined; label: string }[] = [
+  { id: undefined, label: "All" },
+  { id: "IN_STOCK", label: "In stock" },
   { id: "LOW", label: "Low" },
   { id: "OUT_OF_STOCK", label: "Out" },
 ];
 
 export default function ProductsListScreen() {
   const router = useRouter();
-  const [filter, setFilter] = useState<StockStatusFilter>("ALL");
+  const [filter, setFilter] = useState<StockStatusFilter | undefined>(undefined);
   const [search, setSearch] = useState("");
   const { data, isLoading, isFetching, refetch } = useAdminProducts({
     stockStatus: filter,
@@ -82,7 +83,7 @@ export default function ProductsListScreen() {
       <FilterChipRow
         chips={FILTERS.map((f) => ({ label: f.label }))}
         value={FILTERS.find((f) => f.id === filter)?.label ?? "All"}
-        onChange={(label) => setFilter(FILTERS.find((f) => f.label === label)?.id ?? "ALL")}
+        onChange={(label) => setFilter(FILTERS.find((f) => f.label === label)?.id)}
       />
 
       <ScrollView

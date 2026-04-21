@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -159,7 +160,20 @@ export default function WarehouseScreen() {
                 label="Buy stock"
                 color={ios.system.orangeInk}
                 bg={ios.system.orangeWash}
-                onPress={() => router.push("/(operator)/purchase-orders")}
+                onPress={() =>
+                  Alert.alert("Receive stock", undefined, [
+                    {
+                      text: "Quick receive (no PO)",
+                      onPress: () => router.push("/(operator)/purchase-orders/record"),
+                    },
+                    {
+                      text: "New purchase order",
+                      onPress: () => router.push("/(operator)/purchase-orders/new"),
+                    },
+                    { text: "View all POs", onPress: () => router.push("/(operator)/purchase-orders") },
+                    { text: "Cancel", style: "cancel" },
+                  ])
+                }
               />
               <QuickBtn
                 icon="swap-vertical-outline"

@@ -13,7 +13,7 @@ export interface ProductFormValues {
   unit: string;
   description: string;
   pricePerUnit: string;
-  costPerUnit: string;
+  standardCost: string;
   currentStock: string;
   reorderPoint: string;
   reorderQty: string;
@@ -29,7 +29,7 @@ export function emptyProductForm(): ProductFormValues {
     unit: "ea",
     description: "",
     pricePerUnit: "",
-    costPerUnit: "",
+    standardCost: "",
     currentStock: "",
     reorderPoint: "",
     reorderQty: "",
@@ -48,7 +48,7 @@ export function productFormFromValues(
     unit: p.unit ?? "ea",
     description: p.description ?? "",
     pricePerUnit: p.pricePerUnit != null ? String(p.pricePerUnit) : "",
-    costPerUnit: p.costPerUnit != null ? String(p.costPerUnit) : "",
+    standardCost: (p.standardCost ?? p.costPerUnit) != null ? String(p.standardCost ?? p.costPerUnit) : "",
     currentStock: p.currentStock != null ? String(p.currentStock) : "",
     reorderPoint: p.reorderPoint != null ? String(p.reorderPoint) : "",
     reorderQty: p.reorderQty != null ? String(p.reorderQty) : "",
@@ -71,7 +71,7 @@ export interface SubmitPayload {
   unit?: string;
   description?: string;
   pricePerUnit: number;
-  costPerUnit?: number;
+  standardCost?: number;
   currentStock?: number;
   reorderPoint?: number;
   reorderQty?: number;
@@ -91,7 +91,7 @@ export function buildProductPayload(form: ProductFormValues): SubmitPayload | { 
     unit: form.unit.trim() || undefined,
     description: form.description.trim() || undefined,
     pricePerUnit: price,
-    costPerUnit: parseOptionalNumber(form.costPerUnit),
+    standardCost: parseOptionalNumber(form.standardCost),
     currentStock: parseOptionalNumber(form.currentStock),
     reorderPoint: parseOptionalNumber(form.reorderPoint),
     reorderQty: parseOptionalNumber(form.reorderQty),
@@ -209,10 +209,10 @@ export function ProductForm({
             keyboardType="decimal-pad"
           />
         </FormField>
-        <FormField label="Cost per unit (optional)">
+        <FormField label="Standard cost (optional)">
           <FormTextInput
-            value={form.costPerUnit}
-            onChangeText={(v) => set("costPerUnit", v)}
+            value={form.standardCost}
+            onChangeText={(v) => set("standardCost", v)}
             placeholder="0.00"
             keyboardType="decimal-pad"
           />

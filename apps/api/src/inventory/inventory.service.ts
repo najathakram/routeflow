@@ -28,6 +28,8 @@ export class InventoryService {
         standardCost: true,
         isActive: true,
         unitsPerBox: true,
+        reorderPoint: true,
+        reorderQty: true,
       },
     });
 

@@ -5,7 +5,7 @@ import {
   ProductForm,
   productFormFromValues,
 } from "../../../../components/ProductForm";
-import { useProduct, useUpdateProduct } from "../../../../lib/api/products";
+import { useProduct, useUpdateProduct, useUpdateReorderSettings } from "../../../../lib/api/products";
 import { showToast } from "../../../../lib/toast";
 
 export default function EditProductScreen() {
@@ -13,6 +13,7 @@ export default function EditProductScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data: product, isLoading } = useProduct(id ?? "");
   const mut = useUpdateProduct();
+  const reorderMut = useUpdateReorderSettings();
 
   if (isLoading || !product) {
     return (
@@ -37,10 +38,15 @@ export default function EditProductScreen() {
       initial={productFormFromValues(product)}
       onSubmit={(payload) => {
         if (!id) return;
+        const { reorderPoint, reorderQty, ...productDto } = payload;
         mut.mutate(
-          { id, ...payload },
+          { id, ...productDto },
           {
             onSuccess: () => {
+              // Save reorder settings separately (PATCH /inventory/products/:id/reorder-settings)
+              if (reorderPoint != null || reorderQty != null) {
+                reorderMut.mutate({ productId: id, reorderPoint, reorderQty });
+              }
               showToast("Saved");
               router.back();
             },

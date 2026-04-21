@@ -7,9 +7,12 @@ export interface BrandGlyphProps {
   stroke?: string;
 }
 
-/** RouteFlow route-connector glyph — native version (react-native-svg). */
+/** RouteFlow route-connector glyph — native version (react-native-svg).
+ * Double-circle bullseye design matching the website logo, with teal gradient background.
+ */
 export function BrandGlyph({ size = 34, color = "#fff", stroke }: BrandGlyphProps) {
   const c = stroke ?? color;
+  const accent = "#2563EB";
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
       {/* Connecting curve from origin to destination */}
@@ -18,12 +21,14 @@ export function BrandGlyph({ size = 34, color = "#fff", stroke }: BrandGlyphProp
         stroke={c}
         strokeWidth={2}
         strokeLinecap="round"
-        opacity={0.55}
+        opacity={0.45}
       />
-      {/* Origin node: solid filled circle */}
-      <Circle cx="7.5" cy="7" r="3" fill={c} />
-      {/* Destination node: ring */}
-      <Circle cx="16.5" cy="17" r="3" stroke={c} strokeWidth={2} fill="none" />
+      {/* Origin node: white disc with blue centre */}
+      <Circle cx="7.5" cy="7" r="3.5" fill={c} />
+      <Circle cx="7.5" cy="7" r="1.8" fill={accent} />
+      {/* Destination node: blue ring with white fill */}
+      <Circle cx="16.5" cy="17" r="3.5" stroke={accent} strokeWidth={2} fill="none" />
+      <Circle cx="16.5" cy="17" r="1.8" fill={c} />
     </Svg>
   );
 }
