@@ -63,18 +63,18 @@ function RootLayoutNav() {
       return;
     }
 
-    // Step 1: no tenant slug — show landing page (or allow auth screens)
-    if (!tenantSlug) {
-      if (segments[0] !== "(auth)" && segments.length > 0) {
+    // Not authenticated as either buyer or staff — allow only landing + auth screens
+    if (!user) {
+      if (segments.length > 0 && segments[0] !== "(auth)") {
         router.replace("/");
       }
       return;
     }
 
-    // Step 2: login (tenant slug exists but no user)
-    if (!user) {
+    // Staff is authenticated — tenant slug must exist (sanity guard)
+    if (!tenantSlug) {
       if (segments[0] !== "(auth)") {
-        router.replace("/(auth)/login");
+        router.replace("/(auth)/company-code");
       }
       return;
     }
