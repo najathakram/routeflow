@@ -55,8 +55,23 @@ export class InvoicePdfService {
 
     // Load tenant's business info (including logo + primary color) to render
     // a fully branded invoice header.
-    const invTenantId = (inv as any).tenantId as string | null | undefined;
-    let tenantInfo: Record<string, any> | null = null;
+    const invTenantId = (inv as { tenantId?: string | null }).tenantId ?? null;
+    type TenantInfo = {
+      businessName: string | null;
+      addressLine1: string | null;
+      addressLine2: string | null;
+      city: string | null;
+      state: string | null;
+      zip: string | null;
+      country: string | null;
+      phone: string | null;
+      website: string | null;
+      customerEmail: string | null;
+      primaryColor: string | null;
+      logoKey: string | null;
+      logoDataUri?: string;
+    };
+    let tenantInfo: TenantInfo | null = null;
     if (invTenantId) {
       const cfg = await this.prisma.tenantConfig.findUnique({
         where: { tenantId: invTenantId },
@@ -82,11 +97,12 @@ export class InvoicePdfService {
             const buf = await this.storage.download(cfg.logoKey);
             // Best-effort mime detection from the key extension; default to png.
             const lower = cfg.logoKey.toLowerCase();
-            const mime = lower.endsWith(".jpg") || lower.endsWith(".jpeg")
-              ? "image/jpeg"
-              : lower.endsWith(".svg")
-                ? "image/svg+xml"
-                : "image/png";
+            const mime =
+              lower.endsWith(".jpg") || lower.endsWith(".jpeg")
+                ? "image/jpeg"
+                : lower.endsWith(".svg")
+                  ? "image/svg+xml"
+                  : "image/png";
             tenantInfo.logoDataUri = `data:${mime};base64,${buf.toString("base64")}`;
           } catch (err) {
             this.logger.warn(

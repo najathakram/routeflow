@@ -83,11 +83,13 @@ function EditTierOverrideModal({
           showToast(existing ? "Override updated" : "Override added");
           onClose();
         },
-        onError: (e: any) =>
+        onError: (e: unknown) => {
+          const err = e as { response?: { data?: { message?: string } }; message?: string };
           Alert.alert(
             "Couldn't save",
-            e?.response?.data?.message ?? e?.message ?? "Try again.",
-          ),
+            err?.response?.data?.message ?? err?.message ?? "Try again.",
+          );
+        },
       },
     );
   };

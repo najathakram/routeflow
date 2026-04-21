@@ -1,4 +1,12 @@
-export function getTierPrice(product: any, tier: number): number {
+interface TierPriceable {
+  pricePerUnit?: number | string | null;
+  priceTier2?: number | string | null;
+  priceTier3?: number | string | null;
+  priceTier4?: number | string | null;
+  priceTier5?: number | string | null;
+}
+
+export function getTierPrice(product: TierPriceable, tier: number): number {
   switch (tier) {
     case 1:
       return Number(product.pricePerUnit ?? 0);

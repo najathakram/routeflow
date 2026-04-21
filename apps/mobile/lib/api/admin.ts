@@ -1,6 +1,13 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../api-client';
 
+export interface PaginationMeta {
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}
+
 // ─── Dashboard ───────────────────────────────────────────────────────────────
 
 export interface AdminDashboardStats {
@@ -130,7 +137,7 @@ export function useAdminOrders(params?: {
   urgent?: boolean;
   customerId?: string;
 }) {
-  return useQuery<{ data: AdminOrder[]; meta: any }>({
+  return useQuery<{ data: AdminOrder[]; meta: PaginationMeta }>({
     queryKey: ['admin', 'orders', params],
     queryFn: () => apiClient.get('/orders', { params }).then((r) => r.data),
     staleTime: 30_000,
@@ -187,7 +194,7 @@ export function useAdminCustomers(params?: {
   page?: number;
   limit?: number;
 }) {
-  return useQuery<{ data: AdminCustomer[]; meta: any }>({
+  return useQuery<{ data: AdminCustomer[]; meta: PaginationMeta }>({
     queryKey: ['admin', 'customers', params],
     queryFn: () => apiClient.get('/customers', { params }).then((r) => r.data),
     staleTime: 60_000,
@@ -246,7 +253,7 @@ export function useAdminInvoices(params?: {
   limit?: number;
   customerId?: string;
 }) {
-  return useQuery<{ data: AdminInvoice[]; meta: any }>({
+  return useQuery<{ data: AdminInvoice[]; meta: PaginationMeta }>({
     queryKey: ['admin', 'invoices', params],
     queryFn: () => apiClient.get('/invoices', { params }).then((r) => r.data),
     staleTime: 30_000,
@@ -318,7 +325,7 @@ export function useAdminProducts(params?: {
   stockStatus?: StockStatusFilter;
   isActive?: boolean;
 }) {
-  return useQuery<{ data: AdminProduct[]; meta: any }>({
+  return useQuery<{ data: AdminProduct[]; meta: PaginationMeta }>({
     queryKey: ['admin', 'products', params],
     queryFn: () => apiClient.get('/products', { params }).then((r) => r.data),
     staleTime: 60_000,
@@ -375,7 +382,7 @@ export function useAdminRoutes(params?: {
   page?: number;
   limit?: number;
 }) {
-  return useQuery<{ data: AdminRoute[]; meta: any }>({
+  return useQuery<{ data: AdminRoute[]; meta: PaginationMeta }>({
     queryKey: ['admin', 'routes', params],
     queryFn: () => apiClient.get('/routes', { params }).then((r) => r.data),
     staleTime: 30_000,
@@ -410,7 +417,7 @@ export function useAdminDrivers(params?: {
   page?: number;
   limit?: number;
 }) {
-  return useQuery<{ data: AdminDriver[]; meta: any }>({
+  return useQuery<{ data: AdminDriver[]; meta: PaginationMeta }>({
     queryKey: ['admin', 'drivers', params],
     queryFn: () => apiClient.get('/drivers', { params }).then((r) => r.data),
     staleTime: 60_000,
@@ -441,7 +448,7 @@ export function useAdminReturns(params?: {
   page?: number;
   limit?: number;
 }) {
-  return useQuery<{ data: AdminReturn[]; meta: any }>({
+  return useQuery<{ data: AdminReturn[]; meta: PaginationMeta }>({
     queryKey: ['admin', 'returns', params],
     queryFn: () => apiClient.get('/returns', { params }).then((r) => r.data),
     staleTime: 30_000,

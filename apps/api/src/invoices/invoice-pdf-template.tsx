@@ -225,9 +225,9 @@ function StatusBadge({
   status: string;
   styles: ReturnType<typeof buildStyles>;
 }) {
-  let bg = LIGHT_GRAY,
-    color = GRAY,
-    label = status;
+  let bg = LIGHT_GRAY;
+  let color = GRAY;
+  const label = status;
   if (status === "PAID") {
     bg = "#dcfce7";
     color = SUCCESS;
@@ -281,10 +281,7 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
   const styles = buildStyles(primary, navy);
 
   return (
-    <Document
-      title={`Invoice ${invoice.invoiceNumber}`}
-      author={tenant?.businessName ?? undefined}
-    >
+    <Document title={`Invoice ${invoice.invoiceNumber}`} author={tenant?.businessName ?? undefined}>
       <Page size="A4" style={styles.page}>
         {/* Header */}
         <View style={styles.header}>
@@ -292,23 +289,23 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
             {hasTenant ? (
               <>
                 <View style={styles.logoBox}>
-                  {tenant!.logoDataUri ? (
-                    <Image src={tenant!.logoDataUri} style={styles.logoImage} />
+                  {tenant.logoDataUri ? (
+                    <Image src={tenant.logoDataUri} style={styles.logoImage} />
                   ) : null}
-                  <Text style={styles.logoText}>{tenant!.businessName}</Text>
+                  <Text style={styles.logoText}>{tenant.businessName}</Text>
                 </View>
-                {tenant!.addressLine1 ? (
-                  <Text style={styles.logoSub}>{tenant!.addressLine1}</Text>
+                {tenant.addressLine1 ? (
+                  <Text style={styles.logoSub}>{tenant.addressLine1}</Text>
                 ) : null}
-                {tenant!.addressLine2 ? (
-                  <Text style={styles.logoSub}>{tenant!.addressLine2}</Text>
+                {tenant.addressLine2 ? (
+                  <Text style={styles.logoSub}>{tenant.addressLine2}</Text>
                 ) : null}
                 {tenantAddrLine ? <Text style={styles.logoSub}>{tenantAddrLine}</Text> : null}
-                {tenant!.phone ? <Text style={styles.logoSub}>{tenant!.phone}</Text> : null}
-                {tenant!.customerEmail ? (
-                  <Text style={styles.logoSub}>{tenant!.customerEmail}</Text>
+                {tenant.phone ? <Text style={styles.logoSub}>{tenant.phone}</Text> : null}
+                {tenant.customerEmail ? (
+                  <Text style={styles.logoSub}>{tenant.customerEmail}</Text>
                 ) : null}
-                {tenant!.website ? <Text style={styles.logoSub}>{tenant!.website}</Text> : null}
+                {tenant.website ? <Text style={styles.logoSub}>{tenant.website}</Text> : null}
               </>
             ) : (
               <View style={styles.logoBox}>
@@ -479,7 +476,7 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
         <View style={styles.footer} fixed>
           <Text style={styles.footerText}>
             {hasTenant
-              ? [tenant!.businessName, tenant!.website].filter(Boolean).join(" · ")
+              ? [tenant.businessName, tenant.website].filter(Boolean).join(" · ")
               : "RouteFlow"}
           </Text>
           <Text style={styles.footerMuted}>Powered by RouteFlow</Text>
