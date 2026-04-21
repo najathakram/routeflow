@@ -82,3 +82,47 @@ export function useCreateReturn() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['returns'] }),
   });
 }
+
+function returnTransition(action: 'approve' | 'reject' | 'in-transit' | 'receive' | 'refund' | 'cancel') {
+  return (id: string) => apiClient.post(`/returns/${id}/${action}`).then((r) => r.data as Return);
+}
+
+export function useApproveReturn() {
+  const qc = useQueryClient();
+  return useMutation<Return, Error, string>({
+    mutationFn: returnTransition('approve'),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['returns'] }),
+  });
+}
+
+export function useRejectReturn() {
+  const qc = useQueryClient();
+  return useMutation<Return, Error, string>({
+    mutationFn: returnTransition('reject'),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['returns'] }),
+  });
+}
+
+export function useReceiveReturn() {
+  const qc = useQueryClient();
+  return useMutation<Return, Error, string>({
+    mutationFn: returnTransition('receive'),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['returns'] }),
+  });
+}
+
+export function useRefundReturn() {
+  const qc = useQueryClient();
+  return useMutation<Return, Error, string>({
+    mutationFn: returnTransition('refund'),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['returns'] }),
+  });
+}
+
+export function useCancelReturn() {
+  const qc = useQueryClient();
+  return useMutation<Return, Error, string>({
+    mutationFn: returnTransition('cancel'),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['returns'] }),
+  });
+}

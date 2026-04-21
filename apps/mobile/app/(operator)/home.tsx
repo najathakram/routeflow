@@ -164,32 +164,52 @@ export default function OperatorHomeScreen() {
         ) : (
           <>
             <View style={styles.kpiGrid}>
-              <KpiCard
-                icon={<Ionicons name="receipt-outline" size={18} color={ios.brand} />}
-                iconBg={ios.brandWash}
-                value={String(stats.pendingOrders)}
-                label="Pending orders"
-              />
-              <KpiCard
-                icon={<Ionicons name="people-outline" size={18} color={ios.system.greenInk} />}
-                iconBg={ios.system.greenWash}
-                value={String(stats.activeDrivers)}
-                label="Active drivers"
-              />
+              <Pressable
+                style={{ flex: 1 }}
+                onPress={() => router.push("/(operator)/orders?status=PENDING")}
+              >
+                <KpiCard
+                  icon={<Ionicons name="receipt-outline" size={18} color={ios.brand} />}
+                  iconBg={ios.brandWash}
+                  value={String(stats.pendingOrders)}
+                  label="Pending orders"
+                />
+              </Pressable>
+              <Pressable
+                style={{ flex: 1 }}
+                onPress={() => router.push("/(operator)/drivers")}
+              >
+                <KpiCard
+                  icon={<Ionicons name="people-outline" size={18} color={ios.system.greenInk} />}
+                  iconBg={ios.system.greenWash}
+                  value={String(stats.activeDrivers)}
+                  label="Active drivers"
+                />
+              </Pressable>
             </View>
             <View style={[styles.kpiGrid, { marginTop: 12 }]}>
-              <KpiCard
-                icon={<Ionicons name="alert-circle-outline" size={18} color={ios.system.orangeInk} />}
-                iconBg={ios.system.orangeWash}
-                value={String(stats.lowStockProducts)}
-                label="Low stock"
-              />
-              <KpiCard
-                icon={<Ionicons name="card-outline" size={18} color={ios.system.redInk} />}
-                iconBg={ios.system.redWash}
-                value={String(stats.invoicesOverdue)}
-                label="Overdue invoices"
-              />
+              <Pressable
+                style={{ flex: 1 }}
+                onPress={() => router.push("/(operator)/warehouse")}
+              >
+                <KpiCard
+                  icon={<Ionicons name="alert-circle-outline" size={18} color={ios.system.orangeInk} />}
+                  iconBg={ios.system.orangeWash}
+                  value={String(stats.lowStockProducts)}
+                  label="Low stock"
+                />
+              </Pressable>
+              <Pressable
+                style={{ flex: 1 }}
+                onPress={() => router.push("/(operator)/invoices?status=OVERDUE")}
+              >
+                <KpiCard
+                  icon={<Ionicons name="card-outline" size={18} color={ios.system.redInk} />}
+                  iconBg={ios.system.redWash}
+                  value={String(stats.invoicesOverdue)}
+                  label="Overdue invoices"
+                />
+              </Pressable>
             </View>
           </>
         )}

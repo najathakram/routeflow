@@ -13,6 +13,7 @@ import { ListDriversDto } from "./dto/list-drivers.dto";
 import { CreateDriverDto } from "./dto/create-driver.dto";
 import { UpdateDriverDto } from "./dto/update-driver.dto";
 import { ChangeDriverStatusDto } from "./dto/change-driver-status.dto";
+import { PostLocationDto } from "./dto/post-location.dto";
 
 @Injectable()
 export class DriversService {
@@ -79,6 +80,33 @@ export class DriversService {
     const driver = await this.prisma.forTenant().driver.findFirst({ where: { userId } });
     if (!driver) throw new NotFoundException("Driver profile not found");
     return this.update(driver.id, dto);
+  }
+
+  async recordLocation(userId: string, dto: PostLocationDto) {
+    const driver = await this.prisma.forTenant().driver.findFirst({
+      where: { userId },
+      select: { id: true, tenantId: true },
+    });
+    if (!driver) throw new NotFoundException("Driver profile not found");
+
+    const recordedAt = new Date(dto.recordedAt);
+    if (Number.isNaN(recordedAt.getTime())) {
+      throw new BadRequestException("recordedAt must be an ISO date string");
+    }
+
+    await this.prisma.forTenant().driverLocation.create({
+      data: {
+        driverId: driver.id,
+        runId: dto.runId ?? null,
+        lat: dto.lat,
+        lng: dto.lng,
+        heading: dto.heading,
+        speedKph: dto.speedKph,
+        batteryPct: dto.batteryPct,
+        recordedAt,
+      },
+    });
+    return { ok: true };
   }
 
   async findOne(id: string, user: JwtPayload) {

@@ -91,3 +91,44 @@ export function useCreateInvoice() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['invoices'] }),
   });
 }
+
+export function useSendInvoice() {
+  const qc = useQueryClient();
+  return useMutation<Invoice, Error, { id: string; email?: string }>({
+    mutationFn: ({ id, email }) =>
+      apiClient
+        .post(email ? `/invoices/${id}/send-email` : `/invoices/${id}/send`, email ? { email } : {})
+        .then((r) => r.data),
+    onSuccess: (_, { id }) => {
+      qc.invalidateQueries({ queryKey: ['invoices'] });
+      qc.invalidateQueries({ queryKey: ['invoices', id] });
+      qc.invalidateQueries({ queryKey: ['admin', 'invoices'] });
+    },
+  });
+}
+
+export function useVoidInvoice() {
+  const qc = useQueryClient();
+  return useMutation<Invoice, Error, string>({
+    mutationFn: (id) => apiClient.post(`/invoices/${id}/void`).then((r) => r.data),
+    onSuccess: (_, id) => {
+      qc.invalidateQueries({ queryKey: ['invoices'] });
+      qc.invalidateQueries({ queryKey: ['invoices', id] });
+      qc.invalidateQueries({ queryKey: ['admin', 'invoices'] });
+    },
+  });
+}
+
+export function useInvoicePdf() {
+  return useMutation<{ url: string } | null, Error, string>({
+    mutationFn: async (id) => {
+      try {
+        const r = await apiClient.get(`/invoices/${id}/pdf`);
+        return r.data ?? null;
+      } catch (e: any) {
+        if (e?.response?.status === 202) return null;
+        throw e;
+      }
+    },
+  });
+}

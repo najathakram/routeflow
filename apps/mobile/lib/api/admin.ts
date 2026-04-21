@@ -224,6 +224,13 @@ export interface AdminInvoice {
     method: string;
     createdAt: string;
   }>;
+  items?: Array<{
+    id: string;
+    description: string;
+    qty: number;
+    unitPrice: number;
+    subtotal: number;
+  }>;
 }
 
 export function useAdminInvoices(params?: {

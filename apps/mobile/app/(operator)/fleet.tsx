@@ -2,7 +2,6 @@ import { useMemo } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import Svg, { Path, Rect } from "react-native-svg";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { Pill } from "@routeflow/ui/mobile/ios";
@@ -11,6 +10,20 @@ import {
   useAdminRoutes,
   type AdminDriver,
 } from "../../lib/api/admin";
+import { useRoutesLive } from "../../lib/api/routes";
+import { AppMapView, type MapPin, type MapPolyline } from "../../components/MapView";
+
+function driverInitials(name: string | null | undefined): string {
+  if (!name) return "—";
+  return (
+    name
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((p) => p[0]?.toUpperCase())
+      .join("") || "?"
+  );
+}
 
 function driverDisplayName(driver: AdminDriver | undefined): string {
   if (!driver) return "Unassigned";
@@ -20,58 +33,106 @@ function driverDisplayName(driver: AdminDriver | undefined): string {
   return driver.user?.username ?? "Driver";
 }
 
-function driverInitials(driver: AdminDriver | undefined): string {
-  if (!driver?.user) return "—";
-  const first = driver.user.firstName?.[0] ?? "";
-  const last = driver.user.lastName?.[0] ?? "";
-  return `${first}${last}`.toUpperCase() || "?";
-}
-
-// UI-shell map backdrop; the live driver list + status pulls real data.
-// TODO: wire GPS polylines once /routes/live endpoint exists.
 export default function FleetScreen() {
   const router = useRouter();
   const { data: routesData } = useAdminRoutes({ limit: 50 });
   const { data: driversData } = useAdminDrivers();
+  const { data: liveData } = useRoutesLive();
+
   const routes = routesData?.data ?? [];
+  const liveRoutes = liveData?.routes ?? [];
   const driversById = useMemo(() => {
     const map = new Map<string, AdminDriver>();
     for (const d of driversData?.data ?? []) map.set(d.id, d);
     return map;
   }, [driversData]);
 
-  const live = routes.filter((r) => r.runs?.[0]?.status === "IN_PROGRESS");
+  // Build map markers + polylines from live data.
+  const { pins, polylines } = useMemo(() => {
+    const pinList: MapPin[] = [];
+    const lineList: MapPolyline[] = [];
+
+    for (const r of liveRoutes) {
+      // Driver pin (latest known location)
+      if (r.latestLocation) {
+        pinList.push({
+          id: `driver-${r.driverId ?? r.runId}`,
+          lat: r.latestLocation.lat,
+          lng: r.latestLocation.lng,
+          title: r.driverName ?? "Driver",
+          subtitle: r.routeName,
+          color: "brand",
+          onPress: () =>
+            r.driverId
+              ? router.push(`/(operator)/driver?id=${encodeURIComponent(r.driverId)}`)
+              : undefined,
+        });
+      }
+
+      // Stop pins for remaining stops
+      const remainingStops = r.stops.filter(
+        (s) => s.lat != null && s.lng != null && (s.status === "PENDING" || s.status === "IN_PROGRESS"),
+      );
+      for (const s of remainingStops) {
+        pinList.push({
+          id: `stop-${s.id}`,
+          lat: s.lat as number,
+          lng: s.lng as number,
+          title: `${s.stopNumber}. ${s.customerName}`,
+          color: s.status === "IN_PROGRESS" ? "orange" : "gray",
+          onPress: () => router.push(`/(operator)/customers/${s.customerId}`),
+        });
+      }
+
+      // Polyline through remaining stops
+      if (remainingStops.length >= 2) {
+        const coords = remainingStops.map((s) => ({ lat: s.lat as number, lng: s.lng as number }));
+        // Optionally prepend the driver's current location to draw the next leg
+        if (r.latestLocation) {
+          coords.unshift({ lat: r.latestLocation.lat, lng: r.latestLocation.lng });
+        }
+        lineList.push({
+          id: `route-${r.runId}`,
+          coordinates: coords,
+          color: ios.brand,
+          width: 4,
+        });
+      }
+    }
+    return { pins: pinList, polylines: lineList };
+  }, [liveRoutes, router]);
+
+  const liveCount = liveRoutes.length;
+  const driversWithLoc = liveRoutes.filter((r) => r.latestLocation != null).length;
   const home = routes.filter((r) => r.runs?.[0]?.status === "COMPLETED");
 
   return (
     <View style={styles.screen}>
       <View style={styles.mapBg}>
-        <Svg width="100%" height="100%" viewBox="0 0 393 852" preserveAspectRatio="none">
-          <Path d="M-20 180 Q 100 200 200 240 T 420 280" stroke="#fff" strokeWidth={14} fill="none" />
-          <Path d="M80 -20 Q 120 200 170 420 T 260 820" stroke="#fff" strokeWidth={12} fill="none" />
-          <Path d="M-20 500 Q 120 470 240 510 T 420 540" stroke="#fff" strokeWidth={12} fill="none" />
-          <Rect x={40} y={360} width={80} height={50} rx={10} fill="#B9D7B1" opacity={0.7} />
-          <Rect x={260} y={420} width={110} height={80} rx={14} fill="#B9D7B1" opacity={0.7} />
-          <Path
-            d="M-20 820 Q 100 780 200 810 T 420 790 L 420 900 L -20 900 Z"
-            fill="#A9C8D2"
-            opacity={0.8}
-          />
-        </Svg>
+        {pins.length > 0 ? (
+          <AppMapView pins={pins} polylines={polylines} fitToPins />
+        ) : (
+          <View style={styles.mapEmpty}>
+            <Ionicons name="map-outline" size={48} color={ios.label3} />
+            <Text style={styles.mapEmptyText}>
+              No active routes right now. Live driver pins will appear when a route is in progress.
+            </Text>
+          </View>
+        )}
       </View>
 
-      <SafeAreaView style={styles.overlay} edges={["top", "left", "right"]}>
+      <SafeAreaView style={styles.overlay} edges={["top", "left", "right"]} pointerEvents="box-none">
         <View style={styles.topChip}>
           <Pill variant="green" dot small>
-            {live.length} live
+            {liveCount} live
           </Pill>
-          <Pill variant="gray" small>
-            {routes.length} route{routes.length === 1 ? "" : "s"}
+          <Pill variant="brand" small>
+            {driversWithLoc} driver{driversWithLoc === 1 ? "" : "s"} sharing GPS
           </Pill>
         </View>
 
         <View style={styles.legend}>
-          <LegendChip color={ios.brand} label={`On route · ${live.length}`} />
+          <LegendChip color={ios.brand} label={`On route · ${liveCount}`} />
           <LegendChip color={ios.system.green} label={`Home · ${home.length}`} />
         </View>
 
@@ -83,30 +144,22 @@ export default function FleetScreen() {
             <Text style={styles.sheetTitle}>Live drivers</Text>
           </View>
 
-          {routes.length === 0 ? (
-            <Text style={styles.empty}>No routes configured.</Text>
+          {liveRoutes.length === 0 ? (
+            <Text style={styles.empty}>No drivers on the road right now.</Text>
           ) : (
-            routes.slice(0, 5).map((r, i) => {
+            liveRoutes.slice(0, 6).map((r, i) => {
               const driver = r.driverId ? driversById.get(r.driverId) : undefined;
-              const name = driverDisplayName(driver);
-              const initials = driverInitials(driver);
-              const runStatus = r.runs?.[0]?.status;
-              const stateLabel =
-                runStatus === "IN_PROGRESS"
-                  ? "On route"
-                  : runStatus === "COMPLETED"
-                    ? "Home"
-                    : "Scheduled";
-              const stopCount = r._count?.stops ?? 0;
+              const name = r.driverName ?? driverDisplayName(driver);
+              const initials = driverInitials(name);
+              const stopCount = r.stops.length;
+              const remaining = r.stops.filter((s) => s.status === "PENDING" || s.status === "IN_PROGRESS").length;
               return (
                 <Pressable
-                  key={r.id}
+                  key={r.runId}
                   onPress={() =>
                     r.driverId
-                      ? router.push(
-                          `/(operator)/driver?id=${encodeURIComponent(r.driverId)}`,
-                        )
-                      : null
+                      ? router.push(`/(operator)/driver?id=${encodeURIComponent(r.driverId)}`)
+                      : undefined
                   }
                   style={[
                     styles.driverRow,
@@ -121,11 +174,13 @@ export default function FleetScreen() {
                   </View>
                   <View style={{ flex: 1, minWidth: 0 }}>
                     <Text style={styles.driverName} numberOfLines={1}>
-                      {name} <Text style={styles.driverRoute}>· {r.name}</Text>
+                      {name} <Text style={styles.driverRoute}>· {r.routeName}</Text>
                     </Text>
                     <Text style={styles.driverProgress}>
-                      {stateLabel}
-                      {stopCount ? ` · ${stopCount} stop${stopCount === 1 ? "" : "s"}` : ""}
+                      {remaining}/{stopCount} stops left
+                      {r.latestLocation
+                        ? ` · ${Math.round((Date.now() - new Date(r.latestLocation.recordedAt).getTime()) / 1000)}s ago`
+                        : " · waiting on GPS"}
                     </Text>
                   </View>
                   <View style={styles.msgBtn}>
@@ -151,8 +206,15 @@ function LegendChip({ color, label }: { color: string; label: string }) {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: "#DCE7E9" },
+  screen: { flex: 1, backgroundColor: ios.fill3 },
   mapBg: { ...StyleSheet.absoluteFillObject },
+  mapEmpty: { flex: 1, alignItems: "center", justifyContent: "center", padding: 32, gap: 8 },
+  mapEmptyText: {
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    color: ios.label2,
+    textAlign: "center",
+  },
   overlay: { flex: 1, paddingHorizontal: 16 },
   topChip: {
     flexDirection: "row",

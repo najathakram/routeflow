@@ -53,6 +53,13 @@ export class RoutesController {
     return this.routesService.getCustomerRouteAssignments();
   }
 
+  @Get("live")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
+  getLive() {
+    return this.routesService.getLiveRoutes();
+  }
+
   @Get(":id/packing-list")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR, UserRole.DRIVER)

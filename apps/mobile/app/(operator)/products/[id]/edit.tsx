@@ -1,0 +1,57 @@
+import { ActivityIndicator, Alert, View } from "react-native";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { ios } from "@routeflow/ui/tokens";
+import {
+  ProductForm,
+  productFormFromValues,
+} from "../../../../components/ProductForm";
+import { useProduct, useUpdateProduct } from "../../../../lib/api/products";
+import { showToast } from "../../../../lib/toast";
+
+export default function EditProductScreen() {
+  const router = useRouter();
+  const { id } = useLocalSearchParams<{ id: string }>();
+  const { data: product, isLoading } = useProduct(id ?? "");
+  const mut = useUpdateProduct();
+
+  if (isLoading || !product) {
+    return (
+      <View
+        style={{
+          flex: 1,
+          backgroundColor: ios.bg,
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <ActivityIndicator color={ios.brand} />
+      </View>
+    );
+  }
+
+  return (
+    <ProductForm
+      title="Edit product"
+      submitLabel={mut.isPending ? "Saving…" : "Save"}
+      submitting={mut.isPending}
+      initial={productFormFromValues(product)}
+      onSubmit={(payload) => {
+        if (!id) return;
+        mut.mutate(
+          { id, ...payload },
+          {
+            onSuccess: () => {
+              showToast("Saved");
+              router.back();
+            },
+            onError: (e: any) =>
+              Alert.alert(
+                "Couldn't save",
+                e?.response?.data?.message ?? e?.message ?? "Try again.",
+              ),
+          },
+        );
+      }}
+    />
+  );
+}

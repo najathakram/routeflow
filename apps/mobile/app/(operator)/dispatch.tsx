@@ -1,11 +1,14 @@
+import * as React from "react";
 import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from "react-native";
+import type { GestureResponderEvent } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
@@ -91,6 +94,7 @@ function RoutesTab({
   loading: boolean;
   driversById: Map<string, AdminDriver>;
 }) {
+  const router = useRouter();
   if (loading) {
     return (
       <View style={styles.center}>
@@ -109,7 +113,14 @@ function RoutesTab({
         </View>
       ) : null}
 
-      <SectionHeader title="All routes" />
+      <SectionHeader
+        title="All routes"
+        action={
+          <Pressable onPress={() => router.push("/(operator)/routes/new")}>
+            <Text style={styles.sectionAction}>+ New route</Text>
+          </Pressable>
+        }
+      />
       <View style={{ paddingHorizontal: 16, gap: 8, paddingBottom: 20 }}>
         {routes.length === 0 ? (
           <Text style={styles.empty}>No routes defined yet.</Text>
@@ -120,7 +131,11 @@ function RoutesTab({
               r.driverId ? driversById.get(r.driverId) : undefined,
             );
             return (
-              <View key={r.id} style={styles.routeRow}>
+              <Pressable
+                key={r.id}
+                style={styles.routeRow}
+                onPress={() => router.push(`/(operator)/routes/${r.id}`)}
+              >
                 <View style={{ flex: 1 }}>
                   <Text style={styles.routeName}>{r.name}</Text>
                   <Text style={styles.routeSub}>
@@ -134,9 +149,17 @@ function RoutesTab({
                     Assigned
                   </Pill>
                 ) : (
-                  <Pill variant="red">No driver</Pill>
+                  <Pressable
+                    onPress={(e: GestureResponderEvent) => {
+                      e.stopPropagation();
+                      router.push(`/(operator)/routes/${r.id}/assign-driver`);
+                    }}
+                    style={styles.assignBtn}
+                  >
+                    <Text style={styles.assignBtnText}>Assign</Text>
+                  </Pressable>
                 )}
-              </View>
+              </Pressable>
             );
           })
         )}
@@ -152,6 +175,7 @@ function DriversTab({
   drivers: AdminDriver[];
   loading: boolean;
 }) {
+  const router = useRouter();
   if (loading) {
     return (
       <View style={styles.center}>
@@ -161,7 +185,14 @@ function DriversTab({
   }
   return (
     <View>
-      <SectionHeader title="Drivers" />
+      <SectionHeader
+        title="Drivers"
+        action={
+          <Pressable onPress={() => router.push("/(operator)/drivers/new")}>
+            <Text style={styles.sectionAction}>+ New driver</Text>
+          </Pressable>
+        }
+      />
       <View style={{ paddingHorizontal: 16, gap: 8, paddingBottom: 20 }}>
         {drivers.length === 0 ? (
           <Text style={styles.empty}>No drivers on this tenant.</Text>
@@ -174,7 +205,11 @@ function DriversTab({
               ? `${d.user.firstName?.[0] ?? ""}${d.user.lastName?.[0] ?? ""}`.toUpperCase()
               : "??";
             return (
-              <View key={d.id} style={styles.driverRow}>
+              <Pressable
+                key={d.id}
+                style={styles.driverRow}
+                onPress={() => router.push(`/(operator)/driver?id=${encodeURIComponent(d.id)}`)}
+              >
                 <View style={[styles.avatar, { backgroundColor: ios.brand }]}>
                   <Text style={styles.avatarText}>{initials}</Text>
                 </View>
@@ -187,7 +222,7 @@ function DriversTab({
                 <Pill variant={d.status === "ACTIVE" ? "green" : "gray"}>
                   {d.status.toLowerCase()}
                 </Pill>
-              </View>
+              </Pressable>
             );
           })
         )}
@@ -196,10 +231,11 @@ function DriversTab({
   );
 }
 
-function SectionHeader({ title }: { title: string }) {
+function SectionHeader({ title, action }: { title: string; action?: React.ReactNode }) {
   return (
     <View style={styles.sectionHeader}>
       <Text style={styles.sectionTitle}>{title}</Text>
+      {action}
     </View>
   );
 }
@@ -287,4 +323,12 @@ const styles = StyleSheet.create({
     letterSpacing: -0.2,
   },
   driverStatus: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
+  sectionAction: { fontSize: 14, fontFamily: "Inter_500Medium", color: ios.brand },
+  assignBtn: {
+    backgroundColor: ios.brand,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 999,
+  },
+  assignBtnText: { color: "#fff", fontSize: 12, fontFamily: "Inter_600SemiBold" },
 });

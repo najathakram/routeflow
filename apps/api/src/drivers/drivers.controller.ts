@@ -21,6 +21,7 @@ import { ListDriversDto } from "./dto/list-drivers.dto";
 import { CreateDriverDto } from "./dto/create-driver.dto";
 import { UpdateDriverDto } from "./dto/update-driver.dto";
 import { ChangeDriverStatusDto } from "./dto/change-driver-status.dto";
+import { PostLocationDto } from "./dto/post-location.dto";
 
 @ApiTags("drivers")
 @ApiBearerAuth()
@@ -51,6 +52,13 @@ export class DriversController {
   @Patch("me")
   updateMe(@CurrentUser() user: JwtPayload, @Body() dto: UpdateDriverDto) {
     return this.driversService.updateByUserId(user.sub, dto);
+  }
+
+  @Post("me/location")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.DRIVER)
+  postLocation(@CurrentUser() user: JwtPayload, @Body() dto: PostLocationDto) {
+    return this.driversService.recordLocation(user.sub, dto);
   }
 
   @Get(":id")

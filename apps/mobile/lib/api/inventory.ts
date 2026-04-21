@@ -67,3 +67,36 @@ export function useRecordPurchase() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['inventory'] }),
   });
 }
+
+// ─── Movements / history ──────────────────────────────────────────────────────
+
+export type MovementType = 'PURCHASE' | 'SALE' | 'ADJUSTMENT' | 'RETURN';
+
+export interface InventoryMovement {
+  id: string;
+  productId: string;
+  productName?: string;
+  type: MovementType;
+  quantity: number;
+  unitCost?: number;
+  reference?: string;
+  notes?: string;
+  createdAt: string;
+}
+
+export function useInventoryMovements(params?: {
+  productId?: string;
+  type?: MovementType;
+  page?: number;
+  limit?: number;
+}) {
+  return useQuery<{ data: InventoryMovement[]; meta: any }>({
+    queryKey: ['inventory', 'movements', params],
+    queryFn: () =>
+      apiClient
+        .get('/inventory/movements', { params })
+        .then((r) => r.data)
+        .catch(() => ({ data: [], meta: { total: 0 } })),
+    staleTime: 30_000,
+  });
+}

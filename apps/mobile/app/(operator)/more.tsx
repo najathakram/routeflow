@@ -37,6 +37,65 @@ export default function OperatorMoreScreen() {
           </View>
         </View>
 
+        <ListGroup header="MANAGE">
+          <ListRow
+            icon={<Ionicons name="receipt-outline" size={16} color={ios.brand} />}
+            iconBg={ios.brandWash}
+            title="Orders"
+            subtitle="Create, edit, approve orders"
+            onPress={() => router.push("/(operator)/orders")}
+            chevron
+          />
+          <ListRow
+            icon={<Ionicons name="business-outline" size={16} color={ios.system.purpleInk} />}
+            iconBg={ios.system.purpleWash}
+            title="Customers"
+            subtitle="Directory & addresses"
+            onPress={() => router.push("/(operator)/customers")}
+            chevron
+          />
+          <ListRow
+            icon={<Ionicons name="cube-outline" size={16} color={ios.system.greenInk} />}
+            iconBg={ios.system.greenWash}
+            title="Products"
+            subtitle="Catalog & stock"
+            onPress={() => router.push("/(operator)/products")}
+            chevron
+          />
+          <ListRow
+            icon={<Ionicons name="document-text-outline" size={16} color={ios.system.orangeInk} />}
+            iconBg={ios.system.orangeWash}
+            title="Invoices"
+            subtitle="Statements & payments"
+            onPress={() => router.push("/(operator)/invoices")}
+            chevron
+          />
+          <ListRow
+            icon={<Ionicons name="return-down-back-outline" size={16} color={ios.system.redInk} />}
+            iconBg={ios.system.redWash}
+            title="Returns"
+            subtitle="Approvals & credits"
+            onPress={() => router.push("/(operator)/returns")}
+            chevron
+          />
+          <ListRow
+            icon={<Ionicons name="git-branch-outline" size={16} color={ios.brand} />}
+            iconBg={ios.brandWash}
+            title="Routes"
+            subtitle="Templates & stops"
+            onPress={() => router.push("/(operator)/routes")}
+            chevron
+          />
+          <ListRow
+            icon={<Ionicons name="people-outline" size={16} color={ios.system.greenInk} />}
+            iconBg={ios.system.greenWash}
+            title="Drivers"
+            subtitle="Team management"
+            onPress={() => router.push("/(operator)/drivers")}
+            chevron
+          />
+        </ListGroup>
+
         <ListGroup header="WAREHOUSE">
           <ListRow
             icon={<Ionicons name="alert-circle-outline" size={16} color={ios.system.red} />}
@@ -52,6 +111,25 @@ export default function OperatorMoreScreen() {
             title="Pick & load"
             subtitle="Warehouse scanning (coming soon)"
             onPress={() => router.push("/(operator)/pick")}
+            chevron
+          />
+        </ListGroup>
+
+        <ListGroup header="INSIGHTS">
+          <ListRow
+            icon={<Ionicons name="stats-chart-outline" size={16} color={ios.system.purpleInk} />}
+            iconBg={ios.system.purpleWash}
+            title="Analytics"
+            subtitle="Revenue, top items, margins"
+            onPress={() => router.push("/(operator)/analytics")}
+            chevron
+          />
+          <ListRow
+            icon={<Ionicons name="settings-outline" size={16} color={ios.gray[1]} />}
+            iconBg={ios.fill3}
+            title="Settings"
+            subtitle="Business details & notifications"
+            onPress={() => router.push("/(operator)/settings")}
             chevron
           />
         </ListGroup>

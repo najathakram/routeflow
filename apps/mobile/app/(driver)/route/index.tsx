@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
@@ -20,6 +20,10 @@ import {
   type RouteRunStop,
 } from "../../../lib/api/routes";
 import { useAuthStore } from "../../../lib/auth-store";
+import {
+  startLocationTracking,
+  stopLocationTracking,
+} from "../../../lib/location-tracker";
 
 export default function DriverRouteScreen() {
   const router = useRouter();
@@ -28,6 +32,16 @@ export default function DriverRouteScreen() {
 
   const active = activeData?.data?.[0] ?? null;
   const upcoming = scheduledData?.data?.[0] ?? null;
+
+  // Mirror tracking state with the run lifecycle: start when an active run
+  // appears, stop the moment it disappears (completed/cancelled).
+  useEffect(() => {
+    if (active) {
+      void startLocationTracking(active.id);
+    } else {
+      void stopLocationTracking();
+    }
+  }, [active?.id]);
 
   if (activeLoading || scheduledLoading) {
     return (
@@ -69,7 +83,11 @@ function StartOfDay({ run }: { run: RouteRun }) {
     day: "numeric",
   }).toUpperCase();
 
-  const onStart = () => updateStatus.mutate({ id: run.id, status: "IN_PROGRESS" });
+  const onStart = () =>
+    updateStatus.mutate(
+      { id: run.id, status: "IN_PROGRESS" },
+      { onSuccess: () => void startLocationTracking(run.id) },
+    );
 
   const initials =
     greetingName.slice(0, 2).toUpperCase() || "ME";

@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -18,9 +19,13 @@ import {
 } from "@routeflow/ui/mobile/ios";
 import {
   useActiveRouteRun,
+  useCompleteStop,
   useRouteRun,
   type RouteRunStop,
 } from "../../../../../lib/api/routes";
+import { useRecordInvoicePayment } from "../../../../../lib/api/invoices";
+import { usePodStore } from "../../../../../store/podStore";
+import { showToast } from "../../../../../lib/toast";
 
 const METHODS = ["Cash", "Card", "Cheque", "On account"] as const;
 const KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "·", "0", "⌫"];
@@ -59,6 +64,73 @@ export default function PaymentScreen() {
   const [received, setReceived] = useState<string>("0");
   const receivedNum = Number(received);
   const change = Math.max(0, receivedNum - invoiceTotal);
+
+  const completeMut = useCompleteStop();
+  const paymentMut = useRecordInvoicePayment();
+  const pod = usePodStore((s) => (stopId ? s.pods[stopId] : undefined));
+  const clearPod = usePodStore((s) => s.clear);
+
+  const submitting = completeMut.isPending || paymentMut.isPending;
+
+  const closeStop = async () => {
+    if (!stopId || !runId || !stop) return;
+
+    // 1. Complete the stop with all delivered items + POD
+    const items = (stop.orders ?? []).flatMap((o) =>
+      (o.lineItems ?? []).map((li) => ({
+        orderItemId: li.id,
+        productId: li.productId,
+        type: "DELIVERED" as const,
+        qty: Number(li.qty ?? 0),
+      })),
+    );
+    try {
+      await completeMut.mutateAsync({
+        runId,
+        stopId,
+        items,
+        podPhotoUrls: pod?.photoUrls,
+        signatureUrl: pod?.signatureUri,
+        driverNote: pod?.note,
+      });
+    } catch (e: any) {
+      Alert.alert(
+        "Couldn't complete stop",
+        e?.response?.data?.message ?? e?.message ?? "Try again.",
+      );
+      return;
+    }
+
+    // 2. Record payment if there's an invoice and the driver collected something
+    const invoiceId = stop.orders?.[0]?.invoiceId;
+    const apiMethod = ({
+      Cash: "CASH",
+      Card: "OTHER",
+      Cheque: "CHECK",
+      "On account": "OTHER",
+    }[method] ?? "OTHER") as "CASH" | "CHECK" | "ACH" | "OTHER";
+    const collected = method === "On account" ? 0 : Math.min(receivedNum, invoiceTotal);
+
+    if (invoiceId && collected > 0) {
+      try {
+        await paymentMut.mutateAsync({
+          invoiceId,
+          amount: collected,
+          method: apiMethod,
+        });
+      } catch (e: any) {
+        // Stop is already completed at this point, so warn but don't roll back
+        Alert.alert(
+          "Stop completed but payment failed",
+          e?.response?.data?.message ?? e?.message ?? "Record payment from invoices later.",
+        );
+      }
+    }
+
+    clearPod(stopId);
+    showToast("Stop completed");
+    router.replace("/(driver)/route");
+  };
 
   const press = (k: string) => {
     setReceived((prev) => {
@@ -153,10 +225,18 @@ export default function PaymentScreen() {
         </View>
 
         <View style={{ padding: 16 }}>
-          {/* TODO: wire POST /payments/:invoiceId mutation once the endpoint
-              is built; the button is disabled for now. */}
-          <Pressable style={[styles.greenBtn, styles.greenBtnDisabled]} disabled>
-            <Text style={styles.greenBtnText}>Receive cash & close (coming soon)</Text>
+          <Pressable
+            style={[styles.greenBtn, submitting && styles.greenBtnDisabled]}
+            onPress={submitting ? undefined : closeStop}
+            disabled={submitting}
+          >
+            <Text style={styles.greenBtnText}>
+              {submitting
+                ? "Closing…"
+                : method === "On account"
+                  ? "Mark on account & close"
+                  : "Receive payment & close"}
+            </Text>
           </Pressable>
         </View>
       </ScrollView>

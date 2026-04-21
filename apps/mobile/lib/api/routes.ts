@@ -264,6 +264,139 @@ export function useAllRoutes() {
   });
 }
 
+// ─── Route templates (operator) ───────────────────────────────────────────────
+
+export interface CreateRouteDto {
+  name: string;
+  description?: string;
+  stops?: { customerId: string; notes?: string }[];
+}
+
+export function useCreateRoute() {
+  const qc = useQueryClient();
+  return useMutation<{ id: string }, Error, CreateRouteDto>({
+    mutationFn: (dto) => apiClient.post('/routes', dto).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['routes'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'routes'] });
+    },
+  });
+}
+
+export function useUpdateRoute() {
+  const qc = useQueryClient();
+  return useMutation<
+    { id: string },
+    Error,
+    { id: string; name?: string; description?: string; isActive?: boolean; driverId?: string | null }
+  >({
+    mutationFn: ({ id, ...dto }) => apiClient.patch(`/routes/${id}`, dto).then((r) => r.data),
+    onSuccess: (_, { id }) => {
+      qc.invalidateQueries({ queryKey: ['routes'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'routes'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'routes', id] });
+    },
+  });
+}
+
+export function useDeleteRoute() {
+  const qc = useQueryClient();
+  return useMutation<void, Error, string>({
+    mutationFn: (id) => apiClient.delete(`/routes/${id}`).then(() => undefined),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['routes'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'routes'] });
+    },
+  });
+}
+
+export function useAddRouteStop() {
+  const qc = useQueryClient();
+  return useMutation<
+    { id: string },
+    Error,
+    { routeId: string; customerId: string; notes?: string }
+  >({
+    mutationFn: ({ routeId, ...body }) =>
+      apiClient.post(`/routes/${routeId}/stops`, body).then((r) => r.data),
+    onSuccess: (_, { routeId }) => {
+      qc.invalidateQueries({ queryKey: ['admin', 'routes', routeId] });
+    },
+  });
+}
+
+export function useRemoveRouteStop() {
+  const qc = useQueryClient();
+  return useMutation<void, Error, { routeId: string; stopId: string }>({
+    mutationFn: ({ routeId, stopId }) =>
+      apiClient.delete(`/routes/${routeId}/stops/${stopId}`).then(() => undefined),
+    onSuccess: (_, { routeId }) => {
+      qc.invalidateQueries({ queryKey: ['admin', 'routes', routeId] });
+    },
+  });
+}
+
+export function useReorderRouteStops() {
+  const qc = useQueryClient();
+  return useMutation<
+    void,
+    Error,
+    { routeId: string; order: { id: string; stopNumber: number }[] }
+  >({
+    mutationFn: ({ routeId, order }) =>
+      apiClient.patch(`/routes/${routeId}/stops/reorder`, { order }).then(() => undefined),
+    onSuccess: (_, { routeId }) => {
+      qc.invalidateQueries({ queryKey: ['admin', 'routes', routeId] });
+    },
+  });
+}
+
+// ─── Live fleet (operator) ────────────────────────────────────────────────────
+
+export interface LiveRoute {
+  runId: string;
+  routeId: string;
+  routeName: string;
+  driverId: string | null;
+  driverName: string | null;
+  status: string;
+  latestLocation: {
+    lat: number;
+    lng: number;
+    recordedAt: string;
+    speedKph?: number | null;
+    heading?: number | null;
+  } | null;
+  stops: {
+    id: string;
+    customerId: string;
+    customerName: string;
+    lat: number | null;
+    lng: number | null;
+    stopNumber: number;
+    status: string;
+  }[];
+  nextStopIndex: number;
+}
+
+export function useRoutesLive() {
+  return useQuery<{ routes: LiveRoute[] }>({
+    queryKey: ['routes', 'live'],
+    queryFn: () =>
+      apiClient
+        .get('/routes/live')
+        .then((r) => r.data)
+        .catch((err) => {
+          if (err?.response?.status === 404) return { routes: [] };
+          throw err;
+        }),
+    staleTime: 10_000,
+    refetchInterval: 15_000,
+    refetchIntervalInBackground: false,
+    retry: false,
+  });
+}
+
 export function useReopenStop() {
   const qc = useQueryClient();
   return useMutation<{ success: boolean; message: string }, Error, { runId: string; stopId: string }>({

@@ -13,6 +13,7 @@ import { useRouter, useLocalSearchParams } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import {
   InlineStats,
+  NavAction,
   NavBackButton,
   NavBar,
 } from "@routeflow/ui/mobile/ios";
@@ -78,7 +79,13 @@ export default function OperatorDriverDetailScreen() {
       <NavBar
         inlineTitle={`${name} · ${activeRouteName}`}
         leading={<NavBackButton label="Fleet" onPress={() => router.back()} />}
-        trailing={null}
+        trailing={
+          <NavAction
+            label="Edit"
+            bold
+            onPress={() => router.push(`/(operator)/drivers/${driverId}/edit`)}
+          />
+        }
       />
 
       <ScrollView showsVerticalScrollIndicator={false}>

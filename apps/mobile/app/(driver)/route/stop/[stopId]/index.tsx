@@ -27,6 +27,7 @@ import {
   useRouteRun,
   type RouteRunStop,
 } from "../../../../../lib/api/routes";
+import { usePodStore } from "../../../../../store/podStore";
 
 function initialsFrom(name: string): string {
   return (
@@ -150,8 +151,10 @@ export default function StopDetailScreen() {
         : `https://www.google.com/maps/search/?api=1&query=${q}`;
     Linking.openURL(url).catch(() => {});
   };
-  const comingSoon = (what: string) =>
-    Alert.alert(`${what} coming soon`, "This flow isn't wired to the API yet.");
+  const pod = usePodStore((s) => (stopId ? s.pods[stopId] : undefined));
+  const photoCount = pod?.photoUrls?.length ?? 0;
+  const hasSig = !!pod?.signatureUri;
+  const hasNote = !!pod?.note;
   const items = itemsFromStop(stop);
   const itemCount = items.length;
   const dollarTotal = (stop.orders ?? []).reduce(
@@ -244,20 +247,36 @@ export default function StopDetailScreen() {
 
         <SectionRow title="Proof of delivery" />
         <View style={styles.podRow}>
-          <PodTile icon="camera-outline" label="Photo" onPress={() => comingSoon("Photo capture")} />
+          <PodTile
+            icon="camera-outline"
+            label={photoCount > 0 ? `Photo · ${photoCount}` : "Photo"}
+            captured={photoCount > 0}
+            onPress={() => router.push("./photo")}
+          />
           <PodTile
             icon="create-outline"
-            label="Signature"
-            onPress={() => comingSoon("Signature capture")}
+            label={hasSig ? "Signature ✓" : "Signature"}
+            captured={hasSig}
+            onPress={() => router.push("./signature")}
           />
-          <PodTile icon="chatbubble-outline" label="Note" onPress={() => comingSoon("Driver note")} />
+          <PodTile
+            icon="chatbubble-outline"
+            label={hasNote ? "Note ✓" : "Note"}
+            captured={hasNote}
+            onPress={() => router.push("./note")}
+          />
         </View>
 
         <View style={styles.actionsBlock}>
           <View style={styles.actionBtnRow}>
             <SecondaryBtn
-              label="Attempted"
-              onPress={() => comingSoon("Mark as attempted")}
+              label="Skip stop"
+              onPress={() =>
+                Alert.alert("Skip stop", "Mark this stop as skipped? You can reopen it later.", [
+                  { text: "Cancel", style: "cancel" },
+                  { text: "Skip", style: "destructive", onPress: () => router.back() },
+                ])
+              }
             />
             <SecondaryBtn
               label="Partial return"
@@ -298,15 +317,20 @@ function PodTile({
   icon,
   label,
   onPress,
+  captured,
 }: {
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
   onPress?: () => void;
+  captured?: boolean;
 }) {
   return (
-    <Pressable style={styles.podTile} onPress={onPress}>
-      <Ionicons name={icon} size={22} color={ios.label2} />
-      <Text style={styles.podTileLabel}>{label}</Text>
+    <Pressable
+      style={[styles.podTile, captured && styles.podTileCaptured]}
+      onPress={onPress}
+    >
+      <Ionicons name={icon} size={22} color={captured ? ios.brand : ios.label2} />
+      <Text style={[styles.podTileLabel, captured && { color: ios.brand }]}>{label}</Text>
     </Pressable>
   );
 }
@@ -473,6 +497,11 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   podTileLabel: { fontSize: 12, fontFamily: "Inter_500Medium", color: ios.label2 },
+  podTileCaptured: {
+    backgroundColor: ios.brandWash,
+    borderColor: ios.brand,
+    borderStyle: "solid",
+  },
   actionsBlock: { padding: 16, gap: 8 },
   actionBtnRow: { flexDirection: "row", gap: 10 },
   secondaryBtn: {

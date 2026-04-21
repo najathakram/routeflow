@@ -24,6 +24,22 @@ import {
   useRouteRun,
   type RouteRunStop,
 } from "../../../../../../lib/api/routes";
+import { useCreateReturn, type ReturnReason } from "../../../../../../lib/api/returns";
+import { showToast } from "../../../../../../lib/toast";
+
+function reasonForApi(label: string): ReturnReason {
+  const m: Record<string, ReturnReason> = {
+    Damaged: "DAMAGED",
+    Expired: "QUALITY_ISSUE",
+    "Wrong SKU": "WRONG_ITEM",
+    "Short-dated": "QUALITY_ISSUE",
+    "Customer refused": "CUSTOMER_REFUSED",
+    Quality: "QUALITY_ISSUE",
+    Refused: "CUSTOMER_REFUSED",
+    Partial: "EXCESS_ORDER",
+  };
+  return m[label] ?? "DAMAGED";
+}
 
 const REASONS = [
   "Damaged",
@@ -74,6 +90,44 @@ export default function ReturnScreen() {
   );
 
   const rows = stop ? returnRowsFromStop(stop) : [];
+  const createReturn = useCreateReturn();
+
+  const issue = () => {
+    if (!stop) return;
+    const orderId = stop.orders?.[0]?.id;
+    if (!orderId) {
+      Alert.alert("No order", "This stop has no order to attach the return to.");
+      return;
+    }
+    if (rows.length === 0) {
+      Alert.alert("Nothing to return", "Mark items as partial or refused first.");
+      return;
+    }
+    // Map rows back to (productId, qty, reason). Driver mutations carry
+    // productId via DeliveryMutation; we can re-derive that from the stop.
+    const items = (stop.deliveryMutations ?? [])
+      .filter((m) => m.type === "PARTIAL" || m.type === "REFUSED")
+      .map((m) => ({
+        productId: m.productId,
+        qty: Math.round(Number(m.quantityDelivered ?? 0)),
+        reason: reasonForApi(activeReason ?? (m.type === "REFUSED" ? "Refused" : "Partial")),
+      }));
+    createReturn.mutate(
+      {
+        orderId,
+        reason: items[0]?.reason ?? "DAMAGED",
+        items,
+      },
+      {
+        onSuccess: () => {
+          showToast("Return submitted");
+          router.back();
+        },
+        onError: (e: any) =>
+          Alert.alert("Couldn't submit", e?.response?.data?.message ?? e?.message ?? "Try again."),
+      },
+    );
+  };
   const customerName = stop?.customer?.businessName ?? "Stop";
   const orderNumber = stop?.orders?.[0]?.orderNumber;
   const originalTotal = (stop?.orders ?? []).reduce(
@@ -108,14 +162,9 @@ export default function ReturnScreen() {
         leading={<NavBackButton label="Stop" onPress={() => router.back()} />}
         trailing={
           <NavAction
-            label="Issue"
+            label={createReturn.isPending ? "…" : "Issue"}
             bold
-            onPress={() =>
-              Alert.alert(
-                "Issue credit coming soon",
-                "Credit-note issuance isn't wired to the API yet.",
-              )
-            }
+            onPress={createReturn.isPending ? undefined : issue}
           />
         }
       />
@@ -197,15 +246,17 @@ export default function ReturnScreen() {
         ) : null}
 
         <View style={{ padding: 16, gap: 8 }}>
-          {/* TODO: wire POST /returns + POST /credit-notes mutations. */}
-          <Pressable style={[styles.primaryBtn, styles.primaryBtnDisabled]} disabled>
-            <Text style={styles.primaryBtnText}>Issue credit & email (coming soon)</Text>
-          </Pressable>
           <Pressable
-            style={[styles.secondaryBtn, styles.secondaryBtnDisabled]}
-            disabled
+            style={[
+              styles.primaryBtn,
+              (rows.length === 0 || createReturn.isPending) && styles.primaryBtnDisabled,
+            ]}
+            disabled={rows.length === 0 || createReturn.isPending}
+            onPress={issue}
           >
-            <Text style={styles.secondaryBtnText}>Save as draft (coming soon)</Text>
+            <Text style={styles.primaryBtnText}>
+              {createReturn.isPending ? "Submitting…" : "Submit return"}
+            </Text>
           </Pressable>
         </View>
       </ScrollView>

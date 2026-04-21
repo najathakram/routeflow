@@ -301,6 +301,84 @@ export class RoutesService {
     return map;
   }
 
+  async getLiveRoutes() {
+    const runs = await this.prisma.forTenant().routeRun.findMany({
+      where: { status: RouteRunStatus.IN_PROGRESS },
+      include: {
+        route: { select: { id: true, name: true } },
+        driver: {
+          select: {
+            id: true,
+            contactName: true,
+            user: { select: { username: true } },
+          },
+        },
+        stops: {
+          orderBy: { stopNumber: "asc" },
+          include: {
+            customer: { select: { businessName: true } },
+            customerAddress: { select: { lat: true, lng: true } },
+          },
+        },
+      },
+    });
+
+    const driverIds = runs
+      .map((r) => r.driverId)
+      .filter((d): d is string => !!d);
+    const fiveMinAgo = new Date(Date.now() - 5 * 60_000);
+    const recentLocations = driverIds.length
+      ? await this.prisma.forTenant().driverLocation.findMany({
+          where: { driverId: { in: driverIds }, recordedAt: { gte: fiveMinAgo } },
+          orderBy: { recordedAt: "desc" },
+        })
+      : [];
+    const latestByDriver = new Map<string, (typeof recentLocations)[number]>();
+    for (const loc of recentLocations) {
+      if (!latestByDriver.has(loc.driverId)) latestByDriver.set(loc.driverId, loc);
+    }
+
+    return {
+      routes: runs.map((run) => {
+        const stops = run.stops.map((s) => ({
+          id: s.id,
+          customerId: s.customerId,
+          customerName: s.customer?.businessName ?? "",
+          lat: s.customerAddress?.lat != null ? Number(s.customerAddress.lat) : null,
+          lng: s.customerAddress?.lng != null ? Number(s.customerAddress.lng) : null,
+          stopNumber: s.stopNumber,
+          status: s.status,
+        }));
+        const nextStopIndex = stops.findIndex(
+          (s) => s.status === "PENDING" || s.status === "IN_PROGRESS",
+        );
+        const loc = run.driverId ? latestByDriver.get(run.driverId) : undefined;
+        const driverName = run.driver
+          ? run.driver.contactName ?? run.driver.user?.username ?? null
+          : null;
+        return {
+          runId: run.id,
+          routeId: run.routeId,
+          routeName: run.route.name,
+          driverId: run.driverId,
+          driverName,
+          status: run.status,
+          latestLocation: loc
+            ? {
+                lat: Number(loc.lat),
+                lng: Number(loc.lng),
+                recordedAt: loc.recordedAt.toISOString(),
+                speedKph: loc.speedKph != null ? Number(loc.speedKph) : null,
+                heading: loc.heading != null ? Number(loc.heading) : null,
+              }
+            : null,
+          stops,
+          nextStopIndex: nextStopIndex >= 0 ? nextStopIndex : stops.length,
+        };
+      }),
+    };
+  }
+
   // ── Route Runs ─────────────────────────────────────────────────────────
 
   async createRun(dto: CreateRouteRunDto, user?: JwtPayload) {

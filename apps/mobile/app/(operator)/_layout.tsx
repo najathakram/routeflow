@@ -68,6 +68,15 @@ export default function OperatorLayout() {
         <Tabs.Screen name="profile" options={{ href: null }} />
         <Tabs.Screen name="change-password" options={{ href: null }} />
         <Tabs.Screen name="new-order" options={{ href: null }} />
+        <Tabs.Screen name="orders" options={{ href: null }} />
+        <Tabs.Screen name="products" options={{ href: null }} />
+        <Tabs.Screen name="customers" options={{ href: null }} />
+        <Tabs.Screen name="invoices" options={{ href: null }} />
+        <Tabs.Screen name="routes" options={{ href: null }} />
+        <Tabs.Screen name="drivers" options={{ href: null }} />
+        <Tabs.Screen name="returns" options={{ href: null }} />
+        <Tabs.Screen name="settings" options={{ href: null }} />
+        <Tabs.Screen name="analytics" options={{ href: null }} />
       </Tabs>
     </View>
   );

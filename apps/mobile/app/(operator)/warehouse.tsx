@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -8,9 +9,11 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import {
   KpiCard,
+  NavAction,
   NavBar,
   ProgressTrack,
   SearchBar,
@@ -40,6 +43,7 @@ function isOutOfStock(p: AdminProduct): boolean {
 }
 
 export default function WarehouseScreen() {
+  const router = useRouter();
   const [search, setSearch] = useState("");
 
   // One query for the low-stock list (the screen's main content) and a tiny
@@ -77,6 +81,26 @@ export default function WarehouseScreen() {
       <NavBar
         largeTitle="Warehouse"
         leading={<Text style={styles.eyebrow}>STOCK & LOW-STOCK</Text>}
+        trailing={
+          <View style={{ flexDirection: "row", gap: 6, alignItems: "center" }}>
+            <Pressable
+              style={styles.navBtn}
+              onPress={() => router.push("/(operator)/products/scan")}
+              hitSlop={6}
+            >
+              <Ionicons name="barcode-outline" size={18} color={ios.label} />
+            </Pressable>
+            <NavAction
+              label="All"
+              onPress={() => router.push("/(operator)/products")}
+            />
+            <NavAction
+              label="Add"
+              bold
+              onPress={() => router.push("/(operator)/products/new")}
+            />
+          </View>
+        }
       />
 
       <ScrollView showsVerticalScrollIndicator={false}>
@@ -145,7 +169,11 @@ export default function WarehouseScreen() {
                   const out = isOutOfStock(p);
                   const low = isLowStock(p);
                   return (
-                    <View key={p.id} style={styles.row}>
+                    <Pressable
+                      key={p.id}
+                      style={styles.row}
+                      onPress={() => router.push(`/(operator)/products/${p.id}`)}
+                    >
                       <View style={{ flex: 1 }}>
                         <View style={styles.topRow}>
                           <Text style={styles.name} numberOfLines={1}>
@@ -172,7 +200,7 @@ export default function WarehouseScreen() {
                           </Text>
                         </View>
                       </View>
-                    </View>
+                    </Pressable>
                   );
                 })
               )}
@@ -251,5 +279,13 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_400Regular",
     color: ios.label2,
     fontVariant: ["tabular-nums"],
+  },
+  navBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 999,
+    backgroundColor: ios.fill3,
+    alignItems: "center",
+    justifyContent: "center",
   },
 });

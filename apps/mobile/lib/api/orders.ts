@@ -113,6 +113,23 @@ export function useUpdateOrderItems() {
   });
 }
 
+export function useToggleOrderUrgent() {
+  const qc = useQueryClient();
+  return useMutation<Order, Error, { id: string; urgent: boolean }>({
+    mutationFn: ({ id, urgent }) =>
+      apiClient.patch(`/orders/${id}/urgent`, { urgent }).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['orders'] }),
+  });
+}
+
+export function useDeleteOrder() {
+  const qc = useQueryClient();
+  return useMutation<void, Error, string>({
+    mutationFn: (id) => apiClient.delete(`/orders/${id}`).then(() => undefined),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['orders'] }),
+  });
+}
+
 // ─── Tracking ─────────────────────────────────────────────────────────────────
 
 export interface OrderTracking {
