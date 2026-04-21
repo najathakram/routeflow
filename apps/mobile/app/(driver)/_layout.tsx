@@ -78,6 +78,7 @@ export default function DriverLayout() {
         <Tabs.Screen name="driver-messages" options={{ href: null }} />
         <Tabs.Screen name="driver-profile" options={{ href: null }} />
         <Tabs.Screen name="driver-change-password" options={{ href: null }} />
+        <Tabs.Screen name="driver-new-order" options={{ href: null }} />
       </Tabs>
     </View>
   );

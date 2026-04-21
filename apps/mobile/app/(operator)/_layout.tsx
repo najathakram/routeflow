@@ -67,6 +67,7 @@ export default function OperatorLayout() {
         <Tabs.Screen name="messages" options={{ href: null }} />
         <Tabs.Screen name="profile" options={{ href: null }} />
         <Tabs.Screen name="change-password" options={{ href: null }} />
+        <Tabs.Screen name="new-order" options={{ href: null }} />
       </Tabs>
     </View>
   );

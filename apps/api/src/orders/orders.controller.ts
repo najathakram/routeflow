@@ -39,7 +39,7 @@ export class OrdersController {
 
   @Post()
   @UseGuards(RolesGuard)
-  @Roles(UserRole.OPERATOR, UserRole.CUSTOMER)
+  @Roles(UserRole.OPERATOR, UserRole.CUSTOMER, UserRole.DRIVER)
   create(@Body() dto: CreateOrderDto, @CurrentUser() user: JwtPayload) {
     return this.ordersService.create(dto, user);
   }

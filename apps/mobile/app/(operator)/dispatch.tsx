@@ -8,8 +8,9 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
-import { NavBar, Pill, SegmentedControl } from "@routeflow/ui/mobile/ios";
+import { NavAction, NavBar, Pill, SegmentedControl } from "@routeflow/ui/mobile/ios";
 import {
   useAdminDrivers,
   useAdminRoutes,
@@ -26,6 +27,7 @@ function driverDisplayName(driver: AdminDriver | undefined): string {
 }
 
 export default function DispatchScreen() {
+  const router = useRouter();
   const [tab, setTab] = useState("Routes");
   const { data: routesData, isLoading: routesLoading } = useAdminRoutes({ limit: 50 });
   const { data: driversData, isLoading: driversLoading } = useAdminDrivers();
@@ -42,7 +44,17 @@ export default function DispatchScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
-      <NavBar largeTitle="Dispatch" inlineTitle="Assign" />
+      <NavBar
+        largeTitle="Dispatch"
+        inlineTitle="Assign"
+        trailing={
+          <NavAction
+            label="+ New"
+            bold
+            onPress={() => router.push("/(operator)/new-order")}
+          />
+        }
+      />
 
       <ScrollView showsVerticalScrollIndicator={false}>
         <View style={{ paddingHorizontal: 16, paddingTop: 6 }}>

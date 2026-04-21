@@ -254,13 +254,24 @@ function stopPill(stop: RouteRunStop, nextId?: string): string | undefined {
 }
 
 function NoRoute() {
+  const router = useRouter();
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <NavBar largeTitle="Today" />
       <View style={styles.center}>
         <Ionicons name="map-outline" size={48} color={ios.label3} />
         <Text style={styles.emptyTitle}>No route assigned</Text>
-        <Text style={styles.emptySub}>Check back with dispatch for today's manifest.</Text>
+        <Text style={styles.emptySub}>
+          Check back with dispatch for today's manifest, or start an ad-hoc
+          order for a walk-in customer.
+        </Text>
+        <Pressable
+          style={styles.adHocBtn}
+          onPress={() => router.push("/(driver)/driver-new-order")}
+        >
+          <Ionicons name="add" size={16} color="#fff" />
+          <Text style={styles.adHocBtnText}>Create ad-hoc order</Text>
+        </Pressable>
       </View>
     </SafeAreaView>
   );
@@ -269,6 +280,17 @@ function NoRoute() {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: ios.bg },
   center: { flex: 1, alignItems: "center", justifyContent: "center", gap: 10, paddingHorizontal: 40 },
+  adHocBtn: {
+    marginTop: 14,
+    backgroundColor: ios.brand,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    borderRadius: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  adHocBtnText: { color: "#fff", fontSize: 15, fontFamily: "Inter_600SemiBold" },
   emptyTitle: { fontSize: 18, fontFamily: "Inter_600SemiBold", color: ios.label, marginTop: 6 },
   emptySub: { fontSize: 14, fontFamily: "Inter_400Regular", color: ios.label2, textAlign: "center" },
   avatar: {

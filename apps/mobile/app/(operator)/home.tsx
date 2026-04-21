@@ -135,15 +135,22 @@ export default function OperatorHomeScreen() {
             <View style={styles.heroActions}>
               <Pressable
                 style={styles.heroBtnFilled}
+                onPress={() => router.push("/(operator)/new-order")}
+              >
+                <Ionicons name="add" size={14} color={ios.brandInk} />
+                <Text style={styles.heroBtnFilledText}>New order</Text>
+              </Pressable>
+              <Pressable
+                style={styles.heroBtnGhost}
                 onPress={() => router.push("/(operator)/dispatch")}
               >
-                <Text style={styles.heroBtnFilledText}>Dispatch</Text>
+                <Text style={styles.heroBtnGhostText}>Dispatch</Text>
               </Pressable>
               <Pressable
                 style={styles.heroBtnGhost}
                 onPress={() => router.push("/(operator)/fleet")}
               >
-                <Text style={styles.heroBtnGhostText}>Live fleet</Text>
+                <Text style={styles.heroBtnGhostText}>Fleet</Text>
               </Pressable>
             </View>
           </LinearGradient>
@@ -333,6 +340,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
   },
   heroBtnFilledText: { color: ios.brandInk, fontSize: 13, fontFamily: "Inter_600SemiBold" },
   heroBtnGhost: {
