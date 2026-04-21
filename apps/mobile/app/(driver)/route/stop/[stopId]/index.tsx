@@ -81,6 +81,7 @@ export default function StopDetailScreen() {
     () => run?.stops?.find((s) => s.id === stopId),
     [run, stopId],
   );
+  const pod = usePodStore((s) => s.pods[stopId ?? ""] ?? undefined);
 
   if (activeLoading || runLoading) {
     return (
@@ -151,7 +152,6 @@ export default function StopDetailScreen() {
         : `https://www.google.com/maps/search/?api=1&query=${q}`;
     Linking.openURL(url).catch(() => {});
   };
-  const pod = usePodStore((s) => (stopId ? s.pods[stopId] : undefined));
   const photoCount = pod?.photoUrls?.length ?? 0;
   const hasSig = !!pod?.signatureUri;
   const hasNote = !!pod?.note;

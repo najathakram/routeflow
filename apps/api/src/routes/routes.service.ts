@@ -323,9 +323,7 @@ export class RoutesService {
       },
     });
 
-    const driverIds = runs
-      .map((r) => r.driverId)
-      .filter((d): d is string => !!d);
+    const driverIds = runs.map((r) => r.driverId).filter((d): d is string => !!d);
     const fiveMinAgo = new Date(Date.now() - 5 * 60_000);
     const recentLocations = driverIds.length
       ? await this.prisma.forTenant().driverLocation.findMany({
@@ -354,7 +352,7 @@ export class RoutesService {
         );
         const loc = run.driverId ? latestByDriver.get(run.driverId) : undefined;
         const driverName = run.driver
-          ? run.driver.contactName ?? run.driver.user?.username ?? null
+          ? (run.driver.contactName ?? run.driver.user?.username ?? null)
           : null;
         return {
           runId: run.id,
