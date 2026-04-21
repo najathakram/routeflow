@@ -69,8 +69,7 @@ export class RoutesService {
     // Backfill the read side with the customer's default address so the map and other
     // consumers render correctly without requiring a data migration.
     const orphans = route.stops.filter(
-      (s): s is typeof s & { customerId: string } =>
-        !s.customerAddress && !!s.customerId,
+      (s): s is typeof s & { customerId: string } => !s.customerAddress && !!s.customerId,
     );
     if (orphans.length) {
       const customerIds = Array.from(new Set(orphans.map((s) => s.customerId)));
