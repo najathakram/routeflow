@@ -16,8 +16,9 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { BrandGlyph } from "@routeflow/ui/mobile/ios";
-import { buyerLogin, getBuyerSellers, setActiveSeller, type BuyerSeller } from "../../lib/buyer-auth";
+import { buyerLogin, buyerLoginWithGoogle, getBuyerSellers, setActiveSeller, type BuyerSeller } from "../../lib/buyer-auth";
 import { useBuyerSessionStore } from "../../lib/buyer-session-store";
+import { GoogleButton } from "@routeflow/ui/mobile/ios";
 
 export default function CustomerLoginScreen() {
   const router = useRouter();
@@ -26,6 +27,7 @@ export default function CustomerLoginScreen() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const onLogin = async () => {
@@ -60,6 +62,40 @@ export default function CustomerLoginScreen() {
       setError(typeof msg === "string" ? msg : "Login failed.");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const onGoogleLogin = async () => {
+    setError(null);
+    setGoogleLoading(true);
+    try {
+      const { buyer, sellerCount } = await buyerLoginWithGoogle();
+      setBuyer(buyer);
+
+      if (sellerCount === 0) {
+        setError("Your account is not connected to any supplier. Ask your supplier to send you a portal invite.");
+        return;
+      }
+
+      const sellers = await getBuyerSellers();
+      if (sellers.length === 1) {
+        await storeSetSeller(sellers[0]!);
+        router.replace("/(customer)/orders");
+        return;
+      }
+      showSellerPicker(sellers);
+    } catch (e: any) {
+      const code = (e as Error)?.message ?? "";
+      if (code === "cancelled") return;
+      if (code === "google_unavailable") {
+        setError("Google sign-in is not available right now. Try email and password.");
+      } else if (code === "unauthorized") {
+        setError("No buyer account found for this Google address.");
+      } else {
+        setError("Google sign-in failed. Try again or use email and password.");
+      }
+    } finally {
+      setGoogleLoading(false);
     }
   };
 
@@ -150,6 +186,14 @@ export default function CustomerLoginScreen() {
               <Text style={styles.signInLabel}>Sign in</Text>
             )}
           </TouchableOpacity>
+
+          <View style={styles.orRow}>
+            <View style={styles.orLine} />
+            <Text style={styles.orText}>or</Text>
+            <View style={styles.orLine} />
+          </View>
+
+          <GoogleButton onPress={onGoogleLogin} loading={googleLoading} />
         </View>
 
         <View style={{ flex: 1 }} />
@@ -235,4 +279,7 @@ const styles = StyleSheet.create({
   signInLabel: { fontSize: 17, fontFamily: "Inter_600SemiBold", color: "#ffffff", letterSpacing: -0.2 },
   footer: { textAlign: "center", fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 24 },
   footerLink: { color: ios.brand, fontFamily: "Inter_500Medium" },
+  orRow: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 6 },
+  orLine: { flex: 1, height: 1, backgroundColor: ios.separator },
+  orText: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label3 },
 });

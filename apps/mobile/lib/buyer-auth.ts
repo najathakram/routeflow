@@ -1,5 +1,6 @@
 import axios from "axios";
 import { Platform } from "react-native";
+import * as WebBrowser from "expo-web-browser";
 
 // ─── Web-safe storage ─────────────────────────────────────────────────────────
 
@@ -251,4 +252,52 @@ export async function getActiveSeller(): Promise<BuyerSeller | null> {
 
 export async function setActiveSeller(seller: BuyerSeller): Promise<void> {
   await storage.set("buyerActiveSeller", JSON.stringify(seller));
+}
+
+function parseQueryFromUrl(url: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  const q = url.split("?")[1];
+  if (!q) return out;
+  for (const pair of q.split("&")) {
+    const [k, v] = pair.split("=");
+    if (k) out[decodeURIComponent(k)] = decodeURIComponent(v ?? "");
+  }
+  return out;
+}
+
+const GOOGLE_REDIRECT_URI = "routeflow://auth/callback";
+
+/**
+ * Sign in to the buyer portal with Google (buyer-standalone context).
+ * No tenant slug required — the backend auto-matches the buyer account by email.
+ * Returns the buyer profile and how many sellers they are linked to.
+ */
+export async function buyerLoginWithGoogle(): Promise<{ buyer: BuyerUser; sellerCount: number }> {
+  const { data } = await axios.get<{ url: string }>(`${BASE_URL}/api/v1/auth/google`, {
+    params: { context: "buyer-standalone", mobile: 1 },
+  });
+  if (!data?.url) throw new Error("google_unavailable");
+
+  const result = await WebBrowser.openAuthSessionAsync(data.url, GOOGLE_REDIRECT_URI);
+  if (result.type !== "success" || !result.url) {
+    if (result.type === "cancel" || result.type === "dismiss") throw new Error("cancelled");
+    throw new Error("google_unavailable");
+  }
+
+  const params = parseQueryFromUrl(result.url);
+  if (params.error) throw new Error(params.error);
+  const { accessToken, refreshToken, type } = params;
+  if (!accessToken || !refreshToken || type !== "BUYER") throw new Error("google_token_invalid");
+
+  await storage.set("buyerAccessToken", accessToken);
+  await storage.set("buyerRefreshToken", refreshToken);
+
+  const payload = parseJwtPayload(accessToken);
+  const buyer: BuyerUser = {
+    id: (payload?.sub as string) ?? "",
+    email: (payload?.email as string) ?? "",
+    name: (payload?.name as string) ?? "",
+  };
+
+  return { buyer, sellerCount: parseInt(params.sellerCount ?? "0", 10) };
 }

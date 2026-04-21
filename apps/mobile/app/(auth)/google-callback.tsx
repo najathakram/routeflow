@@ -3,6 +3,7 @@ import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { useAuthStore } from "../../lib/auth-store";
+import { useBuyerSessionStore } from "../../lib/buyer-session-store";
 
 /**
  * Safety-net deep-link handler for the Google OAuth callback.
@@ -21,53 +22,76 @@ export default function GoogleCallbackScreen() {
   const params = useLocalSearchParams<{
     accessToken?: string;
     refreshToken?: string;
+    type?: string;
     error?: string;
   }>();
   const setUser = useAuthStore((s) => s.setUser);
+  const { setBuyer } = useBuyerSessionStore();
 
   useEffect(() => {
     (async () => {
       if (params.error) {
-        router.replace("/(auth)/login");
+        router.replace(params.type === "BUYER" ? "/(auth)/customer-login" : "/(auth)/login");
         return;
       }
-      const { accessToken, refreshToken } = params;
+      const { accessToken, refreshToken, type } = params;
       if (!accessToken || !refreshToken) {
         router.replace("/(auth)/login");
         return;
       }
 
-      // Persist tokens + decode user — same shape as loginWithGoogle
       const [, payloadPart] = accessToken.split(".");
-      let user = null;
+      let payload: Record<string, unknown> | null = null;
       if (payloadPart) {
         try {
-          const payload = JSON.parse(
-            atob(payloadPart.replace(/-/g, "+").replace(/_/g, "/")),
-          );
-          user = {
-            id: payload.sub,
-            username: payload.username,
-            role: payload.role,
-            status: payload.status ?? "ACTIVE",
-            forcePasswordChange: payload.forcePasswordChange ?? false,
-          };
+          payload = JSON.parse(atob(payloadPart.replace(/-/g, "+").replace(/_/g, "/")));
         } catch {
           // fall through
         }
       }
 
       const { default: SecureStore } = await import("expo-secure-store");
-      if (typeof window !== "undefined" && window.localStorage) {
-        window.localStorage.setItem("accessToken", accessToken);
-        window.localStorage.setItem("refreshToken", refreshToken);
-      } else {
-        await SecureStore.setItemAsync("accessToken", accessToken);
-        await SecureStore.setItemAsync("refreshToken", refreshToken);
-      }
+      const isWeb = typeof window !== "undefined" && window.localStorage;
 
-      if (user) setUser(user);
-      // RootLayoutNav will redirect based on role
+      if (type === "BUYER") {
+        // Buyer Google callback — store buyer tokens and session
+        if (isWeb) {
+          window.localStorage.setItem("buyerAccessToken", accessToken);
+          window.localStorage.setItem("buyerRefreshToken", refreshToken);
+        } else {
+          await SecureStore.setItemAsync("buyerAccessToken", accessToken);
+          await SecureStore.setItemAsync("buyerRefreshToken", refreshToken);
+        }
+        if (payload) {
+          setBuyer({
+            id: payload.sub as string,
+            email: payload.email as string,
+            name: (payload.name as string) ?? "",
+          });
+        }
+        // Fetch sellers + select — let customer-login handle multi-seller; here
+        // we just route to orders and let the customer layout guard handle it
+        router.replace("/(customer)/orders");
+      } else {
+        // Staff Google callback
+        if (isWeb) {
+          window.localStorage.setItem("accessToken", accessToken);
+          window.localStorage.setItem("refreshToken", refreshToken);
+        } else {
+          await SecureStore.setItemAsync("accessToken", accessToken);
+          await SecureStore.setItemAsync("refreshToken", refreshToken);
+        }
+        if (payload) {
+          setUser({
+            id: payload.sub as string,
+            username: payload.username as string,
+            role: payload.role as any,
+            status: (payload.status as any) ?? "ACTIVE",
+            forcePasswordChange: (payload.forcePasswordChange as boolean) ?? false,
+          });
+        }
+        // RootLayoutNav will redirect based on role
+      }
     })();
   }, []);
 
