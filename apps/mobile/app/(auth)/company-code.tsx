@@ -4,6 +4,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import {
   ActivityIndicator,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -128,13 +129,9 @@ export default function CompanyCodeScreen() {
 
         <View style={styles.portalRow}>
           <Text style={styles.portalHint}>Are you a customer? </Text>
-          <MobileButton
-            variant="ghost"
-            size="sm"
-            onPress={() => router.push("/(auth)/customer-login")}
-          >
-            Customer Portal
-          </MobileButton>
+          <Pressable onPress={() => router.push("/(auth)/customer-login")} hitSlop={8}>
+            <Text style={styles.portalLink}>Customer Portal</Text>
+          </Pressable>
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -209,5 +206,10 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: "Inter_400Regular",
     color: ios.label2,
+  },
+  portalLink: {
+    fontSize: 13,
+    fontFamily: "Inter_500Medium",
+    color: ios.brand,
   },
 });

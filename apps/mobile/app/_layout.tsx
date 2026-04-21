@@ -63,17 +63,17 @@ function RootLayoutNav() {
       return;
     }
 
-    // Step 1: company code (tenant slug) required
+    // Step 1: no tenant slug — show landing page (or allow auth screens)
     if (!tenantSlug) {
-      if (segments[0] !== "(auth)" || segments[1] !== "company-code") {
-        router.replace("/(auth)/company-code");
+      if (segments[0] !== "(auth)" && segments.length > 0) {
+        router.replace("/");
       }
       return;
     }
 
-    // Step 2: login
+    // Step 2: login (tenant slug exists but no user)
     if (!user) {
-      if (segments[0] !== "(auth)" || segments[1] !== "login") {
+      if (segments[0] !== "(auth)") {
         router.replace("/(auth)/login");
       }
       return;
