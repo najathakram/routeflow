@@ -64,6 +64,28 @@ export class RoutesService {
       },
     });
     if (!route) throw new NotFoundException("Route not found");
+
+    // Legacy stops may have customerAddressId=null (customer had no address at add time).
+    // Backfill the read side with the customer's default address so the map and other
+    // consumers render correctly without requiring a data migration.
+    const orphans = route.stops.filter(
+      (s): s is typeof s & { customerId: string } =>
+        !s.customerAddress && !!s.customerId,
+    );
+    if (orphans.length) {
+      const customerIds = Array.from(new Set(orphans.map((s) => s.customerId)));
+      const addresses = await this.prisma.forTenant().customerAddress.findMany({
+        where: { customerId: { in: customerIds } },
+        orderBy: [{ isDefault: "desc" }, { createdAt: "asc" }],
+      });
+      const byCustomer = new Map<string, (typeof addresses)[number]>();
+      for (const a of addresses) if (!byCustomer.has(a.customerId)) byCustomer.set(a.customerId, a);
+      for (const s of orphans) {
+        const addr = byCustomer.get(s.customerId);
+        if (addr) (s as any).customerAddress = addr;
+      }
+    }
+
     return route;
   }
 
@@ -97,11 +119,24 @@ export class RoutesService {
       stopNumber = (last?.stopNumber ?? 0) + 1;
     }
 
+    // Fall back to the customer's default address when the caller omits it, so the
+    // stop has geocoded coords available for the map/optimizer. If the customer
+    // has no addresses at all, store null (nothing we can do).
+    let customerAddressId = dto.customerAddressId;
+    if (!customerAddressId) {
+      const defaultAddr = await this.prisma.forTenant().customerAddress.findFirst({
+        where: { customerId: dto.customerId },
+        orderBy: [{ isDefault: "desc" }, { createdAt: "asc" }],
+        select: { id: true },
+      });
+      customerAddressId = defaultAddr?.id;
+    }
+
     return this.prisma.forTenant().routeStop.create({
       data: {
         routeId,
         customerId: dto.customerId,
-        customerAddressId: dto.customerAddressId,
+        customerAddressId,
         stopNumber,
         notes: dto.notes,
       },
