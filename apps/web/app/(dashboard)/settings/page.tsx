@@ -97,8 +97,6 @@ const profileSchema = z.object({
   state: z.string().optional(),
   zip: z.string().regex(/^\d{5}(-\d{4})?$/, "Enter a valid ZIP code"),
   taxRate: z.coerce.number().min(0).max(100),
-  invoiceNotes: z.string().optional(),
-  invoiceTerms: z.string().optional(),
 });
 type ProfileFormValues = z.infer<typeof profileSchema>;
 
@@ -134,8 +132,6 @@ function BusinessProfileTab() {
       state: "",
       zip: "",
       taxRate: 0,
-      invoiceNotes: "",
-      invoiceTerms: "",
     },
   });
 
@@ -150,8 +146,6 @@ function BusinessProfileTab() {
         state: savedSettings.state ?? "",
         zip: savedSettings.zip ?? "",
         taxRate: savedSettings.taxRate ?? 0,
-        invoiceNotes: savedSettings.invoiceNotes ?? "",
-        invoiceTerms: savedSettings.invoiceTerms ?? "",
       });
     }
   }, [savedSettings, reset]);
@@ -276,37 +270,6 @@ function BusinessProfileTab() {
               error={errors.taxRate?.message}
             />
             <span className="absolute right-3 top-[34px] text-sm text-navy/40">%</span>
-          </div>
-        </div>
-      </Card>
-
-      <Card title="Invoice Defaults">
-        <div className="space-y-4">
-          <div>
-            <label className="text-sm font-medium text-navy">Customer Notes</label>
-            <textarea
-              {...register("invoiceNotes")}
-              rows={5}
-              placeholder={
-                "Thank you for your business.\n\nPlease write check in favor of\nYOUR COMPANY NAME\nZelle: billing@yourcompany.com"
-              }
-              className="mt-1 w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-            />
-            <p className="mt-1 text-xs text-navy/40">
-              Printed on every new invoice under &quot;Notes&quot;. Preserves line breaks.
-            </p>
-          </div>
-          <div>
-            <label className="text-sm font-medium text-navy">Terms &amp; Conditions</label>
-            <textarea
-              {...register("invoiceTerms")}
-              rows={8}
-              placeholder="Your standard terms & conditions shown on every invoice."
-              className="mt-1 w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-            />
-            <p className="mt-1 text-xs text-navy/40">
-              Printed on every new invoice under &quot;Terms &amp; Conditions&quot;. Preserves line breaks.
-            </p>
           </div>
         </div>
       </Card>
@@ -1985,10 +1948,27 @@ const TERMS_OPTIONS = [
 
 function InvoicingTab() {
   const { toast } = useToast();
-  const { data: settings, isLoading } = useInvoiceSettings();
+  const qc = useQueryClient();
+  const { data: invoiceSettings, isLoading } = useInvoiceSettings();
   const updateSettings = useUpdateInvoiceSettings();
 
-  const handleChange = (value: string) => {
+  const { data: savedSettings } = useQuery({
+    queryKey: ["settings"],
+    queryFn: () => apiClient.get("/settings").then((r) => r.data),
+  });
+
+  const [invoiceNotes, setInvoiceNotes] = React.useState("");
+  const [invoiceTerms, setInvoiceTerms] = React.useState("");
+  const [savingDefaults, setSavingDefaults] = React.useState(false);
+
+  React.useEffect(() => {
+    if (savedSettings) {
+      setInvoiceNotes(savedSettings.invoiceNotes ?? "");
+      setInvoiceTerms(savedSettings.invoiceTerms ?? "");
+    }
+  }, [savedSettings]);
+
+  const handleTermsChange = (value: string) => {
     updateSettings.mutate(
       { defaultTerms: value },
       {
@@ -2008,6 +1988,19 @@ function InvoicingTab() {
     );
   };
 
+  const handleSaveDefaults = async () => {
+    setSavingDefaults(true);
+    try {
+      await apiClient.patch("/settings", { invoiceNotes, invoiceTerms });
+      qc.invalidateQueries({ queryKey: ["settings"] });
+      toast({ title: "Invoice defaults saved", variant: "success" });
+    } catch {
+      toast({ title: "Failed to save", variant: "error" });
+    } finally {
+      setSavingDefaults(false);
+    }
+  };
+
   return (
     <div className="space-y-5">
       <Card title="Default Invoice Terms">
@@ -2024,8 +2017,8 @@ function InvoicingTab() {
               <p className="text-sm font-semibold text-navy">Payment Terms</p>
               <select
                 className="w-full rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-navy focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-                value={settings?.defaultTerms ?? "Net 30"}
-                onChange={(e) => handleChange(e.target.value)}
+                value={invoiceSettings?.defaultTerms ?? "Net 30"}
+                onChange={(e) => handleTermsChange(e.target.value)}
                 disabled={isLoading || updateSettings.isPending}
               >
                 {TERMS_OPTIONS.map((opt) => (
@@ -2035,6 +2028,44 @@ function InvoicingTab() {
                 ))}
               </select>
             </div>
+          </div>
+        </div>
+      </Card>
+
+      <Card title="Invoice Defaults">
+        <div className="space-y-4">
+          <div>
+            <label className="text-sm font-medium text-navy">Customer Notes</label>
+            <textarea
+              value={invoiceNotes}
+              onChange={(e) => setInvoiceNotes(e.target.value)}
+              rows={5}
+              placeholder={
+                "Thank you for your business.\n\nPlease write check in favor of\nYOUR COMPANY NAME\nZelle: billing@yourcompany.com"
+              }
+              className="mt-1 w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+            />
+            <p className="mt-1 text-xs text-navy/40">
+              Printed on every new invoice under &quot;Notes&quot;. Preserves line breaks.
+            </p>
+          </div>
+          <div>
+            <label className="text-sm font-medium text-navy">Terms &amp; Conditions</label>
+            <textarea
+              value={invoiceTerms}
+              onChange={(e) => setInvoiceTerms(e.target.value)}
+              rows={8}
+              placeholder="Your standard terms & conditions shown on every invoice."
+              className="mt-1 w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+            />
+            <p className="mt-1 text-xs text-navy/40">
+              Printed on every new invoice under &quot;Terms &amp; Conditions&quot;. Preserves line breaks.
+            </p>
+          </div>
+          <div className="flex justify-end">
+            <Button onClick={handleSaveDefaults} loading={savingDefaults}>
+              Save Defaults
+            </Button>
           </div>
         </div>
       </Card>
