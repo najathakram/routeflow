@@ -1,5 +1,6 @@
 import axios from "axios";
 import { Platform } from "react-native";
+import { useOfflineQueue } from "../store/offlineQueue";
 
 const BASE_URL =
   process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:3000";
@@ -38,7 +39,7 @@ apiClient.interceptors.request.use(async (config) => {
   return config;
 });
 
-// ─── Response interceptor: refresh on 401 ────────────────────────────────────
+// ─── Response interceptor: offline queue + 401 refresh ───────────────────────
 
 let isRefreshing = false;
 let failedQueue: Array<{
@@ -54,14 +55,43 @@ function processQueue(error: unknown, token: string | null = null) {
   failedQueue = [];
 }
 
+type ExtendedConfig = typeof apiClient.defaults & {
+  _retry?: boolean;
+  _offlineQueued?: boolean;
+};
+
 apiClient.interceptors.response.use(
   (response) => response,
   async (error) => {
-    const original = error.config as typeof error.config & {
-      _retry?: boolean;
-    };
+    const original = error.config as ExtendedConfig;
 
-    if (error.response?.status !== 401 || original._retry) {
+    // ── Offline: network error (no response) on a mutating request ──────────
+    const isNetworkError = !error.response && !!error.request;
+    const isMutation = ["POST", "PATCH", "PUT", "DELETE"].includes(
+      (original?.method ?? "").toUpperCase(),
+    );
+    const isFormData = original?.data instanceof FormData;
+
+    if (isNetworkError && isMutation && !isFormData && !original?._offlineQueued) {
+      if (original) original._offlineQueued = true;
+      let body: unknown;
+      try {
+        body = typeof original?.data === "string" ? JSON.parse(original.data) : original?.data;
+      } catch {
+        body = undefined;
+      }
+      useOfflineQueue.getState().enqueue({
+        endpoint: original?.url ?? "",
+        method: (original?.method ?? "POST").toUpperCase() as "POST" | "PATCH" | "PUT" | "DELETE",
+        body,
+      });
+      return Promise.reject(
+        Object.assign(new Error("You are offline. Action queued."), { isOfflineQueued: true }),
+      );
+    }
+
+    // ── 401 token refresh ───────────────────────────────────────────────────
+    if (error.response?.status !== 401 || original?._retry) {
       return Promise.reject(error);
     }
 

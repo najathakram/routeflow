@@ -87,6 +87,14 @@ export default function OperatorMoreScreen() {
             chevron
           />
           <ListRow
+            icon={<Ionicons name="receipt-outline" size={16} color={ios.system.greenInk} />}
+            iconBg={ios.system.greenWash}
+            title="Expenses"
+            subtitle="Track business spending"
+            onPress={() => router.push("/(operator)/expenses")}
+            chevron
+          />
+          <ListRow
             icon={<Ionicons name="git-branch-outline" size={16} color={ios.brand} />}
             iconBg={ios.brandWash}
             title="Routes"
@@ -117,7 +125,7 @@ export default function OperatorMoreScreen() {
             icon={<Ionicons name="alert-circle-outline" size={16} color={ios.system.red} />}
             iconBg={ios.system.redWash}
             title="Exceptions"
-            subtitle="5 open · 2 urgent"
+            subtitle="Urgent orders, late routes, pending returns"
             onPress={() => router.push("/(operator)/exceptions")}
             chevron
           />

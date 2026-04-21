@@ -16,6 +16,7 @@ import { UserRole } from "@routeflow/types";
 import { ios } from "@routeflow/ui/tokens";
 import { useAuthStore } from "../lib/auth-store";
 import { useTenantStore } from "../lib/tenant-store";
+import { useBuyerSessionStore } from "../lib/buyer-session-store";
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -33,6 +34,7 @@ const queryClient = new QueryClient();
 function RootLayoutNav() {
   const { user, isLoading, activeRole, initialize } = useAuthStore();
   const { slug: tenantSlug, isLoading: tenantLoading, initialize: initTenant } = useTenantStore();
+  const { buyer, activeSeller, isLoading: buyerLoading, initialize: initBuyer } = useBuyerSessionStore();
   const router = useRouter();
   const segments: string[] = useSegments();
   const notificationListener = useRef<ReturnType<typeof Notifications.addNotificationReceivedListener> | null>(null);
@@ -40,6 +42,7 @@ function RootLayoutNav() {
   useEffect(() => {
     initTenant();
     initialize();
+    initBuyer();
   }, []);
 
   useEffect(() => {
@@ -50,7 +53,15 @@ function RootLayoutNav() {
   }, []);
 
   useEffect(() => {
-    if (isLoading || tenantLoading) return;
+    if (isLoading || tenantLoading || buyerLoading) return;
+
+    // Buyer portal: if logged in as buyer (and not also as staff), route to customer section
+    if (buyer && activeSeller && !user) {
+      if (segments[0] !== "(customer)") {
+        router.replace("/(customer)/orders");
+      }
+      return;
+    }
 
     // Step 1: company code (tenant slug) required
     if (!tenantSlug) {
@@ -107,7 +118,7 @@ function RootLayoutNav() {
       }
       return;
     }
-  }, [user, isLoading, tenantSlug, tenantLoading, activeRole, segments]);
+  }, [user, isLoading, tenantSlug, tenantLoading, activeRole, buyer, activeSeller, buyerLoading, segments]);
 
   // On web viewed from a desktop browser the phone-sized layout stretches
   // uncomfortably wide. Clamp the app to a phone-ish width and center it

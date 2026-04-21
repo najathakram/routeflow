@@ -397,6 +397,15 @@ export function useRoutesLive() {
   });
 }
 
+export function useOperatorRouteRuns(params?: { status?: string; date?: string; limit?: number }) {
+  return useQuery<{ data: RouteRun[]; meta: any }>({
+    queryKey: ['route-runs', 'operator', params],
+    queryFn: () =>
+      apiClient.get('/route-runs', { params: { limit: 50, ...params } }).then((r) => r.data),
+    staleTime: 30_000,
+  });
+}
+
 export function useReopenStop() {
   const qc = useQueryClient();
   return useMutation<{ success: boolean; message: string }, Error, { runId: string; stopId: string }>({

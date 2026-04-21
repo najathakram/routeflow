@@ -218,6 +218,7 @@ function ProductPickView({
 
   const { data: productsData, isLoading: productsLoading } = useProducts({
     search: search.trim() || undefined,
+    limit: 200,
   });
   const products: Product[] = productsData?.data ?? [];
 

@@ -34,9 +34,9 @@ export default function OperatorTabsLayout() {
           }}
         />
         <Tabs.Screen
-          name="invoices"
+          name="finance"
           options={{
-            title: "Invoices",
+            title: "Finance",
             tabBarIcon: ({ color, size }) => (
               <Ionicons name="receipt-outline" size={size} color={color} />
             ),

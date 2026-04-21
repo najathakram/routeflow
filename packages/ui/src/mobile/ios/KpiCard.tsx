@@ -10,11 +10,13 @@ export interface KpiCardProps {
   /** Sub-line — e.g. "↑ 12 vs yesterday" or "3 need substitution". */
   delta?: string;
   deltaTone?: "up" | "down" | "neutral";
+  /** When true, renders the card with a brand-tinted background to indicate an active filter. */
+  highlighted?: boolean;
 }
 
-export function KpiCard({ icon, iconBg, value, label, delta, deltaTone = "neutral" }: KpiCardProps) {
+export function KpiCard({ icon, iconBg, value, label, delta, deltaTone = "neutral", highlighted }: KpiCardProps) {
   return (
-    <View style={styles.card}>
+    <View style={[styles.card, highlighted && styles.cardHighlighted]}>
       {icon !== undefined ? (
         <View style={[styles.iconWrap, iconBg ? { backgroundColor: iconBg } : null]}>{icon}</View>
       ) : null}
@@ -48,6 +50,11 @@ const styles = StyleSheet.create({
     borderRadius: ios.cardRadius,
     padding: 14,
     minHeight: 110,
+  },
+  cardHighlighted: {
+    backgroundColor: ios.brandWash,
+    borderWidth: 1.5,
+    borderColor: ios.brand,
   },
   iconWrap: {
     width: 32,

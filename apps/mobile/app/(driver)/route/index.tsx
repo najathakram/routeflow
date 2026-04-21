@@ -19,6 +19,7 @@ import {
   type RouteRun,
   type RouteRunStop,
 } from "../../../lib/api/routes";
+import { openRouteInMaps } from "../../../components/openInMaps";
 import { useAuthStore } from "../../../lib/auth-store";
 import {
   startLocationTracking,
@@ -130,6 +131,15 @@ function StartOfDay({ run }: { run: RouteRun }) {
                   {updateStatus.isPending ? "Starting…" : "Start day"}
                 </Text>
               </Pressable>
+              {(run.stops?.length ?? 0) > 0 ? (
+                <Pressable
+                  style={styles.heroBtnGhost}
+                  onPress={() => openRouteInMaps(run.stops ?? [])}
+                >
+                  <Ionicons name="navigate-outline" size={14} color="#fff" />
+                  <Text style={styles.heroBtnGhostText}>Maps</Text>
+                </Pressable>
+              ) : null}
             </View>
           </LinearGradient>
         </View>
@@ -219,6 +229,18 @@ function TodaysRoute({
                   onPress={() => onOpenStop(nextStop.id)}
                 >
                   <Text style={styles.heroBtnGhostText}>Open stop</Text>
+                </Pressable>
+                <Pressable
+                  style={styles.heroBtnGhost}
+                  onPress={() => {
+                    const pending = stops.filter(
+                      (s) => s.status === "PENDING" || s.status === "IN_PROGRESS",
+                    );
+                    openRouteInMaps(pending.length > 0 ? pending : stops);
+                  }}
+                >
+                  <Ionicons name="navigate-outline" size={14} color="#fff" />
+                  <Text style={styles.heroBtnGhostText}>Maps</Text>
                 </Pressable>
               </View>
             </LinearGradient>

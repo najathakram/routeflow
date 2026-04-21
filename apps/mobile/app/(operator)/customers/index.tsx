@@ -20,12 +20,14 @@ import {
   SegmentedControl,
 } from "@routeflow/ui/mobile/ios";
 import { useAdminCustomers, type AdminCustomer } from "../../../lib/api/admin";
-import { useCustomer } from "../../../lib/api/customers";
+import { useSuppliers, type Supplier } from "../../../lib/api/purchase-orders";
 import { AppMapView, type MapPin } from "../../../components/MapView";
 
 type CustomerWithAddress = AdminCustomer & {
   addresses?: Array<{ lat?: number | null; lng?: number | null; line1?: string; city?: string }>;
 };
+
+type Tab = "Customers" | "Suppliers" | "Map";
 
 function initialsFor(name: string): string {
   return (
@@ -40,33 +42,125 @@ function initialsFor(name: string): string {
 
 export default function CustomersListScreen() {
   const router = useRouter();
-  const [tab, setTab] = useState("List");
+  const [tab, setTab] = useState<Tab>("Customers");
   const [search, setSearch] = useState("");
 
-  const { data, isLoading, isFetching, refetch } = useAdminCustomers({
-    search: search.trim() || undefined,
+  const customersQ = useAdminCustomers({
+    search: tab === "Customers" || tab === "Map" ? search.trim() || undefined : undefined,
     limit: 100,
   });
-  const customers = (data?.data ?? []) as CustomerWithAddress[];
+  const suppliersQ = useSuppliers();
+
+  const customers = (customersQ.data?.data ?? []) as CustomerWithAddress[];
+  const suppliers = suppliersQ.data ?? [];
+
+  const filteredSuppliers = useMemo(() => {
+    if (!search.trim()) return suppliers;
+    const q = search.toLowerCase();
+    return suppliers.filter(
+      (s) =>
+        s.name.toLowerCase().includes(q) ||
+        (s.contactName ?? "").toLowerCase().includes(q) ||
+        (s.email ?? "").toLowerCase().includes(q),
+    );
+  }, [suppliers, search]);
+
+  const isLoading =
+    tab === "Suppliers"
+      ? suppliersQ.isLoading
+      : customersQ.isLoading;
+  const isFetching =
+    tab === "Suppliers"
+      ? suppliersQ.isFetching ?? false
+      : customersQ.isFetching;
+  const refetch = tab === "Suppliers" ? suppliersQ.refetch : customersQ.refetch;
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <NavBar
-        largeTitle="Customers"
-        subtitle={customers.length ? `${customers.length} customer${customers.length === 1 ? "" : "s"}` : undefined}
+        largeTitle={tab === "Suppliers" ? "Suppliers" : "Customers"}
+        subtitle={
+          tab === "Suppliers"
+            ? filteredSuppliers.length > 0
+              ? `${filteredSuppliers.length} supplier${filteredSuppliers.length === 1 ? "" : "s"}`
+              : undefined
+            : customers.length > 0
+              ? `${customers.length} customer${customers.length === 1 ? "" : "s"}`
+              : undefined
+        }
         leading={<NavBackButton label="Back" onPress={() => router.back()} />}
         trailing={
-          <NavAction label="Add" bold onPress={() => router.push("/(operator)/customers/new")} />
+          tab === "Suppliers" ? (
+            <NavAction
+              label="Add"
+              bold
+              onPress={() => router.push("/(operator)/suppliers/new")}
+            />
+          ) : tab === "Customers" ? (
+            <NavAction
+              label="Add"
+              bold
+              onPress={() => router.push("/(operator)/customers/new")}
+            />
+          ) : null
         }
       />
 
       <View style={{ paddingHorizontal: 16, paddingTop: 6 }}>
-        <SegmentedControl items={["List", "Map"]} value={tab} onChange={setTab} />
+        <SegmentedControl
+          items={["Customers", "Suppliers", "Map"]}
+          value={tab}
+          onChange={(v) => setTab(v as Tab)}
+        />
       </View>
 
-      <SearchBar placeholder="Search customers…" value={search} onChangeText={setSearch} />
+      <SearchBar
+        placeholder={
+          tab === "Suppliers" ? "Search suppliers…" : "Search customers…"
+        }
+        value={search}
+        onChangeText={setSearch}
+      />
 
-      {tab === "List" ? (
+      {tab === "Suppliers" ? (
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl refreshing={isFetching && !isLoading} onRefresh={refetch} />
+          }
+        >
+          {isLoading ? (
+            <View style={styles.center}>
+              <ActivityIndicator color={ios.brand} />
+            </View>
+          ) : filteredSuppliers.length === 0 ? (
+            <View style={styles.center}>
+              <Text style={styles.emptyText}>
+                {search ? "No suppliers match." : "No suppliers yet."}
+              </Text>
+              <Pressable
+                style={styles.primaryBtn}
+                onPress={() => router.push("/(operator)/suppliers/new")}
+              >
+                <Ionicons name="add" size={16} color="#fff" />
+                <Text style={styles.primaryBtnText}>Add supplier</Text>
+              </Pressable>
+            </View>
+          ) : (
+            <View style={{ paddingHorizontal: 16, gap: 8, paddingBottom: 24 }}>
+              {filteredSuppliers.map((s) => (
+                <SupplierRow
+                  key={s.id}
+                  supplier={s}
+                  onPress={() =>
+                    router.push(`/(operator)/suppliers/${s.id}/edit`)
+                  }
+                />
+              ))}
+            </View>
+          )}
+        </ScrollView>
+      ) : tab === "Customers" ? (
         <ScrollView
           showsVerticalScrollIndicator={false}
           refreshControl={
@@ -96,10 +190,14 @@ export default function CustomersListScreen() {
                 <Pressable
                   key={c.id}
                   style={styles.row}
-                  onPress={() => router.push(`/(operator)/customers/${c.id}`)}
+                  onPress={() =>
+                    router.push(`/(operator)/customers/${c.id}`)
+                  }
                 >
                   <View style={styles.avatar}>
-                    <Text style={styles.avatarText}>{initialsFor(c.businessName)}</Text>
+                    <Text style={styles.avatarText}>
+                      {initialsFor(c.businessName)}
+                    </Text>
                   </View>
                   <View style={{ flex: 1, minWidth: 0 }}>
                     <Text style={styles.name} numberOfLines={1}>
@@ -118,9 +216,45 @@ export default function CustomersListScreen() {
           )}
         </ScrollView>
       ) : (
-        <CustomersMap customers={customers} onPickCustomer={(id) => router.push(`/(operator)/customers/${id}`)} />
+        <CustomersMap
+          customers={customers}
+          onPickCustomer={(id) =>
+            router.push(`/(operator)/customers/${id}`)
+          }
+        />
       )}
     </SafeAreaView>
+  );
+}
+
+function SupplierRow({
+  supplier,
+  onPress,
+}: {
+  supplier: Supplier;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable style={styles.row} onPress={onPress}>
+      <View style={[styles.avatar, { backgroundColor: ios.system.purpleWash }]}>
+        <Text style={[styles.avatarText, { color: ios.system.purpleInk }]}>
+          {initialsFor(supplier.name)}
+        </Text>
+      </View>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text style={styles.name} numberOfLines={1}>
+          {supplier.name}
+        </Text>
+        {supplier.contactName || supplier.phone || supplier.email ? (
+          <Text style={styles.sub} numberOfLines={1}>
+            {[supplier.contactName, supplier.phone ?? supplier.email]
+              .filter(Boolean)
+              .join(" · ")}
+          </Text>
+        ) : null}
+      </View>
+      <Ionicons name="chevron-forward" size={16} color={ios.gray[3]} />
+    </Pressable>
   );
 }
 
@@ -131,10 +265,6 @@ function CustomersMap({
   customers: CustomerWithAddress[];
   onPickCustomer: (id: string) => void;
 }) {
-  // The admin customer list doesn't include addresses. To avoid N+1 fetches
-  // we render pins for customers whose *first* fetched detail entry has been
-  // cached in react-query. For an MVP we fall back to a neutral map when no
-  // geo data is resolved yet.
   const pins = useMemo<MapPin[]>(
     () =>
       customers
@@ -160,7 +290,11 @@ function CustomersMap({
     <View style={{ flex: 1 }}>
       {pins.length === 0 ? (
         <View style={styles.mapHint}>
-          <Ionicons name="information-circle-outline" size={16} color={ios.label2} />
+          <Ionicons
+            name="information-circle-outline"
+            size={16}
+            color={ios.label2}
+          />
           <Text style={styles.mapHintText}>
             Customer addresses with coordinates will appear here.
           </Text>
@@ -202,8 +336,18 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   avatarText: { color: ios.brand, fontSize: 14, fontFamily: "Inter_700Bold" },
-  name: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: ios.label, letterSpacing: -0.2 },
-  sub: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
+  name: {
+    fontSize: 15,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label,
+    letterSpacing: -0.2,
+  },
+  sub: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    color: ios.label2,
+    marginTop: 2,
+  },
   mapHint: {
     flexDirection: "row",
     alignItems: "center",
@@ -214,5 +358,10 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     borderRadius: 10,
   },
-  mapHintText: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, flex: 1 },
+  mapHintText: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    color: ios.label2,
+    flex: 1,
+  },
 });

@@ -125,6 +125,17 @@ export default function CompanyCodeScreen() {
         <Text style={styles.hint}>
           {"Don't know your company code? Contact your RouteFlow administrator."}
         </Text>
+
+        <View style={styles.portalRow}>
+          <Text style={styles.portalHint}>Are you a customer? </Text>
+          <MobileButton
+            variant="ghost"
+            size="sm"
+            onPress={() => router.push("/(auth)/customer-login")}
+          >
+            Customer Portal
+          </MobileButton>
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -183,6 +194,18 @@ const styles = StyleSheet.create({
   hint: {
     marginTop: 32,
     textAlign: "center",
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    color: ios.label2,
+  },
+  portalRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 16,
+    gap: 4,
+  },
+  portalHint: {
     fontSize: 13,
     fontFamily: "Inter_400Regular",
     color: ios.label2,

@@ -40,6 +40,10 @@ function statusPill(status: string) {
   switch (status) {
     case "PENDING":
       return { variant: "orange" as const, label: "Pending" };
+    case "APPROVED":
+      return { variant: "brand" as const, label: "Approved" };
+    case "IN_TRANSIT":
+      return { variant: "brand" as const, label: "In transit" };
     case "PROCESSED":
       return { variant: "green" as const, label: "Processed" };
     case "CANCELLED":

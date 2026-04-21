@@ -21,6 +21,8 @@ import {
 } from "@routeflow/ui/mobile/ios";
 import { useAdminProducts, type AdminProduct } from "../../../lib/api/admin";
 
+type StockFilter = "ALL" | "LOW" | "OUT_OF_STOCK";
+
 function toNumber(v: number | string | null | undefined): number {
   if (typeof v === "number") return v;
   if (typeof v === "string") {
@@ -32,9 +34,6 @@ function toNumber(v: number | string | null | undefined): number {
 
 function isLowStock(p: AdminProduct): boolean {
   const stock = toNumber(p.currentStock);
-  // Schema uses Decimal for currentStock and an Int `reorderPoint`. If the
-  // tenant hasn't set a reorderPoint, we treat stock ≤ 5 as the server-side
-  // `LOW` default (apps/api/src/products/products.service.ts).
   const threshold = p.reorderPoint != null ? p.reorderPoint : 5;
   return stock > 0 && stock <= threshold;
 }
@@ -46,10 +45,15 @@ function isOutOfStock(p: AdminProduct): boolean {
 export default function WarehouseScreen() {
   const router = useRouter();
   const [search, setSearch] = useState("");
+  const [activeFilter, setActiveFilter] = useState<StockFilter>("ALL");
 
-  // One query for the low-stock list (the screen's main content) and a tiny
-  // parallel query just for the out-of-stock KPI count. Both are server-side
-  // filters per the API (StockStatusFilter enum).
+  const stockStatusParam =
+    activeFilter === "OUT_OF_STOCK"
+      ? "OUT_OF_STOCK"
+      : activeFilter === "LOW"
+        ? "LOW"
+        : undefined;
+
   const lowQuery = useAdminProducts({
     stockStatus: "LOW",
     limit: 100,
@@ -58,24 +62,48 @@ export default function WarehouseScreen() {
   const outQuery = useAdminProducts({ stockStatus: "OUT_OF_STOCK", limit: 1 });
   const allQuery = useAdminProducts({ limit: 1 });
 
-  const isLoading = lowQuery.isLoading;
+  const filteredQuery = useAdminProducts({
+    stockStatus: stockStatusParam as any,
+    limit: 200,
+    search: search.trim() || undefined,
+  });
+
+  const isLoading = activeFilter === "ALL" ? lowQuery.isLoading : filteredQuery.isLoading;
   const lowProducts = lowQuery.data?.data ?? [];
   const lowTotalServer = Number(lowQuery.data?.meta?.total ?? lowProducts.length);
   const outTotal = Number(outQuery.data?.meta?.total ?? 0);
   const allTotal = Number(allQuery.data?.meta?.total ?? 0);
-  // The server's LOW filter includes out-of-stock rows (currentStock <= 5
-  // matches zeros and negatives). Subtract OOS so the Low KPI reflects
-  // products that are actually low-but-still-sellable.
   const lowTotal = Math.max(0, lowTotalServer - outTotal);
 
-  // Same idea for the displayed rows — only show items with positive stock.
-  const sorted = useMemo(
-    () =>
-      lowProducts
-        .filter((p) => toNumber(p.currentStock) > 0)
-        .sort((a, b) => toNumber(a.currentStock) - toNumber(b.currentStock)),
-    [lowProducts],
-  );
+  const displayProducts = useMemo(() => {
+    if (activeFilter === "OUT_OF_STOCK") {
+      return (filteredQuery.data?.data ?? []).filter(
+        (p) => toNumber(p.currentStock) <= 0,
+      );
+    }
+    if (activeFilter === "LOW") {
+      return (filteredQuery.data?.data ?? []).filter(
+        (p) => toNumber(p.currentStock) > 0,
+      );
+    }
+    // ALL = show low-stock (positive stock, below threshold)
+    return lowProducts
+      .filter((p) => toNumber(p.currentStock) > 0)
+      .sort((a, b) => toNumber(a.currentStock) - toNumber(b.currentStock));
+  }, [activeFilter, filteredQuery.data, lowProducts]);
+
+  const sectionLabel =
+    activeFilter === "OUT_OF_STOCK"
+      ? outTotal > 0
+        ? "Out of stock"
+        : "No out-of-stock items"
+      : activeFilter === "LOW"
+        ? lowTotal > 0
+          ? "Low-stock alerts"
+          : "No low stock"
+        : lowTotal > 0
+          ? "Low-stock alerts"
+          : "No low stock";
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
@@ -118,18 +146,60 @@ export default function WarehouseScreen() {
         ) : (
           <>
             <View style={styles.kpiRow}>
-              <KpiCard
-                icon={<Ionicons name="archive-outline" size={18} color={ios.system.orangeInk} />}
-                iconBg={ios.system.orangeWash}
-                value={String(lowTotal)}
-                label="Low stock"
-              />
-              <KpiCard
-                icon={<Ionicons name="close-circle-outline" size={18} color={ios.system.redInk} />}
-                iconBg={ios.system.redWash}
-                value={String(outTotal)}
-                label="Out of stock"
-              />
+              <Pressable
+                onPress={() =>
+                  setActiveFilter((f) => (f === "LOW" ? "ALL" : "LOW"))
+                }
+                style={{ flex: 1 }}
+              >
+                <KpiCard
+                  icon={
+                    <Ionicons
+                      name="archive-outline"
+                      size={18}
+                      color={activeFilter === "LOW" ? "#fff" : ios.system.orangeInk}
+                    />
+                  }
+                  iconBg={
+                    activeFilter === "LOW"
+                      ? ios.system.orangeInk
+                      : ios.system.orangeWash
+                  }
+                  value={String(lowTotal)}
+                  label="Low stock"
+                  highlighted={activeFilter === "LOW"}
+                />
+              </Pressable>
+              <Pressable
+                onPress={() =>
+                  setActiveFilter((f) =>
+                    f === "OUT_OF_STOCK" ? "ALL" : "OUT_OF_STOCK",
+                  )
+                }
+                style={{ flex: 1 }}
+              >
+                <KpiCard
+                  icon={
+                    <Ionicons
+                      name="close-circle-outline"
+                      size={18}
+                      color={
+                        activeFilter === "OUT_OF_STOCK"
+                          ? "#fff"
+                          : ios.system.redInk
+                      }
+                    />
+                  }
+                  iconBg={
+                    activeFilter === "OUT_OF_STOCK"
+                      ? ios.system.redInk
+                      : ios.system.redWash
+                  }
+                  value={String(outTotal)}
+                  label="Out of stock"
+                  highlighted={activeFilter === "OUT_OF_STOCK"}
+                />
+              </Pressable>
             </View>
             <View style={[styles.kpiRow, { marginTop: 12 }]}>
               <KpiCard
@@ -139,12 +209,31 @@ export default function WarehouseScreen() {
                 label="SKUs tracked"
               />
               <KpiCard
-                icon={<Ionicons name="cube-outline" size={18} color={ios.system.purpleInk} />}
+                icon={
+                  <Ionicons
+                    name="cube-outline"
+                    size={18}
+                    color={ios.system.purpleInk}
+                  />
+                }
                 iconBg={ios.system.purpleWash}
-                value={String(sorted.filter((p) => p.isActive).length)}
-                label="Low & active"
+                value={String(displayProducts.filter((p) => p.isActive).length)}
+                label={activeFilter === "OUT_OF_STOCK" ? "OOS & active" : "Low & active"}
               />
             </View>
+
+            {activeFilter !== "ALL" ? (
+              <Pressable
+                style={styles.filterBanner}
+                onPress={() => setActiveFilter("ALL")}
+              >
+                <Text style={styles.filterBannerText}>
+                  Filtering:{" "}
+                  {activeFilter === "LOW" ? "Low stock" : "Out of stock"}
+                </Text>
+                <Ionicons name="close" size={14} color={ios.brand} />
+              </Pressable>
+            ) : null}
 
             {/* Quick actions */}
             <View style={styles.quickRow}>
@@ -164,13 +253,18 @@ export default function WarehouseScreen() {
                   Alert.alert("Receive stock", undefined, [
                     {
                       text: "Quick receive (no PO)",
-                      onPress: () => router.push("/(operator)/purchase-orders/record"),
+                      onPress: () =>
+                        router.push("/(operator)/purchase-orders/record"),
                     },
                     {
                       text: "New purchase order",
-                      onPress: () => router.push("/(operator)/purchase-orders/new"),
+                      onPress: () =>
+                        router.push("/(operator)/purchase-orders/new"),
                     },
-                    { text: "View all POs", onPress: () => router.push("/(operator)/purchase-orders") },
+                    {
+                      text: "View all POs",
+                      onPress: () => router.push("/(operator)/purchase-orders"),
+                    },
                     { text: "Cancel", style: "cancel" },
                   ])
                 }
@@ -191,21 +285,21 @@ export default function WarehouseScreen() {
               />
             </View>
 
-            <SectionRow
-              title={lowTotal > 0 ? "Low-stock alerts" : "No low stock"}
-            />
+            <SectionRow title={sectionLabel} />
 
             <View style={styles.list}>
-              {sorted.length === 0 ? (
+              {displayProducts.length === 0 ? (
                 <Text style={styles.empty}>
                   {allTotal === 0
                     ? "No products configured."
                     : search
                       ? "No matches for that search."
-                      : "All stock levels healthy."}
+                      : activeFilter === "OUT_OF_STOCK"
+                        ? "No out-of-stock items."
+                        : "All stock levels healthy."}
                 </Text>
               ) : (
-                sorted.map((p) => {
+                displayProducts.map((p) => {
                   const stock = toNumber(p.currentStock);
                   const threshold = p.reorderPoint ?? 5;
                   const pct =
@@ -218,7 +312,9 @@ export default function WarehouseScreen() {
                     <Pressable
                       key={p.id}
                       style={styles.row}
-                      onPress={() => router.push(`/(operator)/products/${p.id}`)}
+                      onPress={() =>
+                        router.push(`/(operator)/products/${p.id}`)
+                      }
                     >
                       <View style={{ flex: 1 }}>
                         <View style={styles.topRow}>
@@ -273,7 +369,10 @@ function QuickBtn({
   onPress: () => void;
 }) {
   return (
-    <Pressable style={[styles.quickBtn, { backgroundColor: bg }]} onPress={onPress}>
+    <Pressable
+      style={[styles.quickBtn, { backgroundColor: bg }]}
+      onPress={onPress}
+    >
       <Ionicons name={icon} size={20} color={color} />
       <Text style={[styles.quickBtnLabel, { color }]}>{label}</Text>
     </Pressable>
@@ -297,7 +396,29 @@ const styles = StyleSheet.create({
     color: ios.label2,
     letterSpacing: 0.4,
   },
-  kpiRow: { flexDirection: "row", gap: 12, paddingHorizontal: 16, marginTop: 4 },
+  kpiRow: {
+    flexDirection: "row",
+    gap: 12,
+    paddingHorizontal: 16,
+    marginTop: 4,
+  },
+  filterBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    marginHorizontal: 16,
+    marginTop: 12,
+    backgroundColor: ios.brandWash,
+    borderRadius: 10,
+  },
+  filterBannerText: {
+    flex: 1,
+    fontSize: 13,
+    fontFamily: "Inter_500Medium",
+    color: ios.brand,
+  },
   sectionRow: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -331,8 +452,18 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: ios.separator,
   },
-  topRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "baseline" },
-  name: { fontSize: 15, fontFamily: "Inter_500Medium", color: ios.label, flex: 1, marginRight: 8 },
+  topRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "baseline",
+  },
+  name: {
+    fontSize: 15,
+    fontFamily: "Inter_500Medium",
+    color: ios.label,
+    flex: 1,
+    marginRight: 8,
+  },
   qty: {
     fontSize: 13,
     fontFamily: "Inter_600SemiBold",
@@ -340,7 +471,12 @@ const styles = StyleSheet.create({
     fontVariant: ["tabular-nums"],
   },
   min: { color: ios.label2, fontFamily: "Inter_400Regular" },
-  progressRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 6 },
+  progressRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 6,
+  },
   sku: {
     fontSize: 12,
     fontFamily: "Inter_400Regular",
