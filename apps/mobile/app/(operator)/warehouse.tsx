@@ -145,6 +145,38 @@ export default function WarehouseScreen() {
               />
             </View>
 
+            {/* Quick actions */}
+            <View style={styles.quickRow}>
+              <QuickBtn
+                icon="receipt-outline"
+                label="Orders"
+                color={ios.brand}
+                bg={ios.brandWash}
+                onPress={() => router.push("/(operator)/orders")}
+              />
+              <QuickBtn
+                icon="cart-outline"
+                label="Buy stock"
+                color={ios.system.orangeInk}
+                bg={ios.system.orangeWash}
+                onPress={() => router.push("/(operator)/purchase-orders")}
+              />
+              <QuickBtn
+                icon="swap-vertical-outline"
+                label="Movements"
+                color={ios.system.purpleInk}
+                bg={ios.system.purpleWash}
+                onPress={() => router.push("/(operator)/products")}
+              />
+              <QuickBtn
+                icon="cube-outline"
+                label="Adjust"
+                color={ios.system.greenInk}
+                bg={ios.system.greenWash}
+                onPress={() => router.push("/(operator)/products/scan")}
+              />
+            </View>
+
             <SectionRow
               title={lowTotal > 0 ? "Low-stock alerts" : "No low stock"}
             />
@@ -210,6 +242,27 @@ export default function WarehouseScreen() {
         <View style={{ height: 20 }} />
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+function QuickBtn({
+  icon,
+  label,
+  color,
+  bg,
+  onPress,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  color: string;
+  bg: string;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable style={[styles.quickBtn, { backgroundColor: bg }]} onPress={onPress}>
+      <Ionicons name={icon} size={20} color={color} />
+      <Text style={[styles.quickBtnLabel, { color }]}>{label}</Text>
+    </Pressable>
   );
 }
 
@@ -287,5 +340,23 @@ const styles = StyleSheet.create({
     backgroundColor: ios.fill3,
     alignItems: "center",
     justifyContent: "center",
+  },
+  quickRow: {
+    flexDirection: "row",
+    gap: 10,
+    paddingHorizontal: 16,
+    marginTop: 20,
+  },
+  quickBtn: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 14,
+    borderRadius: 12,
+  },
+  quickBtnLabel: {
+    fontSize: 11,
+    fontFamily: "Inter_600SemiBold",
   },
 });

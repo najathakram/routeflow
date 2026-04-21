@@ -34,11 +34,11 @@ export default function OperatorLayout() {
           }}
         />
         <Tabs.Screen
-          name="fleet"
+          name="invoices"
           options={{
-            title: "Fleet",
+            title: "Invoices",
             tabBarIcon: ({ color, size }) => (
-              <Ionicons name="map-outline" size={size} color={color} />
+              <Ionicons name="receipt-outline" size={size} color={color} />
             ),
           }}
         />
@@ -71,7 +71,8 @@ export default function OperatorLayout() {
         <Tabs.Screen name="orders" options={{ href: null }} />
         <Tabs.Screen name="products" options={{ href: null }} />
         <Tabs.Screen name="customers" options={{ href: null }} />
-        <Tabs.Screen name="invoices" options={{ href: null }} />
+        <Tabs.Screen name="fleet" options={{ href: null }} />
+        <Tabs.Screen name="purchase-orders" options={{ href: null }} />
         <Tabs.Screen name="routes" options={{ href: null }} />
         <Tabs.Screen name="drivers" options={{ href: null }} />
         <Tabs.Screen name="returns" options={{ href: null }} />

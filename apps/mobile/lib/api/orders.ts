@@ -12,10 +12,19 @@ export interface OrderItem {
   status: string;
 }
 
+export type OrderStatus =
+  | 'DRAFT'
+  | 'PENDING'
+  | 'CONFIRMED'
+  | 'OUT_FOR_DELIVERY'
+  | 'PARTIALLY_DELIVERED'
+  | 'DELIVERED'
+  | 'CANCELLED';
+
 export interface Order {
   id: string;
   orderNumber: string;
-  status: 'PENDING' | 'CONFIRMED' | 'OUT_FOR_DELIVERY' | 'DELIVERED' | 'CANCELLED';
+  status: OrderStatus;
   urgent: boolean;
   subtotal: number;
   tax: number;
@@ -118,6 +127,26 @@ export function useToggleOrderUrgent() {
   return useMutation<Order, Error, { id: string; urgent: boolean }>({
     mutationFn: ({ id, urgent }) =>
       apiClient.patch(`/orders/${id}/urgent`, { urgent }).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['orders'] }),
+  });
+}
+
+export function useChangeOrderStatus() {
+  const qc = useQueryClient();
+  return useMutation<Order, Error, { id: string; status: OrderStatus }>({
+    mutationFn: ({ id, status }) =>
+      apiClient.patch(`/orders/${id}/status`, { status }).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['orders'] });
+      qc.invalidateQueries({ queryKey: ['route-runs'] });
+    },
+  });
+}
+
+export function useCreateAdminOrder() {
+  const qc = useQueryClient();
+  return useMutation<Order, Error, { customerId: string; items: { productId: string; qty: number }[]; notes?: string; urgent?: boolean; immediateDelivery?: boolean }>({
+    mutationFn: (dto) => apiClient.post('/orders', dto).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['orders'] }),
   });
 }

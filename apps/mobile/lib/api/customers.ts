@@ -29,6 +29,10 @@ export interface CustomerDetail {
   email?: string;
   deliveryWindowStart?: string;
   deliveryWindowEnd?: string;
+  creditLimit?: number | string | null;
+  pricingTier?: number;
+  currency?: string;
+  notes?: string;
   addresses: Array<{
     id: string;
     line1: string;
@@ -36,8 +40,78 @@ export interface CustomerDetail {
     city: string;
     state: string;
     zip: string;
+    country?: string;
     isDefault?: boolean;
+    lat?: number | null;
+    lng?: number | null;
+    notes?: string;
   }>;
+  tagAssignments?: Array<{ tag: { id: string; name: string; color?: string } }>;
+  user?: { id: string; email?: string; username?: string; status?: string };
+}
+
+export interface CustomerStatement {
+  outstanding: number;
+  overdue: number;
+  availableCredit: number;
+  advanceBalance: number;
+  transactions: Array<{
+    id: string;
+    type: string;
+    description: string;
+    date: string;
+    amount: number;
+    runningBalance: number;
+    status?: string;
+  }>;
+}
+
+export function useCustomerStatement(id: string) {
+  return useQuery<CustomerStatement>({
+    queryKey: ['customers', id, 'statement'],
+    queryFn: () => apiClient.get(`/customers/${id}/statement`).then((r) => r.data),
+    enabled: !!id,
+    staleTime: 60_000,
+  });
+}
+
+export interface CustomerPrice {
+  id: string;
+  productId: string;
+  product?: { id: string; name: string; unit?: string };
+  price: number;
+  tier?: number;
+}
+
+export function useCustomerPrices(id: string) {
+  return useQuery<CustomerPrice[]>({
+    queryKey: ['customers', id, 'prices'],
+    queryFn: () => apiClient.get(`/customers/${id}/prices`).then((r) => r.data),
+    enabled: !!id,
+    staleTime: 2 * 60_000,
+  });
+}
+
+export function useUpsertCustomerPrice() {
+  const qc = useQueryClient();
+  return useMutation<CustomerPrice, Error, { customerId: string; productId: string; price: number; tier?: number }>({
+    mutationFn: ({ customerId, ...body }) =>
+      apiClient.post(`/customers/${customerId}/prices`, body).then((r) => r.data),
+    onSuccess: (_, { customerId }) => {
+      qc.invalidateQueries({ queryKey: ['customers', customerId, 'prices'] });
+    },
+  });
+}
+
+export function useDeleteCustomerPrice() {
+  const qc = useQueryClient();
+  return useMutation<void, Error, { customerId: string; priceId: string }>({
+    mutationFn: ({ customerId, priceId }) =>
+      apiClient.delete(`/customers/${customerId}/prices/${priceId}`).then(() => undefined),
+    onSuccess: (_, { customerId }) => {
+      qc.invalidateQueries({ queryKey: ['customers', customerId, 'prices'] });
+    },
+  });
 }
 
 export function useCustomer(id: string) {
@@ -51,8 +125,8 @@ export function useCustomer(id: string) {
 
 // ─── My profile (CUSTOMER role) ───────────────────────────────────────────────
 
-export interface MyCustomerProfile extends CustomerDetail {
-  user?: { email?: string };
+export interface MyCustomerProfile extends Omit<CustomerDetail, 'user'> {
+  user?: { id?: string; email?: string };
 }
 
 export function useMyCustomerProfile() {
