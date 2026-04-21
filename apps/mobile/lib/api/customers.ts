@@ -11,7 +11,10 @@ export interface CustomerSummary {
 }
 
 export function useCustomers(search?: string) {
-  return useQuery<{ data: CustomerSummary[]; total: number }>({
+  return useQuery<{
+    data: CustomerSummary[];
+    meta: { total: number; page: number; limit: number; totalPages: number };
+  }>({
     queryKey: ['customers', 'list', search ?? ''],
     queryFn: () =>
       apiClient
@@ -51,8 +54,8 @@ export interface CustomerDetail {
 }
 
 export interface CustomerStatement {
-  outstanding: number;
-  overdue: number;
+  outstandingAmount: number;
+  overdueAmount: number;
   availableCredit: number;
   advanceBalance: number;
   transactions: Array<{
@@ -77,10 +80,21 @@ export function useCustomerStatement(id: string) {
 
 export interface CustomerPrice {
   id: string;
+  customerId: string;
   productId: string;
-  product?: { id: string; name: string; unit?: string };
-  price: number;
-  tier?: number;
+  pricingTier: number;
+  notes?: string;
+  product?: {
+    id: string;
+    name: string;
+    sku?: string;
+    unit: string;
+    pricePerUnit: number | string;
+    priceTier2?: number | string;
+    priceTier3?: number | string;
+    priceTier4?: number | string;
+    priceTier5?: number | string;
+  };
 }
 
 export function useCustomerPrices(id: string) {
@@ -94,7 +108,11 @@ export function useCustomerPrices(id: string) {
 
 export function useUpsertCustomerPrice() {
   const qc = useQueryClient();
-  return useMutation<CustomerPrice, Error, { customerId: string; productId: string; price: number; tier?: number }>({
+  return useMutation<
+    CustomerPrice,
+    Error,
+    { customerId: string; productId: string; pricingTier: number; notes?: string }
+  >({
     mutationFn: ({ customerId, ...body }) =>
       apiClient.post(`/customers/${customerId}/prices`, body).then((r) => r.data),
     onSuccess: (_, { customerId }) => {

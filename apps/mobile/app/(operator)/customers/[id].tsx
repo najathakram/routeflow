@@ -189,12 +189,12 @@ export default function CustomerDetailScreen() {
             <Text style={styles.cardTitle}>Account standing</Text>
             <View style={styles.statGrid}>
               <View style={styles.statBox}>
-                <Text style={styles.statValue}>{fmt(statement?.outstanding)}</Text>
+                <Text style={styles.statValue}>{fmt(statement?.outstandingAmount)}</Text>
                 <Text style={styles.statLabel}>Outstanding</Text>
               </View>
               <View style={styles.statBox}>
-                <Text style={[styles.statValue, (statement?.overdue ?? 0) > 0 && styles.red]}>
-                  {fmt(statement?.overdue)}
+                <Text style={[styles.statValue, (statement?.overdueAmount ?? 0) > 0 && styles.red]}>
+                  {fmt(statement?.overdueAmount)}
                 </Text>
                 <Text style={styles.statLabel}>Overdue</Text>
               </View>

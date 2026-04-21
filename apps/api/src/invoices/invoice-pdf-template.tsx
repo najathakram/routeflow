@@ -60,6 +60,8 @@ export interface InvoicePdfData {
     phone?: string | null;
     website?: string | null;
     customerEmail?: string | null;
+    primaryColor?: string | null;
+    logoDataUri?: string | null;
   } | null;
 }
 
@@ -78,8 +80,8 @@ const fmtDate = (val: Date | string | null | undefined): string => {
   });
 };
 
-const NAVY = "#1B3A5C";
-const BRAND = "#3B6FCA";
+const DEFAULT_NAVY = "#1B3A5C";
+const DEFAULT_BRAND = "#3B6FCA";
 const GRAY = "#64748b";
 const LIGHT_GRAY = "#f1f5f9";
 const BORDER = "#e2e8f0";
@@ -87,120 +89,142 @@ const SUCCESS = "#16a34a";
 const WARNING = "#d97706";
 const DANGER = "#dc2626";
 
-const styles = StyleSheet.create({
-  page: {
-    fontFamily: "Helvetica",
-    fontSize: 9,
-    color: NAVY,
-    paddingTop: 40,
-    paddingBottom: 40,
-    paddingHorizontal: 44,
-    backgroundColor: "#ffffff",
-  },
-  header: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    marginBottom: 28,
-    paddingBottom: 20,
-    borderBottomWidth: 2,
-    borderBottomColor: NAVY,
-  },
-  logoBox: { flexDirection: "row", alignItems: "center", gap: 8 },
-  logoSquare: {
-    width: 28,
-    height: 28,
-    backgroundColor: BRAND,
-    borderRadius: 4,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  logoText: { fontSize: 13, fontFamily: "Helvetica-Bold", color: NAVY },
-  logoSub: { fontSize: 8, color: GRAY, marginTop: 2 },
-  invoiceTitle: { fontSize: 22, fontFamily: "Helvetica-Bold", color: NAVY, letterSpacing: 1 },
-  invoiceNumber: { fontSize: 9, color: GRAY, marginTop: 4 },
-  badge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20, marginTop: 6 },
-  billGrid: { flexDirection: "row", justifyContent: "space-between", marginBottom: 24 },
-  billSection: { flex: 1, paddingRight: 16 },
-  billLabel: {
-    fontSize: 7,
-    fontFamily: "Helvetica-Bold",
-    color: GRAY,
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-    marginBottom: 4,
-  },
-  billValue: { fontSize: 10, fontFamily: "Helvetica-Bold", color: NAVY, marginBottom: 2 },
-  billSub: { fontSize: 9, color: GRAY, marginBottom: 1 },
-  tableHeader: {
-    flexDirection: "row",
-    backgroundColor: NAVY,
-    paddingVertical: 7,
-    paddingHorizontal: 10,
-  },
-  tableHeaderText: {
-    fontSize: 8,
-    fontFamily: "Helvetica-Bold",
-    color: "#ffffff",
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-  },
-  tableRow: {
-    flexDirection: "row",
-    paddingVertical: 7,
-    paddingHorizontal: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: BORDER,
-  },
-  tableRowAlt: { backgroundColor: LIGHT_GRAY },
-  colDescription: { flex: 3 },
-  colQty: { flex: 1, textAlign: "right" },
-  colUnit: { flex: 1.4, textAlign: "right" },
-  colSubtotal: { flex: 1.4, textAlign: "right" },
-  cellText: { fontSize: 9, color: NAVY },
-  cellTextRight: { fontSize: 9, color: NAVY, textAlign: "right" },
-  totalsWrapper: { flexDirection: "row", justifyContent: "flex-end", marginTop: 12 },
-  totalsBox: { width: 220 },
-  totalRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 4 },
-  totalLabel: { fontSize: 9, color: GRAY },
-  totalValue: { fontSize: 9, color: NAVY, fontFamily: "Helvetica-Bold" },
-  totalDivider: { borderTopWidth: 1, borderTopColor: BORDER, marginVertical: 4 },
-  totalBigRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 5 },
-  totalBigLabel: { fontSize: 11, fontFamily: "Helvetica-Bold", color: NAVY },
-  totalBigValue: { fontSize: 11, fontFamily: "Helvetica-Bold", color: NAVY },
-  sectionTitle: {
-    fontSize: 8,
-    fontFamily: "Helvetica-Bold",
-    color: GRAY,
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-    marginBottom: 6,
-    marginTop: 20,
-  },
-  paymentRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    paddingVertical: 5,
-    paddingHorizontal: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: BORDER,
-  },
-  footer: {
-    position: "absolute",
-    bottom: 20,
-    left: 44,
-    right: 44,
-    borderTopWidth: 1,
-    borderTopColor: BORDER,
-    paddingTop: 8,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  footerText: { fontSize: 7, color: GRAY },
-});
+// Darken a hex color by a factor (0-1). Used to derive a "navy" from the
+// tenant's primary color when they don't supply a separate dark color.
+function darken(hex: string, factor = 0.55): string {
+  const clean = hex.replace("#", "");
+  if (clean.length !== 6) return DEFAULT_NAVY;
+  const r = Math.max(0, Math.round(parseInt(clean.slice(0, 2), 16) * factor));
+  const g = Math.max(0, Math.round(parseInt(clean.slice(2, 4), 16) * factor));
+  const b = Math.max(0, Math.round(parseInt(clean.slice(4, 6), 16) * factor));
+  const toHex = (v: number) => v.toString(16).padStart(2, "0");
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
 
-function StatusBadge({ status }: { status: string }) {
+function buildStyles(primary: string, navy: string) {
+  return StyleSheet.create({
+    page: {
+      fontFamily: "Helvetica",
+      fontSize: 9,
+      color: navy,
+      paddingTop: 40,
+      paddingBottom: 40,
+      paddingHorizontal: 44,
+      backgroundColor: "#ffffff",
+    },
+    header: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "flex-start",
+      marginBottom: 28,
+      paddingBottom: 20,
+      borderBottomWidth: 2,
+      borderBottomColor: navy,
+    },
+    logoBox: { flexDirection: "row", alignItems: "center", gap: 8 },
+    logoImage: { height: 40, width: 40, objectFit: "contain" },
+    logoSquare: {
+      width: 28,
+      height: 28,
+      backgroundColor: primary,
+      borderRadius: 4,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    logoText: { fontSize: 13, fontFamily: "Helvetica-Bold", color: navy },
+    logoSub: { fontSize: 8, color: GRAY, marginTop: 2 },
+    invoiceTitle: { fontSize: 22, fontFamily: "Helvetica-Bold", color: navy, letterSpacing: 1 },
+    invoiceNumber: { fontSize: 9, color: GRAY, marginTop: 4 },
+    badge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20, marginTop: 6 },
+    billGrid: { flexDirection: "row", justifyContent: "space-between", marginBottom: 24 },
+    billSection: { flex: 1, paddingRight: 16 },
+    billLabel: {
+      fontSize: 7,
+      fontFamily: "Helvetica-Bold",
+      color: GRAY,
+      textTransform: "uppercase",
+      letterSpacing: 0.5,
+      marginBottom: 4,
+    },
+    billValue: { fontSize: 10, fontFamily: "Helvetica-Bold", color: navy, marginBottom: 2 },
+    billSub: { fontSize: 9, color: GRAY, marginBottom: 1 },
+    tableHeader: {
+      flexDirection: "row",
+      backgroundColor: navy,
+      paddingVertical: 7,
+      paddingHorizontal: 10,
+    },
+    tableHeaderText: {
+      fontSize: 8,
+      fontFamily: "Helvetica-Bold",
+      color: "#ffffff",
+      textTransform: "uppercase",
+      letterSpacing: 0.5,
+    },
+    tableRow: {
+      flexDirection: "row",
+      paddingVertical: 7,
+      paddingHorizontal: 10,
+      borderBottomWidth: 1,
+      borderBottomColor: BORDER,
+    },
+    tableRowAlt: { backgroundColor: LIGHT_GRAY },
+    colDescription: { flex: 3 },
+    colQty: { flex: 1, textAlign: "right" },
+    colUnit: { flex: 1.4, textAlign: "right" },
+    colSubtotal: { flex: 1.4, textAlign: "right" },
+    cellText: { fontSize: 9, color: navy },
+    cellTextRight: { fontSize: 9, color: navy, textAlign: "right" },
+    totalsWrapper: { flexDirection: "row", justifyContent: "flex-end", marginTop: 12 },
+    totalsBox: { width: 220 },
+    totalRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 4 },
+    totalLabel: { fontSize: 9, color: GRAY },
+    totalValue: { fontSize: 9, color: navy, fontFamily: "Helvetica-Bold" },
+    totalDivider: { borderTopWidth: 1, borderTopColor: BORDER, marginVertical: 4 },
+    totalBigRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 5 },
+    totalBigLabel: { fontSize: 11, fontFamily: "Helvetica-Bold", color: navy },
+    totalBigValue: { fontSize: 11, fontFamily: "Helvetica-Bold", color: navy },
+    sectionTitle: {
+      fontSize: 8,
+      fontFamily: "Helvetica-Bold",
+      color: GRAY,
+      textTransform: "uppercase",
+      letterSpacing: 0.5,
+      marginBottom: 6,
+      marginTop: 20,
+    },
+    paymentRow: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      paddingVertical: 5,
+      paddingHorizontal: 10,
+      borderBottomWidth: 1,
+      borderBottomColor: BORDER,
+    },
+    footer: {
+      position: "absolute",
+      bottom: 20,
+      left: 44,
+      right: 44,
+      borderTopWidth: 1,
+      borderTopColor: BORDER,
+      paddingTop: 8,
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+    },
+    footerText: { fontSize: 7, color: GRAY },
+    footerMuted: { fontSize: 7, color: "#94a3b8" },
+  });
+}
+
+function StatusBadge({
+  status,
+  styles,
+}: {
+  status: string;
+  styles: ReturnType<typeof buildStyles>;
+}) {
   let bg = LIGHT_GRAY,
     color = GRAY,
     label = status;
@@ -248,10 +272,18 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
     .filter(Boolean)
     .join(", ");
 
+  // Resolve per-render brand colors from tenant, with safe fallbacks.
+  const primary =
+    tenant?.primaryColor && /^#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{3})$/.test(tenant.primaryColor)
+      ? tenant.primaryColor
+      : DEFAULT_BRAND;
+  const navy = primary === DEFAULT_BRAND ? DEFAULT_NAVY : darken(primary);
+  const styles = buildStyles(primary, navy);
+
   return (
     <Document
       title={`Invoice ${invoice.invoiceNumber}`}
-      author={tenant?.businessName ?? "RouteFlow"}
+      author={tenant?.businessName ?? undefined}
     >
       <Page size="A4" style={styles.page}>
         {/* Header */}
@@ -259,7 +291,12 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
           <View>
             {hasTenant ? (
               <>
-                <Text style={styles.logoText}>{tenant!.businessName}</Text>
+                <View style={styles.logoBox}>
+                  {tenant!.logoDataUri ? (
+                    <Image src={tenant!.logoDataUri} style={styles.logoImage} />
+                  ) : null}
+                  <Text style={styles.logoText}>{tenant!.businessName}</Text>
+                </View>
                 {tenant!.addressLine1 ? (
                   <Text style={styles.logoSub}>{tenant!.addressLine1}</Text>
                 ) : null}
@@ -274,23 +311,20 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
                 {tenant!.website ? <Text style={styles.logoSub}>{tenant!.website}</Text> : null}
               </>
             ) : (
-              <>
-                <View style={styles.logoBox}>
-                  <View style={styles.logoSquare}>
-                    <Text style={{ fontSize: 9, fontFamily: "Helvetica-Bold", color: "#fff" }}>
-                      RF
-                    </Text>
-                  </View>
-                  <Text style={styles.logoText}>RouteFlow</Text>
+              <View style={styles.logoBox}>
+                <View style={styles.logoSquare}>
+                  <Text style={{ fontSize: 9, fontFamily: "Helvetica-Bold", color: "#fff" }}>
+                    RF
+                  </Text>
                 </View>
-                <Text style={styles.logoSub}>routeflow.io</Text>
-              </>
+                <Text style={styles.logoText}>RouteFlow</Text>
+              </View>
             )}
           </View>
           <View style={{ alignItems: "flex-end" }}>
             <Text style={styles.invoiceTitle}>INVOICE</Text>
             <Text style={styles.invoiceNumber}>{invoice.invoiceNumber}</Text>
-            <StatusBadge status={invoice.status} />
+            <StatusBadge status={invoice.status} styles={styles} />
           </View>
         </View>
 
@@ -409,7 +443,7 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
             {invoice.payments.map((pmt) => (
               <View key={pmt.id} style={styles.paymentRow}>
                 <View>
-                  <Text style={{ fontSize: 9, color: NAVY }}>{pmt.method}</Text>
+                  <Text style={{ fontSize: 9, color: navy }}>{pmt.method}</Text>
                   {pmt.reference ? (
                     <Text style={{ fontSize: 8, color: GRAY }}>Ref: {pmt.reference}</Text>
                   ) : null}
@@ -446,8 +480,9 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
           <Text style={styles.footerText}>
             {hasTenant
               ? [tenant!.businessName, tenant!.website].filter(Boolean).join(" · ")
-              : "RouteFlow · routeflow.io"}
+              : "RouteFlow"}
           </Text>
+          <Text style={styles.footerMuted}>Powered by RouteFlow</Text>
           <Text style={styles.footerText}>Generated {fmtDate(new Date())}</Text>
         </View>
       </Page>

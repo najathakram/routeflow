@@ -148,8 +148,9 @@ export class InvoicesController {
   }
 
   @Get(":id/pdf")
-  async getPdf(@Param("id") id: string) {
-    const url = await this.invoicePdfService.getOrGenerate(id);
+  async getPdf(@Param("id") id: string, @Query("refresh") refresh?: string) {
+    const force = refresh === "1" || refresh === "true";
+    const url = await this.invoicePdfService.getOrGenerate(id, { force });
     return { url };
   }
 

@@ -6,23 +6,20 @@ import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar } from "@routeflow/ui/mobile/ios";
 import { AppMapView, type MapPin } from "../../../../components/MapView";
 import { useAdminRoute } from "../../../../lib/api/admin";
-import { useCustomer } from "../../../../lib/api/customers";
 
 export default function RouteMapScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data: route, isLoading } = useAdminRoute(id);
 
-  // Stops on the route detail include customer summary but not coordinates;
-  // we render any stops with addresses we already know, otherwise show a hint.
   const stops = (route?.stops ?? []).slice().sort((a, b) => a.stopNumber - b.stopNumber);
 
   const pins = useMemo<MapPin[]>(
     () =>
       stops
         .map((s) => {
-          const lat = (s.customer as any)?.addresses?.[0]?.lat;
-          const lng = (s.customer as any)?.addresses?.[0]?.lng;
+          const lat = s.customerAddress?.lat;
+          const lng = s.customerAddress?.lng;
           if (typeof lat !== "number" || typeof lng !== "number") return null;
           return {
             id: s.id,

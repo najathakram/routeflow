@@ -298,6 +298,10 @@ export interface AdminProduct {
   sku?: string;
   unit: string;
   pricePerUnit: number | string;
+  priceTier2?: number | string;
+  priceTier3?: number | string;
+  priceTier4?: number | string;
+  priceTier5?: number | string;
   currentStock: number | string;
   reorderPoint?: number | null;
   reorderQty?: number | null;
@@ -349,6 +353,15 @@ export interface AdminRouteDetailStop {
   id: string;
   customerId: string;
   customer?: { id: string; businessName: string };
+  customerAddress?: {
+    line1: string;
+    line2?: string;
+    city: string;
+    state: string;
+    zip: string;
+    lat?: number;
+    lng?: number;
+  };
   stopNumber: number;
 }
 

@@ -16,15 +16,16 @@ export class InvoicePdfService {
     private readonly storage: StorageService,
   ) {}
 
-  async getOrGenerate(invoiceId: string): Promise<string> {
+  async getOrGenerate(invoiceId: string, opts?: { force?: boolean }): Promise<string> {
     const inv = await this.prisma.invoice.findUnique({
       where: { id: invoiceId },
       select: { id: true, pdfUrl: true },
     });
     if (!inv) throw new NotFoundException("Invoice not found");
 
-    // If pdfUrl already stored, return a fresh presigned URL
-    if (inv.pdfUrl) {
+    // If pdfUrl already stored and caller didn't ask for a fresh render, return
+    // a presigned URL for the cached copy.
+    if (inv.pdfUrl && !opts?.force) {
       return this.storage.presignedUrl(inv.pdfUrl);
     }
 
@@ -52,7 +53,8 @@ export class InvoicePdfService {
     });
     if (!inv) throw new NotFoundException("Invoice not found");
 
-    // Load tenant's business info to render a "Bill From" block on the PDF
+    // Load tenant's business info (including logo + primary color) to render
+    // a fully branded invoice header.
     const invTenantId = (inv as any).tenantId as string | null | undefined;
     let tenantInfo: Record<string, any> | null = null;
     if (invTenantId) {
@@ -69,9 +71,30 @@ export class InvoicePdfService {
           phone: true,
           website: true,
           customerEmail: true,
+          primaryColor: true,
+          logoKey: true,
         },
       });
-      if (cfg) tenantInfo = cfg;
+      if (cfg) {
+        tenantInfo = { ...cfg };
+        if (cfg.logoKey) {
+          try {
+            const buf = await this.storage.download(cfg.logoKey);
+            // Best-effort mime detection from the key extension; default to png.
+            const lower = cfg.logoKey.toLowerCase();
+            const mime = lower.endsWith(".jpg") || lower.endsWith(".jpeg")
+              ? "image/jpeg"
+              : lower.endsWith(".svg")
+                ? "image/svg+xml"
+                : "image/png";
+            tenantInfo.logoDataUri = `data:${mime};base64,${buf.toString("base64")}`;
+          } catch (err) {
+            this.logger.warn(
+              `Failed to load tenant logo ${cfg.logoKey}: ${err instanceof Error ? err.message : err}`,
+            );
+          }
+        }
+      }
     }
 
     this.logger.log(`Generating PDF for invoice ${invoiceId}`);

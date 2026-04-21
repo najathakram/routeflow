@@ -15,7 +15,11 @@ import {
 import { Button, Card, Input, useToast, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useQuery } from "@tanstack/react-query";
-import { useCreateInvoice, type CreateInvoiceItem } from "@/lib/api/invoices";
+import {
+  useCreateInvoice,
+  useUpdateInvoice,
+  type CreateInvoiceItem,
+} from "@/lib/api/invoices";
 import { useCustomers, useCustomerPrices, type Customer } from "@/lib/api/customers";
 import { useProducts } from "@/lib/api/products";
 import { apiClient } from "@/lib/api-client";
@@ -344,6 +348,13 @@ export default function NewInvoicePage() {
   const { setTitle } = usePageTitle();
   const { toast } = useToast();
   const createInvoice = useCreateInvoice();
+  const updateInvoice = useUpdateInvoice();
+
+  // Track the draft id we've previewed so subsequent "Preview" clicks update
+  // the same draft instead of creating a new one each time.
+  const [currentDraftId, setCurrentDraftId] = React.useState<string | null>(null);
+  const [previewUrl, setPreviewUrl] = React.useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = React.useState(false);
 
   React.useEffect(() => { setTitle("New Invoice"); }, [setTitle]);
 
@@ -374,12 +385,29 @@ export default function NewInvoicePage() {
   const [createProductInitialSku, setCreateProductInitialSku] = React.useState("");
   const [createProductTargetIdx, setCreateProductTargetIdx] = React.useState<number | null>(null);
 
-  const { data: settings } = useQuery<{ taxRate?: number }>({
+  const { data: settings } = useQuery<{
+    taxRate?: number;
+    invoiceNotes?: string;
+    invoiceTerms?: string;
+  }>({
     queryKey: ["settings"],
     queryFn: () => apiClient.get("/settings").then((r) => r.data),
     staleTime: 60_000,
   });
   const taxRate = (settings?.taxRate ?? 0) / 100;
+
+  // Prefill customer-facing Notes & Terms from the tenant's Invoicing
+  // settings the first time they arrive. Don't overwrite any edits the
+  // operator has already made — only fill when the field is still empty.
+  const didPrefillRef = React.useRef(false);
+  React.useEffect(() => {
+    if (didPrefillRef.current) return;
+    if (!settings) return;
+    didPrefillRef.current = true;
+    if (settings.invoiceNotes && !notes) setNotes(settings.invoiceNotes);
+    if (settings.invoiceTerms && !termsText) setTermsText(settings.invoiceTerms);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings]);
 
   const { data: customerPricesData } = useCustomerPrices(customer?.id);
   const priceMap = React.useMemo(() => {
@@ -463,10 +491,8 @@ export default function NewInvoicePage() {
 
   // ── Submit ──────────────────────────────────────────────────────────────────
 
-  function handleSubmit(sendNow: boolean) {
-    if (!validate()) return;
-
-    const dto = {
+  function buildInvoiceDto(sendNow: boolean) {
+    return {
       customerId: customer!.id,
       dueDate: dueDate || undefined,
       issueDate: issueDate || undefined,
@@ -491,6 +517,94 @@ export default function NewInvoicePage() {
       ...(adjustment > 0 ? { shippingFee: adjustment } : {}),
       ...(sendNow ? { send: true } : {}),
     };
+  }
+
+  async function handlePreview() {
+    if (!validate()) return;
+    setPreviewLoading(true);
+    try {
+      const dto = buildInvoiceDto(false);
+      let invoiceId = currentDraftId;
+      if (invoiceId) {
+        // Update the existing draft so the preview reflects edits
+        await updateInvoice.mutateAsync({ id: invoiceId, ...dto } as any);
+      } else {
+        const created: any = await createInvoice.mutateAsync(
+          dto as Parameters<typeof createInvoice.mutate>[0],
+        );
+        invoiceId = created.id;
+        setCurrentDraftId(invoiceId);
+      }
+      const res = await apiClient.get(`/invoices/${invoiceId}/pdf`, {
+        params: { refresh: 1 },
+      });
+      setPreviewUrl(res.data?.url ?? null);
+    } catch (err) {
+      toast({
+        title: "Couldn't build preview",
+        description: "Check your inputs and try again.",
+        variant: "error",
+      });
+    } finally {
+      setPreviewLoading(false);
+    }
+  }
+
+  async function handleSendFromPreview() {
+    if (!currentDraftId) return;
+    try {
+      await apiClient.post(`/invoices/${currentDraftId}/send`);
+      toast({
+        title: "Invoice sent",
+        description: "The draft has been sent.",
+        variant: "success",
+      });
+      router.push(`/invoices/${currentDraftId}`);
+    } catch {
+      toast({
+        title: "Send failed",
+        description: "Please try again from the invoice detail page.",
+        variant: "error",
+      });
+    }
+  }
+
+  function handleSubmit(sendNow: boolean) {
+    if (!validate()) return;
+
+    // If we already have a preview draft, just update it and optionally send.
+    if (currentDraftId) {
+      const dto = buildInvoiceDto(false);
+      updateInvoice.mutate(
+        { id: currentDraftId, ...dto } as any,
+        {
+          onSuccess: async () => {
+            if (sendNow) {
+              try {
+                await apiClient.post(`/invoices/${currentDraftId}/send`);
+              } catch {
+                // fall through to toast below
+              }
+            }
+            toast({
+              title: sendNow ? "Invoice sent" : "Draft saved",
+              variant: "success",
+            });
+            router.push(`/invoices/${currentDraftId}`);
+          },
+          onError: () => {
+            toast({
+              title: "Failed to save invoice",
+              description: "Please check your inputs and try again.",
+              variant: "error",
+            });
+          },
+        },
+      );
+      return;
+    }
+
+    const dto = buildInvoiceDto(sendNow);
 
     createInvoice.mutate(dto as Parameters<typeof createInvoice.mutate>[0], {
       onSuccess: (invoice) => {
@@ -963,16 +1077,25 @@ export default function NewInvoicePage() {
           <div className="flex items-center gap-2">
             <Button
               variant="secondary"
+              leftIcon={<Eye className="h-4 w-4" />}
+              onClick={handlePreview}
+              loading={previewLoading}
+              disabled={previewLoading || createInvoice.isPending}
+            >
+              Preview
+            </Button>
+            <Button
+              variant="secondary"
               onClick={() => handleSubmit(false)}
-              loading={createInvoice.isPending}
-              disabled={createInvoice.isPending}
+              loading={createInvoice.isPending || updateInvoice.isPending}
+              disabled={createInvoice.isPending || updateInvoice.isPending}
             >
               Save as Draft
             </Button>
             <Button
               onClick={() => handleSubmit(true)}
-              loading={createInvoice.isPending}
-              disabled={createInvoice.isPending}
+              loading={createInvoice.isPending || updateInvoice.isPending}
+              disabled={createInvoice.isPending || updateInvoice.isPending}
             >
               Save and Send
             </Button>
@@ -989,6 +1112,36 @@ export default function NewInvoicePage() {
           </div>
         </div>
       </div>
+
+      {/* Print-ready preview modal */}
+      {previewUrl ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6"
+          onClick={() => setPreviewUrl(null)}
+        >
+          <div
+            className="flex h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-surface-border px-5 py-3">
+              <h2 className="text-base font-semibold text-navy">Invoice preview</h2>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="secondary"
+                  onClick={() => setPreviewUrl(null)}
+                  disabled={previewLoading}
+                >
+                  Close
+                </Button>
+                <Button onClick={handleSendFromPreview} disabled={previewLoading}>
+                  Send invoice
+                </Button>
+              </div>
+            </div>
+            <iframe src={previewUrl} className="h-full w-full flex-1" title="Invoice preview" />
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
