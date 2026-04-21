@@ -10,11 +10,24 @@
   "scope": "/",
   "lang": "en",
   "categories": ["business", "logistics"],
+  "id": "routeflow-operator",
   "icons": [
     {
       "src": "/logo.svg",
       "type": "image/svg+xml",
       "sizes": "any",
+      "purpose": "any"
+    },
+    {
+      "src": "/logo-seller.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/logo-seller.png",
+      "type": "image/png",
+      "sizes": "512x512",
       "purpose": "any maskable"
     }
   ],
@@ -34,6 +47,11 @@
       "name": "Customers",
       "url": "/customers",
       "description": "Manage customers"
+    },
+    {
+      "name": "Invoices",
+      "url": "/invoices",
+      "description": "View invoices and record payments"
     }
   ]
 }

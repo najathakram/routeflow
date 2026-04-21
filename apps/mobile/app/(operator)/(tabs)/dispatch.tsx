@@ -19,7 +19,7 @@ import {
   useAdminRoutes,
   type AdminDriver,
   type AdminRoute,
-} from "../../lib/api/admin";
+} from "../../../lib/api/admin";
 
 function driverDisplayName(driver: AdminDriver | undefined): string {
   if (!driver) return "Unassigned";

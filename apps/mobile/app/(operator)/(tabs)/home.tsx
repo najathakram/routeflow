@@ -19,8 +19,8 @@ import {
   useAdminRoutes,
   type AdminDriver,
   type AdminRoute,
-} from "../../lib/api/admin";
-import { useAuthStore } from "../../lib/auth-store";
+} from "../../../lib/api/admin";
+import { useAuthStore } from "../../../lib/auth-store";
 
 function routeStatusLabel(r: AdminRoute): {
   label: string;

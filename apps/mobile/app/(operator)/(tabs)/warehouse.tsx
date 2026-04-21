@@ -18,7 +18,7 @@ import {
   ProgressTrack,
   SearchBar,
 } from "@routeflow/ui/mobile/ios";
-import { useAdminProducts, type AdminProduct } from "../../lib/api/admin";
+import { useAdminProducts, type AdminProduct } from "../../../lib/api/admin";
 
 function toNumber(v: number | string | null | undefined): number {
   if (typeof v === "number") return v;

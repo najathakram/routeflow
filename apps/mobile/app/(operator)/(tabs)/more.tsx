@@ -4,8 +4,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { ListGroup, ListRow, NavBar } from "@routeflow/ui/mobile/ios";
-import { useAuthStore } from "../../lib/auth-store";
-import { useTenantStore } from "../../lib/tenant-store";
+import { useAuthStore } from "../../../lib/auth-store";
+import { useTenantStore } from "../../../lib/tenant-store";
 
 export default function OperatorMoreScreen() {
   const router = useRouter();

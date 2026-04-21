@@ -3,6 +3,7 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
 import { TenantProvider } from "@/components/tenant-provider";
+import { ServiceWorkerRegistry } from "@/components/ServiceWorkerRegistry";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -27,16 +28,24 @@ export const metadata: Metadata = {
     capable: true,
     title: "RouteFlow",
     statusBarStyle: "black-translucent",
+    startupImage: "/logo.svg",
   },
   icons: {
-    icon: [{ url: "/logo.svg", type: "image/svg+xml" }],
-    apple: "/logo.svg",
+    icon: [
+      { url: "/logo.svg", type: "image/svg+xml" },
+      { url: "/favicon.png", type: "image/png", sizes: "64x64" },
+    ],
+    apple: [
+      { url: "/logo-seller.png", sizes: "180x180" },
+    ],
+    shortcut: "/favicon.png",
   },
   openGraph: {
     title: "RouteFlow",
     description: "Wholesale distribution, simplified.",
     siteName: "RouteFlow",
     type: "website",
+    images: [{ url: "/logo.svg" }],
   },
 };
 
@@ -50,6 +59,7 @@ export default function RootLayout({
       <body className={`${inter.variable} font-sans antialiased`}>
         <TenantProvider>
           <Providers>{children}</Providers>
+          <ServiceWorkerRegistry />
         </TenantProvider>
       </body>
     </html>

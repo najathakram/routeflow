@@ -14,12 +14,11 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import {
   FilterChipRow,
-  NavBackButton,
   NavBar,
   Pill,
   SearchBar,
 } from "@routeflow/ui/mobile/ios";
-import { useAdminInvoices, type AdminInvoice } from "../../../lib/api/admin";
+import { useAdminInvoices, type AdminInvoice } from "../../../../lib/api/admin";
 
 const FILTERS = [
   { id: "ALL", label: "All" },
@@ -75,10 +74,7 @@ export default function InvoicesListScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
-      <NavBar
-        largeTitle="Invoices"
-        leading={<NavBackButton label="Back" onPress={() => router.back()} />}
-      />
+      <NavBar largeTitle="Invoices" />
       <SearchBar placeholder="Search number, customer…" value={search} onChangeText={setSearch} />
       <FilterChipRow
         chips={FILTERS.map((f) => ({ label: f.label }))}

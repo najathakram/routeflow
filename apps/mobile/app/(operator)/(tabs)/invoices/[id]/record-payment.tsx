@@ -7,10 +7,10 @@ import {
   FormSection,
   FormSheet,
   FormTextInput,
-} from "../../../../components/FormSheet";
-import { useAdminInvoice } from "../../../../lib/api/admin";
-import { useRecordInvoicePayment } from "../../../../lib/api/invoices";
-import { showToast } from "../../../../lib/toast";
+} from "../../../../../components/FormSheet";
+import { useAdminInvoice } from "../../../../../lib/api/admin";
+import { useRecordInvoicePayment } from "../../../../../lib/api/invoices";
+import { showToast } from "../../../../../lib/toast";
 
 const METHODS = [
   { id: "CASH", label: "Cash" },

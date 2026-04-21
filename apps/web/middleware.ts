@@ -13,9 +13,9 @@ const HOSTING_PROVIDER_DOMAINS = new Set([
   "render.com", "fly.dev", "onrender.com", "herokuapp.com",
 ]);
 
-// Mobile-web build served by the @routeflow/mobile Railway service. Phones that
-// hit the Next.js web app get a 302 here so they see the iOS-reskinned app
-// instead of the desktop dashboard.
+// Mobile-web build served by the @routeflow/mobile Railway service. When phones
+// hit the Next.js web app we rewrite (proxy) the response from this URL so the
+// browser address bar keeps showing www.routeflow.info instead of changing domains.
 const MOBILE_WEB_URL =
   process.env.NEXT_PUBLIC_MOBILE_WEB_URL ?? "https://routeflowmobile-production.up.railway.app";
 
@@ -53,11 +53,13 @@ export function middleware(request: NextRequest) {
   if (!skipMobileRedirect) {
     const ua = request.headers.get("user-agent") ?? "";
     if (isMobileUserAgent(ua)) {
-      // Preserve the path + query so /login on phone lands on /login in mobile.
-      const redirectTarget = new URL(MOBILE_WEB_URL);
-      redirectTarget.pathname = pathname;
-      redirectTarget.search = url.search;
-      return NextResponse.redirect(redirectTarget, { status: 302 });
+      // Proxy the mobile-web content so the browser URL stays at www.routeflow.info.
+      // The JS bundles/assets are still served from the Railway origin directly (CORS),
+      // but the initial HTML is proxied and the visible URL never changes.
+      const proxyTarget = new URL(MOBILE_WEB_URL);
+      proxyTarget.pathname = pathname;
+      proxyTarget.search = url.search;
+      return NextResponse.rewrite(proxyTarget);
     }
   }
 
