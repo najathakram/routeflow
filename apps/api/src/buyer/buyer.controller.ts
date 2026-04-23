@@ -367,7 +367,9 @@ export class BuyerController {
   @UseGuards(BuyerSellerContextGuard)
   @UseInterceptors(BuyerTenantInterceptor)
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
-  @ApiOperation({ summary: "Buyer financial analytics: monthly spend, invoice breakdown, payments" })
+  @ApiOperation({
+    summary: "Buyer financial analytics: monthly spend, invoice breakdown, payments",
+  })
   async getAnalytics(@CurrentBuyerCustomer() ctx: any) {
     const db = this.prisma.forTenant();
     const customerId: string = ctx.customerId;
@@ -393,7 +395,10 @@ export class BuyerController {
     for (const o of orders) {
       const key = `${o.createdAt.getFullYear()}-${String(o.createdAt.getMonth() + 1).padStart(2, "0")}`;
       const existing = monthMap.get(key) ?? { spend: 0, orderCount: 0 };
-      monthMap.set(key, { spend: existing.spend + Number(o.total), orderCount: existing.orderCount + 1 });
+      monthMap.set(key, {
+        spend: existing.spend + Number(o.total),
+        orderCount: existing.orderCount + 1,
+      });
     }
     const monthlySpend = Array.from(monthMap.entries())
       .sort(([a], [b]) => a.localeCompare(b))
@@ -414,11 +419,19 @@ export class BuyerController {
       select: { status: true, total: true, dueDate: true },
     });
     const now = new Date();
-    let paidCount = 0, unpaidCount = 0, overdueCount = 0, unpaidTotal = 0;
+    let paidCount = 0,
+      unpaidCount = 0,
+      overdueCount = 0,
+      unpaidTotal = 0;
     for (const inv of invoices) {
       if (inv.status === "PAID") {
         paidCount++;
-      } else if (inv.status === "SENT" || inv.status === "VIEWED" || inv.status === "PARTIAL" || inv.status === "OVERDUE") {
+      } else if (
+        inv.status === "SENT" ||
+        inv.status === "VIEWED" ||
+        inv.status === "PARTIAL" ||
+        inv.status === "OVERDUE"
+      ) {
         if (inv.status === "OVERDUE" || (inv.dueDate && inv.dueDate < now)) {
           overdueCount++;
         } else {
@@ -444,7 +457,13 @@ export class BuyerController {
 
     return {
       monthlySpend,
-      summary: { totalOrders, totalSpend, avgOrderValue, unpaidInvoiceCount: unpaidCount + overdueCount, unpaidInvoiceTotal: unpaidTotal },
+      summary: {
+        totalOrders,
+        totalSpend,
+        avgOrderValue,
+        unpaidInvoiceCount: unpaidCount + overdueCount,
+        unpaidInvoiceTotal: unpaidTotal,
+      },
       invoiceBreakdown: { paid: paidCount, unpaid: unpaidCount, overdue: overdueCount },
       recentPayments,
     };

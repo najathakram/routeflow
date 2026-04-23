@@ -1,4 +1,4 @@
-import axios from "axios";
+import axios, { type InternalAxiosRequestConfig } from "axios";
 import { Platform } from "react-native";
 import { useOfflineQueue } from "../store/offlineQueue";
 
@@ -55,7 +55,7 @@ function processQueue(error: unknown, token: string | null = null) {
   failedQueue = [];
 }
 
-type ExtendedConfig = typeof apiClient.defaults & {
+type ExtendedConfig = InternalAxiosRequestConfig & {
   _retry?: boolean;
   _offlineQueued?: boolean;
 };

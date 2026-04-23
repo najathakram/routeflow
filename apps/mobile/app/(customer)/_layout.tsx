@@ -5,7 +5,7 @@ import { useBuyerSessionStore } from "../../lib/buyer-session-store";
 export default function CustomerLayout() {
   const { buyer, activeSeller, isLoading } = useBuyerSessionStore();
   const router = useRouter();
-  const segments = useSegments();
+  const segments = useSegments() as string[];
 
   useEffect(() => {
     if (isLoading) return;

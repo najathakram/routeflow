@@ -309,6 +309,7 @@ export interface AdminProduct {
   priceTier3?: number | string;
   priceTier4?: number | string;
   priceTier5?: number | string;
+  standardCost?: number | string | null;
   currentStock: number | string;
   reorderPoint?: number | null;
   reorderQty?: number | null;

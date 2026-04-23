@@ -156,15 +156,13 @@ export default function VendorBillDetailScreen() {
                 <Text style={styles.primaryBtnText}>Mark received</Text>
               </Pressable>
             ) : null}
-            {bill.status !== "VOID" ? (
-              <Pressable
-                style={styles.ghostBtn}
-                onPress={onVoid}
-                disabled={voidMut.isPending}
-              >
-                <Text style={styles.ghostBtnText}>Void</Text>
-              </Pressable>
-            ) : null}
+            <Pressable
+              style={styles.ghostBtn}
+              onPress={onVoid}
+              disabled={voidMut.isPending}
+            >
+              <Text style={styles.ghostBtnText}>Void</Text>
+            </Pressable>
           </View>
         ) : null}
 

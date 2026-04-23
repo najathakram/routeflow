@@ -3,7 +3,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar } from "@routeflow/ui/mobile/ios";
-import { usePackingList } from "../../../lib/api/routes";
+import { usePackingList } from "../../../../lib/api/routes";
 
 export default function PackingListScreen() {
   const router = useRouter();
