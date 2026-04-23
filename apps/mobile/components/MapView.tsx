@@ -2,6 +2,22 @@ import * as React from "react";
 import { Platform, StyleSheet, Text, View } from "react-native";
 import { ios } from "@routeflow/ui/tokens";
 
+export type StopStatus = "PENDING" | "IN_PROGRESS" | "COMPLETED" | "SKIPPED";
+
+export function statusToPinColor(status?: StopStatus): MapPin["color"] {
+  switch (status) {
+    case "COMPLETED":
+      return "green";
+    case "IN_PROGRESS":
+      return "orange";
+    case "SKIPPED":
+      return "gray";
+    case "PENDING":
+    default:
+      return "brand";
+  }
+}
+
 export interface MapPin {
   id: string;
   lat: number;

@@ -20,6 +20,7 @@ import {
   type AdminDriver,
   type AdminRoute,
 } from "../../../lib/api/admin";
+import { useOperatorRouteRuns, type RouteRun } from "../../../lib/api/routes";
 
 function driverDisplayName(driver: AdminDriver | undefined): string {
   if (!driver) return "Unassigned";
@@ -44,6 +45,12 @@ export default function DispatchScreen() {
   }, [drivers]);
 
   const unassigned = routes.filter((r) => !r.driverId);
+  const today = new Date().toISOString().slice(0, 10);
+  const { data: runsData, isLoading: runsLoading } = useOperatorRouteRuns({
+    date: today,
+    limit: 50,
+  });
+  const runs = runsData?.data ?? [];
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
@@ -74,6 +81,8 @@ export default function DispatchScreen() {
             unassigned={unassigned}
             loading={routesLoading}
             driversById={driversById}
+            runs={runs}
+            runsLoading={runsLoading}
           />
         ) : (
           <DriversTab drivers={drivers} loading={driversLoading} />
@@ -88,11 +97,15 @@ function RoutesTab({
   unassigned,
   loading,
   driversById,
+  runs,
+  runsLoading,
 }: {
   routes: AdminRoute[];
   unassigned: AdminRoute[];
   loading: boolean;
   driversById: Map<string, AdminDriver>;
+  runs: RouteRun[];
+  runsLoading: boolean;
 }) {
   const router = useRouter();
   if (loading) {
@@ -112,6 +125,43 @@ function RoutesTab({
           </Text>
         </View>
       ) : null}
+
+      <SectionHeader title="Today's runs" />
+      <View style={{ paddingHorizontal: 16, gap: 8, paddingBottom: 4 }}>
+        {runsLoading ? (
+          <ActivityIndicator color={ios.brand} style={{ paddingVertical: 20 }} />
+        ) : runs.length === 0 ? (
+          <Text style={styles.empty}>No runs scheduled today.</Text>
+        ) : (
+          runs.map((r) => {
+            const stopsTotal = r.stops?.length ?? 0;
+            const stopsDone = (r.stops ?? []).filter((s) => s.status === "COMPLETED").length;
+            const pillVariant =
+              r.status === "COMPLETED"
+                ? "green"
+                : r.status === "IN_PROGRESS"
+                  ? "orange"
+                  : r.status === "CANCELLED"
+                    ? "gray"
+                    : "brand";
+            return (
+              <Pressable
+                key={r.id}
+                style={styles.routeRow}
+                onPress={() => router.push(`/(operator)/route-runs/${r.id}` as any)}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.routeName}>{r.route?.name ?? "Run"}</Text>
+                  <Text style={styles.routeSub}>
+                    {r.driver?.contactName ?? "Unassigned"} · {stopsDone}/{stopsTotal} stops
+                  </Text>
+                </View>
+                <Pill variant={pillVariant as any}>{r.status.replace("_", " ").toLowerCase()}</Pill>
+              </Pressable>
+            );
+          })
+        )}
+      </View>
 
       <SectionHeader
         title="All routes"

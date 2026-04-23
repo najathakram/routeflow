@@ -1,16 +1,18 @@
-import { useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { NavAction, NavBackButton, NavBar, Pill } from "@routeflow/ui/mobile/ios";
 import {
@@ -18,7 +20,9 @@ import {
   useAdminRoute,
 } from "../../../lib/api/admin";
 import {
+  useCreateRun,
   useDeleteRoute,
+  useOptimizeTemplate,
   useRemoveRouteStop,
   useReorderRouteStops,
 } from "../../../lib/api/routes";
@@ -36,6 +40,17 @@ export default function RouteDetailScreen() {
   const deleteMut = useDeleteRoute();
   const removeMut = useRemoveRouteStop();
   const reorderMut = useReorderRouteStops();
+  const optimizeMut = useOptimizeTemplate();
+  const createRunMut = useCreateRun();
+  const [dispatchVisible, setDispatchVisible] = useState(false);
+  const [dispatchDate, setDispatchDate] = useState(new Date().toISOString().slice(0, 10));
+  const [dispatchNotes, setDispatchNotes] = useState("");
+
+  useFocusEffect(
+    useCallback(() => {
+      refetch();
+    }, [refetch]),
+  );
 
   if (isLoading || !route) {
     return (
@@ -95,6 +110,49 @@ export default function RouteDetailScreen() {
         onSuccess: () => refetch(),
         onError: (e: any) =>
           Alert.alert("Couldn't reorder", e?.response?.data?.message ?? e?.message ?? "Try again."),
+      },
+    );
+  };
+
+  const handleOptimize = () => {
+    if (!id) return;
+    if (stops.length < 2) {
+      Alert.alert("Nothing to optimize", "Add at least two stops first.");
+      return;
+    }
+    optimizeMut.mutate(id, {
+      onSuccess: (res) => {
+        showToast(
+          res?.usedFallback
+            ? "Reordered (distance-based fallback)"
+            : "Route optimized",
+        );
+        refetch();
+      },
+      onError: (e: any) =>
+        Alert.alert(
+          "Couldn't optimize",
+          e?.response?.data?.message ?? e?.message ?? "Try again.",
+        ),
+    });
+  };
+
+  const handleDispatchConfirm = () => {
+    if (!id) return;
+    createRunMut.mutate(
+      { routeId: id, scheduledDate: dispatchDate, notes: dispatchNotes || undefined },
+      {
+        onSuccess: (run) => {
+          setDispatchVisible(false);
+          setDispatchNotes("");
+          showToast("Run created");
+          router.push(`/(operator)/route-runs/${run.id}` as any);
+        },
+        onError: (e: any) =>
+          Alert.alert(
+            "Couldn't dispatch",
+            e?.response?.data?.message ?? e?.message ?? "Try again.",
+          ),
       },
     );
   };
@@ -183,6 +241,13 @@ export default function RouteDetailScreen() {
                     <Text style={styles.stopName} numberOfLines={1}>
                       {s.customer?.businessName ?? s.customerId}
                     </Text>
+                    {typeof s.customerAddress?.lat !== "number" ||
+                    typeof s.customerAddress?.lng !== "number" ? (
+                      <View style={styles.noLocRow}>
+                        <Ionicons name="alert-circle" size={11} color={ios.system.orangeInk} />
+                        <Text style={styles.noLocText}>No location</Text>
+                      </View>
+                    ) : null}
                   </View>
                   <View style={{ flexDirection: "row", gap: 4 }}>
                     <Pressable style={styles.iconBtn} onPress={() => reorder(i, -1)} disabled={i === 0}>
@@ -220,6 +285,32 @@ export default function RouteDetailScreen() {
             <Text style={styles.mapBtnText}>View on map</Text>
           </Pressable>
 
+          <Pressable
+            style={[styles.mapBtn, optimizeMut.isPending && { opacity: 0.6 }]}
+            onPress={handleOptimize}
+            disabled={optimizeMut.isPending || stops.length < 2}
+          >
+            {optimizeMut.isPending ? (
+              <ActivityIndicator color={ios.brand} size="small" />
+            ) : (
+              <Ionicons name="sparkles-outline" size={18} color={ios.brand} />
+            )}
+            <Text style={styles.mapBtnText}>
+              {optimizeMut.isPending ? "Optimizing…" : "Optimize stops"}
+            </Text>
+          </Pressable>
+
+          <Pressable
+            style={[styles.dispatchBtn]}
+            onPress={() => {
+              setDispatchDate(new Date().toISOString().slice(0, 10));
+              setDispatchVisible(true);
+            }}
+          >
+            <Ionicons name="play-circle-outline" size={18} color="#fff" />
+            <Text style={styles.dispatchBtnText}>Dispatch run</Text>
+          </Pressable>
+
           <Pressable style={styles.deleteBtn} onPress={handleDelete} disabled={deleteMut.isPending}>
             <Ionicons name="trash-outline" size={18} color={ios.system.red} />
             <Text style={styles.deleteBtnText}>Delete route</Text>
@@ -227,6 +318,57 @@ export default function RouteDetailScreen() {
         </View>
         <View style={{ height: 24 }} />
       </ScrollView>
+
+      <Modal
+        visible={dispatchVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setDispatchVisible(false)}
+      >
+        <Pressable style={styles.modalBackdrop} onPress={() => setDispatchVisible(false)} />
+        <View style={styles.modalSheet}>
+          <View style={styles.modalHandle} />
+          <Text style={styles.modalTitle}>Dispatch run</Text>
+          <Text style={styles.modalLabel}>Date</Text>
+          <TextInput
+            style={styles.modalInput}
+            value={dispatchDate}
+            onChangeText={setDispatchDate}
+            placeholder="YYYY-MM-DD"
+            placeholderTextColor={ios.label3}
+            keyboardType="numbers-and-punctuation"
+            autoCapitalize="none"
+          />
+          <Text style={styles.modalLabel}>Notes (optional)</Text>
+          <TextInput
+            style={[styles.modalInput, { height: 72, textAlignVertical: "top" }]}
+            value={dispatchNotes}
+            onChangeText={setDispatchNotes}
+            placeholder="Driver notes…"
+            placeholderTextColor={ios.label3}
+            multiline
+          />
+          <View style={{ flexDirection: "row", gap: 10, marginTop: 6 }}>
+            <Pressable
+              style={[styles.modalBtn, { backgroundColor: ios.fill2, flex: 1 }]}
+              onPress={() => setDispatchVisible(false)}
+            >
+              <Text style={[styles.modalBtnText, { color: ios.label }]}>Cancel</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.modalBtn, { backgroundColor: ios.brand, flex: 1 }, createRunMut.isPending && { opacity: 0.6 }]}
+              onPress={handleDispatchConfirm}
+              disabled={createRunMut.isPending}
+            >
+              {createRunMut.isPending ? (
+                <ActivityIndicator color="#fff" size="small" />
+              ) : (
+                <Text style={[styles.modalBtnText, { color: "#fff" }]}>Dispatch</Text>
+              )}
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -254,6 +396,12 @@ const styles = StyleSheet.create({
   },
   stopBadgeText: { color: ios.brand, fontSize: 12, fontFamily: "Inter_700Bold" },
   stopName: { fontSize: 14, fontFamily: "Inter_500Medium", color: ios.label },
+  noLocRow: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 2 },
+  noLocText: {
+    fontSize: 11,
+    fontFamily: "Inter_500Medium",
+    color: ios.system.orangeInk,
+  },
   iconBtn: {
     width: 30,
     height: 30,
@@ -282,4 +430,52 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   deleteBtnText: { color: ios.system.red, fontSize: 15, fontFamily: "Inter_500Medium" },
+  dispatchBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: ios.brand,
+    paddingVertical: 14,
+    borderRadius: 12,
+  },
+  dispatchBtnText: { color: "#fff", fontSize: 15, fontFamily: "Inter_600SemiBold" },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.4)",
+  },
+  modalSheet: {
+    backgroundColor: ios.bgElev,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    paddingBottom: 36,
+    gap: 8,
+  },
+  modalHandle: {
+    alignSelf: "center",
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: ios.separator,
+    marginBottom: 8,
+  },
+  modalTitle: { fontSize: 18, fontFamily: "Inter_700Bold", color: ios.label, marginBottom: 4 },
+  modalLabel: { fontSize: 13, fontFamily: "Inter_500Medium", color: ios.label2, marginTop: 6 },
+  modalInput: {
+    backgroundColor: ios.fill3,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 15,
+    fontFamily: "Inter_400Regular",
+    color: ios.label,
+  },
+  modalBtn: {
+    paddingVertical: 13,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  modalBtnText: { fontSize: 15, fontFamily: "Inter_600SemiBold" },
 });

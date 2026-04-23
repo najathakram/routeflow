@@ -406,6 +406,100 @@ export function useOperatorRouteRuns(params?: { status?: string; date?: string; 
   });
 }
 
+// ─── Route Optimization (template + run) ──────────────────────────────────────
+
+export interface OptimizeResult {
+  success: boolean;
+  stops?: { id: string; stopNumber: number }[];
+  usedFallback?: boolean;
+  message?: string;
+}
+
+export function useOptimizeTemplate() {
+  const qc = useQueryClient();
+  return useMutation<OptimizeResult, Error, string>({
+    mutationFn: (id) => apiClient.post(`/routes/${id}/optimize`).then((r) => r.data),
+    onSuccess: (_, id) => {
+      qc.invalidateQueries({ queryKey: ['admin', 'routes', id] });
+      qc.invalidateQueries({ queryKey: ['admin', 'routes'] });
+    },
+  });
+}
+
+export function useOptimizeRouteRun() {
+  const qc = useQueryClient();
+  return useMutation<OptimizeResult, Error, string>({
+    mutationFn: (id) => apiClient.post(`/route-runs/${id}/optimize`).then((r) => r.data),
+    onSuccess: (_, id) => {
+      qc.invalidateQueries({ queryKey: ['route-runs', id] });
+      qc.invalidateQueries({ queryKey: ['route-runs'] });
+    },
+  });
+}
+
+// ─── Route Analysis (ETAs + delivery windows) ────────────────────────────────
+
+export interface StopETA {
+  stopId: string;
+  stopNumber: number;
+  customerName: string;
+  arrivalTime: string;
+  departureTime: string;
+  travelTimeMinutes: number;
+  deliveryWindowStart?: string | null;
+  deliveryWindowEnd?: string | null;
+  withinWindow: boolean | null;
+}
+
+export interface RouteAnalysisResult {
+  configured: boolean;
+  summary?: string;
+  stops?: Array<{ stopNumber: number; status: 'ok' | 'warning' | 'critical'; message: string }>;
+  suggestions?: string[];
+  etas: StopETA[];
+}
+
+export function useAnalyzeRoute() {
+  return useMutation<RouteAnalysisResult, Error, { routeId: string; startTime?: string }>({
+    mutationFn: ({ routeId, startTime }) =>
+      apiClient.post(`/routes/${routeId}/analyze`, { startTime }).then((r) => r.data),
+  });
+}
+
+export function useAnalyzeRouteRun() {
+  return useMutation<RouteAnalysisResult, Error, { runId: string; startTime?: string }>({
+    mutationFn: ({ runId, startTime }) =>
+      apiClient.post(`/route-runs/${runId}/analyze`, { startTime }).then((r) => r.data),
+  });
+}
+
+// ─── Route Settings (depot + service time) ───────────────────────────────────
+
+export interface RouteSettings {
+  averageSpeedKmh: number;
+  serviceTimeMinutes: number;
+  defaultStartTime: string;
+  depotLat: number | null;
+  depotLng: number | null;
+  depotAddress: string;
+}
+
+export function useRouteSettings() {
+  return useQuery<RouteSettings>({
+    queryKey: ['route-settings'],
+    queryFn: () =>
+      apiClient
+        .get('/settings/route')
+        .then((r) => r.data)
+        .catch((err) => {
+          if (err?.response?.status === 404) return null;
+          throw err;
+        }),
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+}
+
 export function useReopenStop() {
   const qc = useQueryClient();
   return useMutation<{ success: boolean; message: string }, Error, { runId: string; stopId: string }>({
