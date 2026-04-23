@@ -67,7 +67,8 @@ export default function BuyerOrdersPage() {
   const sellerSlug = params.seller as string;
 
   const [page, setPage] = React.useState(1);
-  const { data: result, isLoading, isError, error } = useBuyerOrders({ page, limit: 20 });
+  const [statusFilter, setStatusFilter] = React.useState("");
+  const { data: result, isLoading, isError, error } = useBuyerOrders({ page, limit: 20, status: statusFilter || undefined });
 
   // Validate slug matches active seller
   React.useEffect(() => {
@@ -97,13 +98,37 @@ export default function BuyerOrdersPage() {
   return (
     <div className="p-6">
       {/* Page header */}
-      <div className="mb-6">
+      <div className="mb-4">
         <h1 className="text-2xl font-bold text-navy">Orders</h1>
         {activeSeller && (
           <p className="text-sm text-navy/60 mt-1">
             {activeSeller.customer.businessName} at {activeSeller.tenant.name}
           </p>
         )}
+      </div>
+
+      {/* Status filter tabs */}
+      <div className="mb-5 flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        {[
+          { label: "All", value: "" },
+          { label: "Active", value: "PENDING" },
+          { label: "Confirmed", value: "CONFIRMED" },
+          { label: "Out for Delivery", value: "OUT_FOR_DELIVERY" },
+          { label: "Delivered", value: "DELIVERED" },
+          { label: "Cancelled", value: "CANCELLED" },
+        ].map((tab) => (
+          <button
+            key={tab.value}
+            onClick={() => { setStatusFilter(tab.value); setPage(1); }}
+            className={`flex-shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+              statusFilter === tab.value
+                ? "border-buyer-500 bg-buyer-500 text-white"
+                : "border-surface-border bg-white text-navy/60 hover:border-buyer-300 hover:text-buyer-600"
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
       </div>
 
       {/* Error */}
@@ -139,6 +164,9 @@ export default function BuyerOrdersPage() {
                     Date
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/50">
+                    Items
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/50">
                     Status
                   </th>
                   <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-navy/50">
@@ -158,6 +186,9 @@ export default function BuyerOrdersPage() {
                     </td>
                     <td className="px-4 py-3 text-sm text-navy/70">
                       {formatDate(order.createdAt)}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-navy/50">
+                      {order.itemCount != null ? `${order.itemCount} item${order.itemCount !== 1 ? "s" : ""}` : "—"}
                     </td>
                     <td className="px-4 py-3">
                       <Badge variant={getStatusVariant(order.status)}>

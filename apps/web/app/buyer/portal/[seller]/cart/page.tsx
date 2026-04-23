@@ -129,7 +129,10 @@ export default function BuyerCartPage() {
             >
               View Order
             </Button>
-            <Button onClick={() => router.push(`/buyer/portal/${sellerSlug}/shop`)}>
+            <Button
+              className="bg-buyer-500 hover:bg-buyer-600 focus-visible:ring-buyer-500"
+              onClick={() => router.push(`/buyer/portal/${sellerSlug}/shop`)}
+            >
               <Store className="mr-1.5 h-4 w-4" /> Continue Shopping
             </Button>
           </div>
@@ -152,7 +155,10 @@ export default function BuyerCartPage() {
           <ShoppingCart className="mx-auto mb-4 h-12 w-12 text-navy/20" />
           <h2 className="text-lg font-semibold text-navy mb-2">Your cart is empty</h2>
           <p className="text-sm text-navy/60 mb-4">Add products from the shop to get started.</p>
-          <Button onClick={() => router.push(`/buyer/portal/${sellerSlug}/shop`)}>
+          <Button
+            className="bg-buyer-500 hover:bg-buyer-600 focus-visible:ring-buyer-500"
+            onClick={() => router.push(`/buyer/portal/${sellerSlug}/shop`)}
+          >
             <Store className="mr-1.5 h-4 w-4" /> Browse Products
           </Button>
         </div>
@@ -404,7 +410,7 @@ export default function BuyerCartPage() {
           {/* Actions */}
           <div className="space-y-2">
             <Button
-              className="w-full"
+              className="w-full bg-buyer-500 hover:bg-buyer-600 focus-visible:ring-buyer-500"
               onClick={handlePlaceOrder}
               loading={createOrder.isPending}
               disabled={createOrder.isPending}

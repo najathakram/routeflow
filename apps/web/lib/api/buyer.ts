@@ -225,6 +225,7 @@ export function useBuyerCreateOrder() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["buyer", "orders"] });
       qc.invalidateQueries({ queryKey: ["buyer", "dashboard"] });
+      qc.invalidateQueries({ queryKey: ["buyer", "activeOrder"] });
     },
   });
 }
@@ -237,6 +238,8 @@ export function useBuyerUpdateOrderItems() {
     onSuccess: (_d, vars) => {
       qc.invalidateQueries({ queryKey: ["buyer", "order", vars.orderId] });
       qc.invalidateQueries({ queryKey: ["buyer", "orders"] });
+      qc.invalidateQueries({ queryKey: ["buyer", "dashboard"] });
+      qc.invalidateQueries({ queryKey: ["buyer", "activeOrder"] });
     },
   });
 }
@@ -250,6 +253,7 @@ export function useBuyerCancelOrder() {
       qc.invalidateQueries({ queryKey: ["buyer", "order", orderId] });
       qc.invalidateQueries({ queryKey: ["buyer", "orders"] });
       qc.invalidateQueries({ queryKey: ["buyer", "dashboard"] });
+      qc.invalidateQueries({ queryKey: ["buyer", "activeOrder"] });
     },
   });
 }
@@ -375,5 +379,27 @@ export function useBuyerRemoveFavorite() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["buyer", "favorites"] });
     },
+  });
+}
+
+// ─── Analytics ────────────────────────────────────────────────────────────────
+
+export interface BuyerAnalytics {
+  monthlySpend: Array<{ month: string; spend: number; orderCount: number }>;
+  summary: {
+    totalOrders: number;
+    totalSpend: number;
+    avgOrderValue: number;
+    unpaidInvoiceCount: number;
+    unpaidInvoiceTotal: number;
+  };
+  invoiceBreakdown: { paid: number; unpaid: number; overdue: number };
+  recentPayments: Array<{ date: string; amount: number; method: string; invoiceNumber: string }>;
+}
+
+export function useBuyerAnalytics() {
+  return useQuery<BuyerAnalytics>({
+    queryKey: ["buyer", "analytics"],
+    queryFn: () => buyerApiClient.get("/buyer/analytics").then((r) => r.data),
   });
 }

@@ -19,13 +19,13 @@ import {
   Heart,
   Bell,
   X,
+  TrendingUp,
 } from "lucide-react";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { useBuyerCart } from "@/lib/buyer-cart";
 import { useBuyerNotifications, type BuyerNotification } from "@/lib/hooks/useBuyerNotifications";
 import type { BuyerSeller } from "@/lib/buyer-auth";
 import { BuyerPortalErrorBoundary } from "./error-boundary";
-import { PwaInstallPrompt } from "@/components/PwaInstallPrompt";
 
 // ─── Status badge variant helper ─────────────────────────────────────────────
 
@@ -169,6 +169,11 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
           href: `/buyer/portal/${sellerSlug}/invoices`,
           icon: FileText,
           label: "Invoices",
+        },
+        {
+          href: `/buyer/portal/${sellerSlug}/finances`,
+          icon: TrendingUp,
+          label: "Finances",
         },
         {
           href: `/buyer/portal/${sellerSlug}/templates`,
@@ -365,8 +370,20 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
         <BuyerPortalErrorBoundary>{children}</BuyerPortalErrorBoundary>
       </main>
 
-      {/* PWA install prompt */}
-      <PwaInstallPrompt />
+      {/* Global floating cart button — visible on all pages when cart has items */}
+      {sellerSlug && cartItemCount > 0 && !pathname.includes("/cart") && (
+        <button
+          type="button"
+          onClick={() => router.push(`/buyer/portal/${sellerSlug}/cart`)}
+          className="fixed bottom-6 right-6 z-50 flex h-14 w-14 items-center justify-center rounded-full bg-buyer-500 text-white shadow-lg hover:bg-buyer-600 transition-colors"
+          aria-label={`View cart (${cartItemCount} items)`}
+        >
+          <ShoppingCart className="h-6 w-6" />
+          <span className="absolute -top-1.5 -right-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-white px-1 text-[10px] font-bold text-buyer-600 border border-buyer-200 shadow-sm">
+            {cartItemCount}
+          </span>
+        </button>
+      )}
     </div>
   );
 }

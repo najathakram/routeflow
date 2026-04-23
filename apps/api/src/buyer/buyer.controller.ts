@@ -361,6 +361,95 @@ export class BuyerController {
     return this.templatesService.generateOrder(id);
   }
 
+  // ─── Analytics ───────────────────────────────────────────────────────────────
+
+  @Get("analytics")
+  @UseGuards(BuyerSellerContextGuard)
+  @UseInterceptors(BuyerTenantInterceptor)
+  @ApiHeader({ name: "X-Tenant-Slug", required: true })
+  @ApiOperation({ summary: "Buyer financial analytics: monthly spend, invoice breakdown, payments" })
+  async getAnalytics(@CurrentBuyerCustomer() ctx: any) {
+    const db = this.prisma.forTenant();
+    const customerId: string = ctx.customerId;
+
+    // Monthly spend — last 12 months of non-cancelled orders
+    const twelveMonthsAgo = new Date();
+    twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 11);
+    twelveMonthsAgo.setDate(1);
+    twelveMonthsAgo.setHours(0, 0, 0, 0);
+
+    const orders = await db.order.findMany({
+      where: {
+        customerId,
+        status: { notIn: ["CANCELLED", "DRAFT"] },
+        createdAt: { gte: twelveMonthsAgo },
+      },
+      select: { createdAt: true, total: true },
+      orderBy: { createdAt: "asc" },
+    });
+
+    // Aggregate by month (YYYY-MM)
+    const monthMap = new Map<string, { spend: number; orderCount: number }>();
+    for (const o of orders) {
+      const key = `${o.createdAt.getFullYear()}-${String(o.createdAt.getMonth() + 1).padStart(2, "0")}`;
+      const existing = monthMap.get(key) ?? { spend: 0, orderCount: 0 };
+      monthMap.set(key, { spend: existing.spend + Number(o.total), orderCount: existing.orderCount + 1 });
+    }
+    const monthlySpend = Array.from(monthMap.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([month, v]) => ({ month, spend: v.spend, orderCount: v.orderCount }));
+
+    // Summary — all time
+    const allOrders = await db.order.findMany({
+      where: { customerId, status: { notIn: ["CANCELLED", "DRAFT"] } },
+      select: { total: true },
+    });
+    const totalOrders = allOrders.length;
+    const totalSpend = allOrders.reduce((s, o) => s + Number(o.total), 0);
+    const avgOrderValue = totalOrders > 0 ? totalSpend / totalOrders : 0;
+
+    // Invoice breakdown
+    const invoices = await db.invoice.findMany({
+      where: { customerId },
+      select: { status: true, total: true, dueDate: true },
+    });
+    const now = new Date();
+    let paidCount = 0, unpaidCount = 0, overdueCount = 0, unpaidTotal = 0;
+    for (const inv of invoices) {
+      if (inv.status === "PAID") {
+        paidCount++;
+      } else if (inv.status === "SENT" || inv.status === "VIEWED" || inv.status === "PARTIAL" || inv.status === "OVERDUE") {
+        if (inv.status === "OVERDUE" || (inv.dueDate && inv.dueDate < now)) {
+          overdueCount++;
+        } else {
+          unpaidCount++;
+        }
+        unpaidTotal += Number(inv.total);
+      }
+    }
+
+    // Recent payments (last 20)
+    const payments = await db.invoicePayment.findMany({
+      where: { invoice: { customerId } },
+      include: { invoice: { select: { invoiceNumber: true } } },
+      orderBy: { paidAt: "desc" },
+      take: 20,
+    });
+    const recentPayments = payments.map((p) => ({
+      date: p.paidAt.toISOString(),
+      amount: Number(p.amount),
+      method: p.method,
+      invoiceNumber: p.invoice.invoiceNumber,
+    }));
+
+    return {
+      monthlySpend,
+      summary: { totalOrders, totalSpend, avgOrderValue, unpaidInvoiceCount: unpaidCount + overdueCount, unpaidInvoiceTotal: unpaidTotal },
+      invoiceBreakdown: { paid: paidCount, unpaid: unpaidCount, overdue: overdueCount },
+      recentPayments,
+    };
+  }
+
   // ─── Favorites ──────────────────────────────────────────────────────────────
 
   @Get("favorites")

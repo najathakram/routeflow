@@ -288,7 +288,7 @@ export default function BuyerShopPage() {
         </div>
 
         {/* Search + filters bar */}
-        <div className="mb-6 flex flex-wrap items-center gap-3">
+        <div className="mb-4 flex flex-wrap items-center gap-3">
           {/* Search */}
           <div className="relative flex-1 min-w-[260px]">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-navy/40" />
@@ -308,20 +308,6 @@ export default function BuyerShopPage() {
               </button>
             )}
           </div>
-
-          {/* Category filter */}
-          {categories.length > 0 && (
-            <select
-              value={category}
-              onChange={(e) => setCategory(e.target.value)}
-              className="h-10 rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-buyer-500 focus:outline-none focus:ring-1 focus:ring-buyer-500"
-            >
-              <option value="">All Categories</option>
-              {categories.map((c) => (
-                <option key={c} value={c}>{c}</option>
-              ))}
-            </select>
-          )}
 
           {/* Sort */}
           <select
@@ -351,6 +337,25 @@ export default function BuyerShopPage() {
             </button>
           </div>
         </div>
+
+        {/* Category pills */}
+        {categories.length > 0 && (
+          <div className="mb-5 flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            {["", ...categories].map((c) => (
+              <button
+                key={c || "__all__"}
+                onClick={() => { setCategory(c); setPage(1); }}
+                className={`flex-shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+                  category === c
+                    ? "border-buyer-500 bg-buyer-500 text-white"
+                    : "border-surface-border bg-white text-navy/60 hover:border-buyer-300 hover:text-buyer-600"
+                }`}
+              >
+                {c || "All"}
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* Results count */}
         {meta && (

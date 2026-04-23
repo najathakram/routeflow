@@ -5,12 +5,13 @@ import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBar } from "@routeflow/ui/mobile/ios";
 import { useBuyerSessionStore } from "../../../lib/buyer-session-store";
-import { useBuyerProfile } from "../../../lib/api/buyer";
+import { useBuyerProfile, useBuyerDashboard } from "../../../lib/api/buyer";
 
 export default function CustomerMoreScreen() {
   const router = useRouter();
   const { buyer, activeSeller, signOut } = useBuyerSessionStore();
   const { data: profile } = useBuyerProfile();
+  const { data: dashboard } = useBuyerDashboard();
 
   const onSignOut = () =>
     Alert.alert("Sign out?", "You'll need to log in again.", [
@@ -47,6 +48,28 @@ export default function CustomerMoreScreen() {
             ) : null}
           </View>
         </View>
+
+        {/* Stats strip */}
+        {dashboard?.stats && (
+          <View style={styles.statsRow}>
+            <View style={styles.statCell}>
+              <Text style={styles.statValue}>{dashboard.stats.totalOrders}</Text>
+              <Text style={styles.statLabel}>Orders</Text>
+            </View>
+            <View style={styles.statDivider} />
+            <View style={styles.statCell}>
+              <Text style={styles.statValue}>${(dashboard.stats.totalSpend ?? 0).toFixed(0)}</Text>
+              <Text style={styles.statLabel}>Total Spend</Text>
+            </View>
+            <View style={styles.statDivider} />
+            <View style={styles.statCell}>
+              <Text style={[styles.statValue, dashboard.stats.unpaidInvoices > 0 && { color: ios.system.orangeInk }]}>
+                {dashboard.stats.unpaidInvoices}
+              </Text>
+              <Text style={styles.statLabel}>Unpaid</Text>
+            </View>
+          </View>
+        )}
 
         {/* ACCOUNT group */}
         <View style={styles.group}>
@@ -162,6 +185,18 @@ const styles = StyleSheet.create({
   accountName: { fontSize: 17, fontFamily: "Inter_700Bold", color: ios.label, letterSpacing: -0.3 },
   accountEmail: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
   accountSeller: { fontSize: 12, fontFamily: "Inter_500Medium", color: ios.brand, marginTop: 3 },
+  statsRow: {
+    flexDirection: "row",
+    marginHorizontal: 16,
+    marginBottom: 16,
+    backgroundColor: ios.bgElev,
+    borderRadius: 14,
+    overflow: "hidden",
+  },
+  statCell: { flex: 1, alignItems: "center", paddingVertical: 14 },
+  statDivider: { width: StyleSheet.hairlineWidth, backgroundColor: ios.separator },
+  statValue: { fontSize: 20, fontFamily: "Inter_700Bold", color: ios.label, letterSpacing: -0.5 },
+  statLabel: { fontSize: 11, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
   group: { paddingHorizontal: 16, marginBottom: 16 },
   groupHeader: {
     fontSize: 12,

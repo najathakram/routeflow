@@ -170,7 +170,10 @@ export default function BuyerFavoritesPage() {
           <p className="text-sm text-navy/60 mb-4">
             Browse the shop and tap the heart icon on products you want to save.
           </p>
-          <Button onClick={() => router.push(`/buyer/portal/${sellerSlug}/shop`)}>
+          <Button
+            className="bg-buyer-500 hover:bg-buyer-600 focus-visible:ring-buyer-500"
+            onClick={() => router.push(`/buyer/portal/${sellerSlug}/shop`)}
+          >
             <Store className="mr-1.5 h-4 w-4" /> Browse Products
           </Button>
         </div>

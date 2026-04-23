@@ -126,7 +126,7 @@ export default function BuyerOrderDetailPage() {
   const updateItems = useBuyerUpdateOrderItems();
 
   const [editMode, setEditMode] = React.useState(false);
-  const [editItems, setEditItems] = React.useState<Array<{ productId: string; qty: number; name: string; unit: string }>>([]);
+  const [editItems, setEditItems] = React.useState<Array<{ productId: string; qty: number; name: string; unit: string; unitPrice: number }>>([]);
   const [cancelOpen, setCancelOpen] = React.useState(false);
   const [actionError, setActionError] = React.useState<string | null>(null);
   const [addSearch, setAddSearch] = React.useState("");
@@ -169,6 +169,7 @@ export default function BuyerOrderDetailPage() {
           qty: Number(li.qty),
           name: li.product.name,
           unit: li.product.unit,
+          unitPrice: Number(li.unitPrice),
         })),
     );
     setEditMode(true);
@@ -253,7 +254,7 @@ export default function BuyerOrderDetailPage() {
           { label: "Tax", value: fmt(Number(order.tax)) },
           {
             label: "Discount",
-            value: Number(order.discountAmount) > 0 ? `-${fmt(Number(order.discountAmount))}` : "N/A",
+            value: Number(order.discountAmount) > 0 ? `-${fmt(Number(order.discountAmount))}` : fmt(0),
           },
           { label: "Total", value: fmt(Number(order.total)), bold: true },
         ].map((c) => (
@@ -301,7 +302,12 @@ export default function BuyerOrderDetailPage() {
               <Button variant="secondary" size="sm" onClick={() => setEditMode(false)}>
                 Cancel
               </Button>
-              <Button size="sm" onClick={handleSaveEdit} loading={updateItems.isPending}>
+              <Button
+                size="sm"
+                className="bg-buyer-500 hover:bg-buyer-600 focus-visible:ring-buyer-500"
+                onClick={handleSaveEdit}
+                loading={updateItems.isPending}
+              >
                 Save Changes
               </Button>
             </div>
@@ -385,8 +391,8 @@ export default function BuyerOrderDetailPage() {
                         </button>
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-right text-sm text-navy/60">N/A</td>
-                    <td className="px-4 py-3 text-right text-sm text-navy/60">N/A</td>
+                    <td className="px-4 py-3 text-right text-sm text-navy/70">{item.unitPrice ? fmt(item.unitPrice) : "—"}</td>
+                    <td className="px-4 py-3 text-right text-sm font-medium text-navy">{item.unitPrice ? fmt(item.unitPrice * item.qty) : "—"}</td>
                   </tr>
                 ))
               : order.lineItems.map((li) => (
@@ -476,7 +482,7 @@ export default function BuyerOrderDetailPage() {
                       onClick={() => {
                         setEditItems((prev) => [
                           ...prev,
-                          { productId: p.id, qty: 1, name: p.name, unit: p.unit },
+                          { productId: p.id, qty: 1, name: p.name, unit: p.unit, unitPrice: p.buyerPrice },
                         ]);
                         setAddSearch("");
                       }}

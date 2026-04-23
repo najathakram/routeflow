@@ -13,7 +13,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBar } from "@routeflow/ui/mobile/ios";
-import { useBuyerProducts, type BuyerProduct } from "../../../lib/api/buyer";
+import { useBuyerProducts, useBuyerCategories, type BuyerProduct } from "../../../lib/api/buyer";
 import { useCartStore } from "../../../store/cartStore";
 
 function formatCurrency(n: number): string {
@@ -23,8 +23,12 @@ function formatCurrency(n: number): string {
 export default function CustomerCatalogScreen() {
   const router = useRouter();
   const [search, setSearch] = useState("");
+  const [category, setCategory] = useState("");
+  const { data: categoriesData } = useBuyerCategories();
+  const categories = categoriesData ?? [];
   const { data, isLoading } = useBuyerProducts({
     search: search.trim() || undefined,
+    category: category || undefined,
     limit: 100,
   });
   const products = data?.data ?? [];
@@ -56,6 +60,27 @@ export default function CustomerCatalogScreen() {
           ) : null}
         </View>
       </View>
+
+      {/* Category pills */}
+      {categories.length > 0 && (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.pillsRow}
+        >
+          {["", ...categories].map((c) => (
+            <Pressable
+              key={c || "__all__"}
+              onPress={() => setCategory(c)}
+              style={[styles.pill, category === c && styles.pillActive]}
+            >
+              <Text style={[styles.pillText, category === c && styles.pillTextActive]}>
+                {c || "All"}
+              </Text>
+            </Pressable>
+          ))}
+        </ScrollView>
+      )}
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: cartCount > 0 ? 100 : 32 }}>
         {isLoading ? (
@@ -190,6 +215,18 @@ const styles = StyleSheet.create({
   },
   qtyBtn: { alignItems: "center", justifyContent: "center" },
   qtyText: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: ios.label, minWidth: 20, textAlign: "center" },
+  pillsRow: { paddingHorizontal: 16, paddingBottom: 8, gap: 8 },
+  pill: {
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: ios.separator,
+    backgroundColor: ios.bgElev,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+  },
+  pillActive: { backgroundColor: ios.brand, borderColor: ios.brand },
+  pillText: { fontSize: 13, fontFamily: "Inter_500Medium", color: ios.label2 },
+  pillTextActive: { color: "#fff" },
   cartBar: {
     position: "absolute",
     bottom: 16,

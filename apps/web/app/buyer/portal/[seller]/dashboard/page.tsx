@@ -18,6 +18,7 @@ import { Badge, Button, cn } from "@routeflow/ui/web";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { useBuyerDashboard, useBuyerTemplates, useBuyerReorder, type OrderTemplate } from "@/lib/api/buyer";
 import { useBuyerCart } from "@/lib/buyer-cart";
+import { PwaInstallPrompt } from "@/components/PwaInstallPrompt";
 
 function fmt(n: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
@@ -523,6 +524,9 @@ export default function BuyerDashboardPage() {
         </div>
       </div>
 
+      {/* PWA install — only when cart is empty */}
+      {cart.itemCount === 0 && <PwaInstallPrompt />}
+
       {/* Quick action */}
       <div className="flex items-center justify-center gap-4">
         <Button
@@ -532,7 +536,10 @@ export default function BuyerDashboardPage() {
           <Store className="mr-1.5 h-4 w-4" /> Browse Products
         </Button>
         {cart.itemCount > 0 && (
-          <Button onClick={() => router.push(`/buyer/portal/${sellerSlug}/cart`)}>
+          <Button
+            className="bg-buyer-500 hover:bg-buyer-600 focus-visible:ring-buyer-500"
+            onClick={() => router.push(`/buyer/portal/${sellerSlug}/cart`)}
+          >
             <ShoppingCart className="mr-1.5 h-4 w-4" /> View Cart ({cart.totalQty})
           </Button>
         )}
