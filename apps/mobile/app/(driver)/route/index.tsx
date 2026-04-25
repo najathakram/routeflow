@@ -1,9 +1,10 @@
 import { useEffect, useMemo } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
+import * as Location from "expo-location";
 import { ios } from "@routeflow/ui/tokens";
 import {
   InlineStats,
@@ -14,6 +15,7 @@ import {
 } from "@routeflow/ui/mobile/ios";
 import {
   useActiveRouteRun,
+  useOptimizeRouteRun,
   useScheduledRouteRuns,
   useUpdateRunStatus,
   type RouteRun,
@@ -25,6 +27,27 @@ import {
   startLocationTracking,
   stopLocationTracking,
 } from "../../../lib/location-tracker";
+
+/**
+ * Best-effort foreground GPS read. Returns null if perms denied / unavailable —
+ * callers should gracefully fall back to depot/first-stop behavior.
+ */
+async function readDriverLocation(): Promise<{ lat: number; lng: number } | null> {
+  if (Platform.OS === "web") return null;
+  try {
+    const perm = await Location.requestForegroundPermissionsAsync();
+    if (perm.status !== "granted") return null;
+    const cur = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+    return { lat: cur.coords.latitude, lng: cur.coords.longitude };
+  } catch {
+    return null;
+  }
+}
+
+async function openRouteFromHere(stops: RouteRunStop[]): Promise<void> {
+  const loc = await readDriverLocation();
+  openRouteInMaps(stops, loc ? { originLat: loc.lat, originLng: loc.lng } : {});
+}
 
 export default function DriverRouteScreen() {
   const router = useRouter();
@@ -134,7 +157,7 @@ function StartOfDay({ run }: { run: RouteRun }) {
               {(run.stops?.length ?? 0) > 0 ? (
                 <Pressable
                   style={styles.heroBtnGhost}
-                  onPress={() => openRouteInMaps(run.stops ?? [])}
+                  onPress={() => void openRouteFromHere(run.stops ?? [])}
                 >
                   <Ionicons name="navigate-outline" size={14} color="#fff" />
                   <Text style={styles.heroBtnGhostText}>Maps</Text>
@@ -157,6 +180,25 @@ function TodaysRoute({
   onOpenStop: (id: string) => void;
 }) {
   const stops = run.stops ?? [];
+  const optimize = useOptimizeRouteRun();
+
+  const onOptimizeFromHere = async () => {
+    const loc = await readDriverLocation();
+    if (!loc) {
+      Alert.alert(
+        "Location needed",
+        "Enable location access to re-optimize from your current position.",
+      );
+      return;
+    }
+    optimize.mutate(
+      { id: run.id, originLat: loc.lat, originLng: loc.lng },
+      {
+        onError: (err) =>
+          Alert.alert("Optimization failed", err.message ?? "Please try again."),
+      },
+    );
+  };
   const { done, pending, nextStop, totalStops } = useMemo(() => {
     const completed = stops.filter((s) => s.status === "COMPLETED" || s.status === "SKIPPED");
     const remaining = stops.filter(
@@ -236,11 +278,23 @@ function TodaysRoute({
                     const pending = stops.filter(
                       (s) => s.status === "PENDING" || s.status === "IN_PROGRESS",
                     );
-                    openRouteInMaps(pending.length > 0 ? pending : stops);
+                    void openRouteFromHere(pending.length > 0 ? pending : stops);
                   }}
                 >
                   <Ionicons name="navigate-outline" size={14} color="#fff" />
                   <Text style={styles.heroBtnGhostText}>Maps</Text>
+                </Pressable>
+              </View>
+              <View style={[styles.heroActions, { marginTop: 8 }]}>
+                <Pressable
+                  style={[styles.heroBtnGhost, { flex: 1, alignItems: "center", flexDirection: "row", justifyContent: "center", gap: 6 }]}
+                  onPress={onOptimizeFromHere}
+                  disabled={optimize.isPending}
+                >
+                  <Ionicons name="git-network-outline" size={14} color="#fff" />
+                  <Text style={styles.heroBtnGhostText}>
+                    {optimize.isPending ? "Optimizing…" : "Re-optimize from here"}
+                  </Text>
                 </Pressable>
               </View>
             </LinearGradient>

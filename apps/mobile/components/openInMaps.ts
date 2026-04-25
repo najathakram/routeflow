@@ -50,36 +50,42 @@ function stopToWaypoint(stop: RouteRunStop): string | null {
   return parts ? encodeURIComponent(parts) : null;
 }
 
+export interface RouteMapOptions {
+  /** Origin coordinates (e.g. driver's current GPS). When omitted, the first stop is used as origin. */
+  originLat?: number | null;
+  originLng?: number | null;
+}
+
 /**
- * Opens Google Maps (always) with the full route as turn-by-turn directions.
- * Uses depot coordinates as origin when provided, otherwise falls back to the
- * first stop. Remaining stops become waypoints; the last stop is the destination.
- *
- * On iOS this still opens Google Maps via the universal URL (iOS will ask the
- * user which app to use if Google Maps is installed).
+ * Opens the route as multi-stop turn-by-turn directions. Uses the Google Maps
+ * universal URL — on Android this launches Google Maps directly; on iOS it
+ * opens Google Maps if installed, otherwise falls back to the browser /
+ * Apple Maps. Google Maps handles the multi-stop view with timings and
+ * distances. Pass `origin*` (driver's live GPS) so the route starts from the
+ * driver's current position; otherwise the first stop is used as the origin.
  */
 export function openRouteInMaps(
   stops: RouteRunStop[],
-  depotLat?: number | null,
-  depotLng?: number | null,
+  options: RouteMapOptions = {},
 ): void {
   const sorted = [...stops].sort((a, b) => a.stopNumber - b.stopNumber);
   const waypoints = sorted.map(stopToWaypoint).filter(Boolean) as string[];
 
   if (waypoints.length === 0) return;
 
-  const origin =
-    typeof depotLat === "number" && typeof depotLng === "number"
-      ? `${depotLat},${depotLng}`
-      : waypoints[0]!;
+  const hasOrigin =
+    typeof options.originLat === "number" && typeof options.originLng === "number";
+  const originStr = hasOrigin
+    ? `${options.originLat},${options.originLng}`
+    : waypoints[0]!;
 
-  const destination = waypoints[waypoints.length - 1]!;
-  const middle = waypoints.slice(
-    typeof depotLat === "number" ? 0 : 1,
-    -1,
-  );
+  const stopList = hasOrigin ? waypoints : waypoints.slice(1);
+  if (stopList.length === 0) return;
 
-  let url = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${destination}&travelmode=driving`;
+  const destination = stopList[stopList.length - 1]!;
+  const middle = stopList.slice(0, -1);
+
+  let url = `https://www.google.com/maps/dir/?api=1&origin=${originStr}&destination=${destination}&travelmode=driving`;
   if (middle.length > 0) {
     url += `&waypoints=${middle.join("|")}`;
   }

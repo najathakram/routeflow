@@ -426,11 +426,26 @@ export function useOptimizeTemplate() {
   });
 }
 
+export interface OptimizeRunInput {
+  id: string;
+  originLat?: number;
+  originLng?: number;
+}
+
 export function useOptimizeRouteRun() {
   const qc = useQueryClient();
-  return useMutation<OptimizeResult, Error, string>({
-    mutationFn: (id) => apiClient.post(`/route-runs/${id}/optimize`).then((r) => r.data),
-    onSuccess: (_, id) => {
+  return useMutation<OptimizeResult, Error, string | OptimizeRunInput>({
+    mutationFn: (input) => {
+      const args: OptimizeRunInput =
+        typeof input === 'string' ? { id: input } : input;
+      const body =
+        typeof args.originLat === 'number' && typeof args.originLng === 'number'
+          ? { originLat: args.originLat, originLng: args.originLng }
+          : {};
+      return apiClient.post(`/route-runs/${args.id}/optimize`, body).then((r) => r.data);
+    },
+    onSuccess: (_, input) => {
+      const id = typeof input === 'string' ? input : input.id;
       qc.invalidateQueries({ queryKey: ['route-runs', id] });
       qc.invalidateQueries({ queryKey: ['route-runs'] });
     },

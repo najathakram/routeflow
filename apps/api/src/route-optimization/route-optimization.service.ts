@@ -282,7 +282,10 @@ export class RouteOptimizationService {
     return { stopOrder, reorderedCount, usedFallback };
   }
 
-  async optimizeRoute(routeRunId: string): Promise<OptimizeResult> {
+  async optimizeRoute(
+    routeRunId: string,
+    origin?: { lat: number; lng: number } | null,
+  ): Promise<OptimizeResult> {
     const run = await this.prisma.forTenant().routeRun.findUnique({
       where: { id: routeRunId },
       include: {
@@ -348,20 +351,23 @@ export class RouteOptimizationService {
       deliveryWindowEnd: s.routeStop.customer?.deliveryWindowEnd,
     }));
 
-    // Resolve depot from the parent route
+    // Resolve depot from the parent route. When the caller provides an
+    // origin (e.g. driver's current GPS mid-run), use that as the vehicle
+    // start instead of the depot.
     const depot = await this.resolveDepot(run.routeId);
+    const start = origin ?? depot;
 
     let optimizedIds: string[];
     let usedFallback = false;
 
     try {
-      optimizedIds = await this.callOrsOptimization(stops, depot);
+      optimizedIds = await this.callOrsOptimization(stops, start);
     } catch (err: unknown) {
       this.logger.warn(
         "ORS optimization failed — applying nearest-neighbor fallback",
         err instanceof Error ? err.message : String(err),
       );
-      optimizedIds = this.nearestNeighborFallback(stops, depot);
+      optimizedIds = this.nearestNeighborFallback(stops, start);
       usedFallback = true;
     }
 

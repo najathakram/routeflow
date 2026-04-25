@@ -1,6 +1,7 @@
-import { useMemo } from "react";
-import { ActivityIndicator, StyleSheet, View } from "react-native";
+import { useEffect, useMemo, useState } from "react";
+import { ActivityIndicator, Platform, StyleSheet, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import * as Location from "expo-location";
 import { ios } from "@routeflow/ui/tokens";
 import { IosEmptyState } from "@routeflow/ui/mobile/ios";
 import { Ionicons } from "@expo/vector-icons";
@@ -11,6 +12,39 @@ import { AppMapView, type MapPin, type MapPolyline } from "../../components/MapV
 export default function DriverMapScreen() {
   const user = useAuthStore((s) => s.user);
   const { data: liveData, isLoading } = useRoutesLive();
+  const [foregroundLoc, setForegroundLoc] = useState<{ lat: number; lng: number } | null>(null);
+
+  // Read the device's current GPS while this screen is visible so the driver
+  // pin appears immediately, without waiting for the background tracker's
+  // 30s/50m post to populate `latestLocation` server-side.
+  useEffect(() => {
+    if (Platform.OS === "web") return;
+    let sub: Location.LocationSubscription | null = null;
+    let cancelled = false;
+
+    (async () => {
+      const perm = await Location.requestForegroundPermissionsAsync();
+      if (perm.status !== "granted" || cancelled) return;
+      try {
+        const cur = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        if (!cancelled) {
+          setForegroundLoc({ lat: cur.coords.latitude, lng: cur.coords.longitude });
+        }
+      } catch {
+        // ignore — server-side latestLocation may still populate the pin
+      }
+      if (cancelled) return;
+      sub = await Location.watchPositionAsync(
+        { accuracy: Location.Accuracy.Balanced, timeInterval: 5000, distanceInterval: 25 },
+        (pos) => setForegroundLoc({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      );
+    })();
+
+    return () => {
+      cancelled = true;
+      sub?.remove();
+    };
+  }, []);
 
   const myRoute = useMemo(() => {
     if (!user?.id || !liveData?.routes) return null;
@@ -22,11 +56,14 @@ export default function DriverMapScreen() {
 
     const pinList: MapPin[] = [];
 
-    if (myRoute.latestLocation) {
+    // Prefer server-side latestLocation (authoritative, includes other devices)
+    // and fall back to the live foreground reading from this screen.
+    const driverLoc = myRoute.latestLocation ?? foregroundLoc;
+    if (driverLoc) {
       pinList.push({
         id: "driver-me",
-        lat: myRoute.latestLocation.lat,
-        lng: myRoute.latestLocation.lng,
+        lat: driverLoc.lat,
+        lng: driverLoc.lng,
         title: "My location",
         color: "brand",
       });
@@ -58,7 +95,7 @@ export default function DriverMapScreen() {
         : [];
 
     return { pins: pinList, polylines: lines };
-  }, [myRoute]);
+  }, [myRoute, foregroundLoc]);
 
   if (isLoading) {
     return (

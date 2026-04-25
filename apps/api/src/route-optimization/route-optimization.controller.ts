@@ -10,7 +10,6 @@ import { RouteAnalysisService } from "./route-analysis.service";
 @ApiTags("route-runs")
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(UserRole.OPERATOR)
 @Controller("route-runs")
 export class RouteOptimizationController {
   constructor(
@@ -19,11 +18,20 @@ export class RouteOptimizationController {
   ) {}
 
   @Post(":id/optimize")
-  optimize(@Param("id") id: string) {
-    return this.service.optimizeRoute(id);
+  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
+  optimize(
+    @Param("id") id: string,
+    @Body() body?: { originLat?: number; originLng?: number },
+  ) {
+    const origin =
+      typeof body?.originLat === "number" && typeof body?.originLng === "number"
+        ? { lat: body.originLat, lng: body.originLng }
+        : null;
+    return this.service.optimizeRoute(id, origin);
   }
 
   @Post(":id/analyze")
+  @Roles(UserRole.OPERATOR)
   analyze(@Param("id") id: string, @Body() body?: { startTime?: string }) {
     return this.analysisService.analyzeRouteRun(id, body?.startTime);
   }
