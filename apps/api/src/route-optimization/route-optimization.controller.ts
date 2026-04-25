@@ -19,10 +19,7 @@ export class RouteOptimizationController {
 
   @Post(":id/optimize")
   @Roles(UserRole.OPERATOR, UserRole.DRIVER)
-  optimize(
-    @Param("id") id: string,
-    @Body() body?: { originLat?: number; originLng?: number },
-  ) {
+  optimize(@Param("id") id: string, @Body() body?: { originLat?: number; originLng?: number }) {
     const origin =
       typeof body?.originLat === "number" && typeof body?.originLng === "number"
         ? { lat: body.originLat, lng: body.originLng }
