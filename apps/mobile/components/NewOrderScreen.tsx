@@ -486,10 +486,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 4,
   },
-  chip: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 999 },
+  chip: {
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 999,
+    minHeight: 28,
+    justifyContent: "center",
+  },
   chipActive: { backgroundColor: ios.brand },
   chipInactive: { backgroundColor: ios.fill3 },
-  chipText: { fontSize: 14, fontFamily: "Inter_500Medium" },
+  chipText: { fontSize: 13, fontFamily: "Inter_500Medium" },
   chipTextActive: { color: "#fff" },
   chipTextInactive: { color: ios.label },
   productRow: {

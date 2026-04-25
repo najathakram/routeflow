@@ -13,6 +13,10 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
+import DraggableFlatList, {
+  RenderItemParams,
+  ScaleDecorator,
+} from "react-native-draggable-flatlist";
 import { ios } from "@routeflow/ui/tokens";
 import { NavAction, NavBackButton, NavBar, Pill } from "@routeflow/ui/mobile/ios";
 import {
@@ -45,6 +49,7 @@ export default function RouteDetailScreen() {
   const [dispatchVisible, setDispatchVisible] = useState(false);
   const [dispatchDate, setDispatchDate] = useState(new Date().toISOString().slice(0, 10));
   const [dispatchNotes, setDispatchNotes] = useState("");
+  const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
 
   useFocusEffect(
     useCallback(() => {
@@ -63,7 +68,10 @@ export default function RouteDetailScreen() {
     );
   }
 
-  const stops = (route.stops ?? []).slice().sort((a, b) => a.stopNumber - b.stopNumber);
+  const stops = (route.stops ?? [])
+    .filter((s) => !removedIds.has(s.id))
+    .slice()
+    .sort((a, b) => a.stopNumber - b.stopNumber);
   const driverName = driver
     ? `${driver.user?.firstName ?? ""} ${driver.user?.lastName ?? ""}`.trim() || driver.user?.username
     : null;
@@ -75,35 +83,34 @@ export default function RouteDetailScreen() {
       {
         text: "Remove",
         style: "destructive",
-        onPress: () =>
+        onPress: () => {
+          setRemovedIds((prev) => new Set([...prev, stopId]));
           removeMut.mutate(
             { routeId: id, stopId },
             {
               onSuccess: () => {
                 showToast("Stop removed");
                 refetch();
+                setRemovedIds(new Set());
               },
-              onError: (e: any) =>
-                Alert.alert("Couldn't remove", e?.response?.data?.message ?? e?.message ?? "Try again."),
+              onError: (e: any) => {
+                setRemovedIds((prev) => {
+                  const next = new Set(prev);
+                  next.delete(stopId);
+                  return next;
+                });
+                Alert.alert("Couldn't remove", e?.response?.data?.message ?? e?.message ?? "Try again.");
+              },
             },
-          ),
+          );
+        },
       },
     ]);
   };
 
-  const reorder = (idx: number, dir: -1 | 1) => {
+  const handleDragEnd = ({ data }: { data: typeof stops }) => {
     if (!id) return;
-    const next = [...stops];
-    const swapIdx = idx + dir;
-    if (swapIdx < 0 || swapIdx >= next.length) return;
-    const a = next[idx];
-    const b = next[swapIdx];
-    if (!a || !b) return;
-    const order = next.map((s, i) => {
-      if (i === idx) return { id: s.id, stopNumber: b.stopNumber };
-      if (i === swapIdx) return { id: s.id, stopNumber: a.stopNumber };
-      return { id: s.id, stopNumber: s.stopNumber };
-    });
+    const order = data.map((s, i) => ({ id: s.id, stopNumber: i + 1 }));
     reorderMut.mutate(
       { routeId: id, order },
       {
@@ -223,57 +230,57 @@ export default function RouteDetailScreen() {
             {stops.length === 0 ? (
               <Text style={styles.empty}>No stops yet.</Text>
             ) : (
-              stops.map((s, i) => (
-                <View
-                  key={s.id}
-                  style={[
-                    styles.stopRow,
-                    i > 0 && {
-                      borderTopWidth: StyleSheet.hairlineWidth,
-                      borderTopColor: ios.separator,
-                    },
-                  ]}
-                >
-                  <View style={styles.stopBadge}>
-                    <Text style={styles.stopBadgeText}>{i + 1}</Text>
-                  </View>
-                  <View style={{ flex: 1, minWidth: 0 }}>
-                    <Text style={styles.stopName} numberOfLines={1}>
-                      {s.customer?.businessName ?? s.customerId}
-                    </Text>
-                    {typeof s.customerAddress?.lat !== "number" ||
-                    typeof s.customerAddress?.lng !== "number" ? (
-                      <View style={styles.noLocRow}>
-                        <Ionicons name="alert-circle" size={11} color={ios.system.orangeInk} />
-                        <Text style={styles.noLocText}>No location</Text>
+              <DraggableFlatList
+                data={stops}
+                keyExtractor={(s) => s.id}
+                onDragEnd={handleDragEnd}
+                scrollEnabled={false}
+                renderItem={({ item: s, getIndex, drag, isActive }: RenderItemParams<typeof stops[number]>) => {
+                  const i = getIndex() ?? 0;
+                  return (
+                    <ScaleDecorator activeScale={1.03}>
+                      <View
+                        style={[
+                          styles.stopRow,
+                          i > 0 && {
+                            borderTopWidth: StyleSheet.hairlineWidth,
+                            borderTopColor: ios.separator,
+                          },
+                          isActive && { backgroundColor: ios.fill3, borderRadius: 10 },
+                        ]}
+                      >
+                        <View style={styles.stopBadge}>
+                          <Text style={styles.stopBadgeText}>{i + 1}</Text>
+                        </View>
+                        <View style={{ flex: 1, minWidth: 0 }}>
+                          <Text style={styles.stopName} numberOfLines={1}>
+                            {s.customer?.businessName ?? s.customerId}
+                          </Text>
+                          {typeof s.customerAddress?.lat !== "number" ||
+                          typeof s.customerAddress?.lng !== "number" ? (
+                            <View style={styles.noLocRow}>
+                              <Ionicons name="alert-circle" size={11} color={ios.system.orangeInk} />
+                              <Text style={styles.noLocText}>No location</Text>
+                            </View>
+                          ) : null}
+                        </View>
+                        <View style={{ flexDirection: "row", gap: 4 }}>
+                          <Pressable
+                            style={styles.iconBtn}
+                            onLongPress={drag}
+                            accessibilityLabel="Drag to reorder"
+                          >
+                            <Ionicons name="reorder-three-outline" size={18} color={ios.label2} />
+                          </Pressable>
+                          <Pressable style={styles.iconBtn} onPress={() => removeStop(s.id)}>
+                            <Ionicons name="trash-outline" size={14} color={ios.system.red} />
+                          </Pressable>
+                        </View>
                       </View>
-                    ) : null}
-                  </View>
-                  <View style={{ flexDirection: "row", gap: 4 }}>
-                    <Pressable style={styles.iconBtn} onPress={() => reorder(i, -1)} disabled={i === 0}>
-                      <Ionicons
-                        name="arrow-up"
-                        size={14}
-                        color={i === 0 ? ios.label3 : ios.brand}
-                      />
-                    </Pressable>
-                    <Pressable
-                      style={styles.iconBtn}
-                      onPress={() => reorder(i, 1)}
-                      disabled={i === stops.length - 1}
-                    >
-                      <Ionicons
-                        name="arrow-down"
-                        size={14}
-                        color={i === stops.length - 1 ? ios.label3 : ios.brand}
-                      />
-                    </Pressable>
-                    <Pressable style={styles.iconBtn} onPress={() => removeStop(s.id)}>
-                      <Ionicons name="trash-outline" size={14} color={ios.system.red} />
-                    </Pressable>
-                  </View>
-                </View>
-              ))
+                    </ScaleDecorator>
+                  );
+                }}
+              />
             )}
           </View>
 

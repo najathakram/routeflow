@@ -2,6 +2,19 @@ import * as React from "react";
 import { Platform, StyleSheet, Text, View } from "react-native";
 import { ios } from "@routeflow/ui/tokens";
 
+// Extracts a short stop-number prefix from titles like "2. Harbor Cafe" → "2"
+function parseStopNumber(title?: string): string | null {
+  if (!title) return null;
+  const m = title.match(/^(\d+)[.\s]/);
+  return m ? m[1] : null;
+}
+
+// Extracts the name part from "2. Harbor Cafe" → "Harbor Cafe"
+function parseStopName(title?: string): string | null {
+  if (!title) return null;
+  return title.replace(/^\d+[.\s]+/, "").trim() || null;
+}
+
 export type StopStatus = "PENDING" | "IN_PROGRESS" | "COMPLETED" | "SKIPPED";
 
 export function statusToPinColor(status?: StopStatus): MapPin["color"] {
@@ -126,16 +139,35 @@ function NativeImpl({
           strokeWidth={pl.width ?? 4}
         />
       ))}
-      {pins.map((p) => (
-        <Marker
-          key={p.id}
-          coordinate={{ latitude: p.lat, longitude: p.lng }}
-          title={p.title}
-          description={p.subtitle}
-          pinColor={colorFor(p.color)}
-          onPress={p.onPress}
-        />
-      ))}
+      {pins.map((p) => {
+        const stopNum = parseStopNumber(p.title);
+        const stopName = parseStopName(p.title);
+        const pinColor = colorFor(p.color);
+        return (
+          <Marker
+            key={p.id}
+            coordinate={{ latitude: p.lat, longitude: p.lng }}
+            onPress={p.onPress}
+            tracksViewChanges={false}
+            anchor={{ x: 0.5, y: 1 }}
+          >
+            <View style={mapStyles.markerWrap}>
+              {(stopNum || stopName) ? (
+                <View style={mapStyles.labelBubble}>
+                  {stopNum ? (
+                    <Text style={[mapStyles.labelNum, { color: pinColor }]}>{stopNum}</Text>
+                  ) : null}
+                  {stopName ? (
+                    <Text style={mapStyles.labelName} numberOfLines={1}>{stopName}</Text>
+                  ) : null}
+                </View>
+              ) : null}
+              <View style={[mapStyles.pin, { backgroundColor: pinColor }]} />
+              <View style={[mapStyles.pinTip, { borderTopColor: pinColor }]} />
+            </View>
+          </Marker>
+        );
+      })}
     </RNMapView>
   );
 }
@@ -167,9 +199,13 @@ function WebFallback({ pins = [], polylines = [], initialRegion, style }: MapVie
     const markersJs = pins
       .map((p) => {
         const c = pinHex(p.color);
-        const pop = [p.title, p.subtitle].filter(Boolean).join("<br>");
-        const popup = pop ? `.bindPopup("${pop.replace(/"/g, '\\"')}")` : "";
-        return `L.circleMarker([${p.lat},${p.lng}],{radius:9,color:"${c}",fillColor:"${c}",fillOpacity:.9,weight:2}).addTo(map)${popup};`;
+        const stopNum = p.title?.match(/^(\d+)[.\s]/)?.[1] ?? "";
+        const stopName = (p.title ?? "").replace(/^\d+[.\s]+/, "").trim();
+        const label = [stopNum, stopName].filter(Boolean).join(" · ").replace(/"/g, '\\"');
+        const tooltip = label
+          ? `.bindTooltip("${label}",{permanent:true,direction:"top",offset:[0,-12],className:"rf-tip"})`
+          : "";
+        return `L.circleMarker([${p.lat},${p.lng}],{radius:8,color:"${c}",fillColor:"${c}",fillOpacity:.9,weight:2}).addTo(map)${tooltip};`;
       })
       .join("");
 
@@ -191,7 +227,7 @@ function WebFallback({ pins = [], polylines = [], initialRegion, style }: MapVie
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<style>html,body,#map{margin:0;padding:0;width:100%;height:100%;overflow:hidden;}</style>
+<style>html,body,#map{margin:0;padding:0;width:100%;height:100%;overflow:hidden;}.rf-tip{background:rgba(20,20,20,.72);color:#fff;border:none;border-radius:5px;font-size:11px;font-weight:600;padding:2px 6px;white-space:nowrap;box-shadow:none;}.rf-tip::before{display:none;}</style>
 </head><body><div id="map"></div><script>
 var map=L.map("map",{zoomControl:true}).setView([${center.lat},${center.lng}],${zoom});
 L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{attribution:"\u00a9 OpenStreetMap"}).addTo(map);
@@ -207,6 +243,48 @@ ${markersJs}${polysJs}${boundsJs}
     style: { border: "none", flex: 1, width: "100%", height: "100%", minHeight: 300, ...style },
   });
 }
+
+const mapStyles = StyleSheet.create({
+  markerWrap: { alignItems: "center" },
+  labelBubble: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    backgroundColor: "rgba(20,20,20,0.72)",
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    marginBottom: 4,
+    maxWidth: 130,
+  },
+  labelNum: {
+    fontSize: 11,
+    fontFamily: "Inter_700Bold",
+  },
+  labelName: {
+    fontSize: 11,
+    fontFamily: "Inter_600SemiBold",
+    color: "#fff",
+    flexShrink: 1,
+  },
+  pin: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    borderWidth: 2,
+    borderColor: "#fff",
+  },
+  pinTip: {
+    width: 0,
+    height: 0,
+    borderLeftWidth: 5,
+    borderRightWidth: 5,
+    borderTopWidth: 6,
+    borderLeftColor: "transparent",
+    borderRightColor: "transparent",
+    marginTop: -1,
+  },
+});
 
 const styles = StyleSheet.create({
   map: { flex: 1 },

@@ -51,12 +51,14 @@ export function FilterChipRow({
 const styles = StyleSheet.create({
   contents: {
     gap: 8,
-    paddingVertical: 10,
+    paddingVertical: 8,
   },
   chip: {
-    paddingHorizontal: 14,
-    paddingVertical: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
     borderRadius: 999,
+    minHeight: 28,
+    justifyContent: "center",
   },
   chipActive: {
     backgroundColor: ios.brand,
@@ -65,7 +67,7 @@ const styles = StyleSheet.create({
     backgroundColor: ios.fill3,
   },
   label: {
-    fontSize: 14,
+    fontSize: 13,
     fontFamily: "Inter_500Medium",
     letterSpacing: -0.1,
   },

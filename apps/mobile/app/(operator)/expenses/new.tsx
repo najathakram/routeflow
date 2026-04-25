@@ -1,12 +1,49 @@
 import { useState } from "react";
-import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
+import {
+  Alert,
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { useRouter } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
 import { ios } from "@routeflow/ui/tokens";
 import { FormField, FormSection, FormSheet, FormTextInput } from "../../../components/FormSheet";
 import { useCreateExpense, useExpenseCategories } from "../../../lib/api/expenses";
 import { useSuppliers } from "../../../lib/api/purchase-orders";
 
 const PAYMENT_METHODS = ["CASH", "CARD", "BANK_TRANSFER", "CHECK", "OTHER"];
+
+const CATEGORY_ICON: Record<string, keyof typeof Ionicons.glyphMap> = {
+  fuel: "speedometer-outline",
+  gas: "speedometer-outline",
+  maintenance: "construct-outline",
+  repair: "construct-outline",
+  vehicle: "car-outline",
+  insurance: "shield-checkmark-outline",
+  supplies: "cube-outline",
+  food: "restaurant-outline",
+  meal: "restaurant-outline",
+  utilities: "flash-outline",
+  rent: "home-outline",
+  salary: "people-outline",
+  payroll: "people-outline",
+  marketing: "megaphone-outline",
+  office: "briefcase-outline",
+  tax: "receipt-outline",
+  other: "ellipsis-horizontal-outline",
+};
+
+function iconForCategory(name: string): keyof typeof Ionicons.glyphMap {
+  const lower = name.toLowerCase();
+  for (const key of Object.keys(CATEGORY_ICON)) {
+    if (lower.includes(key)) return CATEGORY_ICON[key];
+  }
+  return "pricetag-outline";
+}
 
 export default function NewExpenseScreen() {
   const router = useRouter();
@@ -24,22 +61,8 @@ export default function NewExpenseScreen() {
   const [paymentMethod, setPaymentMethod] = useState("");
   const [notes, setNotes] = useState("");
   const [referenceNumber, setReferenceNumber] = useState("");
-
-  const pickCategory = () => {
-    const list = categories ?? [];
-    Alert.alert(
-      "Select category",
-      undefined,
-      [
-        ...list.map((c) => ({
-          text: c.name,
-          onPress: () => { setCategoryId(c.id); setCategoryName(c.name); },
-        })),
-        { text: "Cancel", style: "cancel" },
-      ],
-      { cancelable: true },
-    );
-  };
+  const [categoryPickerOpen, setCategoryPickerOpen] = useState(false);
+  const [paymentPickerOpen, setPaymentPickerOpen] = useState(false);
 
   const pickSupplier = () => {
     const list = suppliers ?? [];
@@ -58,20 +81,8 @@ export default function NewExpenseScreen() {
     );
   };
 
-  const pickPaymentMethod = () => {
-    Alert.alert(
-      "Payment method",
-      undefined,
-      [
-        ...PAYMENT_METHODS.map((m) => ({
-          text: m.charAt(0) + m.slice(1).toLowerCase().replace("_", " "),
-          onPress: () => setPaymentMethod(m),
-        })),
-        { text: "Cancel", style: "cancel" },
-      ],
-      { cancelable: true },
-    );
-  };
+  const formatPaymentLabel = (m: string) =>
+    m.charAt(0) + m.slice(1).toLowerCase().replace("_", " ");
 
   const submit = () => {
     const parsedAmount = Number(amount);
@@ -132,10 +143,11 @@ export default function NewExpenseScreen() {
           />
         </FormField>
         <FormField label="Category">
-          <Pressable style={styles.picker} onPress={pickCategory}>
+          <Pressable style={styles.picker} onPress={() => setCategoryPickerOpen(true)}>
             <Text style={[styles.pickerText, !categoryName && styles.placeholder]}>
               {categoryName || "Select category…"}
             </Text>
+            <Ionicons name="chevron-down" size={16} color={ios.label3} />
           </Pressable>
         </FormField>
         <FormField label="Reference # (optional)">
@@ -149,12 +161,11 @@ export default function NewExpenseScreen() {
 
       <FormSection title="Payment">
         <FormField label="Payment method">
-          <Pressable style={styles.picker} onPress={pickPaymentMethod}>
+          <Pressable style={styles.picker} onPress={() => setPaymentPickerOpen(true)}>
             <Text style={[styles.pickerText, !paymentMethod && styles.placeholder]}>
-              {paymentMethod
-                ? paymentMethod.charAt(0) + paymentMethod.slice(1).toLowerCase().replace("_", " ")
-                : "Select method…"}
+              {paymentMethod ? formatPaymentLabel(paymentMethod) : "Select method…"}
             </Text>
+            <Ionicons name="chevron-down" size={16} color={ios.label3} />
           </Pressable>
         </FormField>
         <FormField label="Supplier (optional)">
@@ -162,6 +173,7 @@ export default function NewExpenseScreen() {
             <Text style={[styles.pickerText, !supplierName && styles.placeholder]}>
               {supplierName || "Select supplier…"}
             </Text>
+            <Ionicons name="chevron-down" size={16} color={ios.label3} />
           </Pressable>
         </FormField>
       </FormSection>
@@ -178,7 +190,139 @@ export default function NewExpenseScreen() {
           />
         </FormField>
       </FormSection>
+
+      <CategorySheet
+        visible={categoryPickerOpen}
+        categories={categories ?? []}
+        selectedId={categoryId}
+        onClose={() => setCategoryPickerOpen(false)}
+        onSelect={(c) => {
+          setCategoryId(c.id);
+          setCategoryName(c.name);
+          setCategoryPickerOpen(false);
+        }}
+      />
+
+      <PaymentMethodSheet
+        visible={paymentPickerOpen}
+        selected={paymentMethod}
+        onClose={() => setPaymentPickerOpen(false)}
+        onSelect={(m) => {
+          setPaymentMethod(m);
+          setPaymentPickerOpen(false);
+        }}
+      />
     </FormSheet>
+  );
+}
+
+function CategorySheet({
+  visible,
+  categories,
+  selectedId,
+  onClose,
+  onSelect,
+}: {
+  visible: boolean;
+  categories: { id: string; name: string }[];
+  selectedId: string;
+  onClose: () => void;
+  onSelect: (c: { id: string; name: string }) => void;
+}) {
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable style={styles.sheetBackdrop} onPress={onClose} />
+      <View style={styles.sheet}>
+        <View style={styles.sheetHandle} />
+        <Text style={styles.sheetTitle}>Select category</Text>
+        <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 420 }}>
+          {categories.length === 0 ? (
+            <Text style={styles.sheetEmpty}>No categories yet.</Text>
+          ) : (
+            <View style={styles.grid}>
+              {categories.map((c) => {
+                const active = c.id === selectedId;
+                return (
+                  <Pressable
+                    key={c.id}
+                    style={[styles.tile, active && styles.tileActive]}
+                    onPress={() => onSelect(c)}
+                    accessibilityLabel={`Category ${c.name}`}
+                  >
+                    <Ionicons
+                      name={iconForCategory(c.name)}
+                      size={22}
+                      color={active ? ios.brand : ios.label}
+                    />
+                    <Text
+                      style={[styles.tileText, active && styles.tileTextActive]}
+                      numberOfLines={2}
+                    >
+                      {c.name}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          )}
+        </ScrollView>
+      </View>
+    </Modal>
+  );
+}
+
+function PaymentMethodSheet({
+  visible,
+  selected,
+  onClose,
+  onSelect,
+}: {
+  visible: boolean;
+  selected: string;
+  onClose: () => void;
+  onSelect: (m: string) => void;
+}) {
+  const iconFor: Record<string, keyof typeof Ionicons.glyphMap> = {
+    CASH: "cash-outline",
+    CARD: "card-outline",
+    BANK_TRANSFER: "swap-horizontal-outline",
+    CHECK: "document-text-outline",
+    OTHER: "ellipsis-horizontal-outline",
+  };
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable style={styles.sheetBackdrop} onPress={onClose} />
+      <View style={styles.sheet}>
+        <View style={styles.sheetHandle} />
+        <Text style={styles.sheetTitle}>Payment method</Text>
+        <View style={styles.grid}>
+          {PAYMENT_METHODS.map((m) => {
+            const active = m === selected;
+            const label = m.charAt(0) + m.slice(1).toLowerCase().replace("_", " ");
+            return (
+              <Pressable
+                key={m}
+                style={[styles.tile, active && styles.tileActive]}
+                onPress={() => onSelect(m)}
+                accessibilityLabel={`Payment ${label}`}
+              >
+                <Ionicons
+                  name={iconFor[m]}
+                  size={22}
+                  color={active ? ios.brand : ios.label}
+                />
+                <Text
+                  style={[styles.tileText, active && styles.tileTextActive]}
+                  numberOfLines={2}
+                >
+                  {label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -189,8 +333,70 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 11,
     minHeight: 44,
-    justifyContent: "center",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
   },
-  pickerText: { fontSize: 15, fontFamily: "Inter_400Regular", color: ios.label },
+  pickerText: { fontSize: 15, fontFamily: "Inter_400Regular", color: ios.label, flex: 1 },
   placeholder: { color: ios.label3 },
+  sheetBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)" },
+  sheet: {
+    backgroundColor: ios.bgElev,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    paddingBottom: 36,
+    gap: 10,
+  },
+  sheetHandle: {
+    alignSelf: "center",
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: ios.separator,
+    marginBottom: 4,
+  },
+  sheetTitle: {
+    fontSize: 18,
+    fontFamily: "Inter_700Bold",
+    color: ios.label,
+    marginBottom: 6,
+  },
+  sheetEmpty: {
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    color: ios.label2,
+    textAlign: "center",
+    paddingVertical: 24,
+  },
+  grid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+  tile: {
+    width: "48%",
+    aspectRatio: 1.6,
+    backgroundColor: ios.fill3,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingHorizontal: 8,
+    borderWidth: 1.5,
+    borderColor: "transparent",
+  },
+  tileActive: {
+    backgroundColor: ios.brandWash,
+    borderColor: ios.brand,
+  },
+  tileText: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label,
+    textAlign: "center",
+  },
+  tileTextActive: {
+    color: ios.brand,
+  },
 });

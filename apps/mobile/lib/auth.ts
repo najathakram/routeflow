@@ -29,6 +29,8 @@ export interface AuthUser {
   role: "OPERATOR" | "TENANT_ADMIN" | "DRIVER" | "CUSTOMER" | "SUPER_ADMIN";
   status: "ACTIVE" | "INACTIVE" | "SUSPENDED";
   forcePasswordChange: boolean;
+  isAdmin: boolean;
+  canActAsDriver: boolean;
 }
 
 export interface AuthResponse {
@@ -62,6 +64,8 @@ export async function getStoredUser(): Promise<AuthUser | null> {
     role: payload.role as AuthUser["role"],
     status: payload.status as AuthUser["status"],
     forcePasswordChange: payload.forcePasswordChange as boolean,
+    isAdmin: (payload.isAdmin as boolean) ?? false,
+    canActAsDriver: (payload.canActAsDriver as boolean) ?? false,
   };
 }
 
@@ -159,6 +163,8 @@ export async function loginWithGoogle(tenantSlug: string): Promise<AuthResponse>
     role: ((payload?.role as AuthUser["role"]) ?? (role as AuthUser["role"])),
     status: (payload?.status as AuthUser["status"]) ?? "ACTIVE",
     forcePasswordChange: (payload?.forcePasswordChange as boolean) ?? false,
+    isAdmin: (payload?.isAdmin as boolean) ?? false,
+    canActAsDriver: (payload?.canActAsDriver as boolean) ?? false,
   };
 
   await registerPushToken();

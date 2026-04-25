@@ -88,6 +88,8 @@ export default function GoogleCallbackScreen() {
             role: payload.role as any,
             status: (payload.status as any) ?? "ACTIVE",
             forcePasswordChange: (payload.forcePasswordChange as boolean) ?? false,
+            isAdmin: (payload.isAdmin as boolean) ?? false,
+            canActAsDriver: (payload.canActAsDriver as boolean) ?? false,
           });
         }
         // RootLayoutNav will redirect based on role
