@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -26,9 +27,23 @@ import {
 import { useRecordInvoicePayment } from "../../../../../lib/api/invoices";
 import { usePodStore } from "../../../../../store/podStore";
 import { showToast } from "../../../../../lib/toast";
+import { openRouteInMaps } from "../../../../../components/openInMaps";
+import * as Location from "expo-location";
 
 const METHODS = ["Cash", "Card", "Cheque", "On account"] as const;
 const KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "·", "0", "⌫"];
+
+async function readDriverLocation(): Promise<{ lat: number; lng: number } | null> {
+  if (Platform.OS === "web") return null;
+  try {
+    const perm = await Location.requestForegroundPermissionsAsync();
+    if (perm.status !== "granted") return null;
+    const cur = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+    return { lat: cur.coords.latitude, lng: cur.coords.longitude };
+  } catch {
+    return null;
+  }
+}
 
 function totalForStop(stop: RouteRunStop): number {
   return (stop.orders ?? []).reduce(
@@ -129,6 +144,32 @@ export default function PaymentScreen() {
 
     clearPod(stopId);
     showToast("Stop completed");
+
+    // Offer to re-launch Google Maps with the remaining stops as waypoints,
+    // originating at the driver's current GPS. Google Maps deep-links are
+    // fire-and-forget — relaunching is the only way to "drop" a completed
+    // stop and re-route to the next one.
+    const remaining = (run?.stops ?? []).filter(
+      (s) => s.id !== stopId && (s.status === "PENDING" || s.status === "IN_PROGRESS"),
+    );
+    if (remaining.length > 0) {
+      Alert.alert(
+        "Continue in Google Maps?",
+        `${remaining.length} stop${remaining.length === 1 ? "" : "s"} left. Re-open Maps with the updated route from your current location?`,
+        [
+          { text: "Stay in app", style: "cancel", onPress: () => router.replace("/(driver)/route") },
+          {
+            text: "Open Maps",
+            onPress: async () => {
+              const loc = await readDriverLocation();
+              openRouteInMaps(remaining, loc ? { originLat: loc.lat, originLng: loc.lng } : {});
+              router.replace("/(driver)/route");
+            },
+          },
+        ],
+      );
+      return;
+    }
     router.replace("/(driver)/route");
   };
 

@@ -17,6 +17,59 @@ import { UpdateRunStatusDto } from "./dto/update-run-status.dto";
 import { ListRunsDto } from "./dto/list-runs.dto";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 
+// Shared per-stop include used by both list (`findAllRuns`) and detail
+// (`findOneRun`) so the two endpoints stay in lockstep. Driver list views need
+// `customer`, `customerAddress`, and `orders` to render addresses/totals and to
+// build Google Maps waypoints — selecting a slim shape here previously caused
+// scheduled-run cards to render "no location" for every stop.
+const RUN_STOP_INCLUDE = {
+  customer: {
+    select: {
+      id: true,
+      businessName: true,
+      contactName: true,
+      phone: true,
+      deliveryWindowStart: true,
+      deliveryWindowEnd: true,
+    },
+  },
+  customerAddress: true,
+  orders: {
+    select: {
+      id: true,
+      orderNumber: true,
+      status: true,
+      urgent: true,
+      notes: true,
+      lineItems: {
+        select: {
+          id: true,
+          productId: true,
+          product: { select: { id: true, name: true, unit: true } },
+          qty: true,
+          unitPrice: true,
+          status: true,
+        },
+      },
+    },
+  },
+  routeStop: {
+    include: {
+      customer: {
+        select: {
+          id: true,
+          businessName: true,
+          contactName: true,
+          phone: true,
+          deliveryWindowStart: true,
+          deliveryWindowEnd: true,
+        },
+      },
+      customerAddress: true,
+    },
+  },
+} as const;
+
 @Injectable()
 export class RoutesService {
   constructor(
@@ -539,7 +592,10 @@ export class RoutesService {
           route: { select: { id: true, name: true } },
           driver: { select: { id: true, contactName: true, user: { select: { username: true } } } },
           _count: { select: { stops: true } },
-          stops: { select: { id: true, status: true } },
+          stops: {
+            include: RUN_STOP_INCLUDE,
+            orderBy: { stopNumber: "asc" },
+          },
         },
         skip,
         take: limit,
@@ -548,7 +604,19 @@ export class RoutesService {
       this.prisma.forTenant().routeRun.count({ where }),
     ]);
 
-    return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
+    // Same normalisation as findOneRun: legacy/seeded run stops may lack a
+    // direct customer/address link — fall back to the template RouteStop's
+    // data so address-dependent UI (Maps button, "no location" badge) works.
+    const normalisedData = data.map((run: any) => ({
+      ...run,
+      stops: run.stops.map((s: any) => ({
+        ...s,
+        customer: s.customer ?? s.routeStop?.customer ?? null,
+        customerAddress: s.customerAddress ?? s.routeStop?.customerAddress ?? null,
+      })),
+    }));
+
+    return { data: normalisedData, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
   }
 
   async findOneRun(id: string, user?: any) {
