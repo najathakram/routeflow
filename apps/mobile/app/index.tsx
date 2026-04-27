@@ -1,4 +1,4 @@
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
@@ -111,7 +111,7 @@ export default function LandingScreen() {
           </View>
 
           <View style={styles.trustRow}>
-            {["Free 14-day trial", "No setup fees", "Cancel anytime"].map((t) => (
+            {["Built for delivery teams", "No setup fees", "Cancel anytime"].map((t) => (
               <View key={t} style={styles.trustItem}>
                 <Ionicons name="checkmark-circle" size={13} color={ios.brandGradient[1]} />
                 <Text style={styles.trustText}>{t}</Text>
@@ -186,13 +186,17 @@ export default function LandingScreen() {
             Ready to run your rounds like the best in the business?
           </Text>
           <Text style={styles.footerCtaSub}>
-            Start a free 14-day trial. No credit card, no setup fees.
+            Talk to us about a tenant for your delivery business. No setup fees.
           </Text>
           <Pressable
             style={styles.footerCtaBtn}
-            onPress={() => router.push("/(auth)/sign-in")}
+            onPress={() =>
+              Linking.openURL(
+                "mailto:hello@routeflow.info?subject=RouteFlow%20demo%20request",
+              )
+            }
           >
-            <Text style={styles.footerCtaBtnText}>Start Free Trial</Text>
+            <Text style={styles.footerCtaBtnText}>Request a demo</Text>
           </Pressable>
         </LinearGradient>
 

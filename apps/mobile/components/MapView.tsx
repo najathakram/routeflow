@@ -223,6 +223,15 @@ function WebFallback({ pins = [], polylines = [], initialRegion, style }: MapVie
 
     const zoom = pins.length === 0 ? 10 : 14;
 
+    // Tile provider is configurable so production can swap off the OSM
+    // volunteer servers (which 403 cross-domain Referer in production).
+    // Default keeps OSM for local dev where the policy isn't enforced.
+    const tileUrl =
+      process.env.EXPO_PUBLIC_MAP_TILE_URL ??
+      "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
+    const tileAttribution =
+      process.env.EXPO_PUBLIC_MAP_TILE_ATTRIBUTION ?? "\u00a9 OpenStreetMap";
+
     const html = `<!DOCTYPE html><html><head>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
@@ -230,7 +239,7 @@ function WebFallback({ pins = [], polylines = [], initialRegion, style }: MapVie
 <style>html,body,#map{margin:0;padding:0;width:100%;height:100%;overflow:hidden;}.rf-tip{background:rgba(20,20,20,.72);color:#fff;border:none;border-radius:5px;font-size:11px;font-weight:600;padding:2px 6px;white-space:nowrap;box-shadow:none;}.rf-tip::before{display:none;}</style>
 </head><body><div id="map"></div><script>
 var map=L.map("map",{zoomControl:true}).setView([${center.lat},${center.lng}],${zoom});
-L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{attribution:"\u00a9 OpenStreetMap"}).addTo(map);
+L.tileLayer("${tileUrl}",{attribution:"${tileAttribution.replace(/"/g, '\\"')}"}).addTo(map);
 ${markersJs}${polysJs}${boundsJs}
 </script></body></html>`;
 

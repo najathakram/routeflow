@@ -52,13 +52,14 @@ const styles = StyleSheet.create({
   contents: {
     gap: 8,
     paddingVertical: 8,
-    alignItems: "flex-start",
+    alignItems: "center",
   },
   chip: {
     paddingHorizontal: 12,
     paddingVertical: 5,
     borderRadius: 999,
     minHeight: 28,
+    alignSelf: "center",
     justifyContent: "center",
   },
   chipActive: {
