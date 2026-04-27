@@ -4,7 +4,11 @@ import { InvoiceStatus } from "@prisma/client";
 
 export class ListInvoicesDto {
   @IsOptional() @IsEnum(InvoiceStatus) status?: InvoiceStatus;
-  @IsOptional() @IsArray() @IsEnum(InvoiceStatus, { each: true }) @Transform(({ value }) => (Array.isArray(value) ? value : [value])) statuses?: InvoiceStatus[];
+  @IsOptional()
+  @IsArray()
+  @IsEnum(InvoiceStatus, { each: true })
+  @Transform(({ value }) => (Array.isArray(value) ? value : [value]))
+  statuses?: InvoiceStatus[];
   @IsOptional() @IsString() customerId?: string;
   @IsOptional() @IsString() search?: string;
   @IsOptional() @IsString() dateFrom?: string;
