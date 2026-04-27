@@ -655,8 +655,7 @@ export class OrdersService {
             if (!li) continue;
             const existingUnitPrice = Number(li.unitPrice);
             const overridePrice = item.unitPrice !== undefined ? Number(item.unitPrice) : null;
-            const isManualOverride =
-              overridePrice !== null && overridePrice !== existingUnitPrice;
+            const isManualOverride = overridePrice !== null && overridePrice !== existingUnitPrice;
             const unitPrice = isManualOverride ? overridePrice : existingUnitPrice;
             await this.prisma.forTenant().orderItem.update({
               where: { id: item.id },
