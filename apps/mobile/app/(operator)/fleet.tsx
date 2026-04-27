@@ -122,13 +122,18 @@ export default function FleetScreen() {
       </View>
 
       <SafeAreaView style={styles.overlay} edges={["top", "left", "right"]} pointerEvents="box-none">
-        <View style={styles.topChip}>
-          <Pill variant="green" dot small>
-            {liveCount} live
-          </Pill>
-          <Pill variant="brand" small>
-            {driversWithLoc} driver{driversWithLoc === 1 ? "" : "s"} sharing GPS
-          </Pill>
+        <View style={styles.topRow}>
+          <Pressable style={styles.backBtn} onPress={() => router.back()} hitSlop={8}>
+            <Ionicons name="chevron-back" size={20} color={ios.label} />
+          </Pressable>
+          <View style={styles.topChip}>
+            <Pill variant="green" dot small>
+              {liveCount} live
+            </Pill>
+            <Pill variant="brand" small>
+              {driversWithLoc} driver{driversWithLoc === 1 ? "" : "s"} sharing GPS
+            </Pill>
+          </View>
         </View>
 
         <View style={styles.legend}>
@@ -216,10 +221,18 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
   overlay: { flex: 1, paddingHorizontal: 16 },
+  topRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 8 },
+  backBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 999,
+    backgroundColor: "rgba(255,255,255,0.94)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
   topChip: {
     flexDirection: "row",
     gap: 6,
-    marginTop: 8,
     alignSelf: "flex-start",
     backgroundColor: "rgba(255,255,255,0.94)",
     paddingHorizontal: 10,
