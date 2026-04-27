@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
-  Modal,
+  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -21,7 +21,7 @@ import {
 } from "@routeflow/ui/mobile/ios";
 import { useAdminProducts, type AdminProduct } from "../../../lib/api/admin";
 
-type StockFilter = "ALL" | "LOW" | "OUT_OF_STOCK";
+type StockFilter = "ALL" | "LOW" | "LOW_ACTIVE" | "OUT_OF_STOCK" | "OOS_ACTIVE";
 
 function toNumber(v: number | string | null | undefined): number {
   if (typeof v === "number") return v;
@@ -46,12 +46,11 @@ export default function WarehouseScreen() {
   const router = useRouter();
   const [search, setSearch] = useState("");
   const [activeFilter, setActiveFilter] = useState<StockFilter>("ALL");
-  const [buyStockOpen, setBuyStockOpen] = useState(false);
 
   const stockStatusParam =
-    activeFilter === "OUT_OF_STOCK"
+    activeFilter === "OUT_OF_STOCK" || activeFilter === "OOS_ACTIVE"
       ? "OUT_OF_STOCK"
-      : activeFilter === "LOW"
+      : activeFilter === "LOW" || activeFilter === "LOW_ACTIVE"
         ? "LOW"
         : undefined;
 
@@ -78,14 +77,16 @@ export default function WarehouseScreen() {
 
   const displayProducts = useMemo(() => {
     if (activeFilter === "OUT_OF_STOCK") {
-      return (filteredQuery.data?.data ?? []).filter(
-        (p) => toNumber(p.currentStock) <= 0,
-      );
+      return (filteredQuery.data?.data ?? []).filter((p) => toNumber(p.currentStock) <= 0);
+    }
+    if (activeFilter === "OOS_ACTIVE") {
+      return (filteredQuery.data?.data ?? []).filter((p) => toNumber(p.currentStock) <= 0 && p.isActive);
     }
     if (activeFilter === "LOW") {
-      return (filteredQuery.data?.data ?? []).filter(
-        (p) => toNumber(p.currentStock) > 0,
-      );
+      return (filteredQuery.data?.data ?? []).filter((p) => toNumber(p.currentStock) > 0);
+    }
+    if (activeFilter === "LOW_ACTIVE") {
+      return (filteredQuery.data?.data ?? []).filter((p) => toNumber(p.currentStock) > 0 && p.isActive);
     }
     // ALL = show low-stock (positive stock, below threshold)
     return lowProducts
@@ -94,13 +95,13 @@ export default function WarehouseScreen() {
   }, [activeFilter, filteredQuery.data, lowProducts]);
 
   const sectionLabel =
-    activeFilter === "OUT_OF_STOCK"
+    activeFilter === "OUT_OF_STOCK" || activeFilter === "OOS_ACTIVE"
       ? outTotal > 0
-        ? "Out of stock"
+        ? activeFilter === "OOS_ACTIVE" ? "Out of stock (active only)" : "Out of stock"
         : "No out-of-stock items"
-      : activeFilter === "LOW"
+      : activeFilter === "LOW" || activeFilter === "LOW_ACTIVE"
         ? lowTotal > 0
-          ? "Low-stock alerts"
+          ? activeFilter === "LOW_ACTIVE" ? "Low-stock alerts (active only)" : "Low-stock alerts"
           : "No low stock"
         : lowTotal > 0
           ? "Low-stock alerts"
@@ -209,18 +210,34 @@ export default function WarehouseScreen() {
                 value={String(allTotal)}
                 label="SKUs tracked"
               />
-              <KpiCard
-                icon={
-                  <Ionicons
-                    name="cube-outline"
-                    size={18}
-                    color={ios.system.purpleInk}
-                  />
-                }
-                iconBg={ios.system.purpleWash}
-                value={String(displayProducts.filter((p) => p.isActive).length)}
-                label={activeFilter === "OUT_OF_STOCK" ? "OOS & active" : "Low & active"}
-              />
+              <Pressable
+                style={{ flex: 1 }}
+                onPress={() => {
+                  if (activeFilter === "OUT_OF_STOCK" || activeFilter === "OOS_ACTIVE") {
+                    setActiveFilter((f) => (f === "OOS_ACTIVE" ? "OUT_OF_STOCK" : "OOS_ACTIVE"));
+                  } else {
+                    setActiveFilter((f) => (f === "LOW_ACTIVE" ? "LOW" : "LOW_ACTIVE"));
+                  }
+                }}
+              >
+                <KpiCard
+                  icon={
+                    <Ionicons
+                      name="cube-outline"
+                      size={18}
+                      color={activeFilter === "LOW_ACTIVE" || activeFilter === "OOS_ACTIVE" ? "#fff" : ios.system.purpleInk}
+                    />
+                  }
+                  iconBg={
+                    activeFilter === "LOW_ACTIVE" || activeFilter === "OOS_ACTIVE"
+                      ? ios.system.purpleInk
+                      : ios.system.purpleWash
+                  }
+                  value={String(displayProducts.filter((p) => p.isActive).length)}
+                  label={activeFilter === "OUT_OF_STOCK" || activeFilter === "OOS_ACTIVE" ? "OOS & active" : "Low & active"}
+                  highlighted={activeFilter === "LOW_ACTIVE" || activeFilter === "OOS_ACTIVE"}
+                />
+              </Pressable>
             </View>
 
             {activeFilter !== "ALL" ? (
@@ -230,7 +247,10 @@ export default function WarehouseScreen() {
               >
                 <Text style={styles.filterBannerText}>
                   Filtering:{" "}
-                  {activeFilter === "LOW" ? "Low stock" : "Out of stock"}
+                  {activeFilter === "LOW" ? "Low stock" :
+                   activeFilter === "LOW_ACTIVE" ? "Low stock · active only" :
+                   activeFilter === "OOS_ACTIVE" ? "Out of stock · active only" :
+                   "Out of stock"}
                 </Text>
                 <Ionicons name="close" size={14} color={ios.brand} />
               </Pressable>
@@ -250,21 +270,39 @@ export default function WarehouseScreen() {
                 label="Buy stock"
                 color={ios.system.orangeInk}
                 bg={ios.system.orangeWash}
-                onPress={() => setBuyStockOpen(true)}
+                onPress={() =>
+                  Alert.alert("Receive stock", undefined, [
+                    {
+                      text: "Quick receive (no PO)",
+                      onPress: () =>
+                        router.push("/(operator)/purchase-orders/record"),
+                    },
+                    {
+                      text: "New purchase order",
+                      onPress: () =>
+                        router.push("/(operator)/purchase-orders/new"),
+                    },
+                    {
+                      text: "View all POs",
+                      onPress: () => router.push("/(operator)/purchase-orders"),
+                    },
+                    { text: "Cancel", style: "cancel" },
+                  ])
+                }
               />
               <QuickBtn
                 icon="swap-vertical-outline"
                 label="Movements"
                 color={ios.system.purpleInk}
                 bg={ios.system.purpleWash}
-                onPress={() => router.push("/(operator)/movements")}
+                onPress={() => router.push("/(operator)/products")}
               />
               <QuickBtn
                 icon="cube-outline"
                 label="Adjust"
                 color={ios.system.greenInk}
                 bg={ios.system.greenWash}
-                onPress={() => router.push("/(operator)/products/adjust-picker")}
+                onPress={() => router.push("/(operator)/products/scan")}
               />
             </View>
 
@@ -334,64 +372,7 @@ export default function WarehouseScreen() {
         )}
         <View style={{ height: 20 }} />
       </ScrollView>
-
-      <Modal
-        visible={buyStockOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setBuyStockOpen(false)}
-      >
-        <Pressable style={styles.sheetBackdrop} onPress={() => setBuyStockOpen(false)}>
-          <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
-            <Text style={styles.sheetTitle}>Receive stock</Text>
-            <SheetAction
-              label="Quick receive (no PO)"
-              icon="flash-outline"
-              onPress={() => {
-                setBuyStockOpen(false);
-                router.push("/(operator)/purchase-orders/record");
-              }}
-            />
-            <SheetAction
-              label="New purchase order"
-              icon="document-text-outline"
-              onPress={() => {
-                setBuyStockOpen(false);
-                router.push("/(operator)/purchase-orders/new");
-              }}
-            />
-            <SheetAction
-              label="View all POs"
-              icon="list-outline"
-              onPress={() => {
-                setBuyStockOpen(false);
-                router.push("/(operator)/purchase-orders");
-              }}
-            />
-            <Pressable style={styles.sheetCancel} onPress={() => setBuyStockOpen(false)}>
-              <Text style={styles.sheetCancelText}>Cancel</Text>
-            </Pressable>
-          </Pressable>
-        </Pressable>
-      </Modal>
     </SafeAreaView>
-  );
-}
-
-function SheetAction({
-  label,
-  icon,
-  onPress,
-}: {
-  label: string;
-  icon: keyof typeof Ionicons.glyphMap;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable style={styles.sheetAction} onPress={onPress}>
-      <Ionicons name={icon} size={18} color={ios.brand} />
-      <Text style={styles.sheetActionText}>{label}</Text>
-    </Pressable>
   );
 }
 
@@ -548,55 +529,5 @@ const styles = StyleSheet.create({
   quickBtnLabel: {
     fontSize: 11,
     fontFamily: "Inter_600SemiBold",
-  },
-  sheetBackdrop: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.4)",
-    justifyContent: "flex-end",
-    padding: 12,
-  },
-  sheet: {
-    backgroundColor: ios.bgElev,
-    borderRadius: 16,
-    paddingVertical: 8,
-    paddingHorizontal: 8,
-    gap: 4,
-  },
-  sheetTitle: {
-    fontSize: 13,
-    fontFamily: "Inter_600SemiBold",
-    color: ios.label2,
-    textAlign: "center",
-    paddingVertical: 10,
-    letterSpacing: 0.4,
-    textTransform: "uppercase",
-  },
-  sheetAction: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    backgroundColor: ios.fill3,
-    borderRadius: 12,
-  },
-  sheetActionText: {
-    fontSize: 16,
-    fontFamily: "Inter_500Medium",
-    color: ios.label,
-  },
-  sheetCancel: {
-    marginTop: 8,
-    paddingVertical: 14,
-    backgroundColor: ios.bgElev,
-    borderRadius: 12,
-    alignItems: "center",
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: ios.separator,
-  },
-  sheetCancelText: {
-    fontSize: 16,
-    fontFamily: "Inter_600SemiBold",
-    color: ios.system.redInk,
   },
 });
