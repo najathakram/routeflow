@@ -17,6 +17,8 @@ import { useAdminCustomers } from "../lib/api/admin";
 import { useProducts } from "../lib/api/products";
 import { useCreateOrderAsDriver } from "../lib/api/orders";
 import { showToast } from "../lib/toast";
+import { apiClient } from "../lib/api-client";
+import { BarcodeScanner } from "./BarcodeScanner";
 
 export interface NewOrderScreenProps {
   /** When present, customer is locked (e.g. invoked from a specific stop). */
@@ -206,12 +208,41 @@ function ProductPickView({
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("All");
   const [items, setItems] = useState<Record<string, number>>({});
+  const [scanOpen, setScanOpen] = useState(false);
 
   const { data: productsData, isLoading: productsLoading } = useProducts({
     search: search.trim() || undefined,
     limit: 200,
   });
   const products: Product[] = productsData?.data ?? [];
+
+  const handleBarcodeScanned = async (code: string) => {
+    setScanOpen(false);
+    const trimmed = code.trim();
+    if (!trimmed) return;
+
+    const local = products.find(
+      (p) => (p.sku ?? "").toLowerCase() === trimmed.toLowerCase(),
+    );
+    if (local) {
+      setItems((m) => ({ ...m, [local.id]: (m[local.id] ?? 0) + 1 }));
+      showToast(`Added ${local.name}`);
+      return;
+    }
+
+    try {
+      const res = await apiClient.get(`/products/barcode/${encodeURIComponent(trimmed)}`);
+      const matched = res.data as Product | undefined;
+      if (matched?.id) {
+        setItems((m) => ({ ...m, [matched.id]: (m[matched.id] ?? 0) + 1 }));
+        showToast(`Added ${matched.name}`);
+        return;
+      }
+    } catch {
+      // fall through
+    }
+    showToast(`No product for "${trimmed}"`);
+  };
 
   const categories = useMemo(() => {
     const set = new Set<string>();
@@ -304,7 +335,11 @@ function ProductPickView({
           placeholder="Search items…"
           value={search}
           onChangeText={setSearch}
-          trailing={<Ionicons name="barcode-outline" size={18} color={ios.label2} />}
+          trailing={
+            <Pressable onPress={() => setScanOpen(true)} hitSlop={10}>
+              <Ionicons name="barcode-outline" size={20} color={ios.brand} />
+            </Pressable>
+          }
         />
 
         {categories.length > 1 ? (
@@ -399,6 +434,13 @@ function ProductPickView({
           </Pressable>
         </View>
       </View>
+
+      {scanOpen ? (
+        <BarcodeScanner
+          onScanned={handleBarcodeScanned}
+          onClose={() => setScanOpen(false)}
+        />
+      ) : null}
     </>
   );
 }

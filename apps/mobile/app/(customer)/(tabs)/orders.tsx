@@ -81,6 +81,7 @@ export default function CustomerOrdersScreen() {
 
       <ScrollView
         showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ flexGrow: 1 }}
         refreshControl={
           <RefreshControl refreshing={isFetching && !isLoading} onRefresh={refetch} />
         }
@@ -143,7 +144,7 @@ export default function CustomerOrdersScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: ios.bg },
-  center: { padding: 40, alignItems: "center", gap: 14 },
+  center: { padding: 40, alignItems: "center", justifyContent: "center", gap: 14, flex: 1 },
   empty: { fontSize: 15, fontFamily: "Inter_500Medium", color: ios.label2 },
   primaryBtn: {
     backgroundColor: ios.brand,

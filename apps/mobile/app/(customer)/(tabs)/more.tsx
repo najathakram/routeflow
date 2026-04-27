@@ -76,12 +76,6 @@ export default function CustomerMoreScreen() {
           <Text style={styles.groupHeader}>ACCOUNT</Text>
           <View style={styles.groupCard}>
             <MenuRow
-              icon={<Ionicons name="receipt-outline" size={16} color={ios.brand} />}
-              iconBg={ios.brandWash}
-              title="My Orders"
-              onPress={() => router.push("/(customer)/(tabs)/orders")}
-            />
-            <MenuRow
               icon={<Ionicons name="document-text-outline" size={16} color={ios.system.purpleInk} />}
               iconBg={ios.system.purpleWash}
               title="Invoices"

@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
@@ -33,7 +33,16 @@ import {
  * callers should gracefully fall back to depot/first-stop behavior.
  */
 async function readDriverLocation(): Promise<{ lat: number; lng: number } | null> {
-  if (Platform.OS === "web") return null;
+  if (Platform.OS === "web") {
+    if (typeof navigator === "undefined" || !navigator.geolocation) return null;
+    return new Promise((resolve) => {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+        () => resolve(null),
+        { enableHighAccuracy: false, timeout: 5000 },
+      );
+    });
+  }
   try {
     const perm = await Location.requestForegroundPermissionsAsync();
     if (perm.status !== "granted") return null;
@@ -90,6 +99,8 @@ export default function DriverRouteScreen() {
 function StartOfDay({ run }: { run: RouteRun }) {
   const user = useAuthStore((s) => s.user);
   const updateStatus = useUpdateRunStatus();
+  const optimize = useOptimizeRouteRun();
+  const [optimizeFromHere, setOptimizeFromHere] = useState(true);
 
   const firstName = user?.username?.split(/[._\s]/)[0] ?? "driver";
   const greetingName = firstName.charAt(0).toUpperCase() + firstName.slice(1);
@@ -107,11 +118,26 @@ function StartOfDay({ run }: { run: RouteRun }) {
     day: "numeric",
   }).toUpperCase();
 
-  const onStart = () =>
+  const startRun = () =>
     updateStatus.mutate(
       { id: run.id, status: "IN_PROGRESS" },
       { onSuccess: () => void startLocationTracking(run.id) },
     );
+
+  const onStart = async () => {
+    if (optimizeFromHere) {
+      const loc = await readDriverLocation();
+      if (loc) {
+        await new Promise<void>((resolve) => {
+          optimize.mutate(
+            { id: run.id, originLat: loc.lat, originLng: loc.lng },
+            { onSettled: () => resolve() },
+          );
+        });
+      }
+    }
+    startRun();
+  };
 
   const initials =
     greetingName.slice(0, 2).toUpperCase() || "ME";
@@ -143,15 +169,34 @@ function StartOfDay({ run }: { run: RouteRun }) {
               {stopCount} stop{stopCount === 1 ? "" : "s"} · ${totalValue.toFixed(0)}
             </Text>
             <Text style={styles.heroSub}>Scheduled · ready to depart</Text>
+
+            <Pressable
+              style={styles.optimizeToggle}
+              onPress={() => setOptimizeFromHere((v) => !v)}
+            >
+              <Ionicons
+                name={optimizeFromHere ? "checkbox" : "square-outline"}
+                size={18}
+                color="#fff"
+              />
+              <Text style={styles.optimizeToggleText}>
+                Optimize from my current location
+              </Text>
+            </Pressable>
+
             <View style={styles.heroActions}>
               <Pressable
                 style={styles.heroBtnFilled}
                 onPress={onStart}
-                disabled={updateStatus.isPending}
+                disabled={updateStatus.isPending || optimize.isPending}
               >
                 <Ionicons name="play" size={14} color={ios.brandInk} />
                 <Text style={styles.heroBtnFilledText}>
-                  {updateStatus.isPending ? "Starting…" : "Start day"}
+                  {optimize.isPending
+                    ? "Optimizing…"
+                    : updateStatus.isPending
+                    ? "Starting…"
+                    : "Start day"}
                 </Text>
               </Pressable>
               {(run.stops?.length ?? 0) > 0 ? (
@@ -474,6 +519,19 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   heroActions: { flexDirection: "row", gap: 8, marginTop: 16 },
+  optimizeToggle: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 8,
+    marginTop: 8,
+  },
+  optimizeToggleText: {
+    color: "#fff",
+    fontSize: 13,
+    fontFamily: "Inter_500Medium",
+    flex: 1,
+  },
   heroBtnFilled: {
     backgroundColor: "#fff",
     paddingHorizontal: 14,

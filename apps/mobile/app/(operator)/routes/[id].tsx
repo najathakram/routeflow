@@ -187,7 +187,7 @@ export default function RouteDetailScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <NavBar
-        inlineTitle={route.name}
+        inlineTitle={`Template · ${route.name}`}
         leading={<NavBackButton label="Routes" onPress={() => router.back()} />}
         trailing={
           <NavAction label="Edit" bold onPress={() => router.push(`/(operator)/routes/${id}/edit`)} />

@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -46,6 +46,7 @@ export default function WarehouseScreen() {
   const router = useRouter();
   const [search, setSearch] = useState("");
   const [activeFilter, setActiveFilter] = useState<StockFilter>("ALL");
+  const [buyStockOpen, setBuyStockOpen] = useState(false);
 
   const stockStatusParam =
     activeFilter === "OUT_OF_STOCK"
@@ -249,39 +250,21 @@ export default function WarehouseScreen() {
                 label="Buy stock"
                 color={ios.system.orangeInk}
                 bg={ios.system.orangeWash}
-                onPress={() =>
-                  Alert.alert("Receive stock", undefined, [
-                    {
-                      text: "Quick receive (no PO)",
-                      onPress: () =>
-                        router.push("/(operator)/purchase-orders/record"),
-                    },
-                    {
-                      text: "New purchase order",
-                      onPress: () =>
-                        router.push("/(operator)/purchase-orders/new"),
-                    },
-                    {
-                      text: "View all POs",
-                      onPress: () => router.push("/(operator)/purchase-orders"),
-                    },
-                    { text: "Cancel", style: "cancel" },
-                  ])
-                }
+                onPress={() => setBuyStockOpen(true)}
               />
               <QuickBtn
                 icon="swap-vertical-outline"
                 label="Movements"
                 color={ios.system.purpleInk}
                 bg={ios.system.purpleWash}
-                onPress={() => router.push("/(operator)/products")}
+                onPress={() => router.push("/(operator)/movements")}
               />
               <QuickBtn
                 icon="cube-outline"
                 label="Adjust"
                 color={ios.system.greenInk}
                 bg={ios.system.greenWash}
-                onPress={() => router.push("/(operator)/products/scan")}
+                onPress={() => router.push("/(operator)/products/adjust-picker")}
               />
             </View>
 
@@ -351,7 +334,64 @@ export default function WarehouseScreen() {
         )}
         <View style={{ height: 20 }} />
       </ScrollView>
+
+      <Modal
+        visible={buyStockOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setBuyStockOpen(false)}
+      >
+        <Pressable style={styles.sheetBackdrop} onPress={() => setBuyStockOpen(false)}>
+          <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
+            <Text style={styles.sheetTitle}>Receive stock</Text>
+            <SheetAction
+              label="Quick receive (no PO)"
+              icon="flash-outline"
+              onPress={() => {
+                setBuyStockOpen(false);
+                router.push("/(operator)/purchase-orders/record");
+              }}
+            />
+            <SheetAction
+              label="New purchase order"
+              icon="document-text-outline"
+              onPress={() => {
+                setBuyStockOpen(false);
+                router.push("/(operator)/purchase-orders/new");
+              }}
+            />
+            <SheetAction
+              label="View all POs"
+              icon="list-outline"
+              onPress={() => {
+                setBuyStockOpen(false);
+                router.push("/(operator)/purchase-orders");
+              }}
+            />
+            <Pressable style={styles.sheetCancel} onPress={() => setBuyStockOpen(false)}>
+              <Text style={styles.sheetCancelText}>Cancel</Text>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </SafeAreaView>
+  );
+}
+
+function SheetAction({
+  label,
+  icon,
+  onPress,
+}: {
+  label: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable style={styles.sheetAction} onPress={onPress}>
+      <Ionicons name={icon} size={18} color={ios.brand} />
+      <Text style={styles.sheetActionText}>{label}</Text>
+    </Pressable>
   );
 }
 
@@ -508,5 +548,55 @@ const styles = StyleSheet.create({
   quickBtnLabel: {
     fontSize: 11,
     fontFamily: "Inter_600SemiBold",
+  },
+  sheetBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.4)",
+    justifyContent: "flex-end",
+    padding: 12,
+  },
+  sheet: {
+    backgroundColor: ios.bgElev,
+    borderRadius: 16,
+    paddingVertical: 8,
+    paddingHorizontal: 8,
+    gap: 4,
+  },
+  sheetTitle: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label2,
+    textAlign: "center",
+    paddingVertical: 10,
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
+  },
+  sheetAction: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    backgroundColor: ios.fill3,
+    borderRadius: 12,
+  },
+  sheetActionText: {
+    fontSize: 16,
+    fontFamily: "Inter_500Medium",
+    color: ios.label,
+  },
+  sheetCancel: {
+    marginTop: 8,
+    paddingVertical: 14,
+    backgroundColor: ios.bgElev,
+    borderRadius: 12,
+    alignItems: "center",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: ios.separator,
+  },
+  sheetCancelText: {
+    fontSize: 16,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.system.redInk,
   },
 });

@@ -2,6 +2,7 @@ import { useCallback, useMemo } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -11,6 +12,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
+import * as Location from "expo-location";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar, Pill } from "@routeflow/ui/mobile/ios";
 import {
@@ -24,8 +26,33 @@ import {
   useReopenStop,
   useRouteRun,
   useRouteSettings,
+  useUpdateStopStatus,
 } from "../../../lib/api/routes";
 import { showToast } from "../../../lib/toast";
+import { openRouteInMaps } from "../../../components/openInMaps";
+
+async function readCurrentLocation(): Promise<{ lat: number; lng: number } | null> {
+  if (Platform.OS === "web") {
+    if (typeof navigator === "undefined" || !navigator.geolocation) return null;
+    return new Promise((resolve) => {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+        () => resolve(null),
+        { enableHighAccuracy: false, timeout: 5000 },
+      );
+    });
+  }
+  try {
+    const perm = await Location.requestForegroundPermissionsAsync();
+    if (perm.status !== "granted") return null;
+    const cur = await Location.getCurrentPositionAsync({
+      accuracy: Location.Accuracy.Balanced,
+    });
+    return { lat: cur.coords.latitude, lng: cur.coords.longitude };
+  } catch {
+    return null;
+  }
+}
 
 function statusPill(status: string) {
   switch (status) {
@@ -47,6 +74,7 @@ export default function OperatorRouteRunScreen() {
   const { data: settings } = useRouteSettings();
   const optimizeMut = useOptimizeRouteRun();
   const reopenMut = useReopenStop();
+  const updateStatusMut = useUpdateStopStatus();
 
   useFocusEffect(
     useCallback(() => {
@@ -100,13 +128,18 @@ export default function OperatorRouteRunScreen() {
 
   const allPins = depotPin ? [depotPin, ...pins] : pins;
 
-  const handleOptimize = () => {
+  const handleOptimize = async () => {
     if (!id) return;
     if (stops.length < 2) {
       Alert.alert("Nothing to optimize", "Need at least two stops.");
       return;
     }
-    optimizeMut.mutate(id, {
+    const useCurrent = run?.status === "IN_PROGRESS";
+    const origin = useCurrent ? await readCurrentLocation() : null;
+    const input = origin
+      ? { id, originLat: origin.lat, originLng: origin.lng }
+      : id;
+    optimizeMut.mutate(input, {
       onSuccess: (res) => {
         showToast(res?.usedFallback ? "Reordered (fallback)" : "Run optimized");
         refetch();
@@ -117,6 +150,48 @@ export default function OperatorRouteRunScreen() {
           e?.response?.data?.message ?? e?.message ?? "Try again.",
         ),
     });
+  };
+
+  const handleOpenInMaps = async () => {
+    const pending = stops.filter(
+      (s) => s.status === "PENDING" || s.status === "IN_PROGRESS",
+    );
+    if (pending.length === 0) {
+      showToast("No pending stops");
+      return;
+    }
+    const origin =
+      run?.status === "IN_PROGRESS" ? await readCurrentLocation() : null;
+    openRouteInMaps(pending, {
+      originLat: origin?.lat,
+      originLng: origin?.lng,
+    });
+  };
+
+  const handleSkip = (stopId: string) => {
+    if (!id) return;
+    Alert.alert("Skip stop?", "It will be marked as skipped on this run.", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Skip",
+        style: "destructive",
+        onPress: () =>
+          updateStatusMut.mutate(
+            { runId: id, stopId, status: "SKIPPED" },
+            {
+              onSuccess: () => {
+                showToast("Stop skipped");
+                refetch();
+              },
+              onError: (e: any) =>
+                Alert.alert(
+                  "Couldn't skip",
+                  e?.response?.data?.message ?? e?.message ?? "Try again.",
+                ),
+            },
+          ),
+      },
+    ]);
   };
 
   const handleReopen = (stopId: string) => {
@@ -156,7 +231,17 @@ export default function OperatorRouteRunScreen() {
   }
 
   const completed = stops.filter((s) => s.status === "COMPLETED").length;
-  const canOptimize = run.status === "SCHEDULED";
+  const skipped = stops.filter((s) => s.status === "SKIPPED").length;
+  const inProgress = stops.find((s) => s.status === "IN_PROGRESS");
+  const nextPending = stops.find((s) => s.status === "PENDING");
+  const currentStop = inProgress ?? nextPending;
+  const total = stops.length;
+  const pending = total - completed - skipped;
+  const percent = total > 0 ? Math.round((completed / total) * 100) : 0;
+  const canOptimize =
+    run.status === "SCHEDULED" || run.status === "IN_PROGRESS";
+  const isTerminal =
+    run.status === "COMPLETED" || run.status === "CANCELLED";
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
@@ -207,8 +292,47 @@ export default function OperatorRouteRunScreen() {
               {statusPill(run.status)}
             </View>
             <Text style={styles.sub}>
-              {run.driver?.contactName ?? "Unassigned"} · {completed}/{stops.length} stops
+              {run.driver?.contactName ?? "Unassigned"} · {completed}/{total} stops
             </Text>
+
+            <View style={styles.progressTrack}>
+              <View style={[styles.progressFill, { width: `${percent}%` }]} />
+            </View>
+
+            <View style={styles.statRow}>
+              <View style={styles.stat}>
+                <Text style={[styles.statNum, { color: ios.system.green }]}>{completed}</Text>
+                <Text style={styles.statLabel}>Done</Text>
+              </View>
+              <View style={styles.stat}>
+                <Text style={[styles.statNum, { color: ios.brand }]}>{pending}</Text>
+                <Text style={styles.statLabel}>Pending</Text>
+              </View>
+              <View style={styles.stat}>
+                <Text style={[styles.statNum, { color: ios.label2 }]}>{skipped}</Text>
+                <Text style={styles.statLabel}>Skipped</Text>
+              </View>
+              <View style={styles.stat}>
+                <Text style={[styles.statNum, { color: ios.label }]}>{percent}%</Text>
+                <Text style={styles.statLabel}>Progress</Text>
+              </View>
+            </View>
+
+            {currentStop ? (
+              <View style={styles.currentStop}>
+                <Ionicons
+                  name={inProgress ? "navigate" : "flag-outline"}
+                  size={14}
+                  color={ios.brand}
+                />
+                <Text style={styles.currentStopText} numberOfLines={1}>
+                  {inProgress ? "Now: " : "Next: "}
+                  {currentStop.customer?.businessName ?? "Stop"}
+                  {" · #"}
+                  {currentStop.stopNumber}
+                </Text>
+              </View>
+            ) : null}
           </View>
 
           <Pressable
@@ -218,6 +342,13 @@ export default function OperatorRouteRunScreen() {
             <Ionicons name="list-outline" size={18} color={ios.brand} />
             <Text style={styles.actionText}>Packing list</Text>
           </Pressable>
+
+          {!isTerminal ? (
+            <Pressable style={styles.actionBtn} onPress={handleOpenInMaps}>
+              <Ionicons name="map-outline" size={18} color={ios.brand} />
+              <Text style={styles.actionText}>Open in Google Maps</Text>
+            </Pressable>
+          ) : null}
 
           {canOptimize ? (
             <Pressable
@@ -231,7 +362,11 @@ export default function OperatorRouteRunScreen() {
                 <Ionicons name="sparkles-outline" size={18} color={ios.brand} />
               )}
               <Text style={styles.actionText}>
-                {optimizeMut.isPending ? "Optimizing…" : "Optimize run"}
+                {optimizeMut.isPending
+                  ? "Optimizing…"
+                  : run.status === "IN_PROGRESS"
+                  ? "Re-optimize from here"
+                  : "Optimize run"}
               </Text>
             </Pressable>
           ) : null}
@@ -294,6 +429,10 @@ export default function OperatorRouteRunScreen() {
                     {s.status === "COMPLETED" ? (
                       <Pressable style={styles.reopenBtn} onPress={() => handleReopen(s.id)}>
                         <Ionicons name="refresh" size={14} color={ios.brand} />
+                      </Pressable>
+                    ) : s.status === "PENDING" || s.status === "IN_PROGRESS" ? (
+                      <Pressable style={styles.skipBtn} onPress={() => handleSkip(s.id)}>
+                        <Ionicons name="close" size={14} color={ios.label2} />
                       </Pressable>
                     ) : null}
                   </View>
@@ -362,5 +501,54 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: ios.brandWash,
     borderRadius: 8,
+  },
+  skipBtn: {
+    width: 32,
+    height: 32,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: ios.fill3,
+    borderRadius: 8,
+  },
+  progressTrack: {
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: ios.fill3,
+    overflow: "hidden",
+    marginTop: 4,
+  },
+  progressFill: {
+    height: "100%",
+    backgroundColor: ios.brand,
+    borderRadius: 3,
+  },
+  statRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 6,
+  },
+  stat: { alignItems: "center", flex: 1 },
+  statNum: { fontSize: 18, fontFamily: "Inter_700Bold" },
+  statLabel: {
+    fontSize: 11,
+    fontFamily: "Inter_500Medium",
+    color: ios.label2,
+    marginTop: 2,
+  },
+  currentStop: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: ios.brandWash,
+    borderRadius: 10,
+    marginTop: 4,
+  },
+  currentStopText: {
+    flex: 1,
+    fontSize: 13,
+    fontFamily: "Inter_500Medium",
+    color: ios.brand,
   },
 });

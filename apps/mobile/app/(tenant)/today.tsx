@@ -289,8 +289,13 @@ export default function TenantTodayScreen() {
                   : status.variant === "red" ? ios.system.red
                   : ios.gray[3];
               const stopCount = r._count?.stops ?? 0;
+              const todaysRunId = r.runs?.[0]?.id;
+              const onPress = () =>
+                todaysRunId
+                  ? router.push(`/(operator)/route-runs/${todaysRunId}`)
+                  : router.push(`/(operator)/routes/${r.id}`);
               return (
-                <View key={r.id} style={styles.routeCard}>
+                <Pressable key={r.id} style={styles.routeCard} onPress={onPress}>
                   <View style={styles.routeHead}>
                     <View style={[styles.routeBadge, { backgroundColor: badgeColor }]}>
                       <Text style={styles.routeBadgeText}>
@@ -321,7 +326,7 @@ export default function TenantTodayScreen() {
                     </View>
                     <Text style={styles.routePct}>{status.pct}%</Text>
                   </View>
-                </View>
+                </Pressable>
               );
             })}
           </View>
