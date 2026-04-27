@@ -31,16 +31,20 @@ export function BarcodeScanner({ onScanned, onClose }: Props) {
   const videoRef = React.useRef<HTMLVideoElement | null>(null);
   const streamRef = React.useRef<MediaStream | null>(null);
   const rafRef = React.useRef<number | null>(null);
+  const readerRef = React.useRef<any>(null);
   const firedRef = React.useRef(false);
   const [error, setError] = React.useState<string | null>(null);
   const [manualMode, setManualMode] = React.useState(false);
   const [manualValue, setManualValue] = React.useState("");
-  const [supportsDetector, setSupportsDetector] = React.useState(true);
 
   const stop = React.useCallback(() => {
     if (rafRef.current != null) {
       cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
+    }
+    if (readerRef.current) {
+      try { readerRef.current.reset(); } catch { /* ignore */ }
+      readerRef.current = null;
     }
     const stream = streamRef.current;
     if (stream) {
@@ -63,48 +67,44 @@ export function BarcodeScanner({ onScanned, onClose }: Props) {
     let cancelled = false;
 
     const start = async () => {
-      const Ctor = typeof window !== "undefined" ? window.BarcodeDetector : undefined;
-      if (!Ctor) {
-        setSupportsDetector(false);
-        setManualMode(true);
-        return;
-      }
       if (!navigator.mediaDevices?.getUserMedia) {
-        setError(
-          "Camera access isn't available in this browser. Use Chrome or Safari over HTTPS.",
-        );
+        setError("Camera access isn't available. Use HTTPS in Chrome or Safari.");
         setManualMode(true);
         return;
       }
+
+      let stream: MediaStream;
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
+        stream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: { ideal: "environment" } },
           audio: false,
         });
-        if (cancelled) {
-          for (const t of stream.getTracks()) t.stop();
-          return;
-        }
-        streamRef.current = stream;
-        const video = videoRef.current;
-        if (video) {
-          video.srcObject = stream;
-          video.setAttribute("playsinline", "true");
-          await video.play().catch(() => undefined);
-        }
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : "Unable to start the camera.";
+        setError(msg);
+        setManualMode(true);
+        return;
+      }
 
+      if (cancelled) {
+        for (const t of stream.getTracks()) t.stop();
+        return;
+      }
+      streamRef.current = stream;
+
+      const video = videoRef.current;
+      if (video) {
+        video.srcObject = stream;
+        video.setAttribute("playsinline", "true");
+        await video.play().catch(() => undefined);
+      }
+
+      // Try native BarcodeDetector first (Chrome / Edge / Android)
+      const Ctor = typeof window !== "undefined" ? window.BarcodeDetector : undefined;
+      if (Ctor) {
         const detector = new Ctor({
-          formats: [
-            "ean_13",
-            "ean_8",
-            "code_128",
-            "qr_code",
-            "upc_a",
-            "upc_e",
-            "code_39",
-          ],
+          formats: ["ean_13", "ean_8", "code_128", "qr_code", "upc_a", "upc_e", "code_39"],
         });
-
         const tick = async () => {
           if (cancelled || !videoRef.current) return;
           try {
@@ -113,17 +113,34 @@ export function BarcodeScanner({ onScanned, onClose }: Props) {
               fire(codes[0].rawValue);
               return;
             }
-          } catch {
-            // ignore per-frame errors and keep scanning
-          }
+          } catch { /* ignore per-frame errors */ }
           rafRef.current = requestAnimationFrame(tick);
         };
         rafRef.current = requestAnimationFrame(tick);
+        return;
+      }
+
+      // Fallback: use @zxing/browser (works on Safari / Firefox / iOS)
+      try {
+        const { BrowserMultiFormatReader } = await import("@zxing/browser");
+        if (cancelled) return;
+        const reader = new BrowserMultiFormatReader();
+        readerRef.current = reader;
+        const videoEl = videoRef.current;
+        if (!videoEl) return;
+        reader.decodeFromStream(stream, videoEl, (result, err) => {
+          if (cancelled) return;
+          if (result) {
+            fire(result.getText());
+          } else if (err && (err as any).name !== "NotFoundException") {
+            // real error, ignore transient "not found" per-frame errors
+          }
+        });
       } catch (e: unknown) {
-        const msg =
-          e instanceof Error ? e.message : "Unable to start the camera.";
-        setError(msg);
-        setManualMode(true);
+        if (!cancelled) {
+          setError("Barcode scanning failed. Try entering the code manually.");
+          setManualMode(true);
+        }
       }
     };
 
@@ -175,15 +192,12 @@ export function BarcodeScanner({ onScanned, onClose }: Props) {
         ) : null}
 
         <View style={styles.bottomCard}>
-          {!supportsDetector && !error ? (
-            <Text style={styles.help}>
-              Camera scanning isn't supported in this browser. Enter the code
-              manually instead.
-            </Text>
-          ) : error ? (
+          {error ? (
             <Text style={styles.error}>{error}</Text>
           ) : (
-            <Text style={styles.help}>Align barcode within the box.</Text>
+            <Text style={styles.help}>
+              {manualMode ? "Enter the barcode or SKU manually." : "Align barcode within the box."}
+            </Text>
           )}
 
           {manualMode ? (

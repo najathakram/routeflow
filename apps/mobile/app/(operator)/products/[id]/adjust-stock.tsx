@@ -58,6 +58,14 @@ export default function AdjustStockScreen() {
       submitting={mut.isPending}
     >
       <FormSection title="Quantity">
+        {product && (
+          <View style={styles.currentRow}>
+            <Text style={styles.currentLabel}>Current stock</Text>
+            <Text style={styles.currentValue}>
+              {Number(product.currentStock ?? 0)} units
+            </Text>
+          </View>
+        )}
         <FormField label="Change (+/−)" hint="Positive to add, negative to remove.">
           <View style={styles.row}>
             <Pressable style={styles.stepBtn} onPress={() => setDelta((d) => shift(d, -1))}>
@@ -130,6 +138,18 @@ function shift(current: string, by: number): string {
 }
 
 const styles = StyleSheet.create({
+  currentRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 10,
+    paddingHorizontal: 2,
+    marginBottom: 4,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: ios.separator,
+  },
+  currentLabel: { fontSize: 14, fontFamily: "Inter_400Regular", color: ios.label2 },
+  currentValue: { fontSize: 16, fontFamily: "Inter_700Bold", color: ios.label },
   row: { flexDirection: "row", alignItems: "center", gap: 10 },
   stepBtn: {
     width: 46,
