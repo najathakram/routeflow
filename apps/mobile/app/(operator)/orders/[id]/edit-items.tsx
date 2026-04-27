@@ -48,7 +48,7 @@ export default function EditOrderItemsScreen() {
     for (const li of order.lineItems) {
       next[li.productId] = {
         productId: li.productId,
-        qty: li.qty,
+        qty: toNumber(li.qty),
         unitPrice: toNumber(li.unitPrice),
         name: li.product?.name ?? "Item",
         unit: li.product?.unit,

@@ -21,6 +21,7 @@ import {
 import { useAdminCustomers } from "../lib/api/admin";
 import { useProducts } from "../lib/api/products";
 import { useCreateOrderAsDriver } from "../lib/api/orders";
+import { showToast } from "../lib/toast";
 
 export interface NewOrderScreenProps {
   /** When present, customer is locked (e.g. invoked from a specific stop). */
@@ -95,9 +96,8 @@ export function NewOrderScreen({
             setPickedCustomerName(null);
           }}
           onSaved={(orderNumber: string) => {
-            Alert.alert("Order created", `Order ${orderNumber} saved as PENDING.`, [
-              { text: "OK", onPress: () => router.back() },
-            ]);
+            showToast(`Order ${orderNumber} saved`);
+            router.back();
           }}
         />
       )}

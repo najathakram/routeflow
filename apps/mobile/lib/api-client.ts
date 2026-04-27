@@ -91,7 +91,15 @@ apiClient.interceptors.response.use(
     }
 
     // ── 401 token refresh ───────────────────────────────────────────────────
-    if (error.response?.status !== 401 || original?._retry) {
+    // Never auto-refresh on the auth endpoints themselves — a 401 from
+    // /auth/login or /auth/refresh is the caller's signal to surface the
+    // error, not to recurse and wipe tokens.
+    const url = original?.url ?? "";
+    const isAuthEndpoint =
+      url.includes("/auth/login") ||
+      url.includes("/auth/refresh") ||
+      url.includes("/auth/logout");
+    if (error.response?.status !== 401 || original?._retry || isAuthEndpoint) {
       return Promise.reject(error);
     }
 

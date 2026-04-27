@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { Platform, StyleSheet, View } from "react-native";
+import { ActivityIndicator, Platform, StyleSheet, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { Slot, useRouter, useSegments } from "expo-router";
 import {
@@ -128,6 +128,12 @@ function RootLayoutNav() {
     }
   }, [user, isLoading, tenantSlug, tenantLoading, activeRole, buyer, activeSeller, buyerLoading, segments]);
 
+  // While auth/tenant/buyer state is being rehydrated from storage, render a
+  // spinner instead of <Slot/>. Without this, on a hard URL refresh the child
+  // routes mount with no auth context, fire API calls that 401, and the
+  // interceptor can wipe tokens before bootstrap finishes.
+  const bootstrapping = isLoading || tenantLoading || buyerLoading;
+
   // On web viewed from a desktop browser the phone-sized layout stretches
   // uncomfortably wide. Clamp the app to a phone-ish width and center it
   // on a neutral backdrop. Native builds ignore this entirely.
@@ -135,12 +141,25 @@ function RootLayoutNav() {
     return (
       <View style={webStyles.page}>
         <View style={webStyles.phoneFrame}>
-          <Slot />
+          {bootstrapping ? (
+            <View style={webStyles.center}>
+              <ActivityIndicator color={ios.brand} />
+            </View>
+          ) : (
+            <Slot />
+          )}
         </View>
       </View>
     );
   }
 
+  if (bootstrapping) {
+    return (
+      <View style={webStyles.center}>
+        <ActivityIndicator color={ios.brand} />
+      </View>
+    );
+  }
   return <Slot />;
 }
 
@@ -156,6 +175,7 @@ const webStyles = StyleSheet.create({
     maxWidth: 480,
     backgroundColor: ios.bg,
   },
+  center: { flex: 1, alignItems: "center", justifyContent: "center" },
 });
 
 export default function RootLayout() {
