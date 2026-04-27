@@ -161,7 +161,8 @@ export class RouteRunsController {
   completeStop(
     @Param("id") runId: string,
     @Param("stopId") stopId: string,
-    @Body() body: {
+    @Body()
+    body: {
       driverNote?: string;
       podPhotoUrls?: string[];
       signatureUrl?: string;
