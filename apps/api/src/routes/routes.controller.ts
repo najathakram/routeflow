@@ -166,7 +166,12 @@ export class RouteRunsController {
       podPhotoUrls?: string[];
       signatureUrl?: string;
       safeDropEnabled?: boolean;
-      deliveries?: Array<{ orderItemId: string; type: string; quantityDelivered: number; note?: string }>;
+      deliveries?: Array<{
+        orderItemId: string;
+        type: string;
+        quantityDelivered: number;
+        note?: string;
+      }>;
     },
     @CurrentUser() user: JwtPayload,
   ) {

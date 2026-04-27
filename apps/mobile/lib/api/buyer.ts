@@ -155,7 +155,7 @@ export function useBuyerCancelOrder() {
 
 // ─── Invoices ─────────────────────────────────────────────────────────────────
 
-export function useBuyerInvoices(params?: { status?: string; page?: number; limit?: number }) {
+export function useBuyerInvoices(params?: { status?: string; statuses?: string[]; page?: number; limit?: number }) {
   return useQuery<{ data: BuyerInvoice[]; meta: any }>({
     queryKey: ["buyer-invoices", params],
     queryFn: () =>
