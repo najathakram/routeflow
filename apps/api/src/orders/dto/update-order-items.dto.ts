@@ -47,6 +47,10 @@ class UpdateOrderItemDto {
   @IsOptional()
   @IsString()
   substitution?: string;
+
+  @IsOptional()
+  @IsString()
+  overrideReason?: string;
 }
 
 export class UpdateOrderItemsDto {

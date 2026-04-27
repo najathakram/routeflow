@@ -15,12 +15,11 @@ import { ios } from "@routeflow/ui/tokens";
 import {
   FilterChipRow,
   NavAction,
-  NavBackButton,
   NavBar,
   Pill,
   SearchBar,
 } from "@routeflow/ui/mobile/ios";
-import { useAdminOrders, type AdminOrder } from "../../../lib/api/admin";
+import { useAdminOrders, type AdminOrder } from "../../../../lib/api/admin";
 
 const STATUS_FILTERS = [
   { id: "PENDING", label: "Pending" },
@@ -84,8 +83,7 @@ export default function OrdersListScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <NavBar
-        inlineTitle="Orders"
-        leading={<NavBackButton label="Back" onPress={() => router.back()} />}
+        largeTitle="Orders"
         trailing={
           <NavAction
             label="New"

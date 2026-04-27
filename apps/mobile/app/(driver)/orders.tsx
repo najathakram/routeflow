@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -10,6 +10,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import {
   FilterChipRow,
@@ -17,177 +18,110 @@ import {
   Pill,
   SearchBar,
 } from "@routeflow/ui/mobile/ios";
-import { useMyStandingOrders, type StandingOrder } from "../../lib/api/standing-orders";
+import { useMyOrders, type Order } from "../../lib/api/orders";
 
-const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const STATUS_FILTERS = [
+  { id: "OUT_FOR_DELIVERY", label: "Active" },
+  { id: "CONFIRMED", label: "Confirmed" },
+  { id: "DELIVERED", label: "Delivered" },
+  { id: "ALL", label: "All" },
+] as const;
 
-function initialsFromName(name: string): string {
-  return name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((s) => s[0]?.toUpperCase() ?? "")
-    .join("") || "?";
-}
+type FilterId = (typeof STATUS_FILTERS)[number]["id"];
 
-function frequencyLabel(days: number[]): string {
-  if (days.length === 0) return "No schedule";
-  if (days.length === 7) return "Daily";
-  if (days.length === 5 && [1, 2, 3, 4, 5].every((d) => days.includes(d))) {
-    return "Every weekday";
+function statusPill(status: string): {
+  variant: "brand" | "green" | "orange" | "red" | "gray";
+  label: string;
+} {
+  switch (status) {
+    case "PENDING":
+      return { variant: "orange", label: "Pending" };
+    case "CONFIRMED":
+      return { variant: "brand", label: "Confirmed" };
+    case "OUT_FOR_DELIVERY":
+      return { variant: "brand", label: "Out for delivery" };
+    case "DELIVERED":
+      return { variant: "green", label: "Delivered" };
+    case "CANCELLED":
+      return { variant: "red", label: "Cancelled" };
+    default:
+      return { variant: "gray", label: status };
   }
-  return days
-    .slice()
-    .sort()
-    .map((d) => DAY_LABELS[d])
-    .join(" · ");
 }
 
-function templateTotal(t: StandingOrder): number {
-  return (t.items ?? []).reduce(
-    (sum, it) => sum + it.qty * Number(it.product?.pricePerUnit ?? 0),
-    0,
-  );
+function formatCurrency(n: number | string | undefined): string {
+  const v = typeof n === "string" ? Number(n) : (n ?? 0);
+  return `$${(Number.isFinite(v) ? v : 0).toFixed(2)}`;
 }
 
-function colorForName(name: string): string {
-  const palette = [
-    "#0B6E6B",
-    "#D2691E",
-    "#5856D6",
-    "#34C759",
-    "#FF9500",
-    "#AF52DE",
-    "#0BA8A4",
-  ];
-  let hash = 0;
-  for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
-  return palette[hash % palette.length]!;
-}
-
-export default function OrdersScreen() {
-  const [filter, setFilter] = useState("Active");
+export default function DriverOrdersScreen() {
+  const router = useRouter();
+  const [filter, setFilter] = useState<FilterId>("OUT_FOR_DELIVERY");
   const [search, setSearch] = useState("");
-  const { data, isLoading } = useMyStandingOrders();
-  const templates = data?.data ?? [];
+
+  const statusParam = filter === "ALL" ? undefined : filter;
+  const { data, isLoading, isFetching, refetch } = useMyOrders({
+    status: statusParam,
+    limit: 50,
+  });
+  const orders = data?.data ?? [];
 
   const filtered = useMemo(() => {
     const s = search.trim().toLowerCase();
-    return templates.filter((t) => {
-      if (filter === "Active" && !t.isActive) return false;
-      if (filter === "Paused" && t.isActive) return false;
-      if (!s) return true;
-      return (
-        t.name.toLowerCase().includes(s) ||
-        (t.customer?.businessName ?? "").toLowerCase().includes(s)
-      );
-    });
-  }, [templates, filter, search]);
+    if (!s) return orders;
+    return orders.filter(
+      (o) =>
+        o.orderNumber.toLowerCase().includes(s) ||
+        (o as any).customer?.businessName?.toLowerCase().includes(s),
+    );
+  }, [orders, search]);
 
-  const activeCount = templates.filter((t) => t.isActive).length;
-  const pausedCount = templates.filter((t) => !t.isActive).length;
-  const chips = [
-    { label: "Active", count: activeCount },
-    { label: "Paused", count: pausedCount },
-    { label: "All", count: templates.length },
-  ];
+  const chipLabel = (id: FilterId) =>
+    STATUS_FILTERS.find((f) => f.id === id)?.label ?? "All";
+  const chipIdFromLabel = (label: string): FilterId =>
+    (STATUS_FILTERS.find((f) => f.label === label)?.id ?? "ALL") as FilterId;
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
-      <NavBar
-        largeTitle="Standing orders"
-        trailing={
-          <Pressable
-            onPress={() =>
-              Alert.alert(
-                "Add standing order",
-                "Creating recurring orders on mobile is coming soon. You can add one from the web dashboard in the meantime.",
-              )
-            }
-            hitSlop={8}
-          >
-            <Ionicons name="add" size={22} color={ios.brand} />
-          </Pressable>
-        }
+      <NavBar largeTitle="My orders" />
+
+      <SearchBar
+        placeholder="Search orders…"
+        value={search}
+        onChangeText={setSearch}
       />
 
-      <ScrollView showsVerticalScrollIndicator={false}>
-        <SearchBar
-          placeholder="Search customers…"
-          value={search}
-          onChangeText={setSearch}
-        />
-        <FilterChipRow chips={chips} value={filter} onChange={setFilter} />
+      <FilterChipRow
+        chips={STATUS_FILTERS.map((f) => ({ label: f.label }))}
+        value={chipLabel(filter)}
+        onChange={(label) => setFilter(chipIdFromLabel(label))}
+      />
 
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl refreshing={isFetching && !isLoading} onRefresh={refetch} />
+        }
+      >
         {isLoading ? (
           <View style={styles.center}>
             <ActivityIndicator color={ios.brand} />
           </View>
         ) : filtered.length === 0 ? (
           <View style={styles.center}>
-            <Ionicons name="calendar-outline" size={40} color={ios.label3} />
-            <Text style={styles.emptyTitle}>No standing orders</Text>
+            <Ionicons name="cube-outline" size={40} color={ios.label3} />
+            <Text style={styles.emptyTitle}>No orders</Text>
             <Text style={styles.emptySub}>
-              {filter === "Paused"
-                ? "No paused templates."
-                : "Standing orders repeat on a schedule. None found for this filter."}
+              {search
+                ? "No orders match your search."
+                : "No orders in this status."}
             </Text>
           </View>
         ) : (
-          <View style={{ paddingHorizontal: 16, paddingTop: 4, gap: 10, paddingBottom: 16 }}>
-            {filtered.map((t) => {
-              const customerName = t.customer?.businessName ?? t.name;
-              const color = colorForName(customerName);
-              const total = templateTotal(t);
-              const itemCount = t.items?.length ?? 0;
-              return (
-                <Pressable
-                  key={t.id}
-                  style={styles.card}
-                  onPress={() =>
-                    Alert.alert(
-                      t.name,
-                      `${customerName} · ${frequencyLabel(t.daysOfWeek)}\n${itemCount} item${
-                        itemCount === 1 ? "" : "s"
-                      } · $${total.toFixed(2)}\n\nDetail editing is coming soon.`,
-                    )
-                  }
-                >
-                  <View style={styles.cardHead}>
-                    <View style={[styles.avatar, { backgroundColor: color }]}>
-                      <Text style={styles.avatarText}>{initialsFromName(customerName)}</Text>
-                    </View>
-                    <View style={{ flex: 1, minWidth: 0 }}>
-                      <View style={styles.nameRow}>
-                        <Text style={styles.name} numberOfLines={1}>
-                          {customerName}
-                        </Text>
-                      </View>
-                      <Text style={styles.freq}>{frequencyLabel(t.daysOfWeek)}</Text>
-                    </View>
-                    {t.isActive ? (
-                      <Text style={styles.chev}>›</Text>
-                    ) : (
-                      <Pill variant="gray">Paused</Pill>
-                    )}
-                  </View>
-                  <View style={styles.cardFoot}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.footEyebrow}>NAME</Text>
-                      <Text style={styles.footValue} numberOfLines={1}>
-                        {t.name}
-                      </Text>
-                    </View>
-                    <View style={{ flex: 2, alignItems: "flex-end" }}>
-                      <Text style={styles.footEyebrow}>ORDER</Text>
-                      <Text style={styles.footValue} numberOfLines={1}>
-                        {itemCount} item{itemCount === 1 ? "" : "s"} · ${total.toFixed(0)}
-                      </Text>
-                    </View>
-                  </View>
-                </Pressable>
-              );
-            })}
+          <View style={{ paddingHorizontal: 16, gap: 8, paddingBottom: 24 }}>
+            {filtered.map((o) => (
+              <OrderRow key={o.id} order={o} />
+            ))}
           </View>
         )}
       </ScrollView>
@@ -195,51 +129,74 @@ export default function OrdersScreen() {
   );
 }
 
+function OrderRow({ order }: { order: Order }) {
+  const s = statusPill(order.status);
+  const itemCount = order.lineItems?.length ?? 0;
+  const customer = (order as any).customer?.businessName;
+
+  return (
+    <View style={styles.row}>
+      <View style={styles.rowHead}>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+            <Text style={styles.rowTitle} numberOfLines={1}>
+              {order.orderNumber}
+            </Text>
+            {order.urgent ? (
+              <Pill variant="red" small>
+                Urgent
+              </Pill>
+            ) : null}
+          </View>
+          {customer ? (
+            <Text style={styles.rowSub} numberOfLines={1}>
+              {customer}
+            </Text>
+          ) : null}
+          <Text style={styles.rowSub}>
+            {itemCount} item{itemCount === 1 ? "" : "s"}
+          </Text>
+        </View>
+        <Pill variant={s.variant} dot>
+          {s.label}
+        </Pill>
+      </View>
+      <View style={styles.rowFoot}>
+        <Text style={styles.rowTotal}>{formatCurrency(order.total)}</Text>
+      </View>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: ios.bg },
-  center: { alignItems: "center", justifyContent: "center", padding: 40, gap: 8 },
+  center: { padding: 40, alignItems: "center", gap: 10 },
   emptyTitle: { fontSize: 16, fontFamily: "Inter_600SemiBold", color: ios.label },
-  emptySub: { fontSize: 14, fontFamily: "Inter_400Regular", color: ios.label2, textAlign: "center" },
-  card: { backgroundColor: ios.bgElev, borderRadius: 16, overflow: "hidden" },
-  cardHead: {
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
+  emptySub: {
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    color: ios.label2,
+    textAlign: "center",
   },
-  avatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  avatarText: { color: "#fff", fontSize: 14, fontFamily: "Inter_700Bold" },
-  nameRow: { flexDirection: "row", alignItems: "center" },
-  name: {
-    fontSize: 16,
+  row: { backgroundColor: ios.bgElev, borderRadius: 14, padding: 14 },
+  rowHead: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
+  rowTitle: {
+    fontSize: 15,
     fontFamily: "Inter_600SemiBold",
     color: ios.label,
     letterSpacing: -0.2,
   },
-  freq: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 1 },
-  chev: { fontSize: 22, color: ios.gray[3], fontFamily: "Inter_400Regular" },
-  cardFoot: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    backgroundColor: ios.bg,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: ios.separator,
-  },
-  footEyebrow: {
-    fontSize: 11,
-    fontFamily: "Inter_600SemiBold",
+  rowSub: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
     color: ios.label2,
-    letterSpacing: 0.6,
+    marginTop: 2,
   },
-  footValue: { fontSize: 14, fontFamily: "Inter_500Medium", color: ios.label },
+  rowFoot: { marginTop: 10 },
+  rowTotal: {
+    fontSize: 15,
+    fontFamily: "Inter_700Bold",
+    color: ios.label,
+    fontVariant: ["tabular-nums"],
+  },
 });

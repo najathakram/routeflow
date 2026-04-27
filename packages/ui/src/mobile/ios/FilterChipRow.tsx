@@ -52,6 +52,7 @@ const styles = StyleSheet.create({
   contents: {
     gap: 8,
     paddingVertical: 8,
+    alignItems: "flex-start",
   },
   chip: {
     paddingHorizontal: 12,

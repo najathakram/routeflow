@@ -116,8 +116,21 @@ export function useCancelOrder() {
 
 export function useUpdateOrderItems() {
   const qc = useQueryClient();
-  return useMutation<Order, Error, { orderId: string; items: Array<{ productId: string; qty: number; unitPrice: number }> }>({
-    mutationFn: ({ orderId, items }) => apiClient.patch(`/orders/${orderId}/items`, { items }).then((r) => r.data),
+  return useMutation<
+    Order,
+    Error,
+    {
+      orderId: string;
+      items: Array<{
+        productId: string;
+        qty: number;
+        unitPrice: number;
+        overrideReason?: string;
+      }>;
+    }
+  >({
+    mutationFn: ({ orderId, items }) =>
+      apiClient.patch(`/orders/${orderId}/items`, { items }).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['orders'] }),
   });
 }

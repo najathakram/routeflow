@@ -2,10 +2,12 @@ import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -20,7 +22,8 @@ import {
 } from "@routeflow/ui/mobile/ios";
 import { useAdminCustomers } from "../lib/api/admin";
 import { useProducts } from "../lib/api/products";
-import { useCreateOrderAsDriver } from "../lib/api/orders";
+import { useCreateOrderAsDriver, useUpdateOrderItems } from "../lib/api/orders";
+import { showToast } from "../lib/toast";
 
 export interface NewOrderScreenProps {
   /** When present, customer is locked (e.g. invoked from a specific stop). */
@@ -95,9 +98,8 @@ export function NewOrderScreen({
             setPickedCustomerName(null);
           }}
           onSaved={(orderNumber: string) => {
-            Alert.alert("Order created", `Order ${orderNumber} saved as PENDING.`, [
-              { text: "OK", onPress: () => router.back() },
-            ]);
+            showToast(`Order ${orderNumber} created`);
+            router.back();
           }}
         />
       )}
@@ -191,6 +193,8 @@ function CustomerPickerView({
 
 // ─────────────────────── Product pick + save ───────────────────────
 
+type PriceOverride = { unitPrice: number; reason?: string };
+
 function ProductPickView({
   customerId,
   customerName,
@@ -215,6 +219,8 @@ function ProductPickView({
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("All");
   const [items, setItems] = useState<Record<string, number>>({});
+  const [overrides, setOverrides] = useState<Record<string, PriceOverride>>({});
+  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
 
   const { data: productsData, isLoading: productsLoading } = useProducts({
     search: search.trim() || undefined,
@@ -236,7 +242,8 @@ function ProductPickView({
   const totalItems = Object.values(items).reduce((a, b) => a + b, 0);
   const total = products.reduce((sum, p) => {
     const q = items[p.id] ?? 0;
-    return sum + q * toNumber(p.pricePerUnit);
+    const price = overrides[p.id]?.unitPrice ?? toNumber(p.pricePerUnit);
+    return sum + q * price;
   }, 0);
 
   const inc = (id: string) =>
@@ -245,8 +252,10 @@ function ProductPickView({
     setItems((m) => ({ ...m, [id]: Math.max(0, (m[id] ?? 0) - 1) }));
 
   const createOrder = useCreateOrderAsDriver();
+  const updateItems = useUpdateOrderItems();
 
-  const canSave = totalItems > 0 && !createOrder.isPending;
+  const isSaving = createOrder.isPending || updateItems.isPending;
+  const canSave = totalItems > 0 && !isSaving;
 
   const onSave = () => {
     const itemPayload = Object.entries(items)
@@ -258,6 +267,8 @@ function ProductPickView({
       return;
     }
 
+    const hasOverrides = itemPayload.some(({ productId }) => overrides[productId]);
+
     createOrder.mutate(
       {
         customerId,
@@ -267,7 +278,27 @@ function ProductPickView({
       },
       {
         onSuccess: (order) => {
-          onSaved(order.orderNumber);
+          if (!hasOverrides) {
+            onSaved(order.orderNumber);
+            return;
+          }
+          const patchItems = itemPayload.map(({ productId, qty }) => {
+            const ov = overrides[productId];
+            const catalogPrice = toNumber(products.find((p) => p.id === productId)?.pricePerUnit ?? 0);
+            return {
+              productId,
+              qty,
+              unitPrice: ov?.unitPrice ?? catalogPrice,
+              overrideReason: ov?.reason,
+            };
+          });
+          updateItems.mutate(
+            { orderId: order.id, items: patchItems },
+            {
+              onSuccess: () => onSaved(order.orderNumber),
+              onError: () => onSaved(order.orderNumber), // order created — don't block navigation
+            },
+          );
         },
         onError: (err: Error) => {
           const msg =
@@ -291,7 +322,7 @@ function ProductPickView({
         }
         trailing={
           <NavAction
-            label={createOrder.isPending ? "Saving…" : "Save"}
+            label={isSaving ? "Saving…" : "Save"}
             bold
             onPress={canSave ? onSave : undefined}
           />
@@ -358,7 +389,9 @@ function ProductPickView({
           <View style={{ paddingHorizontal: 16, paddingTop: 14, gap: 10 }}>
             {filtered.map((p) => {
               const q = items[p.id] ?? 0;
-              const price = toNumber(p.pricePerUnit);
+              const catalogPrice = toNumber(p.pricePerUnit);
+              const ov = overrides[p.id];
+              const displayPrice = ov?.unitPrice ?? catalogPrice;
               return (
                 <View key={p.id} style={styles.productRow}>
                   <View style={styles.productImg} />
@@ -366,10 +399,30 @@ function ProductPickView({
                     <Text style={styles.productName} numberOfLines={1}>
                       {p.name}
                     </Text>
-                    <Text style={styles.productMeta}>
-                      {p.sku ? `SKU ${p.sku} · ` : ""}${price.toFixed(2)}
-                      {p.unit ? ` / ${p.unit}` : ""}
-                    </Text>
+                    <View style={styles.priceRow}>
+                      {ov ? (
+                        <>
+                          <Text style={styles.productMetaStrike}>
+                            ${catalogPrice.toFixed(2)}
+                          </Text>
+                          <Text style={styles.productMetaOverride}>
+                            ${ov.unitPrice.toFixed(2)}
+                          </Text>
+                        </>
+                      ) : (
+                        <Text style={styles.productMeta}>
+                          {p.sku ? `SKU ${p.sku} · ` : ""}${displayPrice.toFixed(2)}
+                          {p.unit ? ` / ${p.unit}` : ""}
+                        </Text>
+                      )}
+                      <Pressable
+                        style={styles.pencilBtn}
+                        onPress={() => setEditingProduct(p)}
+                        hitSlop={8}
+                      >
+                        <Ionicons name="pencil-outline" size={12} color={ios.label3} />
+                      </Pressable>
+                    </View>
                   </View>
                   {q > 0 ? (
                     <View style={styles.stepper}>
@@ -405,19 +458,109 @@ function ProductPickView({
           <Pressable
             style={[
               styles.confirmBtn,
-              (!canSave || createOrder.isPending) && styles.confirmBtnDisabled,
+              (!canSave || isSaving) && styles.confirmBtnDisabled,
             ]}
             disabled={!canSave}
             onPress={onSave}
           >
             <Text style={styles.confirmBtnText}>
-              {createOrder.isPending ? "Saving…" : "Confirm order"}
+              {isSaving ? "Saving…" : "Confirm order"}
             </Text>
             <Ionicons name="arrow-forward" size={14} color="#fff" />
           </Pressable>
         </View>
       </View>
+
+      {editingProduct ? (
+        <PriceEditModal
+          product={editingProduct}
+          current={overrides[editingProduct.id]}
+          onApply={(unitPrice, reason) => {
+            setOverrides((m) => ({ ...m, [editingProduct.id]: { unitPrice, reason } }));
+            setEditingProduct(null);
+          }}
+          onReset={() => {
+            setOverrides((m) => {
+              const next = { ...m };
+              delete next[editingProduct.id];
+              return next;
+            });
+            setEditingProduct(null);
+          }}
+          onClose={() => setEditingProduct(null)}
+        />
+      ) : null}
     </>
+  );
+}
+
+// ─────────────────────── Price edit modal ───────────────────────
+
+function PriceEditModal({
+  product,
+  current,
+  onApply,
+  onReset,
+  onClose,
+}: {
+  product: Product;
+  current?: PriceOverride;
+  onApply: (unitPrice: number, reason?: string) => void;
+  onReset: () => void;
+  onClose: () => void;
+}) {
+  const catalogPrice = toNumber(product.pricePerUnit);
+  const [priceText, setPriceText] = useState(
+    current ? String(current.unitPrice) : String(catalogPrice),
+  );
+  const [reason, setReason] = useState(current?.reason ?? "");
+
+  const apply = () => {
+    const num = parseFloat(priceText);
+    if (!Number.isFinite(num) || num < 0) return;
+    onApply(num, reason.trim() || undefined);
+  };
+
+  return (
+    <Modal transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable style={styles.overlay} onPress={onClose}>
+        <Pressable style={styles.priceSheet} onPress={() => {}}>
+          <Text style={styles.priceSheetTitle}>
+            Override price — {product.name}
+          </Text>
+          <Text style={styles.priceSheetSub}>
+            Catalog price: ${catalogPrice.toFixed(2)}
+          </Text>
+          <TextInput
+            style={styles.priceInput}
+            value={priceText}
+            onChangeText={setPriceText}
+            keyboardType="decimal-pad"
+            selectTextOnFocus
+            placeholder="0.00"
+            placeholderTextColor={ios.label3}
+          />
+          <TextInput
+            style={[styles.priceInput, { marginTop: 8, fontSize: 14 }]}
+            value={reason}
+            onChangeText={setReason}
+            placeholder="Reason (optional)"
+            placeholderTextColor={ios.label3}
+            returnKeyType="done"
+          />
+          <View style={styles.priceSheetActions}>
+            {current ? (
+              <Pressable style={styles.priceResetBtn} onPress={onReset}>
+                <Text style={styles.priceResetText}>Reset</Text>
+              </Pressable>
+            ) : null}
+            <Pressable style={styles.priceApplyBtn} onPress={apply}>
+              <Text style={styles.priceApplyText}>Apply</Text>
+            </Pressable>
+          </View>
+        </Pressable>
+      </Pressable>
+    </Modal>
   );
 }
 
@@ -586,4 +729,52 @@ const styles = StyleSheet.create({
   },
   confirmBtnDisabled: { opacity: 0.55 },
   confirmBtnText: { color: "#fff", fontSize: 16, fontFamily: "Inter_600SemiBold" },
+  priceRow: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 1 },
+  productMetaStrike: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    color: ios.label3,
+    textDecorationLine: "line-through",
+    fontVariant: ["tabular-nums"],
+  },
+  productMetaOverride: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.system.orangeInk,
+    fontVariant: ["tabular-nums"],
+  },
+  pencilBtn: { padding: 2 },
+  overlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.4)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 24,
+  },
+  priceSheet: {
+    backgroundColor: ios.bg,
+    borderRadius: 16,
+    padding: 20,
+    width: "100%",
+    maxWidth: 380,
+  },
+  priceSheetTitle: { fontSize: 16, fontFamily: "Inter_700Bold", color: ios.label, marginBottom: 4 },
+  priceSheetSub: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2, marginBottom: 14 },
+  priceInput: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: ios.separator,
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 18,
+    fontFamily: "Inter_700Bold",
+    color: ios.label,
+    backgroundColor: ios.bgElev,
+    fontVariant: ["tabular-nums"],
+  },
+  priceSheetActions: { flexDirection: "row", justifyContent: "flex-end", gap: 10, marginTop: 16 },
+  priceResetBtn: { paddingHorizontal: 16, paddingVertical: 10 },
+  priceResetText: { color: ios.system.red, fontSize: 15, fontFamily: "Inter_500Medium" },
+  priceApplyBtn: { backgroundColor: ios.brand, borderRadius: 10, paddingHorizontal: 20, paddingVertical: 10 },
+  priceApplyText: { color: "#fff", fontSize: 15, fontFamily: "Inter_600SemiBold" },
 });

@@ -251,19 +251,19 @@ export default function StopDetailScreen() {
             icon="camera-outline"
             label={photoCount > 0 ? `Photo · ${photoCount}` : "Photo"}
             captured={photoCount > 0}
-            onPress={() => router.push("./photo")}
+            onPress={() => router.push(`/route/stop/${stopId}/photo`)}
           />
           <PodTile
             icon="create-outline"
             label={hasSig ? "Signature ✓" : "Signature"}
             captured={hasSig}
-            onPress={() => router.push("./signature")}
+            onPress={() => router.push(`/route/stop/${stopId}/signature`)}
           />
           <PodTile
             icon="chatbubble-outline"
             label={hasNote ? "Note ✓" : "Note"}
             captured={hasNote}
-            onPress={() => router.push("./note")}
+            onPress={() => router.push(`/route/stop/${stopId}/note`)}
           />
         </View>
 
@@ -280,12 +280,12 @@ export default function StopDetailScreen() {
             />
             <SecondaryBtn
               label="Partial return"
-              onPress={() => router.push("./return")}
+              onPress={() => router.push(`/route/stop/${stopId}/return`)}
             />
           </View>
           <Pressable
             style={styles.greenBtn}
-            onPress={() => router.push("./payment")}
+            onPress={() => router.push(`/route/stop/${stopId}/payment`)}
           >
             <Text style={styles.greenBtnText}>Complete & collect →</Text>
           </Pressable>

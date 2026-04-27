@@ -2,10 +2,12 @@ import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -18,12 +20,20 @@ import {
   NavBar,
   SearchBar,
 } from "@routeflow/ui/mobile/ios";
-import { useAdminOrder } from "../../../../lib/api/admin";
-import { useUpdateOrderItems } from "../../../../lib/api/orders";
-import { useProducts } from "../../../../lib/api/products";
-import { showToast } from "../../../../lib/toast";
+import { useAdminOrder } from "../../../../../lib/api/admin";
+import { useUpdateOrderItems } from "../../../../../lib/api/orders";
+import { useProducts } from "../../../../../lib/api/products";
+import { showToast } from "../../../../../lib/toast";
 
-type DraftItem = { productId: string; qty: number; unitPrice: number; name: string; unit?: string };
+type DraftItem = {
+  productId: string;
+  qty: number;
+  unitPrice: number;
+  catalogPrice: number;
+  name: string;
+  unit?: string;
+  overrideReason?: string;
+};
 
 function toNumber(v: number | string | null | undefined): number {
   if (typeof v === "number") return v;
@@ -40,18 +50,22 @@ export default function EditOrderItemsScreen() {
   const { data: order, isLoading } = useAdminOrder(id ?? "");
   const [draft, setDraft] = useState<Record<string, DraftItem>>({});
   const [showPicker, setShowPicker] = useState(false);
+  const [priceEditItem, setPriceEditItem] = useState<DraftItem | null>(null);
   const updateMut = useUpdateOrderItems();
 
   useEffect(() => {
     if (!order) return;
     const next: Record<string, DraftItem> = {};
     for (const li of order.lineItems) {
+      const catalogPrice = toNumber((li as any).product?.pricePerUnit ?? li.unitPrice);
       next[li.productId] = {
         productId: li.productId,
-        qty: li.qty,
+        qty: toNumber(li.qty),
         unitPrice: toNumber(li.unitPrice),
+        catalogPrice,
         name: li.product?.name ?? "Item",
         unit: li.product?.unit,
+        overrideReason: (li as any).overrideReason ?? undefined,
       };
     }
     setDraft(next);
@@ -70,7 +84,12 @@ export default function EditOrderItemsScreen() {
     if (!id) return;
     const items = Object.values(draft)
       .filter((i) => i.qty > 0)
-      .map((i) => ({ productId: i.productId, qty: i.qty, unitPrice: i.unitPrice }));
+      .map((i) => ({
+        productId: i.productId,
+        qty: i.qty,
+        unitPrice: i.unitPrice,
+        ...(i.overrideReason ? { overrideReason: i.overrideReason } : {}),
+      }));
     if (items.length === 0) {
       Alert.alert("Add at least one item", "Orders can't be saved empty.");
       return;
@@ -116,17 +135,39 @@ export default function EditOrderItemsScreen() {
         }
       />
 
+      {/* Price override modal */}
+      {priceEditItem ? (
+        <PriceOverrideModal
+          item={priceEditItem}
+          onSave={(newPrice, reason) => {
+            setDraft((d) => ({
+              ...d,
+              [priceEditItem.productId]: {
+                ...priceEditItem,
+                unitPrice: newPrice,
+                overrideReason: reason || undefined,
+              },
+            }));
+            setPriceEditItem(null);
+          }}
+          onCancel={() => setPriceEditItem(null)}
+        />
+      ) : null}
+
       {showPicker ? (
         <ProductPicker
           onPick={(p) => {
+            const catalogPrice = toNumber(p.pricePerUnit);
             setDraft((d) => ({
               ...d,
               [p.id]: {
                 productId: p.id,
                 qty: (d[p.id]?.qty ?? 0) + 1,
-                unitPrice: toNumber(p.pricePerUnit),
+                unitPrice: d[p.id]?.unitPrice ?? catalogPrice,
+                catalogPrice,
                 name: p.name,
                 unit: p.unit,
+                overrideReason: d[p.id]?.overrideReason,
               },
             }));
             setShowPicker(false);
@@ -140,49 +181,70 @@ export default function EditOrderItemsScreen() {
               {Object.values(draft).length === 0 ? (
                 <Text style={styles.empty}>No items. Add one below.</Text>
               ) : (
-                Object.values(draft).map((it) => (
-                  <View key={it.productId} style={styles.row}>
-                    <View style={{ flex: 1, minWidth: 0 }}>
-                      <Text style={styles.name} numberOfLines={1}>
-                        {it.name}
-                      </Text>
-                      <Text style={styles.sub}>
-                        ${it.unitPrice.toFixed(2)}
-                        {it.unit ? ` / ${it.unit}` : ""}
-                      </Text>
+                Object.values(draft).map((it) => {
+                  const isOverridden = it.unitPrice !== it.catalogPrice;
+                  return (
+                    <View key={it.productId} style={styles.row}>
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <Text style={styles.name} numberOfLines={1}>
+                          {it.name}
+                        </Text>
+                        <Pressable
+                          onPress={() => setPriceEditItem(it)}
+                          style={styles.priceRow}
+                          hitSlop={8}
+                        >
+                          {isOverridden ? (
+                            <Text style={styles.priceStrike}>
+                              ${it.catalogPrice.toFixed(2)}
+                            </Text>
+                          ) : null}
+                          <Text
+                            style={[styles.sub, isOverridden && { color: ios.system.orange }]}
+                          >
+                            ${it.unitPrice.toFixed(2)}
+                            {it.unit ? ` / ${it.unit}` : ""}
+                          </Text>
+                          <Ionicons
+                            name="pencil-outline"
+                            size={12}
+                            color={isOverridden ? ios.system.orange : ios.label3}
+                          />
+                        </Pressable>
+                      </View>
+                      <View style={styles.stepper}>
+                        <Pressable
+                          style={styles.stepBtn}
+                          onPress={() =>
+                            setDraft((d) => {
+                              const next = { ...d };
+                              const cur = next[it.productId];
+                              if (!cur) return next;
+                              const q = Math.max(0, cur.qty - 1);
+                              if (q === 0) delete next[it.productId];
+                              else next[it.productId] = { ...cur, qty: q };
+                              return next;
+                            })
+                          }
+                        >
+                          <Text style={styles.stepText}>−</Text>
+                        </Pressable>
+                        <Text style={styles.qty}>{it.qty}</Text>
+                        <Pressable
+                          style={styles.stepBtn}
+                          onPress={() =>
+                            setDraft((d) => ({
+                              ...d,
+                              [it.productId]: { ...it, qty: Number(it.qty) + 1 },
+                            }))
+                          }
+                        >
+                          <Text style={styles.stepText}>+</Text>
+                        </Pressable>
+                      </View>
                     </View>
-                    <View style={styles.stepper}>
-                      <Pressable
-                        style={styles.stepBtn}
-                        onPress={() =>
-                          setDraft((d) => {
-                            const next = { ...d };
-                            const cur = next[it.productId];
-                            if (!cur) return next;
-                            const q = Math.max(0, cur.qty - 1);
-                            if (q === 0) delete next[it.productId];
-                            else next[it.productId] = { ...cur, qty: q };
-                            return next;
-                          })
-                        }
-                      >
-                        <Text style={styles.stepText}>−</Text>
-                      </Pressable>
-                      <Text style={styles.qty}>{it.qty}</Text>
-                      <Pressable
-                        style={styles.stepBtn}
-                        onPress={() =>
-                          setDraft((d) => ({
-                            ...d,
-                            [it.productId]: { ...it, qty: it.qty + 1 },
-                          }))
-                        }
-                      >
-                        <Text style={styles.stepText}>+</Text>
-                      </Pressable>
-                    </View>
-                  </View>
-                ))
+                  );
+                })
               )}
               <Pressable style={styles.addBtn} onPress={() => setShowPicker(true)}>
                 <Ionicons name="add-circle-outline" size={18} color={ios.brand} />
@@ -209,6 +271,67 @@ export default function EditOrderItemsScreen() {
         </>
       )}
     </SafeAreaView>
+  );
+}
+
+function PriceOverrideModal({
+  item,
+  onSave,
+  onCancel,
+}: {
+  item: DraftItem;
+  onSave: (newPrice: number, reason: string) => void;
+  onCancel: () => void;
+}) {
+  const [priceText, setPriceText] = useState(item.unitPrice.toFixed(2));
+  const [reason, setReason] = useState(item.overrideReason ?? "");
+  const newPrice = toNumber(priceText);
+  const valid = newPrice > 0;
+
+  return (
+    <Modal transparent animationType="fade" onRequestClose={onCancel}>
+      <Pressable style={styles.modalOverlay} onPress={onCancel}>
+        <Pressable style={styles.modalCard} onPress={(e) => e.stopPropagation()}>
+          <Text style={styles.modalTitle}>Override price</Text>
+          <Text style={styles.modalSub}>{item.name}</Text>
+          <Text style={styles.modalLabel}>List price: ${item.catalogPrice.toFixed(2)}</Text>
+
+          <Text style={styles.modalFieldLabel}>New unit price</Text>
+          <TextInput
+            style={styles.modalInput}
+            value={priceText}
+            onChangeText={setPriceText}
+            keyboardType="decimal-pad"
+            selectTextOnFocus
+            autoFocus
+            placeholder="0.00"
+            placeholderTextColor={ios.label3}
+          />
+
+          <Text style={styles.modalFieldLabel}>Reason (optional)</Text>
+          <TextInput
+            style={[styles.modalInput, { marginBottom: 16 }]}
+            value={reason}
+            onChangeText={setReason}
+            placeholder="e.g. daily market price"
+            placeholderTextColor={ios.label3}
+          />
+
+          <View style={styles.modalBtns}>
+            <Pressable style={styles.modalBtnGhost} onPress={onCancel}>
+              <Text style={styles.modalBtnGhostText}>Cancel</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.modalBtnFill, !valid && styles.modalBtnDisabled]}
+              onPress={() => valid && onSave(newPrice, reason)}
+              disabled={!valid}
+            >
+              <Text style={styles.modalBtnFillText}>Apply</Text>
+            </Pressable>
+          </View>
+        </Pressable>
+      </Pressable>
+    </Modal>
   );
 }
 
@@ -289,7 +412,19 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   name: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: ios.label },
-  sub: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
+  priceRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    marginTop: 2,
+  },
+  priceStrike: {
+    fontSize: 11,
+    fontFamily: "Inter_400Regular",
+    color: ios.label3,
+    textDecorationLine: "line-through",
+  },
+  sub: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2 },
   stepper: {
     flexDirection: "row",
     alignItems: "center",
@@ -342,4 +477,73 @@ const styles = StyleSheet.create({
   },
   saveBtnDisabled: { opacity: 0.5 },
   saveBtnText: { color: "#fff", fontSize: 15, fontFamily: "Inter_600SemiBold" },
+  // Price override modal
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.45)",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 24,
+  },
+  modalCard: {
+    backgroundColor: ios.bgElev,
+    borderRadius: 20,
+    padding: 20,
+    width: "100%",
+    maxWidth: 380,
+  },
+  modalTitle: {
+    fontSize: 17,
+    fontFamily: "Inter_700Bold",
+    color: ios.label,
+    letterSpacing: -0.3,
+    marginBottom: 2,
+  },
+  modalSub: {
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    color: ios.label2,
+    marginBottom: 8,
+  },
+  modalLabel: {
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    color: ios.label2,
+    marginBottom: 14,
+  },
+  modalFieldLabel: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label2,
+    letterSpacing: 0.3,
+    marginBottom: 6,
+  },
+  modalInput: {
+    backgroundColor: ios.fill3,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 16,
+    fontFamily: "Inter_500Medium",
+    color: ios.label,
+    marginBottom: 12,
+  },
+  modalBtns: { flexDirection: "row", gap: 10 },
+  modalBtnGhost: {
+    flex: 1,
+    paddingVertical: 13,
+    borderRadius: 12,
+    alignItems: "center",
+    backgroundColor: ios.fill3,
+  },
+  modalBtnGhostText: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: ios.label },
+  modalBtnFill: {
+    flex: 1,
+    paddingVertical: 13,
+    borderRadius: 12,
+    alignItems: "center",
+    backgroundColor: ios.brand,
+  },
+  modalBtnDisabled: { opacity: 0.4 },
+  modalBtnFillText: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: "#fff" },
 });
