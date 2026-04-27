@@ -1,9 +1,14 @@
-import { IsEnum, IsInt, IsOptional, IsString, Min } from "class-validator";
-import { Type } from "class-transformer";
+import { IsArray, IsEnum, IsInt, IsOptional, IsString, Min } from "class-validator";
+import { Transform, Type } from "class-transformer";
 import { InvoiceStatus } from "@prisma/client";
 
 export class ListInvoicesDto {
   @IsOptional() @IsEnum(InvoiceStatus) status?: InvoiceStatus;
+  @IsOptional()
+  @IsArray()
+  @IsEnum(InvoiceStatus, { each: true })
+  @Transform(({ value }) => (Array.isArray(value) ? value : [value]))
+  statuses?: InvoiceStatus[];
   @IsOptional() @IsString() customerId?: string;
   @IsOptional() @IsString() search?: string;
   @IsOptional() @IsString() dateFrom?: string;

@@ -396,6 +396,7 @@ export class InvoicesService {
   async findAll(query: ListInvoicesDto, user?: JwtPayload) {
     const {
       status,
+      statuses,
       customerId,
       search,
       dateFrom,
@@ -407,7 +408,8 @@ export class InvoicesService {
     } = query;
     const skip = (page - 1) * limit;
     const where: any = {};
-    if (status) where.status = status;
+    if (statuses && statuses.length > 0) where.status = { in: statuses };
+    else if (status) where.status = status;
     if (user?.role === UserRole.CUSTOMER) {
       const customer = await this.prisma
         .forTenant()
