@@ -128,7 +128,7 @@ function ProductCard({ product }: { product: BuyerProduct }) {
           <Text style={styles.productCategory}>{product.category}</Text>
         ) : null}
         <Text style={styles.productPrice}>
-          {`$${product.price.toFixed(2)}`}
+          {`$${(product.price ?? 0).toFixed(2)}`}
           {product.unit ? <Text style={styles.productUnit}> / {product.unit}</Text> : null}
         </Text>
       </View>

@@ -892,6 +892,79 @@ export class RoutesService {
     return this.prisma.forTenant().routeRunStop.update({ where: { id: stopId }, data: updates });
   }
 
+  async completeStop(
+    runId: string,
+    stopId: string,
+    dto: {
+      driverNote?: string;
+      podPhotoUrls?: string[];
+      signatureUrl?: string;
+      safeDropEnabled?: boolean;
+      deliveries?: Array<{ orderItemId: string; type: string; quantityDelivered: number; note?: string }>;
+    },
+    user: JwtPayload,
+  ) {
+    const stop = await this.prisma.forTenant().routeRunStop.findFirst({
+      where: { id: stopId, routeRunId: runId },
+      include: { orders: { select: { id: true, status: true, customerId: true } } },
+    });
+    if (!stop) throw new NotFoundException("Stop not found");
+    if (stop.status === "COMPLETED")
+      throw new BadRequestException("Stop is already completed");
+
+    const driver = user.role === UserRole.DRIVER
+      ? await this.prisma.forTenant().driver.findFirst({ where: { userId: user.sub } })
+      : null;
+
+    await this.prisma.tenantTransaction(async (tx) => {
+      // 1. Mark stop completed
+      await tx.routeRunStop.update({
+        where: { id: stopId },
+        data: {
+          status: "COMPLETED",
+          completedAt: new Date(),
+          ...(dto.driverNote !== undefined ? { driverNote: dto.driverNote } : {}),
+          ...(dto.podPhotoUrls ? { podPhotoUrls: dto.podPhotoUrls } : {}),
+          ...(dto.signatureUrl !== undefined ? { signatureUrl: dto.signatureUrl } : {}),
+          ...(dto.safeDropEnabled !== undefined ? { safeDropEnabled: dto.safeDropEnabled } : {}),
+        },
+      });
+
+      // 2. Record delivery mutations if provided
+      if (dto.deliveries && dto.deliveries.length > 0) {
+        for (const d of dto.deliveries) {
+          const item = await tx.orderItem.findUnique({
+            where: { id: d.orderItemId },
+            select: { orderId: true, unitPrice: true },
+          });
+          if (!item) continue;
+          await tx.deliveryMutation.create({
+            data: {
+              orderId: item.orderId,
+              orderItemId: d.orderItemId,
+              routeRunStopId: stopId,
+              ...(driver ? { driverId: driver.id } : {}),
+              type: (d.type as any) ?? "DELIVERED",
+              quantityDelivered: d.quantityDelivered,
+              ...(d.note ? { note: d.note } : {}),
+            },
+          });
+        }
+      }
+
+      // 3. Mark linked orders as DELIVERED
+      const orderIds = stop.orders.map((o) => o.id);
+      if (orderIds.length > 0) {
+        await tx.order.updateMany({
+          where: { id: { in: orderIds }, status: { notIn: [OrderStatus.CANCELLED, OrderStatus.DELIVERED] } },
+          data: { status: OrderStatus.DELIVERED },
+        });
+      }
+    });
+
+    return this.prisma.forTenant().routeRunStop.findUniqueOrThrow({ where: { id: stopId } });
+  }
+
   async getRunPackingList(runId: string) {
     const run = await this.prisma.forTenant().routeRun.findUnique({
       where: { id: runId },

@@ -210,3 +210,12 @@ export function useBuyerReorder() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["buyer-orders"] }),
   });
 }
+
+export function useBuyerUpdateTemplate() {
+  const qc = useQueryClient();
+  return useMutation<any, Error, { id: string; isActive: boolean }>({
+    mutationFn: ({ id, isActive }) =>
+      buyerApiClient.patch(`/buyer/templates/${id}`, { isActive }).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["buyer-templates"] }),
+  });
+}

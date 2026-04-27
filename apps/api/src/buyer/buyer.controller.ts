@@ -361,6 +361,26 @@ export class BuyerController {
     return this.templatesService.generateOrder(id);
   }
 
+  @Patch("templates/:id")
+  @UseGuards(BuyerSellerContextGuard)
+  @UseInterceptors(BuyerTenantInterceptor)
+  @ApiHeader({ name: "X-Tenant-Slug", required: true })
+  @ApiOperation({ summary: "Update a standing order template (e.g. pause/resume)" })
+  async updateTemplate(
+    @Param("id") id: string,
+    @Body() dto: { isActive?: boolean },
+    @CurrentBuyerCustomer() ctx: any,
+  ) {
+    const template = await this.prisma
+      .forTenant()
+      .orderTemplate.findUnique({ where: { id }, select: { customerId: true } });
+    if (!template) throw new NotFoundException("Template not found");
+    if (template.customerId !== ctx.customerId) {
+      throw new ForbiddenException("This template does not belong to your account");
+    }
+    return this.templatesService.updateForUser(id, dto, makePseudoUser(ctx));
+  }
+
   // ─── Analytics ───────────────────────────────────────────────────────────────
 
   @Get("analytics")

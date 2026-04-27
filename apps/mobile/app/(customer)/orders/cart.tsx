@@ -9,6 +9,13 @@ import { useCartStore } from "../../../store/cartStore";
 import { useBuyerCreateOrder } from "../../../lib/api/buyer";
 import { showToast } from "../../../lib/toast";
 
+function formatDateInput(raw: string): string {
+  const digits = raw.replace(/\D/g, "").slice(0, 8);
+  if (digits.length <= 4) return digits;
+  if (digits.length <= 6) return `${digits.slice(0, 4)}-${digits.slice(4)}`;
+  return `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6)}`;
+}
+
 export default function CartScreen() {
   const router = useRouter();
   const { items, setQty, remove, clear, total } = useCartStore();
@@ -132,10 +139,11 @@ export default function CartScreen() {
                   <Text style={styles.detailLabel}>Delivery date</Text>
                   <TextInput
                     value={deliveryDate}
-                    onChangeText={setDeliveryDate}
+                    onChangeText={(t) => setDeliveryDate(formatDateInput(t))}
                     placeholder="YYYY-MM-DD"
                     placeholderTextColor={ios.label3}
-                    keyboardType="numbers-and-punctuation"
+                    keyboardType="number-pad"
+                    maxLength={10}
                     style={styles.detailInput}
                   />
                 </View>

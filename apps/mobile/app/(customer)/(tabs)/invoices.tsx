@@ -29,7 +29,7 @@ function invoicePill(status: string) {
     case "PAID": return { variant: "green" as const, label: "Paid" };
     case "PARTIAL": return { variant: "orange" as const, label: "Partial" };
     case "SENT": return { variant: "orange" as const, label: "Unpaid" };
-    case "OVERDUE": return { variant: "gray" as const, label: "Overdue" };
+    case "OVERDUE": return { variant: "red" as const, label: "Overdue" };
     case "VOID": return { variant: "gray" as const, label: "Void" };
     default: return { variant: "gray" as const, label: status };
   }
@@ -39,9 +39,11 @@ export default function CustomerInvoicesScreen() {
   const router = useRouter();
   const [filter, setFilter] = useState<FilterId>("ALL");
 
-  const statusParam = filter === "ALL" ? undefined : filter === "UNPAID" ? "SENT" : filter;
+  const statusParam = filter === "ALL" || filter === "UNPAID" ? undefined : filter;
+  const statusesParam = filter === "UNPAID" ? ["SENT", "OVERDUE"] : undefined;
   const { data, isLoading, isFetching, refetch } = useBuyerInvoices({
     status: statusParam,
+    statuses: statusesParam,
     limit: 30,
   });
   const invoices = data?.data ?? [];

@@ -4,7 +4,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar } from "@routeflow/ui/mobile/ios";
-import { useBuyerTemplates, useBuyerReorder } from "../../lib/api/buyer";
+import { useBuyerTemplates, useBuyerReorder, useBuyerUpdateTemplate } from "../../lib/api/buyer";
 import { showToast } from "../../lib/toast";
 import { Alert } from "react-native";
 
@@ -12,6 +12,7 @@ export default function StandingOrdersScreen() {
   const router = useRouter();
   const { data: templates, isLoading } = useBuyerTemplates();
   const reorderMut = useBuyerReorder();
+  const updateMut = useBuyerUpdateTemplate();
 
   const onReorder = (id: string, name: string) =>
     Alert.alert(`Reorder from "${name}"?`, "A new order will be created.", [
@@ -30,6 +31,28 @@ export default function StandingOrdersScreen() {
       },
     ]);
 
+  const onTogglePause = (id: string, name: string, isActive: boolean) => {
+    const action = isActive ? "Pause" : "Resume";
+    const message = isActive
+      ? "No new orders will be auto-generated until you resume."
+      : "Auto-orders will resume on the next scheduled day.";
+    Alert.alert(`${action} "${name}"?`, message, [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: action,
+        onPress: () =>
+          updateMut.mutate(
+            { id, isActive: !isActive },
+            {
+              onSuccess: () => showToast(isActive ? "Standing order paused" : "Standing order resumed"),
+              onError: (e: any) =>
+                Alert.alert("Error", e?.response?.data?.message ?? "Try again."),
+            },
+          ),
+      },
+    ]);
+  };
+
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <NavBar
@@ -47,20 +70,43 @@ export default function StandingOrdersScreen() {
           <View style={styles.list}>
             {templates.map((t) => (
               <View key={t.id} style={styles.card}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.cardName}>{t.name ?? "Standing order"}</Text>
-                  <Text style={styles.cardMeta}>
-                    {t.frequencyLabel ?? t.frequency ?? ""} · {t.items?.length ?? 0} items
-                  </Text>
+                <View style={styles.cardTop}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.cardName}>{t.name ?? "Standing order"}</Text>
+                    <Text style={styles.cardMeta}>
+                      {t.frequencyLabel ?? t.frequency ?? ""} · {t.items?.length ?? 0} items
+                    </Text>
+                  </View>
+                  {t.isActive === false ? (
+                    <View style={styles.pausedBadge}>
+                      <Text style={styles.pausedBadgeText}>Paused</Text>
+                    </View>
+                  ) : null}
                 </View>
-                <Pressable
-                  style={styles.reorderBtn}
-                  onPress={() => onReorder(t.id, t.name ?? "Standing order")}
-                  disabled={reorderMut.isPending}
-                >
-                  <Ionicons name="refresh-outline" size={14} color={ios.brand} />
-                  <Text style={styles.reorderText}>Reorder</Text>
-                </Pressable>
+                <View style={styles.cardActions}>
+                  <Pressable
+                    style={[styles.actionBtn, styles.reorderBtn]}
+                    onPress={() => onReorder(t.id, t.name ?? "Standing order")}
+                    disabled={reorderMut.isPending || t.isActive === false}
+                  >
+                    <Ionicons name="refresh-outline" size={14} color={ios.brand} />
+                    <Text style={styles.reorderText}>Order now</Text>
+                  </Pressable>
+                  <Pressable
+                    style={[styles.actionBtn, styles.pauseBtn]}
+                    onPress={() => onTogglePause(t.id, t.name ?? "Standing order", t.isActive !== false)}
+                    disabled={updateMut.isPending}
+                  >
+                    <Ionicons
+                      name={t.isActive === false ? "play-outline" : "pause-outline"}
+                      size={14}
+                      color={ios.label2}
+                    />
+                    <Text style={styles.pauseText}>
+                      {t.isActive === false ? "Resume" : "Pause"}
+                    </Text>
+                  </Pressable>
+                </View>
               </View>
             ))}
           </View>
@@ -75,24 +121,28 @@ const styles = StyleSheet.create({
   center: { padding: 40, alignItems: "center" },
   empty: { fontSize: 15, fontFamily: "Inter_500Medium", color: ios.label2 },
   list: { paddingHorizontal: 16, gap: 8, paddingBottom: 32 },
-  card: {
-    backgroundColor: ios.bgElev,
-    borderRadius: 14,
-    padding: 14,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
+  card: { backgroundColor: ios.bgElev, borderRadius: 14, padding: 14, gap: 12 },
+  cardTop: { flexDirection: "row", alignItems: "center", gap: 10 },
   cardName: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: ios.label },
   cardMeta: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
-  reorderBtn: {
+  pausedBadge: {
+    backgroundColor: ios.fill2,
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  pausedBadgeText: { fontSize: 12, fontFamily: "Inter_500Medium", color: ios.label2 },
+  cardActions: { flexDirection: "row", gap: 8 },
+  actionBtn: {
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
-    backgroundColor: ios.brandWash,
     borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 8,
   },
+  reorderBtn: { backgroundColor: ios.brandWash },
   reorderText: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: ios.brand },
+  pauseBtn: { backgroundColor: ios.fill2 },
+  pauseText: { fontSize: 13, fontFamily: "Inter_500Medium", color: ios.label2 },
 });
