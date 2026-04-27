@@ -291,6 +291,7 @@ export class RouteOptimizationService {
       include: {
         stops: {
           include: {
+            customerAddress: true,
             routeStop: {
               include: {
                 customer: {
@@ -315,9 +316,26 @@ export class RouteOptimizationService {
       return { stopOrder: [], reorderedCount: 0, usedFallback: false };
     }
 
+    // For stops where the run stop has no address FK, fall back to the customer's default address.
+    const stopsNeedingAddr = run.stops.filter((s) => !s.customerAddress && s.customerId);
+    if (stopsNeedingAddr.length > 0) {
+      const defaultAddrs = await this.prisma.forTenant().customerAddress.findMany({
+        where: { customerId: { in: stopsNeedingAddr.map((s) => s.customerId!) }, isDefault: true },
+      });
+      const addrByCustomer = new Map(defaultAddrs.map((a) => [a.customerId, a]));
+      for (const s of stopsNeedingAddr) {
+        const addr = addrByCustomer.get(s.customerId!);
+        if (addr) (s as any).customerAddress = addr;
+      }
+    }
+
+    // Helper: resolve effective address for a run stop (run-stop FK → routeStop FK → customer default)
+    const effectiveAddr = (s: (typeof run.stops)[0]) =>
+      s.customerAddress ?? s.routeStop.customerAddress ?? null;
+
     // Geocode any stops missing lat/lng
     for (const stop of run.stops) {
-      const addr = stop.routeStop.customerAddress;
+      const addr = effectiveAddr(stop);
       if (!addr || (addr.lat != null && addr.lng != null)) continue;
       const coords = await this.geocodeAddress(addr);
       if (coords) {
@@ -332,7 +350,7 @@ export class RouteOptimizationService {
 
     // Validate all stops have coordinates
     const missingCoords = run.stops.filter(
-      (s) => s.routeStop.customerAddress?.lat == null || s.routeStop.customerAddress?.lng == null,
+      (s) => effectiveAddr(s)?.lat == null || effectiveAddr(s)?.lng == null,
     );
     if (missingCoords.length > 0) {
       const names = missingCoords.map((s) => s.routeStop.customer?.businessName ?? s.id).join(", ");
@@ -341,15 +359,18 @@ export class RouteOptimizationService {
       );
     }
 
-    const stops: StopWithCoords[] = run.stops.map((s) => ({
-      id: s.id,
-      stopNumber: s.stopNumber,
-      customerName: s.routeStop.customer?.businessName ?? s.id,
-      lat: s.routeStop.customerAddress!.lat!,
-      lng: s.routeStop.customerAddress!.lng!,
-      deliveryWindowStart: s.routeStop.customer?.deliveryWindowStart,
-      deliveryWindowEnd: s.routeStop.customer?.deliveryWindowEnd,
-    }));
+    const stops: StopWithCoords[] = run.stops.map((s) => {
+      const addr = effectiveAddr(s)!;
+      return {
+        id: s.id,
+        stopNumber: s.stopNumber,
+        customerName: s.routeStop.customer?.businessName ?? s.id,
+        lat: addr.lat!,
+        lng: addr.lng!,
+        deliveryWindowStart: s.routeStop.customer?.deliveryWindowStart,
+        deliveryWindowEnd: s.routeStop.customer?.deliveryWindowEnd,
+      };
+    });
 
     // Resolve depot from the parent route. When the caller provides an
     // origin (e.g. driver's current GPS mid-run), use that as the vehicle

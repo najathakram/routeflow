@@ -473,6 +473,25 @@ export class RoutesService {
     });
     if (!route) throw new NotFoundException("Route not found");
 
+    // For stops missing a customerAddressId, resolve the customer's default address now
+    // so the run stop gets a proper address FK (needed for map pins and optimization).
+    const stopsNeedingAddr = route.stops.filter((s) => !s.customerAddressId && s.customerId);
+    if (stopsNeedingAddr.length > 0) {
+      const defaultAddrs = await this.prisma.forTenant().customerAddress.findMany({
+        where: {
+          customerId: { in: stopsNeedingAddr.map((s) => s.customerId!) },
+          isDefault: true,
+        },
+        select: { id: true, customerId: true },
+      });
+      const addrByCustomer = new Map(defaultAddrs.map((a) => [a.customerId, a.id]));
+      for (const s of route.stops) {
+        if (!s.customerAddressId && s.customerId) {
+          (s as any).customerAddressId = addrByCustomer.get(s.customerId) ?? null;
+        }
+      }
+    }
+
     // Drivers can only create runs for themselves
     let resolvedDriverId = dto.driverId;
     if (user?.role === UserRole.DRIVER) {
@@ -713,6 +732,26 @@ export class RoutesService {
       // Resolve customerId for later order lookup
       _resolvedCustomerId: s.customerId ?? s.routeStop?.customerId ?? null,
     }));
+
+    // Final fallback: if a stop still has no address (route stop FK was never set),
+    // look up the customer's default address so map pins and optimization work.
+    const stillMissingAddr = normalisedStops.filter(
+      (s: any) => !s.customerAddress && s._resolvedCustomerId,
+    );
+    if (stillMissingAddr.length > 0) {
+      const defaultAddrs = await this.prisma.forTenant().customerAddress.findMany({
+        where: {
+          customerId: { in: stillMissingAddr.map((s: any) => s._resolvedCustomerId) },
+          isDefault: true,
+        },
+      });
+      const addrByCustomer = new Map(defaultAddrs.map((a) => [a.customerId, a]));
+      for (const s of normalisedStops as any[]) {
+        if (!s.customerAddress && s._resolvedCustomerId) {
+          s.customerAddress = addrByCustomer.get(s._resolvedCustomerId) ?? null;
+        }
+      }
+    }
 
     // Fallback for runs where orders were not linked at dispatch time (legacy/seeded data):
     // if no stop has linked orders, fetch active orders per customer and merge them in.
