@@ -59,8 +59,8 @@ function VerifyMergeContent() {
               <div className="flex items-start gap-3 text-left">
                 <ShieldCheck className="mt-0.5 h-5 w-5 flex-shrink-0 text-brand-500" />
                 <p className="text-xs text-navy/60">
-                  A platform admin will review the merge request and complete it shortly. Both account
-                  owners will receive an email confirmation when it&apos;s done.
+                  A platform admin will review the merge request and complete it shortly. Both
+                  account owners will receive an email confirmation when it&apos;s done.
                 </p>
               </div>
             </div>

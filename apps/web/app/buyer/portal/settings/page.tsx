@@ -61,9 +61,9 @@ export default function BuyerSettingsPage() {
 
         <p className="mb-5 text-sm text-navy/70">
           If you have two separate RouteFlow accounts (e.g. two different email addresses), you can
-          request to merge them. Your current account (<strong>{buyer?.email}</strong>) will be kept,
-          and the other account will be absorbed into this one. All seller connections from the other
-          account will transfer over.
+          request to merge them. Your current account (<strong>{buyer?.email}</strong>) will be
+          kept, and the other account will be absorbed into this one. All seller connections from
+          the other account will transfer over.
         </p>
 
         {success ? (
