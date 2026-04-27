@@ -73,3 +73,6 @@ backups/
 
 # ─── Claude Code internals ───────────────────────────────────────────────────
 .claude/worktrees/
+
+# ─── QA / audit manifests (ephemeral, contain production IDs) ───────────────
+apps/api/scripts/*-manifest-*.json
