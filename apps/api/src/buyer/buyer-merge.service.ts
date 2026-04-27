@@ -22,46 +22,32 @@ export class BuyerMergeService {
 
   async initiateMerge(primaryBuyerId: string, secondaryEmail: string, notes?: string) {
     const primary = await this.prisma.buyerAccount.findUnique({ where: { id: primaryBuyerId } });
-    if (!primary || primary.status === "DELETED")
-      throw new NotFoundException("Primary account not found");
+    if (!primary || primary.status === "DELETED") throw new NotFoundException("Primary account not found");
 
     const secondary = await this.prisma.buyerAccount.findFirst({
       where: { email: secondaryEmail, status: { not: "DELETED" } },
     });
     if (!secondary) throw new NotFoundException("No active account found with that email address");
-    if (secondary.id === primaryBuyerId)
-      throw new BadRequestException("Cannot merge an account with itself");
+    if (secondary.id === primaryBuyerId) throw new BadRequestException("Cannot merge an account with itself");
 
     // Check for existing open merge request between these two accounts
     const existing = await this.prisma.buyerMergeRequest.findFirst({
       where: {
         primaryAccountId: primaryBuyerId,
         secondaryAccountId: secondary.id,
-        status: {
-          in: [
-            BuyerMergeRequestStatus.PENDING_VERIFICATION,
-            BuyerMergeRequestStatus.PENDING_REVIEW,
-          ],
-        },
+        status: { in: [BuyerMergeRequestStatus.PENDING_VERIFICATION, BuyerMergeRequestStatus.PENDING_REVIEW] },
       },
     });
-    if (existing)
-      throw new ConflictException("An open merge request between these accounts already exists");
+    if (existing) throw new ConflictException("An open merge request between these accounts already exists");
 
     // Check secondary isn't already a target of another pending merge
     const secondaryAsTarget = await this.prisma.buyerMergeRequest.findFirst({
       where: {
         secondaryAccountId: secondary.id,
-        status: {
-          in: [
-            BuyerMergeRequestStatus.PENDING_VERIFICATION,
-            BuyerMergeRequestStatus.PENDING_REVIEW,
-          ],
-        },
+        status: { in: [BuyerMergeRequestStatus.PENDING_VERIFICATION, BuyerMergeRequestStatus.PENDING_REVIEW] },
       },
     });
-    if (secondaryAsTarget)
-      throw new ConflictException("This account is already pending another merge request");
+    if (secondaryAsTarget) throw new ConflictException("This account is already pending another merge request");
 
     // Generate a one-time verification token
     const token = crypto.randomBytes(32).toString("hex");
@@ -107,9 +93,7 @@ export class BuyerMergeService {
       throw new BadRequestException("This merge request has already been processed");
     }
     if (mergeRequest.verificationExpires && mergeRequest.verificationExpires < new Date()) {
-      throw new GoneException(
-        "Verification token has expired. Please initiate a new merge request.",
-      );
+      throw new GoneException("Verification token has expired. Please initiate a new merge request.");
     }
 
     await this.prisma.buyerMergeRequest.update({
@@ -122,23 +106,13 @@ export class BuyerMergeService {
       },
     });
 
-    return {
-      success: true,
-      message:
-        "Your account ownership is confirmed. A platform admin will review and complete the merge shortly.",
-    };
+    return { success: true, message: "Your account ownership is confirmed. A platform admin will review and complete the merge shortly." };
   }
 
   // ─── Tenant: suggest merge ────────────────────────────────────────────────────
 
-  async suggestMerge(
-    tenantId: string,
-    primaryCustomerId: string,
-    secondaryCustomerId: string,
-    notes?: string,
-  ) {
-    if (primaryCustomerId === secondaryCustomerId)
-      throw new BadRequestException("Cannot merge a customer with itself");
+  async suggestMerge(tenantId: string, primaryCustomerId: string, secondaryCustomerId: string, notes?: string) {
+    if (primaryCustomerId === secondaryCustomerId) throw new BadRequestException("Cannot merge a customer with itself");
 
     // Resolve customer links to buyer accounts
     const [primaryLink, secondaryLink] = await Promise.all([
@@ -174,16 +148,10 @@ export class BuyerMergeService {
       where: {
         primaryAccountId: primaryLink.buyerAccountId,
         secondaryAccountId: secondaryLink.buyerAccountId,
-        status: {
-          in: [
-            BuyerMergeRequestStatus.PENDING_VERIFICATION,
-            BuyerMergeRequestStatus.PENDING_REVIEW,
-          ],
-        },
+        status: { in: [BuyerMergeRequestStatus.PENDING_VERIFICATION, BuyerMergeRequestStatus.PENDING_REVIEW] },
       },
     });
-    if (existing)
-      throw new ConflictException("An open merge request between these accounts already exists");
+    if (existing) throw new ConflictException("An open merge request between these accounts already exists");
 
     const mergeRequest = await this.prisma.buyerMergeRequest.create({
       data: {
@@ -196,42 +164,29 @@ export class BuyerMergeService {
       },
     });
 
-    return {
-      id: mergeRequest.id,
-      status: mergeRequest.status,
-      message: "Merge suggestion submitted for admin review.",
-    };
+    return { id: mergeRequest.id, status: mergeRequest.status, message: "Merge suggestion submitted for admin review." };
   }
 
   // ─── Admin: create merge request directly ─────────────────────────────────────
 
   async createAdminMergeRequest(primaryId: string, secondaryId: string, adminNotes?: string) {
-    if (primaryId === secondaryId)
-      throw new BadRequestException("Cannot merge an account with itself");
+    if (primaryId === secondaryId) throw new BadRequestException("Cannot merge an account with itself");
 
     const [primary, secondary] = await Promise.all([
       this.prisma.buyerAccount.findUnique({ where: { id: primaryId } }),
       this.prisma.buyerAccount.findUnique({ where: { id: secondaryId } }),
     ]);
-    if (!primary || primary.status === "DELETED")
-      throw new NotFoundException("Primary account not found");
-    if (!secondary || secondary.status === "DELETED")
-      throw new NotFoundException("Secondary account not found");
+    if (!primary || primary.status === "DELETED") throw new NotFoundException("Primary account not found");
+    if (!secondary || secondary.status === "DELETED") throw new NotFoundException("Secondary account not found");
 
     const existing = await this.prisma.buyerMergeRequest.findFirst({
       where: {
         primaryAccountId: primaryId,
         secondaryAccountId: secondaryId,
-        status: {
-          in: [
-            BuyerMergeRequestStatus.PENDING_VERIFICATION,
-            BuyerMergeRequestStatus.PENDING_REVIEW,
-          ],
-        },
+        status: { in: [BuyerMergeRequestStatus.PENDING_VERIFICATION, BuyerMergeRequestStatus.PENDING_REVIEW] },
       },
     });
-    if (existing)
-      throw new ConflictException("An open merge request between these accounts already exists");
+    if (existing) throw new ConflictException("An open merge request between these accounts already exists");
 
     const mergeRequest = await this.prisma.buyerMergeRequest.create({
       data: {
@@ -283,20 +238,14 @@ export class BuyerMergeService {
         primaryAccount: {
           include: {
             customerLinks: {
-              include: {
-                tenant: { select: { id: true, name: true, slug: true } },
-                customer: { select: { id: true, businessName: true } },
-              },
+              include: { tenant: { select: { id: true, name: true, slug: true } }, customer: { select: { id: true, businessName: true } } },
             },
           },
         },
         secondaryAccount: {
           include: {
             customerLinks: {
-              include: {
-                tenant: { select: { id: true, name: true, slug: true } },
-                customer: { select: { id: true, businessName: true } },
-              },
+              include: { tenant: { select: { id: true, name: true, slug: true } }, customer: { select: { id: true, businessName: true } } },
             },
           },
         },
@@ -308,15 +257,13 @@ export class BuyerMergeService {
 
     const primaryTenantIds = new Set(req.primaryAccount.customerLinks.map((l) => l.tenantId));
 
-    const linksToTransfer = req.secondaryAccount.customerLinks.filter(
-      (l) => !primaryTenantIds.has(l.tenantId),
-    );
-    const conflictingLinks = req.secondaryAccount.customerLinks.filter((l) =>
-      primaryTenantIds.has(l.tenantId),
-    );
+    const linksToTransfer = req.secondaryAccount.customerLinks.filter((l) => !primaryTenantIds.has(l.tenantId));
+    const conflictingLinks = req.secondaryAccount.customerLinks.filter((l) => primaryTenantIds.has(l.tenantId));
 
-    const googleIdTransfer = !req.primaryAccount.googleId && !!req.secondaryAccount.googleId;
-    const googleIdConflict = !!req.primaryAccount.googleId && !!req.secondaryAccount.googleId;
+    const googleIdTransfer =
+      !req.primaryAccount.googleId && !!req.secondaryAccount.googleId;
+    const googleIdConflict =
+      !!req.primaryAccount.googleId && !!req.secondaryAccount.googleId;
 
     return {
       ...req,
@@ -347,10 +294,8 @@ export class BuyerMergeService {
 
     const { primaryAccount, secondaryAccount } = req;
 
-    if (primaryAccount.status === "DELETED")
-      throw new BadRequestException("Primary account is deleted");
-    if (secondaryAccount.status === "DELETED")
-      throw new BadRequestException("Secondary account is already deleted/merged");
+    if (primaryAccount.status === "DELETED") throw new BadRequestException("Primary account is deleted");
+    if (secondaryAccount.status === "DELETED") throw new BadRequestException("Secondary account is already deleted/merged");
 
     // Get secondary's customer links
     const secondaryLinks = await this.prisma.customerLink.findMany({

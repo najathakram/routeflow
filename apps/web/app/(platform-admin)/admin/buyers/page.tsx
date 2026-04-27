@@ -4,7 +4,6 @@ import * as React from "react";
 import Link from "next/link";
 import { superAdminClient } from "@/lib/admin-api";
 import { AdminBadge } from "../../_components/AdminBadge";
-import { AdminModal } from "../../_components/AdminModal";
 import { ChevronUp, ChevronDown, Users, CheckCircle, ShieldOff, Link2 } from "lucide-react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -42,8 +41,6 @@ export default function AdminBuyersPage() {
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [actionLoading, setActionLoading] = React.useState<string | null>(null);
-  const [actionError, setActionError] = React.useState<string | null>(null);
-  const [confirmAction, setConfirmAction] = React.useState<{ buyer: BuyerRow; status: "SUSPENDED" | "DELETED" } | null>(null);
 
   // Filters
   const [search, setSearch] = React.useState("");
@@ -72,21 +69,14 @@ export default function AdminBuyersPage() {
   }, [page, fetchBuyers]);
 
   const setStatus = async (buyer: BuyerRow, status: "ACTIVE" | "SUSPENDED" | "DELETED") => {
-    if (status === "DELETED" || status === "SUSPENDED") {
-      setConfirmAction({ buyer, status });
-      return;
-    }
-    await executeStatus(buyer, status);
-  };
-
-  const executeStatus = async (buyer: BuyerRow, status: "ACTIVE" | "SUSPENDED" | "DELETED") => {
+    if (status === "DELETED" && !window.confirm(`Permanently delete "${buyer.name}" (${buyer.email})?`)) return;
+    if (status === "SUSPENDED" && !window.confirm(`Suspend "${buyer.name}"?`)) return;
     setActionLoading(buyer.id + status);
-    setActionError(null);
     try {
       await superAdminClient.patch(`/platform-admin/buyer-accounts/${buyer.id}/status`, { status });
       fetchBuyers(page);
     } catch (err: unknown) {
-      setActionError((err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Action failed");
+      alert((err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Action failed");
     } finally {
       setActionLoading(null);
     }
@@ -130,54 +120,6 @@ export default function AdminBuyersPage() {
 
   return (
     <div className="p-6">
-      {/* Confirm action modal */}
-      <AdminModal
-        open={!!confirmAction}
-        onClose={() => setConfirmAction(null)}
-        title={
-          confirmAction?.status === "DELETED"
-            ? `Permanently delete "${confirmAction?.buyer.name}"?`
-            : `Suspend "${confirmAction?.buyer.name}"?`
-        }
-        footer={
-          <>
-            <button onClick={() => setConfirmAction(null)} className="rounded-lg px-4 py-2 text-sm text-slate-400 hover:bg-slate-700">Cancel</button>
-            <button
-              disabled={!!actionLoading}
-              onClick={async () => {
-                if (!confirmAction) return;
-                const { buyer, status } = confirmAction;
-                setConfirmAction(null);
-                await executeStatus(buyer, status);
-              }}
-              className={`rounded-lg px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 ${
-                confirmAction?.status === "DELETED" ? "bg-red-600 hover:bg-red-500" : "bg-yellow-600 hover:bg-yellow-500"
-              }`}
-            >
-              {confirmAction?.status === "DELETED" ? "Delete Permanently" : "Suspend"}
-            </button>
-          </>
-        }
-      >
-        {confirmAction?.status === "DELETED" ? (
-          <p className="text-sm text-slate-300">
-            This will permanently delete <strong className="text-white">{confirmAction?.buyer.name}</strong> ({confirmAction?.buyer.email}). This action cannot be undone.
-          </p>
-        ) : (
-          <p className="text-sm text-slate-300">
-            <strong className="text-white">{confirmAction?.buyer.name}</strong> will be suspended and will not be able to log in. You can reactivate them at any time.
-          </p>
-        )}
-      </AdminModal>
-
-      {/* Action error banner */}
-      {actionError && (
-        <div className="mb-4 rounded-lg bg-red-900/40 px-4 py-3 text-sm text-red-400 ring-1 ring-red-700 flex items-center justify-between">
-          <span>{actionError}</span>
-          <button onClick={() => setActionError(null)} className="ml-4 text-red-400 hover:text-red-200 text-lg leading-none">&times;</button>
-        </div>
-      )}
-
       {/* Header */}
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-white">Buyers</h1>

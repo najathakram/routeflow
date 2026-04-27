@@ -39,17 +39,9 @@ export class BuyerAdminMergeController {
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({
-    summary: "Admin creates a merge request directly (no buyer verification needed)",
-  })
-  create(
-    @Body() dto: { primaryAccountId: string; secondaryAccountId: string; adminNotes?: string },
-  ) {
-    return this.mergeService.createAdminMergeRequest(
-      dto.primaryAccountId,
-      dto.secondaryAccountId,
-      dto.adminNotes,
-    );
+  @ApiOperation({ summary: "Admin creates a merge request directly (no buyer verification needed)" })
+  create(@Body() dto: { primaryAccountId: string; secondaryAccountId: string; adminNotes?: string }) {
+    return this.mergeService.createAdminMergeRequest(dto.primaryAccountId, dto.secondaryAccountId, dto.adminNotes);
   }
 
   @Post(":id/execute")

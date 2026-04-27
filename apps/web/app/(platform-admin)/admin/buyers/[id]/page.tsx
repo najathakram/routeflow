@@ -80,16 +80,9 @@ export default function BuyerDetailPage() {
 
   // Status action
   const [statusLoading, setStatusLoading] = React.useState(false);
-  const [statusConfirm, setStatusConfirm] = React.useState<"SUSPENDED" | "DELETED" | null>(null);
-  const [actionError, setActionError] = React.useState<string | null>(null);
 
   // Impersonate
   const [impersonating, setImpersonating] = React.useState(false);
-  const [impersonateConfirm, setImpersonateConfirm] = React.useState(false);
-
-  // Remove link confirm
-  const [removeLinkConfirm, setRemoveLinkConfirm] = React.useState<CustomerLink | null>(null);
-  const [relinkError, setRelinkError] = React.useState<string | null>(null);
 
   // Add link modal
   const [addLinkOpen, setAddLinkOpen] = React.useState(false);
@@ -153,16 +146,9 @@ export default function BuyerDetailPage() {
 
   const handleStatus = async (status: "ACTIVE" | "SUSPENDED" | "DELETED") => {
     if (!buyer) return;
-    if (status === "DELETED" || status === "SUSPENDED") {
-      setStatusConfirm(status);
-      return;
-    }
-    await executeStatus(status);
-  };
-
-  const executeStatus = async (status: "ACTIVE" | "SUSPENDED" | "DELETED") => {
+    if (status === "DELETED" && !window.confirm(`Permanently delete "${buyer.name}"? This cannot be undone.`)) return;
+    if (status === "SUSPENDED" && !window.confirm(`Suspend "${buyer.name}"?`)) return;
     setStatusLoading(true);
-    setActionError(null);
     try {
       await superAdminClient.patch(`/platform-admin/buyer-accounts/${id}/status`, { status });
       if (status === "DELETED") {
@@ -171,7 +157,7 @@ export default function BuyerDetailPage() {
         fetchBuyer();
       }
     } catch (err: unknown) {
-      setActionError((err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Action failed");
+      alert((err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Action failed");
     } finally {
       setStatusLoading(false);
     }
@@ -179,21 +165,15 @@ export default function BuyerDetailPage() {
 
   // ── Impersonate ───────────────────────────────────────────────────────────────
 
-  const handleImpersonate = () => {
-    if (!buyer) return;
-    setImpersonateConfirm(true);
-  };
-
-  const executeImpersonate = async () => {
-    setImpersonateConfirm(false);
+  const handleImpersonate = async () => {
+    if (!buyer || !window.confirm(`Impersonate ${buyer.name}? A short-lived JWT will be issued. The buyer will not be notified.`)) return;
     setImpersonating(true);
-    setActionError(null);
     try {
       const res = await superAdminClient.post<{ accessToken: string }>(`/platform-admin/buyer-accounts/${id}/impersonate`);
       localStorage.setItem("buyerAccessToken", res.data.accessToken);
       window.open("/buyer/portal", "_blank");
     } catch (err: unknown) {
-      setActionError((err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Impersonation failed");
+      alert((err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Impersonation failed");
     } finally {
       setImpersonating(false);
     }
@@ -250,19 +230,14 @@ export default function BuyerDetailPage() {
 
   // ── Remove link ───────────────────────────────────────────────────────────────
 
-  const handleRemoveLink = (link: CustomerLink) => {
-    setRemoveLinkConfirm(link);
-  };
-
-  const executeRemoveLink = async (link: CustomerLink) => {
-    setRemoveLinkConfirm(null);
+  const handleRemoveLink = async (link: CustomerLink) => {
+    if (!window.confirm(`Disconnect "${buyer?.name}" from "${link.tenant.name}"?`)) return;
     setRemovingLink(link.id);
-    setActionError(null);
     try {
       await superAdminClient.delete(`/platform-admin/customer-links/${link.id}`);
       fetchBuyer();
     } catch (err: unknown) {
-      setActionError((err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Failed to remove link");
+      alert((err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Failed to remove link");
     } finally {
       setRemovingLink(null);
     }
@@ -302,85 +277,6 @@ export default function BuyerDetailPage() {
 
   return (
     <div className="p-6 max-w-4xl">
-      {/* Status confirm modal */}
-      <AdminModal
-        open={!!statusConfirm}
-        onClose={() => setStatusConfirm(null)}
-        title={statusConfirm === "DELETED" ? `Permanently delete "${buyer?.name}"?` : `Suspend "${buyer?.name}"?`}
-        footer={
-          <>
-            <button onClick={() => setStatusConfirm(null)} className="rounded-lg px-4 py-2 text-sm text-slate-400 hover:bg-slate-700">Cancel</button>
-            <button
-              onClick={() => { const s = statusConfirm!; setStatusConfirm(null); executeStatus(s); }}
-              className={`rounded-lg px-4 py-2 text-sm font-semibold text-white ${statusConfirm === "DELETED" ? "bg-red-600 hover:bg-red-500" : "bg-yellow-600 hover:bg-yellow-500"}`}
-            >
-              {statusConfirm === "DELETED" ? "Delete Permanently" : "Suspend"}
-            </button>
-          </>
-        }
-      >
-        {statusConfirm === "DELETED" ? (
-          <p className="text-sm text-slate-300">This will permanently delete <strong className="text-white">{buyer?.name}</strong>. This action cannot be undone.</p>
-        ) : (
-          <p className="text-sm text-slate-300"><strong className="text-white">{buyer?.name}</strong> will be suspended and cannot log in. You can reactivate them at any time.</p>
-        )}
-      </AdminModal>
-
-      {/* Impersonate confirm modal */}
-      <AdminModal
-        open={impersonateConfirm}
-        onClose={() => setImpersonateConfirm(false)}
-        title={`Impersonate ${buyer?.name}?`}
-        footer={
-          <>
-            <button onClick={() => setImpersonateConfirm(false)} className="rounded-lg px-4 py-2 text-sm text-slate-400 hover:bg-slate-700">Cancel</button>
-            <button onClick={executeImpersonate} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500">
-              Open Portal
-            </button>
-          </>
-        }
-      >
-        <p className="text-sm text-slate-300">A short-lived JWT will be issued and the buyer portal will open in a new tab. The buyer will not be notified.</p>
-      </AdminModal>
-
-      {/* Remove link confirm modal */}
-      <AdminModal
-        open={!!removeLinkConfirm}
-        onClose={() => setRemoveLinkConfirm(null)}
-        title={`Disconnect from "${removeLinkConfirm?.tenant.name}"?`}
-        footer={
-          <>
-            <button onClick={() => setRemoveLinkConfirm(null)} className="rounded-lg px-4 py-2 text-sm text-slate-400 hover:bg-slate-700">Cancel</button>
-            <button
-              onClick={() => { const l = removeLinkConfirm!; setRemoveLinkConfirm(null); executeRemoveLink(l); }}
-              className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-500"
-            >
-              Disconnect
-            </button>
-          </>
-        }
-      >
-        <p className="text-sm text-slate-300">
-          This will remove the connection between <strong className="text-white">{buyer?.name}</strong> and <strong className="text-white">{removeLinkConfirm?.tenant.name}</strong>. The buyer will lose access to that seller&apos;s portal.
-        </p>
-      </AdminModal>
-
-      {/* Action error banner */}
-      {actionError && (
-        <div className="mb-4 flex items-center justify-between rounded-lg bg-red-900/40 px-4 py-3 text-sm text-red-400 ring-1 ring-red-700">
-          <span>{actionError}</span>
-          <button onClick={() => setActionError(null)} className="ml-4 text-red-400 hover:text-red-200 text-lg leading-none">&times;</button>
-        </div>
-      )}
-
-      {/* Relink error banner */}
-      {relinkError && (
-        <div className="mb-4 flex items-center justify-between rounded-lg bg-red-900/40 px-4 py-3 text-sm text-red-400 ring-1 ring-red-700">
-          <span>{relinkError}</span>
-          <button onClick={() => setRelinkError(null)} className="ml-4 text-red-400 hover:text-red-200 text-lg leading-none">&times;</button>
-        </div>
-      )}
-
       {/* Back + Header */}
       <div className="mb-6">
         <Link
@@ -651,7 +547,6 @@ export default function BuyerDetailPage() {
                             disabled={addLinkLoading}
                             onClick={async () => {
                               setAddLinkLoading(true);
-                              setRelinkError(null);
                               try {
                                 await superAdminClient.post(`/platform-admin/buyer-accounts/${id}/links`, {
                                   tenantId: link.tenant.id,
@@ -659,7 +554,7 @@ export default function BuyerDetailPage() {
                                 });
                                 fetchBuyer();
                               } catch (err: unknown) {
-                                setRelinkError((err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Failed");
+                                alert((err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Failed");
                               } finally {
                                 setAddLinkLoading(false);
                               }

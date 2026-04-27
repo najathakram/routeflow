@@ -42,7 +42,7 @@ function VerifyMergeContent() {
       <div className="w-full max-w-md rounded-2xl border border-surface-border bg-white p-8 shadow-sm text-center">
         {status === "loading" && (
           <>
-            <Loader2 className="mx-auto mb-4 h-12 w-12 animate-spin text-buyer-500" />
+            <Loader2 className="mx-auto mb-4 h-12 w-12 animate-spin text-brand-500" />
             <h1 className="text-xl font-bold text-navy">Verifying...</h1>
             <p className="mt-2 text-sm text-navy/60">Please wait while we confirm your account.</p>
           </>
@@ -57,7 +57,7 @@ function VerifyMergeContent() {
             <p className="mt-2 text-sm text-navy/70">{message}</p>
             <div className="mt-6 rounded-lg bg-surface-raised p-4">
               <div className="flex items-start gap-3 text-left">
-                <ShieldCheck className="mt-0.5 h-5 w-5 flex-shrink-0 text-buyer-500" />
+                <ShieldCheck className="mt-0.5 h-5 w-5 flex-shrink-0 text-brand-500" />
                 <p className="text-xs text-navy/60">
                   A platform admin will review the merge request and complete it shortly. Both account
                   owners will receive an email confirmation when it&apos;s done.
@@ -66,7 +66,7 @@ function VerifyMergeContent() {
             </div>
             <Link
               href="/buyer/login"
-              className="mt-6 inline-block rounded-lg bg-buyer-600 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-buyer-700"
+              className="mt-6 inline-block rounded-lg bg-brand-600 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-brand-700"
             >
               Go to Login
             </Link>
@@ -86,7 +86,7 @@ function VerifyMergeContent() {
             </p>
             <Link
               href="/buyer/login"
-              className="mt-6 inline-block rounded-lg bg-buyer-600 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-buyer-700"
+              className="mt-6 inline-block rounded-lg bg-brand-600 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-brand-700"
             >
               Go to Login
             </Link>
@@ -102,7 +102,7 @@ export default function VerifyMergePage() {
     <React.Suspense
       fallback={
         <div className="flex min-h-screen items-center justify-center bg-surface-raised">
-          <Loader2 className="h-8 w-8 animate-spin text-buyer-500" />
+          <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
         </div>
       }
     >
