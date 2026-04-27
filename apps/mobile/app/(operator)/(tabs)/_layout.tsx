@@ -34,14 +34,15 @@ export default function OperatorTabsLayout() {
           }}
         />
         <Tabs.Screen
-          name="finance"
+          name="orders"
           options={{
-            title: "Finance",
+            title: "Orders",
             tabBarIcon: ({ color, size }) => (
               <Ionicons name="receipt-outline" size={size} color={color} />
             ),
           }}
         />
+        <Tabs.Screen name="finance" options={{ href: null }} />
         <Tabs.Screen
           name="warehouse"
           options={{

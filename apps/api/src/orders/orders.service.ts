@@ -556,15 +556,27 @@ export class OrdersService {
         });
       }
     } else {
-      // Operator path: update by line item id, or add new item if no id
-      for (const item of dto.items) {
-        // New item (no id, has productId + qty)
-        if (!item.id && item.productId && item.qty) {
-          const product = await this.prisma
-            .forTenant()
-            .product.findUnique({ where: { id: item.productId } });
-          if (!product) continue;
-          const unitPrice = Number(product.pricePerUnit);
+      // Operator/admin path
+      const allNewItems = dto.items.every((i) => !i.id);
+
+      if (allNewItems) {
+        // Mobile "replace-all" pattern: client sends full item list without IDs.
+        // Delete existing items then re-create, honoring any per-line price override.
+        const productIds = dto.items.map((i) => i.productId).filter(Boolean) as string[];
+        const products = await this.prisma
+          .forTenant()
+          .product.findMany({ where: { id: { in: productIds } } });
+        const productMap = new Map(products.map((p) => [p.id, p]));
+
+        await this.prisma.forTenant().orderItem.deleteMany({ where: { orderId } });
+        for (const item of dto.items) {
+          if (!item.productId || !item.qty) continue;
+          const product = productMap.get(item.productId);
+          if (!product) throw new BadRequestException(`Product ${item.productId} not found`);
+          const catalogPrice = Number(product.pricePerUnit);
+          const overridePrice = item.unitPrice !== undefined ? Number(item.unitPrice) : null;
+          const isManualOverride = overridePrice !== null && overridePrice !== catalogPrice;
+          const unitPrice = isManualOverride ? overridePrice : catalogPrice;
           await this.prisma.forTenant().orderItem.create({
             data: {
               orderId,
@@ -574,45 +586,96 @@ export class OrdersService {
               subtotal: item.qty * unitPrice,
               status: "PENDING",
               notes: item.notes,
+              priceType: isManualOverride ? PriceType.MANUAL : PriceType.STANDARD,
+              originalPrice: isManualOverride ? catalogPrice : null,
+              overrideReason: isManualOverride ? (item.overrideReason ?? null) : null,
+              overriddenBy: isManualOverride ? (user?.sub ?? null) : null,
             },
           });
-          continue;
         }
-        if (item.action === "CANCEL") {
-          await this.prisma.forTenant().orderItem.update({
-            where: { id: item.id },
-            data: { status: "CANCELLED", qty: 0, subtotal: 0 },
-          });
-        } else if (item.substituteProductId) {
-          const product = await this.prisma.forTenant().product.findUniqueOrThrow({
-            where: { id: item.substituteProductId },
-          });
-          const existingQty = order.lineItems.find((li) => li.id === item.id)?.qty ?? 1;
-          const qtyVal = item.qty ?? Number(existingQty);
-          const unitPrice = Number(product.pricePerUnit);
-          await this.prisma.forTenant().orderItem.update({
-            where: { id: item.id },
-            data: {
-              productId: item.substituteProductId,
-              unitPrice,
-              qty: qtyVal,
-              subtotal: qtyVal * unitPrice,
-              status: "PENDING",
-              notes: item.notes,
-            },
-          });
-        } else if (item.qty !== undefined) {
-          const li = order.lineItems.find((li) => li.id === item.id);
-          if (!li) continue;
-          const unitPrice = Number(li.unitPrice);
-          await this.prisma.forTenant().orderItem.update({
-            where: { id: item.id },
-            data: {
-              qty: item.qty,
-              subtotal: item.qty * unitPrice,
-              ...(item.notes !== undefined ? { notes: item.notes } : {}),
-            },
-          });
+      } else {
+        // Individual item updates (dispatcher workflow with explicit item IDs)
+        for (const item of dto.items) {
+          // New item (no id, has productId + qty)
+          if (!item.id && item.productId && item.qty) {
+            const product = await this.prisma
+              .forTenant()
+              .product.findUnique({ where: { id: item.productId } });
+            if (!product) continue;
+            const catalogPrice = Number(product.pricePerUnit);
+            const overridePrice = item.unitPrice !== undefined ? Number(item.unitPrice) : null;
+            const isManualOverride = overridePrice !== null && overridePrice !== catalogPrice;
+            const unitPrice = isManualOverride ? overridePrice : catalogPrice;
+            await this.prisma.forTenant().orderItem.create({
+              data: {
+                orderId,
+                productId: item.productId,
+                qty: item.qty,
+                unitPrice,
+                subtotal: item.qty * unitPrice,
+                status: "PENDING",
+                notes: item.notes,
+                priceType: isManualOverride ? PriceType.MANUAL : PriceType.STANDARD,
+                originalPrice: isManualOverride ? catalogPrice : null,
+                overrideReason: isManualOverride ? (item.overrideReason ?? null) : null,
+                overriddenBy: isManualOverride ? (user?.sub ?? null) : null,
+              },
+            });
+            continue;
+          }
+          if (item.action === "CANCEL") {
+            await this.prisma.forTenant().orderItem.update({
+              where: { id: item.id },
+              data: { status: "CANCELLED", qty: 0, subtotal: 0 },
+            });
+          } else if (item.substituteProductId) {
+            const product = await this.prisma.forTenant().product.findUniqueOrThrow({
+              where: { id: item.substituteProductId },
+            });
+            const existingQty = order.lineItems.find((li) => li.id === item.id)?.qty ?? 1;
+            const qtyVal = item.qty ?? Number(existingQty);
+            const unitPrice = Number(product.pricePerUnit);
+            await this.prisma.forTenant().orderItem.update({
+              where: { id: item.id },
+              data: {
+                productId: item.substituteProductId,
+                unitPrice,
+                qty: qtyVal,
+                subtotal: qtyVal * unitPrice,
+                status: "PENDING",
+                notes: item.notes,
+                priceType: PriceType.STANDARD,
+                originalPrice: null,
+                overrideReason: null,
+                overriddenBy: null,
+              },
+            });
+          } else if (item.qty !== undefined) {
+            const li = order.lineItems.find((li) => li.id === item.id);
+            if (!li) continue;
+            const existingUnitPrice = Number(li.unitPrice);
+            const overridePrice = item.unitPrice !== undefined ? Number(item.unitPrice) : null;
+            const isManualOverride =
+              overridePrice !== null && overridePrice !== existingUnitPrice;
+            const unitPrice = isManualOverride ? overridePrice : existingUnitPrice;
+            await this.prisma.forTenant().orderItem.update({
+              where: { id: item.id },
+              data: {
+                qty: item.qty,
+                unitPrice,
+                subtotal: item.qty * unitPrice,
+                ...(item.notes !== undefined ? { notes: item.notes } : {}),
+                ...(isManualOverride
+                  ? {
+                      priceType: PriceType.MANUAL,
+                      originalPrice: existingUnitPrice,
+                      overrideReason: item.overrideReason ?? null,
+                      overriddenBy: user?.sub ?? null,
+                    }
+                  : {}),
+              },
+            });
+          }
         }
       }
     }

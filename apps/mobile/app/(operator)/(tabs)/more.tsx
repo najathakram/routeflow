@@ -39,6 +39,14 @@ export default function OperatorMoreScreen() {
 
         <ListGroup header="MANAGE">
           <ListRow
+            icon={<Ionicons name="wallet-outline" size={16} color={ios.system.orangeInk} />}
+            iconBg={ios.system.orangeWash}
+            title="Finance"
+            subtitle="Vendor bills & expenses"
+            onPress={() => router.push("/(operator)/finance")}
+            chevron
+          />
+          <ListRow
             icon={<Ionicons name="receipt-outline" size={16} color={ios.brand} />}
             iconBg={ios.brandWash}
             title="Orders"

@@ -203,6 +203,7 @@ enum PriceType {
   STANDARD
   SPECIAL
   DISCOUNTED
+  MANUAL
 }
 
 // ─── Buyer Portal Enums ───────────────────────────────────────────────────────
@@ -846,6 +847,8 @@ model OrderItem {
   subtotal      Decimal    @default(0) @db.Decimal(10, 2)
   priceType     PriceType  @default(STANDARD)
   originalPrice Decimal?   @db.Decimal(10, 2)
+  overrideReason String?
+  overriddenBy   String?
   boxes         Int?
   pieces        Int?
   notes         String?
