@@ -47,7 +47,7 @@ export default function DriverLayout() {
         <Tabs.Screen
           name="orders"
           options={{
-            title: "Orders",
+            title: "Standing",
             tabBarIcon: ({ color, size }) => (
               <Ionicons name="calendar-outline" size={size} color={color} />
             ),

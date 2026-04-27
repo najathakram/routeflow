@@ -14,7 +14,7 @@ export function MessagesScreen() {
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <NavBar
         inlineTitle="Messages"
-        leading={<NavBackButton onPress={() => router.back()} />}
+        leading={<NavBackButton label="More" onPress={() => router.back()} />}
       />
       <View style={{ flex: 1 }}>
         <IosEmptyState

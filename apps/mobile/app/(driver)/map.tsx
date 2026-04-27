@@ -5,13 +5,12 @@ import * as Location from "expo-location";
 import { ios } from "@routeflow/ui/tokens";
 import { IosEmptyState } from "@routeflow/ui/mobile/ios";
 import { Ionicons } from "@expo/vector-icons";
-import { useAuthStore } from "../../lib/auth-store";
-import { useRoutesLive } from "../../lib/api/routes";
+import { useActiveRouteRun } from "../../lib/api/routes";
 import { AppMapView, type MapPin, type MapPolyline } from "../../components/MapView";
 
 export default function DriverMapScreen() {
-  const user = useAuthStore((s) => s.user);
-  const { data: liveData, isLoading } = useRoutesLive();
+  const { data: activeData, isLoading } = useActiveRouteRun();
+  const activeRun = activeData?.data?.[0] ?? null;
   const [foregroundLoc, setForegroundLoc] = useState<{ lat: number; lng: number } | null>(null);
 
   // Read the device's current GPS while this screen is visible so the driver
@@ -46,48 +45,45 @@ export default function DriverMapScreen() {
     };
   }, []);
 
-  const myRoute = useMemo(() => {
-    if (!user?.id || !liveData?.routes) return null;
-    return liveData.routes.find((r) => r.driverId === user.id) ?? null;
-  }, [liveData, user?.id]);
-
   const { pins, polylines } = useMemo<{ pins: MapPin[]; polylines: MapPolyline[] }>(() => {
-    if (!myRoute) return { pins: [], polylines: [] };
+    if (!activeRun) return { pins: [], polylines: [] };
 
     const pinList: MapPin[] = [];
 
-    // Prefer server-side latestLocation (authoritative, includes other devices)
-    // and fall back to the live foreground reading from this screen.
-    const driverLoc = myRoute.latestLocation ?? foregroundLoc;
-    if (driverLoc) {
+    if (foregroundLoc) {
       pinList.push({
         id: "driver-me",
-        lat: driverLoc.lat,
-        lng: driverLoc.lng,
+        lat: foregroundLoc.lat,
+        lng: foregroundLoc.lng,
         title: "My location",
         color: "brand",
       });
     }
 
-    for (const s of myRoute.stops) {
-      if (s.lat == null || s.lng == null) continue;
+    const stops = activeRun.stops ?? [];
+    const currentIdx = stops.findIndex(
+      (x) => x.status === "PENDING" || x.status === "IN_PROGRESS",
+    );
+
+    stops.forEach((s, idx) => {
+      const lat = s.customerAddress?.lat;
+      const lng = s.customerAddress?.lng;
+      if (lat == null || lng == null) return;
       const isDone = s.status === "COMPLETED";
-      const isCurrent =
-        myRoute.stops.findIndex((x) => x.status === "PENDING" || x.status === "IN_PROGRESS") ===
-        myRoute.stops.indexOf(s);
+      const isCurrent = idx === currentIdx;
       pinList.push({
         id: `stop-${s.id}`,
-        lat: s.lat,
-        lng: s.lng,
-        title: s.customerName,
+        lat,
+        lng,
+        title: s.customer?.businessName ?? `Stop ${s.stopNumber}`,
         subtitle: `Stop ${s.stopNumber}`,
         color: isDone ? "gray" : isCurrent ? "orange" : "green",
       });
-    }
+    });
 
-    const routeCoords = myRoute.stops
-      .filter((s) => s.lat != null && s.lng != null)
-      .map((s) => ({ lat: s.lat as number, lng: s.lng as number }));
+    const routeCoords = stops
+      .map((s) => ({ lat: s.customerAddress?.lat, lng: s.customerAddress?.lng }))
+      .filter((c): c is { lat: number; lng: number } => c.lat != null && c.lng != null);
 
     const lines: MapPolyline[] =
       routeCoords.length > 1
@@ -95,7 +91,7 @@ export default function DriverMapScreen() {
         : [];
 
     return { pins: pinList, polylines: lines };
-  }, [myRoute, foregroundLoc]);
+  }, [activeRun, foregroundLoc]);
 
   if (isLoading) {
     return (
@@ -107,7 +103,7 @@ export default function DriverMapScreen() {
     );
   }
 
-  if (!myRoute) {
+  if (!activeRun) {
     return (
       <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
         <IosEmptyState
