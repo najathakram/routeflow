@@ -155,6 +155,29 @@ export class RouteRunsController {
     return this.routesService.findOneRun(id, user);
   }
 
+  @Post(":id/stops/:stopId/complete")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
+  completeStop(
+    @Param("id") runId: string,
+    @Param("stopId") stopId: string,
+    @Body() body: {
+      driverNote?: string;
+      podPhotoUrls?: string[];
+      signatureUrl?: string;
+      safeDropEnabled?: boolean;
+      deliveries?: Array<{
+        orderItemId: string;
+        type: string;
+        quantityDelivered: number;
+        note?: string;
+      }>;
+    },
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.routesService.completeStop(runId, stopId, body, user);
+  }
+
   @Patch(":id/stops/:stopId")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR, UserRole.DRIVER)

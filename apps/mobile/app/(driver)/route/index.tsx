@@ -181,6 +181,7 @@ function TodaysRoute({
 }) {
   const stops = run.stops ?? [];
   const optimize = useOptimizeRouteRun();
+  const updateStatus = useUpdateRunStatus();
 
   const onOptimizeFromHere = async () => {
     const loc = await readDriverLocation();
@@ -247,7 +248,42 @@ function TodaysRoute({
           </View>
         </View>
 
-        {nextStop ? (
+        {!nextStop && done > 0 ? (
+          <View style={{ padding: 16, paddingTop: 14 }}>
+            <View style={[styles.heroCard, { backgroundColor: ios.system.greenInk }]}>
+              <Ionicons name="checkmark-circle" size={32} color="#fff" style={{ marginBottom: 8 }} />
+              <Text style={styles.heroTitleLg}>All stops done!</Text>
+              <Text style={[styles.heroSub, { marginBottom: 16 }]}>
+                {done} of {totalStops} delivered
+              </Text>
+              <Pressable
+                style={[styles.heroBtnGhost, { alignSelf: "stretch", justifyContent: "center" }]}
+                disabled={updateStatus.isPending}
+                onPress={() =>
+                  Alert.alert(
+                    "Complete route?",
+                    "This will mark the run as finished and lock all stops.",
+                    [
+                      { text: "Cancel", style: "cancel" },
+                      {
+                        text: "Complete",
+                        onPress: () =>
+                          updateStatus.mutate(
+                            { id: run.id, status: "COMPLETED" },
+                            { onError: (e: any) => Alert.alert("Error", e?.response?.data?.message ?? e.message) },
+                          ),
+                      },
+                    ],
+                  )
+                }
+              >
+                <Text style={styles.heroBtnGhostText}>
+                  {updateStatus.isPending ? "Completing…" : "Mark route complete"}
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        ) : nextStop ? (
           <View style={{ padding: 16, paddingTop: 14 }}>
             <LinearGradient
               colors={[ios.brandGradient[0]!, ios.brandGradient[1]!, ios.brandGradient[2]!]}

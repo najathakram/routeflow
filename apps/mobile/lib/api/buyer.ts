@@ -155,7 +155,7 @@ export function useBuyerCancelOrder() {
 
 // ─── Invoices ─────────────────────────────────────────────────────────────────
 
-export function useBuyerInvoices(params?: { status?: string; page?: number; limit?: number }) {
+export function useBuyerInvoices(params?: { status?: string; statuses?: string[]; page?: number; limit?: number }) {
   return useQuery<{ data: BuyerInvoice[]; meta: any }>({
     queryKey: ["buyer-invoices", params],
     queryFn: () =>
@@ -208,5 +208,14 @@ export function useBuyerReorder() {
     mutationFn: (templateId) =>
       buyerApiClient.post(`/buyer/templates/${templateId}/reorder`).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["buyer-orders"] }),
+  });
+}
+
+export function useBuyerUpdateTemplate() {
+  const qc = useQueryClient();
+  return useMutation<any, Error, { id: string; isActive: boolean }>({
+    mutationFn: ({ id, isActive }) =>
+      buyerApiClient.patch(`/buyer/templates/${id}`, { isActive }).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["buyer-templates"] }),
   });
 }
