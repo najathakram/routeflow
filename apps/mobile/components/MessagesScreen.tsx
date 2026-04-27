@@ -3,11 +3,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
-import {
-  IosEmptyState,
-  NavBackButton,
-  NavBar,
-} from "@routeflow/ui/mobile/ios";
+import { IosEmptyState, NavBackButton, NavBar } from "@routeflow/ui/mobile/ios";
 
 // Dispatcher ↔ driver messaging isn't wired yet — no /messages endpoint or
 // websocket feed. Show an honest empty state instead of the hi-fi mockup's

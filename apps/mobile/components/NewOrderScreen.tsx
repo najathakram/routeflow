@@ -12,12 +12,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
-import {
-  NavAction,
-  NavBackButton,
-  NavBar,
-  SearchBar,
-} from "@routeflow/ui/mobile/ios";
+import { NavAction, NavBackButton, NavBar, SearchBar } from "@routeflow/ui/mobile/ios";
 import { useAdminCustomers } from "../lib/api/admin";
 import { useProducts } from "../lib/api/products";
 import { useCreateOrderAsDriver } from "../lib/api/orders";
@@ -129,11 +124,7 @@ function CustomerPickerView({
         inlineTitle="Choose customer"
         leading={<NavBackButton label={backLabel ?? "Back"} onPress={onBack} />}
       />
-      <SearchBar
-        placeholder="Search customers…"
-        value={search}
-        onChangeText={setSearch}
-      />
+      <SearchBar placeholder="Search customers…" value={search} onChangeText={setSearch} />
       <ScrollView showsVerticalScrollIndicator={false}>
         {isLoading ? (
           <View style={styles.center}>
@@ -239,10 +230,8 @@ function ProductPickView({
     return sum + q * toNumber(p.pricePerUnit);
   }, 0);
 
-  const inc = (id: string) =>
-    setItems((m) => ({ ...m, [id]: (m[id] ?? 0) + 1 }));
-  const dec = (id: string) =>
-    setItems((m) => ({ ...m, [id]: Math.max(0, (m[id] ?? 0) - 1) }));
+  const inc = (id: string) => setItems((m) => ({ ...m, [id]: (m[id] ?? 0) + 1 }));
+  const dec = (id: string) => setItems((m) => ({ ...m, [id]: Math.max(0, (m[id] ?? 0) - 1) }));
 
   const createOrder = useCreateOrderAsDriver();
 
@@ -271,8 +260,10 @@ function ProductPickView({
         },
         onError: (err: Error) => {
           const msg =
-            (err as unknown as { response?: { data?: { message?: string } } })
-              ?.response?.data?.message ?? err?.message ?? "Unable to save order.";
+            (err as unknown as { response?: { data?: { message?: string } } })?.response?.data
+              ?.message ??
+            err?.message ??
+            "Unable to save order.";
           Alert.alert("Couldn't save order", String(msg));
         },
       },
@@ -283,12 +274,7 @@ function ProductPickView({
     <>
       <NavBar
         inlineTitle="New order"
-        leading={
-          <NavBackButton
-            label={backLabel ?? customerName ?? "Back"}
-            onPress={onBack}
-          />
-        }
+        leading={<NavBackButton label={backLabel ?? customerName ?? "Back"} onPress={onBack} />}
         trailing={
           <NavAction
             label={createOrder.isPending ? "Saving…" : "Save"}
@@ -309,9 +295,7 @@ function ProductPickView({
           <Text style={styles.customerChipText} numberOfLines={1}>
             {customerName ?? "Customer"}
           </Text>
-          {customerLocked ? null : (
-            <Text style={styles.customerChipChange}>Change</Text>
-          )}
+          {customerLocked ? null : <Text style={styles.customerChipChange}>Change</Text>}
         </Pressable>
       </View>
 
@@ -350,9 +334,7 @@ function ProductPickView({
           </View>
         ) : filtered.length === 0 ? (
           <View style={styles.center}>
-            <Text style={styles.emptyText}>
-              No products{search ? " match your search" : ""}.
-            </Text>
+            <Text style={styles.emptyText}>No products{search ? " match your search" : ""}.</Text>
           </View>
         ) : (
           <View style={{ paddingHorizontal: 16, paddingTop: 14, gap: 10 }}>

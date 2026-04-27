@@ -903,7 +903,12 @@ export class RoutesService {
       podPhotoUrls?: string[];
       signatureUrl?: string;
       safeDropEnabled?: boolean;
-      deliveries?: Array<{ orderItemId: string; type: string; quantityDelivered: number; note?: string }>;
+      deliveries?: Array<{
+        orderItemId: string;
+        type: string;
+        quantityDelivered: number;
+        note?: string;
+      }>;
     },
     user: JwtPayload,
   ) {
@@ -912,12 +917,12 @@ export class RoutesService {
       include: { orders: { select: { id: true, status: true, customerId: true } } },
     });
     if (!stop) throw new NotFoundException("Stop not found");
-    if (stop.status === "COMPLETED")
-      throw new BadRequestException("Stop is already completed");
+    if (stop.status === "COMPLETED") throw new BadRequestException("Stop is already completed");
 
-    const driver = user.role === UserRole.DRIVER
-      ? await this.prisma.forTenant().driver.findFirst({ where: { userId: user.sub } })
-      : null;
+    const driver =
+      user.role === UserRole.DRIVER
+        ? await this.prisma.forTenant().driver.findFirst({ where: { userId: user.sub } })
+        : null;
 
     await this.prisma.tenantTransaction(async (tx) => {
       // 1. Mark stop completed
@@ -959,7 +964,10 @@ export class RoutesService {
       const orderIds = stop.orders.map((o) => o.id);
       if (orderIds.length > 0) {
         await tx.order.updateMany({
-          where: { id: { in: orderIds }, status: { notIn: [OrderStatus.CANCELLED, OrderStatus.DELIVERED] } },
+          where: {
+            id: { in: orderIds },
+            status: { notIn: [OrderStatus.CANCELLED, OrderStatus.DELIVERED] },
+          },
           data: { status: OrderStatus.DELIVERED },
         });
       }
