@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -229,6 +230,75 @@ export default function RouteDetailScreen() {
             </View>
             {stops.length === 0 ? (
               <Text style={styles.empty}>No stops yet.</Text>
+            ) : Platform.OS === "web" ? (
+              stops.map((s, i) => (
+                <View
+                  key={s.id}
+                  style={[
+                    styles.stopRow,
+                    i > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: ios.separator },
+                  ]}
+                >
+                  <View style={styles.stopBadge}>
+                    <Text style={styles.stopBadgeText}>{i + 1}</Text>
+                  </View>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={styles.stopName} numberOfLines={1}>
+                      {s.customer?.businessName ?? s.customerId}
+                    </Text>
+                    {typeof s.customerAddress?.lat !== "number" ||
+                    typeof s.customerAddress?.lng !== "number" ? (
+                      <View style={styles.noLocRow}>
+                        <Ionicons name="alert-circle" size={11} color={ios.system.orangeInk} />
+                        <Text style={styles.noLocText}>No location</Text>
+                      </View>
+                    ) : null}
+                  </View>
+                  <View style={{ flexDirection: "row", gap: 4 }}>
+                    <Pressable
+                      style={styles.iconBtn}
+                      onPress={() => {
+                        if (i === 0) return;
+                        const order = stops.map((x, j) => {
+                          if (j === i - 1) return { id: stops[i]!.id, stopNumber: i };
+                          if (j === i) return { id: stops[i - 1]!.id, stopNumber: i + 1 };
+                          return { id: x.id, stopNumber: j + 1 };
+                        });
+                        reorderMut.mutate(
+                          { routeId: id!, order },
+                          { onSuccess: () => refetch(), onError: (e: any) => Alert.alert("Couldn't reorder", e?.response?.data?.message ?? e?.message) },
+                        );
+                      }}
+                      disabled={i === 0}
+                      accessibilityLabel="Move up"
+                    >
+                      <Ionicons name="chevron-up" size={16} color={i === 0 ? ios.label3 : ios.label2} />
+                    </Pressable>
+                    <Pressable
+                      style={styles.iconBtn}
+                      onPress={() => {
+                        if (i === stops.length - 1) return;
+                        const order = stops.map((x, j) => {
+                          if (j === i) return { id: stops[i + 1]!.id, stopNumber: i + 1 };
+                          if (j === i + 1) return { id: stops[i]!.id, stopNumber: i + 2 };
+                          return { id: x.id, stopNumber: j + 1 };
+                        });
+                        reorderMut.mutate(
+                          { routeId: id!, order },
+                          { onSuccess: () => refetch(), onError: (e: any) => Alert.alert("Couldn't reorder", e?.response?.data?.message ?? e?.message) },
+                        );
+                      }}
+                      disabled={i === stops.length - 1}
+                      accessibilityLabel="Move down"
+                    >
+                      <Ionicons name="chevron-down" size={16} color={i === stops.length - 1 ? ios.label3 : ios.label2} />
+                    </Pressable>
+                    <Pressable style={styles.iconBtn} onPress={() => removeStop(s.id)}>
+                      <Ionicons name="trash-outline" size={14} color={ios.system.red} />
+                    </Pressable>
+                  </View>
+                </View>
+              ))
             ) : (
               <DraggableFlatList
                 data={stops}

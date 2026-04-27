@@ -28,6 +28,7 @@ import {
   useRouteSettings,
   useUpdateStopStatus,
 } from "../../../lib/api/routes";
+import { openRouteInMaps } from "../../../components/openInMaps";
 import { showToast } from "../../../lib/toast";
 import { openRouteInMaps } from "../../../components/openInMaps";
 
@@ -368,6 +369,16 @@ export default function OperatorRouteRunScreen() {
                   ? "Re-optimize from here"
                   : "Optimize run"}
               </Text>
+            </Pressable>
+          ) : null}
+
+          {pins.length > 0 ? (
+            <Pressable
+              style={styles.actionBtn}
+              onPress={() => openRouteInMaps(stops as any)}
+            >
+              <Ionicons name="navigate-outline" size={18} color={ios.brand} />
+              <Text style={styles.actionText}>Open in Google Maps</Text>
             </Pressable>
           ) : null}
 

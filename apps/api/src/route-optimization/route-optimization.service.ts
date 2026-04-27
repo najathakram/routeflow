@@ -198,6 +198,22 @@ export class RouteOptimizationService {
       return { stopOrder: [], reorderedCount: 0, usedFallback: false };
     }
 
+    // Fallback: for stops where customerAddressId FK is null, pull the customer's default address
+    const stopsNeedingAddr = route.stops.filter((s) => !s.customerAddress && s.customerId);
+    if (stopsNeedingAddr.length > 0) {
+      const defaultAddrs = await this.prisma.forTenant().customerAddress.findMany({
+        where: {
+          customerId: { in: stopsNeedingAddr.map((s) => s.customerId!) },
+          isDefault: true,
+        },
+      });
+      const addrByCustomer = new Map(defaultAddrs.map((a) => [a.customerId, a]));
+      for (const s of stopsNeedingAddr) {
+        const addr = addrByCustomer.get(s.customerId!);
+        if (addr) (s as any).customerAddress = addr;
+      }
+    }
+
     // Geocode any stops missing lat/lng
     for (const stop of route.stops) {
       const addr = stop.customerAddress;
