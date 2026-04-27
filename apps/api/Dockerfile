@@ -44,11 +44,6 @@ COPY --from=builder /app/node_modules  ./node_modules
 # Workspace-level node_modules (packages like rxjs that npm doesn't hoist to root)
 COPY --from=builder /app/apps/api/node_modules ./apps/api/node_modules
 
-# rxjs is installed at workspace level (apps/api/node_modules) not hoisted to root.
-# @nestjs/common resolves from /app/node_modules so it can only walk UP — it will
-# never find /app/apps/api/node_modules/rxjs unless we also provide it at root.
-COPY --from=builder /app/apps/api/node_modules/rxjs ./node_modules/rxjs
-
 # Workspace package sources — required so that workspace symlinks inside
 # node_modules (e.g. node_modules/@routeflow/types -> ../../packages/types)
 # resolve correctly at runtime.
