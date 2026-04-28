@@ -88,7 +88,7 @@ export default function OperatorHomeScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <NavBar
-        largeTitle="Warehouse"
+        largeTitle="Today"
         subtitle={
           routesLoading ? " " : `${routes.length} route${routes.length === 1 ? "" : "s"} today`
         }
@@ -247,8 +247,12 @@ export default function OperatorHomeScreen() {
                         ? ios.system.red
                         : ios.gray[3];
               const stopCount = r._count?.stops ?? 0;
+              const activeRun = r.runs?.[0];
+              const cardDest = activeRun
+                ? (`/(operator)/route-runs/${activeRun.id}` as any)
+                : (`/(operator)/routes/${r.id}` as any);
               return (
-                <View key={r.id} style={styles.routeCard}>
+                <Pressable key={r.id} style={styles.routeCard} onPress={() => router.push(cardDest)}>
                   <View style={styles.routeHead}>
                     <View style={[styles.routeBadge, { backgroundColor: badgeColor }]}>
                       <Text style={styles.routeBadgeText}>
@@ -284,7 +288,7 @@ export default function OperatorHomeScreen() {
                     </View>
                     <Text style={styles.routePct}>{status.pct}%</Text>
                   </View>
-                </View>
+                </Pressable>
               );
             })}
           </View>

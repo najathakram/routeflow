@@ -109,6 +109,22 @@ export default function RecordPaymentScreen() {
             keyboardType="decimal-pad"
           />
         </FormField>
+        {/* Quick amount presets */}
+        {balance ? (
+          <View style={styles.presets}>
+            {[25, 50, 75, 100].map((pct) => (
+              <Pressable
+                key={pct}
+                style={styles.preset}
+                onPress={() =>
+                  setAmount((Number(balance) * pct / 100).toFixed(2))
+                }
+              >
+                <Text style={styles.presetText}>{pct}%</Text>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
         {method === "ACH" || method === "CHECK" ? (
           <FormField label="Bank charges (optional)">
             <FormTextInput
@@ -160,4 +176,13 @@ const styles = StyleSheet.create({
   chipText: { fontSize: 13, fontFamily: "Inter_500Medium" },
   chipTextActive: { color: "#fff" },
   chipTextInactive: { color: ios.label },
+  presets: { flexDirection: "row", gap: 8, marginTop: 8 },
+  preset: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: ios.brandWash,
+    alignItems: "center",
+  },
+  presetText: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: ios.brand },
 });

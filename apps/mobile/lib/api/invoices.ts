@@ -130,6 +130,19 @@ export function useVoidInvoice() {
   });
 }
 
+export function useUpdateInvoice() {
+  const qc = useQueryClient();
+  return useMutation<Invoice, Error, { id: string; dueDate?: string; notes?: string }>({
+    mutationFn: ({ id, ...body }) =>
+      apiClient.patch(`/invoices/${id}`, body).then((r) => r.data),
+    onSuccess: (_, { id }) => {
+      qc.invalidateQueries({ queryKey: ['invoices'] });
+      qc.invalidateQueries({ queryKey: ['invoices', id] });
+      qc.invalidateQueries({ queryKey: ['admin', 'invoices'] });
+    },
+  });
+}
+
 export function useInvoicePdf() {
   return useMutation<{ url: string } | null, Error, string>({
     mutationFn: async (id) => {

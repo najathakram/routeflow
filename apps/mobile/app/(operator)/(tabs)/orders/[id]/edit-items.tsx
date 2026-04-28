@@ -50,6 +50,7 @@ export default function EditOrderItemsScreen() {
   const { data: order, isLoading } = useAdminOrder(id ?? "");
   const [draft, setDraft] = useState<Record<string, DraftItem>>({});
   const [showPicker, setShowPicker] = useState(false);
+  const [substituteFor, setSubstituteFor] = useState<string | null>(null);
   const [priceEditItem, setPriceEditItem] = useState<DraftItem | null>(null);
   const updateMut = useUpdateOrderItems();
 
@@ -156,23 +157,44 @@ export default function EditOrderItemsScreen() {
 
       {showPicker ? (
         <ProductPicker
+          title={substituteFor ? "Substitute with…" : "Add product"}
           onPick={(p) => {
             const catalogPrice = toNumber(p.pricePerUnit);
-            setDraft((d) => ({
-              ...d,
-              [p.id]: {
-                productId: p.id,
-                qty: (d[p.id]?.qty ?? 0) + 1,
-                unitPrice: d[p.id]?.unitPrice ?? catalogPrice,
-                catalogPrice,
-                name: p.name,
-                unit: p.unit,
-                overrideReason: d[p.id]?.overrideReason,
-              },
-            }));
+            if (substituteFor) {
+              // Replace the old product with the new one, preserving qty
+              setDraft((d) => {
+                const next = { ...d };
+                const old = next[substituteFor];
+                const inheritedQty = old?.qty ?? 1;
+                delete next[substituteFor];
+                next[p.id] = {
+                  productId: p.id,
+                  qty: inheritedQty,
+                  unitPrice: catalogPrice,
+                  catalogPrice,
+                  name: p.name,
+                  unit: p.unit,
+                };
+                return next;
+              });
+              setSubstituteFor(null);
+            } else {
+              setDraft((d) => ({
+                ...d,
+                [p.id]: {
+                  productId: p.id,
+                  qty: (d[p.id]?.qty ?? 0) + 1,
+                  unitPrice: d[p.id]?.unitPrice ?? catalogPrice,
+                  catalogPrice,
+                  name: p.name,
+                  unit: p.unit,
+                  overrideReason: d[p.id]?.overrideReason,
+                },
+              }));
+            }
             setShowPicker(false);
           }}
-          onClose={() => setShowPicker(false)}
+          onClose={() => { setShowPicker(false); setSubstituteFor(null); }}
         />
       ) : (
         <>
@@ -185,33 +207,73 @@ export default function EditOrderItemsScreen() {
                   const isOverridden = it.unitPrice !== it.catalogPrice;
                   return (
                     <View key={it.productId} style={styles.row}>
+                      {/* Delete item */}
+                      <Pressable
+                        style={styles.deleteBtn}
+                        onPress={() =>
+                          Alert.alert("Remove item?", it.name, [
+                            { text: "Keep", style: "cancel" },
+                            {
+                              text: "Remove",
+                              style: "destructive",
+                              onPress: () =>
+                                setDraft((d) => {
+                                  const next = { ...d };
+                                  delete next[it.productId];
+                                  return next;
+                                }),
+                            },
+                          ])
+                        }
+                        hitSlop={4}
+                      >
+                        <Ionicons name="trash-outline" size={16} color={ios.system.red} />
+                      </Pressable>
+
                       <View style={{ flex: 1, minWidth: 0 }}>
                         <Text style={styles.name} numberOfLines={1}>
                           {it.name}
                         </Text>
-                        <Pressable
-                          onPress={() => setPriceEditItem(it)}
-                          style={styles.priceRow}
-                          hitSlop={8}
-                        >
-                          {isOverridden ? (
-                            <Text style={styles.priceStrike}>
-                              ${it.catalogPrice.toFixed(2)}
-                            </Text>
-                          ) : null}
-                          <Text
-                            style={[styles.sub, isOverridden && { color: ios.system.orange }]}
+                        {/* Price + override + substitute row */}
+                        <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 3 }}>
+                          <Pressable
+                            onPress={() => setPriceEditItem(it)}
+                            style={styles.priceRow}
+                            hitSlop={8}
                           >
-                            ${it.unitPrice.toFixed(2)}
-                            {it.unit ? ` / ${it.unit}` : ""}
-                          </Text>
-                          <Ionicons
-                            name="pencil-outline"
-                            size={12}
-                            color={isOverridden ? ios.system.orange : ios.label3}
-                          />
-                        </Pressable>
+                            {isOverridden ? (
+                              <Text style={styles.priceStrike}>
+                                ${it.catalogPrice.toFixed(2)}
+                              </Text>
+                            ) : null}
+                            <Text
+                              style={[styles.sub, isOverridden && { color: ios.system.orange }]}
+                            >
+                              ${it.unitPrice.toFixed(2)}
+                              {it.unit ? ` / ${it.unit}` : ""}
+                            </Text>
+                            <Ionicons
+                              name="pencil-outline"
+                              size={12}
+                              color={isOverridden ? ios.system.orange : ios.label3}
+                            />
+                          </Pressable>
+                          <Pressable
+                            style={styles.subBtn}
+                            onPress={() => {
+                              // Open product picker in substitute mode
+                              setSubstituteFor(it.productId);
+                              setShowPicker(true);
+                            }}
+                            hitSlop={4}
+                          >
+                            <Ionicons name="swap-horizontal-outline" size={12} color={ios.brand} />
+                            <Text style={styles.subBtnText}>Sub</Text>
+                          </Pressable>
+                        </View>
                       </View>
+
+                      {/* Stepper with typeable qty */}
                       <View style={styles.stepper}>
                         <Pressable
                           style={styles.stepBtn}
@@ -229,7 +291,24 @@ export default function EditOrderItemsScreen() {
                         >
                           <Text style={styles.stepText}>−</Text>
                         </Pressable>
-                        <Text style={styles.qty}>{it.qty}</Text>
+                        <TextInput
+                          style={styles.qtyInput}
+                          value={String(it.qty)}
+                          onChangeText={(val) => {
+                            const n = parseInt(val, 10);
+                            if (!isNaN(n) && n > 0) {
+                              setDraft((d) => ({ ...d, [it.productId]: { ...it, qty: n } }));
+                            } else if (val === "" || val === "0") {
+                              setDraft((d) => {
+                                const next = { ...d };
+                                delete next[it.productId];
+                                return next;
+                              });
+                            }
+                          }}
+                          keyboardType="number-pad"
+                          selectTextOnFocus
+                        />
                         <Pressable
                           style={styles.stepBtn}
                           onPress={() =>
@@ -336,9 +415,11 @@ function PriceOverrideModal({
 }
 
 function ProductPicker({
+  title = "Add product",
   onPick,
   onClose,
 }: {
+  title?: string;
   onPick: (p: { id: string; name: string; pricePerUnit: number | string; unit?: string }) => void;
   onClose: () => void;
 }) {
@@ -355,7 +436,7 @@ function ProductPicker({
   return (
     <>
       <NavBar
-        inlineTitle="Add product"
+        inlineTitle={title}
         leading={<NavBackButton label="Cancel" onPress={onClose} />}
       />
       <SearchBar placeholder="Search products…" value={search} onChangeText={setSearch} />
@@ -441,6 +522,37 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_700Bold",
     color: ios.label,
     fontVariant: ["tabular-nums"],
+  },
+  qtyInput: {
+    minWidth: 36,
+    textAlign: "center",
+    fontSize: 16,
+    fontFamily: "Inter_700Bold",
+    color: ios.label,
+    fontVariant: ["tabular-nums"],
+    paddingVertical: 2,
+  },
+  deleteBtn: {
+    width: 30,
+    height: 30,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: ios.system.redWash,
+    borderRadius: 8,
+  },
+  subBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 2,
+    backgroundColor: ios.brandWash,
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+  },
+  subBtnText: {
+    fontSize: 11,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.brand,
   },
   addBtn: {
     flexDirection: "row",

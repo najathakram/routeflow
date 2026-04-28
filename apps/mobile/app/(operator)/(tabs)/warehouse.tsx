@@ -94,18 +94,29 @@ export default function WarehouseScreen() {
       .sort((a, b) => toNumber(a.currentStock) - toNumber(b.currentStock));
   }, [activeFilter, filteredQuery.data, lowProducts]);
 
-  const sectionLabel =
-    activeFilter === "OUT_OF_STOCK" || activeFilter === "OOS_ACTIVE"
-      ? outTotal > 0
-        ? activeFilter === "OOS_ACTIVE" ? "Out of stock (active only)" : "Out of stock"
-        : "No out-of-stock items"
-      : activeFilter === "LOW" || activeFilter === "LOW_ACTIVE"
-        ? lowTotal > 0
-          ? activeFilter === "LOW_ACTIVE" ? "Low-stock alerts (active only)" : "Low-stock alerts"
-          : "No low stock"
-        : lowTotal > 0
-          ? "Low-stock alerts"
+  const sectionLabel = (() => {
+    const count = displayProducts.length;
+    if (activeFilter === "OUT_OF_STOCK" || activeFilter === "OOS_ACTIVE") {
+      return count > 0
+        ? activeFilter === "OOS_ACTIVE"
+          ? `Out of stock — active (${count})`
+          : `Out of stock (${count})`
+        : "No out-of-stock items";
+    }
+    if (activeFilter === "LOW" || activeFilter === "LOW_ACTIVE") {
+      return count > 0
+        ? activeFilter === "LOW_ACTIVE"
+          ? `Low-stock — active (${count})`
+          : `Low-stock alerts (${count})`
+        : search.trim()
+          ? "No matches for that search"
           : "No low stock";
+    }
+    // ALL filter
+    return count > 0
+      ? `Low-stock alerts (${count})`
+      : "All stock levels healthy";
+  })();
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
@@ -271,20 +282,18 @@ export default function WarehouseScreen() {
                 color={ios.system.orangeInk}
                 bg={ios.system.orangeWash}
                 onPress={() =>
-                  Alert.alert("Receive stock", undefined, [
+                  Alert.alert("Buy stock", undefined, [
                     {
-                      text: "Quick receive (no PO)",
-                      onPress: () =>
-                        router.push("/(operator)/purchase-orders/record"),
+                      text: "Scan a bill / invoice",
+                      onPress: () => router.push("/(operator)/vendor-bills/scan" as any),
                     },
                     {
-                      text: "New purchase order",
-                      onPress: () =>
-                        router.push("/(operator)/purchase-orders/new"),
+                      text: "Enter bill manually",
+                      onPress: () => router.push("/(operator)/vendor-bills/new" as any),
                     },
                     {
-                      text: "View all POs",
-                      onPress: () => router.push("/(operator)/purchase-orders"),
+                      text: "View all bills",
+                      onPress: () => router.push("/(operator)/vendor-bills" as any),
                     },
                     { text: "Cancel", style: "cancel" },
                   ])
@@ -302,7 +311,7 @@ export default function WarehouseScreen() {
                 label="Adjust"
                 color={ios.system.greenInk}
                 bg={ios.system.greenWash}
-                onPress={() => router.push("/(operator)/products/scan")}
+                onPress={() => router.push("/(operator)/products/adjust-picker" as any)}
               />
             </View>
 

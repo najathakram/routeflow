@@ -2,12 +2,15 @@ import {
   ActivityIndicator,
   Alert,
   Linking,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
+import { useState } from "react";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -17,6 +20,7 @@ import { useAdminInvoice } from "../../../../lib/api/admin";
 import {
   useInvoicePdf,
   useSendInvoice,
+  useUpdateInvoice,
   useVoidInvoice,
 } from "../../../../lib/api/invoices";
 import { showToast } from "../../../../lib/toast";
@@ -52,6 +56,9 @@ export default function InvoiceDetailScreen() {
   const sendMut = useSendInvoice();
   const voidMut = useVoidInvoice();
   const pdfMut = useInvoicePdf();
+  const updateMut = useUpdateInvoice();
+  const [dueDateModal, setDueDateModal] = useState(false);
+  const [dueDateInput, setDueDateInput] = useState("");
 
   if (isLoading || !invoice) {
     return (
@@ -139,11 +146,23 @@ export default function InvoiceDetailScreen() {
             <Text style={styles.balanceSub}>
               of {fmtCurrency(invoice.total)} · paid {fmtCurrency(invoice.paidAmount ?? 0)}
             </Text>
-            {invoice.dueDate ? (
+            <Pressable
+              style={styles.dueRow}
+              onPress={() => {
+                setDueDateInput(
+                  invoice.dueDate ? invoice.dueDate.slice(0, 10) : "",
+                );
+                setDueDateModal(true);
+              }}
+              hitSlop={4}
+            >
               <Text style={styles.due}>
-                Due {new Date(invoice.dueDate).toLocaleDateString()}
+                {invoice.dueDate
+                  ? `Due ${new Date(invoice.dueDate).toLocaleDateString()}`
+                  : "Set due date"}
               </Text>
-            ) : null}
+              <Ionicons name="pencil-outline" size={12} color={ios.label3} />
+            </Pressable>
           </View>
 
           {/* Action grid */}
@@ -261,6 +280,73 @@ export default function InvoiceDetailScreen() {
         </View>
         <View style={{ height: 24 }} />
       </ScrollView>
+
+      {/* Due date editor modal */}
+      <Modal
+        visible={dueDateModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setDueDateModal(false)}
+      >
+        <Pressable
+          style={styles.modalOverlay}
+          onPress={() => setDueDateModal(false)}
+        >
+          <Pressable style={styles.modalCard} onPress={(e) => e.stopPropagation()}>
+            <Text style={styles.modalTitle}>Edit due date</Text>
+            <Text style={styles.modalLabel}>Format: YYYY-MM-DD</Text>
+            <TextInput
+              style={styles.modalInput}
+              value={dueDateInput}
+              onChangeText={setDueDateInput}
+              placeholder={new Date().toISOString().slice(0, 10)}
+              placeholderTextColor={ios.label3}
+              keyboardType="numbers-and-punctuation"
+              autoFocus
+            />
+            <View style={{ flexDirection: "row", gap: 10, marginTop: 8 }}>
+              <Pressable
+                style={[styles.modalBtn, { flex: 1, backgroundColor: ios.fill3 }]}
+                onPress={() => setDueDateModal(false)}
+              >
+                <Text style={[styles.modalBtnText, { color: ios.label }]}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={[
+                  styles.modalBtn,
+                  { flex: 1, backgroundColor: ios.brand },
+                  updateMut.isPending && { opacity: 0.6 },
+                ]}
+                onPress={() => {
+                  if (!id) return;
+                  updateMut.mutate(
+                    { id, dueDate: dueDateInput.trim() || undefined },
+                    {
+                      onSuccess: () => {
+                        showToast("Due date updated");
+                        setDueDateModal(false);
+                        refetch();
+                      },
+                      onError: (e: any) =>
+                        Alert.alert(
+                          "Couldn't update",
+                          e?.response?.data?.message ?? e?.message ?? "Try again.",
+                        ),
+                    },
+                  );
+                }}
+                disabled={updateMut.isPending}
+              >
+                {updateMut.isPending ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <Text style={[styles.modalBtnText, { color: "#fff" }]}>Save</Text>
+                )}
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -307,7 +393,37 @@ const styles = StyleSheet.create({
     letterSpacing: -0.8,
   },
   balanceSub: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
-  due: { fontSize: 13, fontFamily: "Inter_500Medium", color: ios.label2, marginTop: 6 },
+  due: { fontSize: 13, fontFamily: "Inter_500Medium", color: ios.label2 },
+  dueRow: { flexDirection: "row", alignItems: "center", gap: 5, marginTop: 6 },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.45)",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 24,
+  },
+  modalCard: {
+    backgroundColor: ios.bgElev,
+    borderRadius: 20,
+    padding: 20,
+    width: "100%",
+    maxWidth: 340,
+    gap: 6,
+  },
+  modalTitle: { fontSize: 17, fontFamily: "Inter_700Bold", color: ios.label },
+  modalLabel: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2 },
+  modalInput: {
+    backgroundColor: ios.fill3,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 16,
+    fontFamily: "Inter_400Regular",
+    color: ios.label,
+    marginTop: 4,
+  },
+  modalBtn: { paddingVertical: 13, borderRadius: 12, alignItems: "center", justifyContent: "center" },
+  modalBtnText: { fontSize: 15, fontFamily: "Inter_600SemiBold" },
   actionsGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
   tile: {
     flexBasis: "47%",

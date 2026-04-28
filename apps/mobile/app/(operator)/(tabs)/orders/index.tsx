@@ -160,9 +160,10 @@ function OrderRow({ order, onPress }: { order: AdminOrder; onPress: () => void }
               {order.orderNumber}
             </Text>
             {order.urgent ? (
-              <Pill variant="red" small>
-                Urgent
-              </Pill>
+              <View style={styles.urgentBadge}>
+                <Ionicons name="flash" size={10} color="#fff" />
+                <Text style={styles.urgentText}>URGENT</Text>
+              </View>
             ) : null}
           </View>
           <Text style={styles.rowSub} numberOfLines={1}>
@@ -209,6 +210,16 @@ const styles = StyleSheet.create({
     letterSpacing: -0.2,
   },
   rowSub: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
+  urgentBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    backgroundColor: ios.system.red,
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  urgentText: { fontSize: 10, fontFamily: "Inter_700Bold", color: "#fff", letterSpacing: 0.3 },
   rowFoot: {
     marginTop: 10,
     flexDirection: "row",

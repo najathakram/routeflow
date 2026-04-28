@@ -26,6 +26,7 @@ import {
   useReopenStop,
   useRouteRun,
   useRouteSettings,
+  useUpdateRunStatus,
   useUpdateStopStatus,
 } from "../../../lib/api/routes";
 import { openRouteInMaps } from "../../../components/openInMaps";
@@ -75,6 +76,7 @@ export default function OperatorRouteRunScreen() {
   const optimizeMut = useOptimizeRouteRun();
   const reopenMut = useReopenStop();
   const updateStatusMut = useUpdateStopStatus();
+  const cancelRunMut = useUpdateRunStatus();
 
   useFocusEffect(
     useCallback(() => {
@@ -217,6 +219,36 @@ export default function OperatorRouteRunScreen() {
           ),
       },
     ]);
+  };
+
+  const handleCancelRun = () => {
+    if (!id) return;
+    Alert.alert(
+      "Cancel run?",
+      "The run will be marked cancelled. Drivers can no longer check in or complete stops.",
+      [
+        { text: "Keep", style: "cancel" },
+        {
+          text: "Cancel run",
+          style: "destructive",
+          onPress: () =>
+            cancelRunMut.mutate(
+              { id, status: "CANCELLED" },
+              {
+                onSuccess: () => {
+                  showToast("Run cancelled");
+                  refetch();
+                },
+                onError: (e: any) =>
+                  Alert.alert(
+                    "Couldn't cancel",
+                    e?.response?.data?.message ?? e?.message ?? "Try again.",
+                  ),
+              },
+            ),
+        },
+      ],
+    );
   };
 
   if (isLoading || !run) {
@@ -378,6 +410,23 @@ export default function OperatorRouteRunScreen() {
             >
               <Ionicons name="navigate-outline" size={18} color={ios.brand} />
               <Text style={styles.actionText}>Open in Google Maps</Text>
+            </Pressable>
+          ) : null}
+
+          {!isTerminal ? (
+            <Pressable
+              style={[styles.cancelBtn, cancelRunMut.isPending && { opacity: 0.6 }]}
+              onPress={handleCancelRun}
+              disabled={cancelRunMut.isPending}
+            >
+              {cancelRunMut.isPending ? (
+                <ActivityIndicator color={ios.system.red} size="small" />
+              ) : (
+                <Ionicons name="close-circle-outline" size={18} color={ios.system.red} />
+              )}
+              <Text style={styles.cancelBtnText}>
+                {cancelRunMut.isPending ? "Cancelling…" : "Cancel run"}
+              </Text>
             </Pressable>
           ) : null}
 
@@ -560,5 +609,19 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: "Inter_500Medium",
     color: ios.brand,
+  },
+  cancelBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: ios.system.redWash,
+    paddingVertical: 14,
+    borderRadius: 12,
+  },
+  cancelBtnText: {
+    color: ios.system.red,
+    fontSize: 15,
+    fontFamily: "Inter_500Medium",
   },
 });

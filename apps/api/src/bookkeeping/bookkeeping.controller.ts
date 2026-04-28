@@ -47,6 +47,11 @@ export class BookkeepingController {
     return this.bookkeepingService.getSummary();
   }
 
+  @Get("dashboard")
+  getDashboard() {
+    return this.bookkeepingService.getMobileDashboard();
+  }
+
   @Get("transactions")
   findAll(@Query() query: ListTransactionsDto) {
     return this.bookkeepingService.findAll(query);

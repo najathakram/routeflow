@@ -239,27 +239,32 @@ function CategorySheet({
           {categories.length === 0 ? (
             <Text style={styles.sheetEmpty}>No categories yet.</Text>
           ) : (
-            <View style={styles.grid}>
+            <View>
               {categories.map((c) => {
                 const active = c.id === selectedId;
                 return (
                   <Pressable
                     key={c.id}
-                    style={[styles.tile, active && styles.tileActive]}
+                    style={[styles.catRow, active && styles.catRowActive]}
                     onPress={() => onSelect(c)}
                     accessibilityLabel={`Category ${c.name}`}
                   >
-                    <Ionicons
-                      name={iconForCategory(c.name)}
-                      size={22}
-                      color={active ? ios.brand : ios.label}
-                    />
+                    <View style={[styles.catIcon, active && styles.catIconActive]}>
+                      <Ionicons
+                        name={iconForCategory(c.name)}
+                        size={16}
+                        color={active ? ios.brand : ios.label2}
+                      />
+                    </View>
                     <Text
-                      style={[styles.tileText, active && styles.tileTextActive]}
-                      numberOfLines={2}
+                      style={[styles.catText, active && styles.catTextActive]}
+                      numberOfLines={1}
                     >
                       {c.name}
                     </Text>
+                    {active ? (
+                      <Ionicons name="checkmark" size={16} color={ios.brand} />
+                    ) : null}
                   </Pressable>
                 );
               })}
@@ -373,6 +378,42 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 10,
+  },
+  catRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 11,
+    paddingHorizontal: 4,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: ios.separator,
+  },
+  catRowActive: {
+    backgroundColor: ios.brandWash,
+    borderRadius: 10,
+    borderBottomWidth: 0,
+    marginBottom: StyleSheet.hairlineWidth,
+  },
+  catIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: 8,
+    backgroundColor: ios.fill3,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  catIconActive: {
+    backgroundColor: ios.brandWash,
+  },
+  catText: {
+    flex: 1,
+    fontSize: 14,
+    fontFamily: "Inter_500Medium",
+    color: ios.label,
+  },
+  catTextActive: {
+    color: ios.brand,
+    fontFamily: "Inter_600SemiBold",
   },
   tile: {
     width: "48%",

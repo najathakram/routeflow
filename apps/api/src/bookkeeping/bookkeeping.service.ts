@@ -222,12 +222,25 @@ export class BookkeepingService implements OnModuleInit {
       }
     }
 
-    return this.prisma.expenseCategory.findMany({
+    const rows = await this.prisma.expenseCategory.findMany({
       where: {
         OR: [{ tenantId }, { tenantId: null }],
         NOT: { code: "INVENTORY_PURCHASE" },
       },
-      orderBy: { name: "asc" },
+      orderBy: [
+        // tenant-specific rows first so they win deduplication
+        { tenantId: 'desc' },
+        { name: 'asc' },
+      ],
+    });
+
+    // Deduplicate by code, keeping the tenant-specific row over any global null-tenant copy
+    const seen = new Set<string>();
+    return rows.filter((c) => {
+      const key = c.code ?? c.id;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
     });
   }
 
@@ -858,6 +871,63 @@ export class BookkeepingService implements OnModuleInit {
       outstandingReceivables,
       paymentsThisWeek: Number(paymentsThisWeekResult._sum.amount ?? 0),
       overdueCount,
+    };
+  }
+
+  // ── Mobile Analytics Dashboard ──
+  /**
+   * Returns the six KPI numbers the mobile analytics screen needs.
+   * Uses current calendar year as the aggregation window.
+   */
+  async getMobileDashboard() {
+    const now = new Date();
+    const startOfYear = new Date(now.getFullYear(), 0, 1);
+
+    const [invoiceAgg, paymentAgg, expenseAgg, outstandingInvoices] = await Promise.all([
+      // Total invoiced (YTD, non-draft/void)
+      this.prisma.forTenant().invoice.aggregate({
+        where: {
+          issueDate: { gte: startOfYear },
+          status: { notIn: [InvoiceStatus.DRAFT, InvoiceStatus.VOID, InvoiceStatus.WRITTEN_OFF] },
+        },
+        _sum: { total: true },
+      }),
+      // Total collected (YTD invoice payments)
+      this.prisma.forTenant().invoicePayment.aggregate({
+        where: { createdAt: { gte: startOfYear } },
+        _sum: { amount: true },
+      }),
+      // Total expenses (YTD)
+      this.prisma.forTenant().expense.aggregate({
+        where: { deletedAt: null, date: { gte: startOfYear } },
+        _sum: { amount: true },
+      }),
+      // Outstanding receivables (unpaid balances)
+      this.prisma.forTenant().invoice.findMany({
+        where: {
+          status: {
+            in: [InvoiceStatus.SENT, InvoiceStatus.VIEWED, InvoiceStatus.PARTIAL, InvoiceStatus.OVERDUE],
+          },
+        },
+        select: { total: true, payments: { select: { amount: true } } },
+      }),
+    ]);
+
+    const totalInvoiced = Number(invoiceAgg._sum.total ?? 0);
+    const totalCollected = Number(paymentAgg._sum.amount ?? 0);
+    const totalExpenses = Number(expenseAgg._sum.amount ?? 0);
+    const totalOutstanding = outstandingInvoices.reduce((sum, inv) => {
+      const paid = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
+      return sum + Math.max(0, Number(inv.total) - paid);
+    }, 0);
+
+    return {
+      revenue: totalCollected,
+      expenses: totalExpenses,
+      netIncome: totalCollected - totalExpenses,
+      totalInvoiced,
+      totalCollected,
+      totalOutstanding,
     };
   }
 
