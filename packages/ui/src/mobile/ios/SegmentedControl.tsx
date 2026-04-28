@@ -22,6 +22,7 @@ export function SegmentedControl({ items, value, onChange, disabledItems = [] }:
           styles.item,
           active && styles.itemActive,
           disabled && styles.itemDisabled,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           isWeb && ({ cursor: disabled ? "default" : "pointer", userSelect: "none" } as any),
         ];
         if (isWeb) {
@@ -32,6 +33,7 @@ export function SegmentedControl({ items, value, onChange, disabledItems = [] }:
             <View
               key={item}
               style={itemStyle}
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
               {...({ onClick: () => !disabled && onChange(item) } as any)}
             >
               <Text style={[styles.label, active && styles.labelActive, disabled && styles.labelDisabled]} numberOfLines={1}>
