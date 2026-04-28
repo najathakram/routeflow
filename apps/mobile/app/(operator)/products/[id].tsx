@@ -105,12 +105,12 @@ export default function ProductDetailScreen() {
             <Row label="Barcode" value={product.barcode ?? "—"} />
             <Row label="Unit" value={product.unit ?? "ea"} />
             <Row label="Price" value={`$${toNumber(product.pricePerUnit).toFixed(2)}`} />
-            {product.costPerUnit != null ? (
+            {(product.standardCost ?? product.costPerUnit) != null ? (
               <>
-                <Row label="Cost" value={`$${toNumber(product.costPerUnit).toFixed(2)}`} />
+                <Row label="Cost" value={`$${toNumber(product.standardCost ?? product.costPerUnit).toFixed(2)}`} />
                 {(() => {
                   const price = toNumber(product.pricePerUnit);
-                  const cost = toNumber(product.costPerUnit);
+                  const cost = toNumber(product.standardCost ?? product.costPerUnit);
                   if (price <= 0) return null;
                   const marginPct = Math.round(((price - cost) / price) * 100);
                   const color =
