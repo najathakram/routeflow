@@ -21,7 +21,7 @@ export function SegmentedControl({ items, value, onChange, disabledItems = [] }:
           <Pressable
             key={item}
             style={[styles.item, active && styles.itemActive, disabled && styles.itemDisabled]}
-            onPress={() => !disabled && onChange(item)}
+            onPressIn={() => !disabled && onChange(item)}
             disabled={disabled}
           >
             <Text style={[styles.label, active && styles.labelActive, disabled && styles.labelDisabled]} numberOfLines={1}>

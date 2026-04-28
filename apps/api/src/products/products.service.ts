@@ -154,7 +154,19 @@ export class ProductsService {
       select: { id: true },
     });
     if (nameTaken) throw new ConflictException(`A product named "${dto.name}" already exists`);
-    if (dto.sku) {
+    // Auto-generate a SKU if none supplied: first 3 alpha chars of name + 4 hex digits
+    if (!dto.sku) {
+      const prefix = dto.name
+        .replace(/[^a-zA-Z]/g, "")
+        .slice(0, 3)
+        .toUpperCase()
+        .padEnd(3, "X");
+      const suffix = Math.floor(Math.random() * 0xffff)
+        .toString(16)
+        .toUpperCase()
+        .padStart(4, "0");
+      dto.sku = `${prefix}-${suffix}`;
+    } else {
       const existing = await this.prisma.forTenant().product.findFirst({ where: { sku: dto.sku } });
       if (existing) throw new BadRequestException("SKU already exists");
     }

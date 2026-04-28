@@ -543,7 +543,7 @@ export class CustomersService {
   async getStatementForOperator(customerId: string) {
     await this.findCustomerOrThrow(customerId);
 
-    const [invoices, creditNotes, advancePayments] = await Promise.all([
+    const [invoices, creditNotes, advancePayments, pendingOrders] = await Promise.all([
       this.prisma.forTenant().invoice.findMany({
         where: { customerId },
         orderBy: { createdAt: "desc" },
@@ -577,6 +577,14 @@ export class CustomersService {
           receivedAt: true,
         },
       }),
+      // Pending / confirmed / out-for-delivery orders not yet invoiced
+      this.prisma.forTenant().order.findMany({
+        where: {
+          customerId,
+          status: { in: ["PENDING", "CONFIRMED", "OUT_FOR_DELIVERY"] as any },
+        },
+        select: { id: true, total: true, orderNumber: true, status: true, createdAt: true },
+      }),
     ]);
 
     const invoicesWithPaid = invoices.map((i) => ({
@@ -602,6 +610,8 @@ export class CustomersService {
       .reduce((sum, c) => sum + Number(c.amount), 0);
 
     const advanceBalance = advancePayments.reduce((sum, a) => sum + Number(a.balance), 0);
+
+    const pendingOrdersAmount = pendingOrders.reduce((sum, o) => sum + Number(o.total), 0);
 
     const transactions = [
       ...invoicesWithPaid.map((i) => ({
@@ -638,6 +648,7 @@ export class CustomersService {
       overdueAmount: overdue,
       availableCredit,
       advanceBalance,
+      pendingOrdersAmount,
       transactions,
     };
   }

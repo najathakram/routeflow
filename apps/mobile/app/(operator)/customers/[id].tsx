@@ -199,6 +199,12 @@ export default function CustomerDetailScreen() {
                 <Text style={styles.statLabel}>Overdue</Text>
               </View>
               <View style={styles.statBox}>
+                <Text style={[styles.statValue, (statement?.pendingOrdersAmount ?? 0) > 0 && styles.amber]}>
+                  {fmt(statement?.pendingOrdersAmount)}
+                </Text>
+                <Text style={styles.statLabel}>Pending orders</Text>
+              </View>
+              <View style={styles.statBox}>
                 <Text style={[styles.statValue, styles.green]}>
                   {fmt(statement?.availableCredit)}
                 </Text>
@@ -354,6 +360,7 @@ const styles = StyleSheet.create({
   statLabel: { fontSize: 11, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
   red: { color: ios.system.redInk },
   green: { color: ios.system.greenInk },
+  amber: { color: ios.system.orangeInk },
   detailRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 6, alignItems: "center" },
   detailLabel: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2 },
   rowValue: { fontSize: 13, fontFamily: "Inter_500Medium", color: ios.label },

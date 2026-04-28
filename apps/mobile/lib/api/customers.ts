@@ -58,6 +58,7 @@ export interface CustomerStatement {
   overdueAmount: number;
   availableCredit: number;
   advanceBalance: number;
+  pendingOrdersAmount: number;
   transactions: Array<{
     id: string;
     type: string;

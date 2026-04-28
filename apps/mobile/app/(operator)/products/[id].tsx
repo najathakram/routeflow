@@ -106,7 +106,35 @@ export default function ProductDetailScreen() {
             <Row label="Unit" value={product.unit ?? "ea"} />
             <Row label="Price" value={`$${toNumber(product.pricePerUnit).toFixed(2)}`} />
             {product.costPerUnit != null ? (
-              <Row label="Cost" value={`$${toNumber(product.costPerUnit).toFixed(2)}`} />
+              <>
+                <Row label="Cost" value={`$${toNumber(product.costPerUnit).toFixed(2)}`} />
+                {(() => {
+                  const price = toNumber(product.pricePerUnit);
+                  const cost = toNumber(product.costPerUnit);
+                  if (price <= 0) return null;
+                  const marginPct = Math.round(((price - cost) / price) * 100);
+                  const color =
+                    marginPct >= 25
+                      ? ios.system.greenInk
+                      : marginPct >= 10
+                        ? ios.system.orangeInk
+                        : ios.system.redInk;
+                  const bg =
+                    marginPct >= 25
+                      ? ios.system.greenWash
+                      : marginPct >= 10
+                        ? ios.system.orangeWash
+                        : ios.system.redWash;
+                  return (
+                    <View style={styles.detailRow}>
+                      <Text style={styles.detailLabel}>Margin</Text>
+                      <View style={[styles.marginChip, { backgroundColor: bg }]}>
+                        <Text style={[styles.marginChipText, { color }]}>{marginPct}%</Text>
+                      </View>
+                    </View>
+                  );
+                })()}
+              </>
             ) : null}
           </View>
 
@@ -204,6 +232,12 @@ const styles = StyleSheet.create({
     color: ios.label,
     fontVariant: ["tabular-nums"],
   },
+  marginChip: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  marginChipText: { fontSize: 12, fontFamily: "Inter_700Bold" },
   movementRow: {
     flexDirection: "row",
     alignItems: "center",

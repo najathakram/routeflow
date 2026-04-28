@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Pressable, StyleSheet, Switch, Text, View } from "react-native";
+import { Platform, Pressable, StyleSheet, Switch, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
@@ -183,13 +183,29 @@ export function ProductForm({
             autoCapitalize="characters"
           />
         </FormField>
-        <FormField label="Barcode" hint="Scan from the product detail screen after saving.">
-          <FormTextInput
-            value={form.barcode}
-            onChangeText={(v) => set("barcode", v)}
-            placeholder="EAN-13, UPC-A, etc."
-            keyboardType="number-pad"
-          />
+        <FormField
+          label="Barcode"
+          hint={Platform.OS === "web" ? "Scan via device camera on the native app." : "Tap the scan icon to auto-fill from camera."}
+        >
+          <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
+            <View style={{ flex: 1 }}>
+              <FormTextInput
+                value={form.barcode}
+                onChangeText={(v) => set("barcode", v)}
+                placeholder="EAN-13, UPC-A, etc."
+                keyboardType="number-pad"
+              />
+            </View>
+            {Platform.OS !== "web" ? (
+              <Pressable
+                onPress={() => router.push("/(operator)/products/scan" as any)}
+                style={styles.scanBtn}
+                hitSlop={8}
+              >
+                <Ionicons name="barcode-outline" size={20} color={ios.brand} />
+              </Pressable>
+            ) : null}
+          </View>
         </FormField>
         <FormField label="Unit">
           <FormTextInput
@@ -281,6 +297,14 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   errorText: { fontSize: 13, fontFamily: "Inter_500Medium", color: ios.system.redInk, flex: 1 },
+  scanBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 10,
+    backgroundColor: ios.brandWash,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   switchRow: { flexDirection: "row", alignItems: "center", gap: 12 },
   switchLabel: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: ios.label },
   switchHint: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
