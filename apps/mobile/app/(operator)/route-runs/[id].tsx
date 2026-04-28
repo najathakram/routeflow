@@ -30,7 +30,6 @@ import {
 } from "../../../lib/api/routes";
 import { openRouteInMaps } from "../../../components/openInMaps";
 import { showToast } from "../../../lib/toast";
-import { openRouteInMaps } from "../../../components/openInMaps";
 
 async function readCurrentLocation(): Promise<{ lat: number; lng: number } | null> {
   if (Platform.OS === "web") {
