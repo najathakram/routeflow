@@ -1,0 +1,51 @@
+{
+  "id": "3db02634-78f8-4d33-9bc8-3773bbf51553",
+  "status": "ERRORED",
+  "platform": "ANDROID",
+  "error": {
+    "errorCode": "UNKNOWN_ERROR",
+    "message": "Unknown error. See logs of the Install dependencies build phase for more information."
+  },
+  "artifacts": {},
+  "fingerprint": {
+    "id": "019dabc3-d1d6-7480-9d1d-ee73845a1c14",
+    "hash": "b9bbbe5d8a918b71f1ff3cf77cd4735cfc3a413b"
+  },
+  "initiatingActor": {
+    "id": "923ebe49-89af-495c-a354-569374e21d16",
+    "displayName": "najathakram1"
+  },
+  "logFiles": [
+    "https://job-logs.eascdn.net/production/3db02634-78f8-4d33-9bc8-3773bbf51553/1776703230637-6f488e76-3148-4190-88a8-2cf1401aba5f.txt?X-Goog-Algorithm=GOOG4-RSA-SHA256&X-Goog-Credential=www-production%40exponentjs.iam.gserviceaccount.com%2F20260420%2Fauto%2Fstorage%2Fgoog4_request&X-Goog-Date=20260420T165820Z&X-Goog-Expires=900&X-Goog-SignedHeaders=host&X-Goog-Signature=40fc14b71a163711412838032a338cfa1e7b0923daccb0412d53ff363650b18b8ca786c41a4a4f62f397842590e5e7068d2889882b65f70c02e1fe544d11670e8043b0d2b46137ec44f9c7ed496f7e61e8cb333b2ff811730b60861d47e2eb3540101393092a5b207081af6b5b05b6056fd61ac26b1426858f6aedd1e4077df059a3af591eba35409de5d3704a7525543ee8dbf98db208a4bf9b7321ac2d63eb32c4ad7b61e655a055f24ebac5b94a7aa8b1991c5c2d1fc2be2487c5a46bec7f693da4f9be0a339ef88dd28da4cb39e29edb5605ee2d5b0553ba4fd46cf327f20f5b4117ac853afbee3d44f3e81e020f822c3d95ea40e33475ecbf38aa0cb28b",
+    "https://job-logs.eascdn.net/production/3db02634-78f8-4d33-9bc8-3773bbf51553/1776703240719-99704c8b-5e24-4c2c-91b0-7bc3d718db2d.txt?X-Goog-Algorithm=GOOG4-RSA-SHA256&X-Goog-Credential=www-production%40exponentjs.iam.gserviceaccount.com%2F20260420%2Fauto%2Fstorage%2Fgoog4_request&X-Goog-Date=20260420T165820Z&X-Goog-Expires=900&X-Goog-SignedHeaders=host&X-Goog-Signature=0dee3b7003cad17de272f1ed4461512b01b8246e6a2b6931e8e2ab94d6a58da13bf14510b33ee110e7737f422bcf9f5f1d71e0ad805e73ec02a56e9ff09b618d10a7a41ad7d1df954746d101b2f551f612c82803d3bd4e5e68758448156450408ab07d2b5d43940e3fcc498394bd9e417cf95e85517cbe687cc2e729f001c1afa0bc3f21049208a31d8d3ccdeef585e15f9cd07151cb6e7a1e0a75d53f6f64d744eda194dd2baeeb1353aa763dc377dcdb98308260cf499f13abd98dbe633a357a13bf009f75ee2a2e43e187e8b5138de84170307649893e0acf0d4e0cb44d4b25d58fad8d406582ed0f0e0c7ab9a781912e0640ba40d4a6b520715a40180f31",
+    "https://job-logs.eascdn.net/production/3db02634-78f8-4d33-9bc8-3773bbf51553/1776703240987-6a6adf0b-2bc9-42a0-bbd0-dde1562b6d56.txt?X-Goog-Algorithm=GOOG4-RSA-SHA256&X-Goog-Credential=www-production%40exponentjs.iam.gserviceaccount.com%2F20260420%2Fauto%2Fstorage%2Fgoog4_request&X-Goog-Date=20260420T165820Z&X-Goog-Expires=900&X-Goog-SignedHeaders=host&X-Goog-Signature=74b06131124f8a5ad40f8dfd93dd14fa54d2196dcead2de2964c7a8549e4c03a6600531223aebc5634dd6787d157d70c58798dc3667b029c6669d0c6b61c2be2c306cc2b6c49d6ef621c01b817e8ab0f94db67b4b19d937e0511bcf74fc243f8e7bd5374028061d6ae2a414c313082135555a17cd87b69697a11ca5628914a295dcc5fffbaa5c4966fa57b3d6282c08dff7635085f34173f31d624c1729ddcb33fe253c09a4bcb465a8bfb3a9189cb143f652aeb16474768c5afe2ac16b6ffbcd489e65e7b47f166b2c5935803027f03139834cea0aad4d32988b9c0f61701818255f7d1020536be0c80765254f2ffebbe60fa12810996f8ea15f443a1b7e44b",
+    "https://job-logs.eascdn.net/production/3db02634-78f8-4d33-9bc8-3773bbf51553/1776703241185-bff507ad-eedb-4c34-ba1f-7f9b7eb6f386.txt?X-Goog-Algorithm=GOOG4-RSA-SHA256&X-Goog-Credential=www-production%40exponentjs.iam.gserviceaccount.com%2F20260420%2Fauto%2Fstorage%2Fgoog4_request&X-Goog-Date=20260420T165820Z&X-Goog-Expires=900&X-Goog-SignedHeaders=host&X-Goog-Signature=640485e29523deca575b29a610d25a19690d780ed1b0d42018632cf043076bd4d894b67a7f77789dbda6c75dc462c87a2a2b6ae821ceee9c8a9791966cb3b9e8d40ef47024a8c9b7f2b823c0009adb9ef124bb87879e9d892c301e520e5600b08d20ad6cc6c4546fe7396061060ce30713dac8525462a5806e1bda62d5f98a062a5a2786457444e813bdca4a1338f3d97aca21c94e6db2c33433f684a608625425747c7fa6e78681cd0a55d86f8f9b1b48a2c58e7639ede91bd8f074675b1cb988e7b5d75c8f41faeaf5332352cb4c8d7fc0b81fed62afb96ca31aeba13ecd31a3b0c0d67a7069403c38de912f45c7fb1d1c6486bb17e199cf01f9e7c04339bb"
+  ],
+  "project": {
+    "id": "5f27e8dc-332e-4491-8d28-360dab02acba",
+    "name": "routeflow-mobile",
+    "slug": "routeflow-mobile",
+    "ownerAccount": {
+      "id": "f3c608f9-9160-4079-8bb2-77c6d1cbc39d",
+      "name": "najathakram1"
+    }
+  },
+  "distribution": "STORE",
+  "buildProfile": "production",
+  "sdkVersion": "55.0.0",
+  "appVersion": "1.0.0",
+  "appBuildVersion": "3",
+  "gitCommitHash": "a79aa555658a037ec752889cc551f8080b13db0f",
+  "gitCommitMessage": "feat(mobile): Apple-style iOS re-skin for driver + operator + real Google OAuth\n\nPorts the hi-fi mockup at routeflow-app/ into the live RN app. New ios token\nnamespace in packages/ui/src/tokens.ts (system colors, grays, labels, brand\ngradient). 14 new primitives under packages/ui/src/mobile/ios/ (Blur, NavBar,\nIosTabBar, SegmentedControl, Pill, ListGroup+Row, KpiCard, InlineStats,\nFilterChipRow, BrandGradientCard, SearchBar, ProgressTrack, GoogleButton,\nBrandGlyph — with .web.tsx variants where needed for react-native-svg).\n\nLogin fully rewritten to match the mockup with real Google OAuth end-to-end:\n- GET /auth/google accepts optional mobile=1 query param; callback redirects\n  to routeflow://auth/callback instead of WEB_URL (additive, backwards-compat).\n- lib/auth.ts loginWithGoogle() opens the consent URL via\n  WebBrowser.openAuthSessionAsync, parses tokens from the returned deep link,\n  persists them, registers push token.\n- BrandMark teal gradient + multi-colour Google G replace the previous stub.\n- Safety-net deep-link handler at (auth)/google-callback.tsx.\n\nDriver + operator screens re-skinned: dashboard fully rewritten with iOS\nprimitives (BrandGradientCard hero, InlineStats, ListGroup); 11 other\ndriver/admin screens token-swapped to the new ios.* palette and blurred\niOS tab bar via IosTabBar.\n\nNo Prisma migration (googleId column already existed). No new Google OAuth\nclient needed (same one apps/web uses). Customer + buyer UIs deliberately\nuntouched — their primitives stay on @routeflow/ui/mobile.\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>",
+  "priority": "NORMAL_PLUS",
+  "createdAt": "2026-04-20T16:40:30.297Z",
+  "updatedAt": "2026-04-20T16:41:42.722Z",
+  "completedAt": "2026-04-20T16:41:35.731Z",
+  "expirationDate": "2026-05-20T16:40:30.404Z",
+  "isForIosSimulator": false,
+  "metrics": {
+    "buildWaitTime": 228,
+    "buildQueueTime": 56352,
+    "buildDuration": 8497
+  }
+}

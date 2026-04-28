@@ -229,8 +229,8 @@ export class BookkeepingService implements OnModuleInit {
       },
       orderBy: [
         // tenant-specific rows first so they win deduplication
-        { tenantId: 'desc' },
-        { name: 'asc' },
+        { tenantId: "desc" },
+        { name: "asc" },
       ],
     });
 
@@ -906,7 +906,12 @@ export class BookkeepingService implements OnModuleInit {
       this.prisma.forTenant().invoice.findMany({
         where: {
           status: {
-            in: [InvoiceStatus.SENT, InvoiceStatus.VIEWED, InvoiceStatus.PARTIAL, InvoiceStatus.OVERDUE],
+            in: [
+              InvoiceStatus.SENT,
+              InvoiceStatus.VIEWED,
+              InvoiceStatus.PARTIAL,
+              InvoiceStatus.OVERDUE,
+            ],
           },
         },
         select: { total: true, payments: { select: { amount: true } } },

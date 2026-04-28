@@ -746,7 +746,7 @@ export class RoutesService {
         },
       });
       const addrByCustomer = new Map(defaultAddrs.map((a) => [a.customerId, a]));
-      for (const s of normalisedStops as any[]) {
+      for (const s of normalisedStops) {
         if (!s.customerAddress && s._resolvedCustomerId) {
           s.customerAddress = addrByCustomer.get(s._resolvedCustomerId) ?? null;
         }
