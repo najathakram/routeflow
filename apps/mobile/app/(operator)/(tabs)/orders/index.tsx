@@ -80,6 +80,18 @@ export default function OrdersListScreen() {
 
   const orders = data?.data ?? [];
 
+  // O-6: detect customers with multiple PENDING orders so the operator can see duplicates at a glance
+  const pendingCountByCustomer = useMemo(() => {
+    if (filter !== "PENDING" && filter !== "ALL") return new Map<string, number>();
+    const map = new Map<string, number>();
+    for (const o of orders) {
+      if (o.status === "PENDING" && o.customer?.id) {
+        map.set(o.customer?.id, (map.get(o.customer?.id) ?? 0) + 1);
+      }
+    }
+    return map;
+  }, [orders, filter]);
+
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <NavBar
@@ -132,7 +144,12 @@ export default function OrdersListScreen() {
         ) : (
           <View style={{ paddingHorizontal: 16, gap: 8, paddingBottom: 24 }}>
             {orders.map((o) => (
-              <OrderRow key={o.id} order={o} onPress={() => router.push(`/(operator)/orders/${o.id}`)} />
+              <OrderRow
+                key={o.id}
+                order={o}
+                duplicateCount={o.customer?.id ? (pendingCountByCustomer.get(o.customer?.id) ?? 0) : 0}
+                onPress={() => router.push(`/(operator)/orders/${o.id}`)}
+              />
             ))}
           </View>
         )}
@@ -141,7 +158,7 @@ export default function OrdersListScreen() {
   );
 }
 
-function OrderRow({ order, onPress }: { order: AdminOrder; onPress: () => void }) {
+function OrderRow({ order, duplicateCount = 0, onPress }: { order: AdminOrder; duplicateCount?: number; onPress: () => void }) {
   const s = statusPill(order.status);
   const itemCount = order.lineItems?.length ?? 0;
   const customer = order.customer?.businessName ?? "Unknown customer";
@@ -166,10 +183,18 @@ function OrderRow({ order, onPress }: { order: AdminOrder; onPress: () => void }
               </View>
             ) : null}
           </View>
-          <Text style={styles.rowSub} numberOfLines={1}>
-            {customer} · {itemCount} item{itemCount === 1 ? "" : "s"}
-            {createdAt ? ` · ${createdAt}` : ""}
-          </Text>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2, flexWrap: "wrap" }}>
+            <Text style={styles.rowSub} numberOfLines={1}>
+              {customer} · {itemCount} item{itemCount === 1 ? "" : "s"}
+              {createdAt ? ` · ${createdAt}` : ""}
+            </Text>
+            {duplicateCount > 1 ? (
+              <View style={styles.dupeBadge}>
+                <Ionicons name="copy-outline" size={10} color={ios.system.orangeInk} />
+                <Text style={styles.dupeText}>{duplicateCount} pending</Text>
+              </View>
+            ) : null}
+          </View>
         </View>
         <Pill variant={s.variant} dot>
           {s.label}
@@ -220,6 +245,16 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
   },
   urgentText: { fontSize: 10, fontFamily: "Inter_700Bold", color: "#fff", letterSpacing: 0.3 },
+  dupeBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    backgroundColor: ios.system.orangeWash,
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  dupeText: { fontSize: 10, fontFamily: "Inter_600SemiBold", color: ios.system.orangeInk },
   rowFoot: {
     marginTop: 10,
     flexDirection: "row",

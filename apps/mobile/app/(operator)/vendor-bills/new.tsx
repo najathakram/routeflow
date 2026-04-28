@@ -1,6 +1,7 @@
 import { useState } from "react";
 import {
   Alert,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -167,6 +168,7 @@ function LineItemRow({
   onUpdate: (i: number, field: keyof LineItem, value: string) => void;
   onRemove: (i: number) => void;
 }) {
+  const router = useRouter();
   const [search, setSearch] = useState(item.description);
   const { data: productData } = useProducts({
     search: search.trim().length >= 2 ? search.trim() : undefined,
@@ -196,6 +198,15 @@ function LineItemRow({
     setShowSugs(false);
   };
 
+  const handleScanProduct = () => {
+    if (Platform.OS === "web") {
+      // On web, expand suggestions (scanner not available in browser)
+      setShowSugs(true);
+    } else {
+      router.push("/(operator)/products/scan" as any);
+    }
+  };
+
   return (
     <View style={styles.itemBlock}>
       <View style={styles.itemHeader}>
@@ -207,9 +218,15 @@ function LineItemRow({
         ) : null}
       </View>
 
-      {/* Description with autocomplete */}
+      {/* Description with autocomplete + scan icon */}
       <View style={{ marginBottom: 8 }}>
-        <Text style={styles.fieldLabel}>Description</Text>
+        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+          <Text style={styles.fieldLabel}>Description</Text>
+          <Pressable onPress={handleScanProduct} hitSlop={8} style={styles.scanIcon}>
+            <Ionicons name="barcode-outline" size={16} color={ios.brand} />
+            <Text style={styles.scanIconText}>Scan</Text>
+          </Pressable>
+        </View>
         <TextInput
           style={styles.textInput}
           value={search}
@@ -308,6 +325,8 @@ const styles = StyleSheet.create({
   },
   sugName: { fontSize: 14, fontFamily: "Inter_500Medium", color: ios.label, flex: 1 },
   sugSub: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2 },
+  scanIcon: { flexDirection: "row", alignItems: "center", gap: 4 },
+  scanIconText: { fontSize: 12, fontFamily: "Inter_600SemiBold", color: ios.brand },
   removeText: { fontSize: 13, fontFamily: "Inter_500Medium", color: ios.system.redInk },
   row2: { flexDirection: "row", gap: 10 },
   addItemBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingVertical: 12, borderRadius: 10, backgroundColor: ios.fill3, marginTop: 4 },

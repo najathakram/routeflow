@@ -115,6 +115,19 @@ export default function NewExpenseScreen() {
       submitting={createMut.isPending}
       onSubmit={submit}
     >
+      {/* Scan shortcut banner */}
+      <Pressable
+        style={styles.scanBanner}
+        onPress={() => router.push("/(operator)/vendor-bills/scan" as any)}
+      >
+        <Ionicons name="scan-outline" size={18} color={ios.brand} />
+        <View style={{ flex: 1 }}>
+          <Text style={styles.scanTitle}>Have a paper receipt?</Text>
+          <Text style={styles.scanSub}>Scan it to extract amount, vendor and date</Text>
+        </View>
+        <Ionicons name="chevron-forward" size={14} color={ios.brand} />
+      </Pressable>
+
       <FormSection title="Amount">
         <FormField label="Amount ($)">
           <FormTextInput
@@ -332,6 +345,17 @@ function PaymentMethodSheet({
 }
 
 const styles = StyleSheet.create({
+  scanBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: ios.brandWash,
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 4,
+  },
+  scanTitle: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: ios.brand },
+  scanSub: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.brand, marginTop: 1, opacity: 0.8 },
   picker: {
     backgroundColor: ios.fill3,
     borderRadius: 10,
