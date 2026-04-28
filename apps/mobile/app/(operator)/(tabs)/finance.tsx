@@ -167,7 +167,7 @@ function BillRow({ bill, onPress }: { bill: VendorBill; onPress: () => void }) {
         </Text>
       </View>
       <View style={{ alignItems: "flex-end", gap: 4 }}>
-        <Text style={styles.billTotal}>{formatCurrency(bill.totalAmount)}</Text>
+        <Text style={styles.billTotal}>{formatCurrency(bill.totalOwed)}</Text>
         <Pill variant={p.variant} small>{p.label}</Pill>
       </View>
     </Pressable>
