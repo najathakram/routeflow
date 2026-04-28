@@ -12,18 +12,40 @@ export interface SegmentedControlProps {
 
 /** iOS-style segmented control — filled container with an active-pill + shadow. */
 export function SegmentedControl({ items, value, onChange, disabledItems = [] }: SegmentedControlProps) {
+  const isWeb = Platform.OS === "web";
   return (
     <View style={styles.container}>
       {items.map((item) => {
         const active = item === value;
         const disabled = disabledItems.includes(item);
+        const itemStyle = [
+          styles.item,
+          active && styles.itemActive,
+          disabled && styles.itemDisabled,
+          isWeb && ({ cursor: disabled ? "default" : "pointer", userSelect: "none" } as any),
+        ];
+        if (isWeb) {
+          // On web, RNW View forwards unknown props (e.g. onClick) to the underlying
+          // DOM div, whereas Pressable silently drops them. Using View + onClick avoids
+          // the double-click focus issue caused by RNW's responder system.
+          return (
+            <View
+              key={item}
+              style={itemStyle}
+              {...({ onClick: () => !disabled && onChange(item) } as any)}
+            >
+              <Text style={[styles.label, active && styles.labelActive, disabled && styles.labelDisabled]} numberOfLines={1}>
+                {item}
+              </Text>
+            </View>
+          );
+        }
         return (
           <Pressable
             key={item}
-            style={[styles.item, active && styles.itemActive, disabled && styles.itemDisabled]}
+            style={itemStyle}
             onPressIn={() => !disabled && onChange(item)}
             disabled={disabled}
-            {...(Platform.OS === "web" ? ({ onClick: () => !disabled && onChange(item) } as any) : {})}
           >
             <Text style={[styles.label, active && styles.labelActive, disabled && styles.labelDisabled]} numberOfLines={1}>
               {item}
