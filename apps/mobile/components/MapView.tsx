@@ -223,14 +223,16 @@ function WebFallback({ pins = [], polylines = [], initialRegion, style }: MapVie
 
     const zoom = pins.length === 0 ? 10 : 14;
 
-    // Tile provider is configurable so production can swap off the OSM
-    // volunteer servers (which 403 cross-domain Referer in production).
-    // Default keeps OSM for local dev where the policy isn't enforced.
+    // Tile provider is configurable via env vars. Default uses CartoDB Voyager
+    // (free, attribution-only, no API key, no Referer restriction) which works
+    // from Railway's server IPs. OSM blocks requests without a browser Referer
+    // header so it breaks in the Expo web build served from Railway.
     const tileUrl =
       process.env.EXPO_PUBLIC_MAP_TILE_URL ??
-      "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
+      "https://a.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png";
     const tileAttribution =
-      process.env.EXPO_PUBLIC_MAP_TILE_ATTRIBUTION ?? "\u00a9 OpenStreetMap";
+      process.env.EXPO_PUBLIC_MAP_TILE_ATTRIBUTION ??
+      "\u00a9 <a href='https://carto.com/attributions'>CARTO</a> \u00a9 <a href='https://openstreetmap.org/copyright'>OpenStreetMap</a>";
 
     const html = `<!DOCTYPE html><html><head>
 <meta name="viewport" content="width=device-width,initial-scale=1">
