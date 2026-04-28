@@ -1,5 +1,5 @@
 import React from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { ios } from "../../tokens";
 
 export interface SegmentedControlProps {
@@ -23,6 +23,7 @@ export function SegmentedControl({ items, value, onChange, disabledItems = [] }:
             style={[styles.item, active && styles.itemActive, disabled && styles.itemDisabled]}
             onPressIn={() => !disabled && onChange(item)}
             disabled={disabled}
+            {...(Platform.OS === "web" ? ({ onClick: () => !disabled && onChange(item) } as any) : {})}
           >
             <Text style={[styles.label, active && styles.labelActive, disabled && styles.labelDisabled]} numberOfLines={1}>
               {item}
