@@ -27,6 +27,7 @@ export function FilterChipRow({
     <ScrollView
       horizontal
       showsHorizontalScrollIndicator={false}
+      style={styles.row}
       contentContainerStyle={[styles.contents, { paddingHorizontal }]}
     >
       {chips.map((c) => {
@@ -49,6 +50,10 @@ export function FilterChipRow({
 }
 
 const styles = StyleSheet.create({
+  row: {
+    height: 44,
+    flexShrink: 0,
+  },
   contents: {
     gap: 8,
     paddingVertical: 8,

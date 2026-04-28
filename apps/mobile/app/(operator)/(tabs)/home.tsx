@@ -20,6 +20,7 @@ import {
   type AdminDriver,
   type AdminRoute,
 } from "../../../lib/api/admin";
+import { useOperatorRouteRuns } from "../../../lib/api/routes";
 import { useAuthStore } from "../../../lib/auth-store";
 
 function routeStatusLabel(r: AdminRoute): {
@@ -55,6 +56,11 @@ export default function OperatorHomeScreen() {
     return map;
   }, [driversData]);
 
+  // Today's runs — same date filter Dispatch uses so the numbers agree
+  const today = new Date().toISOString().slice(0, 10);
+  const { data: runsData } = useOperatorRouteRuns({ date: today, limit: 50 });
+  const todayRuns = runsData?.data ?? [];
+
   const initials =
     user?.username
       ?.split(/[._\s]/)
@@ -72,25 +78,23 @@ export default function OperatorHomeScreen() {
     })
     .toUpperCase();
 
+  // Readiness based on today's runs (same as Dispatch) so both screens agree
   const readiness = useMemo(() => {
-    if (routes.length === 0) return { pct: 0, loaded: 0, total: 0 };
-    const loaded = routes.filter((r) => {
-      const s = r.runs?.[0]?.status;
-      return s === "IN_PROGRESS" || s === "COMPLETED";
-    }).length;
+    if (todayRuns.length === 0) return { pct: 0, loaded: 0, total: 0 };
+    const loaded = todayRuns.filter((r) => r.status === "IN_PROGRESS" || r.status === "COMPLETED").length;
     return {
-      pct: Math.round((loaded / routes.length) * 100),
+      pct: Math.round((loaded / todayRuns.length) * 100),
       loaded,
-      total: routes.length,
+      total: todayRuns.length,
     };
-  }, [routes]);
+  }, [todayRuns]);
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <NavBar
         largeTitle="Today"
         subtitle={
-          routesLoading ? " " : `${routes.length} route${routes.length === 1 ? "" : "s"} today`
+          routesLoading ? " " : `${todayRuns.length} run${todayRuns.length === 1 ? "" : "s"} today`
         }
         leading={<Text style={styles.dateEyebrow}>{dateLabel}</Text>}
         trailing={
@@ -126,7 +130,7 @@ export default function OperatorHomeScreen() {
             <View style={styles.heroRow}>
               <Text style={styles.heroValue}>{readiness.pct}%</Text>
               <Text style={styles.heroSub}>
-                {readiness.loaded} of {readiness.total} routes rolling
+                {readiness.loaded} of {readiness.total} runs rolling
               </Text>
             </View>
             <View style={styles.heroTrack}>
