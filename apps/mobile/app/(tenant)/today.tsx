@@ -48,7 +48,7 @@ function driverDisplayName(driver: AdminDriver | undefined): string {
 
 export default function TenantTodayScreen() {
   const router = useRouter();
-  const { user } = useAuthStore();
+  const { user, setActiveRole } = useAuthStore();
 
   const { data: stats, isLoading: statsLoading } = useAdminDashboard();
   const { data: routesData, isLoading: routesLoading } = useAdminRoutes({ limit: 10 });
@@ -117,6 +117,41 @@ export default function TenantTodayScreen() {
           </View>
         }
       />
+
+      {/* Mode switcher — only shown when user can act as both driver and operator */}
+      {user?.canActAsDriver ? (
+        <View style={styles.modeBar}>
+          <View style={styles.modeTrack}>
+            <Pressable
+              style={[styles.modeSeg, styles.modeSegActive]}
+              onPress={() => setActiveRole("all")}
+            >
+              <Ionicons name="sunny" size={14} color={ios.brand} />
+              <Text style={[styles.modeLabel, styles.modeLabelActive]}>Combined</Text>
+            </Pressable>
+            <Pressable
+              style={styles.modeSeg}
+              onPress={() => {
+                setActiveRole("driver");
+                router.replace("/(driver)/route");
+              }}
+            >
+              <Ionicons name="car-outline" size={14} color={ios.label2} />
+              <Text style={styles.modeLabel}>Driver</Text>
+            </Pressable>
+            <Pressable
+              style={styles.modeSeg}
+              onPress={() => {
+                setActiveRole("operator");
+                router.replace("/(operator)/home");
+              }}
+            >
+              <Ionicons name="briefcase-outline" size={14} color={ios.label2} />
+              <Text style={styles.modeLabel}>Operator</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
 
       <ScrollView showsVerticalScrollIndicator={false}>
         {/* My route card (driver section) */}
@@ -408,4 +443,35 @@ const styles = StyleSheet.create({
     fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2,
     minWidth: 34, textAlign: "right", fontVariant: ["tabular-nums"],
   },
+  modeBar: { paddingHorizontal: 16, paddingBottom: 10 },
+  modeTrack: {
+    flexDirection: "row",
+    backgroundColor: ios.fill3,
+    borderRadius: 12,
+    padding: 3,
+    gap: 2,
+  },
+  modeSeg: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
+    paddingVertical: 8,
+    borderRadius: 10,
+  },
+  modeSegActive: {
+    backgroundColor: ios.bgElev,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  modeLabel: {
+    fontSize: 13,
+    fontFamily: "Inter_500Medium",
+    color: ios.label2,
+  },
+  modeLabelActive: { color: ios.label, fontFamily: "Inter_600SemiBold" },
 });

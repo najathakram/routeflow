@@ -9,7 +9,7 @@ import { useTenantStore } from "../../lib/tenant-store";
 
 export default function TenantMoreScreen() {
   const router = useRouter();
-  const { user, logout, setActiveRole } = useAuthStore();
+  const { user, logout } = useAuthStore();
   const tenantName = useTenantStore((s) => s.branding?.businessName);
 
   const initials =
@@ -36,40 +36,6 @@ export default function TenantMoreScreen() {
             </Text>
           </View>
         </View>
-
-        {/* Focus mode — switch to a role-specific view */}
-        <ListGroup header="FOCUS MODE">
-          <ListRow
-            icon={<Ionicons name="sunny-outline" size={16} color={ios.brand} />}
-            iconBg={ios.brandWash}
-            title="Everything (default)"
-            subtitle="Ops + driver dashboard combined"
-            onPress={() => setActiveRole("all")}
-            chevron
-          />
-          <ListRow
-            icon={<Ionicons name="car-outline" size={16} color={ios.system.greenInk} />}
-            iconBg={ios.system.greenWash}
-            title="Driver view"
-            subtitle="Focus on today's deliveries"
-            onPress={() => {
-              setActiveRole("driver");
-              router.replace("/(driver)/route");
-            }}
-            chevron
-          />
-          <ListRow
-            icon={<Ionicons name="briefcase-outline" size={16} color={ios.system.purpleInk} />}
-            iconBg={ios.system.purpleWash}
-            title="Operator view"
-            subtitle="Focus on dispatch & management"
-            onPress={() => {
-              setActiveRole("operator");
-              router.replace("/(operator)/home");
-            }}
-            chevron
-          />
-        </ListGroup>
 
         <ListGroup header="MANAGE">
           <ListRow
