@@ -44,7 +44,7 @@ export default function FinanceScreen() {
   ).length;
   const unpaidTotal = bills
     .filter((b) => b.status === "RECEIVED" || b.status === "PARTIAL")
-    .reduce((sum, b) => sum + Number(b.totalAmount ?? 0), 0);
+    .reduce((sum, b) => sum + Number(b.totalOwed ?? 0), 0);
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>

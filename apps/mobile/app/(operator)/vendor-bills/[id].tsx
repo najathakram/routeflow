@@ -106,7 +106,7 @@ export default function VendorBillDetailScreen() {
               </Text>
             ) : null}
           </View>
-          <Text style={styles.totalAmount}>{formatCurrency(bill.totalAmount)}</Text>
+          <Text style={styles.totalAmount}>{formatCurrency(bill.totalOwed)}</Text>
           {bill.notes ? <Text style={styles.notes}>{bill.notes}</Text> : null}
         </View>
 

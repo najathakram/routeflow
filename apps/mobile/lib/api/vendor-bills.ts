@@ -21,7 +21,8 @@ export interface VendorBill {
   status: VendorBillStatus;
   billDate?: string;
   dueDate?: string;
-  totalAmount?: number;
+  totalOwed?: number;
+  totalPaid?: number;
   notes?: string;
   supplierId?: string;
   supplier?: { id: string; name: string };

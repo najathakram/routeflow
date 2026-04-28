@@ -149,7 +149,7 @@ function BillRow({ bill, onPress }: { bill: VendorBill; onPress: () => void }) {
         <Pill variant={p.variant} dot>{p.label}</Pill>
       </View>
       <View style={styles.rowFoot}>
-        <Text style={styles.rowTotal}>{formatCurrency(bill.totalAmount)}</Text>
+        <Text style={styles.rowTotal}>{formatCurrency(bill.totalOwed)}</Text>
         <Ionicons name="chevron-forward" size={16} color={ios.gray[3]} />
       </View>
     </Pressable>
