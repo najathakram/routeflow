@@ -78,7 +78,7 @@ export default function CustomersListScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <NavBar
-        largeTitle={tab === "Suppliers" ? "Suppliers" : "Customers"}
+        largeTitle="Contacts"
         subtitle={
           tab === "Suppliers"
             ? filteredSuppliers.length > 0
@@ -88,7 +88,12 @@ export default function CustomersListScreen() {
               ? `${customers.length} customer${customers.length === 1 ? "" : "s"}`
               : undefined
         }
-        leading={<NavBackButton label="Back" onPress={() => router.back()} />}
+        leading={
+          <NavBackButton
+            label="Back"
+            onPress={() => (router.canGoBack() ? router.back() : router.replace("/(operator)" as any))}
+          />
+        }
         trailing={
           tab === "Suppliers" ? (
             <NavAction
