@@ -28,6 +28,7 @@ import {
   type RouteRunStop,
 } from "../../../../../lib/api/routes";
 import { usePodStore } from "../../../../../store/podStore";
+import { openInMaps } from "../../../../../components/openInMaps";
 
 function initialsFrom(name: string): string {
   return (
@@ -145,12 +146,15 @@ export default function StopDetailScreen() {
       Alert.alert("No address", "This stop doesn't have an address on file.");
       return;
     }
-    const q = encodeURIComponent(address);
-    const url =
-      Platform.OS === "ios"
-        ? `http://maps.apple.com/?q=${q}`
-        : `https://www.google.com/maps/search/?api=1&query=${q}`;
-    Linking.openURL(url).catch(() => {});
+    // Pass the business name + address so Google/Apple Maps can match the
+    // actual place listing (with photo, hours, phone) instead of dropping
+    // a generic pin at the coordinates.
+    openInMaps({
+      address,
+      lat: stop.customerAddress?.lat,
+      lng: stop.customerAddress?.lng,
+      label: customerName,
+    });
   };
   const photoCount = pod?.photoUrls?.length ?? 0;
   const hasSig = !!pod?.signatureUri;

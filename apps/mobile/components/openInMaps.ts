@@ -10,26 +10,43 @@ export interface MapTarget {
 
 /**
  * Opens the native maps app (Apple Maps on iOS, Google Maps elsewhere) for
- * the given target. Prefers lat/lng if present, falls back to a textual
- * address search.
+ * the given target.
+ *
+ * Prefers a "Label, Address" search string so the maps app can match the
+ * destination to a real business listing (showing the proper name, photo,
+ * hours) instead of just dropping an unlabeled pin at lat/lng. Falls back
+ * to coordinates only when no address is available.
  */
 export async function openInMaps(target: MapTarget): Promise<void> {
   const { address, lat, lng, label } = target;
   const hasCoords = typeof lat === "number" && typeof lng === "number";
+  const trimmedAddress = address?.trim();
+  const trimmedLabel = label?.trim();
+  // Prefer "Business Name, 123 Main St, City, State Zip" so Google/Apple
+  // Maps match the actual place listing where one exists.
+  const searchQuery = trimmedAddress
+    ? trimmedLabel
+      ? `${trimmedLabel}, ${trimmedAddress}`
+      : trimmedAddress
+    : trimmedLabel ?? "";
   let url: string;
 
   if (Platform.OS === "ios") {
-    if (hasCoords) {
-      const q = encodeURIComponent(label ?? "Destination");
+    if (searchQuery) {
+      url = `http://maps.apple.com/?q=${encodeURIComponent(searchQuery)}`;
+    } else if (hasCoords) {
+      const q = encodeURIComponent(trimmedLabel ?? "Destination");
       url = `http://maps.apple.com/?ll=${lat},${lng}&q=${q}`;
     } else {
-      url = `http://maps.apple.com/?q=${encodeURIComponent(address ?? "")}`;
+      return;
     }
   } else {
-    if (hasCoords) {
+    if (searchQuery) {
+      url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(searchQuery)}`;
+    } else if (hasCoords) {
       url = `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
     } else {
-      url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address ?? "")}`;
+      return;
     }
   }
 
@@ -40,14 +57,31 @@ export async function openInMaps(target: MapTarget): Promise<void> {
   }
 }
 
+/**
+ * Builds a Google-Maps-friendly waypoint for a single route stop.
+ *
+ * Prefers a "Business Name, Street, City, State Zip" search string so each
+ * waypoint resolves to the actual customer location (and matches the Google
+ * Place listing when one exists) instead of an unlabeled pin at raw lat/lng.
+ * Falls back to coordinates only when the address is missing entirely.
+ */
 function stopToWaypoint(stop: RouteRunStop): string | null {
   const a = stop.customerAddress;
-  if (!a) return null;
-  if (typeof a.lat === "number" && typeof a.lng === "number") {
-    return `${a.lat},${a.lng}`;
+  const businessName = stop.customer?.businessName?.trim();
+
+  if (a) {
+    const addressParts = [a.line1, a.city, a.state, a.zip]
+      .map((p) => p?.trim())
+      .filter(Boolean);
+    if (addressParts.length > 0) {
+      const fullParts = businessName ? [businessName, ...addressParts] : addressParts;
+      return encodeURIComponent(fullParts.join(", "));
+    }
+    if (typeof a.lat === "number" && typeof a.lng === "number") {
+      return `${a.lat},${a.lng}`;
+    }
   }
-  const parts = [a.line1, a.city, a.state, a.zip].filter(Boolean).join(", ");
-  return parts ? encodeURIComponent(parts) : null;
+  return null;
 }
 
 export interface RouteMapOptions {
