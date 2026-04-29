@@ -1,22 +1,32 @@
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { ActivityIndicator } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { Linking } from "react-native";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar, Pill } from "@routeflow/ui/mobile/ios";
-import { useBuyerInvoice } from "../../../lib/api/buyer";
+import { useBuyerInvoice, type BuyerInvoiceItem, type BuyerInvoicePayment } from "../../../lib/api/buyer";
 
-function invoicePill(status: string) {
+function invoicePill(status: string, isOverdue?: boolean) {
+  if (isOverdue) return { variant: "gray" as const, label: "Overdue" };
   switch (status) {
     case "PAID": return { variant: "green" as const, label: "Paid" };
     case "PARTIAL": return { variant: "orange" as const, label: "Partial" };
-    case "SENT": return { variant: "orange" as const, label: "Unpaid" };
-    case "OVERDUE": return { variant: "gray" as const, label: "Overdue" };
+    case "SENT":
+    case "VIEWED": return { variant: "orange" as const, label: "Unpaid" };
     case "VOID": return { variant: "gray" as const, label: "Void" };
     default: return { variant: "gray" as const, label: status };
   }
+}
+
+function fmtDate(s?: string | null) {
+  if (!s) return null;
+  return new Date(s).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
+function fmtPaymentMethod(m?: string | null) {
+  if (!m) return "Payment";
+  return m.charAt(0) + m.slice(1).toLowerCase().replace("_", " ");
 }
 
 export default function CustomerInvoiceDetailScreen() {
@@ -33,8 +43,9 @@ export default function CustomerInvoiceDetailScreen() {
     );
   }
 
-  const p = invoicePill(invoice.status);
-  const amountDue = Number(invoice.amountDue ?? invoice.total) || 0;
+  const p = invoicePill(invoice.status, invoice.isOverdue);
+  const balanceDue = Number(invoice.balanceDue ?? invoice.amountDue ?? 0);
+  const paidAmount = Number(invoice.paidAmount ?? invoice.amountPaid ?? 0);
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
@@ -50,54 +61,92 @@ export default function CustomerInvoiceDetailScreen() {
             <View style={{ flex: 1 }}>
               <Text style={styles.invoiceNum}>#{invoice.invoiceNumber}</Text>
               {invoice.issueDate ? (
-                <Text style={styles.issuedDate}>
-                  Issued:{" "}
-                  {new Date(invoice.issueDate).toLocaleDateString(undefined, {
-                    month: "short", day: "numeric", year: "numeric",
-                  })}
-                </Text>
+                <Text style={styles.issuedDate}>Issued: {fmtDate(invoice.issueDate)}</Text>
               ) : null}
             </View>
             <Pill variant={p.variant} dot>{p.label}</Pill>
           </View>
 
+          {invoice.subtotal != null && invoice.tax != null ? (
+            <View style={{ marginTop: 4, gap: 2 }}>
+              <Text style={styles.totalLine}>Subtotal: ${Number(invoice.subtotal).toFixed(2)}</Text>
+              <Text style={styles.totalLine}>GST (10%): ${Number(invoice.tax).toFixed(2)}</Text>
+            </View>
+          ) : null}
+
           <Text style={styles.total}>${Number(invoice.total).toFixed(2)}</Text>
 
           {invoice.dueDate ? (
-            <Text style={styles.dueDate}>
-              Due:{" "}
-              {new Date(invoice.dueDate).toLocaleDateString(undefined, {
-                month: "short", day: "numeric", year: "numeric",
-              })}
-            </Text>
+            <Text style={styles.dueDate}>Due: {fmtDate(invoice.dueDate)}</Text>
           ) : null}
         </View>
 
-        {/* Payment info */}
-        {invoice.status !== "PAID" && amountDue > 0 ? (
+        {/* Balance due banner */}
+        {invoice.status !== "PAID" && invoice.status !== "VOID" && balanceDue > 0 ? (
           <View style={styles.dueCard}>
             <Ionicons name="alert-circle-outline" size={18} color={ios.system.orangeInk} />
             <View style={{ flex: 1 }}>
               <Text style={styles.dueCardTitle}>Amount due</Text>
-              <Text style={styles.dueCardAmount}>${Number(amountDue).toFixed(2)}</Text>
+              <Text style={styles.dueCardAmount}>${balanceDue.toFixed(2)}</Text>
             </View>
           </View>
         ) : null}
 
-        {/* Summary rows */}
+        {/* Line items */}
+        {invoice.items && invoice.items.length > 0 ? (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Items</Text>
+            <View style={styles.itemsList}>
+              {invoice.items.map((item, i) => (
+                <LineItemRow
+                  key={item.id ?? i}
+                  item={item}
+                  last={i === invoice.items!.length - 1}
+                />
+              ))}
+            </View>
+          </View>
+        ) : null}
+
+        {/* Payments */}
+        {invoice.payments && invoice.payments.length > 0 ? (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Payments</Text>
+            <View style={styles.detailCard}>
+              {invoice.payments.map((pmt, i) => (
+                <View
+                  key={pmt.id ?? i}
+                  style={[
+                    styles.detailRow,
+                    i === invoice.payments!.length - 1 && { borderBottomWidth: 0 },
+                  ]}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.detailLabel}>{fmtPaymentMethod(pmt.paymentMethod)}</Text>
+                    {pmt.reference ? (
+                      <Text style={styles.detailMeta}>Ref: {pmt.reference}</Text>
+                    ) : null}
+                    <Text style={styles.detailMeta}>{fmtDate(pmt.createdAt)}</Text>
+                  </View>
+                  <Text style={styles.detailValue}>${Number(pmt.amount).toFixed(2)}</Text>
+                </View>
+              ))}
+            </View>
+          </View>
+        ) : null}
+
+        {/* Summary */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Summary</Text>
           <View style={styles.detailCard}>
             <DetailRow label="Invoice #" value={`#${invoice.invoiceNumber}`} />
             <DetailRow label="Status" value={p.label} />
-            {invoice.total != null ? (
-              <DetailRow label="Total" value={`$${Number(invoice.total).toFixed(2)}`} />
+            <DetailRow label="Total" value={`$${Number(invoice.total).toFixed(2)}`} />
+            {paidAmount > 0 ? (
+              <DetailRow label="Paid" value={`$${paidAmount.toFixed(2)}`} />
             ) : null}
-            {invoice.amountPaid != null && Number(invoice.amountPaid) > 0 ? (
-              <DetailRow label="Amount paid" value={`$${Number(invoice.amountPaid).toFixed(2)}`} />
-            ) : null}
-            {amountDue > 0 && invoice.status !== "PAID" ? (
-              <DetailRow label="Balance due" value={`$${amountDue.toFixed(2)}`} />
+            {balanceDue > 0 && invoice.status !== "PAID" ? (
+              <DetailRow label="Balance due" value={`$${balanceDue.toFixed(2)}`} last />
             ) : null}
           </View>
         </View>
@@ -108,9 +157,27 @@ export default function CustomerInvoiceDetailScreen() {
   );
 }
 
-function DetailRow({ label, value }: { label: string; value: string }) {
+function LineItemRow({ item, last }: { item: BuyerInvoiceItem; last: boolean }) {
+  const label = item.product?.name ?? item.description;
+  const unit = item.product?.unit;
   return (
-    <View style={styles.detailRow}>
+    <View style={[styles.itemRow, last && { borderBottomWidth: 0 }]}>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text style={styles.itemName} numberOfLines={2}>{label}</Text>
+        <Text style={styles.itemMeta}>
+          {Number(item.qty)} × ${Number(item.unitPrice).toFixed(2)}
+          {unit ? ` / ${unit}` : ""}
+          {item.discount ? ` − $${Number(item.discount).toFixed(2)} disc` : ""}
+        </Text>
+      </View>
+      <Text style={styles.itemTotal}>${Number(item.subtotal).toFixed(2)}</Text>
+    </View>
+  );
+}
+
+function DetailRow({ label, value, last }: { label: string; value: string; last?: boolean }) {
+  return (
+    <View style={[styles.detailRow, last && { borderBottomWidth: 0 }]}>
       <Text style={styles.detailLabel}>{label}</Text>
       <Text style={styles.detailValue}>{value}</Text>
     </View>
@@ -120,11 +187,12 @@ function DetailRow({ label, value }: { label: string; value: string }) {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: ios.bg },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
-  headerCard: { margin: 16, backgroundColor: ios.bgElev, borderRadius: 16, padding: 18, gap: 6 },
+  headerCard: { margin: 16, backgroundColor: ios.bgElev, borderRadius: 16, padding: 18, gap: 4 },
   headerRow: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
   invoiceNum: { fontSize: 18, fontFamily: "Inter_700Bold", color: ios.label, letterSpacing: -0.3 },
   issuedDate: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
-  total: { fontSize: 28, fontFamily: "Inter_700Bold", color: ios.label, letterSpacing: -0.6, marginTop: 4 },
+  totalLine: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2 },
+  total: { fontSize: 28, fontFamily: "Inter_700Bold", color: ios.label, letterSpacing: -0.6, marginTop: 2 },
   dueDate: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2 },
   dueCard: {
     flexDirection: "row",
@@ -138,7 +206,7 @@ const styles = StyleSheet.create({
   },
   dueCardTitle: { fontSize: 12, fontFamily: "Inter_500Medium", color: ios.system.orangeInk },
   dueCardAmount: { fontSize: 18, fontFamily: "Inter_700Bold", color: ios.system.orangeInk },
-  section: { paddingHorizontal: 16, paddingBottom: 16 },
+  section: { paddingHorizontal: 16, paddingBottom: 8 },
   sectionTitle: {
     fontSize: 13,
     fontFamily: "Inter_600SemiBold",
@@ -146,18 +214,34 @@ const styles = StyleSheet.create({
     letterSpacing: 0.4,
     textTransform: "uppercase",
     marginBottom: 8,
+    paddingTop: 12,
     paddingLeft: 4,
   },
-  detailCard: { backgroundColor: ios.bgElev, borderRadius: 12, overflow: "hidden" },
-  detailRow: {
+  itemsList: { backgroundColor: ios.bgElev, borderRadius: 12, overflow: "hidden" },
+  itemRow: {
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: ios.separator,
+    gap: 10,
   },
-  detailLabel: { fontSize: 14, fontFamily: "Inter_500Medium", color: ios.label2 },
-  detailValue: { fontSize: 14, fontFamily: "Inter_500Medium", color: ios.label },
+  itemName: { fontSize: 14, fontFamily: "Inter_500Medium", color: ios.label },
+  itemMeta: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
+  itemTotal: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: ios.label, fontVariant: ["tabular-nums"] },
+  detailCard: { backgroundColor: ios.bgElev, borderRadius: 12, overflow: "hidden" },
+  detailRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: ios.separator,
+    gap: 12,
+  },
+  detailLabel: { fontSize: 14, fontFamily: "Inter_500Medium", color: ios.label2, flex: 1 },
+  detailMeta: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label3, marginTop: 2 },
+  detailValue: { fontSize: 14, fontFamily: "Inter_500Medium", color: ios.label, textAlign: "right" },
 });

@@ -35,16 +35,42 @@ export interface BuyerOrder {
   total?: number;
 }
 
+export interface BuyerInvoiceItem {
+  id: string;
+  description: string;
+  qty: number;
+  unitPrice: number;
+  discount?: number;
+  subtotal: number;
+  product?: { id: string; name: string; unit?: string };
+}
+
+export interface BuyerInvoicePayment {
+  id: string;
+  amount: number;
+  createdAt: string;
+  paymentMethod?: string;
+  reference?: string;
+  notes?: string;
+}
+
 export interface BuyerInvoice {
   id: string;
   invoiceNumber: string;
   status: string;
   issueDate?: string;
   dueDate?: string;
+  subtotal?: number;
+  tax?: number;
   total: number;
   amountPaid?: number;
+  paidAmount?: number;
   amountDue?: number;
+  balanceDue?: number;
+  isOverdue?: boolean;
   customer?: { id: string; businessName: string };
+  items?: BuyerInvoiceItem[];
+  payments?: BuyerInvoicePayment[];
 }
 
 export interface BuyerProfile {
