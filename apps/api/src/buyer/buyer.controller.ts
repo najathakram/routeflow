@@ -265,6 +265,9 @@ export class BuyerController {
           makePseudoUser(ctx),
         );
 
+        // Sweep any other PENDING orders for this customer into the winner.
+        await this.ordersService.mergeAllPendingForCustomer(ctx.customerId);
+
         // Return the updated order
         return this.ordersService.findOne(activeOrder.id, makePseudoUser(ctx));
       }
@@ -284,7 +287,11 @@ export class BuyerController {
       requestedDeliveryDate: dto.requestedDeliveryDate,
       status: dto.status ?? "PENDING",
     };
-    return this.ordersService.create(createDto as any, makePseudoUser(ctx));
+    const created = await this.ordersService.create(createDto as any, makePseudoUser(ctx));
+    // Newly-created order may share a customer with pre-existing PENDINGs —
+    // consolidate them so the customer ends up with a single PENDING.
+    await this.ordersService.mergeAllPendingForCustomer(ctx.customerId);
+    return created;
   }
 
   @Patch("orders/:id/items")

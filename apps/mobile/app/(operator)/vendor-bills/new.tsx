@@ -12,9 +12,11 @@ import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { FormField, FormSection, FormSheet, FormTextInput } from "../../../components/FormSheet";
 import { OptionPickerSheet } from "../../../components/OptionPickerSheet";
+import { BarcodeScanner } from "../../../components/BarcodeScanner";
 import { useCreateVendorBill } from "../../../lib/api/vendor-bills";
 import { useSuppliers } from "../../../lib/api/purchase-orders";
 import { useProducts } from "../../../lib/api/products";
+import { apiClient } from "../../../lib/api-client";
 import { showToast } from "../../../lib/toast";
 
 interface LineItem {
@@ -166,7 +168,6 @@ function LineItemRow({
   onUpdate: (i: number, field: keyof LineItem, value: string) => void;
   onRemove: (i: number) => void;
 }) {
-  const router = useRouter();
   const [search, setSearch] = useState(item.description);
   const { data: productData } = useProducts({
     search: search.trim().length >= 2 ? search.trim() : undefined,
@@ -179,6 +180,7 @@ function LineItemRow({
     pricePerUnit?: number | string;
   }>;
   const [showSugs, setShowSugs] = useState(false);
+  const [scanOpen, setScanOpen] = useState(false);
 
   const handleDescChange = (v: string) => {
     setSearch(v);
@@ -201,8 +203,35 @@ function LineItemRow({
       // On web, expand suggestions (scanner not available in browser)
       setShowSugs(true);
     } else {
-      router.push("/(operator)/products/scan" as any);
+      setScanOpen(true);
     }
+  };
+
+  const handleScanned = async (code: string) => {
+    setScanOpen(false);
+    const trimmed = code.trim();
+    if (!trimmed) return;
+    try {
+      const res = await apiClient.get(
+        `/products/barcode/${encodeURIComponent(trimmed)}`,
+      );
+      const product = res.data as
+        | { id: string; name: string; pricePerUnit?: number | string }
+        | undefined;
+      if (product?.id) {
+        setSearch(product.name);
+        onUpdate(index, "description", product.name);
+        if (product.pricePerUnit) {
+          const cost = Number(product.pricePerUnit);
+          if (cost > 0) onUpdate(index, "unitCost", cost.toFixed(2));
+        }
+        setShowSugs(false);
+        return;
+      }
+    } catch {
+      // fall through
+    }
+    showToast(`No product for "${trimmed}"`);
   };
 
   return (
@@ -269,6 +298,9 @@ function LineItemRow({
           />
         </View>
       </View>
+      {scanOpen ? (
+        <BarcodeScanner onScanned={handleScanned} onClose={() => setScanOpen(false)} />
+      ) : null}
     </View>
   );
 }

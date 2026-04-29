@@ -252,10 +252,17 @@ export function useDeleteRouteRun() {
   });
 }
 
+export type OptimizeFallbackReason =
+  | "ORS_NOT_CONFIGURED"
+  | "ORS_RATE_LIMITED"
+  | "ORS_HTTP_ERROR"
+  | "ORS_NETWORK_ERROR";
+
 export interface OptimizeResult {
   stopOrder: Array<{ stopId: string; stopNumber: number }>;
   reorderedCount: number;
   usedFallback: boolean;
+  fallbackReason?: OptimizeFallbackReason;
 }
 
 export interface RunPackingStop {
