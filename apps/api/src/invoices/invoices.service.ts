@@ -411,7 +411,14 @@ export class InvoicesService {
     const where: any = {};
     if (isOverdue) {
       // Derived overdue: unpaid invoices (SENT/VIEWED/PARTIAL) past their due date
-      where.status = { in: [InvoiceStatus.SENT, InvoiceStatus.VIEWED, InvoiceStatus.PARTIAL, InvoiceStatus.OVERDUE] };
+      where.status = {
+        in: [
+          InvoiceStatus.SENT,
+          InvoiceStatus.VIEWED,
+          InvoiceStatus.PARTIAL,
+          InvoiceStatus.OVERDUE,
+        ],
+      };
       where.dueDate = { lt: new Date() };
     } else if (statuses && statuses.length > 0) {
       where.status = { in: statuses };
@@ -490,11 +497,7 @@ export class InvoicesService {
         inv.status === InvoiceStatus.VOID ||
         inv.status === InvoiceStatus.WRITTEN_OFF;
       const balanceDue = isSettled ? 0 : Math.max(0, Number(inv.total) - paidAmount);
-      const isOverdue =
-        !isSettled &&
-        balanceDue > 0 &&
-        inv.dueDate != null &&
-        new Date(inv.dueDate) < now;
+      const isOverdue = !isSettled && balanceDue > 0 && inv.dueDate != null && new Date(inv.dueDate) < now;
       return { ...inv, balanceDue, paidAmount, isOverdue };
     });
 
