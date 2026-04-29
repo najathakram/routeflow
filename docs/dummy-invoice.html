@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+  body { font-family: Arial, sans-serif; margin: 40px; background: white; color: #333; }
+  h1 { font-size: 28px; color: #1a1a2e; }
+  .header { display: flex; justify-content: space-between; margin-bottom: 30px; }
+  .supplier { font-size: 14px; }
+  .invoice-meta { text-align: right; font-size: 14px; }
+  table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+  th { background: #1a1a2e; color: white; padding: 10px; text-align: left; }
+  td { padding: 8px 10px; border-bottom: 1px solid #ddd; }
+  .total-row { font-weight: bold; background: #f5f5f5; }
+  .footer { margin-top: 20px; font-size: 12px; color: #666; }
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="supplier">
+    <h1>INVOICE</h1>
+    <p><strong>From:</strong> Fresh Produce Co.<br>
+    123 Market Street, Sydney NSW 2000<br>
+    ABN: 12 345 678 901<br>
+    Tel: (02) 9999 1234</p>
+  </div>
+  <div class="invoice-meta">
+    <p><strong>Invoice #:</strong> INV-2026-0042<br>
+    <strong>Date:</strong> April 28, 2026<br>
+    <strong>Due:</strong> May 12, 2026<br>
+    <strong>To:</strong> RouteFlow Foods Pty Ltd</p>
+  </div>
+</div>
+<table>
+  <thead>
+    <tr><th>Description</th><th>Qty</th><th>Unit</th><th>Unit Price</th><th>Total</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Almond Mix 16oz</td><td>50</td><td>bag</td><td>$5.00</td><td>$250.00</td></tr>
+    <tr><td>Full Cream Milk 2L</td><td>100</td><td>bottle</td><td>$2.20</td><td>$220.00</td></tr>
+    <tr><td>Baby Spinach 4oz</td><td>80</td><td>bag</td><td>$1.80</td><td>$144.00</td></tr>
+    <tr><td>Apple Juice 1L</td><td>60</td><td>bottle</td><td>$2.50</td><td>$150.00</td></tr>
+    <tr class="total-row"><td colspan="4" style="text-align:right">Subtotal</td><td>$764.00</td></tr>
+    <tr class="total-row"><td colspan="4" style="text-align:right">GST (10%)</td><td>$76.40</td></tr>
+    <tr class="total-row"><td colspan="4" style="text-align:right">TOTAL DUE</td><td>$840.40</td></tr>
+  </tbody>
+</table>
+<div class="footer">
+  <p>Payment terms: Net 14 days. Bank transfer to BSB 062-000 Acc 1234 5678. Please quote invoice number.</p>
+</div>
+</body>
+</html>
