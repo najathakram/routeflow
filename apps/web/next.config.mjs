@@ -25,6 +25,21 @@ const nextConfig = {
     serverComponentsExternalPackages: [],
   },
 
+  async redirects() {
+    return [
+      {
+        source: "/route-runs/:id",
+        destination: "/routes/:id",
+        permanent: true,
+      },
+      {
+        source: "/route-runs/:id/dispatch",
+        destination: "/routes/:id/dispatch",
+        permanent: true,
+      },
+    ];
+  },
+
   // Security headers applied to all routes
   async headers() {
     return [

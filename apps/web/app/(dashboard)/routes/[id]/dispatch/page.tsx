@@ -17,6 +17,7 @@ import {
   Save,
   MapPin,
   Clock,
+  Sparkles,
 } from "lucide-react";
 import { Badge, Button, cn, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
@@ -26,6 +27,7 @@ import {
   useRunPackingList,
   useUpdateRouteRun,
   useUpdateRouteRunStatus,
+  useOptimizeRoute,
   type RunPackingStop,
 } from "@/lib/api/routes";
 import { useDrivers } from "@/lib/api/drivers";
@@ -284,13 +286,46 @@ function OptionalStopCard({ stop }: { stop: RunPackingStop }) {
 export default function DispatchPage({ params }: { params: { id: string } }) {
   const { setTitle } = usePageTitle();
   const { user } = useAuth();
+  const { toast } = useToast();
   const isOperator = user?.role === "OPERATOR";
 
   const { data: run, isLoading: runLoading } = useRouteRun(params.id);
   const { data: packingData, isLoading: packingLoading } = useRunPackingList(params.id);
+  const { mutate: optimizeRoute, isPending: isOptimizing } = useOptimizeRoute();
 
   const [showDriverModal, setShowDriverModal] = React.useState(false);
   const [showCancelModal, setShowCancelModal] = React.useState(false);
+
+  const handleOptimize = () => {
+    optimizeRoute(params.id, {
+      onSuccess: (result) => {
+        if (!result.usedFallback) {
+          toast({
+            title: "Route reordered",
+            description: `${result.reorderedCount} stops reordered for the most efficient sequence.`,
+          });
+          return;
+        }
+        const fallbackHints: Record<string, string> = {
+          ORS_NOT_CONFIGURED:
+            "Route intelligence is not configured. Set ORS_API_KEY to enable true optimization.",
+          ORS_RATE_LIMITED: "Route intelligence rate limit hit — try again in a minute.",
+          ORS_HTTP_ERROR: "Couldn't reach route intelligence (server error). Used estimated distance instead.",
+          ORS_NETWORK_ERROR: "Couldn't reach route intelligence (network error). Used estimated distance instead.",
+        };
+        const hint =
+          (result.fallbackReason && fallbackHints[result.fallbackReason]) ??
+          "Used estimated distance instead of route intelligence.";
+        toast({
+          title: "Route reordered (fallback)",
+          description: `${result.reorderedCount} stops reordered. ${hint}`,
+          variant: "warning",
+        });
+      },
+      onError: (err) =>
+        toast({ title: "Optimization failed", description: err.message, variant: "error" }),
+    });
+  };
 
   const routeName = run?.route?.name ?? "Dispatch";
   React.useEffect(() => {
@@ -390,6 +425,14 @@ export default function DispatchPage({ params }: { params: { id: string } }) {
             {/* Operator controls */}
             {isOperator && run.status !== "CANCELLED" && run.status !== "COMPLETED" && (
               <div className="flex shrink-0 items-center gap-2">
+                <Button variant="secondary" size="sm" onClick={handleOptimize} disabled={isOptimizing}>
+                  {isOptimizing ? (
+                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Sparkles className="mr-1.5 h-3.5 w-3.5" />
+                  )}
+                  {isOptimizing ? "Optimizing…" : "Optimize"}
+                </Button>
                 <Button variant="secondary" size="sm" onClick={() => setShowDriverModal(true)}>
                   <UserCheck className="mr-1.5 h-3.5 w-3.5" />
                   Change Driver
