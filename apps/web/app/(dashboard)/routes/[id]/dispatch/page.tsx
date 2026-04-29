@@ -286,6 +286,7 @@ function OptionalStopCard({ stop }: { stop: RunPackingStop }) {
 export default function DispatchPage({ params }: { params: { id: string } }) {
   const { setTitle } = usePageTitle();
   const { user } = useAuth();
+  const { toast } = useToast();
   const isOperator = user?.role === "OPERATOR";
 
   const { data: run, isLoading: runLoading } = useRouteRun(params.id);
