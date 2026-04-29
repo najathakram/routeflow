@@ -82,3 +82,11 @@ export function useSavePreferences() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["user-preferences"] }),
   });
 }
+
+export function useToggleDriverPermit() {
+  const qc = useQueryClient();
+  return useMutation<AppUser, Error, string>({
+    mutationFn: (userId) => apiClient.patch(`/users/${userId}/driver-permit`).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["users", "me"] }),
+  });
+}

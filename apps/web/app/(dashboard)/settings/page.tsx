@@ -38,6 +38,7 @@ import {
   LogOut as LogOutIcon,
   Loader2,
   FileText,
+  Truck,
 } from "lucide-react";
 import {
   Input,
@@ -51,7 +52,7 @@ import {
 } from "@routeflow/ui/web";
 import { useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
-import { useUsers, useCreateOperator, useUpdateUser, useChangeUserStatus, useResetUserPassword, AppUser } from "@/lib/api/users";
+import { useUsers, useCreateOperator, useUpdateUser, useChangeUserStatus, useResetUserPassword, useToggleDriverPermit, AppUser } from "@/lib/api/users";
 import { useNotificationsStatus, useSendTestNotification } from "@/lib/api/notifications";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api-client";
@@ -1855,6 +1856,8 @@ function MyAccountTab() {
   });
 
   const googleLinked: boolean = me?.googleLinked ?? false;
+  const canToggleDriver = me?.role === "OPERATOR" || me?.role === "TENANT_ADMIN";
+  const toggleDriverPermit = useToggleDriverPermit();
 
   const handleLinkGoogle = async () => {
     setIsLinking(true);
@@ -1879,8 +1882,59 @@ function MyAccountTab() {
     }
   };
 
+  const handleToggleDriver = async () => {
+    if (!me?.id) return;
+    try {
+      await toggleDriverPermit.mutateAsync(me.id);
+      toast({
+        title: me.canActAsDriver ? "Driver access disabled" : "Driver access enabled",
+        description: me.canActAsDriver
+          ? "Sign out and back in to apply."
+          : "Sign out and back in to access driver features.",
+        variant: "success",
+      });
+    } catch {
+      toast({ title: "Failed to update driver access", variant: "error" });
+    }
+  };
+
   return (
     <div className="space-y-5">
+      {canToggleDriver && (
+        <Card title="Driver Access">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-surface-border bg-surface-raised">
+                <Truck className="h-5 w-5 text-navy/60" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-navy">Act as driver</p>
+                <p className="text-xs text-navy/50">
+                  Lets you switch between operator and driver views without a separate account.
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={handleToggleDriver}
+              disabled={isLoading || toggleDriverPermit.isPending}
+              className="shrink-0"
+              aria-label="Toggle driver access"
+            >
+              {me?.canActAsDriver ? (
+                <ToggleRight className="h-7 w-7 text-brand-500" />
+              ) : (
+                <ToggleLeft className="h-7 w-7 text-navy/30" />
+              )}
+            </button>
+          </div>
+          {me?.canActAsDriver && (
+            <p className="mt-3 rounded-md bg-surface-raised px-3 py-2 text-xs text-navy/50">
+              A mode switcher will appear on your dashboard. Sign out and back in after toggling to refresh your session.
+            </p>
+          )}
+        </Card>
+      )}
+
       <Card title="Google Sign-In">
         <div className="space-y-4">
           <p className="text-sm text-navy/60">
