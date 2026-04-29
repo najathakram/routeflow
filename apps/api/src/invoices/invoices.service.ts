@@ -418,10 +418,10 @@ export class InvoicesService {
       where.customerId = customer.id;
       // Buyers must not see DRAFT invoices (not yet issued to them)
       if (!where.status) {
-        where.status = { not: 'DRAFT' };
+        where.status = { not: "DRAFT" };
       } else if (where.status?.in) {
-        where.status.in = where.status.in.filter((s: string) => s !== 'DRAFT');
-      } else if (where.status === 'DRAFT') {
+        where.status.in = where.status.in.filter((s: string) => s !== "DRAFT");
+      } else if (where.status === "DRAFT") {
         return { data: [], meta: { total: 0, page, limit, totalPages: 0 } };
       }
     } else if (customerId) {
