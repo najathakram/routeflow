@@ -48,7 +48,7 @@ function driverDisplayName(driver: AdminDriver | undefined): string {
 
 export default function TenantTodayScreen() {
   const router = useRouter();
-  const { user, setActiveRole } = useAuthStore();
+  const { user } = useAuthStore();
 
   const { data: stats, isLoading: statsLoading } = useAdminDashboard();
   const { data: routesData, isLoading: routesLoading } = useAdminRoutes({ limit: 10 });
@@ -118,40 +118,6 @@ export default function TenantTodayScreen() {
         }
       />
 
-      {/* Mode switcher — only shown when user can act as both driver and operator */}
-      {user?.canActAsDriver ? (
-        <View style={styles.modeBar}>
-          <View style={styles.modeTrack}>
-            <Pressable
-              style={[styles.modeSeg, styles.modeSegActive]}
-              onPress={() => setActiveRole("all")}
-            >
-              <Ionicons name="sunny" size={14} color={ios.brand} />
-              <Text style={[styles.modeLabel, styles.modeLabelActive]}>Combined</Text>
-            </Pressable>
-            <Pressable
-              style={styles.modeSeg}
-              onPress={() => {
-                setActiveRole("driver");
-                router.replace("/(driver)/route");
-              }}
-            >
-              <Ionicons name="car-outline" size={14} color={ios.label2} />
-              <Text style={styles.modeLabel}>Driver</Text>
-            </Pressable>
-            <Pressable
-              style={styles.modeSeg}
-              onPress={() => {
-                setActiveRole("operator");
-                router.replace("/(operator)/home");
-              }}
-            >
-              <Ionicons name="briefcase-outline" size={14} color={ios.label2} />
-              <Text style={styles.modeLabel}>Operator</Text>
-            </Pressable>
-          </View>
-        </View>
-      ) : null}
 
       <ScrollView showsVerticalScrollIndicator={false}>
         {/* My route card (driver section) */}

@@ -106,15 +106,8 @@ function RootLayoutNav() {
     }
 
     // Step 4: role-aware routing.
-    // "all"      → unified (tenant) home (owner/admin who holds both roles)
     // "operator" → operator tabs
     // "driver"   → driver tabs
-    if (activeRole === "all") {
-      if (segments[0] !== "(tenant)") {
-        router.replace("/(tenant)/today");
-      }
-      return;
-    }
     if (activeRole === "operator") {
       if (segments[0] !== "(operator)") {
         router.replace("/(operator)/home");

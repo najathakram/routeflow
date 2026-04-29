@@ -125,20 +125,10 @@ export default function OperatorHomeScreen() {
         }
       />
 
-      {/* Mode switcher — only visible when this user can also act as driver */}
+      {/* Mode switcher — only visible for admin users who can also drive */}
       {user?.canActAsDriver ? (
         <View style={styles.modeBar}>
           <View style={styles.modeTrack}>
-            <Pressable
-              style={styles.modeSeg}
-              onPress={() => {
-                setActiveRole("all");
-                router.replace("/(tenant)/today");
-              }}
-            >
-              <Ionicons name="sunny" size={14} color={ios.label2} />
-              <Text style={styles.modeLabel}>Combined</Text>
-            </Pressable>
             <Pressable style={[styles.modeSeg, styles.modeSegActive]}>
               <Ionicons name="briefcase-outline" size={14} color={ios.brand} />
               <Text style={[styles.modeLabel, styles.modeLabelActive]}>Operator</Text>

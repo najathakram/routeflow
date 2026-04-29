@@ -8,7 +8,7 @@ import {
   refreshTokens,
 } from "./auth";
 
-export type ActiveRole = "driver" | "operator" | "all" | null;
+export type ActiveRole = "driver" | "operator" | null;
 
 interface AuthState {
   user: AuthUser | null;
@@ -31,8 +31,6 @@ interface AuthState {
 function defaultRoleForUser(user: AuthUser | null): ActiveRole {
   if (!user) return null;
   if (user.role === "DRIVER") return "driver";
-  // Multi-role user (operator/admin who can also drive) gets the unified "all" view
-  if ((user.role === "OPERATOR" || user.role === "TENANT_ADMIN") && user.canActAsDriver) return "all";
   if (user.role === "OPERATOR" || user.role === "TENANT_ADMIN") return "operator";
   return null;
 }

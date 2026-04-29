@@ -60,7 +60,7 @@ async function openRouteFromHere(stops: RouteRunStop[]): Promise<void> {
   openRouteInMaps(stops, loc ? { originLat: loc.lat, originLng: loc.lng } : {});
 }
 
-/** Compact 3-way mode pill — self-contained, shown only for canActAsDriver users. */
+/** 2-way mode pill — shown only for admin users who can also drive. */
 function ModeSwitcherBar() {
   const router = useRouter();
   const { user, setActiveRole } = useAuthStore();
@@ -68,16 +68,6 @@ function ModeSwitcherBar() {
   return (
     <View style={styles.modeBar}>
       <View style={styles.modeTrack}>
-        <Pressable
-          style={styles.modeSeg}
-          onPress={() => {
-            setActiveRole("all");
-            router.replace("/(tenant)/today");
-          }}
-        >
-          <Ionicons name="sunny" size={14} color={ios.label2} />
-          <Text style={styles.modeLabel}>Combined</Text>
-        </Pressable>
         <Pressable
           style={styles.modeSeg}
           onPress={() => {

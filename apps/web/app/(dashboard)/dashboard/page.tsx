@@ -20,7 +20,6 @@ import {
   AlertCircle,
   ExternalLink,
   Briefcase,
-  LayoutGrid,
   type LucideIcon,
 } from "lucide-react";
 import { StatCard, Badge, Table, Button, Card, cn } from "@routeflow/ui/web";
@@ -418,7 +417,7 @@ function LowStockPanel({ products, total, isLoading }: { products: Product[]; to
 
 // ─── Mode switcher (dual-role users) ──────────────────────────────────────────
 
-type ViewMode = "all" | "operator" | "driver";
+type ViewMode = "operator" | "driver";
 
 const MODE_STORAGE_KEY = "rf-dashboard-view-mode";
 
@@ -430,9 +429,8 @@ function ModeSwitcher({
   onChange: (m: ViewMode) => void;
 }) {
   const segments: { key: ViewMode; label: string; icon: LucideIcon }[] = [
-    { key: "all", label: "Combined", icon: LayoutGrid },
-    { key: "driver", label: "Driver", icon: Truck },
     { key: "operator", label: "Operator", icon: Briefcase },
+    { key: "driver", label: "Driver", icon: Truck },
   ];
   return (
     <div
@@ -484,11 +482,11 @@ export default function DashboardPage() {
   const canActAsDriver = user?.canActAsDriver === true && baseIsOperator;
 
   // View mode for dual-role users — persisted across visits
-  const [viewMode, setViewMode] = React.useState<ViewMode>("all");
+  const [viewMode, setViewMode] = React.useState<ViewMode>("operator");
   React.useEffect(() => {
     if (typeof window === "undefined") return;
     const saved = localStorage.getItem(MODE_STORAGE_KEY);
-    if (saved === "operator" || saved === "driver" || saved === "all") {
+    if (saved === "operator" || saved === "driver") {
       setViewMode(saved);
     }
   }, []);
@@ -499,12 +497,8 @@ export default function DashboardPage() {
 
   // For dual-role users the mode pill chooses what content shows.
   // Single-role users fall back to their JWT role.
-  const isOperator = canActAsDriver
-    ? viewMode === "all" || viewMode === "operator"
-    : baseIsOperator;
-  const isDriver = canActAsDriver
-    ? viewMode === "all" || viewMode === "driver"
-    : baseIsDriver;
+  const isOperator = canActAsDriver ? viewMode === "operator" : baseIsOperator;
+  const isDriver = canActAsDriver ? viewMode === "driver" : baseIsDriver;
 
   React.useEffect(() => {
     setTitle("Dashboard");
