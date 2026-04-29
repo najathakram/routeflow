@@ -198,7 +198,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: ios.separator,
   },
   itemName: { fontSize: 15, color: ios.label, flexShrink: 1 },
-  itemPrice: { fontSize: 13, color: ios.secondaryLabel, marginTop: 2 },
+  itemPrice: { fontSize: 13, color: ios.label2, marginTop: 2 },
   qtyRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   qtyBtn: { width: 30, height: 30, borderRadius: 15, backgroundColor: ios.fill, alignItems: "center", justifyContent: "center" },
   qtyInput: { width: 36, textAlign: "center", fontSize: 15, color: ios.label, borderBottomWidth: 1, borderBottomColor: ios.separator, paddingVertical: 2 },
