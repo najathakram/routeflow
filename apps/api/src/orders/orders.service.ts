@@ -320,9 +320,7 @@ export class OrdersService implements OnApplicationBootstrap {
 
     // If winner has no route assignment but losers do, promote the first loser's assignment.
     const routeAssignment =
-      winner.routeRunId == null
-        ? losers.find((o) => o.routeRunId != null) ?? null
-        : null;
+      winner.routeRunId == null ? (losers.find((o) => o.routeRunId != null) ?? null) : null;
 
     const winnerProductIds = new Set(winner.lineItems.map((li) => li.productId));
     const qtyAdditions = new Map<string, number>();
