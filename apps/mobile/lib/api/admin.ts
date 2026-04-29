@@ -161,7 +161,10 @@ export function useConfirmAdminOrder() {
       apiClient
         .patch(`/orders/${id}/status`, { status: 'CONFIRMED' })
         .then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'orders'] }),
+    onSuccess: (_, id) => {
+      qc.invalidateQueries({ queryKey: ['admin', 'orders'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'orders', id] });
+    },
   });
 }
 
@@ -172,7 +175,10 @@ export function useCancelAdminOrder() {
       apiClient
         .patch(`/orders/${id}/status`, { status: 'CANCELLED' })
         .then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'orders'] }),
+    onSuccess: (_, id) => {
+      qc.invalidateQueries({ queryKey: ['admin', 'orders'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'orders', id] });
+    },
   });
 }
 
@@ -200,6 +206,7 @@ export function useAdminCustomers(params?: {
     queryKey: ['admin', 'customers', params],
     queryFn: () => apiClient.get('/customers', { params }).then((r) => r.data),
     staleTime: 60_000,
+    refetchOnWindowFocus: true,
   });
 }
 
@@ -261,6 +268,7 @@ export function useAdminInvoices(params?: {
     queryKey: ['admin', 'invoices', params],
     queryFn: () => apiClient.get('/invoices', { params }).then((r) => r.data),
     staleTime: 30_000,
+    refetchOnWindowFocus: true,
   });
 }
 
@@ -277,7 +285,10 @@ export function useVoidAdminInvoice() {
   return useMutation<AdminInvoice, Error, string>({
     mutationFn: (id) =>
       apiClient.post(`/invoices/${id}/void`).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'invoices'] }),
+    onSuccess: (_, id) => {
+      qc.invalidateQueries({ queryKey: ['admin', 'invoices'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'invoices', id] });
+    },
   });
 }
 
@@ -290,7 +301,10 @@ export function useRecordAdminPayment() {
   >({
     mutationFn: ({ id, ...dto }) =>
       apiClient.post(`/invoices/${id}/payments`, dto).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'invoices'] }),
+    onSuccess: (_, { id }) => {
+      qc.invalidateQueries({ queryKey: ['admin', 'invoices'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'invoices', id] });
+    },
   });
 }
 
