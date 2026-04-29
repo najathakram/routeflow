@@ -54,7 +54,7 @@ export default function SuppliersScreen() {
               <SupplierRow
                 key={s.id}
                 supplier={s}
-                onPress={() => router.push(`/(operator)/suppliers/${s.id}/edit`)}
+                onPress={() => router.push(`/(operator)/suppliers/${s.id}` as any)}
               />
             ))}
           </View>
