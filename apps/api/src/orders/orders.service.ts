@@ -334,17 +334,19 @@ export class OrdersService implements OnApplicationBootstrap {
     return { customers: groups.length, merged };
   }
 
-  async onApplicationBootstrap() {
-    try {
-      const result = await this.sweepAllPendingOrders();
-      if (result.customers > 0) {
-        this.logger.log(
-          `Startup sweep: merged duplicate PENDING orders for ${result.customers} customer(s)`,
-        );
-      }
-    } catch (err) {
-      this.logger.error("Startup sweep failed", err instanceof Error ? err.stack : String(err));
-    }
+  onApplicationBootstrap() {
+    // Fire-and-forget: don't block HTTP server startup while sweeping.
+    this.sweepAllPendingOrders()
+      .then((result) => {
+        if (result.customers > 0) {
+          this.logger.log(
+            `Startup sweep: merged duplicate PENDING orders for ${result.customers} customer(s)`,
+          );
+        }
+      })
+      .catch((err) => {
+        this.logger.error("Startup sweep failed", err instanceof Error ? err.stack : String(err));
+      });
   }
 
   @Cron("0 * * * *")
