@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -12,7 +12,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
-import { KpiCard, NavBar, Pill, ProgressTrack } from "@routeflow/ui/mobile/ios";
+import { InlineStats, KpiCard, NavBar, Pill, ProgressTrack, StopCard } from "@routeflow/ui/mobile/ios";
 import {
   useAdminDashboard,
   useAdminDrivers,
@@ -20,7 +20,15 @@ import {
   type AdminDriver,
   type AdminRoute,
 } from "../../../lib/api/admin";
-import { useOperatorRouteRuns, type RouteRun } from "../../../lib/api/routes";
+import {
+  useActiveRouteRun,
+  useOperatorRouteRuns,
+  useScheduledRouteRuns,
+  useUpdateRunStatus,
+  type RouteRun,
+  type RouteRunStop,
+} from "../../../lib/api/routes";
+import { startLocationTracking } from "../../../lib/location-tracker";
 import { useAuthStore } from "../../../lib/auth-store";
 
 function routeStatusLabel(r: AdminRoute): {
@@ -45,7 +53,8 @@ function driverDisplayName(driver: AdminDriver | undefined): string {
 
 export default function OperatorHomeScreen() {
   const router = useRouter();
-  const { user, setActiveRole } = useAuthStore();
+  const { user } = useAuthStore();
+  const [viewMode, setViewMode] = useState<"operator" | "driver">("operator");
   const { data: stats, isLoading: statsLoading } = useAdminDashboard();
   const { data: routesData, isLoading: routesLoading } = useAdminRoutes({ limit: 10 });
   const { data: driversData } = useAdminDrivers();
@@ -125,29 +134,29 @@ export default function OperatorHomeScreen() {
         }
       />
 
-      {/* Mode switcher — only visible for admin users who can also drive */}
+      {/* Mode switcher — local state only, no navigation, header stays fixed */}
       {user?.canActAsDriver ? (
         <View style={styles.modeBar}>
           <View style={styles.modeTrack}>
-            <Pressable style={[styles.modeSeg, styles.modeSegActive]}>
-              <Ionicons name="briefcase-outline" size={14} color={ios.brand} />
-              <Text style={[styles.modeLabel, styles.modeLabelActive]}>Operator</Text>
+            <Pressable
+              style={[styles.modeSeg, viewMode === "operator" && styles.modeSegActive]}
+              onPress={() => setViewMode("operator")}
+            >
+              <Ionicons name="briefcase-outline" size={14} color={viewMode === "operator" ? ios.brand : ios.label2} />
+              <Text style={[styles.modeLabel, viewMode === "operator" && styles.modeLabelActive]}>Operator</Text>
             </Pressable>
             <Pressable
-              style={styles.modeSeg}
-              onPress={() => {
-                setActiveRole("driver");
-                router.replace("/(driver)/route");
-              }}
+              style={[styles.modeSeg, viewMode === "driver" && styles.modeSegActive]}
+              onPress={() => setViewMode("driver")}
             >
-              <Ionicons name="car-outline" size={14} color={ios.label2} />
-              <Text style={styles.modeLabel}>Driver</Text>
+              <Ionicons name="car-outline" size={14} color={viewMode === "driver" ? ios.brand : ios.label2} />
+              <Text style={[styles.modeLabel, viewMode === "driver" && styles.modeLabelActive]}>Driver</Text>
             </Pressable>
           </View>
         </View>
       ) : null}
 
-      <ScrollView showsVerticalScrollIndicator={false}>
+      {viewMode === "driver" ? <DriverInlineView /> : <ScrollView showsVerticalScrollIndicator={false}>
         {/* Readiness hero */}
         <View style={{ paddingHorizontal: 16, paddingTop: 14 }}>
           <LinearGradient
@@ -327,8 +336,182 @@ export default function OperatorHomeScreen() {
             })}
           </View>
         )}
-      </ScrollView>
+      </ScrollView>}
     </SafeAreaView>
+  );
+}
+
+// ─── Driver inline view (shown when mode = "driver") ─────────────────────────
+
+function formatDriverStopSub(stop: RouteRunStop): string {
+  const parts: string[] = [];
+  if (stop.customerAddress?.line1) parts.push(stop.customerAddress.line1);
+  const itemCount = (stop.orders ?? []).reduce((t, o) => t + (o.lineItems?.length ?? 0), 0);
+  if (itemCount) parts.push(`${itemCount} item${itemCount === 1 ? "" : "s"}`);
+  return parts.join(" · ");
+}
+
+function DriverInlineView() {
+  const router = useRouter();
+  const { data: activeData, isLoading: activeLoading } = useActiveRouteRun();
+  const { data: scheduledData, isLoading: scheduledLoading } = useScheduledRouteRuns();
+  const updateStatus = useUpdateRunStatus();
+
+  const active: RouteRun | null = (activeData?.data?.[0] as RouteRun) ?? null;
+  const upcoming: RouteRun | null = (scheduledData?.data?.[0] as RouteRun) ?? null;
+
+  if (activeLoading || scheduledLoading) {
+    return (
+      <View style={styles.driverCenter}>
+        <ActivityIndicator color={ios.brand} />
+      </View>
+    );
+  }
+
+  if (active) {
+    const stops = active.stops ?? [];
+    const done = stops.filter((s) => s.status === "COMPLETED" || s.status === "SKIPPED").length;
+    const remaining = stops
+      .filter((s) => s.status === "PENDING" || s.status === "IN_PROGRESS")
+      .sort((a, b) => a.stopNumber - b.stopNumber);
+    const nextStop = remaining[0] ?? null;
+    const pct = stops.length ? Math.round((done / stops.length) * 100) : 0;
+
+    return (
+      <ScrollView showsVerticalScrollIndicator={false}>
+        <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
+          <InlineStats
+            stats={[
+              { value: String(stops.length), label: "Stops" },
+              { value: String(done), label: "Done", color: ios.system.greenInk },
+              { value: String(remaining.length), label: "Left", color: ios.brand },
+            ]}
+          />
+          <View style={styles.driverProgressRow}>
+            <View style={{ flex: 1 }}>
+              <ProgressTrack percent={pct} fill="green" />
+            </View>
+            <Text style={styles.driverProgressText}>{pct}%</Text>
+          </View>
+        </View>
+
+        {nextStop ? (
+          <View style={{ padding: 16, paddingTop: 8 }}>
+            <LinearGradient
+              colors={[ios.brandGradient[0]!, ios.brandGradient[1]!, ios.brandGradient[2]!]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.driverHeroCard}
+            >
+              <Text style={styles.heroEyebrow}>UP NEXT · STOP {nextStop.stopNumber}</Text>
+              <Text style={styles.driverHeroTitle}>{nextStop.customer?.businessName ?? "Stop"}</Text>
+              {nextStop.customerAddress?.line1 ? (
+                <Text style={styles.heroSub}>{nextStop.customerAddress.line1}</Text>
+              ) : null}
+              <View style={styles.heroActions}>
+                <Pressable
+                  style={[styles.heroBtnGhost, { flex: 1, alignItems: "center" }]}
+                  onPress={() => router.push(`/(driver)/route/stop/${nextStop.id}` as any)}
+                >
+                  <Text style={styles.heroBtnGhostText}>Open stop</Text>
+                </Pressable>
+              </View>
+            </LinearGradient>
+          </View>
+        ) : done > 0 ? (
+          <View style={{ padding: 16, paddingTop: 8 }}>
+            <View style={[styles.driverHeroCard, { backgroundColor: ios.system.greenInk, alignItems: "center", gap: 6 }]}>
+              <Ionicons name="checkmark-circle" size={28} color="#fff" />
+              <Text style={styles.driverHeroTitle}>All stops done!</Text>
+            </View>
+          </View>
+        ) : null}
+
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Stops</Text>
+        </View>
+        <View style={{ paddingHorizontal: 16, gap: 8, paddingBottom: 24 }}>
+          {stops.map((stop) => (
+            <StopCard
+              key={stop.id}
+              number={stop.stopNumber}
+              name={stop.customer?.businessName ?? "Stop"}
+              subtitle={formatDriverStopSub(stop)}
+              status={
+                stop.status === "COMPLETED" || stop.status === "SKIPPED"
+                  ? "done"
+                  : stop.id === nextStop?.id
+                    ? "next"
+                    : "pending"
+              }
+              pillLabel={
+                stop.status === "COMPLETED"
+                  ? "Delivered"
+                  : stop.status === "SKIPPED"
+                    ? "Skipped"
+                    : stop.id === nextStop?.id
+                      ? "Up next"
+                      : undefined
+              }
+              onPress={() => router.push(`/(driver)/route/stop/${stop.id}` as any)}
+            />
+          ))}
+        </View>
+      </ScrollView>
+    );
+  }
+
+  if (upcoming) {
+    const stopCount = upcoming.stops?.length ?? 0;
+    const dateLabel = new Date(upcoming.scheduledDate)
+      .toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" })
+      .toUpperCase();
+
+    return (
+      <ScrollView showsVerticalScrollIndicator={false}>
+        <Text style={[styles.dateEyebrow, { paddingHorizontal: 20, paddingTop: 12 }]}>
+          {dateLabel}
+        </Text>
+        <View style={{ padding: 16, paddingTop: 8 }}>
+          <LinearGradient
+            colors={[ios.brandGradient[0]!, ios.brandGradient[1]!, ios.brandGradient[2]!]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.driverHeroCard}
+          >
+            <Text style={styles.heroEyebrow}>{(upcoming.route?.name ?? "ROUTE").toUpperCase()}</Text>
+            <Text style={styles.driverHeroTitle}>
+              {stopCount} stop{stopCount === 1 ? "" : "s"} · ready to depart
+            </Text>
+            <View style={styles.heroActions}>
+              <Pressable
+                style={styles.heroBtnFilled}
+                disabled={updateStatus.isPending}
+                onPress={() =>
+                  updateStatus.mutate(
+                    { id: upcoming.id, status: "IN_PROGRESS" },
+                    { onSuccess: () => void startLocationTracking(upcoming.id) },
+                  )
+                }
+              >
+                <Ionicons name="play" size={14} color={ios.brandInk} />
+                <Text style={styles.heroBtnFilledText}>
+                  {updateStatus.isPending ? "Starting…" : "Start day"}
+                </Text>
+              </Pressable>
+            </View>
+          </LinearGradient>
+        </View>
+      </ScrollView>
+    );
+  }
+
+  return (
+    <View style={styles.driverCenter}>
+      <Ionicons name="map-outline" size={40} color={ios.label3} />
+      <Text style={styles.emptyTitle}>No route today</Text>
+      <Text style={styles.driverEmptySub}>Check back with dispatch for your schedule.</Text>
+    </View>
   );
 }
 
@@ -486,5 +669,41 @@ const styles = StyleSheet.create({
     minWidth: 34,
     textAlign: "right",
     fontVariant: ["tabular-nums"],
+  },
+  // ── Driver inline view ────────────────────────────────────────────────────
+  driverCenter: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingHorizontal: 40,
+  },
+  driverEmptySub: {
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    color: ios.label2,
+    textAlign: "center",
+  },
+  driverHeroCard: { borderRadius: 20, padding: 18, overflow: "hidden" },
+  driverHeroTitle: {
+    fontSize: 22,
+    fontFamily: "Inter_700Bold",
+    color: "#fff",
+    letterSpacing: -0.4,
+    marginTop: 4,
+  },
+  driverProgressRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginTop: 10,
+    marginBottom: 4,
+  },
+  driverProgressText: {
+    fontSize: 13,
+    fontFamily: "Inter_500Medium",
+    color: ios.label2,
+    minWidth: 34,
+    textAlign: "right",
   },
 });
