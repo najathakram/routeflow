@@ -170,33 +170,35 @@ export default function ExpenseDetailScreen() {
           ) : null}
         </View>
 
-        {/* Details */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Details</Text>
-          <View style={styles.detailCard}>
-            {expense.category ? (
-              <DetailRow label="Category" value={expense.category.name} />
-            ) : null}
-            {expense.supplier ? (
-              <DetailRow label="Supplier" value={expense.supplier.name} />
-            ) : null}
-            {expense.paymentMethod ? (
-              <DetailRow
-                label="Payment"
-                value={
-                  expense.paymentMethod.charAt(0) +
-                  expense.paymentMethod.slice(1).toLowerCase().replace("_", " ")
-                }
-              />
-            ) : null}
-            {expense.referenceNumber ? (
-              <DetailRow label="Reference #" value={expense.referenceNumber} />
-            ) : null}
-            {expense.notes ? (
-              <DetailRow label="Notes" value={expense.notes} />
-            ) : null}
+        {/* Details — only render when at least one detail field exists */}
+        {(expense.category || expense.supplier || expense.paymentMethod || expense.referenceNumber || expense.notes) ? (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Details</Text>
+            <View style={styles.detailCard}>
+              {expense.category ? (
+                <DetailRow label="Category" value={expense.category.name} />
+              ) : null}
+              {expense.supplier ? (
+                <DetailRow label="Supplier" value={expense.supplier.name} />
+              ) : null}
+              {expense.paymentMethod ? (
+                <DetailRow
+                  label="Payment"
+                  value={
+                    expense.paymentMethod.charAt(0) +
+                    expense.paymentMethod.slice(1).toLowerCase().replace("_", " ")
+                  }
+                />
+              ) : null}
+              {expense.referenceNumber ? (
+                <DetailRow label="Reference #" value={expense.referenceNumber} />
+              ) : null}
+              {expense.notes ? (
+                <DetailRow label="Notes" value={expense.notes} />
+              ) : null}
+            </View>
           </View>
-        </View>
+        ) : null}
 
         {/* Edit form */}
         {editing ? (
