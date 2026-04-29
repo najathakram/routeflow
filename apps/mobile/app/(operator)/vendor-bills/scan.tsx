@@ -1,6 +1,7 @@
 import { useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Image,
   Platform,
   Pressable,
@@ -160,6 +161,25 @@ export default function ScanInvoiceScreen() {
 }
 
 function UploadStep({ onPickImage }: { onPickImage: (camera: boolean) => void }) {
+  const handleAddReceipt = () => {
+    if (Platform.OS === "web") {
+      // No camera in browser — go straight to file picker (which on mobile
+      // browsers exposes the device camera as one of the file sources).
+      onPickImage(false);
+      return;
+    }
+    Alert.alert(
+      "Add receipt",
+      "Choose how to add your receipt image.",
+      [
+        { text: "Take photo", onPress: () => onPickImage(true) },
+        { text: "Choose from library", onPress: () => onPickImage(false) },
+        { text: "Cancel", style: "cancel" },
+      ],
+      { cancelable: true },
+    );
+  };
+
   return (
     <View style={styles.uploadStep}>
       <View style={styles.uploadIllustration}>
@@ -167,24 +187,15 @@ function UploadStep({ onPickImage }: { onPickImage: (camera: boolean) => void })
       </View>
       <Text style={styles.uploadTitle}>Scan a vendor invoice</Text>
       <Text style={styles.uploadSub}>
-        Take a photo or choose from your library. Our AI will extract the
-        supplier, items, and totals automatically.
+        Add a receipt — take a photo or pick from your library. Our AI will
+        extract the supplier, items, and totals automatically.
       </Text>
       <Pressable
         style={[styles.uploadBtn, { backgroundColor: ios.brand }]}
-        onPress={() => onPickImage(true)}
+        onPress={handleAddReceipt}
       >
-        <Ionicons name="camera-outline" size={20} color="#fff" />
-        <Text style={styles.uploadBtnText}>Take photo</Text>
-      </Pressable>
-      <Pressable
-        style={[styles.uploadBtn, { backgroundColor: ios.bgElev }]}
-        onPress={() => onPickImage(false)}
-      >
-        <Ionicons name="image-outline" size={20} color={ios.label} />
-        <Text style={[styles.uploadBtnText, { color: ios.label }]}>
-          Choose from library
-        </Text>
+        <Ionicons name="add-circle-outline" size={20} color="#fff" />
+        <Text style={styles.uploadBtnText}>Add receipt</Text>
       </Pressable>
     </View>
   );

@@ -158,6 +158,158 @@ export class OrdersService {
     });
   }
 
+  /**
+   * Consolidate every unassigned PENDING order for a customer into a single
+   * "winner" order. The most-recent order is the winner so its unitPrices are
+   * the latest. Older orders' line items are folded in (qtys summed when the
+   * productId already exists on the winner; new productIds copied over with
+   * the most-recent older order's price/metadata). Older orders are then
+   * deleted.
+   *
+   * Skips orders already attached to a route run, with invoices, transactions,
+   * or returns — those are already part of an in-flight delivery flow and
+   * must not be silently consolidated.
+   *
+   * Idempotent: when there is 0 or 1 mergeable order, returns it (or null)
+   * without writing.
+   */
+  async mergeAllPendingForCustomer(customerId: string) {
+    const pendingOrders = await this.prisma.forTenant().order.findMany({
+      where: {
+        customerId,
+        status: OrderStatus.PENDING,
+        routeRunId: null,
+        routeRunStopId: null,
+        transaction: null,
+        invoices: { none: {} },
+        returns: { none: {} },
+      },
+      include: {
+        lineItems: {
+          where: { status: { not: ItemStatus.CANCELLED } },
+        },
+      },
+      orderBy: { updatedAt: "desc" },
+    });
+
+    if (pendingOrders.length <= 1) {
+      return pendingOrders[0] ?? null;
+    }
+
+    const [winner, ...losers] = pendingOrders;
+    const winnerProductIds = new Set(winner.lineItems.map((li) => li.productId));
+
+    // Sum extra qty to apply to winner items that share a productId with losers.
+    const qtyAdditions = new Map<string, number>();
+    // Collect new items to create on the winner (productIds only on losers).
+    // Iteration is updatedAt DESC so the first occurrence wins on price/metadata.
+    const newItemsByProductId = new Map<
+      string,
+      {
+        qty: number;
+        unitPrice: number;
+        priceType: PriceType;
+        originalPrice: number | null;
+        overrideReason: string | null;
+        overriddenBy: string | null;
+        notes: string | null;
+      }
+    >();
+
+    for (const loser of losers) {
+      for (const li of loser.lineItems) {
+        if (winnerProductIds.has(li.productId)) {
+          qtyAdditions.set(
+            li.productId,
+            (qtyAdditions.get(li.productId) ?? 0) + Number(li.qty),
+          );
+        } else {
+          const existing = newItemsByProductId.get(li.productId);
+          if (existing) {
+            existing.qty += Number(li.qty);
+          } else {
+            newItemsByProductId.set(li.productId, {
+              qty: Number(li.qty),
+              unitPrice: Number(li.unitPrice),
+              priceType: li.priceType,
+              originalPrice:
+                li.originalPrice !== null ? Number(li.originalPrice) : null,
+              overrideReason: li.overrideReason,
+              overriddenBy: li.overriddenBy,
+              notes: li.notes,
+            });
+          }
+        }
+      }
+    }
+
+    const taxRate = await this.getTaxRate();
+
+    await this.prisma.tenantTransaction(async (tx) => {
+      // 1. Bump qty on winner items that overlap with losers.
+      for (const li of winner.lineItems) {
+        const addQty = qtyAdditions.get(li.productId) ?? 0;
+        if (addQty <= 0) continue;
+        const newQty = Number(li.qty) + addQty;
+        const newSubtotal = newQty * Number(li.unitPrice);
+        await tx.orderItem.update({
+          where: { id: li.id },
+          data: { qty: newQty, subtotal: newSubtotal },
+        });
+      }
+
+      // 2. Create winner items for productIds that were only on losers.
+      for (const [productId, data] of newItemsByProductId.entries()) {
+        await tx.orderItem.create({
+          data: {
+            orderId: winner.id,
+            productId,
+            qty: data.qty,
+            unitPrice: data.unitPrice,
+            subtotal: data.qty * data.unitPrice,
+            status: ItemStatus.PENDING,
+            priceType: data.priceType,
+            originalPrice: data.originalPrice,
+            overrideReason: data.overrideReason,
+            overriddenBy: data.overriddenBy,
+            notes: data.notes,
+          },
+        });
+      }
+
+      // 3. Drop loser orders and their items.
+      for (const loser of losers) {
+        await tx.orderItem.deleteMany({ where: { orderId: loser.id } });
+        await tx.order.delete({ where: { id: loser.id } });
+      }
+
+      // 4. Recompute winner totals.
+      const activeItems = await tx.orderItem.findMany({
+        where: { orderId: winner.id, status: { not: ItemStatus.CANCELLED } },
+      });
+      const subtotal = activeItems.reduce((s: number, li: any) => s + Number(li.subtotal), 0);
+      const tax = subtotal * taxRate;
+      await tx.order.update({
+        where: { id: winner.id },
+        data: { subtotal, tax, total: subtotal + tax },
+      });
+    });
+
+    this.logger.log(
+      `Merged ${losers.length} PENDING order(s) into ${winner.id} for customer ${customerId}`,
+    );
+
+    return this.prisma.forTenant().order.findUnique({
+      where: { id: winner.id },
+      include: {
+        customer: { select: { id: true, businessName: true } },
+        lineItems: {
+          include: { product: { select: { id: true, name: true, unit: true } } },
+        },
+      },
+    });
+  }
+
   async create(dto: CreateOrderDto, user: JwtPayload) {
     // Resolve which customer this order is for
     let customerId: string;

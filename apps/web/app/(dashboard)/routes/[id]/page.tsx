@@ -338,11 +338,30 @@ export default function RouteRunDetailPage({ params }: { params: { id: string } 
   const handleOptimize = () => {
     optimizeRoute(params.id, {
       onSuccess: (result) => {
+        if (!result.usedFallback) {
+          toast({
+            title: "Route reordered",
+            description: `${result.reorderedCount} stops reordered for the most efficient sequence.`,
+          });
+          return;
+        }
+        const fallbackHints: Record<string, string> = {
+          ORS_NOT_CONFIGURED:
+            "Route intelligence is not configured. Set ORS_API_KEY in the API environment to enable true optimization.",
+          ORS_RATE_LIMITED:
+            "Route intelligence rate limit hit — try again in a minute.",
+          ORS_HTTP_ERROR:
+            "Couldn't reach route intelligence (server error). Used estimated distance instead.",
+          ORS_NETWORK_ERROR:
+            "Couldn't reach route intelligence (network error). Used estimated distance instead.",
+        };
+        const hint =
+          (result.fallbackReason && fallbackHints[result.fallbackReason]) ??
+          "Used estimated distance instead of route intelligence.";
         toast({
-          title: "Route reordered",
-          description: result.usedFallback
-            ? `${result.reorderedCount} stops reordered by estimated distance. For AI-powered optimization, enable route intelligence in Settings.`
-            : `${result.reorderedCount} stops reordered for the most efficient sequence.`,
+          title: "Route reordered (fallback)",
+          description: `${result.reorderedCount} stops reordered. ${hint}`,
+          variant: "warning",
         });
       },
       onError: (err) => toast({ title: "Optimization failed", description: err.message, variant: "error" }),

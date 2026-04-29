@@ -9,6 +9,7 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { Cron } from "@nestjs/schedule";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
+import { OrdersService } from "../orders/orders.service";
 import { CreateOrderTemplateDto } from "./dto/create-order-template.dto";
 import { UpdateOrderTemplateDto } from "./dto/update-order-template.dto";
 import { AddTemplateItemDto } from "./dto/add-template-item.dto";
@@ -27,6 +28,7 @@ export class OrderTemplatesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    private readonly ordersService: OrdersService,
   ) {
     this.taxRate = this.config.get<number>("taxRate") ?? 0.1;
   }
@@ -295,7 +297,7 @@ export class OrderTemplatesService {
     const orderNumber = `ORD-${Date.now()}`;
     const today = new Date();
 
-    return this.prisma.forTenant().order.create({
+    const created = await this.prisma.forTenant().order.create({
       data: {
         customerId: template.customerId,
         templateId: template.id,
@@ -312,5 +314,11 @@ export class OrderTemplatesService {
         customer: { select: { id: true, businessName: true } },
       },
     });
+
+    // If the customer already had PENDING orders, fold the newly-created one
+    // (and any pre-existing duplicates) into a single winner. The newest order
+    // wins on price/metadata per the merge rules.
+    const merged = await this.ordersService.mergeAllPendingForCustomer(template.customerId);
+    return merged ?? created;
   }
 }

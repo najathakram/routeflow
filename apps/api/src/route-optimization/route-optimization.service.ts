@@ -21,10 +21,25 @@ function timeToSec(t: string): number {
   return h * 3600 + m * 60;
 }
 
+export type FallbackReason =
+  | "ORS_NOT_CONFIGURED"
+  | "ORS_RATE_LIMITED"
+  | "ORS_HTTP_ERROR"
+  | "ORS_NETWORK_ERROR";
+
 export interface OptimizeResult {
   stopOrder: Array<{ stopId: string; stopNumber: number }>;
   reorderedCount: number;
   usedFallback: boolean;
+  fallbackReason?: FallbackReason;
+}
+
+function classifyOrsError(err: unknown): FallbackReason {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (msg.includes("ORS_API_KEY not configured")) return "ORS_NOT_CONFIGURED";
+  if (msg.includes("rate limit")) return "ORS_RATE_LIMITED";
+  if (msg.startsWith("ORS error:")) return "ORS_HTTP_ERROR";
+  return "ORS_NETWORK_ERROR";
 }
 
 export interface StopETA {
@@ -254,12 +269,14 @@ export class RouteOptimizationService {
 
     let optimizedIds: string[];
     let usedFallback = false;
+    let fallbackReason: FallbackReason | undefined;
 
     try {
       optimizedIds = await this.callOrsOptimization(stops, depot);
     } catch (err: unknown) {
+      fallbackReason = classifyOrsError(err);
       this.logger.warn(
-        "ORS optimization failed — applying nearest-neighbor fallback",
+        `ORS optimization failed (${fallbackReason}) — applying nearest-neighbor fallback`,
         err instanceof Error ? err.message : String(err),
       );
       optimizedIds = this.nearestNeighborFallback(stops, depot);
@@ -295,7 +312,7 @@ export class RouteOptimizationService {
       ({ stopId, stopNumber }) => originalOrder.get(stopId) !== stopNumber,
     ).length;
 
-    return { stopOrder, reorderedCount, usedFallback };
+    return { stopOrder, reorderedCount, usedFallback, fallbackReason };
   }
 
   async optimizeRoute(
@@ -396,12 +413,14 @@ export class RouteOptimizationService {
 
     let optimizedIds: string[];
     let usedFallback = false;
+    let fallbackReason: FallbackReason | undefined;
 
     try {
       optimizedIds = await this.callOrsOptimization(stops, start);
     } catch (err: unknown) {
+      fallbackReason = classifyOrsError(err);
       this.logger.warn(
-        "ORS optimization failed — applying nearest-neighbor fallback",
+        `ORS optimization failed (${fallbackReason}) — applying nearest-neighbor fallback`,
         err instanceof Error ? err.message : String(err),
       );
       optimizedIds = this.nearestNeighborFallback(stops, start);
@@ -440,7 +459,7 @@ export class RouteOptimizationService {
       ({ stopId, stopNumber }) => originalOrder.get(stopId) !== stopNumber,
     ).length;
 
-    return { stopOrder, reorderedCount, usedFallback };
+    return { stopOrder, reorderedCount, usedFallback, fallbackReason };
   }
 
   // ─── ORS Vroom API ────────────────────────────────────────────────────────

@@ -61,10 +61,18 @@ export class OrdersController {
           { items: mergedItems } as any,
           user,
         );
+        // Sweep any other PENDING orders for this customer into the winner.
+        await this.ordersService.mergeAllPendingForCustomer(dto.customerId);
         return this.ordersService.findOne(activeOrder.id, user);
       }
     }
-    return this.ordersService.create(dto, user);
+    const created = await this.ordersService.create(dto, user);
+    // Newly-created order may share a customer with pre-existing PENDINGs
+    // (e.g. driver/customer-initiated path) — consolidate them too.
+    if (created.customerId) {
+      await this.ordersService.mergeAllPendingForCustomer(created.customerId);
+    }
+    return created;
   }
 
   @Get(":id/tracking")
