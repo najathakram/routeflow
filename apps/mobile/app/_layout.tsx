@@ -18,6 +18,7 @@ import { ios } from "@routeflow/ui/tokens";
 import { useAuthStore } from "../lib/auth-store";
 import { useTenantStore } from "../lib/tenant-store";
 import { useBuyerSessionStore } from "../lib/buyer-session-store";
+import { ConfirmModal } from "../components/ConfirmModal";
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -197,6 +198,7 @@ export default function RootLayout() {
       <SafeAreaProvider>
         <QueryClientProvider client={queryClient}>
           <RootLayoutNav />
+          <ConfirmModal />
         </QueryClientProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

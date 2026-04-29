@@ -1,9 +1,6 @@
 import { Alert, Platform } from "react-native";
+import { useConfirmStore } from "./confirm-store";
 
-/**
- * Cross-platform confirmation dialog.
- * On web, uses window.confirm (synchronous). On native, uses Alert.alert.
- */
 export function confirm(
   title: string,
   message: string,
@@ -11,8 +8,13 @@ export function confirm(
   options?: { confirmText?: string; destructive?: boolean },
 ): void {
   if (Platform.OS === "web") {
-    const text = message ? `${title}\n\n${message}` : title;
-    if (window.confirm(text)) onConfirm();
+    useConfirmStore.getState().show({
+      title,
+      message,
+      confirmText: options?.confirmText ?? "OK",
+      destructive: options?.destructive ?? false,
+      onConfirm,
+    });
     return;
   }
   Alert.alert(title, message, [
@@ -25,12 +27,15 @@ export function confirm(
   ]);
 }
 
-/**
- * Cross-platform info alert. Uses window.alert on web so the message is not lost.
- */
 export function alertInfo(title: string, message?: string): void {
   if (Platform.OS === "web") {
-    window.alert(message ? `${title}\n\n${message}` : title);
+    useConfirmStore.getState().show({
+      title,
+      message: message ?? "",
+      confirmText: "OK",
+      destructive: false,
+      onConfirm: () => {},
+    });
     return;
   }
   Alert.alert(title, message ?? "", [{ text: "OK" }]);
