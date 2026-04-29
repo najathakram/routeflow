@@ -308,6 +308,119 @@ export class OrdersService implements OnApplicationBootstrap {
     });
   }
 
+  async forceConsolidateCustomer(customerId: string) {
+    const orders = await this.prisma.forTenant().order.findMany({
+      where: { customerId, status: OrderStatus.PENDING },
+      include: { lineItems: { where: { status: { not: ItemStatus.CANCELLED } } } },
+      orderBy: { updatedAt: "desc" },
+    });
+    if (orders.length <= 1) return orders[0] ?? null;
+
+    const [winner, ...losers] = orders;
+
+    // If winner has no route assignment but losers do, promote the first loser's assignment.
+    const routeAssignment =
+      winner.routeRunId == null ? (losers.find((o) => o.routeRunId != null) ?? null) : null;
+
+    const winnerProductIds = new Set(winner.lineItems.map((li) => li.productId));
+    const qtyAdditions = new Map<string, number>();
+    const newItemsByProductId = new Map<
+      string,
+      {
+        qty: number;
+        unitPrice: number;
+        priceType: PriceType;
+        originalPrice: number | null;
+        overrideReason: string | null;
+        overriddenBy: string | null;
+        notes: string | null;
+      }
+    >();
+
+    for (const loser of losers) {
+      for (const li of loser.lineItems) {
+        if (winnerProductIds.has(li.productId)) {
+          qtyAdditions.set(li.productId, (qtyAdditions.get(li.productId) ?? 0) + Number(li.qty));
+        } else {
+          const existing = newItemsByProductId.get(li.productId);
+          if (existing) {
+            existing.qty += Number(li.qty);
+          } else {
+            newItemsByProductId.set(li.productId, {
+              qty: Number(li.qty),
+              unitPrice: Number(li.unitPrice),
+              priceType: li.priceType,
+              originalPrice: li.originalPrice !== null ? Number(li.originalPrice) : null,
+              overrideReason: li.overrideReason,
+              overriddenBy: li.overriddenBy,
+              notes: li.notes,
+            });
+          }
+        }
+      }
+    }
+
+    const taxRate = await this.getTaxRate();
+
+    await this.prisma.tenantTransaction(async (tx) => {
+      for (const li of winner.lineItems) {
+        const addQty = qtyAdditions.get(li.productId) ?? 0;
+        if (addQty <= 0) continue;
+        const newQty = Number(li.qty) + addQty;
+        await tx.orderItem.update({
+          where: { id: li.id },
+          data: { qty: newQty, subtotal: newQty * Number(li.unitPrice) },
+        });
+      }
+      for (const [productId, data] of newItemsByProductId.entries()) {
+        await tx.orderItem.create({
+          data: {
+            orderId: winner.id,
+            productId,
+            qty: data.qty,
+            unitPrice: data.unitPrice,
+            subtotal: data.qty * data.unitPrice,
+            status: ItemStatus.PENDING,
+            priceType: data.priceType,
+            originalPrice: data.originalPrice,
+            overrideReason: data.overrideReason,
+            overriddenBy: data.overriddenBy,
+            notes: data.notes,
+          },
+        });
+      }
+      for (const loser of losers) {
+        await tx.orderItem.deleteMany({ where: { orderId: loser.id } });
+        await tx.order.delete({ where: { id: loser.id } });
+      }
+      const activeItems = await tx.orderItem.findMany({
+        where: { orderId: winner.id, status: { not: ItemStatus.CANCELLED } },
+      });
+      const subtotal = activeItems.reduce((s: number, li: any) => s + Number(li.subtotal), 0);
+      const tax = subtotal * taxRate;
+      const routeUpdate = routeAssignment
+        ? { routeRunId: routeAssignment.routeRunId, routeRunStopId: routeAssignment.routeRunStopId }
+        : {};
+      await tx.order.update({
+        where: { id: winner.id },
+        data: { subtotal, tax, total: subtotal + tax, ...routeUpdate },
+      });
+    });
+
+    this.logger.log(
+      `forceConsolidateCustomer: merged ${losers.length} order(s) into ${winner.id} for customer ${customerId}`,
+    );
+    return this.prisma.forTenant().order.findUnique({
+      where: { id: winner.id },
+      include: {
+        customer: { select: { id: true, businessName: true } },
+        lineItems: {
+          include: { product: { select: { id: true, name: true, unit: true } } },
+        },
+      },
+    });
+  }
+
   async sweepAllPendingOrders(): Promise<{ customers: number; merged: number }> {
     const groups = await this.prisma.forTenant().order.groupBy({
       by: ["customerId"],

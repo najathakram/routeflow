@@ -131,6 +131,13 @@ export class OrdersController {
     return this.ordersService.sweepAllPendingOrders();
   }
 
+  @Post("force-consolidate/:customerId")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR)
+  forceConsolidate(@Param("customerId") customerId: string) {
+    return this.ordersService.forceConsolidateCustomer(customerId);
+  }
+
   @Delete("bulk")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)
