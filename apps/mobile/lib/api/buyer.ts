@@ -226,3 +226,19 @@ export function useBuyerUpdateTemplate() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["buyer-templates"] }),
   });
 }
+
+export function useBuyerUpdateOrderItems() {
+  const qc = useQueryClient();
+  return useMutation<
+    BuyerOrder,
+    Error,
+    { orderId: string; items: Array<{ productId: string; qty: number }> }
+  >({
+    mutationFn: ({ orderId, items }) =>
+      buyerApiClient.patch(`/buyer/orders/${orderId}/items`, { items }).then((r) => r.data),
+    onSuccess: (_, { orderId }) => {
+      qc.invalidateQueries({ queryKey: ["buyer-orders"] });
+      qc.invalidateQueries({ queryKey: ["buyer-order", orderId] });
+    },
+  });
+}

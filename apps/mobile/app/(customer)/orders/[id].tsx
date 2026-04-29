@@ -53,6 +53,7 @@ export default function CustomerOrderDetailScreen() {
   const p = orderPill(order.status);
   const total = Number(order.total) || order.lineItems.reduce((s, i) => s + Number(i.qty) * Number(i.unitPrice), 0);
   const canCancel = order.status === "PENDING" || order.status === "DRAFT";
+  const canEdit = order.status === "PENDING" || order.status === "CONFIRMED";
 
   const onCancel = () =>
     confirm("Cancel order?", "This cannot be undone.", () =>
@@ -139,6 +140,18 @@ export default function CustomerOrderDetailScreen() {
           </>
         ) : null}
 
+        {/* Edit items */}
+        {canEdit ? (
+          <View style={{ paddingHorizontal: 16, marginTop: 16 }}>
+            <Pressable
+              style={styles.editBtn}
+              onPress={() => router.push(`/(customer)/orders/${id}/edit-items` as any)}
+            >
+              <Text style={styles.editBtnText}>Edit items</Text>
+            </Pressable>
+          </View>
+        ) : null}
+
         {/* Cancel */}
         {canCancel ? (
           <View style={{ paddingHorizontal: 16, marginTop: 24 }}>
@@ -166,6 +179,8 @@ const styles = StyleSheet.create({
   notFoundTitle: { fontSize: 17, color: "#333", marginBottom: 16 },
   notFoundBtn: { paddingVertical: 10, paddingHorizontal: 20 },
   notFoundBtnText: { fontSize: 15, color: "#007AFF" },
+  editBtn: { borderWidth: 1, borderColor: "#007AFF", borderRadius: 12, paddingVertical: 14, alignItems: "center" },
+  editBtnText: { color: "#007AFF", fontSize: 15, fontWeight: "600" },
   headerCard: { margin: 16, backgroundColor: ios.bgElev, borderRadius: 16, padding: 18, gap: 6 },
   headerRow: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
   orderNum: { fontSize: 18, fontFamily: "Inter_700Bold", color: ios.label, letterSpacing: -0.3 },
