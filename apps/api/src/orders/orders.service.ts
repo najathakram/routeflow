@@ -180,7 +180,7 @@ export class OrdersService {
         status: OrderStatus.PENDING,
         routeRunId: null,
         routeRunStopId: null,
-        transaction: null,
+        transaction: { is: null },
         invoices: { none: {} },
         returns: { none: {} },
       },
