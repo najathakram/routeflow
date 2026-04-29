@@ -41,4 +41,6 @@ export class CreateOrderDto {
   @IsOptional() @IsBoolean() immediateDelivery?: boolean;
   /** Order-level discount applied to the total */
   @IsOptional() @IsNumber() @Min(0) discountAmount?: number;
+  /** When true, always create a new order even if a PENDING one already exists for this customer */
+  @IsOptional() @IsBoolean() forceNew?: boolean;
 }
