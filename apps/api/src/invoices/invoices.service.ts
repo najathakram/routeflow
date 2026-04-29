@@ -497,7 +497,8 @@ export class InvoicesService {
         inv.status === InvoiceStatus.VOID ||
         inv.status === InvoiceStatus.WRITTEN_OFF;
       const balanceDue = isSettled ? 0 : Math.max(0, Number(inv.total) - paidAmount);
-      const isOverdue = !isSettled && balanceDue > 0 && inv.dueDate != null && new Date(inv.dueDate) < now;
+      const isOverdue =
+        !isSettled && balanceDue > 0 && inv.dueDate != null && new Date(inv.dueDate) < now;
       return { ...inv, balanceDue, paidAmount, isOverdue };
     });
 
