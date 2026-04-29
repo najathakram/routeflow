@@ -59,7 +59,8 @@ async function fetchDashboardStats(): Promise<AdminDashboardStats> {
     safeTotal('/orders', { status: 'PENDING' }),
     safeTotal('/drivers', { status: 'ACTIVE' }),
     safeTotal('/customers'),
-    safeTotal('/invoices', { status: 'OVERDUE' }),
+    // Use bookkeeping summary's overdueCount: SENT/VIEWED/PARTIAL with dueDate < now
+    safeGet<{ overdueCount?: number }>('/bookkeeping/summary').then((r) => Number(r?.overdueCount ?? 0)),
     // Server's LOW filter matches `currentStock <= 5` which includes zeros /
     // negatives (out-of-stock). Subtract OUT_OF_STOCK to get items that are
     // actually low but still available to sell (1–5 units).
@@ -224,6 +225,7 @@ export interface AdminInvoice {
   issueDate?: string;
   balanceDue?: number;
   paidAmount?: number;
+  isOverdue?: boolean;
   createdAt: string;
   customer?: { id: string; businessName: string };
   payments?: Array<{
@@ -253,6 +255,7 @@ export function useAdminInvoices(params?: {
   page?: number;
   limit?: number;
   customerId?: string;
+  isOverdue?: boolean;
 }) {
   return useQuery<{ data: AdminInvoice[]; meta: PaginationMeta }>({
     queryKey: ['admin', 'invoices', params],
