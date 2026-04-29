@@ -16,7 +16,7 @@ import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { BrandGlyph } from "@routeflow/ui/mobile/ios";
 import { OptionPickerSheet } from "../../components/OptionPickerSheet";
-import { buyerLogin, buyerLoginWithGoogle, getBuyerSellers, setActiveSeller, type BuyerSeller } from "../../lib/buyer-auth";
+import { buyerLogin, buyerLoginWithGoogle, getBuyerSellers, type BuyerSeller } from "../../lib/buyer-auth";
 import { useBuyerSessionStore } from "../../lib/buyer-session-store";
 import { GoogleButton } from "@routeflow/ui/mobile/ios";
 
@@ -107,7 +107,7 @@ export default function CustomerLoginScreen() {
   };
 
   const onSelectSeller = async (sellerId: string) => {
-    const seller = pendingSellers.find((s) => s.id === sellerId);
+    const seller = pendingSellers.find((s) => s.linkId === sellerId);
     if (!seller) return;
     setSellerPickerOpen(false);
     await storeSetSeller(seller);
@@ -196,7 +196,7 @@ export default function CustomerLoginScreen() {
         <View style={{ flex: 1 }} />
 
         <Text style={styles.footer}>
-          Don't have an account?{" "}
+          Don&apos;t have an account?{" "}
           <Text style={styles.footerLink}>
             Ask your supplier for a portal invite.
           </Text>
@@ -206,7 +206,7 @@ export default function CustomerLoginScreen() {
       <OptionPickerSheet
         visible={sellerPickerOpen}
         title="Select supplier"
-        options={pendingSellers.map((s) => ({ id: s.id, label: s.tenant.name }))}
+        options={pendingSellers.map((s) => ({ id: s.linkId, label: s.tenant.name }))}
         onClose={() => setSellerPickerOpen(false)}
         onSelect={(opt) => onSelectSeller(opt.id)}
       />
