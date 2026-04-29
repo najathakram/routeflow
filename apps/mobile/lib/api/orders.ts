@@ -131,7 +131,11 @@ export function useUpdateOrderItems() {
   >({
     mutationFn: ({ orderId, items }) =>
       apiClient.patch(`/orders/${orderId}/items`, { items }).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['orders'] }),
+    onSuccess: (_, { orderId }) => {
+      qc.invalidateQueries({ queryKey: ['orders'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'orders'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'orders', orderId] });
+    },
   });
 }
 

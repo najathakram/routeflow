@@ -8,6 +8,12 @@ import { useBuyerTemplates, useBuyerReorder, useBuyerUpdateTemplate } from "../.
 import { showToast } from "../../lib/toast";
 import { confirm } from "../../lib/confirm";
 
+const DAY_ABBR = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+function formatDaysOfWeek(days: number[] | undefined): string {
+  if (!days?.length) return "";
+  return [...days].sort((a, b) => a - b).map((d) => DAY_ABBR[d] ?? "").filter(Boolean).join(" · ");
+}
+
 export default function StandingOrdersScreen() {
   const router = useRouter();
   const { data: templates, isLoading } = useBuyerTemplates();
@@ -66,7 +72,7 @@ export default function StandingOrdersScreen() {
                   <View style={{ flex: 1 }}>
                     <Text style={styles.cardName}>{t.name ?? "Standing order"}</Text>
                     <Text style={styles.cardMeta}>
-                      {t.frequencyLabel ?? t.frequency ?? ""} · {t.items?.length ?? 0} items
+                      {formatDaysOfWeek(t.daysOfWeek) || t.frequencyLabel || t.frequency || "No schedule"} · {t.items?.length ?? 0} items
                     </Text>
                   </View>
                   {t.isActive === false ? (

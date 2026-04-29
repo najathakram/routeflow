@@ -24,10 +24,10 @@ function orderPill(status: string) {
 export default function CustomerOrderDetailScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { data: order, isLoading } = useBuyerOrder(id);
+  const { data: order, isLoading, isError } = useBuyerOrder(id);
   const cancelMut = useBuyerCancelOrder();
 
-  if (isLoading || !order) {
+  if (isLoading) {
     return (
       <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
         <NavBar inlineTitle="Order" leading={<NavBackButton label="Back" onPress={() => router.back()} />} />
@@ -36,9 +36,24 @@ export default function CustomerOrderDetailScreen() {
     );
   }
 
+  if (isError || !order) {
+    return (
+      <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
+        <NavBar inlineTitle="Order" leading={<NavBackButton label="Back" onPress={() => router.back()} />} />
+        <View style={styles.center}>
+          <Text style={styles.notFoundTitle}>Order not found</Text>
+          <Pressable onPress={() => router.replace("/(customer)/(tabs)/orders")} style={styles.notFoundBtn}>
+            <Text style={styles.notFoundBtnText}>Back to orders</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   const p = orderPill(order.status);
   const total = Number(order.total) || order.lineItems.reduce((s, i) => s + Number(i.qty) * Number(i.unitPrice), 0);
   const canCancel = order.status === "PENDING" || order.status === "DRAFT";
+  const canEdit = order.status === "PENDING" || order.status === "CONFIRMED";
 
   const onCancel = () =>
     confirm("Cancel order?", "This cannot be undone.", () =>
@@ -76,6 +91,12 @@ export default function CustomerOrderDetailScreen() {
             </View>
             <Pill variant={p.variant} dot>{p.label}</Pill>
           </View>
+          {order.subtotal != null && order.tax != null ? (
+            <View style={{ marginTop: 4 }}>
+              <Text style={styles.totalLine}>Subtotal: ${Number(order.subtotal).toFixed(2)}</Text>
+              <Text style={styles.totalLine}>GST (10%): ${Number(order.tax).toFixed(2)}</Text>
+            </View>
+          ) : null}
           <Text style={styles.total}>${total.toFixed(2)}</Text>
           {order.requestedDeliveryDate ? (
             <Text style={styles.deliveryDate}>
@@ -119,6 +140,18 @@ export default function CustomerOrderDetailScreen() {
           </>
         ) : null}
 
+        {/* Edit items */}
+        {canEdit ? (
+          <View style={{ paddingHorizontal: 16, marginTop: 16 }}>
+            <Pressable
+              style={styles.editBtn}
+              onPress={() => router.push(`/(customer)/orders/${id}/edit-items` as any)}
+            >
+              <Text style={styles.editBtnText}>Edit items</Text>
+            </Pressable>
+          </View>
+        ) : null}
+
         {/* Cancel */}
         {canCancel ? (
           <View style={{ paddingHorizontal: 16, marginTop: 24 }}>
@@ -143,10 +176,16 @@ export default function CustomerOrderDetailScreen() {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: ios.bg },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
+  notFoundTitle: { fontSize: 17, color: "#333", marginBottom: 16 },
+  notFoundBtn: { paddingVertical: 10, paddingHorizontal: 20 },
+  notFoundBtnText: { fontSize: 15, color: "#007AFF" },
+  editBtn: { borderWidth: 1, borderColor: "#007AFF", borderRadius: 12, paddingVertical: 14, alignItems: "center" },
+  editBtnText: { color: "#007AFF", fontSize: 15, fontWeight: "600" },
   headerCard: { margin: 16, backgroundColor: ios.bgElev, borderRadius: 16, padding: 18, gap: 6 },
   headerRow: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
   orderNum: { fontSize: 18, fontFamily: "Inter_700Bold", color: ios.label, letterSpacing: -0.3 },
   orderDate: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
+  totalLine: { fontSize: 13, color: ios.secondaryLabel, marginTop: 2 },
   total: { fontSize: 28, fontFamily: "Inter_700Bold", color: ios.label, letterSpacing: -0.6, marginTop: 4 },
   deliveryDate: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2 },
   notes: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2 },

@@ -59,7 +59,8 @@ async function fetchDashboardStats(): Promise<AdminDashboardStats> {
     safeTotal('/orders', { status: 'PENDING' }),
     safeTotal('/drivers', { status: 'ACTIVE' }),
     safeTotal('/customers'),
-    safeTotal('/invoices', { status: 'OVERDUE' }),
+    // Use bookkeeping summary's overdueCount: SENT/VIEWED/PARTIAL with dueDate < now
+    safeGet<{ overdueCount?: number }>('/bookkeeping/summary').then((r) => Number(r?.overdueCount ?? 0)),
     // Server's LOW filter matches `currentStock <= 5` which includes zeros /
     // negatives (out-of-stock). Subtract OUT_OF_STOCK to get items that are
     // actually low but still available to sell (1–5 units).
@@ -141,6 +142,7 @@ export function useAdminOrders(params?: {
     queryKey: ['admin', 'orders', params],
     queryFn: () => apiClient.get('/orders', { params }).then((r) => r.data),
     staleTime: 30_000,
+    refetchOnWindowFocus: true,
   });
 }
 
@@ -159,7 +161,10 @@ export function useConfirmAdminOrder() {
       apiClient
         .patch(`/orders/${id}/status`, { status: 'CONFIRMED' })
         .then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'orders'] }),
+    onSuccess: (_, id) => {
+      qc.invalidateQueries({ queryKey: ['admin', 'orders'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'orders', id] });
+    },
   });
 }
 
@@ -170,7 +175,10 @@ export function useCancelAdminOrder() {
       apiClient
         .patch(`/orders/${id}/status`, { status: 'CANCELLED' })
         .then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'orders'] }),
+    onSuccess: (_, id) => {
+      qc.invalidateQueries({ queryKey: ['admin', 'orders'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'orders', id] });
+    },
   });
 }
 
@@ -198,6 +206,7 @@ export function useAdminCustomers(params?: {
     queryKey: ['admin', 'customers', params],
     queryFn: () => apiClient.get('/customers', { params }).then((r) => r.data),
     staleTime: 60_000,
+    refetchOnWindowFocus: true,
   });
 }
 
@@ -223,6 +232,7 @@ export interface AdminInvoice {
   issueDate?: string;
   balanceDue?: number;
   paidAmount?: number;
+  isOverdue?: boolean;
   createdAt: string;
   customer?: { id: string; businessName: string };
   payments?: Array<{
@@ -252,11 +262,13 @@ export function useAdminInvoices(params?: {
   page?: number;
   limit?: number;
   customerId?: string;
+  isOverdue?: boolean;
 }) {
   return useQuery<{ data: AdminInvoice[]; meta: PaginationMeta }>({
     queryKey: ['admin', 'invoices', params],
     queryFn: () => apiClient.get('/invoices', { params }).then((r) => r.data),
     staleTime: 30_000,
+    refetchOnWindowFocus: true,
   });
 }
 
@@ -273,7 +285,10 @@ export function useVoidAdminInvoice() {
   return useMutation<AdminInvoice, Error, string>({
     mutationFn: (id) =>
       apiClient.post(`/invoices/${id}/void`).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'invoices'] }),
+    onSuccess: (_, id) => {
+      qc.invalidateQueries({ queryKey: ['admin', 'invoices'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'invoices', id] });
+    },
   });
 }
 
@@ -286,7 +301,10 @@ export function useRecordAdminPayment() {
   >({
     mutationFn: ({ id, ...dto }) =>
       apiClient.post(`/invoices/${id}/payments`, dto).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'invoices'] }),
+    onSuccess: (_, { id }) => {
+      qc.invalidateQueries({ queryKey: ['admin', 'invoices'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'invoices', id] });
+    },
   });
 }
 

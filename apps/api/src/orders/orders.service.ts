@@ -685,15 +685,41 @@ export class OrdersService {
     });
     const subtotal = activeItems.reduce((s, li) => s + Number(li.subtotal), 0);
     const tax = subtotal * (await this.getTaxRate());
+
+    // Revert CONFIRMED (or later) orders back to PENDING when items are edited
+    // so the operator must re-confirm the updated pick list before dispatch.
+    const shouldRevert =
+      !["DRAFT", "PENDING"].includes(order.status) &&
+      user?.role !== UserRole.CUSTOMER &&
+      user?.role !== UserRole.DRIVER;
+    const revertNote = shouldRevert
+      ? `\n[${new Date().toLocaleDateString()} – items edited, reverted to PENDING]`
+      : undefined;
+
     await this.prisma.forTenant().order.update({
       where: { id: orderId },
       data: {
         subtotal,
         tax,
         total: subtotal + tax,
-        ...(dto.orderNotes !== undefined ? { notes: dto.orderNotes } : {}),
+        ...(shouldRevert ? { status: "PENDING" } : {}),
+        ...(dto.orderNotes !== undefined
+          ? { notes: (order.notes ?? "") + (revertNote ?? "") + "\n" + dto.orderNotes }
+          : revertNote
+            ? { notes: (order.notes ?? "") + revertNote }
+            : {}),
       },
     });
+
+    if (shouldRevert) {
+      this.gateway.emitOrderStatusChanged(this.prisma.getTenantId(), {
+        orderId,
+        orderNumber: order.orderNumber ?? "",
+        status: "PENDING",
+        previousStatus: order.status,
+        customerId: order.customerId,
+      });
+    }
 
     return this.prisma.forTenant().order.findUnique({
       where: { id: orderId },

@@ -307,14 +307,12 @@ export class BuyerController {
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "Cancel a DRAFT or PENDING order" })
   async cancelOrder(@Param("id") id: string, @CurrentBuyerCustomer() ctx: any) {
-    // Cancel then immediately delete — buyer-cancelled orders shouldn't linger
     await this.ordersService.changeStatus(
       id,
       { status: OrderStatus.CANCELLED },
       makePseudoUser(ctx),
     );
-    await this.ordersService.deleteOrder(id);
-    return { message: "Order cancelled and removed" };
+    return { message: "Order cancelled" };
   }
 
   // ─── Dashboard ────────────────────────────────────────────────────────────────

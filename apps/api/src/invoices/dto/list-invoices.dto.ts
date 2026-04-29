@@ -1,4 +1,4 @@
-import { IsArray, IsEnum, IsInt, IsOptional, IsString, Min } from "class-validator";
+import { IsArray, IsBoolean, IsEnum, IsInt, IsOptional, IsString, Min } from "class-validator";
 import { Transform, Type } from "class-transformer";
 import { InvoiceStatus } from "@prisma/client";
 
@@ -15,6 +15,7 @@ export class ListInvoicesDto {
   @IsOptional() @IsString() dateTo?: string;
   @IsOptional() @IsString() sortBy?: string;
   @IsOptional() @IsString() sortOrder?: "asc" | "desc";
+  @IsOptional() @Transform(({ value }) => value === "true") @IsBoolean() isOverdue?: boolean;
   @IsOptional() @IsInt() @Min(1) @Type(() => Number) page?: number;
   @IsOptional() @IsInt() @Min(1) @Type(() => Number) limit?: number;
 }

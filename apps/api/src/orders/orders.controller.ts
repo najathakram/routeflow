@@ -40,7 +40,31 @@ export class OrdersController {
   @Post()
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR, UserRole.CUSTOMER, UserRole.DRIVER)
-  create(@Body() dto: CreateOrderDto, @CurrentUser() user: JwtPayload) {
+  async create(@Body() dto: CreateOrderDto, @CurrentUser() user: JwtPayload) {
+    const isStaff =
+      user.role === UserRole.OPERATOR || (user.role as string) === "TENANT_ADMIN";
+    if (isStaff && dto.customerId && !dto.forceNew) {
+      const activeOrder = await this.ordersService.findActiveOrder(dto.customerId);
+      if (activeOrder) {
+        const mergedMap = new Map<string, number>();
+        for (const li of activeOrder.lineItems) {
+          mergedMap.set(li.productId, Number(li.qty));
+        }
+        for (const item of dto.items ?? []) {
+          mergedMap.set(item.productId, (mergedMap.get(item.productId) ?? 0) + item.qty);
+        }
+        const mergedItems = Array.from(mergedMap.entries()).map(([productId, qty]) => ({
+          productId,
+          qty,
+        }));
+        await this.ordersService.updateOrderItems(
+          activeOrder.id,
+          { items: mergedItems } as any,
+          user,
+        );
+        return this.ordersService.findOne(activeOrder.id, user);
+      }
+    }
     return this.ordersService.create(dto, user);
   }
 

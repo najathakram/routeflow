@@ -9,7 +9,10 @@ export interface BuyerProduct {
   description?: string;
   category?: string;
   unit?: string;
-  price: number;
+  /** Legacy field — may be absent. Prefer buyerPrice then basePrice. */
+  price?: number;
+  buyerPrice?: number;
+  basePrice?: number;
   imageUrl?: string;
   isFavorite?: boolean;
 }
@@ -32,16 +35,42 @@ export interface BuyerOrder {
   total?: number;
 }
 
+export interface BuyerInvoiceItem {
+  id: string;
+  description: string;
+  qty: number;
+  unitPrice: number;
+  discount?: number;
+  subtotal: number;
+  product?: { id: string; name: string; unit?: string };
+}
+
+export interface BuyerInvoicePayment {
+  id: string;
+  amount: number;
+  createdAt: string;
+  paymentMethod?: string;
+  reference?: string;
+  notes?: string;
+}
+
 export interface BuyerInvoice {
   id: string;
   invoiceNumber: string;
   status: string;
   issueDate?: string;
   dueDate?: string;
+  subtotal?: number;
+  tax?: number;
   total: number;
   amountPaid?: number;
+  paidAmount?: number;
   amountDue?: number;
+  balanceDue?: number;
+  isOverdue?: boolean;
   customer?: { id: string; businessName: string };
+  items?: BuyerInvoiceItem[];
+  payments?: BuyerInvoicePayment[];
 }
 
 export interface BuyerProfile {
@@ -221,5 +250,21 @@ export function useBuyerUpdateTemplate() {
     mutationFn: ({ id, isActive }) =>
       buyerApiClient.patch(`/buyer/templates/${id}`, { isActive }).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["buyer-templates"] }),
+  });
+}
+
+export function useBuyerUpdateOrderItems() {
+  const qc = useQueryClient();
+  return useMutation<
+    BuyerOrder,
+    Error,
+    { orderId: string; items: Array<{ productId: string; qty: number }> }
+  >({
+    mutationFn: ({ orderId, items }) =>
+      buyerApiClient.patch(`/buyer/orders/${orderId}/items`, { items }).then((r) => r.data),
+    onSuccess: (_, { orderId }) => {
+      qc.invalidateQueries({ queryKey: ["buyer-orders"] });
+      qc.invalidateQueries({ queryKey: ["buyer-order", orderId] });
+    },
   });
 }

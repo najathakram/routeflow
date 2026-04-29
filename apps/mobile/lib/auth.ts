@@ -197,8 +197,12 @@ export async function logout(): Promise<void> {
   } catch {
     // Best-effort — clear tokens regardless of server response
   }
+  // Clear all session tokens so no stale JWT lingers across surfaces
   await storage.del("accessToken");
   await storage.del("refreshToken");
+  await storage.del("buyerAccessToken");
+  await storage.del("buyerRefreshToken");
+  await storage.del("buyerActiveSeller");
 }
 
 export async function refreshTokens(): Promise<AuthResponse | null> {

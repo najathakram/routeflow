@@ -397,6 +397,7 @@ export class InvoicesService {
     const {
       status,
       statuses,
+      isOverdue,
       customerId,
       search,
       dateFrom,
@@ -408,8 +409,15 @@ export class InvoicesService {
     } = query;
     const skip = (page - 1) * limit;
     const where: any = {};
-    if (statuses && statuses.length > 0) where.status = { in: statuses };
-    else if (status) where.status = status;
+    if (isOverdue) {
+      // Derived overdue: unpaid invoices (SENT/VIEWED/PARTIAL) past their due date
+      where.status = { in: [InvoiceStatus.SENT, InvoiceStatus.VIEWED, InvoiceStatus.PARTIAL, InvoiceStatus.OVERDUE] };
+      where.dueDate = { lt: new Date() };
+    } else if (statuses && statuses.length > 0) {
+      where.status = { in: statuses };
+    } else if (status) {
+      where.status = status;
+    }
     if (user?.role === UserRole.CUSTOMER) {
       const customer = await this.prisma
         .forTenant()
@@ -474,6 +482,7 @@ export class InvoicesService {
 
     // Compute balanceDue server-side so the client always gets the right value
     // regardless of whether InvoicePayment records exist (e.g. Zoho-imported invoices)
+    const now = new Date();
     const computedData = data.map((inv) => {
       const paidAmount = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
       const isSettled =
@@ -481,7 +490,12 @@ export class InvoicesService {
         inv.status === InvoiceStatus.VOID ||
         inv.status === InvoiceStatus.WRITTEN_OFF;
       const balanceDue = isSettled ? 0 : Math.max(0, Number(inv.total) - paidAmount);
-      return { ...inv, balanceDue, paidAmount };
+      const isOverdue =
+        !isSettled &&
+        balanceDue > 0 &&
+        inv.dueDate != null &&
+        new Date(inv.dueDate) < now;
+      return { ...inv, balanceDue, paidAmount, isOverdue };
     });
 
     return {
@@ -515,7 +529,15 @@ export class InvoicesService {
         .customer.findFirst({ where: { userId: user.sub } });
       if (!customer || inv.customerId !== customer.id) throw new ForbiddenException();
     }
-    return inv;
+    const paidAmount = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
+    const isSettled =
+      inv.status === InvoiceStatus.PAID ||
+      inv.status === InvoiceStatus.VOID ||
+      inv.status === InvoiceStatus.WRITTEN_OFF;
+    const balanceDue = isSettled ? 0 : Math.max(0, Number(inv.total) - paidAmount);
+    const isOverdue =
+      !isSettled && balanceDue > 0 && inv.dueDate != null && new Date(inv.dueDate) < new Date();
+    return { ...inv, balanceDue, paidAmount, isOverdue };
   }
 
   async update(id: string, dto: Partial<CreateInvoiceDto>) {

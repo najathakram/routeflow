@@ -14,7 +14,6 @@ import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import {
-  NavAction,
   NavBackButton,
   NavBar,
   SearchBar,
@@ -127,13 +126,6 @@ export default function EditOrderItemsScreen() {
       <NavBar
         inlineTitle="Edit items"
         leading={<NavBackButton label={order.orderNumber} onPress={() => router.back()} />}
-        trailing={
-          <NavAction
-            label={updateMut.isPending ? "Saving…" : "Save"}
-            bold
-            onPress={updateMut.isPending ? undefined : save}
-          />
-        }
       />
 
       {/* Price override modal */}

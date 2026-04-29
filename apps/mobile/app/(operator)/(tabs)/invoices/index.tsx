@@ -66,7 +66,8 @@ export default function InvoicesListScreen() {
   const [search, setSearch] = useState("");
 
   const { data, isLoading, isFetching, refetch } = useAdminInvoices({
-    status: filter === "ALL" ? undefined : filter,
+    status: filter === "ALL" || filter === "OVERDUE" ? undefined : filter,
+    isOverdue: filter === "OVERDUE" ? true : undefined,
     search: search.trim() || undefined,
     limit: 50,
   });
@@ -116,7 +117,8 @@ export default function InvoicesListScreen() {
 }
 
 function Row({ inv, onPress }: { inv: AdminInvoice; onPress: () => void }) {
-  const s = statusPill(inv.status);
+  // Treat as overdue if computed isOverdue flag is set, regardless of stored status
+  const s = inv.isOverdue ? { variant: "red" as const, label: "Overdue" } : statusPill(inv.status);
   const dueLabel = useMemo(() => {
     if (!inv.dueDate) return "";
     return `Due ${new Date(inv.dueDate).toLocaleDateString()}`;

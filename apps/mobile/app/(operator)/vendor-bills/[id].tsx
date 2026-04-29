@@ -88,7 +88,7 @@ export default function VendorBillDetailScreen() {
             {bill.billDate ? (
               <Text style={styles.meta}>
                 Bill date:{" "}
-                {new Date(`${bill.billDate}T00:00:00`).toLocaleDateString(undefined, {
+                {new Date(bill.billDate).toLocaleDateString(undefined, {
                   month: "short", day: "numeric", year: "numeric",
                 })}
               </Text>
@@ -96,7 +96,7 @@ export default function VendorBillDetailScreen() {
             {bill.dueDate ? (
               <Text style={styles.meta}>
                 Due:{" "}
-                {new Date(`${bill.dueDate}T00:00:00`).toLocaleDateString(undefined, {
+                {new Date(bill.dueDate).toLocaleDateString(undefined, {
                   month: "short", day: "numeric", year: "numeric",
                 })}
               </Text>
