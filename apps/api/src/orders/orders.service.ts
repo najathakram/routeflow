@@ -328,7 +328,9 @@ export class OrdersService implements OnApplicationBootstrap {
       const winner = await this.mergeAllPendingForCustomer(g.customerId);
       if (winner) merged++;
     }
-    this.logger.log(`sweepAllPendingOrders: swept ${groups.length} customer(s), merged into ${merged} winner(s)`);
+    this.logger.log(
+      `sweepAllPendingOrders: swept ${groups.length} customer(s), merged into ${merged} winner(s)`,
+    );
     return { customers: groups.length, merged };
   }
 
@@ -336,7 +338,9 @@ export class OrdersService implements OnApplicationBootstrap {
     try {
       const result = await this.sweepAllPendingOrders();
       if (result.customers > 0) {
-        this.logger.log(`Startup sweep: merged duplicate PENDING orders for ${result.customers} customer(s)`);
+        this.logger.log(
+          `Startup sweep: merged duplicate PENDING orders for ${result.customers} customer(s)`,
+        );
       }
     } catch (err) {
       this.logger.error("Startup sweep failed", err instanceof Error ? err.stack : String(err));
