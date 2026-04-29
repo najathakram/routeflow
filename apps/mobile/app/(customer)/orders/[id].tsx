@@ -76,6 +76,12 @@ export default function CustomerOrderDetailScreen() {
             </View>
             <Pill variant={p.variant} dot>{p.label}</Pill>
           </View>
+          {order.subtotal != null && order.tax != null ? (
+            <View style={{ marginTop: 4 }}>
+              <Text style={styles.totalLine}>Subtotal: ${Number(order.subtotal).toFixed(2)}</Text>
+              <Text style={styles.totalLine}>GST (10%): ${Number(order.tax).toFixed(2)}</Text>
+            </View>
+          ) : null}
           <Text style={styles.total}>${total.toFixed(2)}</Text>
           {order.requestedDeliveryDate ? (
             <Text style={styles.deliveryDate}>
@@ -147,6 +153,7 @@ const styles = StyleSheet.create({
   headerRow: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
   orderNum: { fontSize: 18, fontFamily: "Inter_700Bold", color: ios.label, letterSpacing: -0.3 },
   orderDate: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
+  totalLine: { fontSize: 13, color: ios.secondaryLabel, marginTop: 2 },
   total: { fontSize: 28, fontFamily: "Inter_700Bold", color: ios.label, letterSpacing: -0.6, marginTop: 4 },
   deliveryDate: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2 },
   notes: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2 },

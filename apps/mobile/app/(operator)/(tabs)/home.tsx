@@ -20,7 +20,7 @@ import {
   type AdminDriver,
   type AdminRoute,
 } from "../../../lib/api/admin";
-import { useOperatorRouteRuns } from "../../../lib/api/routes";
+import { useOperatorRouteRuns, type RouteRun } from "../../../lib/api/routes";
 import { useAuthStore } from "../../../lib/auth-store";
 
 function routeStatusLabel(r: AdminRoute): {
@@ -56,10 +56,18 @@ export default function OperatorHomeScreen() {
     return map;
   }, [driversData]);
 
-  // Today's runs — same date filter Dispatch uses so the numbers agree
+  // Active runs: today's scheduled runs PLUS any run still IN_PROGRESS from a prior day
   const today = new Date().toISOString().slice(0, 10);
   const { data: runsData } = useOperatorRouteRuns({ date: today, limit: 50 });
-  const todayRuns = runsData?.data ?? [];
+  const { data: inProgressData } = useOperatorRouteRuns({ status: "IN_PROGRESS", limit: 50 });
+  const todayRuns = useMemo(() => {
+    const seen = new Set<string>();
+    const merged: RouteRun[] = [];
+    for (const r of [...(runsData?.data ?? []), ...(inProgressData?.data ?? [])]) {
+      if (!seen.has(r.id)) { seen.add(r.id); merged.push(r); }
+    }
+    return merged;
+  }, [runsData, inProgressData]);
 
   const initials =
     user?.username

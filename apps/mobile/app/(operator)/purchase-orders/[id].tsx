@@ -127,7 +127,7 @@ export default function PurchaseOrderDetailScreen() {
             {po.expectedDate ? (
               <Text style={styles.meta}>
                 Expected{" "}
-                {new Date(`${po.expectedDate}T00:00:00`).toLocaleDateString(undefined, {
+                {new Date(po.expectedDate).toLocaleDateString(undefined, {
                   year: "numeric",
                   month: "short",
                   day: "numeric",

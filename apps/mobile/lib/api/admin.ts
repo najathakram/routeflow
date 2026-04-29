@@ -141,6 +141,7 @@ export function useAdminOrders(params?: {
     queryKey: ['admin', 'orders', params],
     queryFn: () => apiClient.get('/orders', { params }).then((r) => r.data),
     staleTime: 30_000,
+    refetchOnWindowFocus: true,
   });
 }
 

@@ -20,7 +20,9 @@ const FILTERS = [
   { id: "ALL", label: "All" },
   { id: "PENDING", label: "Pending" },
   { id: "CONFIRMED", label: "Confirmed" },
+  { id: "OUT_FOR_DELIVERY", label: "Out for delivery" },
   { id: "DELIVERED", label: "Delivered" },
+  { id: "CANCELLED", label: "Cancelled" },
 ] as const;
 
 type FilterId = (typeof FILTERS)[number]["id"];
@@ -31,9 +33,10 @@ function orderPill(status: string) {
     case "CONFIRMED": return { variant: "brand" as const, label: "Confirmed" };
     case "DRAFT": return { variant: "gray" as const, label: "Draft" };
     case "IN_TRANSIT": return { variant: "brand" as const, label: "In transit" };
+    case "OUT_FOR_DELIVERY": return { variant: "brand" as const, label: "Out for delivery" };
     case "DELIVERED": return { variant: "green" as const, label: "Delivered" };
     case "CANCELLED": return { variant: "gray" as const, label: "Cancelled" };
-    default: return { variant: "gray" as const, label: status };
+    default: return { variant: "gray" as const, label: status.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase()) };
   }
 }
 

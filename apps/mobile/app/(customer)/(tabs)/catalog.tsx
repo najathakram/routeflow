@@ -128,7 +128,7 @@ function ProductCard({ product }: { product: BuyerProduct }) {
           <Text style={styles.productCategory}>{product.category}</Text>
         ) : null}
         <Text style={styles.productPrice}>
-          {`$${(Number(product.price) || 0).toFixed(2)}`}
+          {`$${(Number(product.buyerPrice ?? product.basePrice ?? product.price) || 0).toFixed(2)}`}
           {product.unit ? <Text style={styles.productUnit}> / {product.unit}</Text> : null}
         </Text>
       </View>
@@ -137,7 +137,7 @@ function ProductCard({ product }: { product: BuyerProduct }) {
         <Pressable
           style={styles.addBtn}
           onPress={() =>
-            add({ productId: product.id, name: product.name, unitPrice: Number(product.price) || 0, unit: product.unit })
+            add({ productId: product.id, name: product.name, unitPrice: Number(product.buyerPrice ?? product.basePrice ?? product.price) || 0, unit: product.unit })
           }
         >
           <Ionicons name="add" size={18} color="#fff" />

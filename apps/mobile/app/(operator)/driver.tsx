@@ -65,7 +65,7 @@ export default function OperatorDriverDetailScreen() {
   }
 
   const name = driver.user
-    ? `${driver.user.firstName} ${driver.user.lastName}`
+    ? ([driver.user.firstName, driver.user.lastName].filter(Boolean).join(" ") || driver.user.username || "Driver")
     : "Unknown driver";
   const initials = driver.user
     ? `${driver.user.firstName?.[0] ?? ""}${driver.user.lastName?.[0] ?? ""}`.toUpperCase()

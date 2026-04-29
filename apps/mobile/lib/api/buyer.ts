@@ -9,7 +9,10 @@ export interface BuyerProduct {
   description?: string;
   category?: string;
   unit?: string;
-  price: number;
+  /** Legacy field — may be absent. Prefer buyerPrice then basePrice. */
+  price?: number;
+  buyerPrice?: number;
+  basePrice?: number;
   imageUrl?: string;
   isFavorite?: boolean;
 }

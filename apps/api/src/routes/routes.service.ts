@@ -200,7 +200,28 @@ export class RoutesService {
       .forTenant()
       .routeStop.findFirst({ where: { id: stopId, routeId } });
     if (!stop) throw new NotFoundException("Stop not found");
-    await this.prisma.forTenant().routeStop.delete({ where: { id: stopId } });
+
+    // Check whether any in-flight run stops reference this route stop.
+    // onDelete: Restrict on RouteRunStop → RouteStop would cause a 500 without this guard.
+    const blockedByRun = await this.prisma.forTenant().routeRunStop.findFirst({
+      where: { routeStopId: stopId, status: { in: ["PENDING", "IN_PROGRESS"] } },
+    });
+    if (blockedByRun) {
+      throw new ConflictException(
+        "Cannot remove a stop that is part of an active run. Complete or cancel the run first.",
+      );
+    }
+
+    try {
+      await this.prisma.forTenant().routeStop.delete({ where: { id: stopId } });
+    } catch (err: any) {
+      if (err?.code === "P2003") {
+        throw new ConflictException(
+          "Cannot remove this stop because it is referenced by a route run. Complete or cancel the associated run first.",
+        );
+      }
+      throw err;
+    }
     return { success: true };
   }
 

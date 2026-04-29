@@ -374,7 +374,7 @@ export class VendorBillsService {
         : this.configService.get<string>("ANTHROPIC_API_KEY");
     if (!apiKey || apiKey.length === 0) {
       throw new BadRequestException(
-        "Anthropic API key is not configured. Please add your API key in Settings → AI & Integrations.",
+        "AI invoice scanning is not available. Please contact your system administrator to configure the ANTHROPIC_API_KEY.",
       );
     }
 

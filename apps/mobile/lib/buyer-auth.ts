@@ -197,9 +197,12 @@ export async function buyerLogout(): Promise<void> {
   } catch {
     // Best-effort — clear tokens regardless
   }
+  // Clear all session tokens so no stale JWT lingers across surfaces
   await storage.del("buyerAccessToken");
   await storage.del("buyerRefreshToken");
   await storage.del("buyerActiveSeller");
+  await storage.del("accessToken");
+  await storage.del("refreshToken");
 }
 
 export async function buyerRefreshTokens(): Promise<BuyerAuthResponse | null> {
