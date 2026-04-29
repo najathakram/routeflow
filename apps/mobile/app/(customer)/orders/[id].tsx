@@ -185,7 +185,7 @@ const styles = StyleSheet.create({
   headerRow: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
   orderNum: { fontSize: 18, fontFamily: "Inter_700Bold", color: ios.label, letterSpacing: -0.3 },
   orderDate: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
-  totalLine: { fontSize: 13, color: ios.secondaryLabel, marginTop: 2 },
+  totalLine: { fontSize: 13, color: ios.label2, marginTop: 2 },
   total: { fontSize: 28, fontFamily: "Inter_700Bold", color: ios.label, letterSpacing: -0.6, marginTop: 4 },
   deliveryDate: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2 },
   notes: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2 },

@@ -25,6 +25,9 @@ export interface BuyerOrder {
   requestedDeliveryDate?: string;
   notes?: string;
   urgent?: boolean;
+  subtotal?: number;
+  tax?: number;
+  total?: number;
   lineItems: Array<{
     id: string;
     productId: string;
@@ -32,7 +35,6 @@ export interface BuyerOrder {
     unitPrice: number;
     product?: { id: string; name: string; unit?: string };
   }>;
-  total?: number;
 }
 
 export interface BuyerInvoiceItem {

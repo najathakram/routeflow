@@ -187,7 +187,7 @@ export default function BuyerEditItemsScreen() {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: ios.bg },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
-  empty: { color: ios.secondaryLabel, fontSize: 14, textAlign: "center", margin: 32 },
+  empty: { color: ios.label2, fontSize: 14, textAlign: "center", margin: 32 },
   section: { marginHorizontal: 16, marginTop: 12, backgroundColor: "#fff", borderRadius: 14, overflow: "hidden" },
   itemRow: {
     flexDirection: "row", alignItems: "center", padding: 14,
