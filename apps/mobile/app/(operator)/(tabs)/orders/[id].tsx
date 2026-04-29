@@ -97,17 +97,31 @@ function statusActions(current: string): StatusAction[] {
 export default function OrderDetailScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { data: order, isLoading, refetch } = useAdminOrder(id ?? "");
+  const { data: order, isLoading, isError, refetch } = useAdminOrder(id ?? "");
   const changeMut = useChangeOrderStatus();
   const deleteMut = useDeleteOrder();
   const urgentMut = useToggleOrderUrgent();
 
-  if (isLoading || !order) {
+  if (isLoading) {
     return (
       <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
         <NavBar inlineTitle="Order" leading={<NavBackButton onPress={() => router.back()} />} />
         <View style={styles.center}>
           <ActivityIndicator color={ios.brand} />
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (isError || !order) {
+    return (
+      <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
+        <NavBar inlineTitle="Order" leading={<NavBackButton onPress={() => router.back()} />} />
+        <View style={styles.center}>
+          <Text style={styles.notFoundTitle}>Order not found</Text>
+          <Pressable onPress={() => router.back()} style={styles.notFoundBtn}>
+            <Text style={styles.notFoundBtnText}>Back to orders</Text>
+          </Pressable>
         </View>
       </SafeAreaView>
     );
@@ -373,6 +387,9 @@ export default function OrderDetailScreen() {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: ios.bg },
   center: { padding: 40, alignItems: "center" },
+  notFoundTitle: { fontSize: 17, color: ios.label, marginBottom: 16 },
+  notFoundBtn: { paddingVertical: 10, paddingHorizontal: 20 },
+  notFoundBtnText: { color: ios.brand, fontSize: 15 },
   card: { backgroundColor: ios.bgElev, borderRadius: 14, padding: 14, gap: 10 },
   cardHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   cardTitle: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: ios.label },

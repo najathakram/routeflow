@@ -24,14 +24,28 @@ function orderPill(status: string) {
 export default function CustomerOrderDetailScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { data: order, isLoading } = useBuyerOrder(id);
+  const { data: order, isLoading, isError } = useBuyerOrder(id);
   const cancelMut = useBuyerCancelOrder();
 
-  if (isLoading || !order) {
+  if (isLoading) {
     return (
       <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
         <NavBar inlineTitle="Order" leading={<NavBackButton label="Back" onPress={() => router.back()} />} />
         <View style={styles.center}><ActivityIndicator color={ios.brand} /></View>
+      </SafeAreaView>
+    );
+  }
+
+  if (isError || !order) {
+    return (
+      <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
+        <NavBar inlineTitle="Order" leading={<NavBackButton label="Back" onPress={() => router.back()} />} />
+        <View style={styles.center}>
+          <Text style={styles.notFoundTitle}>Order not found</Text>
+          <Pressable onPress={() => router.replace("/(customer)/(tabs)/orders")} style={styles.notFoundBtn}>
+            <Text style={styles.notFoundBtnText}>Back to orders</Text>
+          </Pressable>
+        </View>
       </SafeAreaView>
     );
   }
@@ -149,6 +163,9 @@ export default function CustomerOrderDetailScreen() {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: ios.bg },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
+  notFoundTitle: { fontSize: 17, color: "#333", marginBottom: 16 },
+  notFoundBtn: { paddingVertical: 10, paddingHorizontal: 20 },
+  notFoundBtnText: { fontSize: 15, color: "#007AFF" },
   headerCard: { margin: 16, backgroundColor: ios.bgElev, borderRadius: 16, padding: 18, gap: 6 },
   headerRow: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
   orderNum: { fontSize: 18, fontFamily: "Inter_700Bold", color: ios.label, letterSpacing: -0.3 },
