@@ -14,17 +14,25 @@ export default function StopNoteScreen() {
   const setNote = usePodStore((s) => s.setNote);
   const [text, setText] = useState(stored);
 
+  const backToStop = () => {
+    if (stopId) {
+      router.replace(`/(driver)/route/stop/${stopId}` as any);
+    } else {
+      router.replace("/(driver)/route" as any);
+    }
+  };
+
   const save = () => {
     if (!stopId) return;
     setNote(stopId, text.trim());
-    router.back();
+    backToStop();
   };
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right", "bottom"]}>
       <NavBar
         inlineTitle="Driver note"
-        leading={<NavBackButton label="Stop" onPress={() => router.back()} />}
+        leading={<NavBackButton label="Stop" onPress={backToStop} />}
       />
       <View style={{ padding: 16, gap: 12 }}>
         <Text style={styles.help}>
@@ -45,7 +53,7 @@ export default function StopNoteScreen() {
       </View>
       <View style={{ flex: 1 }} />
       <View style={styles.footer}>
-        <Pressable style={[styles.btn, styles.btnSecondary]} onPress={() => router.back()}>
+        <Pressable style={[styles.btn, styles.btnSecondary]} onPress={backToStop}>
           <Text style={styles.btnSecondaryText}>Cancel</Text>
         </Pressable>
         <Pressable style={[styles.btn, styles.btnPrimary]} onPress={save}>

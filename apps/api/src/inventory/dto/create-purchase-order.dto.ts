@@ -1,6 +1,7 @@
 import {
   IsArray,
   IsDateString,
+  IsInt,
   IsNumber,
   IsOptional,
   IsString,
@@ -12,7 +13,7 @@ import { Type } from "class-transformer";
 
 export class PurchaseOrderItemDto {
   @IsUUID() productId: string;
-  @IsNumber() @Min(0.001) qtyOrdered: number;
+  @IsInt() @Min(1) qtyOrdered: number;
   @IsNumber() @Min(0) unitCost: number;
 }
 

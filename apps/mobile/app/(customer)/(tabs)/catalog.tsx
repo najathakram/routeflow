@@ -16,8 +16,8 @@ import { NavBar } from "@routeflow/ui/mobile/ios";
 import { useBuyerProducts, useBuyerCategories, type BuyerProduct } from "../../../lib/api/buyer";
 import { useCartStore } from "../../../store/cartStore";
 
-function formatCurrency(n: number): string {
-  return `$${(n ?? 0).toFixed(2)}`;
+function formatCurrency(n: number | string | null | undefined): string {
+  return `$${(Number(n) || 0).toFixed(2)}`;
 }
 
 export default function CustomerCatalogScreen() {
@@ -128,7 +128,7 @@ function ProductCard({ product }: { product: BuyerProduct }) {
           <Text style={styles.productCategory}>{product.category}</Text>
         ) : null}
         <Text style={styles.productPrice}>
-          {`$${(product.price ?? 0).toFixed(2)}`}
+          {`$${(Number(product.price) || 0).toFixed(2)}`}
           {product.unit ? <Text style={styles.productUnit}> / {product.unit}</Text> : null}
         </Text>
       </View>
@@ -137,7 +137,7 @@ function ProductCard({ product }: { product: BuyerProduct }) {
         <Pressable
           style={styles.addBtn}
           onPress={() =>
-            add({ productId: product.id, name: product.name, unitPrice: product.price, unit: product.unit })
+            add({ productId: product.id, name: product.name, unitPrice: Number(product.price) || 0, unit: product.unit })
           }
         >
           <Ionicons name="add" size={18} color="#fff" />

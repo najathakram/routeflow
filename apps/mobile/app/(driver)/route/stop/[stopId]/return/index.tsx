@@ -1,7 +1,6 @@
 import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -79,6 +78,14 @@ export default function ReturnScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ stopId: string; runId?: string }>();
   const stopId = params.stopId;
+
+  const backToStop = () => {
+    if (stopId) {
+      router.replace(`/(driver)/route/stop/${stopId}` as any);
+    } else {
+      router.replace("/(driver)/route" as any);
+    }
+  };
   const [activeReason, setActiveReason] = useState<string | null>(null);
 
   const { data: activeData } = useActiveRouteRun();
@@ -96,11 +103,11 @@ export default function ReturnScreen() {
     if (!stop) return;
     const orderId = stop.orders?.[0]?.id;
     if (!orderId) {
-      Alert.alert("No order", "This stop has no order to attach the return to.");
+      showToast("This stop has no order to attach the return to.");
       return;
     }
     if (rows.length === 0) {
-      Alert.alert("Nothing to return", "Mark items as partial or refused first.");
+      showToast("Mark items as partial or refused first.");
       return;
     }
     // Map rows back to (productId, qty, reason). Driver mutations carry
@@ -121,10 +128,10 @@ export default function ReturnScreen() {
       {
         onSuccess: () => {
           showToast("Return submitted");
-          router.back();
+          backToStop();
         },
         onError: (e: any) =>
-          Alert.alert("Couldn't submit", e?.response?.data?.message ?? e?.message ?? "Try again."),
+          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
       },
     );
   };
@@ -146,7 +153,7 @@ export default function ReturnScreen() {
       <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
         <NavBar
           inlineTitle="Return & credit"
-          leading={<NavBackButton label="Stop" onPress={() => router.back()} />}
+          leading={<NavBackButton label="Stop" onPress={backToStop} />}
         />
         <View style={styles.center}>
           <ActivityIndicator color={ios.brand} />
@@ -159,7 +166,7 @@ export default function ReturnScreen() {
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <NavBar
         inlineTitle="Return & credit"
-        leading={<NavBackButton label="Stop" onPress={() => router.back()} />}
+        leading={<NavBackButton label="Stop" onPress={backToStop} />}
         trailing={
           <NavAction
             label={createReturn.isPending ? "…" : "Issue"}

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
@@ -8,6 +8,7 @@ import { NavBackButton, NavBar } from "@routeflow/ui/mobile/ios";
 import { useCartStore } from "../../../store/cartStore";
 import { useBuyerCreateOrder } from "../../../lib/api/buyer";
 import { showToast } from "../../../lib/toast";
+import { confirm } from "../../../lib/confirm";
 
 function formatDateInput(raw: string): string {
   const digits = raw.replace(/\D/g, "").slice(0, 8);
@@ -25,7 +26,7 @@ export default function CartScreen() {
 
   const onPlaceOrder = () => {
     if (items.length === 0) {
-      Alert.alert("Empty cart", "Add items from the catalog before placing an order.");
+      showToast("Add items from the catalog before placing an order.");
       return;
     }
 
@@ -42,10 +43,7 @@ export default function CartScreen() {
           router.replace(`/(customer)/orders/${order.id}`);
         },
         onError: (e: any) =>
-          Alert.alert(
-            "Couldn't place order",
-            e?.response?.data?.message ?? e?.message ?? "Try again.",
-          ),
+          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
       },
     );
   };
@@ -59,10 +57,10 @@ export default function CartScreen() {
           items.length > 0 ? (
             <Pressable
               onPress={() =>
-                Alert.alert("Clear cart?", "Remove all items?", [
-                  { text: "Cancel", style: "cancel" },
-                  { text: "Clear", style: "destructive", onPress: clear },
-                ])
+                confirm("Clear cart?", "Remove all items?", clear, {
+                  confirmText: "Clear",
+                  destructive: true,
+                })
               }
               hitSlop={8}
             >

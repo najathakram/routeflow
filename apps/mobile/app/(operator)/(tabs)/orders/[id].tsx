@@ -1,6 +1,5 @@
 import {
   ActivityIndicator,
-  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -20,6 +19,7 @@ import {
   type OrderStatus,
 } from "../../../../lib/api/orders";
 import { showToast } from "../../../../lib/toast";
+import { confirm } from "../../../../lib/confirm";
 
 function formatCurrency(n: number | string | undefined): string {
   const v = typeof n === "string" ? Number(n) : (n ?? 0);
@@ -129,41 +129,33 @@ export default function OrderDetailScreen() {
           },
           onError: (e: unknown) => {
             const err = e as { response?: { data?: { message?: string } }; message?: string };
-            Alert.alert("Couldn't update", err?.response?.data?.message ?? err?.message ?? "Try again.");
+            showToast(err?.response?.data?.message ?? err?.message ?? "Try again.");
           },
         },
       );
     };
 
     if (action.confirmMessage) {
-      Alert.alert("Confirm action", action.confirmMessage, [
-        { text: "Cancel", style: "cancel" },
-        { text: "Confirm", onPress: doChange },
-      ]);
+      confirm("Confirm action", action.confirmMessage, doChange, { confirmText: "Confirm" });
     } else {
       doChange();
     }
   };
 
   const handleDelete = () => {
-    Alert.alert("Delete order?", "This permanently removes the order.", [
-      { text: "Keep it", style: "cancel" },
-      {
-        text: "Delete",
-        style: "destructive",
-        onPress: () =>
-          deleteMut.mutate(order.id, {
-            onSuccess: () => {
-              showToast("Order deleted");
-              router.back();
-            },
-            onError: (e: unknown) => {
-              const err = e as { response?: { data?: { message?: string } }; message?: string };
-              Alert.alert("Couldn't delete", err?.response?.data?.message ?? err?.message ?? "Try again.");
-            },
-          }),
-      },
-    ]);
+    confirm("Delete order?", "This permanently removes the order.", () =>
+      deleteMut.mutate(order.id, {
+        onSuccess: () => {
+          showToast("Order deleted");
+          router.back();
+        },
+        onError: (e: unknown) => {
+          const err = e as { response?: { data?: { message?: string } }; message?: string };
+          showToast(err?.response?.data?.message ?? err?.message ?? "Try again.");
+        },
+      }),
+      { confirmText: "Delete", destructive: true },
+    );
   };
 
   const handleToggleUrgent = () => {
@@ -176,7 +168,7 @@ export default function OrderDetailScreen() {
         },
         onError: (e: unknown) => {
           const err = e as { response?: { data?: { message?: string } }; message?: string };
-          Alert.alert("Couldn't update", err?.response?.data?.message ?? err?.message ?? "Try again.");
+          showToast(err?.response?.data?.message ?? err?.message ?? "Try again.");
         },
       },
     );

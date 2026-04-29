@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { Alert } from "react-native";
 import { useRouter } from "expo-router";
 import {
   FormField,
@@ -8,6 +7,8 @@ import {
   FormTextInput,
 } from "../../../components/FormSheet";
 import { useCreateDriver } from "../../../lib/api/drivers";
+import { showToast } from "../../../lib/toast";
+import { alertInfo } from "../../../lib/confirm";
 
 export default function NewDriverScreen() {
   const router = useRouter();
@@ -39,14 +40,14 @@ export default function NewDriverScreen() {
       },
       {
         onSuccess: (res) => {
-          Alert.alert(
+          alertInfo(
             "Driver created",
             `Temporary password: ${res.tempPassword}\nShare this with the driver to log in. They'll be prompted to set a new password.`,
-            [{ text: "Done", onPress: () => router.back() }],
           );
+          router.back();
         },
         onError: (e: any) =>
-          Alert.alert("Couldn't create", e?.response?.data?.message ?? e?.message ?? "Try again."),
+          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
       },
     );
   };

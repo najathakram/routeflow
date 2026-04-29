@@ -1,9 +1,10 @@
 import { useState } from "react";
-import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { FormField, FormSection, FormSheet, FormTextInput } from "../../../components/FormSheet";
+import { OptionPickerSheet } from "../../../components/OptionPickerSheet";
 import { useRecordPurchase } from "../../../lib/api/inventory";
 import { useSuppliers } from "../../../lib/api/purchase-orders";
 import { useAdminProducts } from "../../../lib/api/admin";
@@ -21,66 +22,24 @@ export default function QuickReceiveScreen() {
   const [unitCost, setUnitCost] = useState("");
   const [supplierId, setSupplierId] = useState("");
   const [supplierName, setSupplierName] = useState("");
+  const [productPickerOpen, setProductPickerOpen] = useState(false);
+  const [supplierPickerOpen, setSupplierPickerOpen] = useState(false);
   const [reference, setReference] = useState("");
   const [notes, setNotes] = useState("");
 
   const products = productsData?.data ?? [];
 
-  const pickProduct = () => {
-    if (products.length === 0) {
-      Alert.alert("No products", "No active products found.");
-      return;
-    }
-    const slice = products.slice(0, 8);
-    Alert.alert(
-      "Select product",
-      undefined,
-      [
-        ...slice.map((p: any) => ({
-          text: p.name,
-          onPress: () => {
-            setProductId(p.id);
-            setProductName(p.name);
-            if (p.standardCost != null) setUnitCost(String(p.standardCost));
-          },
-        })),
-        { text: "Cancel", style: "cancel" },
-      ],
-      { cancelable: true },
-    );
-  };
-
-  const pickSupplier = () => {
-    const list = suppliers ?? [];
-    if (list.length === 0) {
-      Alert.alert("No suppliers", "No suppliers have been set up.");
-      return;
-    }
-    Alert.alert(
-      "Select supplier",
-      undefined,
-      [
-        ...list.map((s: any) => ({
-          text: s.name,
-          onPress: () => {
-            setSupplierId(s.id);
-            setSupplierName(s.name);
-          },
-        })),
-        { text: "Cancel", style: "cancel" },
-      ],
-      { cancelable: true },
-    );
-  };
+  const pickProduct = () => setProductPickerOpen(true);
+  const pickSupplier = () => setSupplierPickerOpen(true);
 
   const submit = () => {
     if (!productId) {
-      Alert.alert("Product required", "Please select a product.");
+      showToast("Please select a product.");
       return;
     }
     const qty = Number(quantity);
     if (!Number.isFinite(qty) || qty <= 0) {
-      Alert.alert("Invalid quantity", "Enter a quantity greater than 0.");
+      showToast("Enter a quantity greater than 0.");
       return;
     }
 
@@ -99,10 +58,7 @@ export default function QuickReceiveScreen() {
           router.back();
         },
         onError: (e: any) =>
-          Alert.alert(
-            "Couldn't record",
-            e?.response?.data?.message ?? e?.message ?? "Try again.",
-          ),
+          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
       },
     );
   };
@@ -175,6 +131,25 @@ export default function QuickReceiveScreen() {
           />
         </FormField>
       </FormSection>
+
+      <OptionPickerSheet
+        visible={productPickerOpen}
+        title="Product"
+        options={products.map((p: any) => ({ id: p.id, label: p.name }))}
+        selectedId={productId}
+        onClose={() => setProductPickerOpen(false)}
+        onSelect={(opt) => { setProductId(opt.id); setProductName(opt.label); setProductPickerOpen(false); }}
+      />
+      <OptionPickerSheet
+        visible={supplierPickerOpen}
+        title="Supplier"
+        options={(suppliers ?? []).map((s: any) => ({ id: s.id, label: s.name }))}
+        selectedId={supplierId}
+        nullable
+        nullLabel="None"
+        onClose={() => setSupplierPickerOpen(false)}
+        onSelect={(opt) => { setSupplierId(opt.id); setSupplierName(opt.id ? opt.label : ""); setSupplierPickerOpen(false); }}
+      />
     </FormSheet>
   );
 }

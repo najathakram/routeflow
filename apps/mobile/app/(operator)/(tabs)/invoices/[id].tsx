@@ -1,6 +1,5 @@
 import {
   ActivityIndicator,
-  Alert,
   Linking,
   Modal,
   Pressable,
@@ -24,6 +23,7 @@ import {
   useVoidInvoice,
 } from "../../../../lib/api/invoices";
 import { showToast } from "../../../../lib/toast";
+import { confirm } from "../../../../lib/confirm";
 
 function fmtCurrency(n: number | string | undefined): string {
   const v = typeof n === "string" ? Number(n) : (n ?? 0);
@@ -88,29 +88,24 @@ export default function InvoiceDetailScreen() {
           refetch();
         },
         onError: (e: any) =>
-          Alert.alert("Couldn't send", e?.response?.data?.message ?? e?.message ?? "Try again."),
+          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
       },
     );
   };
 
   const handleVoid = () => {
     if (!id) return;
-    Alert.alert("Void invoice?", `${invoice.invoiceNumber} will be marked void.`, [
-      { text: "Keep", style: "cancel" },
-      {
-        text: "Void",
-        style: "destructive",
-        onPress: () =>
-          voidMut.mutate(id, {
-            onSuccess: () => {
-              showToast("Invoice voided");
-              refetch();
-            },
-            onError: (e: any) =>
-              Alert.alert("Couldn't void", e?.response?.data?.message ?? e?.message ?? "Try again."),
-          }),
-      },
-    ]);
+    confirm("Void invoice?", `${invoice.invoiceNumber} will be marked void.`, () =>
+      voidMut.mutate(id, {
+        onSuccess: () => {
+          showToast("Invoice voided");
+          refetch();
+        },
+        onError: (e: any) =>
+          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+      }),
+      { confirmText: "Void", destructive: true },
+    );
   };
 
   const handlePdf = () => {
@@ -120,11 +115,11 @@ export default function InvoiceDetailScreen() {
         if (data?.url) {
           Linking.openURL(data.url);
         } else {
-          Alert.alert("Generating PDF", "Try again in a moment.");
+          showToast("PDF is still generating, try again in a moment.");
         }
       },
       onError: (e: any) =>
-        Alert.alert("Couldn't fetch PDF", e?.response?.data?.message ?? e?.message ?? "Try again."),
+        showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
     });
   };
 
@@ -328,10 +323,7 @@ export default function InvoiceDetailScreen() {
                         refetch();
                       },
                       onError: (e: any) =>
-                        Alert.alert(
-                          "Couldn't update",
-                          e?.response?.data?.message ?? e?.message ?? "Try again.",
-                        ),
+                        showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
                     },
                   );
                 }}

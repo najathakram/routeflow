@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { Alert } from "react-native";
 import { useRouter } from "expo-router";
 import {
   FormField,
@@ -32,7 +31,7 @@ export default function NewRouteScreen() {
           router.replace(`/(operator)/routes/${res.id}`);
         },
         onError: (e: any) =>
-          Alert.alert("Couldn't save", e?.response?.data?.message ?? e?.message ?? "Try again."),
+          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
       },
     );
   };

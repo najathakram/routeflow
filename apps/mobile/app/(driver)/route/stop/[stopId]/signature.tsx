@@ -12,42 +12,47 @@ export default function StopSignatureScreen() {
   const { stopId } = useLocalSearchParams<{ stopId: string }>();
   const setSig = usePodStore((s) => s.setSignature);
   const stored = usePodStore((s) => (stopId ? s.pods[stopId]?.signatureUri : undefined));
-  const [captured, setCaptured] = useState<boolean>(!!stored);
+  const [sigUri, setSigUri] = useState<string | null>(stored ?? null);
+
+  const backToStop = () => {
+    if (stopId) {
+      router.replace(`/(driver)/route/stop/${stopId}` as any);
+    } else {
+      router.replace("/(driver)/route" as any);
+    }
+  };
 
   const save = () => {
     if (!stopId) return;
-    if (!captured) {
-      router.back();
+    if (!sigUri) {
+      backToStop();
       return;
     }
-    // The current SignaturePad doesn't expose pixel data — stash a placeholder
-    // marker that the server stores as `signatureUrl`. Future enhancement:
-    // snapshot the pad to PNG via react-native-view-shot.
-    setSig(stopId, `captured:${stopId}:${Date.now()}`);
-    router.back();
+    setSig(stopId, sigUri);
+    backToStop();
   };
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right", "bottom"]}>
       <NavBar
         inlineTitle="Customer signature"
-        leading={<NavBackButton label="Stop" onPress={() => router.back()} />}
+        leading={<NavBackButton label="Stop" onPress={backToStop} />}
       />
       <View style={{ padding: 16, gap: 12 }}>
         <Text style={styles.help}>
           Hand the device to the customer and ask them to sign confirming receipt.
         </Text>
-        <SignaturePad onCapture={setCaptured} />
+        <SignaturePad onCapture={setSigUri} />
       </View>
       <View style={{ flex: 1 }} />
       <View style={styles.footer}>
-        <Pressable style={[styles.btn, styles.btnSecondary]} onPress={() => router.back()}>
+        <Pressable style={[styles.btn, styles.btnSecondary]} onPress={backToStop}>
           <Text style={styles.btnSecondaryText}>Cancel</Text>
         </Pressable>
         <Pressable
-          style={[styles.btn, styles.btnPrimary, !captured && { opacity: 0.5 }]}
+          style={[styles.btn, styles.btnPrimary, !sigUri && { opacity: 0.5 }]}
           onPress={save}
-          disabled={!captured}
+          disabled={!sigUri}
         >
           <Text style={styles.btnPrimaryText}>Save</Text>
         </Pressable>

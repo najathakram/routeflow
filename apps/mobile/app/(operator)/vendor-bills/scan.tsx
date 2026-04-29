@@ -1,14 +1,14 @@
 import { useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
+  Image,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from "react-native";
-import { Image } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
@@ -24,6 +24,7 @@ import {
 } from "../../../lib/api/vendor-bills";
 import { useSuppliers } from "../../../lib/api/purchase-orders";
 import { showToast } from "../../../lib/toast";
+import { confirm } from "../../../lib/confirm";
 
 type Step = "upload" | "scanning" | "review";
 
@@ -40,7 +41,7 @@ export default function ScanInvoiceScreen() {
   const { data: suppliers } = useSuppliers();
 
   const pickImage = async (useCamera: boolean) => {
-    const result = useCamera
+    const result = (useCamera && Platform.OS !== "web")
       ? await ImagePicker.launchCameraAsync({ mediaTypes: ["images"], quality: 0.8 })
       : await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], quality: 0.8 });
 
@@ -64,10 +65,7 @@ export default function ScanInvoiceScreen() {
       },
       onError: (e: any) => {
         setStep("upload");
-        Alert.alert(
-          "Scan failed",
-          e?.response?.data?.message ?? e?.message ?? "Could not read invoice. Try a clearer photo.",
-        );
+        showToast(e?.response?.data?.message ?? e?.message ?? "Could not read invoice. Try a clearer photo.");
       },
     });
   };
@@ -113,10 +111,7 @@ export default function ScanInvoiceScreen() {
         router.replace(`/(operator)/vendor-bills/${bill.id}`);
       },
       onError: (e: any) =>
-        Alert.alert(
-          "Couldn't save",
-          e?.response?.data?.message ?? e?.message ?? "Try again.",
-        ),
+        showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
     });
   };
 
@@ -135,10 +130,10 @@ export default function ScanInvoiceScreen() {
             label="Cancel"
             onPress={() => {
               if (step === "review") {
-                Alert.alert("Discard scan?", "Your scanned data will be lost.", [
-                  { text: "Keep reviewing", style: "cancel" },
-                  { text: "Discard", style: "destructive", onPress: () => router.back() },
-                ]);
+                confirm("Discard scan?", "Your scanned data will be lost.", () => router.back(), {
+                  confirmText: "Discard",
+                  destructive: true,
+                });
               } else {
                 router.back();
               }

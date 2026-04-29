@@ -1,7 +1,6 @@
 import { useMemo } from "react";
 import {
   ActivityIndicator,
-  Alert,
   Linking,
   Platform,
   Pressable,
@@ -10,6 +9,8 @@ import {
   Text,
   View,
 } from "react-native";
+import { showToast } from "../../../../../lib/toast";
+import { confirm } from "../../../../../lib/confirm";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
@@ -89,7 +90,7 @@ export default function StopDetailScreen() {
       <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
         <NavBar
           inlineTitle="Stop"
-          leading={<NavBackButton label="Route" onPress={() => router.back()} />}
+          leading={<NavBackButton label="Route" onPress={() => router.replace("/(driver)/route" as any)} />}
         />
         <View style={styles.center}>
           <ActivityIndicator color={ios.brand} />
@@ -103,7 +104,7 @@ export default function StopDetailScreen() {
       <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
         <NavBar
           inlineTitle="Stop"
-          leading={<NavBackButton label="Route" onPress={() => router.back()} />}
+          leading={<NavBackButton label="Route" onPress={() => router.replace("/(driver)/route" as any)} />}
         />
         <View style={styles.center}>
           <Ionicons name="alert-circle-outline" size={36} color={ios.label3} />
@@ -128,14 +129,14 @@ export default function StopDetailScreen() {
 
   const openTel = () => {
     if (!phone) {
-      Alert.alert("No phone number", "This customer doesn't have a phone on file.");
+      showToast("This customer doesn't have a phone on file.");
       return;
     }
     Linking.openURL(`tel:${phone.replace(/[^0-9+]/g, "")}`).catch(() => {});
   };
   const openSms = () => {
     if (!phone) {
-      Alert.alert("No phone number", "This customer doesn't have a phone on file.");
+      showToast("This customer doesn't have a phone on file.");
       return;
     }
     const sep = Platform.OS === "ios" ? "&" : "?";
@@ -143,7 +144,7 @@ export default function StopDetailScreen() {
   };
   const openMaps = () => {
     if (!address) {
-      Alert.alert("No address", "This stop doesn't have an address on file.");
+      showToast("This stop doesn't have an address on file.");
       return;
     }
     // Pass the business name + address so Google/Apple Maps can match the
@@ -175,7 +176,7 @@ export default function StopDetailScreen() {
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <NavBar
         inlineTitle={`Stop ${stop.stopNumber} / ${totalStops}`}
-        leading={<NavBackButton label="Route" onPress={() => router.back()} />}
+        leading={<NavBackButton label="Route" onPress={() => router.replace("/(driver)/route" as any)} />}
         trailing={<NavAction label="Call" onPress={openTel} />}
       />
 
@@ -276,10 +277,12 @@ export default function StopDetailScreen() {
             <SecondaryBtn
               label="Skip stop"
               onPress={() =>
-                Alert.alert("Skip stop", "Mark this stop as skipped? You can reopen it later.", [
-                  { text: "Cancel", style: "cancel" },
-                  { text: "Skip", style: "destructive", onPress: () => router.back() },
-                ])
+                confirm(
+                  "Skip stop",
+                  "Mark this stop as skipped? You can reopen it later.",
+                  () => router.replace("/(driver)/route" as any),
+                  { confirmText: "Skip", destructive: true },
+                )
               }
             />
             <SecondaryBtn

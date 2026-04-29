@@ -6,7 +6,7 @@ import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar } from "@routeflow/ui/mobile/ios";
 import { useBuyerTemplates, useBuyerReorder, useBuyerUpdateTemplate } from "../../lib/api/buyer";
 import { showToast } from "../../lib/toast";
-import { Alert } from "react-native";
+import { confirm } from "../../lib/confirm";
 
 export default function StandingOrdersScreen() {
   const router = useRouter();
@@ -15,42 +15,34 @@ export default function StandingOrdersScreen() {
   const updateMut = useBuyerUpdateTemplate();
 
   const onReorder = (id: string, name: string) =>
-    Alert.alert(`Reorder from "${name}"?`, "A new order will be created.", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Reorder",
-        onPress: () =>
-          reorderMut.mutate(id, {
-            onSuccess: (order) => {
-              showToast("Order created");
-              router.push(`/(customer)/orders/${order.id}`);
-            },
-            onError: (e: any) =>
-              Alert.alert("Error", e?.response?.data?.message ?? "Try again."),
-          }),
-      },
-    ]);
+    confirm(`Reorder from "${name}"?`, "A new order will be created.", () =>
+      reorderMut.mutate(id, {
+        onSuccess: (order) => {
+          showToast("Order created");
+          router.push(`/(customer)/orders/${order.id}`);
+        },
+        onError: (e: any) =>
+          showToast(e?.response?.data?.message ?? "Try again."),
+      }),
+      { confirmText: "Reorder" },
+    );
 
   const onTogglePause = (id: string, name: string, isActive: boolean) => {
     const action = isActive ? "Pause" : "Resume";
     const message = isActive
       ? "No new orders will be auto-generated until you resume."
       : "Auto-orders will resume on the next scheduled day.";
-    Alert.alert(`${action} "${name}"?`, message, [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: action,
-        onPress: () =>
-          updateMut.mutate(
-            { id, isActive: !isActive },
-            {
-              onSuccess: () => showToast(isActive ? "Standing order paused" : "Standing order resumed"),
-              onError: (e: any) =>
-                Alert.alert("Error", e?.response?.data?.message ?? "Try again."),
-            },
-          ),
-      },
-    ]);
+    confirm(`${action} "${name}"?`, message, () =>
+      updateMut.mutate(
+        { id, isActive: !isActive },
+        {
+          onSuccess: () => showToast(isActive ? "Standing order paused" : "Standing order resumed"),
+          onError: (e: any) =>
+            showToast(e?.response?.data?.message ?? "Try again."),
+        },
+      ),
+      { confirmText: action },
+    );
   };
 
   return (

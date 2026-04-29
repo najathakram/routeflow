@@ -1,7 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   Modal,
   Platform,
   Pressable,
@@ -32,6 +31,7 @@ import {
   useReorderRouteStops,
 } from "../../../lib/api/routes";
 import { showToast } from "../../../lib/toast";
+import { confirm } from "../../../lib/confirm";
 
 export default function RouteDetailScreen() {
   const router = useRouter();
@@ -79,34 +79,27 @@ export default function RouteDetailScreen() {
 
   const removeStop = (stopId: string) => {
     if (!id) return;
-    Alert.alert("Remove stop?", "The customer will be removed from this route.", [
-      { text: "Keep", style: "cancel" },
-      {
-        text: "Remove",
-        style: "destructive",
-        onPress: () => {
-          setRemovedIds((prev) => new Set([...prev, stopId]));
-          removeMut.mutate(
-            { routeId: id, stopId },
-            {
-              onSuccess: () => {
-                showToast("Stop removed");
-                refetch();
-                setRemovedIds(new Set());
-              },
-              onError: (e: any) => {
-                setRemovedIds((prev) => {
-                  const next = new Set(prev);
-                  next.delete(stopId);
-                  return next;
-                });
-                Alert.alert("Couldn't remove", e?.response?.data?.message ?? e?.message ?? "Try again.");
-              },
-            },
-          );
+    confirm("Remove stop?", "The customer will be removed from this route.", () => {
+      setRemovedIds((prev) => new Set([...prev, stopId]));
+      removeMut.mutate(
+        { routeId: id, stopId },
+        {
+          onSuccess: () => {
+            showToast("Stop removed");
+            refetch();
+            setRemovedIds(new Set());
+          },
+          onError: (e: any) => {
+            setRemovedIds((prev) => {
+              const next = new Set(prev);
+              next.delete(stopId);
+              return next;
+            });
+            showToast(e?.response?.data?.message ?? e?.message ?? "Try again.");
+          },
         },
-      },
-    ]);
+      );
+    }, { confirmText: "Remove", destructive: true });
   };
 
   const handleDragEnd = ({ data }: { data: typeof stops }) => {
@@ -117,7 +110,7 @@ export default function RouteDetailScreen() {
       {
         onSuccess: () => refetch(),
         onError: (e: any) =>
-          Alert.alert("Couldn't reorder", e?.response?.data?.message ?? e?.message ?? "Try again."),
+          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
       },
     );
   };
@@ -125,7 +118,7 @@ export default function RouteDetailScreen() {
   const handleOptimize = () => {
     if (!id) return;
     if (stops.length < 2) {
-      Alert.alert("Nothing to optimize", "Add at least two stops first.");
+      showToast("Add at least two stops first.");
       return;
     }
     optimizeMut.mutate(id, {
@@ -138,10 +131,7 @@ export default function RouteDetailScreen() {
         refetch();
       },
       onError: (e: any) =>
-        Alert.alert(
-          "Couldn't optimize",
-          e?.response?.data?.message ?? e?.message ?? "Try again.",
-        ),
+        showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
     });
   };
 
@@ -157,32 +147,24 @@ export default function RouteDetailScreen() {
           router.push(`/(operator)/route-runs/${run.id}` as any);
         },
         onError: (e: any) =>
-          Alert.alert(
-            "Couldn't dispatch",
-            e?.response?.data?.message ?? e?.message ?? "Try again.",
-          ),
+          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
       },
     );
   };
 
   const handleDelete = () => {
     if (!id) return;
-    Alert.alert("Delete route?", `${route.name} and all its stops will be removed.`, [
-      { text: "Keep", style: "cancel" },
-      {
-        text: "Delete",
-        style: "destructive",
-        onPress: () =>
-          deleteMut.mutate(id, {
-            onSuccess: () => {
-              showToast("Route deleted");
-              router.back();
-            },
-            onError: (e: any) =>
-              Alert.alert("Couldn't delete", e?.response?.data?.message ?? e?.message ?? "Try again."),
-          }),
-      },
-    ]);
+    confirm("Delete route?", `${route.name} and all its stops will be removed.`, () =>
+      deleteMut.mutate(id, {
+        onSuccess: () => {
+          showToast("Route deleted");
+          router.back();
+        },
+        onError: (e: any) =>
+          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+      }),
+      { confirmText: "Delete", destructive: true },
+    );
   };
 
   return (
@@ -266,7 +248,7 @@ export default function RouteDetailScreen() {
                         });
                         reorderMut.mutate(
                           { routeId: id!, order },
-                          { onSuccess: () => refetch(), onError: (e: any) => Alert.alert("Couldn't reorder", e?.response?.data?.message ?? e?.message) },
+                          { onSuccess: () => refetch(), onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again.") },
                         );
                       }}
                       disabled={i === 0}
@@ -285,7 +267,7 @@ export default function RouteDetailScreen() {
                         });
                         reorderMut.mutate(
                           { routeId: id!, order },
-                          { onSuccess: () => refetch(), onError: (e: any) => Alert.alert("Couldn't reorder", e?.response?.data?.message ?? e?.message) },
+                          { onSuccess: () => refetch(), onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again.") },
                         );
                       }}
                       disabled={i === stops.length - 1}

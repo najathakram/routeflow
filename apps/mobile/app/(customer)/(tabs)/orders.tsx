@@ -37,8 +37,8 @@ function orderPill(status: string) {
   }
 }
 
-function formatCurrency(n: number): string {
-  return `$${(n ?? 0).toFixed(2)}`;
+function formatCurrency(n: number | string | null | undefined): string {
+  return `$${(Number(n) || 0).toFixed(2)}`;
 }
 
 export default function CustomerOrdersScreen() {
@@ -54,7 +54,7 @@ export default function CustomerOrdersScreen() {
   const orders = data?.data ?? [];
 
   const totalItems = (order: BuyerOrder) =>
-    order.lineItems.reduce((s, i) => s + i.qty, 0);
+    order.lineItems.reduce((s, i) => s + Number(i.qty), 0);
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
@@ -109,7 +109,7 @@ export default function CustomerOrdersScreen() {
                 month: "short", day: "numeric", year: "numeric",
               });
               const itemCount = totalItems(order);
-              const total = order.total ?? order.lineItems.reduce((s, i) => s + i.qty * i.unitPrice, 0);
+              const total = Number(order.total) || order.lineItems.reduce((s, i) => s + Number(i.qty) * Number(i.unitPrice), 0);
 
               return (
                 <Pressable

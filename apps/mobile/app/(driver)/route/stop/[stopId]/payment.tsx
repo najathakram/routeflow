@@ -109,10 +109,7 @@ export default function PaymentScreen() {
         driverNote: pod?.note,
       });
     } catch (e: any) {
-      Alert.alert(
-        "Couldn't complete stop",
-        e?.response?.data?.message ?? e?.message ?? "Try again.",
-      );
+      showToast(e?.response?.data?.message ?? e?.message ?? "Try again.");
       return;
     }
 
@@ -135,24 +132,21 @@ export default function PaymentScreen() {
         });
       } catch (e: any) {
         // Stop is already completed at this point, so warn but don't roll back
-        Alert.alert(
-          "Stop completed but payment failed",
-          e?.response?.data?.message ?? e?.message ?? "Record payment from invoices later.",
-        );
+        showToast(e?.response?.data?.message ?? e?.message ?? "Stop completed but payment failed — record from invoices later.");
       }
     }
 
     clearPod(stopId);
     showToast("Stop completed");
 
-    // Offer to re-launch Google Maps with the remaining stops as waypoints,
-    // originating at the driver's current GPS. Google Maps deep-links are
-    // fire-and-forget — relaunching is the only way to "drop" a completed
-    // stop and re-route to the next one.
     const remaining = (run?.stops ?? []).filter(
       (s) => s.id !== stopId && (s.status === "PENDING" || s.status === "IN_PROGRESS"),
     );
-    if (remaining.length > 0) {
+
+    if (Platform.OS !== "web" && remaining.length > 0) {
+      // Native only: offer to re-launch Google Maps with remaining stops.
+      // Deep-links are fire-and-forget — relaunching is the only way to drop
+      // the completed stop and re-route to the next one.
       Alert.alert(
         "Continue in Google Maps?",
         `${remaining.length} stop${remaining.length === 1 ? "" : "s"} left. Re-open Maps with the updated route from your current location?`,

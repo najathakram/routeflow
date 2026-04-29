@@ -1,4 +1,4 @@
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { ActivityIndicator } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
@@ -7,6 +7,7 @@ import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar, Pill } from "@routeflow/ui/mobile/ios";
 import { useBuyerOrder, useBuyerCancelOrder } from "../../../lib/api/buyer";
 import { showToast } from "../../../lib/toast";
+import { confirm } from "../../../lib/confirm";
 
 function orderPill(status: string) {
   switch (status) {
@@ -36,26 +37,21 @@ export default function CustomerOrderDetailScreen() {
   }
 
   const p = orderPill(order.status);
-  const total = order.total ?? order.lineItems.reduce((s, i) => s + i.qty * i.unitPrice, 0);
+  const total = Number(order.total) || order.lineItems.reduce((s, i) => s + Number(i.qty) * Number(i.unitPrice), 0);
   const canCancel = order.status === "PENDING" || order.status === "DRAFT";
 
   const onCancel = () =>
-    Alert.alert("Cancel order?", "This cannot be undone.", [
-      { text: "Keep order", style: "cancel" },
-      {
-        text: "Cancel order",
-        style: "destructive",
-        onPress: () =>
-          cancelMut.mutate(id, {
-            onSuccess: () => {
-              showToast("Order cancelled");
-              router.back();
-            },
-            onError: (e: any) =>
-              Alert.alert("Error", e?.response?.data?.message ?? e?.message ?? "Try again."),
-          }),
-      },
-    ]);
+    confirm("Cancel order?", "This cannot be undone.", () =>
+      cancelMut.mutate(id, {
+        onSuccess: () => {
+          showToast("Order cancelled");
+          router.back();
+        },
+        onError: (e: any) =>
+          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+      }),
+      { confirmText: "Cancel order", destructive: true },
+    );
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
@@ -112,11 +108,11 @@ export default function CustomerOrderDetailScreen() {
                       {item.product?.name ?? "Product"}
                     </Text>
                     <Text style={styles.itemMeta}>
-                      {item.qty} × ${item.unitPrice.toFixed(2)}
+                      {Number(item.qty)} × ${Number(item.unitPrice).toFixed(2)}
                       {item.product?.unit ? ` / ${item.product.unit}` : ""}
                     </Text>
                   </View>
-                  <Text style={styles.itemTotal}>${(item.qty * item.unitPrice).toFixed(2)}</Text>
+                  <Text style={styles.itemTotal}>${(Number(item.qty) * Number(item.unitPrice)).toFixed(2)}</Text>
                 </View>
               ))}
             </View>

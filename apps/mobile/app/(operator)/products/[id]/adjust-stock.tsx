@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { Ionicons } from "@expo/vector-icons";
@@ -28,7 +28,7 @@ export default function AdjustStockScreen() {
     if (!id) return;
     const n = Number(delta);
     if (!Number.isFinite(n) || n === 0) {
-      Alert.alert("Enter quantity", "Use a positive number to add stock or a negative number to remove.");
+      showToast("Use a positive number to add stock or a negative number to remove.");
       return;
     }
     mut.mutate(
@@ -44,7 +44,7 @@ export default function AdjustStockScreen() {
           router.back();
         },
         onError: (e: any) =>
-          Alert.alert("Couldn't adjust", e?.response?.data?.message ?? e?.message ?? "Try again."),
+          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
       },
     );
   };

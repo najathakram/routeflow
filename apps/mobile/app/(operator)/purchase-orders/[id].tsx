@@ -1,6 +1,5 @@
 import {
   ActivityIndicator,
-  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -19,6 +18,7 @@ import {
   type POStatus,
 } from "../../../lib/api/purchase-orders";
 import { showToast } from "../../../lib/toast";
+import { confirm } from "../../../lib/confirm";
 
 function statusPill(status: POStatus): {
   variant: "brand" | "green" | "orange" | "red" | "gray";
@@ -40,8 +40,9 @@ function statusPill(status: POStatus): {
   }
 }
 
-function fmtCurrency(n: number | undefined): string {
-  return `$${(Number.isFinite(n ?? 0) ? (n ?? 0) : 0).toFixed(2)}`;
+function fmtCurrency(n: number | string | null | undefined): string {
+  const v = Number(n) || 0;
+  return `$${v.toFixed(2)}`;
 }
 
 export default function PurchaseOrderDetailScreen() {
@@ -71,45 +72,36 @@ export default function PurchaseOrderDetailScreen() {
   const canClose = po.status === "RECEIVED";
 
   const handleSend = () => {
-    Alert.alert("Send PO?", "This will mark the PO as Sent to the supplier.", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Send",
-        onPress: () =>
-          sendMut.mutate(id ?? "", {
-            onSuccess: () => showToast("PO sent to supplier"),
-            onError: (e: any) =>
-              Alert.alert("Error", e?.response?.data?.message ?? e?.message ?? "Try again."),
-          }),
-      },
-    ]);
+    confirm("Send PO?", "This will mark the PO as Sent to the supplier.", () =>
+      sendMut.mutate(id ?? "", {
+        onSuccess: () => showToast("PO sent to supplier"),
+        onError: (e: any) =>
+          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+      }),
+      { confirmText: "Send" },
+    );
   };
 
   const handleClose = () => {
-    Alert.alert("Close PO?", "Mark as closed. This cannot be undone.", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Close",
-        style: "destructive",
-        onPress: () =>
-          closeMut.mutate(id ?? "", {
-            onSuccess: () => showToast("PO closed"),
-            onError: (e: any) =>
-              Alert.alert("Error", e?.response?.data?.message ?? e?.message ?? "Try again."),
-          }),
-      },
-    ]);
+    confirm("Close PO?", "Mark as closed. This cannot be undone.", () =>
+      closeMut.mutate(id ?? "", {
+        onSuccess: () => showToast("PO closed"),
+        onError: (e: any) =>
+          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+      }),
+      { confirmText: "Close", destructive: true },
+    );
   };
 
-  const totalOrdered = po.items.reduce((sum, it) => sum + it.qtyOrdered, 0);
-  const totalReceived = po.items.reduce((sum, it) => sum + it.qtyReceived, 0);
+  const totalOrdered = po.items.reduce((sum, it) => sum + Number(it.qtyOrdered), 0);
+  const totalReceived = po.items.reduce((sum, it) => sum + Number(it.qtyReceived), 0);
   const receivedRatio = totalOrdered > 0 ? totalReceived / totalOrdered : 0;
 
   const computedTotal = po.items.reduce(
-    (sum, it) => sum + it.qtyOrdered * it.unitCost,
+    (sum, it) => sum + Number(it.qtyOrdered) * Number(it.unitCost),
     0,
   );
-  const displayTotal = po.totalAmount ?? computedTotal;
+  const displayTotal = Number(po.totalAmount) || computedTotal;
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
@@ -135,7 +127,7 @@ export default function PurchaseOrderDetailScreen() {
             {po.expectedDate ? (
               <Text style={styles.meta}>
                 Expected{" "}
-                {new Date(po.expectedDate).toLocaleDateString(undefined, {
+                {new Date(`${po.expectedDate}T00:00:00`).toLocaleDateString(undefined, {
                   year: "numeric",
                   month: "short",
                   day: "numeric",
@@ -233,8 +225,8 @@ export default function PurchaseOrderDetailScreen() {
 
 function ItemRow({ item, isFirst }: { item: POItem; isFirst: boolean }) {
   const productName = item.product?.name ?? `Product ${item.productId}`;
-  const subtotal = item.qtyOrdered * item.unitCost;
-  const remaining = item.qtyOrdered - item.qtyReceived;
+  const subtotal = Number(item.qtyOrdered) * Number(item.unitCost);
+  const remaining = Number(item.qtyOrdered) - Number(item.qtyReceived);
 
   return (
     <View

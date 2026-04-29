@@ -1,6 +1,5 @@
 import {
   ActivityIndicator,
-  Alert,
   Linking,
   Pressable,
   ScrollView,
@@ -20,6 +19,7 @@ import {
 } from "../../../lib/api/customers";
 import { openInMaps } from "../../../components/openInMaps";
 import { showToast } from "../../../lib/toast";
+import { confirm } from "../../../lib/confirm";
 
 function fmt(n: number | string | null | undefined): string {
   const v = n == null ? 0 : typeof n === "string" ? Number(n) : n;
@@ -48,27 +48,21 @@ export default function CustomerDetailScreen() {
 
   const handleDelete = () => {
     if (!id) return;
-    Alert.alert(
+    confirm(
       "Delete customer?",
       `${customer.businessName} will be removed. This is permanent.`,
-      [
-        { text: "Keep it", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: () =>
-            deleteMut.mutate(id, {
-              onSuccess: () => {
-                showToast("Customer deleted");
-                router.back();
-              },
-              onError: (e: unknown) => {
-                const err = e as { response?: { data?: { message?: string } }; message?: string };
-                Alert.alert("Couldn't delete", err?.response?.data?.message ?? err?.message ?? "Try again.");
-              },
-            }),
-        },
-      ],
+      () =>
+        deleteMut.mutate(id, {
+          onSuccess: () => {
+            showToast("Customer deleted");
+            router.back();
+          },
+          onError: (e: unknown) => {
+            const err = e as { response?: { data?: { message?: string } }; message?: string };
+            showToast(err?.response?.data?.message ?? err?.message ?? "Try again.");
+          },
+        }),
+      { confirmText: "Delete", destructive: true },
     );
   };
 

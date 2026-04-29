@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Alert, StyleSheet, Switch, Text, View } from "react-native";
+import { ActivityIndicator, StyleSheet, Switch, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import {
@@ -47,7 +47,7 @@ export default function EditRouteScreen() {
   const submit = () => {
     if (!id) return;
     if (!name.trim()) {
-      Alert.alert("Name required");
+      showToast("Name is required.");
       return;
     }
     mut.mutate(
@@ -58,7 +58,7 @@ export default function EditRouteScreen() {
           router.back();
         },
         onError: (e: any) =>
-          Alert.alert("Couldn't save", e?.response?.data?.message ?? e?.message ?? "Try again."),
+          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
       },
     );
   };

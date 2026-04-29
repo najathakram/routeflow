@@ -510,6 +510,10 @@ export class BookkeepingService implements OnModuleInit {
 
   // ── Expense Receipt Management ─────────────────────────────────────────────
 
+  async getExpense(id: string) {
+    return this.findExpenseOrThrow(id);
+  }
+
   private async findExpenseOrThrow(id: string) {
     const expense = await this.prisma.forTenant().expense.findFirst({
       where: { id, deletedAt: null },

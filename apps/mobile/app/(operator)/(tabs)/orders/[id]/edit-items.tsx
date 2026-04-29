@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   Modal,
   Pressable,
   ScrollView,
@@ -24,6 +23,7 @@ import { useAdminOrder } from "../../../../../lib/api/admin";
 import { useUpdateOrderItems } from "../../../../../lib/api/orders";
 import { useProducts } from "../../../../../lib/api/products";
 import { showToast } from "../../../../../lib/toast";
+import { confirm } from "../../../../../lib/confirm";
 
 type DraftItem = {
   productId: string;
@@ -92,7 +92,7 @@ export default function EditOrderItemsScreen() {
         ...(i.overrideReason ? { overrideReason: i.overrideReason } : {}),
       }));
     if (items.length === 0) {
-      Alert.alert("Add at least one item", "Orders can't be saved empty.");
+      showToast("Orders can't be saved empty.");
       return;
     }
     updateMut.mutate(
@@ -103,7 +103,7 @@ export default function EditOrderItemsScreen() {
           router.back();
         },
         onError: (e: any) =>
-          Alert.alert("Couldn't save", e?.response?.data?.message ?? e?.message ?? "Try again."),
+          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
       },
     );
   };
@@ -211,19 +211,14 @@ export default function EditOrderItemsScreen() {
                       <Pressable
                         style={styles.deleteBtn}
                         onPress={() =>
-                          Alert.alert("Remove item?", it.name, [
-                            { text: "Keep", style: "cancel" },
-                            {
-                              text: "Remove",
-                              style: "destructive",
-                              onPress: () =>
-                                setDraft((d) => {
-                                  const next = { ...d };
-                                  delete next[it.productId];
-                                  return next;
-                                }),
-                            },
-                          ])
+                          confirm("Remove item?", it.name, () =>
+                            setDraft((d) => {
+                              const next = { ...d };
+                              delete next[it.productId];
+                              return next;
+                            }),
+                            { confirmText: "Remove", destructive: true },
+                          )
                         }
                         hitSlop={4}
                       >

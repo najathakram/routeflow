@@ -1,4 +1,4 @@
-import { IsBoolean, IsDecimal, IsEnum, IsInt, IsOptional, IsString, IsUUID } from "class-validator";
+import { IsBoolean, IsDecimal, IsEnum, IsInt, IsOptional, IsString, IsUUID, Matches } from "class-validator";
 import { CostingMethod } from "@prisma/client";
 
 export class CreateProductDto {
@@ -6,7 +6,7 @@ export class CreateProductDto {
   @IsOptional() @IsString() sku?: string;
   @IsOptional() @IsString() barcode?: string;
   @IsString() unit: string;
-  @IsDecimal() pricePerUnit: string; // Decimal as string for Prisma
+  @IsDecimal() @Matches(/^\d+(\.\d+)?$/, { message: 'pricePerUnit must be non-negative' }) pricePerUnit: string; // Decimal as string for Prisma
   @IsOptional() @IsString() category?: string;
   @IsOptional() @IsString() description?: string;
   @IsOptional() @IsBoolean() isActive?: boolean;
