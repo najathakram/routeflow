@@ -70,7 +70,8 @@ export class OrdersController {
     // Newly-created order may share a customer with pre-existing PENDINGs
     // (e.g. driver/customer-initiated path) — consolidate them too.
     if (created.customerId) {
-      await this.ordersService.mergeAllPendingForCustomer(created.customerId);
+      const merged = await this.ordersService.mergeAllPendingForCustomer(created.customerId);
+      if (merged) return merged;
     }
     return created;
   }

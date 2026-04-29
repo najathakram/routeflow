@@ -290,8 +290,8 @@ export class BuyerController {
     const created = await this.ordersService.create(createDto as any, makePseudoUser(ctx));
     // Newly-created order may share a customer with pre-existing PENDINGs —
     // consolidate them so the customer ends up with a single PENDING.
-    await this.ordersService.mergeAllPendingForCustomer(ctx.customerId);
-    return created;
+    const merged = await this.ordersService.mergeAllPendingForCustomer(ctx.customerId);
+    return merged ?? created;
   }
 
   @Patch("orders/:id/items")
