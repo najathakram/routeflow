@@ -124,6 +124,13 @@ export class OrdersController {
     return this.ordersService.toggleUrgent(id, user, body.urgent);
   }
 
+  @Post("sweep-pending")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR)
+  sweepPending() {
+    return this.ordersService.sweepAllPendingOrders();
+  }
+
   @Delete("bulk")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)

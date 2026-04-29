@@ -4,7 +4,9 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  OnApplicationBootstrap,
 } from "@nestjs/common";
+import { Cron } from "@nestjs/schedule";
 import { InjectQueue } from "@nestjs/bull";
 import type { Queue } from "bull";
 import { PrismaService } from "../prisma/prisma.service";
@@ -32,7 +34,7 @@ import { InvoicesService } from "../invoices/invoices.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 
 @Injectable()
-export class OrdersService {
+export class OrdersService implements OnApplicationBootstrap {
   private readonly logger = new Logger(OrdersService.name);
 
   constructor(
@@ -304,6 +306,50 @@ export class OrdersService {
         },
       },
     });
+  }
+
+  async sweepAllPendingOrders(): Promise<{ customers: number; merged: number }> {
+    const groups = await this.prisma.forTenant().order.groupBy({
+      by: ["customerId"],
+      where: {
+        status: OrderStatus.PENDING,
+        routeRunId: null,
+        routeRunStopId: null,
+        transaction: { is: null },
+        invoices: { none: {} },
+        returns: { none: {} },
+      },
+      _count: { _all: true },
+      having: { customerId: { _count: { gt: 1 } } },
+    });
+
+    let merged = 0;
+    for (const g of groups) {
+      const winner = await this.mergeAllPendingForCustomer(g.customerId);
+      if (winner) merged++;
+    }
+    this.logger.log(`sweepAllPendingOrders: swept ${groups.length} customer(s), merged into ${merged} winner(s)`);
+    return { customers: groups.length, merged };
+  }
+
+  async onApplicationBootstrap() {
+    try {
+      const result = await this.sweepAllPendingOrders();
+      if (result.customers > 0) {
+        this.logger.log(`Startup sweep: merged duplicate PENDING orders for ${result.customers} customer(s)`);
+      }
+    } catch (err) {
+      this.logger.error("Startup sweep failed", err instanceof Error ? err.stack : String(err));
+    }
+  }
+
+  @Cron("0 * * * *")
+  async cronSweepPendingOrders() {
+    try {
+      await this.sweepAllPendingOrders();
+    } catch (err) {
+      this.logger.error("Hourly sweep failed", err instanceof Error ? err.stack : String(err));
+    }
   }
 
   async create(dto: CreateOrderDto, user: JwtPayload) {
