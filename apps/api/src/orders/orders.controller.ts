@@ -41,8 +41,7 @@ export class OrdersController {
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR, UserRole.CUSTOMER, UserRole.DRIVER)
   async create(@Body() dto: CreateOrderDto, @CurrentUser() user: JwtPayload) {
-    const isStaff =
-      user.role === UserRole.OPERATOR || (user.role as string) === "TENANT_ADMIN";
+    const isStaff = user.role === UserRole.OPERATOR || (user.role as string) === "TENANT_ADMIN";
     if (isStaff && dto.customerId && !dto.forceNew) {
       const activeOrder = await this.ordersService.findActiveOrder(dto.customerId);
       if (activeOrder) {
