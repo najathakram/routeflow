@@ -19,6 +19,9 @@ import {
   Plus,
   AlertCircle,
   ExternalLink,
+  Briefcase,
+  LayoutGrid,
+  type LucideIcon,
 } from "lucide-react";
 import { StatCard, Badge, Table, Button, Card, cn } from "@routeflow/ui/web";
 import { useQuery } from "@tanstack/react-query";
@@ -413,6 +416,56 @@ function LowStockPanel({ products, total, isLoading }: { products: Product[]; to
   );
 }
 
+// ─── Mode switcher (dual-role users) ──────────────────────────────────────────
+
+type ViewMode = "all" | "operator" | "driver";
+
+const MODE_STORAGE_KEY = "rf-dashboard-view-mode";
+
+function ModeSwitcher({
+  mode,
+  onChange,
+}: {
+  mode: ViewMode;
+  onChange: (m: ViewMode) => void;
+}) {
+  const segments: { key: ViewMode; label: string; icon: LucideIcon }[] = [
+    { key: "all", label: "Combined", icon: LayoutGrid },
+    { key: "driver", label: "Driver", icon: Truck },
+    { key: "operator", label: "Operator", icon: Briefcase },
+  ];
+  return (
+    <div
+      role="tablist"
+      aria-label="Switch view mode"
+      className="inline-flex items-center rounded-full border border-surface-border bg-white p-0.5"
+    >
+      {segments.map((s) => {
+        const Icon = s.icon;
+        const active = mode === s.key;
+        return (
+          <button
+            key={s.key}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            onClick={() => onChange(s.key)}
+            className={cn(
+              "flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium transition-colors",
+              active
+                ? "bg-navy text-white"
+                : "text-navy/55 hover:text-navy",
+            )}
+          >
+            <Icon className="h-3.5 w-3.5" />
+            <span>{s.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
@@ -420,9 +473,38 @@ export default function DashboardPage() {
   const { setTitle } = usePageTitle();
   const { user } = useAuth();
 
-  const isOperator = !user?.role || user.role === "OPERATOR" || user.role === "SUPER_ADMIN" || user.role === "TENANT_ADMIN";
+  const baseIsOperator =
+    !user?.role ||
+    user.role === "OPERATOR" ||
+    user.role === "SUPER_ADMIN" ||
+    user.role === "TENANT_ADMIN";
   const isCustomer = user?.role === "CUSTOMER";
-  const isDriver   = user?.role === "DRIVER";
+  const baseIsDriver = user?.role === "DRIVER";
+
+  const canActAsDriver = user?.canActAsDriver === true && baseIsOperator;
+
+  // View mode for dual-role users — persisted across visits
+  const [viewMode, setViewMode] = React.useState<ViewMode>("all");
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+    const saved = localStorage.getItem(MODE_STORAGE_KEY);
+    if (saved === "operator" || saved === "driver" || saved === "all") {
+      setViewMode(saved);
+    }
+  }, []);
+  const updateViewMode = React.useCallback((m: ViewMode) => {
+    setViewMode(m);
+    if (typeof window !== "undefined") localStorage.setItem(MODE_STORAGE_KEY, m);
+  }, []);
+
+  // For dual-role users the mode pill chooses what content shows.
+  // Single-role users fall back to their JWT role.
+  const isOperator = canActAsDriver
+    ? viewMode === "all" || viewMode === "operator"
+    : baseIsOperator;
+  const isDriver = canActAsDriver
+    ? viewMode === "all" || viewMode === "driver"
+    : baseIsDriver;
 
   React.useEffect(() => {
     setTitle("Dashboard");
@@ -490,6 +572,13 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6 p-6">
+
+      {/* ── Mode switcher (dual-role users only) ── */}
+      {canActAsDriver && (
+        <div className="-mb-3 flex justify-end">
+          <ModeSwitcher mode={viewMode} onChange={updateViewMode} />
+        </div>
+      )}
 
       {/* ── Greeting ── */}
       {isOperator && (

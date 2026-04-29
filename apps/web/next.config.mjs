@@ -1,7 +1,20 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   // Produce a self-contained Node.js server for Docker deployment
   output: "standalone",
+
+  // Pin the Turbopack workspace root to this app's grandparent (the repo
+  // root, whether checked out at the main path or under .claude/worktrees/*).
+  // Without this, Next 16 + Turbopack picks the wrong root when multiple
+  // lockfiles are present in a worktree setup.
+  turbopack: {
+    root: path.resolve(__dirname, "..", ".."),
+  },
 
   // Transpile monorepo packages so Next.js can compile their TypeScript/JSX
   transpilePackages: ["@routeflow/ui", "@routeflow/types"],
