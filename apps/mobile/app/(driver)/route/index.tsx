@@ -60,6 +60,43 @@ async function openRouteFromHere(stops: RouteRunStop[]): Promise<void> {
   openRouteInMaps(stops, loc ? { originLat: loc.lat, originLng: loc.lng } : {});
 }
 
+/** Compact 3-way mode pill — self-contained, shown only for canActAsDriver users. */
+function ModeSwitcherBar() {
+  const router = useRouter();
+  const { user, setActiveRole } = useAuthStore();
+  if (!user?.canActAsDriver) return null;
+  return (
+    <View style={styles.modeBar}>
+      <View style={styles.modeTrack}>
+        <Pressable
+          style={styles.modeSeg}
+          onPress={() => {
+            setActiveRole("all");
+            router.replace("/(tenant)/today");
+          }}
+        >
+          <Ionicons name="sunny" size={14} color={ios.label2} />
+          <Text style={styles.modeLabel}>Combined</Text>
+        </Pressable>
+        <Pressable
+          style={styles.modeSeg}
+          onPress={() => {
+            setActiveRole("operator");
+            router.replace("/(operator)/home");
+          }}
+        >
+          <Ionicons name="briefcase-outline" size={14} color={ios.label2} />
+          <Text style={styles.modeLabel}>Operator</Text>
+        </Pressable>
+        <Pressable style={[styles.modeSeg, styles.modeSegActive]}>
+          <Ionicons name="car-outline" size={14} color={ios.brand} />
+          <Text style={[styles.modeLabel, styles.modeLabelActive]}>Driver</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
 export default function DriverRouteScreen() {
   const router = useRouter();
   const { data: activeData, isLoading: activeLoading } = useActiveRouteRun();
@@ -154,6 +191,7 @@ function StartOfDay({ run }: { run: RouteRun }) {
           </View>
         }
       />
+      <ModeSwitcherBar />
       <ScrollView showsVerticalScrollIndicator={false}>
         <Text style={styles.dateEyebrow}>{dateLabel}</Text>
 
@@ -274,6 +312,7 @@ function TodaysRoute({
         }
         trailing={null}
       />
+      <ModeSwitcherBar />
 
       <ScrollView showsVerticalScrollIndicator={false}>
         <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
@@ -427,6 +466,7 @@ function NoRoute() {
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <NavBar largeTitle="Today" />
+      <ModeSwitcherBar />
       <View style={styles.center}>
         <Ionicons name="map-outline" size={48} color={ios.label3} />
         <Text style={styles.emptyTitle}>No route assigned</Text>
@@ -449,6 +489,35 @@ function NoRoute() {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: ios.bg },
   center: { flex: 1, alignItems: "center", justifyContent: "center", gap: 10, paddingHorizontal: 40 },
+  // ── Mode switcher ─────────────────────────────────────────────────────────
+  modeBar: { paddingHorizontal: 16, paddingBottom: 10 },
+  modeTrack: {
+    flexDirection: "row",
+    backgroundColor: ios.fill3,
+    borderRadius: 12,
+    padding: 3,
+    gap: 2,
+  },
+  modeSeg: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
+    paddingVertical: 8,
+    borderRadius: 10,
+  },
+  modeSegActive: {
+    backgroundColor: ios.bgElev,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  modeLabel: { fontSize: 13, fontFamily: "Inter_500Medium", color: ios.label2 },
+  modeLabelActive: { color: ios.label, fontFamily: "Inter_600SemiBold" },
+  // ─────────────────────────────────────────────────────────────────────────
   adHocBtn: {
     marginTop: 14,
     backgroundColor: ios.brand,

@@ -9,7 +9,7 @@ import { useTenantStore } from "../../../lib/tenant-store";
 
 export default function OperatorMoreScreen() {
   const router = useRouter();
-  const { user, logout, setActiveRole } = useAuthStore();
+  const { user, logout } = useAuthStore();
   const tenantName = useTenantStore((s) => s.branding?.businessName);
 
   const initials =
@@ -182,17 +182,6 @@ export default function OperatorMoreScreen() {
             iconBg={ios.fill3}
             title="Change password"
             onPress={() => router.push("/(operator)/change-password")}
-            chevron
-          />
-          <ListRow
-            icon={<Ionicons name="swap-horizontal-outline" size={16} color={ios.system.orangeInk} />}
-            iconBg={ios.system.orangeWash}
-            title="Switch role"
-            subtitle="Go to driver view"
-            onPress={() => {
-              setActiveRole("driver");
-              router.replace("/(driver)/route");
-            }}
             chevron
           />
         </ListGroup>

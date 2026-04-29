@@ -45,7 +45,7 @@ function driverDisplayName(driver: AdminDriver | undefined): string {
 
 export default function OperatorHomeScreen() {
   const router = useRouter();
-  const { user } = useAuthStore();
+  const { user, setActiveRole } = useAuthStore();
   const { data: stats, isLoading: statsLoading } = useAdminDashboard();
   const { data: routesData, isLoading: routesLoading } = useAdminRoutes({ limit: 10 });
   const { data: driversData } = useAdminDrivers();
@@ -124,6 +124,38 @@ export default function OperatorHomeScreen() {
           </View>
         }
       />
+
+      {/* Mode switcher — only visible when this user can also act as driver */}
+      {user?.canActAsDriver ? (
+        <View style={styles.modeBar}>
+          <View style={styles.modeTrack}>
+            <Pressable
+              style={styles.modeSeg}
+              onPress={() => {
+                setActiveRole("all");
+                router.replace("/(tenant)/today");
+              }}
+            >
+              <Ionicons name="sunny" size={14} color={ios.label2} />
+              <Text style={styles.modeLabel}>Combined</Text>
+            </Pressable>
+            <Pressable style={[styles.modeSeg, styles.modeSegActive]}>
+              <Ionicons name="briefcase-outline" size={14} color={ios.brand} />
+              <Text style={[styles.modeLabel, styles.modeLabelActive]}>Operator</Text>
+            </Pressable>
+            <Pressable
+              style={styles.modeSeg}
+              onPress={() => {
+                setActiveRole("driver");
+                router.replace("/(driver)/route");
+              }}
+            >
+              <Ionicons name="car-outline" size={14} color={ios.label2} />
+              <Text style={styles.modeLabel}>Driver</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
 
       <ScrollView showsVerticalScrollIndicator={false}>
         {/* Readiness hero */}
@@ -313,6 +345,35 @@ export default function OperatorHomeScreen() {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: ios.bg },
   center: { alignItems: "center", justifyContent: "center", padding: 24, gap: 6 },
+  // ── Mode switcher ─────────────────────────────────────────────────────────
+  modeBar: { paddingHorizontal: 16, paddingBottom: 10 },
+  modeTrack: {
+    flexDirection: "row",
+    backgroundColor: ios.fill3,
+    borderRadius: 12,
+    padding: 3,
+    gap: 2,
+  },
+  modeSeg: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
+    paddingVertical: 8,
+    borderRadius: 10,
+  },
+  modeSegActive: {
+    backgroundColor: ios.bgElev,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  modeLabel: { fontSize: 13, fontFamily: "Inter_500Medium", color: ios.label2 },
+  modeLabelActive: { color: ios.label, fontFamily: "Inter_600SemiBold" },
+  // ─────────────────────────────────────────────────────────────────────────
   emptyTitle: { fontSize: 16, fontFamily: "Inter_600SemiBold", color: ios.label2 },
   dateEyebrow: {
     fontSize: 13,
