@@ -1,4 +1,4 @@
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
@@ -6,6 +6,7 @@ import { ios } from "@routeflow/ui/tokens";
 import { NavBar } from "@routeflow/ui/mobile/ios";
 import { useBuyerSessionStore } from "../../../lib/buyer-session-store";
 import { useBuyerProfile, useBuyerDashboard } from "../../../lib/api/buyer";
+import { confirm } from "../../../lib/confirm";
 
 export default function CustomerMoreScreen() {
   const router = useRouter();
@@ -14,17 +15,10 @@ export default function CustomerMoreScreen() {
   const { data: dashboard } = useBuyerDashboard();
 
   const onSignOut = () =>
-    Alert.alert("Sign out?", "You'll need to log in again.", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Sign out",
-        style: "destructive",
-        onPress: async () => {
-          await signOut();
-          router.replace("/(auth)/customer-login");
-        },
-      },
-    ]);
+    confirm("Sign out?", "You'll need to log in again.", async () => {
+      await signOut();
+      router.replace("/(auth)/customer-login");
+    }, { confirmText: "Sign out", destructive: true });
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>

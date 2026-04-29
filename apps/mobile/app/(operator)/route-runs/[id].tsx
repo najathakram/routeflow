@@ -1,7 +1,6 @@
 import { useCallback, useMemo } from "react";
 import {
   ActivityIndicator,
-  Alert,
   Platform,
   Pressable,
   ScrollView,
@@ -31,6 +30,7 @@ import {
 } from "../../../lib/api/routes";
 import { openRouteInMaps } from "../../../components/openInMaps";
 import { showToast } from "../../../lib/toast";
+import { confirm } from "../../../lib/confirm";
 
 async function readCurrentLocation(): Promise<{ lat: number; lng: number } | null> {
   if (Platform.OS === "web") {
@@ -133,7 +133,7 @@ export default function OperatorRouteRunScreen() {
   const handleOptimize = async () => {
     if (!id) return;
     if (stops.length < 2) {
-      Alert.alert("Nothing to optimize", "Need at least two stops.");
+      showToast("Need at least two stops.");
       return;
     }
     const useCurrent = run?.status === "IN_PROGRESS";
@@ -147,10 +147,7 @@ export default function OperatorRouteRunScreen() {
         refetch();
       },
       onError: (e: any) =>
-        Alert.alert(
-          "Couldn't optimize",
-          e?.response?.data?.message ?? e?.message ?? "Try again.",
-        ),
+        showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
     });
   };
 
@@ -172,82 +169,58 @@ export default function OperatorRouteRunScreen() {
 
   const handleSkip = (stopId: string) => {
     if (!id) return;
-    Alert.alert("Skip stop?", "It will be marked as skipped on this run.", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Skip",
-        style: "destructive",
-        onPress: () =>
-          updateStatusMut.mutate(
-            { runId: id, stopId, status: "SKIPPED" },
-            {
-              onSuccess: () => {
-                showToast("Stop skipped");
-                refetch();
-              },
-              onError: (e: any) =>
-                Alert.alert(
-                  "Couldn't skip",
-                  e?.response?.data?.message ?? e?.message ?? "Try again.",
-                ),
-            },
-          ),
-      },
-    ]);
+    confirm("Skip stop?", "It will be marked as skipped on this run.", () =>
+      updateStatusMut.mutate(
+        { runId: id, stopId, status: "SKIPPED" },
+        {
+          onSuccess: () => {
+            showToast("Stop skipped");
+            refetch();
+          },
+          onError: (e: any) =>
+            showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        },
+      ),
+      { confirmText: "Skip", destructive: true },
+    );
   };
 
   const handleReopen = (stopId: string) => {
     if (!id) return;
-    Alert.alert("Reopen stop?", "The stop status will reset to pending.", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Reopen",
-        onPress: () =>
-          reopenMut.mutate(
-            { runId: id, stopId },
-            {
-              onSuccess: () => {
-                showToast("Stop reopened");
-                refetch();
-              },
-              onError: (e: any) =>
-                Alert.alert(
-                  "Couldn't reopen",
-                  e?.response?.data?.message ?? e?.message ?? "Try again.",
-                ),
-            },
-          ),
-      },
-    ]);
+    confirm("Reopen stop?", "The stop status will reset to pending.", () =>
+      reopenMut.mutate(
+        { runId: id, stopId },
+        {
+          onSuccess: () => {
+            showToast("Stop reopened");
+            refetch();
+          },
+          onError: (e: any) =>
+            showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        },
+      ),
+      { confirmText: "Reopen" },
+    );
   };
 
   const handleCancelRun = () => {
     if (!id) return;
-    Alert.alert(
+    confirm(
       "Cancel run?",
       "The run will be marked cancelled. Drivers can no longer check in or complete stops.",
-      [
-        { text: "Keep", style: "cancel" },
-        {
-          text: "Cancel run",
-          style: "destructive",
-          onPress: () =>
-            cancelRunMut.mutate(
-              { id, status: "CANCELLED" },
-              {
-                onSuccess: () => {
-                  showToast("Run cancelled");
-                  refetch();
-                },
-                onError: (e: any) =>
-                  Alert.alert(
-                    "Couldn't cancel",
-                    e?.response?.data?.message ?? e?.message ?? "Try again.",
-                  ),
-              },
-            ),
-        },
-      ],
+      () =>
+        cancelRunMut.mutate(
+          { id, status: "CANCELLED" },
+          {
+            onSuccess: () => {
+              showToast("Run cancelled");
+              refetch();
+            },
+            onError: (e: any) =>
+              showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+          },
+        ),
+      { confirmText: "Cancel run", destructive: true },
     );
   };
 

@@ -41,7 +41,7 @@ export class CustomersController {
   constructor(private readonly customersService: CustomersService) {}
 
   @Get()
-  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
+  @Roles(UserRole.OPERATOR)
   findAll(@Query() query: ListCustomersDto) {
     return this.customersService.findAll(query);
   }

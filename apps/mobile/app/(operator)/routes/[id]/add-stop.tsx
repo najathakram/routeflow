@@ -1,7 +1,6 @@
 import { useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -38,7 +37,7 @@ export default function AddStopScreen() {
           router.back();
         },
         onError: (e: any) =>
-          Alert.alert("Couldn't add", e?.response?.data?.message ?? e?.message ?? "Try again."),
+          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
       },
     );
   };

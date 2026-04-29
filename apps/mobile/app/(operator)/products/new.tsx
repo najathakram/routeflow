@@ -1,4 +1,3 @@
-import { Alert } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import {
   ProductForm,
@@ -36,10 +35,7 @@ export default function NewProductScreen() {
             router.replace(`/(operator)/products/${res.id}`);
           },
           onError: (e: any) =>
-            Alert.alert(
-              "Couldn't save",
-              e?.response?.data?.message ?? e?.message ?? "Try again.",
-            ),
+            showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
         });
       }}
     />

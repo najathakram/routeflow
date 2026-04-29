@@ -1,7 +1,6 @@
 import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   Modal,
   Pressable,
   ScrollView,
@@ -24,6 +23,7 @@ import {
 import { useAdminProducts, type AdminProduct } from "../../../../lib/api/admin";
 import { getTierPrice } from "../../../../lib/pricing";
 import { showToast } from "../../../../lib/toast";
+import { confirm } from "../../../../lib/confirm";
 
 function fmt(n: number | string | undefined | null): string {
   const v = n == null ? 0 : typeof n === "string" ? Number(n) : n;
@@ -73,7 +73,7 @@ function EditTierOverrideModal({
 
   const save = () => {
     if (!productId || !tier) {
-      Alert.alert("Missing info", "Pick a product and a tier.");
+      showToast("Pick a product and a tier.");
       return;
     }
     upsert.mutate(
@@ -85,10 +85,7 @@ function EditTierOverrideModal({
         },
         onError: (e: unknown) => {
           const err = e as { response?: { data?: { message?: string } }; message?: string };
-          Alert.alert(
-            "Couldn't save",
-            err?.response?.data?.message ?? err?.message ?? "Try again.",
-          );
+          showToast(err?.response?.data?.message ?? err?.message ?? "Try again.");
         },
       },
     );
@@ -241,24 +238,18 @@ export default function CustomerCatalogScreen() {
   const priceList: CustomerPrice[] = prices ?? [];
 
   const handleDelete = (cp: CustomerPrice) => {
-    Alert.alert(
+    confirm(
       "Remove tier override?",
       `${cp.product?.name ?? "Product"} will revert to the customer's default tier.`,
-      [
-        { text: "Keep", style: "cancel" },
-        {
-          text: "Remove",
-          style: "destructive",
-          onPress: () =>
-            deleteMut.mutate(
-              { customerId, priceId: cp.id },
-              {
-                onSuccess: () => showToast("Override removed"),
-                onError: () => Alert.alert("Error", "Couldn't remove. Try again."),
-              },
-            ),
-        },
-      ],
+      () =>
+        deleteMut.mutate(
+          { customerId, priceId: cp.id },
+          {
+            onSuccess: () => showToast("Override removed"),
+            onError: () => showToast("Couldn't remove. Try again."),
+          },
+        ),
+      { confirmText: "Remove", destructive: true },
     );
   };
 

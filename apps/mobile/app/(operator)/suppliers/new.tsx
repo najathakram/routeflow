@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { Alert } from "react-native";
 import { useRouter } from "expo-router";
 import { FormField, FormSection, FormSheet, FormTextInput } from "../../../components/FormSheet";
 import { useCreateSupplier } from "../../../lib/api/purchase-orders";
@@ -17,7 +16,7 @@ export default function NewSupplierScreen() {
 
   const submit = () => {
     if (!name.trim()) {
-      Alert.alert("Name required", "Please enter a supplier name.");
+      showToast("Please enter a supplier name.");
       return;
     }
     mut.mutate(
@@ -34,10 +33,7 @@ export default function NewSupplierScreen() {
           router.back();
         },
         onError: (e: any) =>
-          Alert.alert(
-            "Couldn't create",
-            e?.response?.data?.message ?? e?.message ?? "Try again.",
-          ),
+          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
       },
     );
   };

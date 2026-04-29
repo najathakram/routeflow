@@ -1,7 +1,6 @@
 import { useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -16,6 +15,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { BrandGlyph } from "@routeflow/ui/mobile/ios";
+import { OptionPickerSheet } from "../../components/OptionPickerSheet";
 import { buyerLogin, buyerLoginWithGoogle, getBuyerSellers, setActiveSeller, type BuyerSeller } from "../../lib/buyer-auth";
 import { useBuyerSessionStore } from "../../lib/buyer-session-store";
 import { GoogleButton } from "@routeflow/ui/mobile/ios";
@@ -29,6 +29,8 @@ export default function CustomerLoginScreen() {
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pendingSellers, setPendingSellers] = useState<BuyerSeller[]>([]);
+  const [sellerPickerOpen, setSellerPickerOpen] = useState(false);
 
   const onLogin = async () => {
     if (!email.trim()) { setError("Email is required."); return; }
@@ -100,21 +102,16 @@ export default function CustomerLoginScreen() {
   };
 
   const showSellerPicker = (sellers: BuyerSeller[]) => {
-    Alert.alert(
-      "Select supplier",
-      "Choose which supplier to connect to:",
-      [
-        ...sellers.map((s) => ({
-          text: s.tenant.name,
-          onPress: async () => {
-            await storeSetSeller(s);
-            router.replace("/(customer)/orders");
-          },
-        })),
-        { text: "Cancel", style: "cancel" },
-      ],
-      { cancelable: true },
-    );
+    setPendingSellers(sellers);
+    setSellerPickerOpen(true);
+  };
+
+  const onSelectSeller = async (sellerId: string) => {
+    const seller = pendingSellers.find((s) => s.id === sellerId);
+    if (!seller) return;
+    setSellerPickerOpen(false);
+    await storeSetSeller(seller);
+    router.replace("/(customer)/orders");
   };
 
   return (
@@ -205,6 +202,14 @@ export default function CustomerLoginScreen() {
           </Text>
         </Text>
       </ScrollView>
+
+      <OptionPickerSheet
+        visible={sellerPickerOpen}
+        title="Select supplier"
+        options={pendingSellers.map((s) => ({ id: s.id, label: s.tenant.name }))}
+        onClose={() => setSellerPickerOpen(false)}
+        onSelect={(opt) => onSelectSeller(opt.id)}
+      />
     </SafeAreaView>
   );
 }

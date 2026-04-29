@@ -1,6 +1,5 @@
 import {
   ActivityIndicator,
-  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -37,7 +36,7 @@ export default function AssignDriverScreen() {
           router.back();
         },
         onError: (e: any) =>
-          Alert.alert("Couldn't assign", e?.response?.data?.message ?? e?.message ?? "Try again."),
+          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
       },
     );
   };

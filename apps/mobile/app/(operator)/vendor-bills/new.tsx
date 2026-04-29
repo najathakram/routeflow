@@ -1,7 +1,5 @@
 import { useState } from "react";
 import {
-  Alert,
-  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -12,9 +10,11 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { FormField, FormSection, FormSheet, FormTextInput } from "../../../components/FormSheet";
+import { OptionPickerSheet } from "../../../components/OptionPickerSheet";
 import { useCreateVendorBill } from "../../../lib/api/vendor-bills";
 import { useSuppliers } from "../../../lib/api/purchase-orders";
 import { useProducts } from "../../../lib/api/products";
+import { showToast } from "../../../lib/toast";
 
 interface LineItem {
   description: string;
@@ -39,26 +39,13 @@ export default function NewVendorBillScreen() {
 
   const [supplierId, setSupplierId] = useState("");
   const [supplierName, setSupplierName] = useState("");
+  const [supplierPickerOpen, setSupplierPickerOpen] = useState(false);
   const [billDate, setBillDate] = useState("");
   const [dueDate, setDueDate] = useState("");
   const [notes, setNotes] = useState("");
   const [items, setItems] = useState<LineItem[]>([{ ...EMPTY_ITEM }]);
 
-  const pickSupplier = () => {
-    const list = suppliers ?? [];
-    Alert.alert(
-      "Select supplier",
-      undefined,
-      [
-        ...list.map((s: any) => ({
-          text: s.name,
-          onPress: () => { setSupplierId(s.id); setSupplierName(s.name); },
-        })),
-        { text: "Cancel", style: "cancel" },
-      ],
-      { cancelable: true },
-    );
-  };
+  const pickSupplier = () => setSupplierPickerOpen(true);
 
   const updateItem = (index: number, field: keyof LineItem, value: string) =>
     setItems((prev) => prev.map((it, i) => (i === index ? { ...it, [field]: value } : it)));
@@ -76,7 +63,7 @@ export default function NewVendorBillScreen() {
       }));
 
     if (parsedItems.length === 0) {
-      Alert.alert("Items required", "Add at least one line item.");
+      showToast("Add at least one line item.");
       return;
     }
 
@@ -89,7 +76,7 @@ export default function NewVendorBillScreen() {
     createMut.mutate(dto, {
       onSuccess: (bill) => router.replace(`/(operator)/vendor-bills/${bill.id}`),
       onError: (e: any) =>
-        Alert.alert("Couldn't create bill", e?.response?.data?.message ?? e?.message ?? "Try again."),
+        showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
     });
   };
 
@@ -113,7 +100,7 @@ export default function NewVendorBillScreen() {
         <Ionicons name="chevron-forward" size={14} color={ios.brand} />
       </Pressable>
 
-      <FormSection title="Supplier (optional)">
+      <FormSection title="Supplier">
         <FormField label="Supplier">
           <Pressable style={styles.picker} onPress={pickSupplier}>
             <Text style={[styles.pickerText, !supplierName && styles.placeholder]}>
@@ -151,6 +138,16 @@ export default function NewVendorBillScreen() {
           <Text style={styles.addItemText}>Add item</Text>
         </Pressable>
       </FormSection>
+      <OptionPickerSheet
+        visible={supplierPickerOpen}
+        title="Supplier"
+        options={(suppliers ?? []).map((s: any) => ({ id: s.id, label: s.name }))}
+        selectedId={supplierId}
+        nullable
+        nullLabel="None"
+        onClose={() => setSupplierPickerOpen(false)}
+        onSelect={(opt) => { setSupplierId(opt.id); setSupplierName(opt.id ? opt.label : ""); setSupplierPickerOpen(false); }}
+      />
     </FormSheet>
   );
 }

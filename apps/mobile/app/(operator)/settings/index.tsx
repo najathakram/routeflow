@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -27,6 +26,7 @@ import {
   useUpdateBusinessSettings,
 } from "../../../lib/api/admin";
 import { showToast } from "../../../lib/toast";
+import { alertInfo } from "../../../lib/confirm";
 
 export default function SettingsScreen() {
   const router = useRouter();
@@ -70,7 +70,7 @@ export default function SettingsScreen() {
       {
         onSuccess: () => showToast("Settings saved"),
         onError: (e: any) =>
-          Alert.alert("Couldn't save", e?.response?.data?.message ?? e?.message ?? "Try again."),
+          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
       },
     );
   };
@@ -121,7 +121,7 @@ export default function SettingsScreen() {
                 value={pushEnabled}
                 onValueChange={(v) => {
                   setPushEnabled(v);
-                  Alert.alert(
+                  alertInfo(
                     v ? "Push enabled" : "Push disabled",
                     v
                       ? "We'll register this device with the push service on your next launch."

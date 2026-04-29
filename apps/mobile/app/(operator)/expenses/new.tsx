@@ -1,6 +1,5 @@
 import { useState } from "react";
 import {
-  Alert,
   Modal,
   Pressable,
   ScrollView,
@@ -12,8 +11,10 @@ import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { ios } from "@routeflow/ui/tokens";
 import { FormField, FormSection, FormSheet, FormTextInput } from "../../../components/FormSheet";
+import { OptionPickerSheet } from "../../../components/OptionPickerSheet";
 import { useCreateExpense, useExpenseCategories } from "../../../lib/api/expenses";
 import { useSuppliers } from "../../../lib/api/purchase-orders";
+import { showToast } from "../../../lib/toast";
 
 const PAYMENT_METHODS = ["CASH", "CARD", "BANK_TRANSFER", "CHECK", "OTHER"];
 
@@ -63,23 +64,7 @@ export default function NewExpenseScreen() {
   const [referenceNumber, setReferenceNumber] = useState("");
   const [categoryPickerOpen, setCategoryPickerOpen] = useState(false);
   const [paymentPickerOpen, setPaymentPickerOpen] = useState(false);
-
-  const pickSupplier = () => {
-    const list = suppliers ?? [];
-    Alert.alert(
-      "Select supplier",
-      undefined,
-      [
-        { text: "None", onPress: () => { setSupplierId(""); setSupplierName(""); } },
-        ...list.map((s: any) => ({
-          text: s.name,
-          onPress: () => { setSupplierId(s.id); setSupplierName(s.name); },
-        })),
-        { text: "Cancel", style: "cancel" },
-      ],
-      { cancelable: true },
-    );
-  };
+  const [supplierPickerOpen, setSupplierPickerOpen] = useState(false);
 
   const formatPaymentLabel = (m: string) =>
     m.charAt(0) + m.slice(1).toLowerCase().replace("_", " ");
@@ -87,7 +72,7 @@ export default function NewExpenseScreen() {
   const submit = () => {
     const parsedAmount = Number(amount);
     if (!amount || !Number.isFinite(parsedAmount) || parsedAmount <= 0) {
-      Alert.alert("Amount required", "Enter a valid expense amount.");
+      showToast("Enter a valid expense amount.");
       return;
     }
 
@@ -104,7 +89,7 @@ export default function NewExpenseScreen() {
     createMut.mutate(dto, {
       onSuccess: (expense) => router.replace(`/(operator)/expenses/${expense.id}`),
       onError: (e: any) =>
-        Alert.alert("Couldn't create expense", e?.response?.data?.message ?? e?.message ?? "Try again."),
+        showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
     });
   };
 
@@ -182,7 +167,7 @@ export default function NewExpenseScreen() {
           </Pressable>
         </FormField>
         <FormField label="Supplier (optional)">
-          <Pressable style={styles.picker} onPress={pickSupplier}>
+          <Pressable style={styles.picker} onPress={() => setSupplierPickerOpen(true)}>
             <Text style={[styles.pickerText, !supplierName && styles.placeholder]}>
               {supplierName || "Select supplier…"}
             </Text>
@@ -223,6 +208,21 @@ export default function NewExpenseScreen() {
         onSelect={(m) => {
           setPaymentMethod(m);
           setPaymentPickerOpen(false);
+        }}
+      />
+
+      <OptionPickerSheet
+        visible={supplierPickerOpen}
+        title="Supplier"
+        options={(suppliers ?? []).map((s: any) => ({ id: s.id, label: s.name }))}
+        selectedId={supplierId}
+        nullable
+        nullLabel="None"
+        onClose={() => setSupplierPickerOpen(false)}
+        onSelect={(opt) => {
+          setSupplierId(opt.id);
+          setSupplierName(opt.label === "None" ? "" : opt.label);
+          setSupplierPickerOpen(false);
         }}
       />
     </FormSheet>

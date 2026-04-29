@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import {
@@ -60,7 +60,7 @@ export default function RecordPaymentScreen() {
         router.back();
       },
       onError: (e: any) =>
-        Alert.alert("Couldn't record", e?.response?.data?.message ?? e?.message ?? "Try again."),
+        showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
     });
   };
 

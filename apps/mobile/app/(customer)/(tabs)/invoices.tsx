@@ -99,7 +99,7 @@ function InvoiceRow({ invoice, onPress }: { invoice: BuyerInvoice; onPress: () =
         month: "short", day: "numeric", year: "numeric",
       })
     : "";
-  const amountDue = invoice.amountDue ?? invoice.total;
+  const amountDue = Number(invoice.amountDue ?? invoice.total) || 0;
 
   return (
     <Pressable style={styles.card} onPress={onPress}>
@@ -112,7 +112,7 @@ function InvoiceRow({ invoice, onPress }: { invoice: BuyerInvoice; onPress: () =
       </View>
       <View style={styles.cardFoot}>
         <View>
-          <Text style={styles.cardTotal}>${invoice.total.toFixed(2)}</Text>
+          <Text style={styles.cardTotal}>${Number(invoice.total).toFixed(2)}</Text>
           {amountDue > 0 && invoice.status !== "PAID" ? (
             <Text style={styles.cardDue}>Due: ${amountDue.toFixed(2)}</Text>
           ) : null}

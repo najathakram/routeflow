@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -15,6 +15,8 @@ import {
 } from "../../../lib/api/expenses";
 import { useSuppliers } from "../../../lib/api/purchase-orders";
 import { showToast } from "../../../lib/toast";
+import { confirm } from "../../../lib/confirm";
+import { OptionPickerSheet } from "../../../components/OptionPickerSheet";
 
 function statusPill(status: ExpenseStatus) {
   switch (status) {
@@ -52,6 +54,9 @@ export default function ExpenseDetailScreen() {
   const [paymentMethod, setPaymentMethod] = useState("");
   const [notes, setNotes] = useState("");
   const [referenceNumber, setReferenceNumber] = useState("");
+  const [catPickerOpen, setCatPickerOpen] = useState(false);
+  const [supPickerOpen, setSupPickerOpen] = useState(false);
+  const [pmPickerOpen, setPmPickerOpen] = useState(false);
 
   if (isLoading || !expense) {
     return (
@@ -88,7 +93,7 @@ export default function ExpenseDetailScreen() {
   const saveEdit = () => {
     const parsedAmount = Number(amount);
     if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
-      Alert.alert("Invalid amount", "Enter a valid amount.");
+      showToast("Enter a valid amount.");
       return;
     }
     const dto: any = { id, amount: parsedAmount, date };
@@ -107,75 +112,26 @@ export default function ExpenseDetailScreen() {
         setEditing(false);
       },
       onError: (e: any) =>
-        Alert.alert("Couldn't update", e?.response?.data?.message ?? e?.message ?? "Try again."),
+        showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
     });
   };
 
   const onDelete = () =>
-    Alert.alert("Delete expense?", "This cannot be undone.", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Delete",
-        style: "destructive",
-        onPress: () =>
-          deleteMut.mutate(id, {
-            onSuccess: () => {
-              showToast("Expense deleted");
-              router.back();
-            },
-            onError: (e: any) =>
-              Alert.alert("Error", e?.response?.data?.message ?? e?.message ?? "Try again."),
-          }),
-      },
-    ]);
-
-  const pickCategory = () => {
-    const list = categories ?? [];
-    Alert.alert(
-      "Select category",
-      undefined,
-      [
-        ...list.map((c) => ({
-          text: c.name,
-          onPress: () => { setCategoryId(c.id); setCategoryName(c.name); },
-        })),
-        { text: "Cancel", style: "cancel" },
-      ],
-      { cancelable: true },
+    confirm("Delete expense?", "This cannot be undone.", () =>
+      deleteMut.mutate(id, {
+        onSuccess: () => {
+          showToast("Expense deleted");
+          router.back();
+        },
+        onError: (e: any) =>
+          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+      }),
+      { confirmText: "Delete", destructive: true },
     );
-  };
 
-  const pickSupplier = () => {
-    const list = suppliers ?? [];
-    Alert.alert(
-      "Select supplier",
-      undefined,
-      [
-        { text: "None", onPress: () => { setSupplierId(""); setSupplierName(""); } },
-        ...list.map((s: any) => ({
-          text: s.name,
-          onPress: () => { setSupplierId(s.id); setSupplierName(s.name); },
-        })),
-        { text: "Cancel", style: "cancel" },
-      ],
-      { cancelable: true },
-    );
-  };
-
-  const pickPaymentMethod = () => {
-    Alert.alert(
-      "Payment method",
-      undefined,
-      [
-        ...PAYMENT_METHODS.map((m) => ({
-          text: m.charAt(0) + m.slice(1).toLowerCase().replace("_", " "),
-          onPress: () => setPaymentMethod(m),
-        })),
-        { text: "Cancel", style: "cancel" },
-      ],
-      { cancelable: true },
-    );
-  };
+  const pickCategory = () => setCatPickerOpen(true);
+  const pickSupplier = () => setSupPickerOpen(true);
+  const pickPaymentMethod = () => setPmPickerOpen(true);
 
   const dateLabel = new Date(expense.date).toLocaleDateString(undefined, {
     month: "long", day: "numeric", year: "numeric",
@@ -314,6 +270,35 @@ export default function ExpenseDetailScreen() {
 
         <View style={{ height: 40 }} />
       </ScrollView>
+
+      <OptionPickerSheet
+        visible={catPickerOpen}
+        title="Category"
+        options={(categories ?? []).map((c) => ({ id: c.id, label: c.name }))}
+        selectedId={categoryId}
+        nullable
+        nullLabel="None"
+        onClose={() => setCatPickerOpen(false)}
+        onSelect={(opt) => { setCategoryId(opt.id); setCategoryName(opt.id ? opt.label : ""); setCatPickerOpen(false); }}
+      />
+      <OptionPickerSheet
+        visible={supPickerOpen}
+        title="Supplier"
+        options={(suppliers ?? []).map((s: any) => ({ id: s.id, label: s.name }))}
+        selectedId={supplierId}
+        nullable
+        nullLabel="None"
+        onClose={() => setSupPickerOpen(false)}
+        onSelect={(opt) => { setSupplierId(opt.id); setSupplierName(opt.id ? opt.label : ""); setSupPickerOpen(false); }}
+      />
+      <OptionPickerSheet
+        visible={pmPickerOpen}
+        title="Payment method"
+        options={PAYMENT_METHODS.map((m) => ({ id: m, label: m.charAt(0) + m.slice(1).toLowerCase().replace("_", " ") }))}
+        selectedId={paymentMethod}
+        onClose={() => setPmPickerOpen(false)}
+        onSelect={(opt) => { setPaymentMethod(opt.id); setPmPickerOpen(false); }}
+      />
     </SafeAreaView>
   );
 }

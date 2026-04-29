@@ -1,7 +1,6 @@
 import { useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -54,7 +53,7 @@ export default function ManageAddressesScreen() {
           refetch();
         },
         onError: (e: any) =>
-          Alert.alert("Couldn't update", e?.response?.data?.message ?? e?.message ?? "Try again."),
+          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
       },
     );
   };
@@ -103,7 +102,7 @@ export default function ManageAddressesScreen() {
                       refetch();
                     },
                     onError: (e: any) =>
-                      Alert.alert("Couldn't add", e?.response?.data?.message ?? e?.message ?? "Try again."),
+                      showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
                   },
                 );
               }}

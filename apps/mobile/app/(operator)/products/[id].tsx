@@ -1,6 +1,5 @@
 import {
   ActivityIndicator,
-  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -15,6 +14,7 @@ import { NavAction, NavBackButton, NavBar, Pill } from "@routeflow/ui/mobile/ios
 import { useProduct, useDeleteProduct } from "../../../lib/api/products";
 import { useInventoryMovements } from "../../../lib/api/inventory";
 import { showToast } from "../../../lib/toast";
+import { confirm } from "../../../lib/confirm";
 
 function toNumber(v: number | string | null | undefined): number {
   if (typeof v === "number") return v;
@@ -50,25 +50,17 @@ export default function ProductDetailScreen() {
 
   const handleDelete = () => {
     if (!id) return;
-    Alert.alert("Delete product?", `${product.name} will be removed permanently.`, [
-      { text: "Keep it", style: "cancel" },
-      {
-        text: "Delete",
-        style: "destructive",
-        onPress: () =>
-          deleteMut.mutate(id, {
-            onSuccess: () => {
-              showToast("Product deleted");
-              router.back();
-            },
-            onError: (e: any) =>
-              Alert.alert(
-                "Couldn't delete",
-                e?.response?.data?.message ?? e?.message ?? "Try again.",
-              ),
-          }),
-      },
-    ]);
+    confirm("Delete product?", `${product.name} will be removed permanently.`, () =>
+      deleteMut.mutate(id, {
+        onSuccess: () => {
+          showToast("Product deleted");
+          router.back();
+        },
+        onError: (e: any) =>
+          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+      }),
+      { confirmText: "Delete", destructive: true },
+    );
   };
 
   return (

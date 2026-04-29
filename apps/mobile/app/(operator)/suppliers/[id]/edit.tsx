@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Alert, View } from "react-native";
+import { ActivityIndicator, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { FormField, FormSection, FormSheet, FormTextInput } from "../../../../components/FormSheet";
@@ -40,7 +40,7 @@ export default function EditSupplierScreen() {
 
   const submit = () => {
     if (!name.trim()) {
-      Alert.alert("Name required", "Please enter a supplier name.");
+      showToast("Please enter a supplier name.");
       return;
     }
     mut.mutate(
@@ -58,10 +58,7 @@ export default function EditSupplierScreen() {
           router.back();
         },
         onError: (e: any) =>
-          Alert.alert(
-            "Couldn't update",
-            e?.response?.data?.message ?? e?.message ?? "Try again.",
-          ),
+          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
       },
     );
   };

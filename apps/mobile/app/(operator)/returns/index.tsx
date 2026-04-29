@@ -1,7 +1,6 @@
 import { useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -26,6 +25,7 @@ import {
   useRejectReturn,
 } from "../../../lib/api/returns";
 import { showToast } from "../../../lib/toast";
+import { confirm } from "../../../lib/confirm";
 
 const FILTERS = [
   { id: "ALL", label: "All" },
@@ -73,25 +73,20 @@ export default function ReturnsListScreen() {
         refetch();
       },
       onError: (e: any) =>
-        Alert.alert("Couldn't approve", e?.response?.data?.message ?? e?.message ?? "Try again."),
+        showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
     });
   const reject = (id: string) =>
-    Alert.alert("Reject return?", "The return will be cancelled.", [
-      { text: "Keep", style: "cancel" },
-      {
-        text: "Reject",
-        style: "destructive",
-        onPress: () =>
-          rejectMut.mutate(id, {
-            onSuccess: () => {
-              showToast("Return rejected");
-              refetch();
-            },
-            onError: (e: any) =>
-              Alert.alert("Couldn't reject", e?.response?.data?.message ?? e?.message ?? "Try again."),
-          }),
-      },
-    ]);
+    confirm("Reject return?", "The return will be cancelled.", () =>
+      rejectMut.mutate(id, {
+        onSuccess: () => {
+          showToast("Return rejected");
+          refetch();
+        },
+        onError: (e: any) =>
+          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+      }),
+      { confirmText: "Reject", destructive: true },
+    );
   const receive = (id: string) =>
     receiveMut.mutate(id, {
       onSuccess: () => {
@@ -99,7 +94,7 @@ export default function ReturnsListScreen() {
         refetch();
       },
       onError: (e: any) =>
-        Alert.alert("Couldn't update", e?.response?.data?.message ?? e?.message ?? "Try again."),
+        showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
     });
 
   return (

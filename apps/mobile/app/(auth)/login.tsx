@@ -3,7 +3,6 @@ import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import {
-  Alert,
   ScrollView,
   StyleSheet,
   Text,
@@ -11,6 +10,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import { alertInfo } from "../../lib/confirm";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { ios } from "@routeflow/ui/tokens";
@@ -170,7 +170,7 @@ export default function LoginScreen() {
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() =>
-                Alert.alert(
+                alertInfo(
                   "Reset your password",
                   "Please contact your dispatcher to reset your password. Self-serve reset is coming soon.",
                 )
@@ -203,7 +203,7 @@ export default function LoginScreen() {
 
         <TouchableOpacity
           onPress={() =>
-            Alert.alert(
+            alertInfo(
               "New to RouteFlow?",
               "Your dispatcher can set up your account and give you your company code. Self-serve onboarding is coming soon.",
             )

@@ -197,7 +197,11 @@ export function useBuyerDashboard() {
 export function useBuyerTemplates() {
   return useQuery<any[]>({
     queryKey: ["buyer-templates"],
-    queryFn: () => buyerApiClient.get("/buyer/templates").then((r) => r.data),
+    queryFn: () =>
+      buyerApiClient.get("/buyer/templates").then((r) => {
+        const body = r.data;
+        return Array.isArray(body) ? body : (body?.data ?? []);
+      }),
     staleTime: 60_000,
   });
 }

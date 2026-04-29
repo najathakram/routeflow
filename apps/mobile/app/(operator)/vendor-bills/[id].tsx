@@ -1,4 +1,4 @@
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -12,6 +12,7 @@ import {
   type VendorBillStatus,
 } from "../../../lib/api/vendor-bills";
 import { showToast } from "../../../lib/toast";
+import { confirm } from "../../../lib/confirm";
 
 function billPill(status: VendorBillStatus) {
   switch (status) {
@@ -52,23 +53,18 @@ export default function VendorBillDetailScreen() {
     receiveMut.mutate(bill.id, {
       onSuccess: () => showToast("Bill marked as received"),
       onError: (e: any) =>
-        Alert.alert("Error", e?.response?.data?.message ?? e?.message ?? "Try again."),
+        showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
     });
 
   const onVoid = () =>
-    Alert.alert("Void bill?", "This cannot be undone.", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Void",
-        style: "destructive",
-        onPress: () =>
-          voidMut.mutate(bill.id, {
-            onSuccess: () => showToast("Bill voided"),
-            onError: (e: any) =>
-              Alert.alert("Error", e?.response?.data?.message ?? e?.message ?? "Try again."),
-          }),
-      },
-    ]);
+    confirm("Void bill?", "This cannot be undone.", () =>
+      voidMut.mutate(bill.id, {
+        onSuccess: () => showToast("Bill voided"),
+        onError: (e: any) =>
+          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+      }),
+      { confirmText: "Void", destructive: true },
+    );
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
@@ -92,7 +88,7 @@ export default function VendorBillDetailScreen() {
             {bill.billDate ? (
               <Text style={styles.meta}>
                 Bill date:{" "}
-                {new Date(bill.billDate).toLocaleDateString(undefined, {
+                {new Date(`${bill.billDate}T00:00:00`).toLocaleDateString(undefined, {
                   month: "short", day: "numeric", year: "numeric",
                 })}
               </Text>
@@ -100,7 +96,7 @@ export default function VendorBillDetailScreen() {
             {bill.dueDate ? (
               <Text style={styles.meta}>
                 Due:{" "}
-                {new Date(bill.dueDate).toLocaleDateString(undefined, {
+                {new Date(`${bill.dueDate}T00:00:00`).toLocaleDateString(undefined, {
                   month: "short", day: "numeric", year: "numeric",
                 })}
               </Text>
@@ -136,7 +132,7 @@ export default function VendorBillDetailScreen() {
                       {item.qty} × {formatCurrency(item.unitCost)}
                     </Text>
                   </View>
-                  <Text style={styles.itemTotal}>{formatCurrency(item.lineTotal)}</Text>
+                  <Text style={styles.itemTotal}>{formatCurrency(item.lineTotal ?? Number(item.qty) * Number(item.unitCost))}</Text>
                 </View>
               ))}
             </View>

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Alert, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
@@ -14,8 +14,8 @@ export default function CustomerChangePasswordScreen() {
   const [loading, setLoading] = useState(false);
 
   const onSave = async () => {
-    if (!current || !next) { Alert.alert("Both fields required"); return; }
-    if (next.length < 8) { Alert.alert("New password must be at least 8 characters"); return; }
+    if (!current || !next) { showToast("Both fields required"); return; }
+    if (next.length < 8) { showToast("New password must be at least 8 characters"); return; }
     setLoading(true);
     try {
       await buyerApiClient.post("/buyer/auth/change-password", {
@@ -25,7 +25,7 @@ export default function CustomerChangePasswordScreen() {
       showToast("Password changed");
       router.back();
     } catch (e: any) {
-      Alert.alert("Error", e?.response?.data?.message ?? "Could not change password.");
+      showToast(e?.response?.data?.message ?? "Could not change password.");
     } finally {
       setLoading(false);
     }

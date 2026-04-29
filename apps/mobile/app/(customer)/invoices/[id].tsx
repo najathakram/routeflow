@@ -34,7 +34,7 @@ export default function CustomerInvoiceDetailScreen() {
   }
 
   const p = invoicePill(invoice.status);
-  const amountDue = invoice.amountDue ?? invoice.total;
+  const amountDue = Number(invoice.amountDue ?? invoice.total) || 0;
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
@@ -61,7 +61,7 @@ export default function CustomerInvoiceDetailScreen() {
             <Pill variant={p.variant} dot>{p.label}</Pill>
           </View>
 
-          <Text style={styles.total}>${invoice.total.toFixed(2)}</Text>
+          <Text style={styles.total}>${Number(invoice.total).toFixed(2)}</Text>
 
           {invoice.dueDate ? (
             <Text style={styles.dueDate}>
@@ -79,7 +79,7 @@ export default function CustomerInvoiceDetailScreen() {
             <Ionicons name="alert-circle-outline" size={18} color={ios.system.orangeInk} />
             <View style={{ flex: 1 }}>
               <Text style={styles.dueCardTitle}>Amount due</Text>
-              <Text style={styles.dueCardAmount}>${amountDue.toFixed(2)}</Text>
+              <Text style={styles.dueCardAmount}>${Number(amountDue).toFixed(2)}</Text>
             </View>
           </View>
         ) : null}
@@ -91,10 +91,10 @@ export default function CustomerInvoiceDetailScreen() {
             <DetailRow label="Invoice #" value={`#${invoice.invoiceNumber}`} />
             <DetailRow label="Status" value={p.label} />
             {invoice.total != null ? (
-              <DetailRow label="Total" value={`$${invoice.total.toFixed(2)}`} />
+              <DetailRow label="Total" value={`$${Number(invoice.total).toFixed(2)}`} />
             ) : null}
-            {invoice.amountPaid != null && invoice.amountPaid > 0 ? (
-              <DetailRow label="Amount paid" value={`$${invoice.amountPaid.toFixed(2)}`} />
+            {invoice.amountPaid != null && Number(invoice.amountPaid) > 0 ? (
+              <DetailRow label="Amount paid" value={`$${Number(invoice.amountPaid).toFixed(2)}`} />
             ) : null}
             {amountDue > 0 && invoice.status !== "PAID" ? (
               <DetailRow label="Balance due" value={`$${amountDue.toFixed(2)}`} />

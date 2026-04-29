@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { Alert } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import {
   FormField,
@@ -43,7 +42,7 @@ export default function ReceivePOScreen() {
 
     const hasPositive = items.some((i) => i.qtyReceived > 0);
     if (!hasPositive) {
-      Alert.alert("No items", "Enter a quantity for at least one item.");
+      showToast("Enter a quantity for at least one item.");
       return;
     }
 
@@ -55,10 +54,7 @@ export default function ReceivePOScreen() {
           router.back();
         },
         onError: (e: any) =>
-          Alert.alert(
-            "Couldn't receive",
-            e?.response?.data?.message ?? e?.message ?? "Try again.",
-          ),
+          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
       },
     );
   };

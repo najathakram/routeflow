@@ -1,9 +1,10 @@
 import { useState } from "react";
-import { Alert, StyleSheet, Text, View } from "react-native";
+import { StyleSheet, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { BarcodeScanner } from "../../../components/BarcodeScanner";
 import { apiClient } from "../../../lib/api-client";
+import { showToast } from "../../../lib/toast";
 
 export default function ScanProductScreen() {
   const router = useRouter();
@@ -31,10 +32,7 @@ export default function ScanProductScreen() {
         });
         return;
       }
-      Alert.alert(
-        "Couldn't look up barcode",
-        err?.response?.data?.message ?? err?.message ?? "Try again.",
-      );
+      showToast(err?.response?.data?.message ?? err?.message ?? "Couldn't look up barcode. Try again.");
       setBusy(false);
     }
   };

@@ -1,7 +1,6 @@
 import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -281,23 +280,8 @@ export default function WarehouseScreen() {
                 label="Buy stock"
                 color={ios.system.orangeInk}
                 bg={ios.system.orangeWash}
-                onPress={() =>
-                  Alert.alert("Buy stock", undefined, [
-                    {
-                      text: "Scan a bill / invoice",
-                      onPress: () => router.push("/(operator)/vendor-bills/scan" as any),
-                    },
-                    {
-                      text: "Enter bill manually",
-                      onPress: () => router.push("/(operator)/vendor-bills/new" as any),
-                    },
-                    {
-                      text: "View all bills",
-                      onPress: () => router.push("/(operator)/vendor-bills" as any),
-                    },
-                    { text: "Cancel", style: "cancel" },
-                  ])
-                }
+                // TODO: replace with Modal picker (Buy stock: Scan bill / Enter manually / View all)
+                onPress={() => router.push("/(operator)/vendor-bills/new" as any)}
               />
               <QuickBtn
                 icon="swap-vertical-outline"

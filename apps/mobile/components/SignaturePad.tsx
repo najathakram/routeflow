@@ -1,5 +1,6 @@
 import {
   PanResponder,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -13,14 +14,38 @@ type Point = { x: number; y: number };
 type Stroke = Point[];
 
 interface Props {
-  /** Called when the user finishes signing. Pass null when cleared. */
-  onCapture: (captured: boolean) => void;
+  /**
+   * Called after each stroke completes or on clear.
+   * Receives a PNG data URL on web, a native sentinel string on native,
+   * or null when the pad is cleared.
+   */
+  onCapture: (uri: string | null) => void;
+}
+
+function renderStrokesToDataUrl(strokes: Stroke[], w: number, h: number): string {
+  const canvas = (document as any).createElement("canvas") as HTMLCanvasElement;
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d")!;
+  ctx.strokeStyle = "#1e293b";
+  ctx.lineWidth = 2.5;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  for (const stroke of strokes) {
+    if (stroke.length < 2) continue;
+    ctx.beginPath();
+    ctx.moveTo(stroke[0].x, stroke[0].y);
+    for (let i = 1; i < stroke.length; i++) ctx.lineTo(stroke[i].x, stroke[i].y);
+    ctx.stroke();
+  }
+  return canvas.toDataURL("image/png");
 }
 
 export function SignaturePad({ onCapture }: Props) {
   const [strokes, setStrokes] = useState<Stroke[]>([]);
   const currentStroke = useRef<Point[]>([]);
   const [renderTick, setRenderTick] = useState(0);
+  const padSize = useRef({ width: 300, height: 140 });
 
   const panResponder = useRef(
     PanResponder.create({
@@ -41,7 +66,17 @@ export function SignaturePad({ onCapture }: Props) {
         if (stroke.length > 0) {
           setStrokes((prev) => {
             const next = [...prev, stroke];
-            onCapture(true);
+            if (Platform.OS === "web") {
+              try {
+                const { width, height } = padSize.current;
+                const dataUrl = renderStrokesToDataUrl(next, width, height);
+                onCapture(dataUrl);
+              } catch {
+                onCapture("native-captured");
+              }
+            } else {
+              onCapture("native-captured");
+            }
             return next;
           });
         }
@@ -58,7 +93,7 @@ export function SignaturePad({ onCapture }: Props) {
     setStrokes([]);
     currentStroke.current = [];
     setRenderTick((n) => n + 1);
-    onCapture(false);
+    onCapture(null);
   };
 
   const allStrokes: Stroke[] = [
@@ -69,8 +104,16 @@ export function SignaturePad({ onCapture }: Props) {
 
   return (
     <View style={styles.wrapper}>
-      <View style={styles.pad} {...panResponder.panHandlers}>
-        {/* Render each stroke as a series of line segments */}
+      <View
+        style={styles.pad}
+        {...panResponder.panHandlers}
+        onLayout={(e) => {
+          padSize.current = {
+            width: e.nativeEvent.layout.width,
+            height: e.nativeEvent.layout.height,
+          };
+        }}
+      >
         {allStrokes.map((stroke, sIdx) =>
           stroke.slice(1).map((pt, pIdx) => {
             const prev = stroke[pIdx];

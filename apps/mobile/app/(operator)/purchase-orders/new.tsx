@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { FormField, FormSection, FormSheet, FormTextInput } from "../../../components/FormSheet";
+import { OptionPickerSheet } from "../../../components/OptionPickerSheet";
 import { useCreatePO, useSuppliers } from "../../../lib/api/purchase-orders";
 import { useProductPickerStore } from "../../../store/productPickerStore";
+import { showToast } from "../../../lib/toast";
 
 interface LineItem {
   productId: string;
@@ -35,6 +37,7 @@ export default function NewPurchaseOrderScreen() {
 
   const [supplierId, setSupplierId] = useState("");
   const [supplierName, setSupplierName] = useState("");
+  const [supplierPickerOpen, setSupplierPickerOpen] = useState(false);
   const [expectedDate, setExpectedDate] = useState("");
   const [notes, setNotes] = useState("");
   const [items, setItems] = useState<LineItem[]>([EMPTY_ITEM(0)]);
@@ -89,32 +92,7 @@ export default function NewPurchaseOrderScreen() {
     prevSelectionsRef.current = { ...getSelection };
   }, [getSelection, clearSelection]);
 
-  const pickSupplier = () => {
-    const list = suppliers ?? [];
-    Alert.alert(
-      "Select supplier",
-      undefined,
-      [
-        ...list.map((s: any) => ({
-          text: s.name,
-          onPress: () => {
-            setSupplierId(s.id);
-            setSupplierName(s.name);
-          },
-        })),
-        {
-          text: "+ New supplier",
-          onPress: () => {
-            setSupplierId("");
-            setSupplierName("");
-            router.push("/(operator)/suppliers/new");
-          },
-        },
-        { text: "Cancel", style: "cancel" },
-      ],
-      { cancelable: true },
-    );
-  };
+  const pickSupplier = () => setSupplierPickerOpen(true);
 
   const pickProduct = (item: LineItem) => {
     router.push({
@@ -136,7 +114,7 @@ export default function NewPurchaseOrderScreen() {
 
   const submit = () => {
     if (!supplierId) {
-      Alert.alert("Supplier required", "Please select a supplier.");
+      showToast("Please select a supplier.");
       return;
     }
 
@@ -149,11 +127,11 @@ export default function NewPurchaseOrderScreen() {
       }));
 
     if (parsedItems.length === 0) {
-      Alert.alert("Items required", "Add at least one product.");
+      showToast("Add at least one product.");
       return;
     }
     if (parsedItems.some((it) => it.qtyOrdered <= 0)) {
-      Alert.alert("Invalid quantity", "Each item needs a quantity greater than 0.");
+      showToast("Each item needs a quantity greater than 0.");
       return;
     }
 
@@ -166,10 +144,7 @@ export default function NewPurchaseOrderScreen() {
         router.replace(`/(operator)/purchase-orders/${result.id}`);
       },
       onError: (e: any) =>
-        Alert.alert(
-          "Couldn't create PO",
-          e?.response?.data?.message ?? e?.message ?? "Try again.",
-        ),
+        showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
     });
   };
 
@@ -269,6 +244,15 @@ export default function NewPurchaseOrderScreen() {
           <Text style={styles.addItemText}>+ Add item</Text>
         </Pressable>
       </FormSection>
+
+      <OptionPickerSheet
+        visible={supplierPickerOpen}
+        title="Supplier"
+        options={(suppliers ?? []).map((s: any) => ({ id: s.id, label: s.name }))}
+        selectedId={supplierId}
+        onClose={() => setSupplierPickerOpen(false)}
+        onSelect={(opt) => { setSupplierId(opt.id); setSupplierName(opt.label); setSupplierPickerOpen(false); }}
+      />
     </FormSheet>
   );
 }

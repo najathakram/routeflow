@@ -49,7 +49,7 @@ export default function OperatorMoreScreen() {
           <ListRow
             icon={<Ionicons name="business-outline" size={16} color={ios.system.purpleInk} />}
             iconBg={ios.system.purpleWash}
-            title="Customers"
+            title="Contacts"
             subtitle="Directory & addresses"
             onPress={() => router.push("/(operator)/customers")}
             chevron

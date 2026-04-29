@@ -1,4 +1,3 @@
-import { Alert } from "react-native";
 import { useRouter } from "expo-router";
 import {
   CustomerForm,
@@ -23,7 +22,7 @@ export default function NewCustomerScreen() {
             router.replace(`/(operator)/customers/${res.id}`);
           },
           onError: (e: any) =>
-            Alert.alert("Couldn't save", e?.response?.data?.message ?? e?.message ?? "Try again."),
+            showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
         })
       }
     />
