@@ -132,6 +132,11 @@ export class BookkeepingController {
     return this.bookkeepingService.createExpense(dto, user.sub);
   }
 
+  @Get("expenses/:id")
+  getExpense(@Param("id") id: string) {
+    return this.bookkeepingService.getExpense(id);
+  }
+
   @Patch("expenses/:id")
   updateExpense(@Param("id") id: string, @Body() dto: UpdateExpenseDto) {
     return this.bookkeepingService.updateExpense(id, dto);

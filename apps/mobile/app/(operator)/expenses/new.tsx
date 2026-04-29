@@ -376,6 +376,9 @@ const styles = StyleSheet.create({
     padding: 20,
     paddingBottom: 36,
     gap: 10,
+    maxWidth: 480,
+    width: "100%",
+    alignSelf: "center",
   },
   sheetHandle: {
     alignSelf: "center",

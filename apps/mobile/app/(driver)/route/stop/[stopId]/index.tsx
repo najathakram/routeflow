@@ -90,7 +90,7 @@ export default function StopDetailScreen() {
       <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
         <NavBar
           inlineTitle="Stop"
-          leading={<NavBackButton label="Route" onPress={() => router.back()} />}
+          leading={<NavBackButton label="Route" onPress={() => router.replace("/(driver)/route" as any)} />}
         />
         <View style={styles.center}>
           <ActivityIndicator color={ios.brand} />
@@ -104,7 +104,7 @@ export default function StopDetailScreen() {
       <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
         <NavBar
           inlineTitle="Stop"
-          leading={<NavBackButton label="Route" onPress={() => router.back()} />}
+          leading={<NavBackButton label="Route" onPress={() => router.replace("/(driver)/route" as any)} />}
         />
         <View style={styles.center}>
           <Ionicons name="alert-circle-outline" size={36} color={ios.label3} />
@@ -176,7 +176,7 @@ export default function StopDetailScreen() {
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <NavBar
         inlineTitle={`Stop ${stop.stopNumber} / ${totalStops}`}
-        leading={<NavBackButton label="Route" onPress={() => router.back()} />}
+        leading={<NavBackButton label="Route" onPress={() => router.replace("/(driver)/route" as any)} />}
         trailing={<NavAction label="Call" onPress={openTel} />}
       />
 
@@ -280,7 +280,7 @@ export default function StopDetailScreen() {
                 confirm(
                   "Skip stop",
                   "Mark this stop as skipped? You can reopen it later.",
-                  () => router.back(),
+                  () => router.replace("/(driver)/route" as any),
                   { confirmText: "Skip", destructive: true },
                 )
               }

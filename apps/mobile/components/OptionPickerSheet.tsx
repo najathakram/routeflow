@@ -83,6 +83,9 @@ const styles = StyleSheet.create({
     paddingTop: 10,
     paddingBottom: 0,
     maxHeight: "70%",
+    maxWidth: 480,
+    width: "100%",
+    alignSelf: "center",
   },
   handle: {
     width: 36,
