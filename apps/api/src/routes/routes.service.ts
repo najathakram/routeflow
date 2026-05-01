@@ -561,6 +561,10 @@ export class RoutesService {
           depotLng,
           depotAddress,
           notes: dto.notes,
+          // RF-001: include tenantId on the RouteRun record itself (previously
+          // only the child RouteRunStops received tenantId, leaving RouteRun
+          // rows with tenantId=null and bypassing tenant query scoping).
+          tenantId: this.prisma.getTenantId(),
           stops: {
             create: route.stops.map((s) => ({
               routeStopId: s.id,
@@ -972,6 +976,17 @@ export class RoutesService {
     },
     user: JwtPayload,
   ) {
+    // RF-003: fetch the parent run first and reject if it hasn't been started.
+    // Previously completeStop() accepted stops on SCHEDULED runs, letting
+    // drivers mark deliveries done without ever dispatching the run.
+    const run = await this.prisma.forTenant().routeRun.findUnique({ where: { id: runId } });
+    if (!run) throw new NotFoundException("Route run not found");
+    if (run.status !== RouteRunStatus.IN_PROGRESS) {
+      throw new ForbiddenException(
+        `Cannot complete a stop on a run that is not in progress (current status: ${run.status}).`,
+      );
+    }
+
     const stop = await this.prisma.forTenant().routeRunStop.findFirst({
       where: { id: stopId, routeRunId: runId },
       include: { orders: { select: { id: true, status: true, customerId: true } } },

@@ -13,11 +13,13 @@ import {
 import { Type } from "class-transformer";
 import { FulfillPath } from "@prisma/client";
 import { CreateAddressDto } from "./create-address.dto";
+import { StripHtml } from "../../common/transforms/strip-html.transform";
 
 export class CreateCustomerDto {
   @IsEmail() email: string;
   @IsString() @MinLength(3) username: string;
-  @IsString() businessName: string;
+  // RF-110: strip HTML to prevent stored XSS via businessName
+  @StripHtml() @IsString() businessName: string;
   @IsString() contactName: string;
   @IsOptional() @IsString() phone?: string;
   @IsOptional() @IsString() notes?: string;

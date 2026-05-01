@@ -8,6 +8,7 @@ import {
   ValidateNested,
 } from "class-validator";
 import { Type } from "class-transformer";
+import { StripHtml } from "../../common/transforms/strip-html.transform";
 
 class UpdateOrderItemDto {
   @IsOptional()
@@ -59,7 +60,9 @@ export class UpdateOrderItemsDto {
   @Type(() => UpdateOrderItemDto)
   items: UpdateOrderItemDto[];
 
+  // RF-110: strip HTML to prevent stored XSS via order notes
   @IsOptional()
+  @StripHtml()
   @IsString()
   orderNotes?: string;
 }

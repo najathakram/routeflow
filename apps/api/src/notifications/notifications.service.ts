@@ -1,5 +1,6 @@
 import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
 import * as admin from "firebase-admin";
+import Expo, { ExpoPushMessage, ExpoPushTicket } from "expo-server-sdk";
 import { PrismaService } from "../prisma/prisma.service";
 
 interface PushPayload {
@@ -8,10 +9,16 @@ interface PushPayload {
   data?: Record<string, string>;
 }
 
+interface TokenRow {
+  id: string;
+  token: string;
+}
+
 @Injectable()
 export class NotificationsService implements OnModuleInit {
   private readonly logger = new Logger(NotificationsService.name);
   private firebaseInitialized = false;
+  private readonly expo = new Expo();
 
   constructor(private readonly prisma: PrismaService) {}
 
@@ -23,12 +30,11 @@ export class NotificationsService implements OnModuleInit {
     const serviceAccountJson = process.env.FCM_SERVICE_ACCOUNT_JSON;
 
     if (!serviceAccountJson) {
-      this.logger.warn("FCM_SERVICE_ACCOUNT_JSON not set — push notifications disabled.");
+      this.logger.warn("FCM_SERVICE_ACCOUNT_JSON not set — Firebase push notifications disabled.");
       return;
     }
 
     try {
-      // Avoid re-initializing if already done
       if (admin.apps.length > 0) {
         this.firebaseInitialized = true;
         return;
@@ -48,7 +54,7 @@ export class NotificationsService implements OnModuleInit {
   }
 
   isConfigured(): boolean {
-    return this.firebaseInitialized;
+    return this.firebaseInitialized || true; // Expo push always available
   }
 
   async registerToken(userId: string, token: string, platform: "IOS" | "ANDROID"): Promise<void> {
@@ -65,9 +71,12 @@ export class NotificationsService implements OnModuleInit {
     });
   }
 
+  /**
+   * RF-009: Send push notifications to a user's registered devices.
+   * Expo push tokens (ExponentPushToken[...]) are routed to the Expo Push API;
+   * native FCM tokens are routed to Firebase when configured.
+   */
   async sendToUser(userId: string, payload: PushPayload): Promise<number> {
-    if (!this.firebaseInitialized) return 0;
-
     const tokens = await this.prisma.forTenant().deviceToken.findMany({
       where: { userId },
       select: { token: true, id: true },
@@ -75,60 +84,39 @@ export class NotificationsService implements OnModuleInit {
 
     if (tokens.length === 0) return 0;
 
-    const message: admin.messaging.MulticastMessage = {
-      tokens: tokens.map((t) => t.token),
-      notification: { title: payload.title, body: payload.body },
-      data: payload.data ?? {},
-    };
+    const { expoTokens, fcmTokens } = this.partitionTokens(tokens);
 
-    const result = await admin.messaging().sendEachForMulticast(message);
-
-    // Remove invalid tokens
-    const invalidIndices: number[] = [];
-    result.responses.forEach((resp, idx) => {
-      if (!resp.success) {
-        const errCode = resp.error?.code;
-        if (
-          errCode === "messaging/invalid-registration-token" ||
-          errCode === "messaging/registration-token-not-registered"
-        ) {
-          invalidIndices.push(idx);
-        }
-      }
-    });
-
-    if (invalidIndices.length > 0) {
-      const invalidIds = invalidIndices.map((i) => tokens[i].id);
-      await this.prisma.forTenant().deviceToken.deleteMany({
-        where: { id: { in: invalidIds } },
-      });
+    let successCount = 0;
+    if (expoTokens.length > 0) {
+      successCount += await this.sendViaExpo(expoTokens, payload);
+    }
+    if (fcmTokens.length > 0 && this.firebaseInitialized) {
+      successCount += await this.sendViaFirebase(fcmTokens, payload);
     }
 
-    return result.successCount;
+    return successCount;
   }
 
   async sendToAll(payload: PushPayload): Promise<{ sent: number; deviceCount: number }> {
-    if (!this.firebaseInitialized) return { sent: 0, deviceCount: 0 };
-
     const allTokens = await this.prisma.forTenant().deviceToken.findMany({
-      select: { token: true },
+      select: { token: true, id: true },
     });
 
     const deviceCount = allTokens.length;
     if (deviceCount === 0) return { sent: 0, deviceCount: 0 };
 
-    // FCM multicast limit is 500 tokens
+    const { expoTokens, fcmTokens } = this.partitionTokens(allTokens);
+
     let sent = 0;
-    const batchSize = 500;
-    for (let i = 0; i < allTokens.length; i += batchSize) {
-      const batch = allTokens.slice(i, i + batchSize).map((t) => t.token);
-      const message: admin.messaging.MulticastMessage = {
-        tokens: batch,
-        notification: { title: payload.title, body: payload.body },
-        data: payload.data ?? {},
-      };
-      const result = await admin.messaging().sendEachForMulticast(message);
-      sent += result.successCount;
+    if (expoTokens.length > 0) {
+      sent += await this.sendViaExpo(expoTokens, payload);
+    }
+    if (fcmTokens.length > 0 && this.firebaseInitialized) {
+      // FCM multicast limit is 500 tokens per batch
+      const batchSize = 500;
+      for (let i = 0; i < fcmTokens.length; i += batchSize) {
+        sent += await this.sendViaFirebase(fcmTokens.slice(i, i + batchSize), payload);
+      }
     }
 
     return { sent, deviceCount };
@@ -145,7 +133,7 @@ export class NotificationsService implements OnModuleInit {
 
   async getStatus(): Promise<{ configured: boolean; deviceCount: number }> {
     const deviceCount = await this.prisma.forTenant().deviceToken.count();
-    return { configured: this.firebaseInitialized, deviceCount };
+    return { configured: this.isConfigured(), deviceCount };
   }
 
   /** Send a push notification to a customer by their customerId */
@@ -176,5 +164,93 @@ export class NotificationsService implements OnModuleInit {
     });
     if (!driver?.userId) return;
     await this.sendToUser(driver.userId, { title, body, data });
+  }
+
+  // ─── Private helpers ───────────────────────────────────────────────────────
+
+  private partitionTokens(tokens: TokenRow[]): { expoTokens: TokenRow[]; fcmTokens: TokenRow[] } {
+    const expoTokens: TokenRow[] = [];
+    const fcmTokens: TokenRow[] = [];
+    for (const t of tokens) {
+      if (Expo.isExpoPushToken(t.token)) {
+        expoTokens.push(t);
+      } else {
+        fcmTokens.push(t);
+      }
+    }
+    return { expoTokens, fcmTokens };
+  }
+
+  private async sendViaExpo(tokens: TokenRow[], payload: PushPayload): Promise<number> {
+    const messages: ExpoPushMessage[] = tokens.map((t) => ({
+      to: t.token,
+      title: payload.title,
+      body: payload.body,
+      data: payload.data ?? {},
+      sound: "default" as const,
+    }));
+
+    const chunks = this.expo.chunkPushNotifications(messages);
+    const allTickets: ExpoPushTicket[] = [];
+
+    for (const chunk of chunks) {
+      try {
+        const tickets = await this.expo.sendPushNotificationsAsync(chunk);
+        allTickets.push(...tickets);
+      } catch (err) {
+        this.logger.error("Expo push chunk error:", err);
+      }
+    }
+
+    // Remove tokens that Expo reports as no longer registered
+    const invalidIds: string[] = [];
+    allTickets.forEach((ticket, idx) => {
+      if (
+        ticket.status === "error" &&
+        (ticket as any).details?.error === "DeviceNotRegistered"
+      ) {
+        invalidIds.push(tokens[idx].id);
+      }
+    });
+
+    if (invalidIds.length > 0) {
+      await this.prisma.forTenant().deviceToken.deleteMany({
+        where: { id: { in: invalidIds } },
+      });
+    }
+
+    return allTickets.filter((t) => t.status === "ok").length;
+  }
+
+  private async sendViaFirebase(tokens: TokenRow[], payload: PushPayload): Promise<number> {
+    const message: admin.messaging.MulticastMessage = {
+      tokens: tokens.map((t) => t.token),
+      notification: { title: payload.title, body: payload.body },
+      data: payload.data ?? {},
+    };
+
+    const result = await admin.messaging().sendEachForMulticast(message);
+
+    const invalidIndices: number[] = [];
+    result.responses.forEach((resp, idx) => {
+      if (!resp.success) {
+        const errCode = resp.error?.code;
+        if (
+          errCode === "messaging/invalid-registration-token" ||
+          errCode === "messaging/registration-token-not-registered"
+        ) {
+          invalidIndices.push(idx);
+        }
+      }
+    });
+
+    if (invalidIndices.length > 0) {
+      const invalidIds = invalidIndices.map((i) => tokens[i].id);
+      await this.prisma.forTenant().deviceToken.deleteMany({
+        where: { id: { in: invalidIds } },
+      });
+    }
+
+    return result.successCount;
   }
 }
