@@ -1,0 +1,23 @@
+INVOICE #001
+Date: 2026-04-29
+Vendor: Acme Supplies Co.
+Address: 42 Distribution Ave, Warehouse District
+
+Bill To:
+  RouteFlow Operator
+  1 Main Street
+
+Line Items:
+  1x Widget A           $12.50
+  3x Gizmo B            $45.00
+  2x Sprocket C         $18.00
+  1x Delivery Fee        $5.00
+
+                         --------
+Subtotal:               $80.50
+Tax (10%):               $8.05
+                         --------
+TOTAL DUE:              $88.55
+
+Payment terms: Net 30
+Thank you for your business.
