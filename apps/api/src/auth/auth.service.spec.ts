@@ -4,6 +4,7 @@ import { ConfigService } from "@nestjs/config";
 import { UnauthorizedException, BadRequestException } from "@nestjs/common";
 import * as bcrypt from "bcrypt";
 import { AuthService } from "./auth.service";
+import { EmailService } from "../email/email.service";
 
 jest.mock("bcrypt", () => ({
   compare: jest.fn(),
@@ -66,6 +67,10 @@ describe("AuthService", () => {
         {
           provide: ConfigService,
           useValue: { get: jest.fn().mockReturnValue(JWT_CONFIG) },
+        },
+        {
+          provide: EmailService,
+          useValue: { send: jest.fn().mockResolvedValue(undefined) },
         },
       ],
     }).compile();
@@ -178,7 +183,9 @@ describe("AuthService", () => {
       const result = await service.changePassword("user-1", "old", "new");
 
       expect(result).toEqual(
-        expect.objectContaining({ message: expect.stringMatching(/Password changed successfully/) }),
+        expect.objectContaining({
+          message: expect.stringMatching(/Password changed successfully/),
+        }),
       );
       expect(prisma.user.update).toHaveBeenCalledWith(
         expect.objectContaining({
