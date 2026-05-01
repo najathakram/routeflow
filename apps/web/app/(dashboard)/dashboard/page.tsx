@@ -505,14 +505,15 @@ export default function DashboardPage() {
   }, [setTitle]);
 
   // ── Data fetching ──
-  const { data: allOrdersData, isLoading: ordersLoading, isError: ordersError } = useOrders({ page: 1, limit: 100 });
-  const { data: urgentOrdersData, isLoading: urgentLoading } = useOrders({ urgent: true, limit: 5 });
-  const { data: recentOrdersData, isLoading: recentLoading, isError: recentError } = useOrders({ page: 1, limit: 5 });
-  const { data: routeRunsData, isLoading: runsLoading } = useRouteRuns({ status: "SCHEDULED" });
-  const { data: driversData, isLoading: driversLoading } = useDrivers({ page: 1, limit: 20 });
-  const { data: lowStockData, isLoading: lowStockLoading } = useProducts({ isActive: true, stockStatus: "LOW", limit: 5 });
-  const { data: financeData, isLoading: financeLoading } = useFinanceDashboard();
-  const { data: overdueData, isLoading: overdueLoading } = useInvoices({ status: "OVERDUE", limit: 5, sortBy: "dueDate", sortOrder: "asc" });
+  const POLL = { refetchInterval: 30_000 };
+  const { data: allOrdersData, isLoading: ordersLoading, isError: ordersError } = useOrders({ page: 1, limit: 100 }, POLL);
+  const { data: urgentOrdersData, isLoading: urgentLoading } = useOrders({ urgent: true, limit: 5 }, POLL);
+  const { data: recentOrdersData, isLoading: recentLoading, isError: recentError } = useOrders({ page: 1, limit: 5 }, POLL);
+  const { data: routeRunsData, isLoading: runsLoading } = useRouteRuns({ status: "SCHEDULED" }, POLL);
+  const { data: driversData, isLoading: driversLoading } = useDrivers({ page: 1, limit: 20 }, POLL);
+  const { data: lowStockData, isLoading: lowStockLoading } = useProducts({ isActive: true, stockStatus: "LOW", limit: 5 }, POLL);
+  const { data: financeData, isLoading: financeLoading } = useFinanceDashboard(POLL);
+  const { data: overdueData, isLoading: overdueLoading } = useInvoices({ status: "OVERDUE", limit: 5, sortBy: "dueDate", sortOrder: "asc" }, POLL);
 
   // ── KPI calculations ──
   const activeOrders = React.useMemo(() => {

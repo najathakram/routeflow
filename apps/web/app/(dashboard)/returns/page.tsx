@@ -403,7 +403,7 @@ export default function ReturnsPage() {
   const [isCreateOpen, setIsCreateOpen] = React.useState(false);
   const LIMIT = 20;
 
-  const { data, isLoading, isError } = useReturns({
+  const { data, isLoading, isError, refetch } = useReturns({
     status: statusFilter || undefined,
     reason: reasonFilter || undefined,
     search: debouncedSearch || undefined,
@@ -413,7 +413,7 @@ export default function ReturnsPage() {
 
   // Unfiltered summary query for KPI cards
   const { data: summaryData } = useReturns({ limit: 500 });
-  const allReturns = summaryData?.data ?? [];
+  const allReturns: Return[] = Array.isArray(summaryData) ? (summaryData as Return[]) : (summaryData?.data ?? []);
   const pendingCount = allReturns.filter((r) => r.status === "PENDING").length;
   const now = new Date();
   const thisMonthCount = allReturns.filter((r) => {
@@ -424,8 +424,9 @@ export default function ReturnsPage() {
     return sum + r.items.reduce((s, i) => s + (i.unitPrice ?? 0) * i.qty, 0);
   }, 0);
 
-  const returns = data?.data ?? [];
-  const meta = data?.meta;
+  // Handle both paginated { data: [], meta: {} } and plain array responses
+  const returns: Return[] = Array.isArray(data) ? (data as Return[]) : (data?.data ?? []);
+  const meta = Array.isArray(data) ? undefined : data?.meta;
   const totalPages = meta?.totalPages ?? 1;
 
   return (
@@ -533,8 +534,14 @@ export default function ReturnsPage() {
               </tr>
             ) : isError ? (
               <tr>
-                <td colSpan={8} className="px-4 py-12 text-center text-sm text-danger">
-                  Failed to load returns. Please try again.
+                <td colSpan={8} className="px-4 py-12 text-center">
+                  <p className="text-sm text-danger">Failed to load returns.</p>
+                  <button
+                    onClick={() => refetch()}
+                    className="mt-2 text-sm text-brand-500 hover:underline"
+                  >
+                    Try again
+                  </button>
                 </td>
               </tr>
             ) : returns.length === 0 ? (

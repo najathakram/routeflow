@@ -124,10 +124,14 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
   const [sellersOpen, setSellersOpen] = React.useState(false);
   const [notifOpen, setNotifOpen] = React.useState(false);
 
-  // Redirect to login if not authenticated
+  // Redirect to login if not authenticated.
+  // Pass the current path so the login page can bounce the user back after signing in.
+  // Only buyerAccessToken / buyerRefreshToken are used in this portal — operator tokens
+  // stored under "accessToken" are never read here (RF-220 token isolation).
   React.useEffect(() => {
     if (!isLoading && !isAuthenticated) {
-      router.push("/buyer/login");
+      const redirect = encodeURIComponent(window.location.pathname + window.location.search);
+      router.push(`/buyer/login?redirect=${redirect}`);
     }
   }, [isLoading, isAuthenticated, router]);
 

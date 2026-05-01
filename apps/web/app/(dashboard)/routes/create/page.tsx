@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Loader2 } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -173,7 +173,7 @@ export default function CreateRoutePage() {
   React.useEffect(() => { setTitle("Create Route"); }, [setTitle]);
 
   // ── Data fetching ──
-  const { data: customersData, isLoading: customersLoading } = useCustomers({ page: 1, limit: 500 } as any);
+  const { data: customersData } = useCustomers({ page: 1, limit: 500 } as any);
   const { data: driversData } = useDrivers({ page: 1, limit: 100 });
   const { data: assignments } = useCustomerRouteAssignments();
   const { data: routeSettings } = useRouteSettings();
@@ -305,22 +305,16 @@ export default function CreateRoutePage() {
 
         {/* Right panel — Map (60%) */}
         <div className="flex flex-1 flex-col overflow-hidden">
-          {customersLoading ? (
-            <div className="flex flex-1 items-center justify-center bg-surface-raised">
-              <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
-            </div>
-          ) : (
-            <CreateRouteMap
-              customers={customers}
-              stops={stops}
-              assignments={assignments ?? {}}
-              onAddStop={addStop}
-              onRemoveStop={removeStop}
-              depotLat={routeSettings?.depotLat}
-              depotLng={routeSettings?.depotLng}
-              depotAddress={routeSettings?.depotAddress}
-            />
-          )}
+          <CreateRouteMap
+            customers={customers}
+            stops={stops}
+            assignments={assignments ?? {}}
+            onAddStop={addStop}
+            onRemoveStop={removeStop}
+            depotLat={routeSettings?.depotLat}
+            depotLng={routeSettings?.depotLng}
+            depotAddress={routeSettings?.depotAddress}
+          />
         </div>
       </div>
     </div>

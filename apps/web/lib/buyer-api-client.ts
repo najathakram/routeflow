@@ -6,6 +6,11 @@ const BASE_URL = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000/api/
 export const buyerApiClient = axios.create({ baseURL: BASE_URL });
 
 // ─── Request interceptor: attach buyer access token + X-Tenant-Slug ──────────
+//
+// RF-220 TOKEN ISOLATION: this client reads ONLY buyerAccessToken / buyerRefreshToken.
+// The operator portal stores its JWT under "accessToken" (no "buyer" prefix).
+// Never read "accessToken" here — that would allow cross-context token bleed when
+// the same browser session has both an operator and a buyer session open.
 
 buyerApiClient.interceptors.request.use((config) => {
   if (typeof window !== "undefined") {

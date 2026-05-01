@@ -89,20 +89,24 @@ interface PaginatedResponse<T> {
 
 // ─── Queries ──────────────────────────────────────────────────────────────────
 
-export function useInvoices(params?: {
-  customerId?: string;
-  status?: string;
-  search?: string;
-  dateFrom?: string;
-  dateTo?: string;
-  sortBy?: string;
-  sortOrder?: "asc" | "desc";
-  page?: number;
-  limit?: number;
-}) {
+export function useInvoices(
+  params?: {
+    customerId?: string;
+    status?: string;
+    search?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    sortBy?: string;
+    sortOrder?: "asc" | "desc";
+    page?: number;
+    limit?: number;
+  },
+  options?: { refetchInterval?: number },
+) {
   return useQuery<PaginatedResponse<Invoice>>({
     queryKey: ['invoices', params],
     queryFn: () => apiClient.get('/invoices', { params }).then((r) => r.data),
+    ...options,
   });
 }
 

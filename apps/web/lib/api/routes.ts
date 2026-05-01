@@ -196,10 +196,14 @@ export function useCustomerRouteAssignments() {
 }
 
 // Route Runs
-export function useRouteRuns(params?: { status?: string; date?: string; assignedToMe?: boolean; page?: number }) {
+export function useRouteRuns(
+  params?: { status?: string; date?: string; assignedToMe?: boolean; page?: number },
+  options?: { refetchInterval?: number },
+) {
   return useQuery<PaginatedResponse<RouteRun>>({
     queryKey: ['route-runs', params],
     queryFn: () => apiClient.get('/route-runs', { params }).then((r) => r.data),
+    ...options,
   });
 }
 

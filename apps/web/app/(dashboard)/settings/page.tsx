@@ -2013,12 +2013,16 @@ function InvoicingTab() {
 
   const [invoiceNotes, setInvoiceNotes] = React.useState("");
   const [invoiceTerms, setInvoiceTerms] = React.useState("");
+  const [invoicePrefix, setInvoicePrefix] = React.useState("");
+  const [paymentDueDays, setPaymentDueDays] = React.useState("");
   const [savingDefaults, setSavingDefaults] = React.useState(false);
 
   React.useEffect(() => {
     if (savedSettings) {
       setInvoiceNotes(savedSettings.invoiceNotes ?? "");
       setInvoiceTerms(savedSettings.invoiceTerms ?? "");
+      setInvoicePrefix(savedSettings.invoicePrefix ?? "");
+      setPaymentDueDays(savedSettings.paymentDueDays ?? "");
     }
   }, [savedSettings]);
 
@@ -2045,7 +2049,7 @@ function InvoicingTab() {
   const handleSaveDefaults = async () => {
     setSavingDefaults(true);
     try {
-      await apiClient.patch("/settings", { invoiceNotes, invoiceTerms });
+      await apiClient.patch("/settings", { invoiceNotes, invoiceTerms, invoicePrefix, paymentDueDays });
       qc.invalidateQueries({ queryKey: ["settings"] });
       toast({ title: "Invoice defaults saved", variant: "success" });
     } catch {
@@ -2083,6 +2087,41 @@ function InvoicingTab() {
               </select>
             </div>
           </div>
+        </div>
+      </Card>
+
+      <Card title="Invoice Numbering">
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-navy">Invoice Number Prefix</label>
+            <input
+              type="text"
+              value={invoicePrefix}
+              onChange={(e) => setInvoicePrefix(e.target.value)}
+              placeholder="INV-"
+              maxLength={10}
+              className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+            />
+            <p className="mt-1 text-xs text-navy/40">Prepended to invoice numbers (e.g. INV-, 2026-).</p>
+          </div>
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-navy">Payment Due Days</label>
+            <input
+              type="number"
+              value={paymentDueDays}
+              onChange={(e) => setPaymentDueDays(e.target.value)}
+              placeholder="30"
+              min="0"
+              max="365"
+              className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+            />
+            <p className="mt-1 text-xs text-navy/40">Default days until payment is due (0 = due on receipt).</p>
+          </div>
+        </div>
+        <div className="mt-4 flex justify-end">
+          <Button onClick={handleSaveDefaults} loading={savingDefaults} size="sm">
+            Save Numbering
+          </Button>
         </div>
       </Card>
 
@@ -2179,6 +2218,9 @@ export default function SettingsPage() {
           <TabTrigger value="invoicing" icon={<FileText className="h-4 w-4" />}>
             Invoicing
           </TabTrigger>
+          <TabTrigger value="integrations" icon={<Sparkles className="h-4 w-4" />}>
+            Integrations
+          </TabTrigger>
           <TabTrigger value="account" icon={<UserCircle className="h-4 w-4" />}>
             My Account
           </TabTrigger>
@@ -2206,6 +2248,10 @@ export default function SettingsPage() {
 
         <Tabs.Content value="invoicing" className="mt-6 max-w-2xl focus:outline-none">
           <InvoicingTab />
+        </Tabs.Content>
+
+        <Tabs.Content value="integrations" className="mt-6 max-w-2xl focus:outline-none">
+          <AIIntegrationsTab />
         </Tabs.Content>
 
         <Tabs.Content value="account" className="mt-6 max-w-2xl focus:outline-none">

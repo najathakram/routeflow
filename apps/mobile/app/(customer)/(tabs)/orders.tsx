@@ -1,5 +1,6 @@
 import {
   ActivityIndicator,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -12,9 +13,14 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { FilterChipRow, NavAction, NavBar, Pill } from "@routeflow/ui/mobile/ios";
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { io, type Socket } from "socket.io-client";
 import { useBuyerOrders, type BuyerOrder } from "../../../lib/api/buyer";
 import { useBuyerSessionStore } from "../../../lib/buyer-session-store";
+
+const SOCKET_URL =
+  (process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:3000").replace(/\/$/, "");
 
 const FILTERS = [
   { id: "ALL", label: "All" },
@@ -46,8 +52,56 @@ function formatCurrency(n: number | string | null | undefined): string {
 
 export default function CustomerOrdersScreen() {
   const router = useRouter();
-  const { activeSeller } = useBuyerSessionStore();
+  const qc = useQueryClient();
+  const { activeSeller, buyer } = useBuyerSessionStore();
   const [filter, setFilter] = useState<FilterId>("ALL");
+  const socketRef = useRef<Socket | null>(null);
+
+  // ── Buyer socket subscription ──
+  useEffect(() => {
+    if (!buyer) return;
+
+    let mounted = true;
+
+    const connect = async () => {
+      let token: string | null = null;
+      if (Platform.OS === "web") {
+        token = localStorage.getItem("buyerAccessToken");
+      } else {
+        const { getItemAsync } = await import("expo-secure-store");
+        token = await getItemAsync("buyerAccessToken");
+      }
+      if (!token || !mounted) return;
+
+      const socket = io(SOCKET_URL, {
+        auth: { token },
+        transports: ["websocket", "polling"],
+        reconnection: true,
+        reconnectionDelay: 1_000,
+        reconnectionDelayMax: 30_000,
+        reconnectionAttempts: Infinity,
+      });
+      socketRef.current = socket;
+
+      socket.on("order.statusChanged", () => {
+        void qc.invalidateQueries({ queryKey: ["buyer-orders"] });
+      });
+
+      socket.on("invoice.updated", () => {
+        void qc.invalidateQueries({ queryKey: ["buyer-dashboard"] });
+      });
+    };
+
+    void connect();
+
+    return () => {
+      mounted = false;
+      if (socketRef.current) {
+        socketRef.current.disconnect();
+        socketRef.current = null;
+      }
+    };
+  }, [buyer, qc]);
 
   const statusParam = filter === "ALL" ? undefined : filter;
   const { data, isLoading, isFetching, refetch } = useBuyerOrders({

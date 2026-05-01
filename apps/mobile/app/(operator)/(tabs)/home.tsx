@@ -30,6 +30,7 @@ import {
 } from "../../../lib/api/routes";
 import { startLocationTracking } from "../../../lib/location-tracker";
 import { useAuthStore } from "../../../lib/auth-store";
+import { useSocket } from "../../../hooks/useSocket";
 
 function routeStatusLabel(r: AdminRoute): {
   label: string;
@@ -55,6 +56,7 @@ export default function OperatorHomeScreen() {
   const router = useRouter();
   const { user } = useAuthStore();
   const [viewMode, setViewMode] = useState<"operator" | "driver">("operator");
+  useSocket();
   const { data: stats, isLoading: statsLoading } = useAdminDashboard();
   const { data: routesData, isLoading: routesLoading } = useAdminRoutes({ limit: 10 });
   const { data: driversData } = useAdminDrivers();

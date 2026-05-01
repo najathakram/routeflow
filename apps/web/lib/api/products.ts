@@ -1,18 +1,22 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 
-export function useProducts(params?: {
-  search?: string;
-  category?: string;
-  isActive?: boolean;
-  stockStatus?: "IN_STOCK" | "LOW" | "OUT_OF_STOCK";
-  page?: number;
-  limit?: number;
-  includeVariants?: boolean;
-}) {
+export function useProducts(
+  params?: {
+    search?: string;
+    category?: string;
+    isActive?: boolean;
+    stockStatus?: "IN_STOCK" | "LOW" | "OUT_OF_STOCK";
+    page?: number;
+    limit?: number;
+    includeVariants?: boolean;
+  },
+  options?: { refetchInterval?: number },
+) {
   return useQuery({
     queryKey: ["products", params],
     queryFn: () => apiClient.get("/products", { params }).then((r) => r.data),
+    ...options,
   });
 }
 
