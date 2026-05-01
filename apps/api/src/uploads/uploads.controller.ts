@@ -89,12 +89,11 @@ export class UploadsController {
 
     const contentType = mime.lookup(resolved) || "application/octet-stream";
     res.setHeader("Content-Type", contentType);
+    // RF-078: Always force download — prevents browser from rendering any file inline
+    // (covers SVG XSS, HTML injection, and any future MIME confusion attacks).
+    res.setHeader("Content-Disposition", `attachment; filename="${path.basename(resolved)}"`);
+    // RF-076: Prevent MIME sniffing — browser must honour the declared Content-Type.
     res.setHeader("X-Content-Type-Options", "nosniff");
-    // Force download for non-image content; protects against rendered XSS
-    // (e.g. inline HTML/SVG/PDFs interpreted by the browser).
-    if (!contentType.startsWith("image/") || contentType === "image/svg+xml") {
-      res.setHeader("Content-Disposition", `attachment; filename="${path.basename(resolved)}"`);
-    }
     // Cache only public assets (images); private documents must not be cached publicly.
     res.setHeader("Cache-Control", "private, max-age=31536000, immutable");
     fs.createReadStream(resolved).pipe(res);
