@@ -47,18 +47,25 @@ export default function CustomerMoreScreen() {
         {dashboard?.stats && (
           <View style={styles.statsRow}>
             <View style={styles.statCell}>
-              <Text style={styles.statValue}>{dashboard.stats.totalOrders}</Text>
-              <Text style={styles.statLabel}>Orders</Text>
+              <Text style={styles.statValue}>
+                {dashboard.stats.activeOrders ?? dashboard.stats.totalOrders ?? 0}
+              </Text>
+              <Text style={styles.statLabel}>Active</Text>
             </View>
             <View style={styles.statDivider} />
             <View style={styles.statCell}>
-              <Text style={styles.statValue}>${(dashboard.stats.totalSpend ?? 0).toFixed(0)}</Text>
+              <Text style={styles.statValue}>
+                ${(dashboard.stats.spendAllTime ?? dashboard.stats.totalSpend ?? 0).toFixed(0)}
+              </Text>
               <Text style={styles.statLabel}>Total Spend</Text>
             </View>
             <View style={styles.statDivider} />
             <View style={styles.statCell}>
-              <Text style={[styles.statValue, dashboard.stats.unpaidInvoices > 0 && { color: ios.system.orangeInk }]}>
-                {dashboard.stats.unpaidInvoices}
+              <Text style={[
+                styles.statValue,
+                (dashboard.stats.unpaidInvoices ?? 0) > 0 && { color: ios.system.orangeInk },
+              ]}>
+                {dashboard.stats.unpaidInvoices ?? 0}
               </Text>
               <Text style={styles.statLabel}>Unpaid</Text>
             </View>

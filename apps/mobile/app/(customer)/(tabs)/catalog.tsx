@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -13,7 +13,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBar } from "@routeflow/ui/mobile/ios";
-import { useBuyerProducts, useBuyerCategories, type BuyerProduct } from "../../../lib/api/buyer";
+import { useBuyerProducts, useBuyerCategories, useBuyerFavorites, useToggleFavorite, type BuyerProduct } from "../../../lib/api/buyer";
 import { useCartStore } from "../../../store/cartStore";
 
 function formatCurrency(n: number | string | null | undefined): string {
@@ -35,6 +35,13 @@ export default function CustomerCatalogScreen() {
   const cart = useCartStore((s) => s.items);
   const cartCount = cart.reduce((s, i) => s + i.qty, 0);
   const cartTotal = useCartStore((s) => s.total());
+
+  const { data: favoritesData } = useBuyerFavorites();
+  const favoriteIds = useMemo(
+    () => new Set((favoritesData ?? []).map((f: any) => f.productId ?? f.id)),
+    [favoritesData],
+  );
+  const toggleFavorite = useToggleFavorite();
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
@@ -94,7 +101,14 @@ export default function CustomerCatalogScreen() {
         ) : (
           <View style={styles.grid}>
             {products.map((product) => (
-              <ProductCard key={product.id} product={product} />
+              <ProductCard
+                key={product.id}
+                product={product}
+                isFavorite={favoriteIds.has(product.id)}
+                onToggleFavorite={() =>
+                  toggleFavorite.mutate({ productId: product.id, isFavorite: favoriteIds.has(product.id) })
+                }
+              />
             ))}
           </View>
         )}
@@ -114,7 +128,15 @@ export default function CustomerCatalogScreen() {
   );
 }
 
-function ProductCard({ product }: { product: BuyerProduct }) {
+function ProductCard({
+  product,
+  isFavorite,
+  onToggleFavorite,
+}: {
+  product: BuyerProduct;
+  isFavorite: boolean;
+  onToggleFavorite: () => void;
+}) {
   const cartItem = useCartStore((s) => s.items.find((i) => i.productId === product.id));
   const add = useCartStore((s) => s.add);
   const setQty = useCartStore((s) => s.setQty);
@@ -123,7 +145,16 @@ function ProductCard({ product }: { product: BuyerProduct }) {
   return (
     <View style={styles.productCard}>
       <View style={styles.productInfo}>
-        <Text style={styles.productName} numberOfLines={2}>{product.name}</Text>
+        <View style={styles.productNameRow}>
+          <Text style={[styles.productName, { flex: 1 }]} numberOfLines={2}>{product.name}</Text>
+          <Pressable onPress={onToggleFavorite} hitSlop={8} style={styles.heartBtn}>
+            <Ionicons
+              name={isFavorite ? "heart" : "heart-outline"}
+              size={16}
+              color={isFavorite ? "#ef4444" : ios.label3}
+            />
+          </Pressable>
+        </View>
         {product.category ? (
           <Text style={styles.productCategory}>{product.category}</Text>
         ) : null}
@@ -190,6 +221,8 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   productInfo: { flex: 1 },
+  productNameRow: { flexDirection: "row", alignItems: "flex-start", gap: 4 },
+  heartBtn: { paddingTop: 1 },
   productName: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: ios.label, letterSpacing: -0.1 },
   productCategory: { fontSize: 11, fontFamily: "Inter_400Regular", color: ios.label3, marginTop: 2 },
   productPrice: { fontSize: 15, fontFamily: "Inter_700Bold", color: ios.label, marginTop: 6 },

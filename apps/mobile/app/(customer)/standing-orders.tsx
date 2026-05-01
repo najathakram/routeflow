@@ -14,6 +14,19 @@ function formatDaysOfWeek(days: number[] | undefined): string {
   return [...days].sort((a, b) => a - b).map((d) => DAY_ABBR[d] ?? "").filter(Boolean).join(" · ");
 }
 
+function formatNextFireDate(dateStr: string | undefined | null): string | null {
+  if (!dateStr) return null;
+  const d = new Date(dateStr);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  d.setHours(0, 0, 0, 0);
+  const diff = Math.round((d.getTime() - today.getTime()) / 86400000);
+  if (diff === 0) return "Today";
+  if (diff === 1) return "Tomorrow";
+  if (diff > 0 && diff <= 7) return d.toLocaleDateString(undefined, { weekday: "long" });
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
 export default function StandingOrdersScreen() {
   const router = useRouter();
   const { data: templates, isLoading } = useBuyerTemplates();
@@ -67,13 +80,30 @@ export default function StandingOrdersScreen() {
         ) : (
           <View style={styles.list}>
             {templates.map((t) => (
-              <View key={t.id} style={styles.card}>
+              <Pressable
+                key={t.id}
+                style={styles.card}
+                onPress={() => onReorder(t.id, t.name ?? "Standing order")}
+              >
                 <View style={styles.cardTop}>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.cardName}>{t.name ?? "Standing order"}</Text>
                     <Text style={styles.cardMeta}>
                       {formatDaysOfWeek(t.daysOfWeek) || t.frequencyLabel || t.frequency || "No schedule"} · {t.items?.length ?? 0} items
                     </Text>
+                    {/* First 2 product names inline */}
+                    {t.items && t.items.length > 0 && (
+                      <Text style={styles.cardItems} numberOfLines={1}>
+                        {t.items.slice(0, 2).map((i: any) => i.product?.name ?? i.name ?? "").filter(Boolean).join(", ")}
+                        {t.items.length > 2 ? ` +${t.items.length - 2} more` : ""}
+                      </Text>
+                    )}
+                    {/* Next fire date */}
+                    {formatNextFireDate(t.nextFireDate) ? (
+                      <Text style={styles.cardNextFire}>
+                        Next order: {formatNextFireDate(t.nextFireDate)}
+                      </Text>
+                    ) : null}
                   </View>
                   {t.isActive === false ? (
                     <View style={styles.pausedBadge}>
@@ -105,7 +135,7 @@ export default function StandingOrdersScreen() {
                     </Text>
                   </Pressable>
                 </View>
-              </View>
+              </Pressable>
             ))}
           </View>
         )}
@@ -123,6 +153,8 @@ const styles = StyleSheet.create({
   cardTop: { flexDirection: "row", alignItems: "center", gap: 10 },
   cardName: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: ios.label },
   cardMeta: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
+  cardItems: { fontSize: 11, fontFamily: "Inter_400Regular", color: ios.label3, marginTop: 2 },
+  cardNextFire: { fontSize: 11, fontFamily: "Inter_600SemiBold", color: ios.brand, marginTop: 3 },
   pausedBadge: {
     backgroundColor: ios.fill2,
     borderRadius: 8,

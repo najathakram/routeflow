@@ -17,6 +17,21 @@ function formatDateInput(raw: string): string {
   return `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6)}`;
 }
 
+function formatDisplayDate(iso: string): string {
+  if (!iso || iso.length < 10) return "";
+  try {
+    return new Date(iso + "T00:00:00").toLocaleDateString(undefined, {
+      weekday: "short", month: "short", day: "numeric", year: "numeric",
+    });
+  } catch { return iso; }
+}
+
+function addDays(n: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
 export default function CartScreen() {
   const router = useRouter();
   const { items, setQty, remove, clear, total } = useCartStore();
@@ -133,17 +148,39 @@ export default function CartScreen() {
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Details (optional)</Text>
               <View style={styles.detailCard}>
-                <View style={styles.detailRow}>
+                <View style={[styles.detailRow, { flexDirection: "column", alignItems: "flex-start", gap: 8 }]}>
                   <Text style={styles.detailLabel}>Delivery date</Text>
+                  {/* Quick chips */}
+                  <View style={styles.dateChips}>
+                    {[
+                      { label: "Tomorrow", value: addDays(1) },
+                      { label: "+2 days",  value: addDays(2) },
+                      { label: "+3 days",  value: addDays(3) },
+                    ].map((opt) => (
+                      <Pressable
+                        key={opt.value}
+                        onPress={() => setDeliveryDate(deliveryDate === opt.value ? "" : opt.value)}
+                        style={[styles.dateChip, deliveryDate === opt.value && styles.dateChipActive]}
+                      >
+                        <Text style={[styles.dateChipText, deliveryDate === opt.value && styles.dateChipTextActive]}>
+                          {opt.label}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                  {/* Manual entry fallback */}
                   <TextInput
                     value={deliveryDate}
                     onChangeText={(t) => setDeliveryDate(formatDateInput(t))}
-                    placeholder="YYYY-MM-DD"
+                    placeholder="or type YYYY-MM-DD"
                     placeholderTextColor={ios.label3}
                     keyboardType="number-pad"
                     maxLength={10}
-                    style={styles.detailInput}
+                    style={[styles.detailInput, { width: "100%" }]}
                   />
+                  {deliveryDate.length === 10 && (
+                    <Text style={styles.datePreview}>{formatDisplayDate(deliveryDate)}</Text>
+                  )}
                 </View>
                 <View style={[styles.detailRow, { borderBottomWidth: 0 }]}>
                   <Text style={styles.detailLabel}>Notes</Text>
@@ -246,6 +283,19 @@ const styles = StyleSheet.create({
   },
   detailLabel: { fontSize: 14, fontFamily: "Inter_500Medium", color: ios.label2, width: 90, paddingTop: 2 },
   detailInput: { flex: 1, fontSize: 14, fontFamily: "Inter_400Regular", color: ios.label, paddingTop: 2 },
+  dateChips: { flexDirection: "row", gap: 8, flexWrap: "wrap" },
+  dateChip: {
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: ios.separator,
+    backgroundColor: ios.fill3,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  dateChipActive: { backgroundColor: ios.brand, borderColor: ios.brand },
+  dateChipText: { fontSize: 13, fontFamily: "Inter_500Medium", color: ios.label2 },
+  dateChipTextActive: { color: "#fff" },
+  datePreview: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.brand, marginTop: 2 },
   summaryRow: {
     flexDirection: "row",
     justifyContent: "space-between",

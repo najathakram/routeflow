@@ -86,7 +86,20 @@ export interface BuyerProfile {
 export interface BuyerDashboard {
   recentOrders: BuyerOrder[];
   frequentItems: Array<{ productId: string; name: string; totalQty: number }>;
-  stats: { totalOrders: number; totalSpend: number; unpaidInvoices: number };
+  frequentlyOrdered?: Array<{ productId: string; name: string; totalQty: number }>;
+  stats: {
+    // Fields returned by /buyer/dashboard
+    spendAllTime: number;
+    spend30d: number;
+    spend90d: number;
+    activeOrders: number;
+    pendingDeliveries: number;
+    templateCount: number;
+    // Legacy aliases — may be absent depending on API version
+    totalOrders?: number;
+    totalSpend?: number;
+    unpaidInvoices?: number;
+  };
 }
 
 // ─── Catalog ──────────────────────────────────────────────────────────────────

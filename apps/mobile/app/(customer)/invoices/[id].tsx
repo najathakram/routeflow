@@ -54,7 +54,12 @@ export default function CustomerInvoiceDetailScreen() {
         leading={<NavBackButton label="Back" onPress={() => router.back()} />}
       />
 
-      <ScrollView showsVerticalScrollIndicator={false}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        scrollEventThrottle={16}
+        overScrollMode="never"
+        bounces={false}
+      >
         {/* Header */}
         <View style={styles.headerCard}>
           <View style={styles.headerRow}>

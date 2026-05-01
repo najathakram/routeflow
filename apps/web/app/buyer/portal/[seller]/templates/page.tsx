@@ -86,6 +86,12 @@ function TemplateRow({
               <Package className="h-3 w-3" />
               {template.items.length} {template.items.length === 1 ? "item" : "items"}
             </span>
+            {template.nextFireDate && (
+              <span className="flex items-center gap-1 text-xs font-medium text-buyer-600">
+                <Calendar className="h-3 w-3" />
+                Next: {new Date(template.nextFireDate).toLocaleDateString("en-GB", { day: "2-digit", month: "short" })}
+              </span>
+            )}
           </div>
         </div>
 

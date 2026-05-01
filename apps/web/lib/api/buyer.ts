@@ -126,6 +126,7 @@ export interface OrderTemplate {
   isActive: boolean;
   daysOfWeek: number[];
   notes: string | null;
+  nextFireDate: string | null;
   items: Array<{
     id: string;
     productId: string;
