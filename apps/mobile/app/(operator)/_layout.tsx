@@ -3,6 +3,7 @@ import { StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { ios } from "@routeflow/ui/tokens";
 import { useNetworkSync } from "../../hooks/useNetworkSync";
+import { useSocket } from "../../hooks/useSocket";
 
 function OfflineBanner() {
   const { isOnline, queueLength } = useNetworkSync();
@@ -18,6 +19,10 @@ function OfflineBanner() {
 }
 
 export default function OperatorLayout() {
+  // RF-002: hoist Socket.IO subscription to layout level so real-time events
+  // (order.created, order.statusChanged, route.stop.completed, etc.) keep
+  // active queries fresh across every operator screen, not only the home tab.
+  useSocket();
   return (
     <View style={{ flex: 1, backgroundColor: ios.bg }}>
       <OfflineBanner />

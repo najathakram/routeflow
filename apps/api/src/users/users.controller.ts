@@ -67,12 +67,21 @@ export class UsersController {
     return this.usersService.findById(id);
   }
 
+  /**
+   * RF-073: Previously, `UpdateUserDto.role` was passed straight through Prisma
+   * for self-updates, allowing any authenticated user (driver, customer) to
+   * call PATCH /users/{ownId} with `{role: "OPERATOR"}` and self-promote.
+   * The role field is now stripped for any caller who is not an OPERATOR
+   * or TENANT_ADMIN.
+   */
   @Patch(":id")
   update(@Param("id") id: string, @Body() dto: UpdateUserDto, @CurrentUser() user: JwtPayload) {
     if (user.role !== UserRole.OPERATOR && user.role !== UserRole.TENANT_ADMIN && user.sub !== id) {
       throw new ForbiddenException("Access denied");
     }
-    return this.usersService.updateUser(id, dto);
+    const isPrivileged = user.role === UserRole.OPERATOR || user.role === UserRole.TENANT_ADMIN;
+    const safeDto: UpdateUserDto = isPrivileged ? dto : { ...dto, role: undefined };
+    return this.usersService.updateUser(id, safeDto);
   }
 
   @Patch(":id/status")

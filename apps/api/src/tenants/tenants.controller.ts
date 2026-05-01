@@ -138,12 +138,18 @@ export class TenantsController {
   @ApiBody({
     schema: { type: "object", properties: { logo: { type: "string", format: "binary" } } },
   })
-  @ApiOperation({ summary: "Upload tenant logo (max 5 MB; PNG, JPG, SVG, WEBP)" })
+  @ApiOperation({ summary: "Upload tenant logo (max 5 MB; PNG, JPG, WEBP)" })
   async uploadLogo(@CurrentUser() user: JwtPayload, @UploadedFile() file: Express.Multer.File) {
     if (!file) throw new BadRequestException("No file uploaded");
-    const allowed = ["image/png", "image/jpeg", "image/svg+xml", "image/webp"];
-    if (!allowed.includes(file.mimetype)) {
-      throw new BadRequestException("Only PNG, JPG, SVG, and WEBP images are allowed");
+    // RF-076: SVG removed from allowlist. SVGs can embed <script> tags and were
+    // served inline as image/svg+xml, enabling stored XSS via tenant logos.
+    const allowed = ["image/png", "image/jpeg", "image/webp"];
+    if (
+      !allowed.includes(file.mimetype) ||
+      file.mimetype === "image/svg+xml" ||
+      file.originalname.toLowerCase().endsWith(".svg")
+    ) {
+      throw new BadRequestException("Only PNG, JPG, and WEBP images are allowed");
     }
     return this.tenantsService.uploadLogo(user.tenantId!, file);
   }

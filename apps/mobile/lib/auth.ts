@@ -197,12 +197,12 @@ export async function logout(): Promise<void> {
   } catch {
     // Best-effort — clear tokens regardless of server response
   }
-  // Clear all session tokens so no stale JWT lingers across surfaces
+  // RF-077: only clear operator-namespaced storage. Previously this also
+  // deleted buyerAccessToken/buyerRefreshToken/buyerActiveSeller, which
+  // logged the buyer out of an unrelated parallel session in the same
+  // browser. Operator and buyer sessions are now strictly isolated.
   await storage.del("accessToken");
   await storage.del("refreshToken");
-  await storage.del("buyerAccessToken");
-  await storage.del("buyerRefreshToken");
-  await storage.del("buyerActiveSeller");
 }
 
 export async function refreshTokens(): Promise<AuthResponse | null> {

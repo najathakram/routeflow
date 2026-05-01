@@ -4,6 +4,7 @@ import { StyleSheet, Text, View } from "react-native";
 import { ios } from "@routeflow/ui/tokens";
 import { IosTabBar } from "@routeflow/ui/mobile/ios";
 import { useNetworkSync } from "../../hooks/useNetworkSync";
+import { useSocket } from "../../hooks/useSocket";
 
 function OfflineBanner() {
   const { isOnline, queueLength } = useNetworkSync();
@@ -19,6 +20,9 @@ function OfflineBanner() {
 }
 
 export default function DriverLayout() {
+  // RF-002: keep the driver app subscribed to real-time route/stop events so
+  // operator dispatches and stop updates land without a manual refresh.
+  useSocket();
   return (
     <View style={{ flex: 1, backgroundColor: ios.bg }}>
       <OfflineBanner />
