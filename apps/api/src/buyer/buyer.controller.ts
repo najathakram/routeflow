@@ -337,6 +337,26 @@ export class BuyerController {
     return this.dashboardService.getDashboard(ctx.customerId, window);
   }
 
+  // ─── Buyer self-profile ───────────────────────────────────────────────────────
+
+  @Get("me")
+  @UseGuards(BuyerSellerContextGuard)
+  @UseInterceptors(BuyerTenantInterceptor)
+  @ApiHeader({ name: "X-Tenant-Slug", required: true })
+  @ApiOperation({ summary: "Get authenticated buyer's own profile" })
+  getMe(@CurrentBuyerCustomer() ctx: any) {
+    return ctx.customer;
+  }
+
+  @Patch("me")
+  @UseGuards(BuyerSellerContextGuard)
+  @UseInterceptors(BuyerTenantInterceptor)
+  @ApiHeader({ name: "X-Tenant-Slug", required: true })
+  @ApiOperation({ summary: "Update authenticated buyer's own profile" })
+  updateMe(@CurrentBuyerCustomer() ctx: any, @Body() dto: any) {
+    return this.customersService.update(ctx.customerId, dto);
+  }
+
   // ─── Order templates ──────────────────────────────────────────────────────────
 
   @Get("templates")
@@ -345,6 +365,15 @@ export class BuyerController {
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "List buyer's standing order templates" })
   getTemplates(@CurrentBuyerCustomer() ctx: any) {
+    return this.templatesService.findAllForUser(makePseudoUser(ctx));
+  }
+
+  @Get("standing-orders")
+  @UseGuards(BuyerSellerContextGuard)
+  @UseInterceptors(BuyerTenantInterceptor)
+  @ApiHeader({ name: "X-Tenant-Slug", required: true })
+  @ApiOperation({ summary: "Alias: list buyer's standing order templates (same as /buyer/templates)" })
+  getStandingOrders(@CurrentBuyerCustomer() ctx: any) {
     return this.templatesService.findAllForUser(makePseudoUser(ctx));
   }
 

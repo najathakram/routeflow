@@ -31,7 +31,7 @@ export class UsersController {
 
   @Get()
   @UseGuards(RolesGuard)
-  @Roles(UserRole.OPERATOR)
+  @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
   findAll(@Query() query: ListUsersDto) {
     return this.usersService.findAll(query);
   }

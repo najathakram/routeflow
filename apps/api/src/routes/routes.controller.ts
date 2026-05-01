@@ -134,6 +134,13 @@ export class RouteRunsController {
     return this.routesService.createRun(dto, user);
   }
 
+  @Get("my-runs")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.DRIVER)
+  getMyRuns(@CurrentUser() user: JwtPayload) {
+    return this.routesService.findMyRuns(user);
+  }
+
   @Get("my-stats")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR, UserRole.DRIVER)

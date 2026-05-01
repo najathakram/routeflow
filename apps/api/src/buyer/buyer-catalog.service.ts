@@ -17,6 +17,9 @@ export interface BuyerProduct {
   thumbnailUrl: string | null;
   imageKeys: string[];
   isFeatured: boolean;
+  // RF-200: stock availability fields
+  inStock: boolean;
+  stockStatus: "IN_STOCK" | "LOW" | "OUT_OF_STOCK";
 }
 
 @Injectable()
@@ -72,6 +75,11 @@ export class BuyerCatalogService {
       const effectiveTier = cpMap.get(p.id) ?? defaultTier;
       const buyerPrice = getTierPrice(p, effectiveTier);
 
+      const stock = Number(p.currentStock ?? 0);
+      const lowThreshold = Number(p.lowStockThreshold ?? 5);
+      const stockStatus: BuyerProduct["stockStatus"] =
+        stock <= 0 ? "OUT_OF_STOCK" : stock <= lowThreshold ? "LOW" : "IN_STOCK";
+
       return {
         id: p.id,
         name: p.name,
@@ -85,6 +93,8 @@ export class BuyerCatalogService {
         isFeatured: p.isFeatured ?? false,
         thumbnailUrl: p.thumbnailUrl ?? null,
         imageKeys: p.imageKeys ?? [],
+        inStock: stock > 0,
+        stockStatus,
       };
     });
 

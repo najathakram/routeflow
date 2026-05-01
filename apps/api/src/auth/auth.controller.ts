@@ -51,7 +51,7 @@ export class AuthController {
   @Post("login")
   @HttpCode(HttpStatus.OK)
   @UseGuards(LocalAuthGuard)
-  @Throttle({ default: { ttl: 60_000, limit: 30 } }) // 30/min: still brute-force resistant, allows shared-NAT offices + E2E test suites
+  @Throttle({ default: { ttl: 300_000, limit: 10 } }) // RF-160: 10 attempts per 5 min per IP to block brute-force
   @ApiOperation({ summary: "Login with username and password" })
   login(@CurrentUser() user: any, @Body() _dto: LoginDto, @Req() req: any) {
     const deviceInfo = this.extractDeviceInfo(req);

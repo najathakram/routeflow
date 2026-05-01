@@ -150,10 +150,13 @@ export class InvoicesService {
 
     const invDiscount = dto.discount ?? 0;
     const shipping = dto.shippingFee ?? 0;
-    const taxTotal = dto.items.reduce((sum, item) => {
-      const lineSub = item.qty * item.unitPrice - (item.discount ?? 0);
-      return sum + lineSub * (item.taxRate ?? 0);
-    }, 0);
+    // RF-079: tax-exempt customers owe $0 tax regardless of line item tax rates
+    const taxTotal = (customer as any).isTaxExempt
+      ? 0
+      : dto.items.reduce((sum, item) => {
+          const lineSub = item.qty * item.unitPrice - (item.discount ?? 0);
+          return sum + lineSub * (item.taxRate ?? 0);
+        }, 0);
     const total = subtotal - invDiscount + shipping + taxTotal;
 
     // Validate invoice-level discount doesn't exceed subtotal and total is non-negative
@@ -235,6 +238,12 @@ export class InvoicesService {
     });
     if (!order) throw new NotFoundException("Order not found");
 
+    // RF-079: check customer tax-exempt status
+    const customer = await db.customer.findUnique({
+      where: { id: order.customerId },
+      select: { isTaxExempt: true },
+    });
+
     // Build invoice items from order items, carrying price type info
     const tenantId = this.prisma.getTenantId();
     const itemsData = order.lineItems.map((li: any) => ({
@@ -251,8 +260,9 @@ export class InvoicesService {
     }));
 
     const subtotal = Number(order.subtotal);
-    const taxAmount = Number(order.tax);
-    const total = Number(order.total);
+    // RF-079: tax-exempt customers owe $0 tax
+    const taxAmount = customer?.isTaxExempt ? 0 : Number(order.tax);
+    const total = subtotal + taxAmount;
 
     // Due date from configured payment terms (e.g. "Net 30")
     const { terms: defaultTerms, dueDays } = await this.resolveDefaultTerms();
@@ -454,9 +464,11 @@ export class InvoicesService {
       };
       where.dueDate = { lt: new Date() };
     } else if (statuses && statuses.length > 0) {
-      where.status = { in: statuses };
+      // RF-204: normalize legacy "VOIDED" alias → the DB enum value "VOID"
+      where.status = { in: statuses.map((s: string) => (s === "VOIDED" ? "VOID" : s)) };
     } else if (status) {
-      where.status = status;
+      // RF-204: normalize "VOIDED" → "VOID" for single-status filter
+      where.status = (status as string) === "VOIDED" ? "VOID" : status;
     }
     if (user?.role === UserRole.CUSTOMER) {
       const customer = await this.prisma

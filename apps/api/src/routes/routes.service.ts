@@ -1171,6 +1171,42 @@ export class RoutesService {
     };
   }
 
+  async findMyRuns(user: JwtPayload) {
+    const driver = await this.prisma.forTenant().driver.findFirst({ where: { userId: user.sub } });
+    if (!driver) return { data: [], meta: { total: 0, page: 1, limit: 20, totalPages: 0 } };
+
+    const data = await this.prisma.forTenant().routeRun.findMany({
+      where: {
+        driverId: driver.id,
+        status: { in: [RouteRunStatus.SCHEDULED, RouteRunStatus.IN_PROGRESS] },
+      },
+      include: {
+        route: { select: { id: true, name: true } },
+        driver: { select: { id: true, contactName: true, user: { select: { username: true } } } },
+        _count: { select: { stops: true } },
+        stops: {
+          include: RUN_STOP_INCLUDE,
+          orderBy: { stopNumber: "asc" },
+        },
+      },
+      orderBy: { scheduledDate: "asc" },
+    });
+
+    const normalisedData = data.map((run: any) => ({
+      ...run,
+      stops: run.stops.map((s: any) => ({
+        ...s,
+        customer: s.customer ?? s.routeStop?.customer ?? null,
+        customerAddress: s.customerAddress ?? s.routeStop?.customerAddress ?? null,
+      })),
+    }));
+
+    return {
+      data: normalisedData,
+      meta: { total: normalisedData.length, page: 1, limit: normalisedData.length, totalPages: 1 },
+    };
+  }
+
   async getMyStats(user: JwtPayload) {
     const driver = await this.prisma.forTenant().driver.findFirst({ where: { userId: user.sub } });
     if (!driver)

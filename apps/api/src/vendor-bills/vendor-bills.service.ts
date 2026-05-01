@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
 import { SystemConfigService } from "../system-config/system-config.service";
@@ -147,6 +147,8 @@ export class VendorBillsService {
       },
     });
     if (!bill) throw new NotFoundException("Bill not found");
+    // RF-084: idempotency guard — prevent double-receive doubling stock
+    if (bill.status === "RECEIVED") throw new ConflictException("Bill already received");
 
     // Update bill status
     const updated = await this.prisma.tenantTransaction(async (tx) => {
@@ -284,6 +286,62 @@ export class VendorBillsService {
   }
 
   async voidBill(id: string) {
+    const bill = await this.prisma.forTenant().vendorBill.findUnique({
+      where: { id },
+      include: { items: { include: { product: true } } },
+    });
+    if (!bill) throw new NotFoundException("Bill not found");
+
+    // RF-085: reverse stock movements when voiding a RECEIVED bill
+    const needsReversal = bill.status === "RECEIVED" || bill.status === "PARTIAL" || bill.status === "PAID";
+    if (needsReversal) {
+      return this.prisma.tenantTransaction(async (tx) => {
+        for (const item of bill.items) {
+          if (!item.productId || !item.product) continue;
+          const qty = new Prisma.Decimal(item.qty);
+          const unitCost = new Prisma.Decimal(item.unitCost);
+
+          // Compensating stock movement with negative quantity
+          await tx.stockMovement.create({
+            data: {
+              productId: item.productId,
+              type: MovementType.ADJUSTMENT,
+              quantity: qty.negated(),
+              unitCost,
+              supplierId: bill.supplierId,
+              reference: bill.billNumber,
+              notes: `Void reversal for vendor bill ${bill.billNumber}`,
+            },
+          });
+
+          const product = await tx.product.findUnique({
+            where: { id: item.productId },
+            select: { currentStock: true, averageCost: true },
+          });
+          if (!product) continue;
+
+          const currentStock = new Prisma.Decimal(product.currentStock);
+          const stockAfterVoid = currentStock.sub(qty);
+          const currentAvgCost = new Prisma.Decimal(product.averageCost ?? 0);
+          let newAvgCost: Prisma.Decimal;
+          if (stockAfterVoid.lte(0)) {
+            newAvgCost = new Prisma.Decimal(0);
+          } else {
+            const numerator = currentStock.mul(currentAvgCost).sub(qty.mul(unitCost));
+            newAvgCost = numerator.div(stockAfterVoid);
+            if (newAvgCost.lt(0)) newAvgCost = new Prisma.Decimal(0);
+          }
+
+          await tx.product.update({
+            where: { id: item.productId },
+            data: { currentStock: { decrement: qty }, averageCost: newAvgCost },
+          });
+        }
+
+        return tx.vendorBill.update({ where: { id }, data: { status: "VOID" as any } });
+      });
+    }
+
     return this.prisma
       .forTenant()
       .vendorBill.update({ where: { id }, data: { status: "VOID" as any } });

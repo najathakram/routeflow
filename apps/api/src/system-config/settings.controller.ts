@@ -22,7 +22,9 @@ import { EmailService } from "../email/email.service";
 import { UpdateRouteSettingsDto } from "./dto/update-route-settings.dto";
 import { UpdateInvoiceSettingsDto } from "./dto/update-invoice-settings.dto";
 
-@Controller("settings")
+// RF-213: serve under both /settings and /tenant/settings so the frontend
+// calling the latter doesn't get a 404 while the operator app uses /settings.
+@Controller(["settings", "tenant/settings"])
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.OPERATOR)
 export class SettingsController {
