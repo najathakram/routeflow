@@ -12,6 +12,7 @@ import {
   ValidateNested,
 } from "class-validator";
 import { Type } from "class-transformer";
+import { StripHtml } from "../../common/transforms/strip-html.transform";
 
 class OrderItemDto {
   @IsString() productId: string;
@@ -33,7 +34,8 @@ export class CreateOrderDto {
   @ValidateNested({ each: true })
   @Type(() => OrderItemDto)
   items?: OrderItemDto[];
-  @IsOptional() @IsString() notes?: string;
+  // RF-110: strip HTML to prevent stored XSS via order notes
+  @IsOptional() @StripHtml() @IsString() notes?: string;
   @IsOptional() @IsBoolean() urgent?: boolean;
   @IsOptional() @IsDateString() requestedDeliveryDate?: string;
   @IsOptional() @IsString() routeRunId?: string;

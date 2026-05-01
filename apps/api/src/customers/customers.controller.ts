@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -346,8 +347,8 @@ export class CustomersController {
 
   @Delete(":id")
   @Roles(UserRole.OPERATOR)
-  remove(@Param("id") id: string) {
-    return this.customersService.deleteCustomer(id);
+  remove(@Param("id") id: string, @Query("force") force?: string) {
+    return this.customersService.deleteCustomer(id, force === "true");
   }
 
   // ─── Suggest buyer account merge ──────────────────────────────────────────
@@ -382,6 +383,15 @@ export class CustomersController {
       storage: memoryStorage(),
       limits: { fileSize: 15 * 1024 * 1024 }, // 15 MB (frontend compresses first)
       fileFilter: (_req, file, cb) => {
+        // RF-157: SVG files are rejected — they can embed JS and are served as
+        // image/svg+xml which enables XSS when the file is opened directly.
+        if (
+          file.mimetype === "image/svg+xml" ||
+          file.originalname.toLowerCase().endsWith(".svg")
+        ) {
+          cb(new BadRequestException("SVG files are not permitted for security reasons."), false);
+          return;
+        }
         cb(null, file.mimetype.startsWith("image/"));
       },
     }),

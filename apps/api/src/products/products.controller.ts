@@ -101,6 +101,15 @@ export class ProductsController {
       storage: memoryStorage(),
       limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB per file
       fileFilter: (_req, file, cb) => {
+        // RF-157: SVG files are rejected — they can embed JS and are served as
+        // image/svg+xml which enables XSS when the file is opened directly.
+        if (
+          file.mimetype === "image/svg+xml" ||
+          file.originalname.toLowerCase().endsWith(".svg")
+        ) {
+          cb(new BadRequestException("SVG files are not permitted for security reasons."), false);
+          return;
+        }
         cb(null, file.mimetype.startsWith("image/"));
       },
     }),

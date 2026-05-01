@@ -5,11 +5,13 @@ import {
   BadRequestException,
   InternalServerErrorException,
   Logger,
+  UseGuards,
 } from "@nestjs/common";
 import { ApiTags, ApiOperation } from "@nestjs/swagger";
 import { Throttle } from "@nestjs/throttler";
 import { ConfigService } from "@nestjs/config";
 import { AppConfig } from "../config/configuration";
+import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 
 /**
  * Public proxy for the Google Places API (New).
@@ -34,6 +36,7 @@ export class PublicPlacesController {
   @Get("config")
   @ApiOperation({ summary: "Return public client configuration" })
   @Throttle({ default: { ttl: 60_000, limit: 30 } })
+  @UseGuards(JwtAuthGuard)
   publicConfig() {
     return { googleMapsKey: this.apiKey };
   }

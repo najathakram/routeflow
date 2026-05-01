@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -539,17 +540,6 @@ export class OrdersService implements OnApplicationBootstrap {
         : [];
     const cpMap = new Map(customerPrices.map((cp) => [cp.productId, cp.pricingTier]));
 
-    // Generate progressive, tenant-scoped order number
-    const lastOrder = await this.prisma.forTenant().order.findFirst({
-      where: { orderNumber: { startsWith: "ORD-" } },
-      orderBy: { orderNumber: "desc" },
-      select: { orderNumber: true },
-    });
-    const seq = lastOrder?.orderNumber
-      ? parseInt(lastOrder.orderNumber.replace("ORD-", ""), 10) + 1
-      : 1;
-    const orderNumber = `ORD-${String(Number.isFinite(seq) ? seq : 1).padStart(5, "0")}`;
-
     let subtotal = 0;
     const lineItemsData = items.map((item) => {
       const product = productMap.get(item.productId);
@@ -606,27 +596,100 @@ export class OrdersService implements OnApplicationBootstrap {
     const tax = subtotal * (await this.getTaxRate());
     const total = subtotal + tax - orderDiscount;
 
-    const order = await this.prisma.forTenant().order.create({
-      data: {
-        customerId,
-        orderNumber,
-        status: isDraft ? OrderStatus.DRAFT : OrderStatus.PENDING,
-        subtotal,
-        tax,
-        total,
-        discountAmount: orderDiscount,
-        notes: dto.notes,
-        urgent: dto.urgent ?? false,
-        requestedDeliveryDate: dto.requestedDeliveryDate
-          ? new Date(dto.requestedDeliveryDate)
-          : undefined,
-        lineItems: { create: lineItemsData },
-      },
-      include: {
-        customer: { select: { id: true, businessName: true } },
-        lineItems: { include: { product: { select: { id: true, name: true, unit: true } } } },
-      },
-    });
+    // RF-017 + RF-014: create the order inside a transaction so we can
+    // (a) hold a pessimistic lock on product rows while checking/decrementing
+    //     stock, preventing concurrent oversell, and
+    // (b) retry on P2002 if two requests race to the same order number.
+    const MAX_RETRIES = 3;
+    let order: any;
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      try {
+        order = await this.prisma.tenantTransaction(async (tx) => {
+          // RF-017: stock validation — only for non-draft orders that have items.
+          // Lock product rows first so concurrent requests serialise here.
+          if (!isDraft && lineItemsData.length > 0) {
+            const productIds = lineItemsData.map((li) => li.productId);
+            // SELECT … FOR UPDATE acquires row-level locks in the current transaction.
+            await tx.$executeRaw`
+              SELECT id FROM "Product"
+              WHERE id IN (${Prisma.join(productIds)})
+              FOR UPDATE
+            `;
+
+            const lockedProducts = await tx.product.findMany({
+              where: { id: { in: productIds } },
+              select: { id: true, name: true, currentStock: true },
+            });
+
+            const oosItems: string[] = [];
+            for (const li of lineItemsData) {
+              const p = lockedProducts.find((lp) => lp.id === li.productId);
+              if (p && Number(p.currentStock) < li.qty) {
+                oosItems.push(
+                  `${productMap.get(li.productId)?.name ?? li.productId}` +
+                    ` (available: ${Number(p.currentStock)}, requested: ${li.qty})`,
+                );
+              }
+            }
+            if (oosItems.length > 0) {
+              throw new ConflictException(`Insufficient stock: ${oosItems.join("; ")}`);
+            }
+
+            // Decrement stock atomically while the lock is held.
+            for (const li of lineItemsData) {
+              await tx.product.update({
+                where: { id: li.productId },
+                data: { currentStock: { decrement: li.qty } },
+              });
+            }
+          }
+
+          // RF-014: generate order number inside the transaction so a P2002 on
+          // the @@unique([tenantId, orderNumber]) constraint can be caught and
+          // retried with a fresh sequence value.
+          const lastOrder = await tx.order.findFirst({
+            where: { orderNumber: { startsWith: "ORD-" } },
+            orderBy: { orderNumber: "desc" },
+            select: { orderNumber: true },
+          });
+          const seq = lastOrder?.orderNumber
+            ? parseInt(lastOrder.orderNumber.replace("ORD-", ""), 10) + 1
+            : 1;
+          const orderNumber = `ORD-${String(Number.isFinite(seq) ? seq : 1).padStart(5, "0")}`;
+
+          return tx.order.create({
+            data: {
+              customerId,
+              orderNumber,
+              status: isDraft ? OrderStatus.DRAFT : OrderStatus.PENDING,
+              subtotal,
+              tax,
+              total,
+              discountAmount: orderDiscount,
+              notes: dto.notes,
+              urgent: dto.urgent ?? false,
+              requestedDeliveryDate: dto.requestedDeliveryDate
+                ? new Date(dto.requestedDeliveryDate)
+                : undefined,
+              lineItems: { create: lineItemsData },
+            },
+            include: {
+              customer: { select: { id: true, businessName: true } },
+              lineItems: {
+                include: { product: { select: { id: true, name: true, unit: true } } },
+              },
+            },
+          });
+        });
+        break; // transaction succeeded
+      } catch (e: any) {
+        // Retry only on orderNumber unique-constraint violations (RF-014);
+        // propagate all other errors immediately (including ConflictException
+        // for OOS items from RF-017).
+        if (e?.code === "P2002" && attempt < MAX_RETRIES - 1) continue;
+        throw e;
+      }
+    }
 
     // If driver is creating at a stop, link order to route run and optionally confirm it
     if (dto.routeRunId || dto.routeRunStopId) {

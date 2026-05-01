@@ -476,6 +476,9 @@ model Customer {
   pricingTier         Int         @default(1)
   createdAt           DateTime    @default(now())
   updatedAt           DateTime    @updatedAt
+  // RF-197: soft-delete timestamp; set instead of physically deleting when
+  // the customer has financial records (orders / invoices / returns).
+  deletedAt           DateTime?
   tenantId            String?
 
   user           User              @relation(fields: [userId], references: [id])
@@ -825,6 +828,10 @@ model Order {
   invoices          Invoice[]
   returns           Return[]
 
+  // RF-014: prevent duplicate order numbers within the same tenant.
+  // NULL values are treated as distinct by PostgreSQL, so rows with
+  // orderNumber=null remain unrestricted (legacy/draft orders).
+  @@unique([tenantId, orderNumber])
   @@index([customerId])
   @@index([routeRunId])
   @@index([routeRunStopId])

@@ -1,8 +1,10 @@
 import { IsBoolean, IsEnum, IsInt, IsOptional, IsString, Max, Min } from "class-validator";
 import { FulfillPath } from "@prisma/client";
+import { StripHtml } from "../../common/transforms/strip-html.transform";
 
 export class UpdateCustomerDto {
-  @IsOptional() @IsString() businessName?: string;
+  // RF-110: strip HTML to prevent stored XSS via businessName
+  @IsOptional() @StripHtml() @IsString() businessName?: string;
   @IsOptional() @IsString() contactName?: string;
   @IsOptional() @IsString() phone?: string;
   @IsOptional() @IsString() notes?: string;

@@ -28,19 +28,28 @@ export class AuthService {
     private readonly configService: ConfigService<AppConfig>,
   ) {}
 
+  /**
+   * Validate username + password.
+   *
+   * RF-176: cross-tenant fallback is only attempted when a tenant header was
+   * provided but the user wasn't found in that tenant (e.g. stale cookie).
+   * When no tenant header is present (tenantId === null) we skip the fallback
+   * entirely — this prevents a null-tenantId JWT that could read across all
+   * tenant data via the cross-tenant lookup path.
+   */
   async validateUser(username: string, password: string, tenantId: string | null) {
     let user = await this.usersService.findByUsername(username, tenantId);
 
-    // Fallback: if no user found with the resolved tenant (e.g. stale/missing cookie),
-    // do a cross-tenant lookup so tenant admins can always log in regardless of which
-    // tenant cookie the browser holds. Email lookups are tried first; username lookups
-    // only succeed when the username is globally unique (common names like "admin" that
-    // exist in multiple tenants will not match — those users must use their email).
-    if (!user && username.includes("@")) {
-      user = await this.usersService.findByEmailCrossTenant(username);
-    }
-    if (!user && !username.includes("@")) {
-      user = await this.usersService.findByUsernameCrossTenant(username);
+    // Cross-tenant fallback only when a tenant slug was provided but the user
+    // was not found in that specific tenant (e.g. old/stale cookie).
+    // Never fall back when tenantId is null (no X-Tenant-Slug sent) — that
+    // would allow any tenant user to obtain a null-tenantId JWT (RF-176).
+    if (!user && tenantId !== null) {
+      if (username.includes("@")) {
+        user = await this.usersService.findByEmailCrossTenant(username);
+      } else {
+        user = await this.usersService.findByUsernameCrossTenant(username);
+      }
     }
 
     if (!user || user.deletedAt !== null) return null;
@@ -58,6 +67,13 @@ export class AuthService {
     deviceInfo?: DeviceInfo,
   ) {
     const jwtConfig = this.configService.get<AppConfig["jwt"]>("jwt")!;
+
+    // RF-176: reject logins where the user has no tenant association unless the
+    // user is a platform-level super-admin.  A null-tenantId JWT bypasses all
+    // forTenant() query scoping and can read data across every tenant.
+    if (!user.tenantId && user.role !== "SUPER_ADMIN") {
+      throw new UnauthorizedException("Tenant not found");
+    }
 
     // Fetch tenant slug if user belongs to a tenant
     let tenantSlug: string | null = null;

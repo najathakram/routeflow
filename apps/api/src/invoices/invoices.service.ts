@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -84,6 +85,11 @@ export class InvoicesService {
 
   // ─── CRUD ─────────────────────────────────────────────────────────────────
 
+  /**
+   * RF-026: Previously, concurrent invoice creates both read the same last
+   * invoice number and one crashed with Prisma P2002 → HTTP 500. Now catches
+   * P2002 and returns 409 Conflict instead.
+   */
   async create(dto: CreateInvoiceDto) {
     const customer = await this.prisma
       .forTenant()
@@ -161,28 +167,35 @@ export class InvoicesService {
     }
 
     const tenantDefaults = await this.resolveTenantInvoiceDefaults();
-    const invoice = await this.prisma.forTenant().invoice.create({
-      data: {
-        invoiceNumber: await this.nextInvoiceNumber(),
-        customerId: dto.customerId,
-        status: InvoiceStatus.DRAFT,
-        subtotal,
-        taxAmount: taxTotal,
-        discount: invDiscount,
-        shippingFee: shipping,
-        total,
-        dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
-        issueDate: dto.issueDate ? new Date(dto.issueDate) : new Date(),
-        notes: dto.notes ?? tenantDefaults.notes,
-        terms: dto.terms ?? tenantDefaults.terms,
-        items: { create: itemsData },
-      },
-      include: {
-        customer: { select: { id: true, businessName: true } },
-        items: true,
-        payments: true,
-      },
-    });
+    let invoice: any;
+    try {
+      invoice = await this.prisma.forTenant().invoice.create({
+        data: {
+          invoiceNumber: await this.nextInvoiceNumber(),
+          customerId: dto.customerId,
+          status: InvoiceStatus.DRAFT,
+          subtotal,
+          taxAmount: taxTotal,
+          discount: invDiscount,
+          shippingFee: shipping,
+          total,
+          dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
+          issueDate: dto.issueDate ? new Date(dto.issueDate) : new Date(),
+          notes: dto.notes ?? tenantDefaults.notes,
+          terms: dto.terms ?? tenantDefaults.terms,
+          items: { create: itemsData },
+        },
+        include: {
+          customer: { select: { id: true, businessName: true } },
+          items: true,
+          payments: true,
+        },
+      });
+    } catch (err: any) {
+      // RF-050: duplicate invoiceNumber under concurrent requests
+      if (err?.code === "P2002") throw new ConflictException("Invoice number conflict — please retry.");
+      throw err;
+    }
 
     // If the caller wants to immediately send the invoice, transition DRAFT → SENT
     if (dto.send) {
@@ -196,6 +209,10 @@ export class InvoicesService {
    * Auto-generate an Invoice from a delivered Order.
    * Accepts an optional Prisma transaction client so it can run
    * inside completeStop()'s $transaction.
+   *
+   * RF-147: tenantId is now explicitly set on the Invoice record.  Previously
+   * the create call omitted it, leaving invoices with tenantId=null which
+   * bypassed all tenant-scoped queries.
    */
   async createInvoiceFromOrder(orderId: string, txClient?: any) {
     const db = txClient ?? this.prisma;
@@ -248,7 +265,9 @@ export class InvoicesService {
     // Generate invoice number
     const invoiceNumber = await this.generateInvoiceNumber(db);
 
-    const invoice = await db.invoice.create({
+    let invoice: any;
+    try {
+    invoice = await db.invoice.create({
       data: {
         invoiceNumber,
         customerId: order.customerId,
@@ -264,6 +283,9 @@ export class InvoicesService {
         issueDate: new Date(),
         notes: tenantDefaults.notes ?? (order.orderNumber ? `Order #${order.orderNumber}` : null),
         items: { create: itemsData },
+        // RF-147: propagate tenantId onto the Invoice row.  Previously omitted,
+        // leaving auto-generated invoices with tenantId=null.
+        ...(tenantId ? { tenantId } : {}),
       },
       include: {
         customer: {
@@ -273,6 +295,11 @@ export class InvoicesService {
         payments: true,
       },
     });
+    } catch (err: any) {
+      // RF-050: duplicate invoiceNumber under concurrent requests
+      if (err?.code === "P2002") throw new ConflictException("Invoice number conflict — please retry.");
+      throw err;
+    }
 
     return invoice;
   }
@@ -349,32 +376,38 @@ export class InvoicesService {
 
     const invoiceNumber = await this.generateInvoiceNumber();
 
-    return this.prisma.invoice.create({
-      data: {
-        invoiceNumber,
-        customerId: order.customerId,
-        orderId: order.id,
-        status: InvoiceStatus.DRAFT,
-        subtotal,
-        taxAmount,
-        discount: 0,
-        shippingFee: 0,
-        total,
-        dueDate,
-        terms: tenantTerms ?? defaultTerms,
-        issueDate: new Date(),
-        notes: tenantNotes ?? (order.orderNumber ? `Order #${order.orderNumber}` : null),
-        items: { create: itemsData },
-        ...(tenantId ? { tenantId } : {}),
-      },
-      include: {
-        customer: {
-          select: { id: true, businessName: true, email: true, phone: true, mobile: true },
+    try {
+      return await this.prisma.invoice.create({
+        data: {
+          invoiceNumber,
+          customerId: order.customerId,
+          orderId: order.id,
+          status: InvoiceStatus.DRAFT,
+          subtotal,
+          taxAmount,
+          discount: 0,
+          shippingFee: 0,
+          total,
+          dueDate,
+          terms: tenantTerms ?? defaultTerms,
+          issueDate: new Date(),
+          notes: tenantNotes ?? (order.orderNumber ? `Order #${order.orderNumber}` : null),
+          items: { create: itemsData },
+          ...(tenantId ? { tenantId } : {}),
         },
-        items: true,
-        payments: true,
-      },
-    });
+        include: {
+          customer: {
+            select: { id: true, businessName: true, email: true, phone: true, mobile: true },
+          },
+          items: true,
+          payments: true,
+        },
+      });
+    } catch (err: any) {
+      // RF-050: duplicate invoiceNumber under concurrent requests
+      if (err?.code === "P2002") throw new ConflictException("Invoice number conflict — please retry.");
+      throw err;
+    }
   }
 
   /**

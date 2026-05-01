@@ -1217,14 +1217,57 @@ export class CustomersService {
 
   // ─── Delete ────────────────────────────────────────────────────────────────
 
-  async deleteCustomer(id: string) {
+  /**
+   * RF-197: Delete a customer safely.
+   *
+   * Without force: rejects with ConflictException if the customer has any
+   * orders, invoices, or returns — financial records must never be silently
+   * destroyed.
+   *
+   * With force=true (operator-only): performs a soft-delete (sets deletedAt)
+   * instead of a hard delete, preserving all financial records with their
+   * customer FK intact.  The customer user account is also deactivated
+   * (status INACTIVE) rather than deleted.
+   *
+   * Previously this method unconditionally cascade-deleted all related
+   * financial data in a single transaction.
+   */
+  async deleteCustomer(id: string, force = false) {
     const customer = await this.prisma.forTenant().customer.findUnique({
       where: { id },
       include: { user: { select: { status: true } } },
     });
     if (!customer) throw new NotFoundException("Customer not found");
 
-    // Delete all dependent records in correct order before removing the customer
+    // Count financial records that would be orphaned by a hard delete.
+    const [orderCount, invoiceCount, returnCount] = await Promise.all([
+      this.prisma.forTenant().order.count({ where: { customerId: id } }),
+      this.prisma.forTenant().invoice.count({ where: { customerId: id } }),
+      this.prisma.forTenant().return.count({ where: { customerId: id } }),
+    ]);
+
+    const hasFinancialRecords = orderCount + invoiceCount + returnCount > 0;
+
+    if (hasFinancialRecords && !force) {
+      throw new ConflictException(
+        `Cannot delete customer with existing financial records. ` +
+          `Affected: ${orderCount} order(s), ${invoiceCount} invoice(s), ${returnCount} return(s). ` +
+          `Use force=true to soft-delete the customer account while preserving all records.`,
+      );
+    }
+
+    if (force || hasFinancialRecords) {
+      // Soft-delete: mark the customer and deactivate their user account.
+      // All financial records are preserved with their customerId FK intact.
+      await this.prisma.tenantTransaction(async (tx) => {
+        await tx.customer.update({ where: { id }, data: { deletedAt: new Date() } });
+        await tx.user.update({ where: { id: customer.userId }, data: { status: "INACTIVE" } });
+      });
+      return { success: true, softDeleted: true };
+    }
+
+    // Hard-delete path (only reached when there are no financial records).
+    // Delete all dependent non-financial records in correct order.
     await this.prisma.tenantTransaction(async (tx) => {
       // Payments on invoices
       const invoices = await tx.invoice.findMany({
@@ -1343,9 +1386,37 @@ export class CustomersService {
     return { success: true };
   }
 
+  /**
+   * RF-080: Bulk customer delete.
+   *
+   * Before attempting any deletion the method checks every customer for PAID
+   * or SENT invoices and returns a per-customer breakdown.  The entire batch
+   * is blocked if any customer has such invoices — financial records from PAID
+   * or SENT invoices must never be silently destroyed.
+   *
+   * Previously batchDelete() called deleteCustomer() in a plain loop without
+   * checking invoice statuses, allowing bulk deletion to destroy PAID invoices.
+   */
   async batchDelete(
     ids: string[],
   ): Promise<{ deleted: number; failed: { id: string; reason: string }[] }> {
+    // Pre-flight: collect per-customer PAID/SENT invoice counts.
+    const blockers = await this.prisma.forTenant().invoice.groupBy({
+      by: ["customerId"],
+      where: {
+        customerId: { in: ids },
+        status: { in: ["PAID", "SENT"] },
+      },
+      _count: { _all: true },
+    });
+
+    if (blockers.length > 0) {
+      const breakdown = blockers.map((b) => `${b.customerId}: ${b._count._all} invoice(s)`);
+      throw new ConflictException(
+        `Bulk delete blocked — the following customers have PAID or SENT invoices that cannot be destroyed: ${breakdown.join("; ")}.`,
+      );
+    }
+
     const failed: { id: string; reason: string }[] = [];
     let deleted = 0;
     for (const id of ids) {
