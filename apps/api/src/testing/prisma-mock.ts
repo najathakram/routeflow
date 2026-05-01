@@ -12,7 +12,9 @@ export function createMockPrisma(): jest.Mocked<PrismaService> {
   const modelMethods = [
     "findMany",
     "findUnique",
+    "findUniqueOrThrow",
     "findFirst",
+    "findFirstOrThrow",
     "create",
     "createMany",
     "update",
@@ -28,7 +30,9 @@ export function createMockPrisma(): jest.Mocked<PrismaService> {
   const defaultReturnValues: Record<string, unknown> = {
     findMany: [],
     findUnique: null,
+    findUniqueOrThrow: {},
     findFirst: null,
+    findFirstOrThrow: {},
     create: {},
     createMany: { count: 0 },
     update: {},
@@ -88,6 +92,10 @@ export function createMockPrisma(): jest.Mocked<PrismaService> {
     customerTag: modelProxy(),
     customerComment: modelProxy(),
     tenant: modelProxy(),
+    return: modelProxy(),
+    returnItem: modelProxy(),
+    stockMovement: modelProxy(),
+    idempotencyKey: modelProxy(),
   });
 
   const txModels = () => ({
@@ -112,6 +120,7 @@ export function createMockPrisma(): jest.Mocked<PrismaService> {
     vendorBillItem: modelProxy(),
     billPayment: modelProxy(),
     refreshToken: modelProxy(),
+    idempotencyKey: modelProxy(),
     // Raw query support inside transactions
     $executeRaw: jest.fn().mockResolvedValue(0),
     $queryRaw: jest.fn().mockResolvedValue([]),

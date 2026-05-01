@@ -21,6 +21,7 @@ import {
 import {
   useActiveRouteRun,
   useCompleteStop,
+  useCompleteWithPayment,
   useRouteRun,
   type RouteRunStop,
 } from "../../../../../lib/api/routes";
@@ -77,43 +78,40 @@ export default function PaymentScreen() {
 
   const [method, setMethod] = useState<string>("Cash");
   const [received, setReceived] = useState<string>("0");
+  const [amountError, setAmountError] = useState<string | null>(null);
   const receivedNum = Number(received);
   const change = Math.max(0, receivedNum - invoiceTotal);
 
   const completeMut = useCompleteStop();
+  const completeWithPaymentMut = useCompleteWithPayment();
   const paymentMut = useRecordInvoicePayment();
   const pod = usePodStore((s) => (stopId ? s.pods[stopId] : undefined));
   const clearPod = usePodStore((s) => s.clear);
 
-  const submitting = completeMut.isPending || paymentMut.isPending;
+  const submitting = completeMut.isPending || completeWithPaymentMut.isPending || paymentMut.isPending;
 
   const closeStop = async () => {
     if (!stopId || !runId || !stop) return;
 
-    // 1. Complete the stop with all delivered items + POD
-    const items = (stop.orders ?? []).flatMap((o) =>
+    // RF-006: block submit when physical-money methods have zero collected amount
+    const requiresAmount = method === "Cash" || method === "Card" || method === "Cheque";
+    if (requiresAmount && receivedNum === 0) {
+      setAmountError(`Enter the ${method.toLowerCase()} amount received before closing.`);
+      return;
+    }
+    setAmountError(null);
+
+    // RF-005: use the atomic complete-with-payment endpoint so both writes
+    // succeed or fail together (no orphaned completed stop without payment).
+    const deliveries = (stop.orders ?? []).flatMap((o) =>
       (o.lineItems ?? []).map((li) => ({
         orderItemId: li.id,
         productId: li.productId,
         type: "DELIVERED" as const,
-        qty: Number(li.qty ?? 0),
+        quantityDelivered: Math.round(Number(li.qty ?? 0)),
       })),
     );
-    try {
-      await completeMut.mutateAsync({
-        runId,
-        stopId,
-        items,
-        podPhotoUrls: pod?.photoUrls,
-        signatureUrl: pod?.signatureUri,
-        driverNote: pod?.note,
-      });
-    } catch (e: any) {
-      showToast(e?.response?.data?.message ?? e?.message ?? "Try again.");
-      return;
-    }
 
-    // 2. Record payment if there's an invoice and the driver collected something
     const invoiceId = stop.orders?.[0]?.invoiceId;
     const apiMethod = ({
       Cash: "CASH",
@@ -123,17 +121,22 @@ export default function PaymentScreen() {
     }[method] ?? "OTHER") as "CASH" | "CHECK" | "CREDIT_CARD" | "ADVANCE" | "OTHER";
     const collected = method === "On account" ? 0 : Math.min(receivedNum, invoiceTotal);
 
-    if (invoiceId && collected > 0) {
-      try {
-        await paymentMut.mutateAsync({
-          invoiceId,
-          amount: collected,
-          method: apiMethod,
-        });
-      } catch (e: any) {
-        // Stop is already completed at this point, so warn but don't roll back
-        showToast(e?.response?.data?.message ?? e?.message ?? "Stop completed but payment failed — record from invoices later.");
-      }
+    try {
+      await completeWithPaymentMut.mutateAsync({
+        runId,
+        stopId,
+        deliveries,
+        podPhotoUrls: pod?.photoUrls,
+        signatureUrl: pod?.signatureUri,
+        driverNote: pod?.note,
+        payment:
+          invoiceId && collected > 0
+            ? { invoiceId, amount: collected, method: apiMethod }
+            : undefined,
+      });
+    } catch (e: any) {
+      showToast(e?.response?.data?.message ?? e?.message ?? "Try again.");
+      return;
     }
 
     clearPod(stopId);
@@ -260,6 +263,11 @@ export default function PaymentScreen() {
         </View>
 
         <View style={{ padding: 16 }}>
+          {amountError ? (
+            <View style={styles.amountErrorBox}>
+              <Text style={styles.amountErrorText}>{amountError}</Text>
+            </View>
+          ) : null}
           <Pressable
             style={[styles.greenBtn, submitting && styles.greenBtnDisabled]}
             onPress={submitting ? undefined : closeStop}
@@ -420,5 +428,18 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontSize: 17,
     fontFamily: "Inter_600SemiBold",
+  },
+  amountErrorBox: {
+    backgroundColor: "#FEE2E2",
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 10,
+  },
+  amountErrorText: {
+    color: "#B91C1C",
+    fontSize: 14,
+    fontFamily: "Inter_500Medium",
+    textAlign: "center",
   },
 });

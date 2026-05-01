@@ -5,6 +5,7 @@ import {
   Patch,
   Delete,
   Body,
+  Headers,
   Param,
   Query,
   UseGuards,
@@ -181,9 +182,41 @@ export class RouteRunsController {
         note?: string;
       }>;
     },
+    @Headers("idempotency-key") idempotencyKey: string | undefined,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.routesService.completeStop(runId, stopId, body, user);
+    return this.routesService.completeStop(runId, stopId, { ...body, idempotencyKey }, user);
+  }
+
+  // RF-005: Atomic complete + payment
+  @Post(":id/stops/:stopId/complete-with-payment")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
+  completeWithPayment(
+    @Param("id") runId: string,
+    @Param("stopId") stopId: string,
+    @Body()
+    body: {
+      driverNote?: string;
+      podPhotoUrls?: string[];
+      signatureUrl?: string;
+      safeDropEnabled?: boolean;
+      deliveries?: Array<{
+        orderItemId: string;
+        type: string;
+        quantityDelivered: number;
+        note?: string;
+      }>;
+      payment?: {
+        invoiceId: string;
+        amount: number;
+        method: string;
+      };
+    },
+    @Headers("idempotency-key") idempotencyKey: string | undefined,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.routesService.completeWithPayment(runId, stopId, { ...body, idempotencyKey }, user);
   }
 
   @Patch(":id/stops/:stopId")

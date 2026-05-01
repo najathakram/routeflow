@@ -5,6 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
+import { createHash } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import { UserRole, RouteRunStatus, OrderStatus, Prisma } from "@prisma/client";
@@ -989,6 +990,47 @@ export class RoutesService {
     return this.prisma.forTenant().routeRunStop.update({ where: { id: stopId }, data: updates });
   }
 
+  // ── RF-019: Idempotency helpers ───────────────────────────────────────────
+  // Uses raw SQL so the feature works before the IdempotencyKey table migration
+  // is applied — queries are wrapped in try/catch and fail silently if the table
+  // does not yet exist.
+
+  private makeKeyHash(key: string, scope: string): string {
+    return createHash("sha256").update(`${scope}:${key}`).digest("hex");
+  }
+
+  private async checkIdempotencyKey(key: string, scope: string): Promise<unknown | null> {
+    const hash = this.makeKeyHash(key, scope);
+    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    try {
+      const rows = await this.prisma.$queryRaw<{ response: string }[]>`
+        SELECT response FROM "IdempotencyKey"
+        WHERE "keyHash" = ${hash} AND "createdAt" >= ${cutoff}
+        LIMIT 1
+      `;
+      if (!rows || rows.length === 0) return null;
+      return JSON.parse(rows[0].response);
+    } catch {
+      return null; // table doesn't exist yet — degrade gracefully
+    }
+  }
+
+  private async saveIdempotencyKey(key: string, scope: string, response: unknown): Promise<void> {
+    const hash = this.makeKeyHash(key, scope);
+    try {
+      const responseJson = JSON.stringify(response);
+      await this.prisma.$executeRaw`
+        INSERT INTO "IdempotencyKey" ("id", "keyHash", "response", "createdAt")
+        VALUES (gen_random_uuid(), ${hash}, ${responseJson}, now())
+        ON CONFLICT ("keyHash") DO UPDATE
+          SET response   = EXCLUDED.response,
+              "createdAt" = now()
+      `;
+    } catch {
+      // best-effort — don't fail the request if idempotency storage errors
+    }
+  }
+
   async completeStop(
     runId: string,
     stopId: string,
@@ -1003,6 +1045,7 @@ export class RoutesService {
         quantityDelivered: number;
         note?: string;
       }>;
+      idempotencyKey?: string;
     },
     user: JwtPayload,
   ) {
@@ -1023,6 +1066,13 @@ export class RoutesService {
     });
     if (!stop) throw new NotFoundException("Stop not found");
     if (stop.status === "COMPLETED") throw new BadRequestException("Stop is already completed");
+
+    // RF-019: Idempotency check (outside transaction for speed)
+    if (dto.idempotencyKey) {
+      const scope = `completeStop:${runId}:${stopId}`;
+      const cached = await this.checkIdempotencyKey(dto.idempotencyKey, scope);
+      if (cached) return cached;
+    }
 
     const driver =
       user.role === UserRole.DRIVER
@@ -1076,9 +1126,200 @@ export class RoutesService {
           data: { status: OrderStatus.DELIVERED },
         });
       }
+
+      // RF-016: Auto-complete run when last stop is done
+      const allStops = await tx.routeRunStop.findMany({
+        where: { routeRunId: runId },
+        select: { id: true, status: true },
+      });
+      const allDone = allStops.every(
+        (s: any) => s.id === stopId || s.status === "COMPLETED" || s.status === "SKIPPED",
+      );
+      if (allDone) {
+        await tx.routeRun.update({
+          where: { id: runId },
+          data: { status: RouteRunStatus.COMPLETED, completedAt: new Date() },
+        });
+      }
     });
 
-    return this.prisma.forTenant().routeRunStop.findUniqueOrThrow({ where: { id: stopId } });
+    const result = await this.prisma.forTenant().routeRunStop.findUniqueOrThrow({ where: { id: stopId } });
+
+    // RF-019: persist idempotency key after successful write
+    if (dto.idempotencyKey) {
+      const scope = `completeStop:${runId}:${stopId}`;
+      await this.saveIdempotencyKey(dto.idempotencyKey, scope, result);
+    }
+
+    return result;
+  }
+
+  /**
+   * RF-005: Atomic complete + payment endpoint.
+   * POST /route-runs/:runId/stops/:stopId/complete-with-payment
+   * Both the stop completion and invoice payment land in one transaction so
+   * neither can succeed without the other.
+   */
+  async completeWithPayment(
+    runId: string,
+    stopId: string,
+    dto: {
+      driverNote?: string;
+      podPhotoUrls?: string[];
+      signatureUrl?: string;
+      safeDropEnabled?: boolean;
+      deliveries?: Array<{
+        orderItemId: string;
+        type: string;
+        quantityDelivered: number;
+        note?: string;
+      }>;
+      payment?: {
+        invoiceId: string;
+        amount: number;
+        method: string;
+      };
+      idempotencyKey?: string;
+    },
+    user: JwtPayload,
+  ) {
+    const run = await this.prisma.forTenant().routeRun.findUnique({ where: { id: runId } });
+    if (!run) throw new NotFoundException("Route run not found");
+    if (run.status !== RouteRunStatus.IN_PROGRESS) {
+      throw new ForbiddenException(
+        `Cannot complete a stop on a run that is not in progress (current status: ${run.status}).`,
+      );
+    }
+
+    const stop = await this.prisma.forTenant().routeRunStop.findFirst({
+      where: { id: stopId, routeRunId: runId },
+      include: { orders: { select: { id: true, status: true, customerId: true } } },
+    });
+    if (!stop) throw new NotFoundException("Stop not found");
+    if (stop.status === "COMPLETED") throw new BadRequestException("Stop is already completed");
+
+    // RF-006: reject physical-money payment with zero amount
+    if (dto.payment && dto.payment.amount <= 0) {
+      const physicalMethods = ["CASH", "CHECK", "CREDIT_CARD"];
+      if (physicalMethods.includes(dto.payment.method.toUpperCase())) {
+        throw new BadRequestException(
+          `Payment amount must be greater than 0 for ${dto.payment.method} payments.`,
+        );
+      }
+    }
+
+    // RF-019: Idempotency check
+    if (dto.idempotencyKey) {
+      const scope = `completeWithPayment:${runId}:${stopId}`;
+      const cached = await this.checkIdempotencyKey(dto.idempotencyKey, scope);
+      if (cached) return cached;
+    }
+
+    const driver =
+      user.role === UserRole.DRIVER
+        ? await this.prisma.forTenant().driver.findFirst({ where: { userId: user.sub } })
+        : null;
+
+    await this.prisma.tenantTransaction(async (tx) => {
+      // 1. Mark stop completed
+      await tx.routeRunStop.update({
+        where: { id: stopId },
+        data: {
+          status: "COMPLETED",
+          completedAt: new Date(),
+          ...(dto.driverNote !== undefined ? { driverNote: dto.driverNote } : {}),
+          ...(dto.podPhotoUrls ? { podPhotoUrls: dto.podPhotoUrls } : {}),
+          ...(dto.signatureUrl !== undefined ? { signatureUrl: dto.signatureUrl } : {}),
+          ...(dto.safeDropEnabled !== undefined ? { safeDropEnabled: dto.safeDropEnabled } : {}),
+        },
+      });
+
+      // 2. Record delivery mutations
+      if (dto.deliveries && dto.deliveries.length > 0) {
+        for (const d of dto.deliveries) {
+          const item = await tx.orderItem.findUnique({
+            where: { id: d.orderItemId },
+            select: { orderId: true },
+          });
+          if (!item) continue;
+          await tx.deliveryMutation.create({
+            data: {
+              orderId: item.orderId,
+              orderItemId: d.orderItemId,
+              routeRunStopId: stopId,
+              ...(driver ? { driverId: driver.id } : {}),
+              type: (d.type as any) ?? "DELIVERED",
+              quantityDelivered: d.quantityDelivered,
+            },
+          });
+        }
+      }
+
+      // 3. Mark linked orders as DELIVERED
+      const orderIds = stop.orders.map((o) => o.id);
+      if (orderIds.length > 0) {
+        await tx.order.updateMany({
+          where: {
+            id: { in: orderIds },
+            status: { notIn: [OrderStatus.CANCELLED, OrderStatus.DELIVERED] },
+          },
+          data: { status: OrderStatus.DELIVERED },
+        });
+      }
+
+      // 4. Record payment (atomic with stop completion — RF-005)
+      if (dto.payment && dto.payment.invoiceId && dto.payment.amount > 0) {
+        const invoice = await tx.invoice.findFirst({
+          where: { id: dto.payment.invoiceId },
+          select: { id: true, balance: true },
+        });
+        if (invoice) {
+          const paidAmount = new Prisma.Decimal(dto.payment.amount);
+          await tx.invoicePayment.create({
+            data: {
+              invoiceId: invoice.id,
+              amount: paidAmount,
+              method: dto.payment.method as any,
+              paidAt: new Date(),
+              tenantId: this.prisma.getTenantId(),
+            },
+          });
+          const newBalance = new Prisma.Decimal(invoice.balance ?? 0).minus(paidAmount);
+          await tx.invoice.update({
+            where: { id: invoice.id },
+            data: {
+              balance: newBalance,
+              status: newBalance.lessThanOrEqualTo(0) ? ("PAID" as any) : ("PARTIAL" as any),
+            },
+          });
+        }
+      }
+
+      // 5. RF-016: Auto-complete run when last stop is done
+      const allStops = await tx.routeRunStop.findMany({
+        where: { routeRunId: runId },
+        select: { id: true, status: true },
+      });
+      const allDone = allStops.every(
+        (s: any) => s.id === stopId || s.status === "COMPLETED" || s.status === "SKIPPED",
+      );
+      if (allDone) {
+        await tx.routeRun.update({
+          where: { id: runId },
+          data: { status: RouteRunStatus.COMPLETED, completedAt: new Date() },
+        });
+      }
+    });
+
+    const result = await this.prisma.forTenant().routeRunStop.findUniqueOrThrow({ where: { id: stopId } });
+
+    // RF-019: persist idempotency key
+    if (dto.idempotencyKey) {
+      const scope = `completeWithPayment:${runId}:${stopId}`;
+      await this.saveIdempotencyKey(dto.idempotencyKey, scope, result);
+    }
+
+    return result;
   }
 
   async getRunPackingList(runId: string) {

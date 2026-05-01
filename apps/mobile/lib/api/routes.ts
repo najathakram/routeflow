@@ -221,6 +221,59 @@ export function useCompleteStop() {
   });
 }
 
+// RF-005: Atomic complete + payment hook
+export interface CompleteWithPaymentDto {
+  runId: string;
+  stopId: string;
+  driverNote?: string;
+  deliveries?: Array<{
+    orderItemId: string;
+    productId: string;
+    type: string;
+    quantityDelivered: number;
+  }>;
+  podPhotoUrls?: string[];
+  signatureUrl?: string;
+  safeDropEnabled?: boolean;
+  payment?: {
+    invoiceId: string;
+    amount: number;
+    method: string;
+  };
+  idempotencyKey?: string;
+}
+
+export function useCompleteWithPayment() {
+  const qc = useQueryClient();
+  return useMutation<RouteRunStop, Error, CompleteWithPaymentDto>({
+    mutationFn: ({
+      runId,
+      stopId,
+      driverNote,
+      deliveries,
+      podPhotoUrls,
+      signatureUrl,
+      safeDropEnabled,
+      payment,
+      idempotencyKey,
+    }) => {
+      const headers: Record<string, string> = {};
+      if (idempotencyKey) headers['idempotency-key'] = idempotencyKey;
+      return apiClient
+        .post(
+          `/route-runs/${runId}/stops/${stopId}/complete-with-payment`,
+          { driverNote, deliveries, podPhotoUrls, signatureUrl, safeDropEnabled, payment },
+          { headers },
+        )
+        .then((r) => r.data);
+    },
+    onSuccess: (_, { runId }) => {
+      qc.invalidateQueries({ queryKey: ['route-runs', runId] });
+      qc.invalidateQueries({ queryKey: ['route-runs', 'active'] });
+    },
+  });
+}
+
 export function useUpdateStopStatus() {
   const qc = useQueryClient();
   return useMutation<RouteRunStop, Error, { runId: string; stopId: string; status: 'IN_PROGRESS' | 'SKIPPED'; driverNote?: string }>({

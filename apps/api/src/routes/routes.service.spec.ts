@@ -1,5 +1,5 @@
 import { Test, TestingModule } from "@nestjs/testing";
-import { NotFoundException, ForbiddenException } from "@nestjs/common";
+import { BadRequestException, NotFoundException, ForbiddenException } from "@nestjs/common";
 import { RoutesService } from "./routes.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
@@ -325,6 +325,214 @@ describe("RoutesService", () => {
       } as any);
 
       expect(gateway.emitToDriver).not.toHaveBeenCalled();
+    });
+  });
+
+  // ─── RF-016: Auto-complete run when last stop is DELIVERED ────────────────
+
+  describe("completeStop (RF-016)", () => {
+    const IN_PROGRESS_RUN = { ...MOCK_RUN, status: "IN_PROGRESS" as const };
+
+    it("should auto-complete the run when the last remaining stop is completed", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue(IN_PROGRESS_RUN);
+      prisma.routeRunStop.findFirst.mockResolvedValue({
+        id: "stop-1",
+        routeRunId: "run-1",
+        status: "PENDING",
+        orders: [],
+      });
+      prisma.driver.findFirst.mockResolvedValue(null);
+      // Simulate two stops — one being completed now, one already COMPLETED
+      const txMock = {
+        ...prisma,
+        routeRunStop: {
+          ...prisma.routeRunStop,
+          findMany: jest.fn().mockResolvedValue([
+            { id: "stop-1", status: "PENDING" },
+            { id: "stop-2", status: "COMPLETED" },
+          ]),
+          update: jest.fn().mockResolvedValue({}),
+          findUniqueOrThrow: jest.fn().mockResolvedValue({ id: "stop-1", status: "COMPLETED" }),
+        },
+        routeRun: {
+          ...prisma.routeRun,
+          update: jest.fn().mockResolvedValue({}),
+        },
+        order: { ...prisma.order, updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+        orderItem: { ...prisma.orderItem, findUnique: jest.fn().mockResolvedValue(null) },
+        deliveryMutation: { ...prisma.deliveryMutation, create: jest.fn() },
+        $executeRaw: jest.fn().mockResolvedValue(0),
+      };
+      (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(txMock));
+      prisma.routeRunStop.findUniqueOrThrow.mockResolvedValue({ id: "stop-1", status: "COMPLETED" });
+
+      await service.completeStop("run-1", "stop-1", {}, operatorPayload);
+
+      expect(txMock.routeRun.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "run-1" },
+          data: expect.objectContaining({ status: "COMPLETED" }),
+        }),
+      );
+    });
+
+    it("should NOT auto-complete the run when other stops are still pending", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue(IN_PROGRESS_RUN);
+      prisma.routeRunStop.findFirst.mockResolvedValue({
+        id: "stop-1",
+        routeRunId: "run-1",
+        status: "PENDING",
+        orders: [],
+      });
+      prisma.driver.findFirst.mockResolvedValue(null);
+      const txMock = {
+        ...prisma,
+        routeRunStop: {
+          ...prisma.routeRunStop,
+          findMany: jest.fn().mockResolvedValue([
+            { id: "stop-1", status: "PENDING" },
+            { id: "stop-2", status: "PENDING" }, // still pending
+          ]),
+          update: jest.fn().mockResolvedValue({}),
+        },
+        routeRun: { ...prisma.routeRun, update: jest.fn() },
+        order: { ...prisma.order, updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+        orderItem: { ...prisma.orderItem, findUnique: jest.fn().mockResolvedValue(null) },
+        deliveryMutation: { ...prisma.deliveryMutation, create: jest.fn() },
+        $executeRaw: jest.fn().mockResolvedValue(0),
+      };
+      (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(txMock));
+      prisma.routeRunStop.findUniqueOrThrow.mockResolvedValue({ id: "stop-1", status: "COMPLETED" });
+
+      await service.completeStop("run-1", "stop-1", {}, operatorPayload);
+
+      expect(txMock.routeRun.update).not.toHaveBeenCalled();
+    });
+  });
+
+  // ─── RF-005: Atomic complete + payment ───────────────────────────────────
+
+  describe("completeWithPayment (RF-005)", () => {
+    const IN_PROGRESS_RUN = { ...MOCK_RUN, status: "IN_PROGRESS" as const };
+
+    it("should complete stop and record payment in one transaction", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue(IN_PROGRESS_RUN);
+      prisma.routeRunStop.findFirst.mockResolvedValue({
+        id: "stop-1",
+        routeRunId: "run-1",
+        status: "PENDING",
+        orders: [],
+      });
+      prisma.driver.findFirst.mockResolvedValue(null);
+      const txMock = {
+        ...prisma,
+        routeRunStop: {
+          ...prisma.routeRunStop,
+          findMany: jest.fn().mockResolvedValue([{ id: "stop-1", status: "PENDING" }]),
+          update: jest.fn().mockResolvedValue({}),
+        },
+        routeRun: { ...prisma.routeRun, update: jest.fn().mockResolvedValue({}) },
+        order: { ...prisma.order, updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+        orderItem: { ...prisma.orderItem, findUnique: jest.fn().mockResolvedValue(null) },
+        deliveryMutation: { ...prisma.deliveryMutation, create: jest.fn() },
+        invoice: {
+          ...prisma.invoice,
+          findFirst: jest.fn().mockResolvedValue({ id: "inv-1", balance: 100 }),
+          update: jest.fn().mockResolvedValue({}),
+        },
+        invoicePayment: { ...prisma.invoicePayment, create: jest.fn().mockResolvedValue({}) },
+        $executeRaw: jest.fn().mockResolvedValue(0),
+      };
+      (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(txMock));
+      prisma.routeRunStop.findUniqueOrThrow.mockResolvedValue({ id: "stop-1", status: "COMPLETED" });
+
+      await service.completeWithPayment(
+        "run-1",
+        "stop-1",
+        { payment: { invoiceId: "inv-1", amount: 50, method: "CASH" } },
+        operatorPayload,
+      );
+
+      expect(txMock.invoicePayment.create).toHaveBeenCalled();
+      expect(txMock.invoice.update).toHaveBeenCalled();
+    });
+
+    it("should throw BadRequestException for CASH payment with amount=0 (RF-006)", async () => {
+      const inProgressRun = { ...MOCK_RUN, status: "IN_PROGRESS" as const };
+      prisma.routeRun.findUnique.mockResolvedValue(inProgressRun);
+      prisma.routeRunStop.findFirst.mockResolvedValue({
+        id: "stop-1",
+        routeRunId: "run-1",
+        status: "PENDING",
+        orders: [],
+      });
+
+      await expect(
+        service.completeWithPayment(
+          "run-1",
+          "stop-1",
+          { payment: { invoiceId: "inv-1", amount: 0, method: "CASH" } },
+          operatorPayload,
+        ),
+      ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  // ─── RF-019: Idempotency key deduplication ───────────────────────────────
+
+  describe("completeStop idempotency (RF-019)", () => {
+    const IN_PROGRESS_RUN = { ...MOCK_RUN, status: "IN_PROGRESS" as const };
+
+    it("should return cached response for duplicate idempotency key", async () => {
+      const cachedStop = { id: "stop-1", status: "COMPLETED" };
+      prisma.routeRun.findUnique.mockResolvedValue(IN_PROGRESS_RUN);
+      prisma.routeRunStop.findFirst.mockResolvedValue({
+        id: "stop-1",
+        routeRunId: "run-1",
+        status: "PENDING",
+        orders: [],
+      });
+
+      // Mock $queryRaw to simulate an existing idempotency key in the DB
+      (prisma.$queryRaw as jest.Mock).mockResolvedValueOnce([
+        { response: JSON.stringify(cachedStop) },
+      ]);
+
+      const result = await service.completeStop(
+        "run-1",
+        "stop-1",
+        { idempotencyKey: "test-key-123" },
+        operatorPayload,
+      );
+
+      // Should return the cached response, not call tenantTransaction
+      expect(result).toEqual(cachedStop);
+      expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+    });
+  });
+
+  // ─── RF-167: GET /route-runs/my-runs regression check ───────────────────
+
+  describe("findMyRuns (RF-167)", () => {
+    it("should return active runs for the authenticated driver", async () => {
+      const mockDriver = { id: "drv-1", userId: "user-drv" };
+      const mockRuns = [{ ...MOCK_RUN, status: "IN_PROGRESS" as const, stops: [] }];
+      prisma.driver.findFirst.mockResolvedValue(mockDriver);
+      prisma.routeRun.findMany.mockResolvedValue(mockRuns);
+
+      const result = await service.findMyRuns(driverPayload);
+      expect(result.data).toHaveLength(1);
+      expect(prisma.routeRun.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ driverId: "drv-1" }),
+        }),
+      );
+    });
+
+    it("should return empty list when driver profile not found", async () => {
+      prisma.driver.findFirst.mockResolvedValue(null);
+      const result = await service.findMyRuns(driverPayload);
+      expect(result.data).toHaveLength(0);
     });
   });
 });

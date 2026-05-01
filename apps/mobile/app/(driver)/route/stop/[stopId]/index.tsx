@@ -160,7 +160,12 @@ export default function StopDetailScreen() {
   const photoCount = pod?.photoUrls?.length ?? 0;
   const hasSig = !!pod?.signatureUri;
   const hasNote = !!pod?.note;
-  const items = itemsFromStop(stop);
+  // NEW-m1-1: memoize items so itemsFromStop is not called on every render.
+  // Without this, tapping any checkbox on a DELIVERED stop triggers
+  // React error #185 (max update depth exceeded) because itemsFromStop
+  // returns a new array reference on each render cycle, causing downstream
+  // effects that depend on `items` to re-run indefinitely.
+  const items = useMemo(() => itemsFromStop(stop), [stop]);
   const itemCount = items.length;
   const dollarTotal = (stop.orders ?? []).reduce(
     (sum, o) =>
