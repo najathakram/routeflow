@@ -257,7 +257,7 @@ export default function LoginPage() {
             <Button
               type="submit"
               loading={isLoading}
-              disabled={throttleSeconds && throttleSeconds > 0}
+              disabled={!!(throttleSeconds && throttleSeconds > 0)}
               className="mt-2 w-full"
             >
               Sign in
