@@ -93,6 +93,14 @@ export interface CreditNoteCreatedPayload {
   amount: number;
 }
 
+export interface RouteDispatchedPayload {
+  runId: string;
+  routeId: string;
+  routeName: string;
+  scheduledDate: string;
+  stopCount: number;
+}
+
 // ─── Gateway ──────────────────────────────────────────────────────────────────
 
 @WebSocketGateway({
@@ -217,5 +225,12 @@ export class RouteFlowGateway implements OnGatewayConnection, OnGatewayDisconnec
     this.server
       .to(this.tenantRoom(tenantId, `customer:${payload.customerId}`))
       .emit("creditNote.created", payload);
+  }
+
+  /** RF-015: Notify a specific driver that a run has been dispatched to them. */
+  emitToDriver(tenantId: string | null, driverId: string, payload: RouteDispatchedPayload) {
+    this.server
+      .to(this.tenantRoom(tenantId, `driver:${driverId}`))
+      .emit("route.dispatched", payload);
   }
 }

@@ -9,6 +9,7 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { Cron } from "@nestjs/schedule";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
+import { TenantContextService } from "../tenant/tenant-context.service";
 import { OrdersService } from "../orders/orders.service";
 import { CreateOrderTemplateDto } from "./dto/create-order-template.dto";
 import { UpdateOrderTemplateDto } from "./dto/update-order-template.dto";
@@ -27,6 +28,7 @@ export class OrderTemplatesService {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly tenantCtx: TenantContextService,
     private readonly config: ConfigService,
     private readonly ordersService: OrdersService,
   ) {
@@ -227,39 +229,52 @@ export class OrderTemplatesService {
 
     this.logger.log(`Running daily order generation for day ${dayOfWeek}`);
 
-    const templates = await this.prisma.forTenant().orderTemplate.findMany({
-      where: { isActive: true, daysOfWeek: { has: dayOfWeek } },
-      include: { items: true },
+    // RF-008: cron has no HTTP request context so ALS is empty. Fetch all
+    // active tenants and run each in its own ALS scope so forTenant() works.
+    const activeTenants = await this.prisma.tenant.findMany({
+      where: { status: "ACTIVE" },
+      select: { id: true },
     });
 
-    let created = 0;
-    let skipped = 0;
+    let totalCreated = 0;
+    let totalSkipped = 0;
 
-    for (const template of templates) {
-      // Idempotency: skip if order already generated today for this template
-      const existing = await this.prisma.forTenant().order.findFirst({
-        where: {
-          templateId: template.id,
-          createdAt: { gte: startOfDay(today) },
-        },
+    for (const tenant of activeTenants) {
+      await this.tenantCtx.run(tenant.id, async () => {
+        const templates = await this.prisma.forTenant().orderTemplate.findMany({
+          where: { isActive: true, daysOfWeek: { has: dayOfWeek } },
+          include: { items: true },
+        });
+
+        for (const template of templates) {
+          // Idempotency: skip if order already generated today for this template
+          const existing = await this.prisma.forTenant().order.findFirst({
+            where: {
+              templateId: template.id,
+              createdAt: { gte: startOfDay(today) },
+            },
+          });
+          if (existing) {
+            totalSkipped++;
+            continue;
+          }
+
+          try {
+            await this.createOrderFromTemplate(template);
+            totalCreated++;
+          } catch (err) {
+            this.logger.error(
+              `[tenant:${tenant.id}] Failed to generate order for template ${template.id} (${template.name})`,
+              err instanceof Error ? err.stack : String(err),
+            );
+          }
+        }
       });
-      if (existing) {
-        skipped++;
-        continue;
-      }
-
-      try {
-        await this.createOrderFromTemplate(template);
-        created++;
-      } catch (err) {
-        this.logger.error(
-          `Failed to generate order for template ${template.id} (${template.name})`,
-          err instanceof Error ? err.stack : String(err),
-        );
-      }
     }
 
-    this.logger.log(`Daily order generation complete: ${created} created, ${skipped} skipped`);
+    this.logger.log(
+      `Daily order generation complete: ${totalCreated} created, ${totalSkipped} skipped across ${activeTenants.length} tenant(s)`,
+    );
   }
 
   private async createOrderFromTemplate(template: {

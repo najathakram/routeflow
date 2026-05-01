@@ -3,6 +3,7 @@ import { NotFoundException, ForbiddenException } from "@nestjs/common";
 import { RoutesService } from "./routes.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
+import { NotificationsService } from "../notifications/notifications.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 const MOCK_ROUTE = {
@@ -47,23 +48,30 @@ const driverPayload = {
 describe("RoutesService", () => {
   let service: RoutesService;
   let prisma: ReturnType<typeof createMockPrisma>;
+  let gateway: jest.Mocked<Pick<RouteFlowGateway, "emitStopCompleted" | "emitOrderCreated" | "emitOrderStatusChanged" | "emitLowStock" | "emitToDriver">>;
+  let notifications: jest.Mocked<Pick<NotificationsService, "sendToDriver">>;
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+
+    gateway = {
+      emitStopCompleted: jest.fn(),
+      emitOrderCreated: jest.fn(),
+      emitOrderStatusChanged: jest.fn(),
+      emitLowStock: jest.fn(),
+      emitToDriver: jest.fn(),
+    };
+
+    notifications = {
+      sendToDriver: jest.fn().mockResolvedValue(undefined),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         RoutesService,
         { provide: PrismaService, useValue: prisma },
-        {
-          provide: RouteFlowGateway,
-          useValue: {
-            emitStopCompleted: jest.fn(),
-            emitOrderCreated: jest.fn(),
-            emitOrderStatusChanged: jest.fn(),
-            emitLowStock: jest.fn(),
-          },
-        },
+        { provide: RouteFlowGateway, useValue: gateway },
+        { provide: NotificationsService, useValue: notifications },
       ],
     }).compile();
 
@@ -228,7 +236,15 @@ describe("RoutesService", () => {
         ...MOCK_ROUTE,
         stops: [{ id: "rs-1", stopNumber: 1, customerId: "c1", customerAddressId: "a1" }],
       });
-      prisma.routeRun.create.mockResolvedValue({ ...MOCK_RUN, stops: [] });
+      // RF-015: createRun now accesses run.route and run.stops — supply them in the mock
+      prisma.routeRun.create.mockResolvedValue({
+        ...MOCK_RUN,
+        driverId: null,
+        scheduledDate: new Date("2025-06-01"),
+        route: { id: "route-1", name: "Downtown Route" },
+        stops: [],
+      });
+      prisma.order.updateMany.mockResolvedValue({ count: 0 });
 
       await service.createRun({
         routeId: "route-1",
@@ -252,6 +268,63 @@ describe("RoutesService", () => {
           }),
         }),
       );
+    });
+
+    // RF-015: operator dispatch must emit route.dispatched to the driver's socket room
+    it("should emit route.dispatched via gateway when driver is assigned", async () => {
+      const mockRun = {
+        ...MOCK_RUN,
+        driverId: "drv-1",
+        scheduledDate: new Date("2025-06-01"),
+        route: { id: "route-1", name: "Downtown Route" },
+        stops: [{ id: "rrs-1", customerId: "c1" }],
+      };
+      prisma.route.findUnique.mockResolvedValue({
+        ...MOCK_ROUTE,
+        stops: [{ id: "rs-1", stopNumber: 1, customerId: "c1", customerAddressId: "a1" }],
+      });
+      prisma.routeRun.create.mockResolvedValue(mockRun);
+      prisma.order.updateMany.mockResolvedValue({ count: 0 });
+
+      await service.createRun({
+        routeId: "route-1",
+        driverId: "drv-1",
+        scheduledDate: "2025-06-01",
+      } as any);
+
+      expect(gateway.emitToDriver).toHaveBeenCalledWith(
+        expect.anything(), // tenantId
+        "drv-1",
+        expect.objectContaining({
+          runId: mockRun.id,
+          routeId: "route-1",
+          routeName: "Downtown Route",
+          stopCount: 1,
+        }),
+      );
+    });
+
+    // RF-015: no socket emit when no driver assigned
+    it("should NOT emit route.dispatched when no driver is assigned", async () => {
+      const mockRun = {
+        ...MOCK_RUN,
+        driverId: null,
+        scheduledDate: new Date("2025-06-01"),
+        route: { id: "route-1", name: "Downtown Route" },
+        stops: [],
+      };
+      prisma.route.findUnique.mockResolvedValue({
+        ...MOCK_ROUTE,
+        stops: [],
+      });
+      prisma.routeRun.create.mockResolvedValue(mockRun);
+
+      await service.createRun({
+        routeId: "route-1",
+        scheduledDate: "2025-06-01",
+      } as any);
+
+      expect(gateway.emitToDriver).not.toHaveBeenCalled();
     });
   });
 });

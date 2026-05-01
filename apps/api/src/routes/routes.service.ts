@@ -16,6 +16,7 @@ import { CreateRouteRunDto } from "./dto/create-route-run.dto";
 import { UpdateRunStatusDto } from "./dto/update-run-status.dto";
 import { ListRunsDto } from "./dto/list-runs.dto";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
+import { NotificationsService } from "../notifications/notifications.service";
 
 // Shared per-stop include used by both list (`findAllRuns`) and detail
 // (`findOneRun`) so the two endpoints stay in lockstep. Driver list views need
@@ -75,6 +76,7 @@ export class RoutesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly gateway: RouteFlowGateway,
+    private readonly notifications: NotificationsService,
   ) {}
 
   // ── Route Templates ────────────────────────────────────────────────────
@@ -605,6 +607,34 @@ export class RoutesService {
           }),
         ),
     );
+
+    // RF-015: notify the assigned driver via WebSocket + push so the run
+    // appears on their device immediately after dispatch (no pull-to-refresh needed).
+    if (run.driverId) {
+      const tenantId = this.prisma.getTenantId();
+      const dispatchPayload = {
+        runId: run.id,
+        routeId: run.route.id,
+        routeName: run.route.name,
+        scheduledDate: run.scheduledDate.toISOString(),
+        stopCount: run.stops.length,
+      };
+
+      // Socket.IO: delivers instantly when driver is connected
+      this.gateway.emitToDriver(tenantId, run.driverId, dispatchPayload);
+
+      // Push notification: delivers when driver is offline/backgrounded
+      this.notifications
+        .sendToDriver(
+          run.driverId,
+          "New route dispatched",
+          `You have been assigned to ${run.route.name} (${run.stops.length} stop${run.stops.length !== 1 ? "s" : ""})`,
+          { runId: run.id, screen: "route" },
+        )
+        .catch(() => {
+          // Best-effort — do not fail dispatch if push is unavailable
+        });
+    }
 
     return run;
   }

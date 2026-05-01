@@ -28,6 +28,14 @@ interface StopCompletedPayload {
   runId: string;
 }
 
+interface RouteDispatchedPayload {
+  runId: string;
+  routeId: string;
+  routeName: string;
+  scheduledDate: string;
+  stopCount: number;
+}
+
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
 export function useSocket() {
@@ -75,6 +83,12 @@ export function useSocket() {
       socket.on("order.statusChanged", (_data: OrderStatusChangedPayload) => {
         void qc.invalidateQueries({ queryKey: ["admin", "orders"] });
         void qc.invalidateQueries({ queryKey: ["admin", "dashboard"] });
+      });
+
+      // RF-015: driver receives this when operator dispatches a run to them
+      socket.on("route.dispatched", (_data: RouteDispatchedPayload) => {
+        void qc.invalidateQueries({ queryKey: ["route-runs"] });
+        void qc.invalidateQueries({ queryKey: ["admin", "routes"] });
       });
 
       socket.on("route.stop.completed", (_data: StopCompletedPayload) => {

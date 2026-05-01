@@ -3,9 +3,10 @@ import { RoutesService } from "./routes.service";
 import { RoutesController, RouteRunsController } from "./routes.controller";
 import { AuthModule } from "../auth/auth.module";
 import { GatewaysModule } from "../gateways/gateways.module";
+import { NotificationsModule } from "../notifications/notifications.module";
 
 @Module({
-  imports: [AuthModule, GatewaysModule],
+  imports: [AuthModule, GatewaysModule, NotificationsModule],
   controllers: [RoutesController, RouteRunsController],
   providers: [RoutesService],
   exports: [RoutesService],

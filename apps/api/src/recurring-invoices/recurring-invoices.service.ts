@@ -1,6 +1,7 @@
 import { Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { Cron, CronExpression } from "@nestjs/schedule";
 import { PrismaService } from "../prisma/prisma.service";
+import { TenantContextService } from "../tenant/tenant-context.service";
 import { InvoicesService } from "../invoices/invoices.service";
 import { CreateRecurringInvoiceDto } from "./dto/create-recurring-invoice.dto";
 import { RecurringFrequency } from "@prisma/client";
@@ -11,6 +12,7 @@ export class RecurringInvoicesService {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly tenantCtx: TenantContextService,
     private readonly invoicesService: InvoicesService,
   ) {}
 
@@ -197,31 +199,42 @@ export class RecurringInvoicesService {
 
   @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
   async generateDueRecurringInvoices() {
-    const due = await this.prisma.forTenant().recurringInvoice.findMany({
-      where: { isActive: true, nextRunAt: { lte: new Date() } },
-      include: { items: true, customer: true },
+    // RF-008: cron has no HTTP request context so ALS is empty. Fetch all
+    // active tenants and run each in its own ALS scope so forTenant() works.
+    const activeTenants = await this.prisma.tenant.findMany({
+      where: { status: "ACTIVE" },
+      select: { id: true },
     });
 
-    if (due.length === 0) return;
-    this.logger.log(`Processing ${due.length} due recurring invoice(s)…`);
+    let totalSuccess = 0;
+    let totalFail = 0;
 
-    let successCount = 0;
-    let failCount = 0;
+    for (const tenant of activeTenants) {
+      await this.tenantCtx.run(tenant.id, async () => {
+        const due = await this.prisma.forTenant().recurringInvoice.findMany({
+          where: { isActive: true, nextRunAt: { lte: new Date() } },
+          include: { items: true, customer: true },
+        });
 
-    for (const ri of due) {
-      try {
-        await this.generateInvoiceFromTemplate(ri);
-        successCount++;
-      } catch (err) {
-        failCount++;
-        this.logger.error(
-          `Failed to generate invoice for recurring template ${ri.id} (customer: ${ri.customerId}): ${err instanceof Error ? err.message : err}`,
-        );
-      }
+        if (due.length === 0) return;
+        this.logger.log(`[tenant:${tenant.id}] Processing ${due.length} due recurring invoice(s)…`);
+
+        for (const ri of due) {
+          try {
+            await this.generateInvoiceFromTemplate(ri);
+            totalSuccess++;
+          } catch (err) {
+            totalFail++;
+            this.logger.error(
+              `[tenant:${tenant.id}] Failed to generate invoice for recurring template ${ri.id} (customer: ${ri.customerId}): ${err instanceof Error ? err.message : err}`,
+            );
+          }
+        }
+      });
     }
 
     this.logger.log(
-      `Recurring invoices: ${successCount} generated, ${failCount} failed out of ${due.length} due.`,
+      `Recurring invoices: ${totalSuccess} generated, ${totalFail} failed across ${activeTenants.length} tenant(s).`,
     );
   }
 }
