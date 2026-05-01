@@ -33,13 +33,13 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://api.routeflow.app"
+        "EXPO_PUBLIC_API_URL": "https://routeflowapi-production.up.railway.app"
       }
     },
     "production": {
       "autoIncrement": true,
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://api.routeflow.app"
+        "EXPO_PUBLIC_API_URL": "https://routeflowapi-production.up.railway.app"
       }
     }
   },
