@@ -41,10 +41,12 @@ export class ReturnsController {
     );
   }
 
+  /** RF-081: Restricted to OPERATOR | TENANT_ADMIN | CUSTOMER (no DRIVER).
+   * CUSTOMER role gets an ownership check inside findOneForUser(). */
   @Get(":id")
-  @Roles(UserRole.OPERATOR, UserRole.DRIVER, UserRole.CUSTOMER)
-  findOne(@Param("id") id: string) {
-    return this.returnsService.findOne(id);
+  @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN, UserRole.CUSTOMER)
+  findOne(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
+    return this.returnsService.findOneForUser(id, user);
   }
 
   @Post(":id/approve")

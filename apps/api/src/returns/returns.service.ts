@@ -192,7 +192,9 @@ export class ReturnsService {
     if (!ret) throw new NotFoundException("Return not found");
     if (ret.status !== "APPROVED")
       throw new BadRequestException("Only APPROVED returns can be marked in transit");
-    return this.prisma.forTenant().return.update({ where: { id }, data: { status: "IN_TRANSIT" } });
+    return this.prisma
+      .forTenant()
+      .return.update({ where: { id }, data: { status: "IN_TRANSIT" } });
   }
 
   async receive(id: string, userId: string) {
@@ -261,6 +263,20 @@ export class ReturnsService {
       }
       return tx.return.update({ where: { id }, data: { status: "CANCELLED" } });
     });
+  }
+
+  /** RF-081: Fetches a return by ID with ownership enforcement for CUSTOMER role. */
+  async findOneForUser(id: string, user: JwtPayload) {
+    const ret = await this.findOne(id);
+    if (user.role === "CUSTOMER") {
+      const customer = await this.prisma
+        .forTenant()
+        .customer.findFirst({ where: { userId: user.sub } });
+      if (!customer || ret.customerId !== customer.id) {
+        throw new ForbiddenException("You can only view your own returns");
+      }
+    }
+    return ret;
   }
 
   async findOne(id: string) {

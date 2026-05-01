@@ -6,6 +6,7 @@ import helmet from "helmet";
 import { Pool } from "pg";
 import { AppModule } from "./app.module";
 import { RedisIoAdapter } from "./gateways/redis-io.adapter";
+import { ThrottlerExceptionFilter } from "./common/throttler-exception.filter";
 
 const DEFAULT_CORS_ORIGINS = [
   "http://localhost:3001", // web dashboard
@@ -114,6 +115,10 @@ async function bootstrap() {
     },
     credentials: true,
   });
+
+  // ─── Global exception filters ────────────────────────────────────────────────
+  // RF-160: emit Retry-After header on 429 throttle responses
+  app.useGlobalFilters(new ThrottlerExceptionFilter());
 
   // ─── Validation ─────────────────────────────────────────────────────────────
   app.useGlobalPipes(

@@ -90,6 +90,8 @@ function TabTrigger({
 // ─── TAB 1: Business Profile ──────────────────────────────────────────────────
 
 const profileSchema = z.object({
+  businessName: z.string().min(1, "Required"),
+  email: z.string().email("Enter a valid email"),
   ownerName: z.string().min(1, "Required"),
   phone: z.string().min(7, "Enter a valid phone number"),
   customerEmail: z.string().email("Enter a valid email").or(z.literal("")),
@@ -125,6 +127,8 @@ function BusinessProfileTab() {
   const { register, handleSubmit, reset, watch, setValue, formState: { errors, isSubmitting } } = useForm<ProfileFormValues>({
     resolver: zodResolver(profileSchema),
     defaultValues: {
+      businessName: "",
+      email: "",
       ownerName: "",
       phone: "",
       customerEmail: "",
@@ -139,6 +143,8 @@ function BusinessProfileTab() {
   React.useEffect(() => {
     if (savedSettings) {
       reset({
+        businessName: savedSettings.businessName ?? "",
+        email: savedSettings.email ?? "",
         ownerName: savedSettings.ownerName ?? "",
         phone: savedSettings.phone ?? "",
         customerEmail: savedSettings.customerEmail ?? "",
@@ -166,22 +172,10 @@ function BusinessProfileTab() {
     <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-6">
       <Card title="Business Information">
         <div className="grid grid-cols-2 gap-4">
-          <div className="flex flex-col gap-1">
-            <label className="text-sm font-medium text-navy">Business Name</label>
-            <div className="flex h-10 items-center rounded border border-surface-border bg-surface-raised px-3 text-sm text-navy/70">
-              {savedSettings?.businessName || "Set by platform admin"}
-            </div>
-            <p className="text-xs text-navy/40">Managed by platform admin</p>
-          </div>
+          <Input label="Business Name" register={register("businessName")} error={errors.businessName?.message} />
+          <Input label="Account Email" type="email" register={register("email")} error={errors.email?.message} />
           <Input label="Owner / Manager Name" register={register("ownerName")} error={errors.ownerName?.message} />
           <Input label="Phone" type="tel" register={register("phone")} error={errors.phone?.message} />
-          <div className="flex flex-col gap-1">
-            <label className="text-sm font-medium text-navy">Account Email</label>
-            <div className="flex h-10 items-center rounded border border-surface-border bg-surface-raised px-3 text-sm text-navy/70">
-              {savedSettings?.email || "Set by platform admin"}
-            </div>
-            <p className="text-xs text-navy/40">Used for RouteFlow communications. Managed by platform admin.</p>
-          </div>
           <div className="col-span-2">
             <Input
               label="Customer-Facing Email"
@@ -276,7 +270,7 @@ function BusinessProfileTab() {
       </Card>
 
       <div className="flex justify-end">
-        <Button type="submit" loading={isSubmitting}>Save Changes</Button>
+        <Button type="submit" loading={isSubmitting} disabled={Object.keys(errors).length > 0}>Save Changes</Button>
       </div>
     </form>
   );
@@ -328,6 +322,26 @@ function NotificationsTab() {
           {!notificationsStatus?.configured && (
             <div className="text-sm text-navy/60">
               <p>Push notifications allow drivers to receive real-time alerts for new orders and route assignments. Contact your system administrator to enable this feature.</p>
+            </div>
+          )}
+
+          {notificationsStatus?.configured && (
+            <div className="space-y-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-navy/40">Notification Types</p>
+              <div className="space-y-2">
+                <label className="flex items-center gap-3 p-2 rounded hover:bg-surface-raised cursor-pointer">
+                  <input type="checkbox" defaultChecked className="h-4 w-4 rounded border-surface-border" />
+                  <span className="text-sm text-navy">Order Placed</span>
+                </label>
+                <label className="flex items-center gap-3 p-2 rounded hover:bg-surface-raised cursor-pointer">
+                  <input type="checkbox" defaultChecked className="h-4 w-4 rounded border-surface-border" />
+                  <span className="text-sm text-navy">Order Delivered</span>
+                </label>
+                <label className="flex items-center gap-3 p-2 rounded hover:bg-surface-raised cursor-pointer">
+                  <input type="checkbox" defaultChecked className="h-4 w-4 rounded border-surface-border" />
+                  <span className="text-sm text-navy">Payment Received</span>
+                </label>
+              </div>
             </div>
           )}
 
