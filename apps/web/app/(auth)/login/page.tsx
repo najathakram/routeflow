@@ -55,6 +55,7 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = React.useState(false);
   const [googleLoading, setGoogleLoading] = React.useState(false);
   const [googleError, setGoogleError] = React.useState<string | null>(null);
+  const [throttleSeconds, setThrottleSeconds] = React.useState<number | null>(null);
 
   const {
     register,
@@ -64,9 +65,25 @@ export default function LoginPage() {
     resolver: zodResolver(loginSchema),
   });
 
+  // NEW-rweb-4: countdown timer for throttle display
+  React.useEffect(() => {
+    if (!throttleSeconds || throttleSeconds <= 0) return;
+    const timer = setInterval(() => {
+      setThrottleSeconds((s) => {
+        if (!s || s <= 1) {
+          clearInterval(timer);
+          return null;
+        }
+        return s - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [throttleSeconds]);
+
   const onSubmit = async (data: LoginFormValues) => {
     setIsLoading(true);
     setApiError(null);
+    setThrottleSeconds(null);
     try {
       const user = await authLogin(data.username, data.password);
       if (user.forcePasswordChange) {
@@ -75,9 +92,22 @@ export default function LoginPage() {
         router.push("/dashboard");
       }
     } catch (err: unknown) {
+      // NEW-rweb-4: parse Retry-After header on 429 throttling for friendlier UX
+      const errObj = err as { response?: { status?: number; headers?: Record<string, string>; data?: { message?: string } } };
+      if (errObj?.response?.status === 429) {
+        const retryAfter = errObj.response.headers?.["retry-after"];
+        if (retryAfter) {
+          const seconds = Math.ceil(Number(retryAfter));
+          if (!isNaN(seconds) && seconds > 0) {
+            setThrottleSeconds(seconds);
+            setApiError(null);
+            setIsLoading(false);
+            return;
+          }
+        }
+      }
       const msg =
-        (err as { response?: { data?: { message?: string } } })?.response?.data
-          ?.message ?? "Invalid username or password.";
+        errObj?.response?.data?.message ?? "Invalid username or password.";
       setApiError(typeof msg === "string" ? msg : "Login failed.");
       setIsLoading(false);
     }
@@ -169,11 +199,15 @@ export default function LoginPage() {
         {/* Card */}
         <div className="rounded-xl bg-white p-6 shadow-card">
           <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4" noValidate>
-            {apiError && (
+            {throttleSeconds && throttleSeconds > 0 ? (
+              <p className="rounded-lg bg-warning-bg px-3 py-2 text-sm text-warning">
+                Too many login attempts. Try again in {throttleSeconds} {throttleSeconds === 1 ? "second" : "seconds"}.
+              </p>
+            ) : apiError ? (
               <p className="rounded-lg bg-danger-bg px-3 py-2 text-sm text-danger">
                 {apiError}
               </p>
-            )}
+            ) : null}
             <Input
               label="Username or Email"
               placeholder="Enter your username or email"
@@ -220,7 +254,12 @@ export default function LoginPage() {
                 <p className="text-xs text-danger">{errors.password.message}</p>
               )}
             </div>
-            <Button type="submit" loading={isLoading} className="mt-2 w-full">
+            <Button
+              type="submit"
+              loading={isLoading}
+              disabled={throttleSeconds && throttleSeconds > 0}
+              className="mt-2 w-full"
+            >
               Sign in
             </Button>
           </form>

@@ -112,6 +112,12 @@ export default function PaymentScreen() {
       })),
     );
 
+    // NEW-m1-3: validate that at least one item is being delivered
+    if (deliveries.length === 0) {
+      setAmountError("At least one item must be marked for delivery before completing this stop.");
+      return;
+    }
+
     const invoiceId = stop.orders?.[0]?.invoiceId;
     const apiMethod = ({
       Cash: "CASH",
