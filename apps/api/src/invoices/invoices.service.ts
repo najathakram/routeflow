@@ -352,9 +352,16 @@ export class InvoicesService {
       tenantId,
     }));
 
+    // RF-079: apply tax-exempt check in the fire-and-forget path too.
+    const customerForTax = tenantId
+      ? await this.prisma.customer.findFirst({
+          where: { id: order.customerId, ...(tenantId ? { tenantId } : {}) },
+          select: { isTaxExempt: true },
+        })
+      : null;
     const subtotal = Number(order.subtotal);
-    const taxAmount = Number(order.tax);
-    const total = Number(order.total);
+    const taxAmount = customerForTax?.isTaxExempt ? 0 : Number(order.tax);
+    const total = subtotal + taxAmount;
 
     // Resolve default terms — read SystemConfig with explicit tenantId since we're
     // outside the normal request context (fire-and-forget, no AsyncLocalStorage).
@@ -690,6 +697,30 @@ export class InvoicesService {
       });
     }
 
+    // RF-012: if discount or shippingFee changed, recompute total from existing items.
+    const needsRecalc = dto.discount !== undefined || dto.shippingFee !== undefined;
+    let recalcData: Record<string, unknown> = {};
+    if (needsRecalc) {
+      const existingItems = await this.prisma
+        .forTenant()
+        .invoiceItem.findMany({ where: { invoiceId: id } });
+      const subtotal = existingItems.reduce((s: number, i: any) => s + Number(i.subtotal), 0);
+      const taxTotal = existingItems.reduce(
+        (s: number, i: any) => s + Number(i.subtotal) * Number(i.taxRate ?? 0),
+        0,
+      );
+      const invDiscount = dto.discount !== undefined ? dto.discount : Number(inv.discount);
+      const shipping =
+        dto.shippingFee !== undefined ? dto.shippingFee : Number(inv.shippingFee);
+      recalcData = {
+        subtotal,
+        taxAmount: taxTotal,
+        discount: invDiscount,
+        shippingFee: shipping,
+        total: subtotal - invDiscount + shipping + taxTotal,
+      };
+    }
+
     return this.prisma.forTenant().invoice.update({
       where: { id },
       data: {
@@ -697,8 +728,7 @@ export class InvoicesService {
         ...(dto.issueDate && { issueDate: new Date(dto.issueDate) }),
         ...(dto.notes !== undefined && { notes: dto.notes }),
         ...(dto.terms !== undefined && { terms: dto.terms }),
-        ...(dto.discount !== undefined && { discount: dto.discount }),
-        ...(dto.shippingFee !== undefined && { shippingFee: dto.shippingFee }),
+        ...recalcData,
       },
       include: {
         customer: { select: { id: true, businessName: true } },
@@ -932,6 +962,13 @@ export class InvoicesService {
       .forTenant()
       .invoice.findUnique({ where: { id }, include: { items: true } });
     if (!inv) throw new NotFoundException("Invoice not found");
+    // RF-011: order-linked invoices must not be duplicated — the order is the
+    // canonical billing source and a second copy would double-bill the customer.
+    if (inv.orderId !== null) {
+      throw new BadRequestException(
+        "Cannot duplicate an order-linked invoice. Create a new invoice or issue a credit note instead.",
+      );
+    }
     return this.prisma.forTenant().invoice.create({
       data: {
         invoiceNumber: await this.nextInvoiceNumber(),
