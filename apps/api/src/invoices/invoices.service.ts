@@ -196,7 +196,8 @@ export class InvoicesService {
       });
     } catch (err: any) {
       // RF-050: duplicate invoiceNumber under concurrent requests
-      if (err?.code === "P2002") throw new ConflictException("Invoice number conflict — please retry.");
+      if (err?.code === "P2002")
+        throw new ConflictException("Invoice number conflict — please retry.");
       throw err;
     }
 
@@ -277,37 +278,38 @@ export class InvoicesService {
 
     let invoice: any;
     try {
-    invoice = await db.invoice.create({
-      data: {
-        invoiceNumber,
-        customerId: order.customerId,
-        orderId: order.id,
-        status: InvoiceStatus.DRAFT,
-        subtotal,
-        taxAmount,
-        discount: 0,
-        shippingFee: 0,
-        total,
-        dueDate,
-        terms: tenantDefaults.terms ?? defaultTerms,
-        issueDate: new Date(),
-        notes: tenantDefaults.notes ?? (order.orderNumber ? `Order #${order.orderNumber}` : null),
-        items: { create: itemsData },
-        // RF-147: propagate tenantId onto the Invoice row.  Previously omitted,
-        // leaving auto-generated invoices with tenantId=null.
-        ...(tenantId ? { tenantId } : {}),
-      },
-      include: {
-        customer: {
-          select: { id: true, businessName: true, email: true, phone: true, mobile: true },
+      invoice = await db.invoice.create({
+        data: {
+          invoiceNumber,
+          customerId: order.customerId,
+          orderId: order.id,
+          status: InvoiceStatus.DRAFT,
+          subtotal,
+          taxAmount,
+          discount: 0,
+          shippingFee: 0,
+          total,
+          dueDate,
+          terms: tenantDefaults.terms ?? defaultTerms,
+          issueDate: new Date(),
+          notes: tenantDefaults.notes ?? (order.orderNumber ? `Order #${order.orderNumber}` : null),
+          items: { create: itemsData },
+          // RF-147: propagate tenantId onto the Invoice row.  Previously omitted,
+          // leaving auto-generated invoices with tenantId=null.
+          ...(tenantId ? { tenantId } : {}),
         },
-        items: true,
-        payments: true,
-      },
-    });
+        include: {
+          customer: {
+            select: { id: true, businessName: true, email: true, phone: true, mobile: true },
+          },
+          items: true,
+          payments: true,
+        },
+      });
     } catch (err: any) {
       // RF-050: duplicate invoiceNumber under concurrent requests
-      if (err?.code === "P2002") throw new ConflictException("Invoice number conflict — please retry.");
+      if (err?.code === "P2002")
+        throw new ConflictException("Invoice number conflict — please retry.");
       throw err;
     }
 
@@ -415,7 +417,8 @@ export class InvoicesService {
       });
     } catch (err: any) {
       // RF-050: duplicate invoiceNumber under concurrent requests
-      if (err?.code === "P2002") throw new ConflictException("Invoice number conflict — please retry.");
+      if (err?.code === "P2002")
+        throw new ConflictException("Invoice number conflict — please retry.");
       throw err;
     }
   }
@@ -534,7 +537,13 @@ export class InvoicesService {
 
     // Compute balanceDue server-side so the client always gets the right value
     // regardless of whether InvoicePayment records exist (e.g. Zoho-imported invoices)
-    const now = new Date();
+    //
+    // RF-202: isOverdue uses ISO date-string comparison (YYYY-MM-DD) so that an
+    // invoice due *today* is NOT considered overdue.  Comparing Date objects
+    // directly would treat a due date of "2026-05-01" (midnight UTC) as overdue
+    // any time after midnight UTC on that date, regardless of local timezone.
+    // Business rule: grace period extends through the end of the due date.
+    const todayIso = new Date().toISOString().slice(0, 10);
     const computedData = data.map((inv) => {
       const paidAmount = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
       const isSettled =
@@ -542,8 +551,12 @@ export class InvoicesService {
         inv.status === InvoiceStatus.VOID ||
         inv.status === InvoiceStatus.WRITTEN_OFF;
       const balanceDue = isSettled ? 0 : Math.max(0, Number(inv.total) - paidAmount);
-      const isOverdue =
-        !isSettled && balanceDue > 0 && inv.dueDate != null && new Date(inv.dueDate) < now;
+      const dueDateIso = inv.dueDate
+        ? (inv.dueDate instanceof Date ? inv.dueDate : new Date(inv.dueDate))
+            .toISOString()
+            .slice(0, 10)
+        : null;
+      const isOverdue = !isSettled && balanceDue > 0 && dueDateIso != null && dueDateIso < todayIso;
       return { ...inv, balanceDue, paidAmount, isOverdue };
     });
 
@@ -584,8 +597,17 @@ export class InvoicesService {
       inv.status === InvoiceStatus.VOID ||
       inv.status === InvoiceStatus.WRITTEN_OFF;
     const balanceDue = isSettled ? 0 : Math.max(0, Number(inv.total) - paidAmount);
+    // RF-202: date-string comparison — invoice due today is NOT overdue.
+    const dueDateIso = inv.dueDate
+      ? (inv.dueDate instanceof Date ? inv.dueDate : new Date(inv.dueDate))
+          .toISOString()
+          .slice(0, 10)
+      : null;
     const isOverdue =
-      !isSettled && balanceDue > 0 && inv.dueDate != null && new Date(inv.dueDate) < new Date();
+      !isSettled &&
+      balanceDue > 0 &&
+      dueDateIso != null &&
+      dueDateIso < new Date().toISOString().slice(0, 10);
     return { ...inv, balanceDue, paidAmount, isOverdue };
   }
 

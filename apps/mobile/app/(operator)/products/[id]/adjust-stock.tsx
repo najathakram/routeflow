@@ -31,12 +31,15 @@ export default function AdjustStockScreen() {
       showToast("Use a positive number to add stock or a negative number to remove.");
       return;
     }
+    // RF-201: include the selected reason chip in notes so the audit trail is
+    // always populated — combine with any free-text the operator typed.
+    const combinedNotes = [reason, notes.trim()].filter(Boolean).join(" — ");
     mut.mutate(
       {
         productId: id,
         quantity: n,
         reference: reason,
-        notes: notes.trim() || undefined,
+        notes: combinedNotes || undefined,
       },
       {
         onSuccess: () => {

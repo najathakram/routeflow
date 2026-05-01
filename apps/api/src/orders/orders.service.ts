@@ -540,6 +540,39 @@ export class OrdersService implements OnApplicationBootstrap {
         : [];
     const cpMap = new Map(customerPrices.map((cp) => [cp.productId, cp.pricingTier]));
 
+    // RF-198: price-race check — buyer cart may have been built with a stale price.
+    // Re-fetch (already done above) and compare against the cart unitPrice for each item.
+    // Only applies when the CUSTOMER role sends unitPrice values (buyer portal checkout).
+    if (user.role === UserRole.CUSTOMER && items.some((i) => i.unitPrice != null)) {
+      const changedItems: Array<{
+        productId: string;
+        name: string;
+        cartPrice: number;
+        currentPrice: number;
+      }> = [];
+      for (const item of items) {
+        if (item.unitPrice == null) continue;
+        const product = productMap.get(item.productId);
+        if (!product) continue; // missing product caught in lineItemsData.map below
+        const tierForProduct = cpMap.get(item.productId) ?? defaultTier;
+        const currentPrice = Number(getTierPrice(product, tierForProduct));
+        if (Math.abs(currentPrice - item.unitPrice) > 0.01) {
+          changedItems.push({
+            productId: item.productId,
+            name: product.name,
+            cartPrice: item.unitPrice,
+            currentPrice,
+          });
+        }
+      }
+      if (changedItems.length > 0) {
+        throw new ConflictException({
+          message: "Prices have been updated. Please review your cart.",
+          changedItems,
+        });
+      }
+    }
+
     let subtotal = 0;
     const lineItemsData = items.map((item) => {
       const product = productMap.get(item.productId);

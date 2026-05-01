@@ -2,8 +2,12 @@ import { useEffect, useRef } from "react";
 import NetInfo from "@react-native-community/netinfo";
 import { useOfflineQueue } from "../store/offlineQueue";
 import { apiClient } from "../lib/api-client";
+import { showToast } from "../lib/toast";
 
 const MAX_RETRIES = 3;
+
+// RF-170: matches /route-runs/{runId}/stops/{stopId}/complete
+const STOP_COMPLETE_RE = /\/route-runs\/([^/]+)\/stops\/[^/]+\/complete/;
 
 export function useNetworkSync() {
   const { queue, isOnline, setOnline, setSyncing, dequeue, incrementRetry } = useOfflineQueue();
@@ -19,6 +23,24 @@ export function useNetworkSync() {
         dequeue(action.id);
         continue;
       }
+
+      // RF-170: before submitting a stop-completion, verify the run is still active.
+      // If it was cancelled while the driver was offline, silently drop the action.
+      const stopMatch = STOP_COMPLETE_RE.exec(action.endpoint);
+      if (stopMatch) {
+        const runId = stopMatch[1];
+        try {
+          const { data: run } = await apiClient.get(`/route-runs/${runId}`);
+          if (run?.status === "CANCELLED") {
+            dequeue(action.id);
+            showToast("A route run was cancelled — some offline actions have been discarded.");
+            continue;
+          }
+        } catch {
+          // Can't verify — attempt submission anyway; server will reject if needed.
+        }
+      }
+
       try {
         await apiClient.request({
           method: action.method,

@@ -11,6 +11,29 @@ import { AnalyticsService } from "./analytics.service";
 export class AnalyticsController {
   constructor(private readonly analyticsService: AnalyticsService) {}
 
+  @Get()
+  getIndex() {
+    // RF-222: root endpoint so GET /analytics returns a helpful summary instead of 404.
+    return {
+      endpoints: [
+        "GET /analytics/revenue",
+        "GET /analytics/products/top",
+        "GET /analytics/customers/top",
+        "GET /analytics/routes/performance",
+        "GET /analytics/drivers/performance",
+        "GET /analytics/inventory/turnover",
+        "GET /analytics/inventory/dead-stock",
+        "GET /analytics/inventory/margin-alerts",
+        "GET /analytics/dso",
+        "GET /analytics/sales-by-category",
+        "GET /analytics/gross-margin",
+        "GET /analytics/aov",
+        "GET /analytics/price-history/:productId",
+        "GET /analytics/cost-history/:productId",
+      ],
+    };
+  }
+
   @Get("revenue")
   getRevenue(@Query("from") from?: string, @Query("to") to?: string, @Query("groupBy") g?: string) {
     return this.analyticsService.getRevenueTrend(from, to, g);

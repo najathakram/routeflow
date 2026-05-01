@@ -7,7 +7,14 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { Eye, Play, Calendar, CheckSquare, X, Trash2 } from "lucide-react";
 import { PageHeader, Badge, Table, Button, Modal, useToast, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
-import { useRoutes, useRouteRuns, useCreateRouteRun, useDeleteRoute, type Route, type RouteRun } from "@/lib/api/routes";
+import {
+  useRoutes,
+  useRouteRuns,
+  useCreateRouteRun,
+  useDeleteRoute,
+  type Route,
+  type RouteRun,
+} from "@/lib/api/routes";
 import { useDrivers } from "@/lib/api/drivers";
 
 // ─── Status helpers ───────────────────────────────────────────────────────────
@@ -28,7 +35,9 @@ function ProgressBar({ done, total }: { done: number; total: number }) {
   return (
     <div className="space-y-1">
       <div className="flex justify-between text-xs text-navy/60">
-        <span>{done} of {total} stops</span>
+        <span>
+          {done} of {total} stops
+        </span>
         <span>{pct}%</span>
       </div>
       <div className="h-1.5 overflow-hidden rounded-full bg-surface-border">
@@ -64,7 +73,10 @@ function DispatchModal({
 
   // Reset form when modal opens
   React.useEffect(() => {
-    if (open) { setDate(today); setDriverId(""); }
+    if (open) {
+      setDate(today);
+      setDriverId("");
+    }
   }, [open, today]);
 
   const handleDispatch = () => {
@@ -118,7 +130,9 @@ function DispatchModal({
           >
             <option value="">Unassigned</option>
             {drivers.map((d: any) => (
-              <option key={d.id} value={d.id}>{d.contactName}</option>
+              <option key={d.id} value={d.id}>
+                {d.contactName}
+              </option>
             ))}
           </select>
         </div>
@@ -138,34 +152,34 @@ function useTemplateColumns(
 ) {
   return React.useMemo<ColumnDef<Route, unknown>[]>(
     () => [
-      ...(selectMode ? [{
-        id: "select",
-        header: () => null,
-        cell: ({ row }: { row: { original: Route } }) => (
-          <input
-            type="checkbox"
-            checked={selected.has(row.original.id)}
-            onChange={() => onToggle(row.original.id)}
-            onClick={(e) => e.stopPropagation()}
-            className="h-4 w-4 cursor-pointer rounded border-navy/30 accent-brand-500"
-          />
-        ),
-        enableSorting: false,
-        size: 40,
-      } as ColumnDef<Route, unknown>] : []),
+      ...(selectMode
+        ? [
+            {
+              id: "select",
+              header: () => null,
+              cell: ({ row }: { row: { original: Route } }) => (
+                <input
+                  type="checkbox"
+                  checked={selected.has(row.original.id)}
+                  onChange={() => onToggle(row.original.id)}
+                  onClick={(e) => e.stopPropagation()}
+                  className="h-4 w-4 cursor-pointer rounded border-navy/30 accent-brand-500"
+                />
+              ),
+              enableSorting: false,
+              size: 40,
+            } as ColumnDef<Route, unknown>,
+          ]
+        : []),
       {
         accessorKey: "name",
         header: "Route Name",
-        cell: ({ row }) => (
-          <span className="font-medium text-navy">{row.original.name}</span>
-        ),
+        cell: ({ row }) => <span className="font-medium text-navy">{row.original.name}</span>,
       },
       {
         accessorKey: "stopCount",
         header: "Stops",
-        cell: ({ row }) => (
-          <span className="text-navy/70">{row.original._count?.stops ?? 0}</span>
-        ),
+        cell: ({ row }) => <span className="text-navy/70">{row.original._count?.stops ?? 0}</span>,
       },
       {
         accessorKey: "createdAt",
@@ -219,16 +233,26 @@ export default function RoutesPage() {
   const { toast } = useToast();
 
   const toggleSelect = (id: string) =>
-    setSelected((prev) => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
 
-  const exitSelectMode = () => { setSelectMode(false); setSelected(new Set()); };
+  const exitSelectMode = () => {
+    setSelectMode(false);
+    setSelected(new Set());
+  };
 
   const handleBulkDelete = async () => {
     if (isBulkDeleting) return;
     setIsBulkDeleting(true);
     try {
       await Promise.all(Array.from(selected).map((id) => deleteRoute.mutateAsync(id)));
-      toast({ title: `${selected.size} route${selected.size !== 1 ? "s" : ""} deleted`, variant: "success" });
+      toast({
+        title: `${selected.size} route${selected.size !== 1 ? "s" : ""} deleted`,
+        variant: "success",
+      });
       exitSelectMode();
     } catch {
       toast({ title: "Failed to delete some routes", variant: "error" });
@@ -237,16 +261,37 @@ export default function RoutesPage() {
     }
   };
 
-  const templateColumns = useTemplateColumns(router, setDispatchRouteId, selectMode, selected, toggleSelect);
+  const templateColumns = useTemplateColumns(
+    router,
+    setDispatchRouteId,
+    selectMode,
+    selected,
+    toggleSelect,
+  );
 
-  React.useEffect(() => { setTitle("Routes"); }, [setTitle]);
+  React.useEffect(() => {
+    setTitle("Routes");
+  }, [setTitle]);
 
   const today = new Date().toISOString().split("T")[0];
-  const { data: runsData, isLoading: runsLoading, isError: runsError } = useRouteRuns({ date: today });
+  const {
+    data: runsData,
+    isLoading: runsLoading,
+    isError: runsError,
+  } = useRouteRuns({ date: today });
   const { data: routesData, isLoading: routesLoading, isError: routesError } = useRoutes();
 
   const todayRuns = runsData?.data ?? [];
-  const routeTemplates = routesData?.data ?? [];
+  // RF-206: deduplicate by route ID — routes with multiple historical runs could
+  // appear more than once if the API JOIN returns one row per run.
+  const routeTemplates = React.useMemo(() => {
+    const seen = new Set<string>();
+    return (routesData?.data ?? []).filter((r) => {
+      if (seen.has(r.id)) return false;
+      seen.add(r.id);
+      return true;
+    });
+  }, [routesData?.data]);
 
   return (
     <div className="space-y-6 p-6">
@@ -256,7 +301,9 @@ export default function RoutesPage() {
           <div className="flex items-center gap-2">
             <Button
               variant="secondary"
-              leftIcon={selectMode ? <X className="h-4 w-4" /> : <CheckSquare className="h-4 w-4" />}
+              leftIcon={
+                selectMode ? <X className="h-4 w-4" /> : <CheckSquare className="h-4 w-4" />
+              }
               onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
             >
               {selectMode ? "Cancel" : "Select"}
@@ -268,9 +315,7 @@ export default function RoutesPage() {
 
       {/* ── Today's route runs ── */}
       <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-navy">
-          Route Runs Today
-        </h2>
+        <h2 className="text-sm font-semibold text-navy">Route Runs Today</h2>
         {runsLoading ? (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {[1, 2, 3].map((i) => (
@@ -290,16 +335,22 @@ export default function RoutesPage() {
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {todayRuns.map((run) => {
               const total = run._count?.stops ?? run.stops?.length ?? 0;
-              const done = run.stops?.filter(
-                (s) => s.status === "COMPLETED" || s.status === "SKIPPED",
-              ).length ?? 0;
+              const done =
+                run.stops?.filter((s) => s.status === "COMPLETED" || s.status === "SKIPPED")
+                  .length ?? 0;
               const driverName = run.driver?.contactName ?? "Unassigned";
               const routeName = run.route?.name ?? "Route";
               const startTime = run.startedAt
-                ? new Date(run.startedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                ? new Date(run.startedAt).toLocaleTimeString([], {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })
                 : null;
               const endTime = run.completedAt
-                ? new Date(run.completedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                ? new Date(run.completedAt).toLocaleTimeString([], {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })
                 : null;
               return (
                 <div
@@ -334,15 +385,18 @@ export default function RoutesPage() {
       {/* ── Route templates ── */}
       <section className="space-y-3">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-navy">
-            Route Templates
-          </h2>
+          <h2 className="text-sm font-semibold text-navy">Route Templates</h2>
           {selectMode && routeTemplates.length > 0 && (
             <label className="flex items-center gap-2 cursor-pointer select-none">
               <input
                 type="checkbox"
                 checked={routeTemplates.every((r) => selected.has(r.id))}
-                ref={(el) => { if (el) el.indeterminate = routeTemplates.some((r) => selected.has(r.id)) && !routeTemplates.every((r) => selected.has(r.id)); }}
+                ref={(el) => {
+                  if (el)
+                    el.indeterminate =
+                      routeTemplates.some((r) => selected.has(r.id)) &&
+                      !routeTemplates.every((r) => selected.has(r.id));
+                }}
                 onChange={() => {
                   if (routeTemplates.every((r) => selected.has(r.id))) setSelected(new Set());
                   else setSelected(new Set(routeTemplates.map((r) => r.id)));
@@ -361,10 +415,18 @@ export default function RoutesPage() {
               {selected.size} route{selected.size !== 1 ? "s" : ""} selected
             </span>
             <div className="flex items-center gap-2">
-              <button onClick={() => setSelected(new Set())} className="text-sm text-navy/50 hover:text-navy transition-colors">
+              <button
+                onClick={() => setSelected(new Set())}
+                className="text-sm text-navy/50 hover:text-navy transition-colors"
+              >
                 Deselect all
               </button>
-              <Button variant="danger" leftIcon={<Trash2 className="h-4 w-4" />} loading={isBulkDeleting} onClick={handleBulkDelete}>
+              <Button
+                variant="danger"
+                leftIcon={<Trash2 className="h-4 w-4" />}
+                loading={isBulkDeleting}
+                onClick={handleBulkDelete}
+              >
                 Delete {selected.size}
               </Button>
             </div>

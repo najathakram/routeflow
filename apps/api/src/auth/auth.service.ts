@@ -10,6 +10,7 @@ import * as bcrypt from "bcrypt";
 import * as crypto from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { UsersService } from "../users/users.service";
+import { EmailService } from "../email/email.service";
 import { AppConfig } from "../config/configuration";
 import { JwtPayload } from "./jwt-payload.interface";
 
@@ -26,6 +27,7 @@ export class AuthService {
     private readonly usersService: UsersService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService<AppConfig>,
+    private readonly emailService: EmailService,
   ) {}
 
   /**
@@ -106,6 +108,35 @@ export class AuthService {
       { sub: user.id },
       { secret: jwtConfig.refreshSecret, expiresIn: jwtConfig.refreshExpiresIn as any },
     );
+
+    // RF-228: new-device login notification (minimum viable security measure).
+    // Check before storing so we compare against pre-existing tokens only.
+    // Full session management (per-device revocation, session listing UI) is a backlog item.
+    if (deviceInfo?.userAgent && (user as any).email) {
+      const knownCount = await this.prisma.refreshToken.count({
+        where: {
+          userId: user.id,
+          userAgent: deviceInfo.userAgent,
+          expiresAt: { gt: new Date() },
+        },
+      });
+      if (knownCount === 0) {
+        const deviceName = this.deriveDeviceName(deviceInfo.userAgent);
+        const loginTime = new Date().toUTCString();
+        // Fire-and-forget — email failures must not block the login response.
+        this.emailService
+          .send({
+            to: (user as any).email as string,
+            subject: "New login detected on your RouteFlow account",
+            html: `<p>A new login was detected on your RouteFlow account.</p>
+                   <p><strong>Device:</strong> ${deviceName}</p>
+                   <p><strong>IP address:</strong> ${deviceInfo.ipAddress ?? "unknown"}</p>
+                   <p><strong>Time:</strong> ${loginTime}</p>
+                   <p>If this wasn't you, please contact support immediately and change your password.</p>`,
+          })
+          .catch(() => {});
+      }
+    }
 
     await this.storeRefreshToken(user.id, refreshToken, deviceInfo);
 
