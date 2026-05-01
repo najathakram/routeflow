@@ -115,7 +115,15 @@ function StartOfDay({ run }: { run: RouteRun }) {
     }, 0);
     return sum + orderTotal;
   }, 0);
-  const dateLabel = new Date(run.scheduledDate).toLocaleDateString(undefined, {
+  // NEW-rweb-7: scheduledDate is a UTC ISO string whose date component is the
+  // intended calendar date. Parsing it directly with `new Date()` interprets
+  // midnight UTC as the previous evening in negative-offset timezones, making
+  // the label show yesterday. Fix: extract the YYYY-MM-DD part and parse it as
+  // a local date by replacing hyphens with slashes (unambiguous local parse).
+  const scheduledLocalDate = new Date(
+    (run.scheduledDate ?? "").slice(0, 10).replace(/-/g, "/"),
+  );
+  const dateLabel = scheduledLocalDate.toLocaleDateString(undefined, {
     weekday: "long",
     month: "short",
     day: "numeric",

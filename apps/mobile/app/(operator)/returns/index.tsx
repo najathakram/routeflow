@@ -27,10 +27,13 @@ import {
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
 
+// RF-212: default "All" so data is visible immediately. Previous default was
+// "PENDING" which caused an empty state when returns were in APPROVED/IN_TRANSIT.
+// The API status filter is passed through as-is; "ALL" omits the filter param.
 const FILTERS = [
   { id: "ALL", label: "All" },
   { id: "PENDING", label: "Pending" },
-  { id: "PROCESSED", label: "Processed" },
+  { id: "APPROVED", label: "Approved" },
   { id: "CANCELLED", label: "Cancelled" },
 ] as const;
 
@@ -55,7 +58,8 @@ function statusPill(status: string) {
 
 export default function ReturnsListScreen() {
   const router = useRouter();
-  const [filter, setFilter] = useState<FilterId>("PENDING");
+  // RF-212: default ALL so existing returns are visible immediately.
+  const [filter, setFilter] = useState<FilterId>("ALL");
   const { data, isLoading, isFetching, refetch } = useAdminReturns({
     status: filter === "ALL" ? undefined : filter,
     limit: 100,
@@ -105,9 +109,9 @@ export default function ReturnsListScreen() {
       />
       <FilterChipRow
         chips={FILTERS.map((f) => ({ label: f.label }))}
-        value={FILTERS.find((f) => f.id === filter)?.label ?? "Pending"}
+        value={FILTERS.find((f) => f.id === filter)?.label ?? "All"}
         onChange={(label) =>
-          setFilter((FILTERS.find((f) => f.label === label)?.id as FilterId) ?? "ALL")
+          setFilter((FILTERS.find((f) => f.label === label)?.id ?? "ALL") as FilterId)
         }
       />
       <ScrollView

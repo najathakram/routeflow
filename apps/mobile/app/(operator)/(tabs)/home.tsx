@@ -463,7 +463,10 @@ function DriverInlineView() {
 
   if (upcoming) {
     const stopCount = upcoming.stops?.length ?? 0;
-    const dateLabel = new Date(upcoming.scheduledDate)
+    // NEW-rweb-7: parse only the date portion as a local date to avoid UTC-offset shift.
+    const dateLabel = new Date(
+      (upcoming.scheduledDate ?? "").slice(0, 10).replace(/-/g, "/"),
+    )
       .toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" })
       .toUpperCase();
 
