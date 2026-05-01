@@ -1,4 +1,10 @@
-import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
 import { SystemConfigService } from "../system-config/system-config.service";
@@ -293,7 +299,8 @@ export class VendorBillsService {
     if (!bill) throw new NotFoundException("Bill not found");
 
     // RF-085: reverse stock movements when voiding a RECEIVED bill
-    const needsReversal = bill.status === "RECEIVED" || bill.status === "PARTIAL" || bill.status === "PAID";
+    const needsReversal =
+      bill.status === "RECEIVED" || bill.status === "PARTIAL" || bill.status === "PAID";
     if (needsReversal) {
       return this.prisma.tenantTransaction(async (tx) => {
         for (const item of bill.items) {

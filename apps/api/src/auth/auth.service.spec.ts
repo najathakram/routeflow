@@ -128,7 +128,15 @@ describe("AuthService", () => {
       role: "OPERATOR" as const,
       status: "ACTIVE" as const,
       forcePasswordChange: false,
+      tenantId: "tenant-1",
+      isAdmin: false,
+      canActAsDriver: false,
     };
+
+    beforeEach(() => {
+      // RF-176: login() looks up tenant slug from prisma.tenant
+      prisma.tenant.findUnique.mockResolvedValue({ slug: "test-tenant" } as any);
+    });
 
     it("should return access token, refresh token, and user", async () => {
       prisma.refreshToken.upsert.mockResolvedValue({} as any);

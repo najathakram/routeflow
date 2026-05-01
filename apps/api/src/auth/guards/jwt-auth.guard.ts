@@ -1,4 +1,9 @@
-import { ExecutionContext, ForbiddenException, Injectable, UnauthorizedException } from "@nestjs/common";
+import {
+  ExecutionContext,
+  ForbiddenException,
+  Injectable,
+  UnauthorizedException,
+} from "@nestjs/common";
 import { AuthGuard } from "@nestjs/passport";
 
 @Injectable()
@@ -9,8 +14,7 @@ export class JwtAuthGuard extends AuthGuard("jwt") {
 
     if (user.forcePasswordChange) {
       const req = context.switchToHttp().getRequest<{ method: string; path: string }>();
-      const isChangePassword =
-        req.method === "POST" && req.path.endsWith("/auth/change-password");
+      const isChangePassword = req.method === "POST" && req.path.endsWith("/auth/change-password");
       if (!isChangePassword) {
         throw new ForbiddenException(
           "Password change required. Please update your password before continuing.",

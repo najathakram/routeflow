@@ -12,6 +12,15 @@ jest.mock("../invoices/invoices.service", () => ({
   })),
 }));
 
+// Mock NotificationsService — it imports expo-server-sdk which is ESM-only
+// and fails Jest's CommonJS parser.
+jest.mock("../notifications/notifications.service", () => ({
+  NotificationsService: jest.fn().mockImplementation(() => ({
+    sendToCustomer: jest.fn().mockResolvedValue(undefined),
+    sendToDriver: jest.fn().mockResolvedValue(undefined),
+  })),
+}));
+
 import { OrdersService } from "./orders.service";
 import { InvoicesService } from "../invoices/invoices.service";
 import { SystemConfigService } from "../system-config/system-config.service";

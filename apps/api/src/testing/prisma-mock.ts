@@ -87,6 +87,7 @@ export function createMockPrisma(): jest.Mocked<PrismaService> {
     contactPerson: modelProxy(),
     customerTag: modelProxy(),
     customerComment: modelProxy(),
+    tenant: modelProxy(),
   });
 
   const txModels = () => ({

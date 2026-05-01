@@ -372,7 +372,9 @@ export class BuyerController {
   @UseGuards(BuyerSellerContextGuard)
   @UseInterceptors(BuyerTenantInterceptor)
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
-  @ApiOperation({ summary: "Alias: list buyer's standing order templates (same as /buyer/templates)" })
+  @ApiOperation({
+    summary: "Alias: list buyer's standing order templates (same as /buyer/templates)",
+  })
   getStandingOrders(@CurrentBuyerCustomer() ctx: any) {
     return this.templatesService.findAllForUser(makePseudoUser(ctx));
   }

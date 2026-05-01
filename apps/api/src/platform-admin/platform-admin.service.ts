@@ -682,15 +682,19 @@ ${paymentSection}
     });
 
     // Auto-create a driver profile so the admin can use driver features immediately
-    await this.prisma.driver.create({
-      data: {
-        userId: user.id,
-        tenantId,
-        contactName: dto.username,
-        phone: "",
-        status: "ACTIVE",
-      },
-    }).catch(() => { /* ignore if driver record already exists */ });
+    await this.prisma.driver
+      .create({
+        data: {
+          userId: user.id,
+          tenantId,
+          contactName: dto.username,
+          phone: "",
+          status: "ACTIVE",
+        },
+      })
+      .catch(() => {
+        /* ignore if driver record already exists */
+      });
 
     // Send welcome email
     try {

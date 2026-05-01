@@ -205,10 +205,7 @@ export class NotificationsService implements OnModuleInit {
     // Remove tokens that Expo reports as no longer registered
     const invalidIds: string[] = [];
     allTickets.forEach((ticket, idx) => {
-      if (
-        ticket.status === "error" &&
-        (ticket as any).details?.error === "DeviceNotRegistered"
-      ) {
+      if (ticket.status === "error" && (ticket as any).details?.error === "DeviceNotRegistered") {
         invalidIds.push(tokens[idx].id);
       }
     });
