@@ -13,6 +13,16 @@ export default function CustomerTabsLayout() {
         tabBarInactiveTintColor: ios.gray[1],
       }}
     >
+      {/* RF-218: buyer dashboard home tab */}
+      <Tabs.Screen
+        name="home"
+        options={{
+          title: "Home",
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="home-outline" size={size} color={color} />
+          ),
+        }}
+      />
       <Tabs.Screen
         name="orders"
         options={{

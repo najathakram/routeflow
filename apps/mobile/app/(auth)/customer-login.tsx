@@ -53,7 +53,7 @@ export default function CustomerLoginScreen() {
 
       if (sellers.length === 1) {
         await storeSetSeller(sellers[0]!);
-        router.replace("/(customer)/orders");
+        router.replace("/(customer)/(tabs)/home");
         return;
       }
 
@@ -82,7 +82,7 @@ export default function CustomerLoginScreen() {
       const sellers = await getBuyerSellers();
       if (sellers.length === 1) {
         await storeSetSeller(sellers[0]!);
-        router.replace("/(customer)/orders");
+        router.replace("/(customer)/(tabs)/home");
         return;
       }
       showSellerPicker(sellers);
@@ -111,7 +111,7 @@ export default function CustomerLoginScreen() {
     if (!seller) return;
     setSellerPickerOpen(false);
     await storeSetSeller(seller);
-    router.replace("/(customer)/orders");
+    router.replace("/(customer)/(tabs)/home");
   };
 
   return (

@@ -58,9 +58,10 @@ function RootLayoutNav() {
     if (isLoading || tenantLoading || buyerLoading) return;
 
     // Buyer portal: if logged in as buyer (and not also as staff), route to customer section
+    // RF-218: land on the dashboard home tab.
     if (buyer && activeSeller && !user) {
       if (segments[0] !== "(customer)") {
-        router.replace("/(customer)/orders");
+        router.replace("/(customer)/(tabs)/home");
       }
       return;
     }
@@ -108,14 +109,18 @@ function RootLayoutNav() {
     // Step 4: role-aware routing.
     // "operator" → operator tabs
     // "driver"   → driver tabs
+    //
+    // RF-087: staff users must be able to access /(auth)/customer-login to sign
+    // in to the buyer portal. Do NOT redirect them away from that screen.
+    const onCustomerLogin = segments[0] === "(auth)" && segments[1] === "customer-login";
     if (activeRole === "operator") {
-      if (segments[0] !== "(operator)") {
+      if (segments[0] !== "(operator)" && !onCustomerLogin) {
         router.replace("/(operator)/home");
       }
       return;
     }
     if (activeRole === "driver") {
-      if (segments[0] !== "(driver)") {
+      if (segments[0] !== "(driver)" && !onCustomerLogin) {
         router.replace("/(driver)/route");
       }
       return;

@@ -109,4 +109,18 @@ describe("BuyerController — buyer portal 500 fixes (F1-INFRA-500S)", () => {
     expect(user.role).toBe(UserRole.OPERATOR);
     expect(customerId).toBe("cust-abc");
   });
+
+  // RF-094 / RF-180: GET /buyer/standing-orders returns 200 (empty array OK)
+  it("getStandingOrders: returns data without 500 when customerId is set", async () => {
+    const result = await controller.getStandingOrders(MOCK_CTX as any);
+    // templatesService.findAllForUser resolves to { data: [], meta: { total: 0 } }
+    expect(result).toBeDefined();
+    expect(templatesService.findAllForUser).toHaveBeenCalledTimes(1);
+  });
+
+  // RF-217: GET /buyer/me returns 200 — it is a direct passthrough of ctx.customer
+  it("getMe: returns customer profile directly from context (no extra DB call)", () => {
+    const result = controller.getMe(MOCK_CTX as any);
+    expect(result).toEqual(MOCK_CTX.customer);
+  });
 });

@@ -7,6 +7,8 @@ import {
   type BuyerUser,
   type BuyerSeller,
 } from "./buyer-auth";
+// RF-013: import cart store so we can clear it on logout
+import { useCartStore } from "../store/cartStore";
 
 interface BuyerSessionState {
   buyer: BuyerUser | null;
@@ -37,6 +39,8 @@ export const useBuyerSessionStore = create<BuyerSessionState>()((set) => ({
 
   signOut: async () => {
     await buyerLogout();
+    // RF-013: clear local cart so next buyer session starts empty
+    useCartStore.getState().clear();
     set({ buyer: null, activeSeller: null });
   },
 }));
