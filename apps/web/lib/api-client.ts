@@ -6,6 +6,7 @@
  */
 
 import axios from "axios";
+import { OP_KEYS } from "./auth-keys";
 
 const BASE_URL =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000/api/v1";
@@ -28,7 +29,7 @@ apiClient.interceptors.request.use((config) => {
   if (typeof window !== "undefined") {
     // Prefer impersonation token over regular access token when present
     const impersonationToken = localStorage.getItem("impersonationToken");
-    const token = impersonationToken || localStorage.getItem("accessToken");
+    const token = impersonationToken || localStorage.getItem(OP_KEYS.accessToken);
     if (token) config.headers.Authorization = `Bearer ${token}`;
 
     // Tell the API which tenant this request belongs to.
@@ -93,23 +94,23 @@ apiClient.interceptors.response.use(
     try {
       const refreshToken =
         typeof window !== "undefined"
-          ? localStorage.getItem("refreshToken")
+          ? localStorage.getItem(OP_KEYS.refreshToken)
           : null;
       if (!refreshToken) throw new Error("No refresh token");
 
       const { data } = await axios.post(`${BASE_URL}/auth/refresh`, {
         refreshToken,
       });
-      localStorage.setItem("accessToken", data.accessToken);
-      localStorage.setItem("refreshToken", data.refreshToken);
+      localStorage.setItem(OP_KEYS.accessToken, data.accessToken);
+      localStorage.setItem(OP_KEYS.refreshToken, data.refreshToken);
 
       original.headers.Authorization = `Bearer ${data.accessToken}`;
       processQueue(null, data.accessToken);
       return apiClient(original);
     } catch (refreshError) {
       processQueue(refreshError, null);
-      localStorage.removeItem("accessToken");
-      localStorage.removeItem("refreshToken");
+      localStorage.removeItem(OP_KEYS.accessToken);
+      localStorage.removeItem(OP_KEYS.refreshToken);
       window.location.href = "/login";
       return Promise.reject(refreshError);
     } finally {

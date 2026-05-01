@@ -1,6 +1,7 @@
 import axios from "axios";
 import { Platform } from "react-native";
 import * as WebBrowser from "expo-web-browser";
+import { BUYER_KEYS } from "./auth-keys";
 
 // ─── Web-safe storage ─────────────────────────────────────────────────────────
 
@@ -53,6 +54,32 @@ interface BuyerAuthResponse {
   buyer: BuyerUser;
 }
 
+// ─── Legacy key migration (NEW-m2-1 / RF-077) ────────────────────────────────
+
+const LEGACY_ACCESS = "buyerAccessToken";
+const LEGACY_REFRESH = "buyerRefreshToken";
+const LEGACY_SELLER = "buyerActiveSeller";
+
+/**
+ * One-time migration: copy legacy buyerAccessToken → rf:buyer:accessToken then
+ * delete the legacy keys. Idempotent — safe to call on every app start.
+ */
+export async function migrateLegacyBuyerToken(): Promise<void> {
+  const legacy = await storage.get(LEGACY_ACCESS);
+  if (!legacy) return;
+  const existing = await storage.get(BUYER_KEYS.accessToken);
+  if (!existing) {
+    await storage.set(BUYER_KEYS.accessToken, legacy);
+    const legacyRefresh = await storage.get(LEGACY_REFRESH);
+    if (legacyRefresh) await storage.set(BUYER_KEYS.refreshToken, legacyRefresh);
+    const legacySeller = await storage.get(LEGACY_SELLER);
+    if (legacySeller) await storage.set(BUYER_KEYS.activeSeller, legacySeller);
+  }
+  await storage.del(LEGACY_ACCESS);
+  await storage.del(LEGACY_REFRESH);
+  await storage.del(LEGACY_SELLER);
+}
+
 // ─── Buyer API client (separate from staff apiClient) ─────────────────────────
 
 const BASE_URL =
@@ -67,8 +94,8 @@ export const buyerApiClient = axios.create({
 
 buyerApiClient.interceptors.request.use(async (config) => {
   const [token, activeSellerRaw] = await Promise.all([
-    storage.get("buyerAccessToken"),
-    storage.get("buyerActiveSeller"),
+    storage.get(BUYER_KEYS.accessToken),
+    storage.get(BUYER_KEYS.activeSeller),
   ]);
   if (token) config.headers.Authorization = `Bearer ${token}`;
   if (activeSellerRaw) {
@@ -127,23 +154,23 @@ buyerApiClient.interceptors.response.use(
     isRefreshing = true;
 
     try {
-      const refreshToken = await storage.get("buyerRefreshToken");
+      const refreshToken = await storage.get(BUYER_KEYS.refreshToken);
       if (!refreshToken) throw new Error("No buyer refresh token");
 
       const { data } = await axios.post<BuyerAuthResponse>(
         `${BASE_URL}/api/v1/buyer/auth/refresh`,
         { refreshToken },
       );
-      await storage.set("buyerAccessToken", data.accessToken);
-      await storage.set("buyerRefreshToken", data.refreshToken);
+      await storage.set(BUYER_KEYS.accessToken, data.accessToken);
+      await storage.set(BUYER_KEYS.refreshToken, data.refreshToken);
 
       original.headers.Authorization = `Bearer ${data.accessToken}`;
       processQueue(null, data.accessToken);
       return buyerApiClient(original);
     } catch (refreshError) {
       processQueue(refreshError, null);
-      await storage.del("buyerAccessToken");
-      await storage.del("buyerRefreshToken");
+      await storage.del(BUYER_KEYS.accessToken);
+      await storage.del(BUYER_KEYS.refreshToken);
       return Promise.reject(refreshError);
     } finally {
       isRefreshing = false;
@@ -172,8 +199,8 @@ export async function buyerLogin(
     "/buyer/auth/login",
     { email, password },
   );
-  await storage.set("buyerAccessToken", data.accessToken);
-  await storage.set("buyerRefreshToken", data.refreshToken);
+  await storage.set(BUYER_KEYS.accessToken, data.accessToken);
+  await storage.set(BUYER_KEYS.refreshToken, data.refreshToken);
   return data;
 }
 
@@ -186,8 +213,8 @@ export async function buyerRegister(
     "/buyer/auth/register",
     { email, password, name },
   );
-  await storage.set("buyerAccessToken", data.accessToken);
-  await storage.set("buyerRefreshToken", data.refreshToken);
+  await storage.set(BUYER_KEYS.accessToken, data.accessToken);
+  await storage.set(BUYER_KEYS.refreshToken, data.refreshToken);
   return data;
 }
 
@@ -197,25 +224,22 @@ export async function buyerLogout(): Promise<void> {
   } catch {
     // Best-effort — clear tokens regardless
   }
-  // RF-077: only clear buyer-namespaced storage. Previously this also
-  // deleted accessToken/refreshToken, which logged the operator out of an
-  // unrelated parallel session in the same browser. Operator and buyer
-  // sessions are now strictly isolated.
-  await storage.del("buyerAccessToken");
-  await storage.del("buyerRefreshToken");
-  await storage.del("buyerActiveSeller");
+  // RF-077: only clear buyer-namespaced storage.
+  await storage.del(BUYER_KEYS.accessToken);
+  await storage.del(BUYER_KEYS.refreshToken);
+  await storage.del(BUYER_KEYS.activeSeller);
 }
 
 export async function buyerRefreshTokens(): Promise<BuyerAuthResponse | null> {
-  const refreshToken = await storage.get("buyerRefreshToken");
+  const refreshToken = await storage.get(BUYER_KEYS.refreshToken);
   if (!refreshToken) return null;
   try {
     const { data } = await buyerApiClient.post<BuyerAuthResponse>(
       "/buyer/auth/refresh",
       { refreshToken },
     );
-    await storage.set("buyerAccessToken", data.accessToken);
-    await storage.set("buyerRefreshToken", data.refreshToken);
+    await storage.set(BUYER_KEYS.accessToken, data.accessToken);
+    await storage.set(BUYER_KEYS.refreshToken, data.refreshToken);
     return data;
   } catch {
     return null;
@@ -223,7 +247,7 @@ export async function buyerRefreshTokens(): Promise<BuyerAuthResponse | null> {
 }
 
 export async function getStoredBuyer(): Promise<BuyerUser | null> {
-  const token = await storage.get("buyerAccessToken");
+  const token = await storage.get(BUYER_KEYS.accessToken);
   if (!token) return null;
   const payload = parseJwtPayload(token);
   if (!payload) return null;
@@ -245,7 +269,7 @@ export async function getBuyerSellers(): Promise<BuyerSeller[]> {
 }
 
 export async function getActiveSeller(): Promise<BuyerSeller | null> {
-  const raw = await storage.get("buyerActiveSeller");
+  const raw = await storage.get(BUYER_KEYS.activeSeller);
   if (!raw) return null;
   try {
     return JSON.parse(raw) as BuyerSeller;
@@ -255,7 +279,7 @@ export async function getActiveSeller(): Promise<BuyerSeller | null> {
 }
 
 export async function setActiveSeller(seller: BuyerSeller): Promise<void> {
-  await storage.set("buyerActiveSeller", JSON.stringify(seller));
+  await storage.set(BUYER_KEYS.activeSeller, JSON.stringify(seller));
 }
 
 function parseQueryFromUrl(url: string): Record<string, string> {
@@ -293,8 +317,8 @@ export async function buyerLoginWithGoogle(): Promise<{ buyer: BuyerUser; seller
   const { accessToken, refreshToken, type } = params;
   if (!accessToken || !refreshToken || type !== "BUYER") throw new Error("google_token_invalid");
 
-  await storage.set("buyerAccessToken", accessToken);
-  await storage.set("buyerRefreshToken", refreshToken);
+  await storage.set(BUYER_KEYS.accessToken, accessToken);
+  await storage.set(BUYER_KEYS.refreshToken, refreshToken);
 
   const payload = parseJwtPayload(accessToken);
   const buyer: BuyerUser = {

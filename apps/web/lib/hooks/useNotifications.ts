@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { connectSocket } from '../socket';
+import { OP_KEYS } from '../auth-keys';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -71,7 +72,7 @@ export function useNotifications() {
   // Attach WebSocket event listeners
   React.useEffect(() => {
     if (typeof window === 'undefined') return;
-    const token = localStorage.getItem('accessToken');
+    const token = localStorage.getItem(OP_KEYS.accessToken);
     if (!token) return;
 
     const socket = connectSocket(token);

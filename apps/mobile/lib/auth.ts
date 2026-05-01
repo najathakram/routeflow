@@ -3,6 +3,7 @@ import { Platform } from "react-native";
 import * as Notifications from "expo-notifications";
 import * as WebBrowser from "expo-web-browser";
 import { apiClient } from "./api-client";
+import { OP_KEYS, DRIVER_KEYS } from "./auth-keys";
 
 // ─── Web-safe storage (SecureStore is native-only) ────────────────────────────
 
@@ -50,23 +51,61 @@ function parseJwtPayload(token: string): Record<string, unknown> | null {
   }
 }
 
-export async function getStoredUser(): Promise<AuthUser | null> {
-  const token = await storage.get("accessToken");
-  if (!token) return null;
-  const payload = parseJwtPayload(token);
-  if (!payload) return null;
-  if (typeof payload.exp === "number" && payload.exp * 1000 < Date.now()) {
-    return null;
+const DRIVER_ROLE_SET = new Set(["DRIVER"]);
+
+function keysForRole(role: string): typeof OP_KEYS | typeof DRIVER_KEYS {
+  return DRIVER_ROLE_SET.has(role) ? DRIVER_KEYS : OP_KEYS;
+}
+
+// ─── Legacy key migration (NEW-m2-1 / RF-077) ────────────────────────────────
+
+const LEGACY_ACCESS = "accessToken";
+const LEGACY_REFRESH = "refreshToken";
+
+/**
+ * One-time migration: if the legacy `accessToken` key exists, move it to the
+ * role-appropriate namespaced key then delete the legacy entry. Idempotent.
+ */
+export async function migrateLegacyToken(): Promise<void> {
+  const legacy = await storage.get(LEGACY_ACCESS);
+  if (!legacy) return;
+
+  const payload = parseJwtPayload(legacy);
+  const role = (payload?.role as string) ?? "";
+  const keys = keysForRole(role);
+
+  const existing = await storage.get(keys.accessToken);
+  if (!existing) {
+    await storage.set(keys.accessToken, legacy);
+    const legacyRefresh = await storage.get(LEGACY_REFRESH);
+    if (legacyRefresh) await storage.set(keys.refreshToken, legacyRefresh);
   }
-  return {
-    id: payload.sub as string,
-    username: payload.username as string,
-    role: payload.role as AuthUser["role"],
-    status: payload.status as AuthUser["status"],
-    forcePasswordChange: payload.forcePasswordChange as boolean,
-    isAdmin: (payload.isAdmin as boolean) ?? false,
-    canActAsDriver: (payload.canActAsDriver as boolean) ?? false,
-  };
+  await storage.del(LEGACY_ACCESS);
+  await storage.del(LEGACY_REFRESH);
+}
+
+/**
+ * Get the stored user from the appropriate role key.
+ * Checks operator slot first, then driver slot (supports the dual-role picker).
+ */
+export async function getStoredUser(): Promise<AuthUser | null> {
+  for (const keySet of [OP_KEYS, DRIVER_KEYS]) {
+    const token = await storage.get(keySet.accessToken);
+    if (!token) continue;
+    const payload = parseJwtPayload(token);
+    if (!payload) continue;
+    if (typeof payload.exp === "number" && payload.exp * 1000 < Date.now()) continue;
+    return {
+      id: payload.sub as string,
+      username: payload.username as string,
+      role: payload.role as AuthUser["role"],
+      status: payload.status as AuthUser["status"],
+      forcePasswordChange: payload.forcePasswordChange as boolean,
+      isAdmin: (payload.isAdmin as boolean) ?? false,
+      canActAsDriver: (payload.canActAsDriver as boolean) ?? false,
+    };
+  }
+  return null;
 }
 
 // ─── Auth functions ───────────────────────────────────────────────────────────
@@ -116,8 +155,9 @@ export async function login(
     username,
     password,
   });
-  await storage.set("accessToken", data.accessToken);
-  await storage.set("refreshToken", data.refreshToken);
+  const keys = keysForRole(data.user.role);
+  await storage.set(keys.accessToken, data.accessToken);
+  await storage.set(keys.refreshToken, data.refreshToken);
   // Register push token after successful login
   await registerPushToken();
   return data;
@@ -152,8 +192,9 @@ export async function loginWithGoogle(tenantSlug: string): Promise<AuthResponse>
   const { accessToken, refreshToken, role, tenantSlug: resolvedTenantSlug } = params;
   if (!accessToken || !refreshToken) throw new Error("google_token_invalid");
 
-  await storage.set("accessToken", accessToken);
-  await storage.set("refreshToken", refreshToken);
+  const keys = keysForRole(role ?? "OPERATOR");
+  await storage.set(keys.accessToken, accessToken);
+  await storage.set(keys.refreshToken, refreshToken);
 
   // Decode the user from the JWT — same shape getStoredUser returns
   const payload = parseJwtPayload(accessToken);
@@ -197,27 +238,31 @@ export async function logout(): Promise<void> {
   } catch {
     // Best-effort — clear tokens regardless of server response
   }
-  // RF-077: only clear operator-namespaced storage. Previously this also
-  // deleted buyerAccessToken/buyerRefreshToken/buyerActiveSeller, which
-  // logged the buyer out of an unrelated parallel session in the same
-  // browser. Operator and buyer sessions are now strictly isolated.
-  await storage.del("accessToken");
-  await storage.del("refreshToken");
+  // RF-077: clear both operator and driver slots
+  await storage.del(OP_KEYS.accessToken);
+  await storage.del(OP_KEYS.refreshToken);
+  await storage.del(DRIVER_KEYS.accessToken);
+  await storage.del(DRIVER_KEYS.refreshToken);
 }
 
 export async function refreshTokens(): Promise<AuthResponse | null> {
-  const refreshToken = await storage.get("refreshToken");
-  if (!refreshToken) return null;
-  try {
-    const { data } = await apiClient.post<AuthResponse>("/auth/refresh", {
-      refreshToken,
-    });
-    await storage.set("accessToken", data.accessToken);
-    await storage.set("refreshToken", data.refreshToken);
-    return data;
-  } catch {
-    return null;
+  // Try whichever role has a stored refresh token (op first, then driver)
+  for (const keys of [OP_KEYS, DRIVER_KEYS]) {
+    const refreshToken = await storage.get(keys.refreshToken);
+    if (!refreshToken) continue;
+    try {
+      const { data } = await apiClient.post<AuthResponse>("/auth/refresh", {
+        refreshToken,
+      });
+      const newKeys = keysForRole(data.user.role);
+      await storage.set(newKeys.accessToken, data.accessToken);
+      await storage.set(newKeys.refreshToken, data.refreshToken);
+      return data;
+    } catch {
+      // Try next slot
+    }
   }
+  return null;
 }
 
 export async function changePassword(

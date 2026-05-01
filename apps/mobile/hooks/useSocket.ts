@@ -3,6 +3,7 @@ import { Platform } from "react-native";
 import { io, type Socket } from "socket.io-client";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuthStore } from "../lib/auth-store";
+import { OP_KEYS, DRIVER_KEYS } from "../lib/auth-keys";
 
 const SOCKET_URL =
   (process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:3000").replace(/\/$/, "");
@@ -51,10 +52,14 @@ export function useSocket() {
     const connect = async () => {
       let token: string | null = null;
       if (Platform.OS === "web") {
-        token = localStorage.getItem("accessToken");
+        // NEW-m2-1 / RF-077: read from role-namespaced key
+        const role = user.role;
+        const isDriver = role === "DRIVER";
+        token = localStorage.getItem(isDriver ? DRIVER_KEYS.accessToken : OP_KEYS.accessToken);
       } else {
         const { getItemAsync } = await import("expo-secure-store");
-        token = await getItemAsync("accessToken");
+        const isDriver = user.role === "DRIVER";
+        token = await getItemAsync(isDriver ? DRIVER_KEYS.accessToken : OP_KEYS.accessToken);
       }
 
       if (!token || !mounted) return;

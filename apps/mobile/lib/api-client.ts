@@ -1,6 +1,7 @@
 import axios, { type InternalAxiosRequestConfig } from "axios";
 import { Platform } from "react-native";
 import { useOfflineQueue } from "../store/offlineQueue";
+import { OP_KEYS, DRIVER_KEYS } from "./auth-keys";
 
 const BASE_URL =
   process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:3000";
@@ -27,11 +28,29 @@ async function storageDel(key: string): Promise<void> {
   await deleteItemAsync(key);
 }
 
+/**
+ * Return whichever namespaced access token is present (op slot first, then driver).
+ * NEW-m2-1 / RF-077: tokens are keyed by role to prevent cross-role overwrite.
+ */
+async function getActiveAccessToken(): Promise<string | null> {
+  const op = await storageGet(OP_KEYS.accessToken);
+  if (op) return op;
+  return storageGet(DRIVER_KEYS.accessToken);
+}
+
+async function getActiveRefreshToken(): Promise<{ token: string; isDriver: boolean } | null> {
+  const op = await storageGet(OP_KEYS.refreshToken);
+  if (op) return { token: op, isDriver: false };
+  const driver = await storageGet(DRIVER_KEYS.refreshToken);
+  if (driver) return { token: driver, isDriver: true };
+  return null;
+}
+
 // ─── Request interceptor: attach access token + tenant slug ──────────────────
 
 apiClient.interceptors.request.use(async (config) => {
   const [token, tenantSlug] = await Promise.all([
-    storageGet("accessToken"),
+    getActiveAccessToken(),
     storageGet("tenantSlug"),
   ]);
   if (token) config.headers.Authorization = `Bearer ${token}`;
@@ -119,22 +138,26 @@ apiClient.interceptors.response.use(
     isRefreshing = true;
 
     try {
-      const refreshToken = await storageGet("refreshToken");
-      if (!refreshToken) throw new Error("No refresh token");
+      const refreshEntry = await getActiveRefreshToken();
+      if (!refreshEntry) throw new Error("No refresh token");
 
       const { data } = await axios.post(`${BASE_URL}/api/v1/auth/refresh`, {
-        refreshToken,
+        refreshToken: refreshEntry.token,
       });
-      await storageSet("accessToken", data.accessToken);
-      await storageSet("refreshToken", data.refreshToken);
+
+      const keys = refreshEntry.isDriver ? DRIVER_KEYS : OP_KEYS;
+      await storageSet(keys.accessToken, data.accessToken);
+      await storageSet(keys.refreshToken, data.refreshToken);
 
       original.headers.Authorization = `Bearer ${data.accessToken}`;
       processQueue(null, data.accessToken);
       return apiClient(original);
     } catch (refreshError) {
       processQueue(refreshError, null);
-      await storageDel("accessToken");
-      await storageDel("refreshToken");
+      await storageDel(OP_KEYS.accessToken);
+      await storageDel(OP_KEYS.refreshToken);
+      await storageDel(DRIVER_KEYS.accessToken);
+      await storageDel(DRIVER_KEYS.refreshToken);
       // Navigation is handled by the auth store watching user state
       return Promise.reject(refreshError);
     } finally {

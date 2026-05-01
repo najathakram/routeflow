@@ -1,5 +1,6 @@
 import axios from "axios";
 import type { BuyerSeller } from "./buyer-auth";
+import { BUYER_KEYS } from "./auth-keys";
 
 const BASE_URL = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000/api/v1").replace(/\/$/, "");
 
@@ -7,17 +8,17 @@ export const buyerApiClient = axios.create({ baseURL: BASE_URL });
 
 // ─── Request interceptor: attach buyer access token + X-Tenant-Slug ──────────
 //
-// RF-220 TOKEN ISOLATION: this client reads ONLY buyerAccessToken / buyerRefreshToken.
-// The operator portal stores its JWT under "accessToken" (no "buyer" prefix).
-// Never read "accessToken" here — that would allow cross-context token bleed when
+// RF-220 / NEW-m2-1 TOKEN ISOLATION: this client reads ONLY rf:buyer:* keys.
+// The operator portal stores its JWT under rf:op:* keys.
+// Never read rf:op:* here — that would allow cross-context token bleed when
 // the same browser session has both an operator and a buyer session open.
 
 buyerApiClient.interceptors.request.use((config) => {
   if (typeof window !== "undefined") {
-    const token = localStorage.getItem("buyerAccessToken");
+    const token = localStorage.getItem(BUYER_KEYS.accessToken);
     if (token) config.headers.Authorization = `Bearer ${token}`;
 
-    const raw = localStorage.getItem("buyerActiveSeller");
+    const raw = localStorage.getItem(BUYER_KEYS.activeSeller);
     if (raw) {
       try {
         const seller: BuyerSeller = JSON.parse(raw);
@@ -60,21 +61,21 @@ buyerApiClient.interceptors.response.use(
     isRefreshing = true;
 
     try {
-      const refreshToken = typeof window !== "undefined" ? localStorage.getItem("buyerRefreshToken") : null;
+      const refreshToken = typeof window !== "undefined" ? localStorage.getItem(BUYER_KEYS.refreshToken) : null;
       if (!refreshToken) throw new Error("No buyer refresh token");
 
       const { data } = await axios.post(`${BASE_URL}/buyer/auth/refresh`, { refreshToken });
-      localStorage.setItem("buyerAccessToken", data.accessToken);
-      localStorage.setItem("buyerRefreshToken", data.refreshToken);
+      localStorage.setItem(BUYER_KEYS.accessToken, data.accessToken);
+      localStorage.setItem(BUYER_KEYS.refreshToken, data.refreshToken);
 
       original.headers.Authorization = `Bearer ${data.accessToken}`;
       processQueue(null, data.accessToken);
       return buyerApiClient(original);
     } catch (refreshError) {
       processQueue(refreshError, null);
-      localStorage.removeItem("buyerAccessToken");
-      localStorage.removeItem("buyerRefreshToken");
-      localStorage.removeItem("buyerActiveSeller");
+      localStorage.removeItem(BUYER_KEYS.accessToken);
+      localStorage.removeItem(BUYER_KEYS.refreshToken);
+      localStorage.removeItem(BUYER_KEYS.activeSeller);
       if (typeof window !== "undefined") window.location.href = "/buyer/login";
       return Promise.reject(refreshError);
     } finally {

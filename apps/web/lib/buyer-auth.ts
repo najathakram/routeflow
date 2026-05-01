@@ -1,4 +1,5 @@
 import axios from "axios";
+import { BUYER_KEYS } from "./auth-keys";
 
 const BASE_URL = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000/api/v1").replace(/\/$/, "");
 
@@ -21,6 +22,31 @@ interface BuyerAuthResponse {
   buyer: BuyerUser;
 }
 
+// Legacy keys used before NEW-m2-1 / RF-077
+const LEGACY_BUYER_ACCESS = "buyerAccessToken";
+const LEGACY_BUYER_REFRESH = "buyerRefreshToken";
+const LEGACY_BUYER_SELLER = "buyerActiveSeller";
+
+/**
+ * One-time migration: copy legacy buyerAccessToken → rf:buyer:accessToken then
+ * delete the legacy keys. Idempotent — safe to call on every page load.
+ */
+export function migrateLegacyBuyerToken(): void {
+  if (typeof window === "undefined") return;
+  const legacy = localStorage.getItem(LEGACY_BUYER_ACCESS);
+  if (!legacy) return;
+  if (!localStorage.getItem(BUYER_KEYS.accessToken)) {
+    localStorage.setItem(BUYER_KEYS.accessToken, legacy);
+    const legacyRefresh = localStorage.getItem(LEGACY_BUYER_REFRESH);
+    if (legacyRefresh) localStorage.setItem(BUYER_KEYS.refreshToken, legacyRefresh);
+    const legacySeller = localStorage.getItem(LEGACY_BUYER_SELLER);
+    if (legacySeller) localStorage.setItem(BUYER_KEYS.activeSeller, legacySeller);
+  }
+  localStorage.removeItem(LEGACY_BUYER_ACCESS);
+  localStorage.removeItem(LEGACY_BUYER_REFRESH);
+  localStorage.removeItem(LEGACY_BUYER_SELLER);
+}
+
 function parseJwtPayload(token: string): Record<string, unknown> | null {
   try {
     const part = token.split(".")[1];
@@ -30,7 +56,7 @@ function parseJwtPayload(token: string): Record<string, unknown> | null {
 
 export function getStoredBuyer(): BuyerUser | null {
   if (typeof window === "undefined") return null;
-  const token = localStorage.getItem("buyerAccessToken");
+  const token = localStorage.getItem(BUYER_KEYS.accessToken);
   if (!token) return null;
   const payload = parseJwtPayload(token);
   if (!payload) return null;
@@ -41,52 +67,52 @@ export function getStoredBuyer(): BuyerUser | null {
 
 export function getStoredActiveSeller(): BuyerSeller | null {
   if (typeof window === "undefined") return null;
-  const raw = localStorage.getItem("buyerActiveSeller");
+  const raw = localStorage.getItem(BUYER_KEYS.activeSeller);
   if (!raw) return null;
   try { return JSON.parse(raw) as BuyerSeller; } catch { return null; }
 }
 
 export function storeActiveSeller(seller: BuyerSeller): void {
-  localStorage.setItem("buyerActiveSeller", JSON.stringify(seller));
+  localStorage.setItem(BUYER_KEYS.activeSeller, JSON.stringify(seller));
 }
 
 export function clearActiveSeller(): void {
-  localStorage.removeItem("buyerActiveSeller");
+  localStorage.removeItem(BUYER_KEYS.activeSeller);
 }
 
 export async function buyerLogin(email: string, password: string): Promise<BuyerAuthResponse> {
   const { data } = await axios.post<BuyerAuthResponse>(`${BASE_URL}/buyer/auth/login`, { email, password });
-  localStorage.setItem("buyerAccessToken", data.accessToken);
-  localStorage.setItem("buyerRefreshToken", data.refreshToken);
+  localStorage.setItem(BUYER_KEYS.accessToken, data.accessToken);
+  localStorage.setItem(BUYER_KEYS.refreshToken, data.refreshToken);
   return data;
 }
 
 export async function buyerRegister(email: string, password: string, name: string): Promise<BuyerAuthResponse> {
   const { data } = await axios.post<BuyerAuthResponse>(`${BASE_URL}/buyer/auth/register`, { email, password, name });
-  localStorage.setItem("buyerAccessToken", data.accessToken);
-  localStorage.setItem("buyerRefreshToken", data.refreshToken);
+  localStorage.setItem(BUYER_KEYS.accessToken, data.accessToken);
+  localStorage.setItem(BUYER_KEYS.refreshToken, data.refreshToken);
   return data;
 }
 
 export async function buyerLogout(): Promise<void> {
   try {
-    const token = localStorage.getItem("buyerAccessToken");
+    const token = localStorage.getItem(BUYER_KEYS.accessToken);
     if (token) {
       await axios.post(`${BASE_URL}/buyer/auth/logout`, {}, { headers: { Authorization: `Bearer ${token}` } });
     }
   } catch { /* best-effort */ }
-  localStorage.removeItem("buyerAccessToken");
-  localStorage.removeItem("buyerRefreshToken");
-  localStorage.removeItem("buyerActiveSeller");
+  localStorage.removeItem(BUYER_KEYS.accessToken);
+  localStorage.removeItem(BUYER_KEYS.refreshToken);
+  localStorage.removeItem(BUYER_KEYS.activeSeller);
 }
 
 export async function buyerRefreshTokens(): Promise<BuyerAuthResponse | null> {
-  const refreshToken = typeof window !== "undefined" ? localStorage.getItem("buyerRefreshToken") : null;
+  const refreshToken = typeof window !== "undefined" ? localStorage.getItem(BUYER_KEYS.refreshToken) : null;
   if (!refreshToken) return null;
   try {
     const { data } = await axios.post<BuyerAuthResponse>(`${BASE_URL}/buyer/auth/refresh`, { refreshToken });
-    localStorage.setItem("buyerAccessToken", data.accessToken);
-    localStorage.setItem("buyerRefreshToken", data.refreshToken);
+    localStorage.setItem(BUYER_KEYS.accessToken, data.accessToken);
+    localStorage.setItem(BUYER_KEYS.refreshToken, data.refreshToken);
     return data;
   } catch { return null; }
 }
@@ -118,7 +144,6 @@ export async function requestSellerConnection(
 
 export async function getInviteDetails(token: string): Promise<{ name: string; slug: string; logoKey: string | null }> {
   const { data } = await axios.get(`${BASE_URL}/buyer/invites/${token}/details`);
-  // API returns sellerName/sellerSlug; map to the shape the invite page expects
   return {
     name: (data as { sellerName?: string; name?: string }).sellerName ?? (data as { name?: string }).name ?? "",
     slug: (data as { sellerSlug?: string; slug?: string }).sellerSlug ?? (data as { slug?: string }).slug ?? "",

@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@routeflow/ui/web';
 import { connectSocket, disconnectSocket } from '../socket';
+import { OP_KEYS } from '../auth-keys';
 
 export function useRealtimeUpdates() {
   const qc = useQueryClient();
@@ -12,7 +13,7 @@ export function useRealtimeUpdates() {
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
-    const token = localStorage.getItem('accessToken');
+    const token = localStorage.getItem(OP_KEYS.accessToken);
     if (!token) return;
 
     const socket = connectSocket(token);
