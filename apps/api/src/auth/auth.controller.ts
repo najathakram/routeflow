@@ -25,6 +25,8 @@ import { GoogleOAuthService } from "./google-oauth.service";
 import { LoginDto } from "./dto/login.dto";
 import { RefreshDto } from "./dto/refresh.dto";
 import { ChangePasswordDto } from "./dto/change-password.dto";
+import { RequestPasswordResetDto } from "./dto/request-password-reset.dto";
+import { ResetPasswordDto } from "./dto/reset-password.dto";
 
 @ApiTags("auth")
 @Controller("auth")
@@ -92,6 +94,24 @@ export class AuthController {
   @ApiOperation({ summary: "Change password" })
   changePassword(@CurrentUser() user: { id: string }, @Body() dto: ChangePasswordDto) {
     return this.authService.changePassword(user.id, dto.currentPassword, dto.newPassword);
+  }
+
+  // ─── Password reset (RF-018) ───────────────────────────────────────────────
+
+  @Post("request-password-reset")
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { ttl: 900_000, limit: 5 } }) // 5 per 15 min per IP
+  @ApiOperation({ summary: "Request a password reset link (RF-018)" })
+  requestPasswordReset(@Body() dto: RequestPasswordResetDto) {
+    return this.authService.requestPasswordReset(dto.email);
+  }
+
+  @Post("reset-password")
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { ttl: 900_000, limit: 5 } }) // 5 per 15 min per IP
+  @ApiOperation({ summary: "Reset password with token (RF-018)" })
+  resetPassword(@Body() dto: ResetPasswordDto) {
+    return this.authService.resetPassword(dto.token, dto.newPassword);
   }
 
   // ─── Session management ────────────────────────────────────────────────────────

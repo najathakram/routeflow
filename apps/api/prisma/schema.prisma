@@ -414,15 +414,16 @@ model User {
   deletedAt           DateTime?
   tenantId            String?
 
-  tenant          Tenant?          @relation(fields: [tenantId], references: [id])
-  customer        Customer?
-  driver          Driver?
-  deviceTokens    DeviceToken[]
-  refreshTokens   RefreshToken[]
-  stockMovements  StockMovement[]
-  expenses        Expense[]
-  messages        Message[]
-  preferences     UserPreference[]
+  tenant               Tenant?               @relation(fields: [tenantId], references: [id])
+  customer             Customer?
+  driver               Driver?
+  deviceTokens         DeviceToken[]
+  refreshTokens        RefreshToken[]
+  stockMovements       StockMovement[]
+  expenses             Expense[]
+  messages             Message[]
+  preferences          UserPreference[]
+  passwordResetTokens  PasswordResetToken[]
 
   @@unique([tenantId, email])
   @@unique([tenantId, username])
@@ -1096,6 +1097,20 @@ model RefreshToken {
   @@index([userId])
   @@index([expiresAt])
   @@index([tenantId])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(uuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
 }
 
 model Supplier {

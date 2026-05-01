@@ -366,6 +366,89 @@ export class AuthService {
     return this.login(safeUser, deviceInfo);
   }
 
+  // ─── Password reset (RF-018) ──────────────────────────────────────────────────
+
+  /**
+   * Generates a single-use password reset token and emails a link to the user.
+   * Always returns the same shape to prevent email enumeration.
+   */
+  async requestPasswordReset(email: string): Promise<{ message: string }> {
+    const MSG = { message: "If that address is registered you will receive a reset link shortly." };
+
+    // Look up user by email (cross-tenant safe — find first active match)
+    const user = await this.prisma.user.findFirst({
+      where: { email: email.toLowerCase(), deletedAt: null, status: "ACTIVE" },
+    });
+    if (!user) return MSG;
+
+    // Raw 32-byte random token
+    const rawToken = crypto.randomBytes(32).toString("hex");
+    const tokenHash = this.hashToken(rawToken);
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 min
+
+    // Clean up any previous unexpired tokens for this user to avoid table bloat
+    await this.prisma.passwordResetToken.deleteMany({
+      where: { userId: user.id, usedAt: null, expiresAt: { gt: new Date() } },
+    });
+
+    await this.prisma.passwordResetToken.create({
+      data: { userId: user.id, tokenHash, expiresAt },
+    });
+
+    const resetUrl = `https://routeflowmobile-production.up.railway.app/reset-password?token=${rawToken}`;
+
+    this.emailService
+      .send({
+        to: email,
+        subject: "Reset your RouteFlow password",
+        html: `<p>Hi,</p>
+<p>We received a request to reset the password for your RouteFlow account.</p>
+<p><a href="${resetUrl}" style="display:inline-block;background:#4f46e5;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:600;">Reset password</a></p>
+<p>This link expires in <strong>15 minutes</strong>. If you didn't request this, you can safely ignore this email — your password will not change.</p>`,
+      })
+      .catch(() => {});
+
+    return MSG;
+  }
+
+  /**
+   * Validates a reset token, updates the user's password, and invalidates all
+   * existing refresh tokens so active sessions are force-logged-out.
+   */
+  async resetPassword(token: string, newPassword: string): Promise<{ message: string }> {
+    const tokenHash = this.hashToken(token);
+    const record = await this.prisma.passwordResetToken.findUnique({ where: { tokenHash } });
+
+    if (!record) throw new BadRequestException("Reset link is invalid or has already been used.");
+    if (record.usedAt) throw new BadRequestException("Reset link has already been used.");
+    if (record.expiresAt < new Date()) throw new BadRequestException("Reset link has expired.");
+
+    const newHash = await bcrypt.hash(newPassword, 10);
+
+    // Mark token used and update password in a transaction
+    await this.prisma.$transaction([
+      this.prisma.passwordResetToken.update({
+        where: { tokenHash },
+        data: { usedAt: new Date() },
+      }),
+      this.prisma.user.update({
+        where: { id: record.userId },
+        data: { password: newHash, forcePasswordChange: false },
+      }),
+      this.prisma.refreshToken.deleteMany({ where: { userId: record.userId } }),
+    ]);
+
+    return { message: "Password reset successfully. Please log in with your new password." };
+  }
+
+  /**
+   * Hash a raw token with SHA-256 for storage — same helper used for refresh tokens.
+   * Exported for unit testing.
+   */
+  hashTokenPublic(token: string): string {
+    return this.hashToken(token);
+  }
+
   async changePassword(userId: string, currentPassword: string, newPassword: string) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new UnauthorizedException();

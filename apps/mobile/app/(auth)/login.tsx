@@ -10,9 +10,10 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { alertInfo } from "../../lib/confirm";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
+import { useRouter } from "expo-router";
+import { alertInfo } from "../../lib/confirm";
 import { ios } from "@routeflow/ui/tokens";
 import { BrandGlyph, GoogleButton } from "@routeflow/ui/mobile/ios";
 import { useAuthStore } from "../../lib/auth-store";
@@ -39,6 +40,7 @@ function BrandMark() {
 }
 
 export default function LoginScreen() {
+  const router = useRouter();
   const login = useAuthStore((s) => s.login);
   const loginWithGoogle = useAuthStore((s) => s.loginWithGoogle);
   const tenantSlug = useTenantStore((s) => s.slug);
@@ -169,12 +171,7 @@ export default function LoginScreen() {
               <Text style={styles.rememberText}>Remember me</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              onPress={() =>
-                alertInfo(
-                  "Reset your password",
-                  "Please contact your dispatcher to reset your password. Self-serve reset is coming soon.",
-                )
-              }
+              onPress={() => router.push("/(auth)/forgot-password")}
               activeOpacity={0.7}
             >
               <Text style={styles.forgotText}>Forgot?</Text>
