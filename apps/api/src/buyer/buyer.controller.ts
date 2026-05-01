@@ -36,17 +36,22 @@ import { ListInvoicesDto } from "../invoices/dto/list-invoices.dto";
 import { UpdateOrderItemsDto } from "../orders/dto/update-order-items.dto";
 
 /**
- * Builds a JwtPayload that looks like a CUSTOMER user.
+ * Builds a JwtPayload that looks like a tenant user.
  * Used so existing tenant services can scope their queries correctly:
- *   - `sub`      → User.id (the Customer's user account)
- *   - `role`     → CUSTOMER (triggers per-customer filtering in services)
+ *   - `sub`      → User.id (the Customer's user account; may be null for portal-only buyers)
+ *   - `role`     → defaults to CUSTOMER; pass OPERATOR to skip userId-lookup paths in services
  *   - `tenantId` → from BuyerSellerContextGuard (set by BuyerTenantInterceptor ALS run)
  */
-function makePseudoUser(ctx: { userId: string; tenantId: string; tenantSlug: string }): JwtPayload {
+function makePseudoUser(ctx: {
+  userId?: string | null;
+  tenantId: string;
+  tenantSlug: string;
+  role?: UserRole;
+}): JwtPayload {
   return {
-    sub: ctx.userId,
+    sub: ctx.userId ?? "",
     username: "",
-    role: UserRole.CUSTOMER,
+    role: ctx.role ?? UserRole.CUSTOMER,
     status: UserStatus.ACTIVE,
     forcePasswordChange: false,
     tenantId: ctx.tenantId,
@@ -126,7 +131,9 @@ export class BuyerController {
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "List buyer's orders at the selected seller" })
   getOrders(@CurrentBuyerCustomer() ctx: any, @Query() query: ListOrdersDto) {
-    return this.ordersService.findAll(query, makePseudoUser(ctx));
+    // Inject customerId directly so ordersService.findAll() doesn't need to look
+    // up the customer by userId (which is null for buyer-portal-only accounts).
+    return this.ordersService.findAll({ ...query, customerId: ctx.customerId }, makePseudoUser({ ...ctx, role: UserRole.OPERATOR }));
   }
 
   @Get("invoices")
@@ -135,7 +142,14 @@ export class BuyerController {
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "List buyer's invoices at the selected seller" })
   getInvoices(@CurrentBuyerCustomer() ctx: any, @Query() query: ListInvoicesDto) {
-    return this.invoicesService.findAll(query, makePseudoUser(ctx));
+    // Inject customerId directly; pass OPERATOR role so invoicesService.findAll()
+    // uses the where.customerId path rather than the userId-lookup path.
+    // Buyers must never see DRAFT invoices — exclude them unless caller specified a status.
+    const buyerQuery: ListInvoicesDto = { ...query, customerId: ctx.customerId };
+    if (!buyerQuery.status && (!buyerQuery.statuses || buyerQuery.statuses.length === 0)) {
+      buyerQuery.statuses = ["SENT", "VIEWED", "PARTIAL", "OVERDUE", "PAID", "VOID", "WRITTEN_OFF"] as any;
+    }
+    return this.invoicesService.findAll(buyerQuery, makePseudoUser({ ...ctx, role: UserRole.OPERATOR }));
   }
 
   @Get("invoices/:id")
@@ -365,7 +379,9 @@ export class BuyerController {
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "List buyer's standing order templates" })
   getTemplates(@CurrentBuyerCustomer() ctx: any) {
-    return this.templatesService.findAllForUser(makePseudoUser(ctx));
+    // Pass OPERATOR role + customerId to avoid userId-based customer lookup
+    // (buyer-portal-only accounts may have userId=null on the Customer record).
+    return this.templatesService.findAllForUser(makePseudoUser({ ...ctx, role: UserRole.OPERATOR }), ctx.customerId);
   }
 
   @Get("standing-orders")
@@ -376,7 +392,8 @@ export class BuyerController {
     summary: "Alias: list buyer's standing order templates (same as /buyer/templates)",
   })
   getStandingOrders(@CurrentBuyerCustomer() ctx: any) {
-    return this.templatesService.findAllForUser(makePseudoUser(ctx));
+    // Pass OPERATOR role + customerId to avoid userId-based customer lookup.
+    return this.templatesService.findAllForUser(makePseudoUser({ ...ctx, role: UserRole.OPERATOR }), ctx.customerId);
   }
 
   @Post("templates/:id/reorder")

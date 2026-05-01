@@ -90,6 +90,8 @@ export class CustomersService {
     const where: any = {
       // Exclude supplier-only contacts (vendors imported from expense CSVs that have no orders)
       supplierOnly: false,
+      // Exclude soft-deleted customers (RF-197)
+      deletedAt: null,
     };
     if (query.search) {
       const q = query.search;
