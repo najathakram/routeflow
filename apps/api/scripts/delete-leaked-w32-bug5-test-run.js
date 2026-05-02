@@ -21,7 +21,7 @@ const readline   = require("readline");
 // ── Config ────────────────────────────────────────────────────────────────────
 
 const DB_URL = "postgresql://routeflow:routeflow_prod_2026@gondola.proxy.rlwy.net:41006/routeflow";
-const UX_AUDIT_TENANT_ID = "ux-audit-1777265477001"; // From targets.json env
+const UX_AUDIT_TENANT_ID = "8ee7bbf5-991b-41b1-adcb-4a6c20981401"; // tenantId UUID for ux-audit-1777265477001
 const TARGET_RUN_NAME = "W32-BUG5-TEST";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

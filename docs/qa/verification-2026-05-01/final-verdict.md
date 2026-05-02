@@ -1,5 +1,10 @@
 # RouteFlow Verification — 2026-05-01
 
+> **Update 2026-05-01 (post-fix-orchestration):** Phase B fixes are STAGED.
+> 13 commits in working tree, 4 migrations + 3 cleanup scripts pending manual apply on Railway.
+> See [`DEPLOY-HANDOFF.md`](./DEPLOY-HANDOFF.md) for the deploy steps and the migration order.
+> Phase C re-verification will run **after deploy completes**.
+
 ## Headline
 
 **🛑 NO-SHIP.** Five P0 fixes from the 2026-04-29 audit are still broken or unverifiable on production, two new P0-class regressions surfaced (entire buyer Orders and Invoices APIs return 500), and 17 P1s remain FAIL/PARTIAL. All six verification domains are HOLD or RE-FIX.
