@@ -703,7 +703,14 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
       <div className="flex flex-1 flex-col overflow-hidden">
         <ImpersonationBanner />
         <Header onOpenPalette={() => setPaletteOpen(true)} />
-        <main id="main-content" className="flex-1 overflow-x-hidden overflow-y-auto bg-surface-raised">
+        {/* pb-24 reserves 96px of clearance below page content so the
+            floating PwaInstallPrompt (fixed bottom-4) and similar
+            bottom-anchored UI never sit on top of bottom-aligned form
+            actions like Save Defaults / Save Changes. Without this, the
+            install prompt covers the Save button on Settings →
+            Invoicing → Invoice Defaults and on the Business Profile
+            tab, making the form look like it has no save action. */}
+        <main id="main-content" className="flex-1 overflow-x-hidden overflow-y-auto bg-surface-raised pb-24">
           {children}
         </main>
       </div>
