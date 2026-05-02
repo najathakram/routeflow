@@ -304,8 +304,23 @@ export function useWriteOffInvoice() {
 }
 
 export function useDownloadInvoicePdf() {
-  return useMutation<{ url: string }, Error, string>({
-    mutationFn: (id) => apiClient.get(`/invoices/${id}/pdf`).then((r) => r.data),
+  // Two-step download. The /pdf endpoint returns { url } pointing at the
+  // generated PDF — but in production that URL is the local-storage uploads
+  // endpoint, which requires a JWT (RF-075). A plain `window.open(url)` opens
+  // a new top-level tab that has no localStorage token in scope, so the
+  // request comes back 401 Unauthorized. Fetching the PDF here through the
+  // axios apiClient (which auto-attaches the Bearer token via its interceptor)
+  // lets us hand the caller a blob it can hand off to <a download> or an
+  // iframe — same flow works whether the URL is a presigned R2 URL (auth
+  // header is harmless) or a local /uploads/... URL (auth header is required).
+  return useMutation<{ url: string; blob: Blob }, Error, string>({
+    mutationFn: async (id) => {
+      const { url } = await apiClient
+        .get<{ url: string }>(`/invoices/${id}/pdf`)
+        .then((r) => r.data);
+      const pdfRes = await apiClient.get<Blob>(url, { responseType: "blob" });
+      return { url, blob: pdfRes.data };
+    },
   });
 }
 

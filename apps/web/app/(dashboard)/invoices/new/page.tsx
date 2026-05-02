@@ -535,10 +535,26 @@ export default function NewInvoicePage() {
         invoiceId = created.id;
         setCurrentDraftId(invoiceId);
       }
-      const res = await apiClient.get(`/invoices/${invoiceId}/pdf`, {
+      // Two-step: render PDF on the API, then fetch its bytes through the
+      // authenticated apiClient. The raw URL points at the storage uploads
+      // endpoint which requires a JWT (RF-075); embedding it directly in an
+      // <iframe> fails because the iframe request has no token. A blob URL
+      // built from the auth-fetched bytes works in any <iframe>/new tab.
+      const meta = await apiClient.get<{ url: string }>(`/invoices/${invoiceId}/pdf`, {
         params: { refresh: 1 },
       });
-      setPreviewUrl(res.data?.url ?? null);
+      if (!meta.data?.url) {
+        setPreviewUrl(null);
+      } else {
+        const pdfRes = await apiClient.get<Blob>(meta.data.url, {
+          responseType: "blob",
+        });
+        // Replace any previous preview blob URL to avoid memory leaks.
+        setPreviewUrl((prev) => {
+          if (prev && prev.startsWith("blob:")) URL.revokeObjectURL(prev);
+          return URL.createObjectURL(pdfRes.data);
+        });
+      }
     } catch (err) {
       toast({
         title: "Couldn't build preview",

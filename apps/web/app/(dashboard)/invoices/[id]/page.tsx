@@ -1035,11 +1035,27 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
 
   const handleDownloadPdf = () => {
     downloadPdf.mutate(invoice.id, {
-      onSuccess: ({ url }) => {
-        window.open(url, "_blank", "noopener,noreferrer");
+      onSuccess: ({ blob }) => {
+        // Trigger the download via a same-origin blob URL — `window.open(url)`
+        // can't be used here because the storage endpoint requires a JWT and a
+        // top-level navigation has no token in localStorage scope.
+        const blobUrl = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = blobUrl;
+        a.download = `${invoice.invoiceNumber || invoice.id}.pdf`;
+        a.rel = "noopener noreferrer";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        // Revoke after the browser has had a chance to start the download.
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
       },
       onError: () => {
-        toast({ title: "Failed to generate PDF", description: "Please try again.", variant: "error" });
+        toast({
+          title: "Failed to generate PDF",
+          description: "Please try again.",
+          variant: "error",
+        });
       },
     });
   };
@@ -1156,8 +1172,13 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
             />
           )}
 
-          {/* Adjust Prices — operator-only, any non-void status */}
-          {status !== "VOID" && status !== "WRITTEN_OFF" && (
+          {/* Adjust Prices — operator-only. Match backend gate exactly:
+              PAID/VOID/WRITTEN_OFF reject with "Cannot adjust prices on a
+              ${status} invoice. Issue a credit note instead." Hiding the
+              button avoids the dead-click + invisible-toast UX where the
+              panel opens, the user clicks Apply, and the success/error
+              toast gets covered by the install prompt or other corner UI. */}
+          {status !== "VOID" && status !== "WRITTEN_OFF" && status !== "PAID" && (
             <Button
               size="sm"
               variant="secondary"

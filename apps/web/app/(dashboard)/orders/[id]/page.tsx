@@ -93,8 +93,22 @@ function SendInvoiceModal({
   async function handleDownload() {
     setPdfLoading(true);
     try {
-      const res = await apiClient.get(`/invoices/${data.invoiceId}/pdf`);
-      if (res.data?.url) window.open(res.data.url, "_blank");
+      // Two-step: ask the API to render the PDF, then fetch the bytes through
+      // the authenticated apiClient. Cannot `window.open(url)` directly — the
+      // storage endpoint requires a JWT (RF-075) and a top-level new-tab
+      // navigation has no token in localStorage scope, so it returns 401.
+      const meta = await apiClient.get<{ url: string }>(`/invoices/${data.invoiceId}/pdf`);
+      if (!meta.data?.url) throw new Error("No PDF URL returned");
+      const pdfRes = await apiClient.get<Blob>(meta.data.url, { responseType: "blob" });
+      const blobUrl = URL.createObjectURL(pdfRes.data);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = `invoice-${data.invoiceId}.pdf`;
+      a.rel = "noopener noreferrer";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
     } catch {
       toast({ title: "Could not generate PDF", variant: "error" });
     } finally {
