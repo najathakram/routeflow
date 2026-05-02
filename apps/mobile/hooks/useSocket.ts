@@ -8,6 +8,16 @@ import { OP_KEYS, DRIVER_KEYS } from "../lib/auth-keys";
 const SOCKET_URL =
   (process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:3000").replace(/\/$/, "");
 
+// Diagnostic logging — gated so it can be disabled by setting
+// EXPO_PUBLIC_DEBUG_SOCKET=false in the Railway env.
+const DEBUG = (process.env.EXPO_PUBLIC_DEBUG_SOCKET ?? "true") !== "false";
+function dbg(...args: unknown[]) {
+  if (DEBUG) console.log("[socket]", ...args);
+}
+function dbgErr(...args: unknown[]) {
+  if (DEBUG) console.error("[socket]", ...args);
+}
+
 // ─── Typed event payloads (mirrors routeflow.gateway.ts) ─────────────────────
 
 interface OrderCreatedPayload {
@@ -45,28 +55,59 @@ export function useSocket() {
   const socketRef = useRef<Socket | null>(null);
 
   useEffect(() => {
-    if (!user) return;
+    const role = user?.role ?? "(none)";
+    dbg("hook mount, role=", role, "user=", user ? user.id : null);
+
+    if (!user) {
+      dbg("no user in store, skipping connect");
+      return;
+    }
+
+    // SSR guard: localStorage is only available in a real browser context.
+    // Expo web can pre-render components on the server where window and
+    // localStorage are absent. We check via globalThis so the guard is
+    // testable in a Node.js environment (jest sets global.window and
+    // global.localStorage as side-effects of the test helpers).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const g = globalThis as any;
+    if (Platform.OS === "web" && (g.window == null || g.localStorage == null)) {
+      dbg("SSR context (no window/localStorage), skipping connect");
+      return;
+    }
 
     let mounted = true;
 
     const connect = async () => {
       let token: string | null = null;
+      const isDriver = user.role === "DRIVER";
+      const tokenKey = isDriver ? DRIVER_KEYS.accessToken : OP_KEYS.accessToken;
+
       if (Platform.OS === "web") {
-        // NEW-m2-1 / RF-077: read from role-namespaced key
-        const role = user.role;
-        const isDriver = role === "DRIVER";
-        token = localStorage.getItem(isDriver ? DRIVER_KEYS.accessToken : OP_KEYS.accessToken);
+        token = localStorage.getItem(tokenKey);
       } else {
         const { getItemAsync } = await import("expo-secure-store");
-        const isDriver = user.role === "DRIVER";
-        token = await getItemAsync(isDriver ? DRIVER_KEYS.accessToken : OP_KEYS.accessToken);
+        token = await getItemAsync(tokenKey);
       }
 
-      if (!token || !mounted) return;
+      dbg(`storage read key=${tokenKey} token=${token ? "[present]" : "[null]"}`);
+
+      if (!token) {
+        dbg(`no token in storage (key=${tokenKey}), skipping connect`);
+        return;
+      }
+      if (!mounted) {
+        dbg("unmounted before io() — aborting");
+        return;
+      }
+
+      dbg(`calling io(${SOCKET_URL})`);
 
       const socket = io(SOCKET_URL, {
         auth: { token },
-        transports: ["websocket", "polling"],
+        // Start with polling so the HTTP handshake always works through Railway's
+        // proxy (polling is confirmed working). socket.io-client will upgrade to
+        // WebSocket automatically after the handshake succeeds.
+        transports: ["polling", "websocket"],
         reconnection: true,
         reconnectionDelay: 1_000,
         reconnectionDelayMax: 30_000,
@@ -74,6 +115,18 @@ export function useSocket() {
       });
 
       socketRef.current = socket;
+
+      socket.on("connect", () => {
+        dbg("connected", socket.id);
+      });
+
+      socket.on("connect_error", (e: Error) => {
+        dbgErr("connect_error", e?.message, e);
+      });
+
+      socket.on("disconnect", (reason: string) => {
+        dbg("disconnect", reason);
+      });
 
       socket.on("order.created", (_data: OrderCreatedPayload) => {
         void qc.invalidateQueries({ queryKey: ["admin", "orders"] });
