@@ -9,15 +9,44 @@ import { Eye, EyeOff, ArrowLeft } from "lucide-react";
 import { Input, Button } from "@routeflow/ui/web";
 import { useAuth } from "@/lib/auth-context";
 import { useTenant } from "@/components/tenant-provider";
+import { setTenantCookie } from "@/lib/tenant-cookie";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
+// Workspace slug rules: lowercase letters, digits, hyphens; 1–63 chars.
+// Matches the API's tenant slug constraints.
+const WORKSPACE_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+
 const loginSchema = z.object({
+  workspace: z
+    .string()
+    .min(1, "Workspace is required")
+    .transform((v) => v.trim().toLowerCase())
+    .refine((v) => WORKSPACE_RE.test(v), "Letters, numbers, and hyphens only"),
   username: z.string().min(1, "Username is required"),
   password: z.string().min(1, "Password is required"),
 });
 
 type LoginFormValues = z.infer<typeof loginSchema>;
+
+// If the page is loaded on a tenant subdomain (e.g. affa.routeflow.info),
+// the workspace is implied by the URL — pre-fill and lock the field.
+// On platform hosts (www.routeflow.info, app.routeflow.info, hosting-provider
+// domains, localhost) the user must type which workspace they're signing into.
+const PLATFORM_SUBDOMAINS = new Set([
+  "www", "app", "api", "admin", "static", "assets",
+  "mail", "support", "platform", "billing", "localhost",
+]);
+
+function getSubdomainWorkspace(): string | null {
+  if (typeof window === "undefined") return null;
+  const host = window.location.hostname;
+  const parts = host.split(".");
+  if (parts.length < 3) return null; // bare domain or localhost
+  const sub = parts[0];
+  if (!sub || PLATFORM_SUBDOMAINS.has(sub)) return null;
+  return sub;
+}
 
 // ─── Google Icon ──────────────────────────────────────────────────────────────
 
@@ -57,13 +86,26 @@ export default function LoginPage() {
   const [googleError, setGoogleError] = React.useState<string | null>(null);
   const [throttleSeconds, setThrottleSeconds] = React.useState<number | null>(null);
 
+  const subdomainWorkspace = React.useMemo(getSubdomainWorkspace, []);
+  const showWorkspaceField = !subdomainWorkspace;
+
+  // Only pre-fill from the URL subdomain. We deliberately do NOT pre-fill
+  // from `tenantSlug` (useTenant) on platform hosts because that value
+  // can be the DEFAULT_TENANT env-var fallback (e.g. "legacy"), which
+  // would silently route the user to the wrong tenant.
   const {
     register,
     handleSubmit,
+    watch,
     formState: { errors },
   } = useForm<LoginFormValues>({
     resolver: zodResolver(loginSchema),
+    defaultValues: {
+      workspace: subdomainWorkspace ?? "",
+    },
   });
+
+  const workspaceValue = watch("workspace");
 
   // NEW-rweb-4: countdown timer for throttle display
   React.useEffect(() => {
@@ -84,6 +126,12 @@ export default function LoginPage() {
     setIsLoading(true);
     setApiError(null);
     setThrottleSeconds(null);
+    // Set the tenant cookie BEFORE calling the auth client so the Axios
+    // interceptor attaches X-Tenant-Slug: <workspace> to the /auth/login
+    // request. Without this, on platform hosts (www.routeflow.info) the
+    // request goes to whatever DEFAULT_TENANT is set to and login fails
+    // for users in any other tenant.
+    setTenantCookie(data.workspace);
     try {
       const user = await authLogin(data.username, data.password);
       if (user.forcePasswordChange) {
@@ -127,7 +175,11 @@ export default function LoginPage() {
     setGoogleError(null);
     try {
       const params = new URLSearchParams({ context: "staff" });
-      if (tenantSlug) params.set("tenant", tenantSlug);
+      // Prefer the workspace the user just typed over the cookie/subdomain
+      // slug — on platform hosts the latter is the DEFAULT_TENANT fallback,
+      // which would route OAuth to the wrong tenant.
+      const oauthTenant = (workspaceValue || "").trim().toLowerCase() || tenantSlug;
+      if (oauthTenant) params.set("tenant", oauthTenant);
       const res = await fetch(`${apiUrl}/auth/google?${params}`);
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -208,6 +260,17 @@ export default function LoginPage() {
                 {apiError}
               </p>
             ) : null}
+            {showWorkspaceField && (
+              <Input
+                label="Workspace"
+                placeholder="e.g. affa"
+                autoComplete="organization"
+                autoCapitalize="none"
+                spellCheck={false}
+                register={register("workspace")}
+                error={errors.workspace?.message}
+              />
+            )}
             <Input
               label="Username or Email"
               placeholder="Enter your username or email"

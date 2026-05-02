@@ -102,10 +102,15 @@ export function middleware(request: NextRequest) {
   const hostname = host.split(":")[0];
   const parts = hostname.split(".");
 
-  // A real subdomain looks like  <slug>.routeflow.io  →  3 parts
-  // localhost or bare domain → 1 part → skip
-  // Hosting provider URLs (*.railway.app, *.vercel.app, etc.) → use default
-  let resolvedSlug: string | null = null;
+  // Tenant resolution precedence:
+  //   1. Real subdomain (e.g. affa.routeflow.info) → authoritative, overwrites cookie
+  //   2. Existing cookie (e.g. user picked a workspace on the login form, or
+  //      previous successful login anchored it to the user's actual tenant) → preserve
+  //   3. DEFAULT_TENANT env var → single-tenant fallback (Railway/Vercel deploys
+  //      that serve only one tenant). Do NOT apply this when an existing cookie
+  //      is present — we'd clobber the user's workspace selection on every nav.
+  //   4. Otherwise → no cookie set; the login page asks the user for a workspace.
+  let subdomainSlug: string | null = null;
 
   if (parts.length >= 3) {
     // Check against known hosting provider base domains (last 2 or 3 parts)
@@ -118,15 +123,21 @@ export function middleware(request: NextRequest) {
     if (!isHostingProvider) {
       const subdomain = parts[0];
       if (subdomain && !PLATFORM_HOSTS.has(subdomain)) {
-        resolvedSlug = subdomain;
+        subdomainSlug = subdomain;
       }
     }
   }
 
-  // For hosting-provider or localhost URLs without a subdomain, fall back to
-  // the DEFAULT_TENANT env var so single-tenant deployments work out of the box.
-  if (!resolvedSlug) {
-    resolvedSlug = process.env.DEFAULT_TENANT ?? null;
+  const existingCookieSlug = request.cookies.get("tenant-slug")?.value || null;
+
+  let resolvedSlug: string | null = null;
+  if (subdomainSlug) {
+    resolvedSlug = subdomainSlug;
+  } else if (existingCookieSlug) {
+    // Preserve — do not overwrite below
+    resolvedSlug = null;
+  } else if (process.env.DEFAULT_TENANT) {
+    resolvedSlug = process.env.DEFAULT_TENANT;
   }
 
   if (resolvedSlug) {
