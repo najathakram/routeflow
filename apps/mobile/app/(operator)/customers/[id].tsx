@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import {
   ActivityIndicator,
   Linking,
@@ -29,8 +30,17 @@ function fmt(n: number | string | null | undefined): string {
 export default function CustomerDetailScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { data: customer, isLoading } = useCustomer(id ?? "");
-  const { data: statement } = useCustomerStatement(id ?? "");
+
+  // RF-203: defensive guard — if somehow "create" reaches this screen (e.g. the
+  // static create.tsx was not matched), redirect to the proper create form
+  // instead of firing a doomed /customers/create API call and spinning forever.
+  const isCreateAlias = id === "create" || id === "new";
+  useEffect(() => {
+    if (isCreateAlias) router.replace("/(operator)/customers/new");
+  }, [isCreateAlias, router]);
+
+  const { data: customer, isLoading } = useCustomer(isCreateAlias ? "" : (id ?? ""));
+  const { data: statement } = useCustomerStatement(isCreateAlias ? "" : (id ?? ""));
   const deleteMut = useDeleteCustomer();
 
   if (isLoading || !customer) {

@@ -9,7 +9,7 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -52,7 +52,16 @@ function statusPill(status: string) {
 export default function InvoiceDetailScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { data: invoice, isLoading, refetch } = useAdminInvoice(id ?? "");
+
+  // RF-203: defensive guard — if somehow "create" reaches this screen (e.g. the
+  // static create.tsx was not matched), redirect to the proper create form
+  // instead of firing a doomed /invoices/create API call and spinning forever.
+  const isCreateAlias = id === "create" || id === "new";
+  useEffect(() => {
+    if (isCreateAlias) router.replace("/(operator)/invoices/new");
+  }, [isCreateAlias, router]);
+
+  const { data: invoice, isLoading, refetch } = useAdminInvoice(isCreateAlias ? "" : (id ?? ""));
   const sendMut = useSendInvoice();
   const voidMut = useVoidInvoice();
   const pdfMut = useInvoicePdf();

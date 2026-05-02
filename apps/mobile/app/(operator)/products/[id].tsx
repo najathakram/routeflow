@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -28,8 +29,17 @@ function toNumber(v: number | string | null | undefined): number {
 export default function ProductDetailScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { data: product, isLoading } = useProduct(id ?? "");
-  const { data: movements } = useInventoryMovements({ productId: id, limit: 20 });
+
+  // RF-203: defensive guard — if somehow "create" reaches this screen (e.g. the
+  // static create.tsx was not matched), redirect to the proper create form
+  // instead of firing a doomed /products/create API call and spinning forever.
+  const isCreateAlias = id === "create" || id === "new";
+  useEffect(() => {
+    if (isCreateAlias) router.replace("/(operator)/products/new");
+  }, [isCreateAlias, router]);
+
+  const { data: product, isLoading } = useProduct(isCreateAlias ? "" : (id ?? ""));
+  const { data: movements } = useInventoryMovements({ productId: isCreateAlias ? undefined : id, limit: 20 });
   const deleteMut = useDeleteProduct();
 
   if (isLoading || !product) {

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Modal,
@@ -36,7 +36,16 @@ import { confirm } from "../../../lib/confirm";
 export default function RouteDetailScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { data: route, isLoading, refetch } = useAdminRoute(id);
+
+  // RF-203: defensive guard — if somehow "create" reaches this screen (e.g. the
+  // static create.tsx was not matched), redirect to the proper create form
+  // instead of firing a doomed /routes/create API call and spinning forever.
+  const isCreateAlias = id === "create" || id === "new";
+  useEffect(() => {
+    if (isCreateAlias) router.replace("/(operator)/routes/new");
+  }, [isCreateAlias, router]);
+
+  const { data: route, isLoading, refetch } = useAdminRoute(isCreateAlias ? null : id);
   const { data: driversData } = useAdminDrivers();
   const driver = useMemo(
     () => driversData?.data.find((d) => d.id === route?.driverId),
