@@ -4,6 +4,7 @@ import { useRouter, useLocalSearchParams } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { useAuthStore } from "../../lib/auth-store";
 import { useBuyerSessionStore } from "../../lib/buyer-session-store";
+import { BUYER_KEYS, OP_KEYS, DRIVER_KEYS } from "../../lib/auth-keys";
 
 /**
  * Safety-net deep-link handler for the Google OAuth callback.
@@ -54,13 +55,14 @@ export default function GoogleCallbackScreen() {
       const isWeb = typeof window !== "undefined" && window.localStorage;
 
       if (type === "BUYER") {
-        // Buyer Google callback — store buyer tokens and session
+        // Buyer Google callback — store buyer tokens using role-namespaced keys
+        // NEW-m2-1 / RF-077: write to rf:buyer:accessToken, not legacy buyerAccessToken
         if (isWeb) {
-          window.localStorage.setItem("buyerAccessToken", accessToken);
-          window.localStorage.setItem("buyerRefreshToken", refreshToken);
+          window.localStorage.setItem(BUYER_KEYS.accessToken, accessToken);
+          window.localStorage.setItem(BUYER_KEYS.refreshToken, refreshToken);
         } else {
-          await SecureStore.setItemAsync("buyerAccessToken", accessToken);
-          await SecureStore.setItemAsync("buyerRefreshToken", refreshToken);
+          await SecureStore.setItemAsync(BUYER_KEYS.accessToken, accessToken);
+          await SecureStore.setItemAsync(BUYER_KEYS.refreshToken, refreshToken);
         }
         if (payload) {
           setBuyer({
@@ -73,13 +75,16 @@ export default function GoogleCallbackScreen() {
         // we just route to orders and let the customer layout guard handle it
         router.replace("/(customer)/orders");
       } else {
-        // Staff Google callback
+        // Staff Google callback — write to role-namespaced key (op or driver)
+        // NEW-m2-1 / RF-077: parse role from JWT to pick the right slot
+        const role = (payload?.role as string) ?? "";
+        const staffKeys = role === "DRIVER" ? DRIVER_KEYS : OP_KEYS;
         if (isWeb) {
-          window.localStorage.setItem("accessToken", accessToken);
-          window.localStorage.setItem("refreshToken", refreshToken);
+          window.localStorage.setItem(staffKeys.accessToken, accessToken);
+          window.localStorage.setItem(staffKeys.refreshToken, refreshToken);
         } else {
-          await SecureStore.setItemAsync("accessToken", accessToken);
-          await SecureStore.setItemAsync("refreshToken", refreshToken);
+          await SecureStore.setItemAsync(staffKeys.accessToken, accessToken);
+          await SecureStore.setItemAsync(staffKeys.refreshToken, refreshToken);
         }
         if (payload) {
           setUser({

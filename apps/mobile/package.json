@@ -17,7 +17,6 @@
   },
   "dependencies": {
     "@expo-google-fonts/inter": "^0.4.2",
-    "@zxing/browser": "^0.1.5",
     "@expo/metro-runtime": "^55.0.6",
     "@hookform/resolvers": "^5.2.2",
     "@react-native-async-storage/async-storage": "^3.0.1",
@@ -27,6 +26,7 @@
     "@react-navigation/stack": "^7.8.4",
     "@routeflow/types": "*",
     "@tanstack/react-query": "^5.90.21",
+    "@zxing/browser": "^0.1.5",
     "axios": "^1.13.6",
     "date-fns": "^4.1.0",
     "expo": "~55.0.5",
@@ -71,8 +71,13 @@
   },
   "devDependencies": {
     "@routeflow/eslint-config": "*",
+    "@testing-library/jest-native": "^5.4.3",
+    "@testing-library/react-native": "^13.3.3",
     "@types/react": "~19.2.2",
+    "babel-jest": "^30.2.0",
     "eslint": "^9.0.0",
+    "jest": "^30.3.0",
+    "jest-expo": "^55.0.16",
     "typescript": "~5.9.2"
   },
   "private": true

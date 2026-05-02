@@ -3,6 +3,7 @@ import { Platform } from "react-native";
 import { io, type Socket } from "socket.io-client";
 import { useQueryClient } from "@tanstack/react-query";
 import { useBuyerSessionStore } from "../lib/buyer-session-store";
+import { BUYER_KEYS } from "../lib/auth-keys";
 
 const SOCKET_URL =
   (process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:3000").replace(/\/$/, "");
@@ -10,10 +11,13 @@ const SOCKET_URL =
 /**
  * RF-002: Real-time updates for the buyer/customer surface.
  *
- * Connects with the buyer-namespaced JWT (`buyerAccessToken`) and invalidates
- * buyer-scoped query keys when relevant events arrive — so order status,
- * invoices, and the dashboard reflect operator-side changes without the
+ * Connects with the buyer-namespaced JWT (BUYER_KEYS.accessToken = "rf:buyer:accessToken")
+ * and invalidates buyer-scoped query keys when relevant events arrive — so order
+ * status, invoices, and the dashboard reflect operator-side changes without the
  * buyer pulling-to-refresh. Mirrors `useSocket` on the operator/driver side.
+ *
+ * NEW-m2-1 / RF-077: reads from the role-namespaced key set by buyer-auth.ts,
+ * not the legacy "buyerAccessToken" key that was migrated away from.
  */
 export function useBuyerSocket() {
   const qc = useQueryClient();
@@ -28,10 +32,11 @@ export function useBuyerSocket() {
     const connect = async () => {
       let token: string | null = null;
       if (Platform.OS === "web") {
-        token = localStorage.getItem("buyerAccessToken");
+        // NEW-m2-1 / RF-077: read from role-namespaced key
+        token = localStorage.getItem(BUYER_KEYS.accessToken);
       } else {
         const { getItemAsync } = await import("expo-secure-store");
-        token = await getItemAsync("buyerAccessToken");
+        token = await getItemAsync(BUYER_KEYS.accessToken);
       }
       if (!token || !mounted) return;
 
@@ -57,6 +62,11 @@ export function useBuyerSocket() {
 
       socket.on("inventory.low.stock", () => {
         void qc.invalidateQueries({ queryKey: ["buyer-products"] });
+      });
+
+      socket.on("creditNote.created", () => {
+        void qc.invalidateQueries({ queryKey: ["buyer-credit-notes"] });
+        void qc.invalidateQueries({ queryKey: ["buyer-dashboard"] });
       });
     };
 
