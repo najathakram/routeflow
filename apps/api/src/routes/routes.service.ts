@@ -641,11 +641,18 @@ export class RoutesService {
   }
 
   async findAllRuns(query: ListRunsDto, user: JwtPayload) {
-    const { assignedToMe, status, date, page = 1, limit = 20 } = query;
+    const { assignedToMe, status, activeOnly, date, page = 1, limit = 20 } = query;
     const skip = (page - 1) * limit;
     const where: any = {};
 
-    if (status) where.status = status;
+    if (status) {
+      where.status = status;
+    } else if (activeOnly) {
+      // Mirror the dispatch endpoint's definition of "active" so orphan
+      // SCHEDULED/IN_PROGRESS runs that block dispatch are surfaced to the
+      // operator regardless of scheduledDate.
+      where.status = { in: [RouteRunStatus.SCHEDULED, RouteRunStatus.IN_PROGRESS] };
+    }
     if (date) {
       const d = new Date(date);
       const nextDay = new Date(d);

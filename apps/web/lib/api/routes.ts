@@ -197,7 +197,7 @@ export function useCustomerRouteAssignments() {
 
 // Route Runs
 export function useRouteRuns(
-  params?: { status?: string; date?: string; assignedToMe?: boolean; page?: number },
+  params?: { status?: string; activeOnly?: boolean; date?: string; assignedToMe?: boolean; page?: number; limit?: number },
   options?: { refetchInterval?: number },
 ) {
   return useQuery<PaginatedResponse<RouteRun>>({

@@ -273,15 +273,20 @@ export default function RoutesPage() {
     setTitle("Routes");
   }, [setTitle]);
 
-  const today = new Date().toISOString().split("T")[0];
+  // Show all currently-active runs (SCHEDULED + IN_PROGRESS) regardless of
+  // their scheduledDate. Filtering by today's date hid orphan active runs from
+  // previous days, which still block dispatch via the API's duplicate-active-run
+  // check — operators saw "no runs scheduled for today" yet got "this route
+  // already has an active run" when trying to dispatch, with no way to find or
+  // cancel the blocking run.
   const {
     data: runsData,
     isLoading: runsLoading,
     isError: runsError,
-  } = useRouteRuns({ date: today });
+  } = useRouteRuns({ activeOnly: true, limit: 100 });
   const { data: routesData, isLoading: routesLoading, isError: routesError } = useRoutes();
 
-  const todayRuns = runsData?.data ?? [];
+  const activeRuns = runsData?.data ?? [];
   // RF-206: deduplicate by route ID — routes with multiple historical runs could
   // appear more than once if the API JOIN returns one row per run.
   const routeTemplates = React.useMemo(() => {
@@ -313,9 +318,9 @@ export default function RoutesPage() {
         }
       />
 
-      {/* ── Today's route runs ── */}
+      {/* ── Active route runs (SCHEDULED + IN_PROGRESS, any date) ── */}
       <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-navy">Route Runs Today</h2>
+        <h2 className="text-sm font-semibold text-navy">Active Runs</h2>
         {runsLoading ? (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {[1, 2, 3].map((i) => (
@@ -329,17 +334,25 @@ export default function RoutesPage() {
           <div className="flex items-center gap-2 rounded-lg border border-danger/30 bg-danger-bg px-4 py-3">
             <span className="text-sm text-danger">Failed to load data. Please try refreshing.</span>
           </div>
-        ) : todayRuns.length === 0 ? (
-          <p className="text-sm text-navy/50">No runs scheduled for today.</p>
+        ) : activeRuns.length === 0 ? (
+          <p className="text-sm text-navy/50">No active runs. Dispatch a template below to start one.</p>
         ) : (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {todayRuns.map((run) => {
+            {activeRuns.map((run) => {
               const total = run._count?.stops ?? run.stops?.length ?? 0;
               const done =
                 run.stops?.filter((s) => s.status === "COMPLETED" || s.status === "SKIPPED")
                   .length ?? 0;
               const driverName = run.driver?.contactName ?? "Unassigned";
               const routeName = run.route?.name ?? "Route";
+              const scheduledLabel = (() => {
+                if (!run.scheduledDate) return null;
+                const d = new Date(run.scheduledDate);
+                const todayStr = new Date().toISOString().slice(0, 10);
+                const runStr = d.toISOString().slice(0, 10);
+                if (runStr === todayStr) return "Today";
+                return d.toLocaleDateString();
+              })();
               const startTime = run.startedAt
                 ? new Date(run.startedAt).toLocaleTimeString([], {
                     hour: "2-digit",
@@ -366,6 +379,7 @@ export default function RoutesPage() {
                   </div>
                   <ProgressBar done={done} total={total} />
                   <div className="flex items-center justify-between text-xs text-navy/50">
+                    {scheduledLabel && <span>Scheduled {scheduledLabel}</span>}
                     {startTime && <span>Started {startTime}</span>}
                     {endTime && <span>Finished {endTime}</span>}
                   </div>
