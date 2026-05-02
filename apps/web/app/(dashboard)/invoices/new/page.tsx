@@ -496,7 +496,19 @@ export default function NewInvoicePage() {
       customerId: customer!.id,
       dueDate: dueDate || undefined,
       issueDate: issueDate || undefined,
-      terms: terms || undefined,
+      // The form has two separate fields:
+      //   - `terms` = the Payment Terms dropdown ("Net 30" / "Due on Receipt"
+      //      etc.) which is used purely to drive the due-date calculator.
+      //   - `termsText` = the Terms & Conditions long-form textarea, which
+      //     is what the tenant configures in Settings → Invoicing → "Terms
+      //     & Conditions" and what gets pre-filled on this page.
+      // The invoice schema has a single `terms` column that we render under
+      // the "Terms & Conditions" section of the invoice and PDF — so we
+      // need to send the LONG text, not the dropdown selection. Sending the
+      // dropdown value here was overwriting tenant defaults with "Net 30",
+      // making the configured Terms & Conditions invisible on every new
+      // invoice. The dropdown's effect is preserved via dueDate above.
+      terms: termsText.trim() || undefined,
       items: items.map((it): CreateInvoiceItem => ({
         productId: it.productId,
         description: it.description,
