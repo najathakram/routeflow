@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Eye, Play, Calendar, CheckSquare, X, Trash2 } from "lucide-react";
+import { Eye, Play, Calendar, CheckSquare, X, Trash2, Pencil, Ban } from "lucide-react";
 import { PageHeader, Badge, Table, Button, Modal, useToast, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import {
@@ -12,10 +12,13 @@ import {
   useRouteRuns,
   useCreateRouteRun,
   useDeleteRoute,
+  useUpdateRouteRunStatus,
+  useDeleteRouteRun,
   type Route,
   type RouteRun,
 } from "@/lib/api/routes";
 import { useDrivers } from "@/lib/api/drivers";
+import { EditRunModal } from "./_components/EditRunModal";
 
 // ─── Status helpers ───────────────────────────────────────────────────────────
 
@@ -229,8 +232,41 @@ export default function RoutesPage() {
   const [selectMode, setSelectMode] = React.useState(false);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [isBulkDeleting, setIsBulkDeleting] = React.useState(false);
+  // Inline-action state for active-run cards
+  const [editingRun, setEditingRun] = React.useState<RouteRun | null>(null);
+  const [cancellingRun, setCancellingRun] = React.useState<RouteRun | null>(null);
+  const [deletingRun, setDeletingRun] = React.useState<RouteRun | null>(null);
   const deleteRoute = useDeleteRoute();
+  const updateRunStatus = useUpdateRouteRunStatus();
+  const deleteRun = useDeleteRouteRun();
   const { toast } = useToast();
+
+  const handleConfirmCancelRun = () => {
+    if (!cancellingRun) return;
+    updateRunStatus.mutate(
+      { id: cancellingRun.id, status: "CANCELLED" },
+      {
+        onSuccess: () => {
+          toast({ title: "Run cancelled", variant: "success" });
+          setCancellingRun(null);
+        },
+        onError: (err) =>
+          toast({ title: "Cancel failed", description: err.message, variant: "error" }),
+      },
+    );
+  };
+
+  const handleConfirmDeleteRun = () => {
+    if (!deletingRun) return;
+    deleteRun.mutate(deletingRun.id, {
+      onSuccess: () => {
+        toast({ title: "Run deleted", variant: "success" });
+        setDeletingRun(null);
+      },
+      onError: (err) =>
+        toast({ title: "Delete failed", description: err.message, variant: "error" }),
+    });
+  };
 
   const toggleSelect = (id: string) =>
     setSelected((prev) => {
@@ -300,6 +336,81 @@ export default function RoutesPage() {
 
   return (
     <div className="space-y-6 p-6">
+      {/* Inline action modals for active-run cards */}
+      {editingRun && (
+        <EditRunModal
+          run={{
+            id: editingRun.id,
+            driverId: editingRun.driverId,
+            scheduledDate: editingRun.scheduledDate,
+            notes: editingRun.notes,
+          }}
+          onClose={() => setEditingRun(null)}
+        />
+      )}
+
+      <Modal
+        open={!!cancellingRun}
+        onClose={() => setCancellingRun(null)}
+        title="Cancel this run?"
+        description={
+          cancellingRun
+            ? `Cancel the run for ${cancellingRun.route?.name ?? "this route"}? The run will be marked CANCELLED and the route can be dispatched again.`
+            : ""
+        }
+        footer={
+          <>
+            <Button
+              variant="secondary"
+              onClick={() => setCancellingRun(null)}
+              disabled={updateRunStatus.isPending}
+            >
+              Keep run
+            </Button>
+            <Button
+              variant="danger"
+              onClick={handleConfirmCancelRun}
+              loading={updateRunStatus.isPending}
+            >
+              Cancel run
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-navy/70">
+          Any in-progress stops will stop counting toward this run. This cannot be undone.
+        </p>
+      </Modal>
+
+      <Modal
+        open={!!deletingRun}
+        onClose={() => setDeletingRun(null)}
+        title="Delete this run?"
+        description={
+          deletingRun
+            ? `Delete the scheduled run for ${deletingRun.route?.name ?? "this route"}? This permanently removes it.`
+            : ""
+        }
+        footer={
+          <>
+            <Button
+              variant="secondary"
+              onClick={() => setDeletingRun(null)}
+              disabled={deleteRun.isPending}
+            >
+              Keep run
+            </Button>
+            <Button variant="danger" onClick={handleConfirmDeleteRun} loading={deleteRun.isPending}>
+              Delete run
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-navy/70">
+          Stops and any delivery records on this run will be lost. This cannot be undone.
+        </p>
+      </Modal>
+
       <PageHeader
         title="Routes"
         action={
@@ -383,12 +494,44 @@ export default function RoutesPage() {
                     {startTime && <span>Started {startTime}</span>}
                     {endTime && <span>Finished {endTime}</span>}
                   </div>
-                  <Link
-                    href={`/routes/${run.id}`}
-                    className="inline-flex w-full items-center justify-center rounded-lg border border-surface-border bg-white px-3 py-1.5 text-sm font-medium text-navy hover:bg-surface-raised transition-colors"
-                  >
-                    View Run
-                  </Link>
+                  {/* Inline actions: View · Edit / Reschedule (SCHEDULED) ·
+                      Cancel (SCHEDULED + IN_PROGRESS) · Delete (SCHEDULED) */}
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <Link
+                      href={`/routes/${run.id}`}
+                      className="inline-flex flex-1 items-center justify-center gap-1 rounded-lg border border-surface-border bg-white px-3 py-1.5 text-xs font-medium text-navy hover:bg-surface-raised transition-colors"
+                      title="Open run detail"
+                    >
+                      <Eye className="h-3.5 w-3.5" /> View
+                    </Link>
+                    {run.status === "SCHEDULED" && (
+                      <button
+                        onClick={() => setEditingRun(run)}
+                        className="inline-flex items-center gap-1 rounded-lg border border-surface-border bg-white px-2.5 py-1.5 text-xs font-medium text-navy hover:bg-surface-raised transition-colors"
+                        title="Change driver, date, or notes"
+                      >
+                        <Pencil className="h-3.5 w-3.5" /> Edit
+                      </button>
+                    )}
+                    {(run.status === "SCHEDULED" || run.status === "IN_PROGRESS") && (
+                      <button
+                        onClick={() => setCancellingRun(run)}
+                        className="inline-flex items-center gap-1 rounded-lg border border-surface-border bg-white px-2.5 py-1.5 text-xs font-medium text-navy hover:bg-surface-raised transition-colors"
+                        title="Cancel this run"
+                      >
+                        <Ban className="h-3.5 w-3.5" /> Cancel
+                      </button>
+                    )}
+                    {run.status === "SCHEDULED" && (
+                      <button
+                        onClick={() => setDeletingRun(run)}
+                        className="inline-flex items-center gap-1 rounded-lg border border-surface-border bg-white px-2.5 py-1.5 text-xs font-medium text-danger hover:border-danger/40 hover:bg-danger/5 transition-colors"
+                        title="Delete this run permanently"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" /> Delete
+                      </button>
+                    )}
+                  </div>
                 </div>
               );
             })}
