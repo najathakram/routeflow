@@ -82,7 +82,14 @@ export function middleware(request: NextRequest) {
   const headerSlug = request.headers.get("x-tenant-slug");
   if (headerSlug) {
     response.cookies.set("tenant-slug", headerSlug, {
-      httpOnly: !isProd, // readable client-side only in dev (prod reads happen server-side)
+      // MUST be readable by client-side JS. The Axios interceptor in
+      // apps/web/lib/api-client.ts attaches X-Tenant-Slug to every API
+      // request by reading document.cookie; if this is httpOnly the
+      // interceptor sees nothing, the API can't resolve the tenant on
+      // /auth/login, and login fails with "Invalid credentials".
+      // The slug is not a secret — it's the public subdomain — so httpOnly
+      // adds no real security and breaks login. Do not change to httpOnly.
+      httpOnly: false,
       sameSite: "lax",
       path: "/",
       maxAge: 60 * 60 * 24 * 7, // 7 days
@@ -124,7 +131,13 @@ export function middleware(request: NextRequest) {
 
   if (resolvedSlug) {
     response.cookies.set("tenant-slug", resolvedSlug, {
-      httpOnly: isProd, // httpOnly in production; dev needs client-side reads for TenantProvider
+      // MUST stay non-httpOnly. The Axios interceptor in
+      // apps/web/lib/api-client.ts and the TenantProvider both read this
+      // via document.cookie. Making it httpOnly silently breaks login
+      // (the API can't resolve the tenant on /auth/login → "Invalid
+      // credentials") and tenant branding. The slug is the public
+      // subdomain, not a secret, so httpOnly buys no real security.
+      httpOnly: false,
       sameSite: "strict", // prevent cross-site requests from sending tenant context
       path: "/",
       maxAge: 60 * 60 * 24 * 30,
