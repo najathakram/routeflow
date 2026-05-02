@@ -164,7 +164,7 @@ function rolePill(role: string) {
 }
 
 function UsersTab() {
-  const { data: users, isLoading, refetch } = useAdminUsers();
+  const { data: usersPage, isLoading, refetch } = useAdminUsers();
   const toggleMut = useToggleUserStatus();
 
   const handleToggle = (user: AppUser) => {
@@ -189,7 +189,8 @@ function UsersTab() {
     );
   }
 
-  const list = Array.isArray(users) ? users : [];
+  // API returns { data: AppUser[], meta: {...} } — unwrap the array.
+  const list: AppUser[] = Array.isArray(usersPage?.data) ? usersPage.data : [];
 
   return (
     <ScrollView showsVerticalScrollIndicator={false}>

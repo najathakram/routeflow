@@ -136,7 +136,7 @@ export default function BuyerHomeScreen() {
                         month: "short", day: "numeric", year: "numeric",
                       })}
                       {" · "}
-                      {lastOrder.lineItems.reduce((s, i) => s + Number(i.qty), 0)} items
+                      {lastOrder.itemCount ?? (lastOrder.lineItems ?? []).reduce((s, i) => s + Number(i.qty), 0)} items
                     </Text>
                   </View>
                   <View style={{ alignItems: "flex-end", gap: 4 }}>

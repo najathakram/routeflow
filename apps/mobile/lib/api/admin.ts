@@ -686,10 +686,14 @@ export function useUpdateBusinessSettings() {
   });
 }
 
-export function useAdminUsers() {
-  return useQuery<AppUser[]>({
-    queryKey: ['admin', 'users'],
-    queryFn: () => apiClient.get('/users').then(r => r.data).catch(() => []),
+export function useAdminUsers(params?: { search?: string; status?: string; page?: number; limit?: number }) {
+  return useQuery<{ data: AppUser[]; meta: PaginationMeta }>({
+    queryKey: ['admin', 'users', params],
+    queryFn: () =>
+      apiClient
+        .get('/users', { params: { limit: 100, ...params } })
+        .then(r => r.data)
+        .catch(() => ({ data: [] as AppUser[], meta: { total: 0, page: 1, limit: 100, totalPages: 0 } })),
     staleTime: 60_000,
   });
 }

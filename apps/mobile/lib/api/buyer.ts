@@ -83,8 +83,28 @@ export interface BuyerProfile {
   address?: { line1?: string; city?: string; postcode?: string };
 }
 
+/** Minimal order shape returned by /buyer/dashboard (no lineItems — use itemCount). */
+export interface DashboardOrder {
+  id: string;
+  orderNumber?: string;
+  status: string;
+  total?: number;
+  createdAt: string;
+  requestedDeliveryDate?: string;
+  /** Pre-computed item count returned by the dashboard endpoint. */
+  itemCount?: number;
+  /** lineItems is NOT present in dashboard responses — guard every access. */
+  lineItems?: Array<{
+    id: string;
+    productId: string;
+    qty: number;
+    unitPrice: number;
+    product?: { id: string; name: string; unit?: string };
+  }>;
+}
+
 export interface BuyerDashboard {
-  recentOrders: BuyerOrder[];
+  recentOrders: DashboardOrder[];
   frequentItems: Array<{ productId: string; name: string; totalQty: number }>;
   frequentlyOrdered?: Array<{ productId: string; name: string; totalQty: number }>;
   stats: {

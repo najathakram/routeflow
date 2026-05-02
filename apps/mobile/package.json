@@ -12,7 +12,8 @@
     "dev:tunnel": "expo start --dev-client --tunnel",
     "build": "tsc --noEmit && expo export --platform android --platform ios",
     "lint": "eslint . --ext .ts,.tsx",
-    "check-types": "tsc --noEmit"
+    "check-types": "tsc --noEmit",
+    "test": "jest --config jest.config.js"
   },
   "dependencies": {
     "@expo-google-fonts/inter": "^0.4.2",
