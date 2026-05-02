@@ -692,7 +692,17 @@ export function useAdminUsers(params?: { search?: string; status?: string; page?
     queryFn: () =>
       apiClient
         .get('/users', { params: { limit: 100, ...params } })
-        .then(r => r.data)
+        .then(r => {
+          // NEW-vop-5: API returns status: "ACTIVE" | "INACTIVE" | "SUSPENDED" but
+          // the UI + toggle mutation expect a derived isActive boolean. Map here so
+          // every consumer of useAdminUsers gets the boolean shape.
+          const raw = r.data as { data?: Array<AppUser & { status?: string }>; meta?: PaginationMeta };
+          const list = (raw.data ?? []).map((u) => ({
+            ...u,
+            isActive: u.isActive ?? u.status === 'ACTIVE',
+          }));
+          return { data: list, meta: raw.meta ?? { total: list.length, page: 1, limit: 100, totalPages: 1 } };
+        })
         .catch(() => ({ data: [] as AppUser[], meta: { total: 0, page: 1, limit: 100, totalPages: 0 } })),
     staleTime: 60_000,
   });
