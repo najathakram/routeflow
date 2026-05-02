@@ -1006,7 +1006,7 @@ export class RoutesService {
     return createHash("sha256").update(`${scope}:${key}`).digest("hex");
   }
 
-  private async checkIdempotencyKey(key: string, scope: string): Promise<unknown | null> {
+  private async checkIdempotencyKey(key: string, scope: string): Promise<unknown> {
     const hash = this.makeKeyHash(key, scope);
     const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
     try {
@@ -1150,7 +1150,9 @@ export class RoutesService {
       }
     });
 
-    const result = await this.prisma.forTenant().routeRunStop.findUniqueOrThrow({ where: { id: stopId } });
+    const result = await this.prisma
+      .forTenant()
+      .routeRunStop.findUniqueOrThrow({ where: { id: stopId } });
 
     // RF-019: persist idempotency key after successful write
     if (dto.idempotencyKey) {
@@ -1318,7 +1320,9 @@ export class RoutesService {
       }
     });
 
-    const result = await this.prisma.forTenant().routeRunStop.findUniqueOrThrow({ where: { id: stopId } });
+    const result = await this.prisma
+      .forTenant()
+      .routeRunStop.findUniqueOrThrow({ where: { id: stopId } });
 
     // RF-019: persist idempotency key
     if (dto.idempotencyKey) {

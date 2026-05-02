@@ -192,9 +192,7 @@ export class ReturnsService {
     if (!ret) throw new NotFoundException("Return not found");
     if (ret.status !== "APPROVED")
       throw new BadRequestException("Only APPROVED returns can be marked in transit");
-    return this.prisma
-      .forTenant()
-      .return.update({ where: { id }, data: { status: "IN_TRANSIT" } });
+    return this.prisma.forTenant().return.update({ where: { id }, data: { status: "IN_TRANSIT" } });
   }
 
   async receive(id: string, userId: string) {

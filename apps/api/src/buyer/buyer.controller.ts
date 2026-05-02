@@ -133,7 +133,10 @@ export class BuyerController {
   getOrders(@CurrentBuyerCustomer() ctx: any, @Query() query: ListOrdersDto) {
     // Inject customerId directly so ordersService.findAll() doesn't need to look
     // up the customer by userId (which is null for buyer-portal-only accounts).
-    return this.ordersService.findAll({ ...query, customerId: ctx.customerId }, makePseudoUser({ ...ctx, role: UserRole.OPERATOR }));
+    return this.ordersService.findAll(
+      { ...query, customerId: ctx.customerId },
+      makePseudoUser({ ...ctx, role: UserRole.OPERATOR }),
+    );
   }
 
   @Get("invoices")
@@ -147,9 +150,20 @@ export class BuyerController {
     // Buyers must never see DRAFT invoices — exclude them unless caller specified a status.
     const buyerQuery: ListInvoicesDto = { ...query, customerId: ctx.customerId };
     if (!buyerQuery.status && (!buyerQuery.statuses || buyerQuery.statuses.length === 0)) {
-      buyerQuery.statuses = ["SENT", "VIEWED", "PARTIAL", "OVERDUE", "PAID", "VOID", "WRITTEN_OFF"] as any;
+      buyerQuery.statuses = [
+        "SENT",
+        "VIEWED",
+        "PARTIAL",
+        "OVERDUE",
+        "PAID",
+        "VOID",
+        "WRITTEN_OFF",
+      ] as any;
     }
-    return this.invoicesService.findAll(buyerQuery, makePseudoUser({ ...ctx, role: UserRole.OPERATOR }));
+    return this.invoicesService.findAll(
+      buyerQuery,
+      makePseudoUser({ ...ctx, role: UserRole.OPERATOR }),
+    );
   }
 
   @Get("invoices/:id")
@@ -381,7 +395,10 @@ export class BuyerController {
   getTemplates(@CurrentBuyerCustomer() ctx: any) {
     // Pass OPERATOR role + customerId to avoid userId-based customer lookup
     // (buyer-portal-only accounts may have userId=null on the Customer record).
-    return this.templatesService.findAllForUser(makePseudoUser({ ...ctx, role: UserRole.OPERATOR }), ctx.customerId);
+    return this.templatesService.findAllForUser(
+      makePseudoUser({ ...ctx, role: UserRole.OPERATOR }),
+      ctx.customerId,
+    );
   }
 
   @Get("standing-orders")
@@ -393,7 +410,10 @@ export class BuyerController {
   })
   getStandingOrders(@CurrentBuyerCustomer() ctx: any) {
     // Pass OPERATOR role + customerId to avoid userId-based customer lookup.
-    return this.templatesService.findAllForUser(makePseudoUser({ ...ctx, role: UserRole.OPERATOR }), ctx.customerId);
+    return this.templatesService.findAllForUser(
+      makePseudoUser({ ...ctx, role: UserRole.OPERATOR }),
+      ctx.customerId,
+    );
   }
 
   @Post("templates/:id/reorder")

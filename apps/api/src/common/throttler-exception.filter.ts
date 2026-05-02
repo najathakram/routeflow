@@ -1,10 +1,4 @@
-import {
-  ArgumentsHost,
-  Catch,
-  ExceptionFilter,
-  HttpStatus,
-  Logger,
-} from "@nestjs/common";
+import { ArgumentsHost, Catch, ExceptionFilter, HttpStatus, Logger } from "@nestjs/common";
 import { ThrottlerException } from "@nestjs/throttler";
 import type { Response } from "express";
 
@@ -30,14 +24,11 @@ export class ThrottlerExceptionFilter implements ExceptionFilter {
 
     this.logger.warn(`Rate limit hit: ${req.path} ip=${req.ip}`);
 
-    res
-      .status(HttpStatus.TOO_MANY_REQUESTS)
-      .header("Retry-After", String(retryAfter))
-      .json({
-        statusCode: HttpStatus.TOO_MANY_REQUESTS,
-        error: "Too Many Requests",
-        message: exception.message,
-        retryAfter,
-      });
+    res.status(HttpStatus.TOO_MANY_REQUESTS).header("Retry-After", String(retryAfter)).json({
+      statusCode: HttpStatus.TOO_MANY_REQUESTS,
+      error: "Too Many Requests",
+      message: exception.message,
+      retryAfter,
+    });
   }
 }

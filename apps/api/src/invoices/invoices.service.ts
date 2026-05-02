@@ -710,8 +710,7 @@ export class InvoicesService {
         0,
       );
       const invDiscount = dto.discount !== undefined ? dto.discount : Number(inv.discount);
-      const shipping =
-        dto.shippingFee !== undefined ? dto.shippingFee : Number(inv.shippingFee);
+      const shipping = dto.shippingFee !== undefined ? dto.shippingFee : Number(inv.shippingFee);
       recalcData = {
         subtotal,
         taxAmount: taxTotal,
