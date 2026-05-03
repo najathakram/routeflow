@@ -127,6 +127,10 @@ export default function PaymentScreen() {
     }[method] ?? "OTHER") as "CASH" | "CHECK" | "CREDIT_CARD" | "ADVANCE" | "OTHER";
     const collected = method === "On account" ? 0 : Math.min(receivedNum, invoiceTotal);
 
+    // BUG-DRV1-3: stable per-attempt idempotency-key. The header is captured
+    // by the offline-queue persister so a retry after a network blip cannot
+    // double-charge — the server (RF-019) returns the original response.
+    const idempotencyKey = `stop-${stopId}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
     try {
       await completeWithPaymentMut.mutateAsync({
         runId,
@@ -139,6 +143,7 @@ export default function PaymentScreen() {
           invoiceId && collected > 0
             ? { invoiceId, amount: collected, method: apiMethod }
             : undefined,
+        idempotencyKey,
       });
     } catch (e: any) {
       showToast(e?.response?.data?.message ?? e?.message ?? "Try again.");

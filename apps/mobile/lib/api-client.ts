@@ -99,10 +99,23 @@ apiClient.interceptors.response.use(
       } catch {
         body = undefined;
       }
+      // Preserve idempotency-key (and any other replay-safe headers) so a
+      // queued mutation that succeeds server-side but loses the response is
+      // rejected as a duplicate on retry instead of being applied twice.
+      const replayHeaders: Record<string, string> = {};
+      const rawHeaders = original?.headers as Record<string, unknown> | undefined;
+      if (rawHeaders) {
+        for (const [k, v] of Object.entries(rawHeaders)) {
+          if (typeof v !== "string") continue;
+          const lk = k.toLowerCase();
+          if (lk === "idempotency-key") replayHeaders[k] = v;
+        }
+      }
       useOfflineQueue.getState().enqueue({
         endpoint: original?.url ?? "",
         method: (original?.method ?? "POST").toUpperCase() as "POST" | "PATCH" | "PUT" | "DELETE",
         body,
+        ...(Object.keys(replayHeaders).length > 0 ? { headers: replayHeaders } : {}),
       });
       return Promise.reject(
         Object.assign(new Error("You are offline. Action queued."), { isOfflineQueued: true }),

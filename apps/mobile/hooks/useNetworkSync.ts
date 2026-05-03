@@ -46,6 +46,7 @@ export function useNetworkSync() {
           method: action.method,
           url: action.endpoint,
           data: action.body,
+          ...(action.headers ? { headers: action.headers } : {}),
         });
         dequeue(action.id);
       } catch (err: unknown) {

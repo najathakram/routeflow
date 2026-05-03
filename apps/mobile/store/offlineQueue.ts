@@ -7,6 +7,9 @@ export interface QueuedAction {
   endpoint: string;
   method: "POST" | "PATCH" | "PUT" | "DELETE";
   body?: unknown;
+  // Headers worth preserving across replay — currently only Idempotency-Key
+  // (RF-019 / BUG-DRV1-3). Auth is re-attached by the request interceptor.
+  headers?: Record<string, string>;
   timestamp: number;
   retries: number;
 }

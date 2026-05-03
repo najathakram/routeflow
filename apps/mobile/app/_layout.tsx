@@ -66,10 +66,28 @@ function RootLayoutNav() {
       return;
     }
 
-    // Not authenticated as either buyer or staff — allow only landing + auth screens
+    // Not authenticated as either buyer or staff — allow only landing + auth screens.
+    // BUG-B2-5: when the requested route is buyer-protected (e.g. a deep-linked
+    // /invoices/<uuid>), send the user to /customer-login with returnTo so post-
+    // login they land back on the intended page instead of the marketing home.
     if (!user) {
       if (segments.length > 0 && segments[0] !== "(auth)") {
-        router.replace("/");
+        const isBuyerRoute = segments[0] === "(customer)";
+        const isStaffRoute = segments[0] === "(operator)" || segments[0] === "(driver)";
+        if (isBuyerRoute || isStaffRoute) {
+          const returnTo =
+            Platform.OS === "web" && typeof window !== "undefined"
+              ? window.location.pathname + window.location.search
+              : "";
+          const target = isBuyerRoute ? "/(auth)/customer-login" : "/(auth)/login";
+          if (returnTo && returnTo !== "/") {
+            router.replace({ pathname: target, params: { returnTo } } as any);
+          } else {
+            router.replace(target as any);
+          }
+        } else {
+          router.replace("/");
+        }
       }
       return;
     }

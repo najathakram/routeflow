@@ -80,6 +80,20 @@ export async function migrateLegacyBuyerToken(): Promise<void> {
   await storage.del(LEGACY_SELLER);
 }
 
+// ─── Session-expired callback (set by buyer-session-store on init) ───────────
+//
+// BUG-B1-1: when a buyer 401 refresh fails, simply clearing the storage tokens
+// is not enough — the zustand session store still has {buyer, activeSeller}
+// set, so the root layout's redirect-to-login does not fire and the UI stays
+// stuck on a screen that calls APIs which all 401. The store registers an
+// onSessionExpired handler at boot; we invoke it here to clear in-memory
+// state and let the layout redirect.
+
+let buyerSessionExpiredHandler: (() => void) | null = null;
+export function registerBuyerSessionExpiredHandler(fn: () => void): void {
+  buyerSessionExpiredHandler = fn;
+}
+
 // ─── Buyer API client (separate from staff apiClient) ─────────────────────────
 
 const BASE_URL =
@@ -176,6 +190,12 @@ buyerApiClient.interceptors.response.use(
       processQueue(refreshError, null);
       await storage.del(BUYER_KEYS.accessToken);
       await storage.del(BUYER_KEYS.refreshToken);
+      // BUG-B1-1: tell the session store the buyer is signed out so the root
+      // layout redirects to /customer-login instead of leaving the buyer on a
+      // screen whose every API call now silently fails with empty data.
+      if (buyerSessionExpiredHandler) {
+        try { buyerSessionExpiredHandler(); } catch { /* ignore */ }
+      }
       return Promise.reject(refreshError);
     } finally {
       isRefreshing = false;

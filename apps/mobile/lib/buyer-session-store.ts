@@ -4,6 +4,7 @@ import {
   getActiveSeller,
   setActiveSeller as persistActiveSeller,
   buyerLogout,
+  registerBuyerSessionExpiredHandler,
   type BuyerUser,
   type BuyerSeller,
 } from "./buyer-auth";
@@ -28,6 +29,12 @@ export const useBuyerSessionStore = create<BuyerSessionState>()((set) => ({
   initialize: async () => {
     const [buyer, seller] = await Promise.all([getStoredBuyer(), getActiveSeller()]);
     set({ buyer, activeSeller: seller, isLoading: false });
+    // BUG-B1-1: when buyer-auth's 401 retry fails it clears tokens; mirror
+    // that into in-memory state so the layout redirect-to-login fires.
+    registerBuyerSessionExpiredHandler(() => {
+      useCartStore.getState().clear();
+      set({ buyer: null, activeSeller: null });
+    });
   },
 
   setBuyer: (buyer) => set({ buyer }),

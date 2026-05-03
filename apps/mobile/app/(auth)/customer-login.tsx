@@ -12,7 +12,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { BrandGlyph } from "@routeflow/ui/mobile/ios";
 import { OptionPickerSheet } from "../../components/OptionPickerSheet";
@@ -22,7 +22,18 @@ import { GoogleButton } from "@routeflow/ui/mobile/ios";
 
 export default function CustomerLoginScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ returnTo?: string }>();
   const { setBuyer, setActiveSeller: storeSetSeller } = useBuyerSessionStore();
+
+  // BUG-B2-5: if a deep-link sent the user here, return them to that page
+  // post-login. Only allow same-origin paths under /(customer) to prevent
+  // open-redirect via crafted returnTo values.
+  const safeReturnTo = (() => {
+    const raw = typeof params.returnTo === "string" ? params.returnTo : "";
+    if (!raw || !raw.startsWith("/") || raw.startsWith("//")) return null;
+    return raw;
+  })();
+  const postLoginTarget: any = safeReturnTo ?? "/(customer)/(tabs)/home";
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -53,7 +64,7 @@ export default function CustomerLoginScreen() {
 
       if (sellers.length === 1) {
         await storeSetSeller(sellers[0]!);
-        router.replace("/(customer)/(tabs)/home");
+        router.replace(postLoginTarget);
         return;
       }
 
@@ -82,7 +93,7 @@ export default function CustomerLoginScreen() {
       const sellers = await getBuyerSellers();
       if (sellers.length === 1) {
         await storeSetSeller(sellers[0]!);
-        router.replace("/(customer)/(tabs)/home");
+        router.replace(postLoginTarget);
         return;
       }
       showSellerPicker(sellers);
@@ -182,6 +193,18 @@ export default function CustomerLoginScreen() {
             ) : (
               <Text style={styles.signInLabel}>Sign in</Text>
             )}
+          </TouchableOpacity>
+
+          {/* BUG-B2-7: Forgot Password? link — /forgot-password route already
+              exists, was simply missing the entry point on this screen. */}
+          <TouchableOpacity
+            onPress={() => router.push("/(auth)/forgot-password")}
+            style={{ marginTop: 14, alignSelf: "center" }}
+            hitSlop={8}
+          >
+            <Text style={{ color: ios.brand, fontSize: 14, fontFamily: "Inter_500Medium" }}>
+              Forgot password?
+            </Text>
           </TouchableOpacity>
 
           <View style={styles.orRow}>
