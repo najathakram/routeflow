@@ -135,28 +135,64 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
       | undefined)?.data ?? [];
 
   /**
-   * Given the productId of a matched row, return the full set of
-   * variant siblings (including the matched product itself) so the
-   * operator can split a single invoice line across flavors.
+   * Given the productId of a matched row, return the full set of likely
+   * sibling products so the operator can split one invoice line across
+   * flavors / varieties. Two discovery paths, deduped by id:
    *
-   * - If matched product has a parent → all children of that parent.
-   * - If matched product IS a parent → all its children.
-   * - If matched product is standalone (no parent, no children) → empty.
+   *   1. Parent-tagged variants — products that share `parentProductId`
+   *      (the "correct" model). Includes the case where the matched
+   *      product itself IS a parent and has children.
+   *
+   *   2. Name-prefix grouping — for catalogs where flavors were entered
+   *      as independent products (no parentProductId). We split the
+   *      matched product's name on common separators (" - ", " — ",
+   *      ": ") and find every other product whose name starts with the
+   *      same "<base> <separator>" prefix. This means the operator can
+   *      use the split feature without first reorganising their catalog.
+   *
+   * Returns the matched product first (so it pre-selects naturally),
+   * then everything else sorted by display label.
    */
   const getVariantSiblings = React.useCallback(
     (productId: string) => {
       const matched = products.find((p) => p.id === productId);
       if (!matched) return [] as typeof products;
+
+      // Path 1 — proper parent-tagged variants
       const parentId = matched.parentProductId ?? matched.id;
-      return products
+      const parentSiblings = products
         .filter((p) => (p.parentProductId ?? p.id) === parentId)
-        .filter((p) => p.id !== parentId || p.parentProductId === parentId)
-        // Keep the originally-matched item first for stable UX
-        .sort((a, b) => {
-          if (a.id === productId) return -1;
-          if (b.id === productId) return 1;
-          return (a.variantName ?? a.name).localeCompare(b.variantName ?? b.name);
-        });
+        .filter((p) => p.id !== parentId || p.parentProductId === parentId);
+
+      // Path 2 — name-prefix grouping (catches flavors stored as standalone products).
+      // Tries " - ", " — ", and ": " in that order; uses whichever appears in the name.
+      const SEPARATORS = [" - ", " — ", ": "];
+      const sep = SEPARATORS.find((s) => matched.name.includes(s));
+      let prefixSiblings: typeof products = [];
+      if (sep) {
+        const prefix = matched.name.split(sep).slice(0, -1).join(sep).trim();
+        // Require ≥3 chars to avoid grouping on tokens like "A" / "S".
+        if (prefix.length >= 3) {
+          const needle = `${prefix}${sep}`.toLowerCase();
+          prefixSiblings = products.filter((p) =>
+            p.name.toLowerCase().startsWith(needle),
+          );
+        }
+      }
+
+      // Merge + dedupe by id; keep the matched product first.
+      const seen = new Set<string>();
+      const merged: typeof products = [];
+      for (const p of [matched, ...parentSiblings, ...prefixSiblings]) {
+        if (seen.has(p.id)) continue;
+        seen.add(p.id);
+        merged.push(p);
+      }
+      return merged.sort((a, b) => {
+        if (a.id === productId) return -1;
+        if (b.id === productId) return 1;
+        return (a.variantName ?? a.name).localeCompare(b.variantName ?? b.name);
+      });
     },
     [products],
   );
@@ -387,6 +423,33 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
         if (idx !== rowIdx || !row.splits) return row;
         const next = row.splits.map((s, j) => (j === splitIdx ? { ...s, qty } : s));
         return { ...row, splits: next };
+      }),
+    );
+  };
+
+  /**
+   * Manually add another product to a split (escape hatch when flavors
+   * weren't tagged as variants in the catalog and weren't picked up by
+   * the name-prefix grouping). Skips no-ops and duplicates.
+   */
+  const addSplitVariant = (rowIdx: number, productId: string) => {
+    if (!productId) return;
+    setReviewItems((prev) =>
+      prev.map((row, idx) => {
+        if (idx !== rowIdx) return row;
+        const splits = row.splits ?? [];
+        if (splits.some((s) => s.productId === productId)) return row;
+        return { ...row, splits: [...splits, { productId, qty: "0" }] };
+      }),
+    );
+  };
+
+  const removeSplit = (rowIdx: number, splitIdx: number) => {
+    setReviewItems((prev) =>
+      prev.map((row, idx) => {
+        if (idx !== rowIdx || !row.splits) return row;
+        const next = row.splits.filter((_, j) => j !== splitIdx);
+        return { ...row, splits: next.length > 0 ? next : undefined };
       }),
     );
   };
@@ -935,7 +998,13 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                           const siblings = item.productId
                             ? getVariantSiblings(item.productId)
                             : [];
-                          const hasSiblings = siblings.length > 1;
+                          // Auto-detected siblings (parent-tagged or name-prefix grouped).
+                          const autoDetectedCount = siblings.length - 1;
+                          // Always offer the split affordance on a catalog-linked row —
+                          // even if no auto-siblings were detected, the operator can
+                          // open the panel and add varieties manually (e.g. when flavors
+                          // were entered as fully independent products with unrelated names).
+                          const canSplit = !!item.productId && !isSplit;
                           const originalQty = parseFloat(item.qty) || 0;
                           const sumMatchesOriginal =
                             originalQty === 0 || Math.abs(splitTotal - originalQty) < 0.001;
@@ -1026,15 +1095,24 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                                         AI: {item.extractedQty}
                                       </div>
                                     )}
-                                    {hasSiblings && (
+                                    {canSplit && (
                                       <button
                                         type="button"
                                         onClick={() => startSplit(i)}
                                         className="mt-1 inline-flex items-center gap-1 rounded px-1 text-[10px] font-medium text-brand-600 transition-colors hover:bg-brand-50"
-                                        title={`This product has ${siblings.length - 1} other variants — split the qty across flavors`}
+                                        title={
+                                          autoDetectedCount > 0
+                                            ? `Split this qty across ${autoDetectedCount} other variant${autoDetectedCount === 1 ? "" : "s"}`
+                                            : "Split this qty across multiple varieties — pick them manually"
+                                        }
                                       >
                                         <Layers className="h-2.5 w-2.5" />
                                         Split by variety
+                                        {autoDetectedCount > 0 && (
+                                          <span className="text-navy/40">
+                                            ({autoDetectedCount + 1})
+                                          </span>
+                                        )}
                                       </button>
                                     )}
                                   </>
@@ -1145,9 +1223,56 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                                               }
                                               className="w-20 rounded border border-surface-border px-2 py-1 text-right text-xs tabular-nums text-navy focus:outline-none focus:ring-2 focus:ring-brand-500 [appearance:textfield] [&::-webkit-inner-spin-button]:m-0 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:m-0 [&::-webkit-outer-spin-button]:appearance-none"
                                             />
+                                            <button
+                                              type="button"
+                                              onClick={() => removeSplit(i, j)}
+                                              disabled={item.splits!.length <= 1}
+                                              className="rounded p-0.5 text-navy/30 transition-colors hover:bg-red-50 hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-navy/30"
+                                              title={
+                                                item.splits!.length <= 1
+                                                  ? "Cancel split instead of removing the last variety"
+                                                  : "Remove this variety from the split"
+                                              }
+                                            >
+                                              <X className="h-3 w-3" />
+                                            </button>
                                           </div>
                                         );
                                       })}
+                                    </div>
+                                    {/*
+                                      Manual escape hatch: when flavors weren't tagged as
+                                      variants in the catalog AND the name-prefix grouping
+                                      didn't catch them, the operator can still add varieties
+                                      one-by-one from the full product list.
+                                    */}
+                                    <div className="mt-2 flex items-center gap-2">
+                                      <select
+                                        value=""
+                                        onChange={(e) => {
+                                          if (e.target.value) {
+                                            addSplitVariant(i, e.target.value);
+                                            // Reset back to the placeholder option so the
+                                            // operator can pick another product right after.
+                                            e.target.value = "";
+                                          }
+                                        }}
+                                        className="flex-1 rounded border border-dashed border-brand-300 bg-white px-2.5 py-1.5 text-xs text-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                                      >
+                                        <option value="">+ Add another variety…</option>
+                                        {products
+                                          .filter(
+                                            (p) =>
+                                              !item.splits!.some(
+                                                (s) => s.productId === p.id,
+                                              ),
+                                          )
+                                          .map((p) => (
+                                            <option key={p.id} value={p.id}>
+                                              {p.name}
+                                            </option>
+                                          ))}
+                                      </select>
                                     </div>
                                     {!sumMatchesOriginal && (
                                       <p className="mt-2 flex items-start gap-1 text-[11px] text-amber-700">
