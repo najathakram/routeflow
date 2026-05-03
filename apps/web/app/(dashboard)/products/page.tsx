@@ -10,6 +10,7 @@ import { useToast } from "@routeflow/ui/web";
 import { useDebounce } from "@/lib/hooks/useDebounce";
 import { useProducts, useCreateProduct, useUpdateProduct, useBulkDeleteProducts, uploadProductImages } from "@/lib/api/products";
 import { GroupAsVariantsModal } from "@/components/GroupAsVariantsModal";
+import { SearchableProductPicker } from "@/components/SearchableProductPicker";
 import { apiClient } from "@/lib/api-client";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { QuickEditCell, type EditRecord } from "./_components/QuickEditCell";
@@ -628,17 +629,14 @@ function CreateProductModal({
               {allProducts && allProducts.filter(p => !p.parentProductId).length > 0 && (
                 <div className="col-span-2">
                   <label className="mb-1 block text-sm font-medium text-navy">Variant of <span className="font-normal text-navy/40">(optional)</span></label>
-                  <div className="flex gap-2">
-                    <select
+                  <div className="flex items-stretch gap-2">
+                    <SearchableProductPicker
                       value={form.parentProductId}
-                      onChange={(e) => set("parentProductId", e.target.value)}
-                      className="flex-1 rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                    >
-                      <option value="">— Standalone product —</option>
-                      {allProducts.filter(p => !p.parentProductId).map((p) => (
-                        <option key={p.id} value={p.id}>{p.name}</option>
-                      ))}
-                    </select>
+                      onChange={(id) => set("parentProductId", id)}
+                      products={allProducts.filter(p => !p.parentProductId)}
+                      placeholder="Standalone product (type to search)…"
+                      className="flex-1"
+                    />
                     <BarcodeScannerButton
                       onScan={handleVariantOfScan}
                       title="Scan a variant's barcode to auto-select its parent"
@@ -1130,7 +1128,10 @@ export default function ProductsPage() {
           categories={categories}
           units={existingUnits}
           defaultParentId={newVariantParentId}
-          allProducts={productList}
+          // Pass the full unfiltered catalog (already loaded for the
+          // category dropdown) so the "Variant of" picker can see every
+          // standalone product, not just the current page.
+          allProducts={allProductsForCategories?.data ?? productList}
         />
       )}
 
