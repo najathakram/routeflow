@@ -11,7 +11,7 @@ import { useCustomers, useCustomerPrices, useCustomer } from "@/lib/api/customer
 import { useProducts } from "@/lib/api/products";
 import { useCreateOrder, useActiveOrderForCustomer, type ActiveOrderSummary } from "@/lib/api/orders";
 import { apiClient } from "@/lib/api-client";
-import { getTierPrice } from "@/lib/pricing";
+import { getTierPrice, computeLineSubtotal } from "@/lib/pricing";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
@@ -215,7 +215,21 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
 
   // ── Derived totals ────────────────────────────────────────────────────────
 
-  const subtotal = lineItems.reduce((sum, li) => sum + li.unitPrice * li.qty, 0);
+  // Use the shared helper so the live "Line total" matches what the server
+  // will compute. For boxed products (unitsPerBox > 1), unitPrice is the BOX
+  // price; loose pieces are prorated.
+  const subtotal = lineItems.reduce(
+    (sum, li) =>
+      sum +
+      computeLineSubtotal({
+        unitPrice: li.unitPrice,
+        qty: li.qty,
+        boxes: li.boxes ?? null,
+        pieces: li.pieces ?? null,
+        unitsPerBox: li.unitsPerBox ?? null,
+      }),
+    0,
+  );
   const tax = subtotal * taxRate;
   const discountAmt = parseFloat(orderDiscount) || 0;
   const total = subtotal + tax - discountAmt;
@@ -808,7 +822,13 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
                     )}
                     {/* Line total */}
                     <span className="w-16 text-right text-sm font-semibold text-navy">
-                      ${(li.unitPrice * li.qty).toFixed(2)}
+                      ${computeLineSubtotal({
+                        unitPrice: li.unitPrice,
+                        qty: li.qty,
+                        boxes: li.boxes ?? null,
+                        pieces: li.pieces ?? null,
+                        unitsPerBox: li.unitsPerBox ?? null,
+                      }).toFixed(2)}
                     </span>
                     <button
                       type="button"

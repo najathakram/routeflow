@@ -17,6 +17,7 @@ import { Button } from "@routeflow/ui/web";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { useBuyerCart } from "@/lib/buyer-cart";
 import { useBuyerProducts, useBuyerCreateOrder, useBuyerActiveOrder } from "@/lib/api/buyer";
+import { computeLineSubtotal } from "@/lib/pricing";
 
 function fmt(n: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
@@ -62,7 +63,16 @@ export default function BuyerCartPage() {
 
   const subtotal = cart.items.reduce((sum, item) => {
     const price = priceMap.get(item.productId) ?? 0;
-    return sum + price * item.qty;
+    return (
+      sum +
+      computeLineSubtotal({
+        unitPrice: price,
+        qty: item.qty,
+        boxes: item.boxes ?? null,
+        pieces: item.pieces ?? null,
+        unitsPerBox: item.unitsPerBox ?? null,
+      })
+    );
   }, 0);
 
   // Redirect checks
@@ -331,7 +341,15 @@ export default function BuyerCartPage() {
                       </td>
                       <td className="px-4 py-3 text-right text-sm text-navy/70">{fmt(price)}</td>
                       <td className="px-4 py-3 text-right text-sm font-medium text-navy">
-                        {fmt(price * item.qty)}
+                        {fmt(
+                          computeLineSubtotal({
+                            unitPrice: price,
+                            qty: item.qty,
+                            boxes: item.boxes ?? null,
+                            pieces: item.pieces ?? null,
+                            unitsPerBox: item.unitsPerBox ?? null,
+                          }),
+                        )}
                       </td>
                       <td className="px-4 py-3">
                         <button

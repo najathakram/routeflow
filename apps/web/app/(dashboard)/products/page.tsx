@@ -145,7 +145,11 @@ function ProductCard({
         <div>
           <p className="text-xs text-navy/40">{product.sku}</p>
           <p className="mt-0.5 text-sm font-semibold leading-snug text-navy line-clamp-2">
-            {product.name}
+            {/* Variants display just their flavor / variety name. Parent
+                context is rendered below as a small caption. Falls back to
+                full `name` for variants whose row still has the legacy
+                "Parent - Variant" composite name (pre-fix data). */}
+            {product.variantName ?? product.name}
           </p>
         </div>
         <div className="mt-auto flex items-end justify-between gap-1">
@@ -537,11 +541,13 @@ function CreateProductModal({
       return;
     }
     setPriceError("");
-    // Auto-compose the product name when creating a variant
+    // For variants, store ONLY the variant name in the `name` field.
+    // The parent product's name stays unchanged; UI composes the full
+    // display name (e.g. "Geek Next 50K · Strawberry") from the parent
+    // relationship when needed.
     let productName = form.name.trim();
     if (form.parentProductId && form.variantName.trim()) {
-      const parent = allProducts?.find(p => p.id === form.parentProductId);
-      productName = parent ? `${parent.name} - ${form.variantName.trim()}` : form.variantName.trim();
+      productName = form.variantName.trim();
     }
     const product = await onCreate({
       name: productName,
@@ -661,9 +667,12 @@ function CreateProductModal({
                   />
                   {form.variantName.trim() && allProducts?.find(p => p.id === form.parentProductId) && (
                     <p className="mt-1 rounded bg-surface-raised px-2.5 py-1.5 text-xs text-navy/60">
-                      Will be named: <span className="font-medium text-navy">
-                        {allProducts.find(p => p.id === form.parentProductId)!.name} - {form.variantName.trim()}
+                      Will appear as:{" "}
+                      <span className="font-medium text-navy">
+                        {allProducts.find(p => p.id === form.parentProductId)!.name}
                       </span>
+                      <span className="text-navy/40"> · </span>
+                      <span className="font-medium text-navy">{form.variantName.trim()}</span>
                     </p>
                   )}
                 </div>

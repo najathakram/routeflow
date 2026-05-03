@@ -101,17 +101,18 @@ export function InlineCreateProductModal({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
-    // When creating a variant, auto-compose the product name
+    // For variants the `name` field stores ONLY the variant name (e.g. "Strawberry").
+    // The parent context comes from `parentProductId` — UI components compose the
+    // display name as `<parent.name> · <variant.variantName>` when needed. This
+    // keeps the parent product's own name unchanged and avoids redundant prefixes
+    // baked into every variant row.
     let productName = form.name.trim();
     if (form.parentProductId) {
       if (!form.variantName.trim()) {
         toast({ title: "Variant name is required", variant: "error" });
         return;
       }
-      const parentName = selectedParent?.name ?? "";
-      productName = parentName
-        ? `${parentName} - ${form.variantName.trim()}`
-        : form.variantName.trim();
+      productName = form.variantName.trim();
     } else if (!productName) {
       return;
     }
@@ -201,13 +202,17 @@ export function InlineCreateProductModal({
                 className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
                 placeholder='e.g. "Chocolate", "Large", "500ml"'
               />
-              {/* Auto-composed name preview */}
+              {/* Display preview — variant rows show their flavor; parent context
+                  comes from the relationship, not from being baked into the name. */}
               {selectedParent && (
                 <p className="mt-1.5 rounded bg-surface-raised px-2.5 py-1.5 text-xs text-navy/60">
-                  Will be named:{" "}
+                  Will appear as:{" "}
                   <span className="font-medium text-navy">
                     {selectedParent.name}
-                    {form.variantName.trim() ? ` - ${form.variantName.trim()}` : " - …"}
+                  </span>
+                  <span className="text-navy/40"> · </span>
+                  <span className="font-medium text-navy">
+                    {form.variantName.trim() || "…"}
                   </span>
                 </p>
               )}
