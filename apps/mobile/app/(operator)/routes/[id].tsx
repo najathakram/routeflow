@@ -33,6 +33,11 @@ import {
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
 
+function localTodayISO(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 export default function RouteDetailScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -57,7 +62,10 @@ export default function RouteDetailScreen() {
   const optimizeMut = useOptimizeTemplate();
   const createRunMut = useCreateRun();
   const [dispatchVisible, setDispatchVisible] = useState(false);
-  const [dispatchDate, setDispatchDate] = useState(new Date().toISOString().slice(0, 10));
+  // BUG-W-8: use the operator's LOCAL calendar date for the default. Date.toISOString()
+  // is always UTC, so an operator at 9pm PST sees tomorrow's UTC date and the run gets
+  // scheduled a day ahead.
+  const [dispatchDate, setDispatchDate] = useState(localTodayISO());
   const [dispatchNotes, setDispatchNotes] = useState("");
   const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
 
@@ -380,7 +388,7 @@ export default function RouteDetailScreen() {
                 <Pressable
                   style={[styles.dispatchBtn, cannotDispatch && { opacity: 0.4 }]}
                   onPress={() => {
-                    setDispatchDate(new Date().toISOString().slice(0, 10));
+                    setDispatchDate(localTodayISO());
                     setDispatchVisible(true);
                   }}
                   disabled={cannotDispatch}

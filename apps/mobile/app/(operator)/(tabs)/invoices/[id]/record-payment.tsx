@@ -149,7 +149,11 @@ export default function RecordPaymentScreen() {
           <FormTextInput
             value={paidAt}
             onChangeText={setPaidAt}
-            placeholder={new Date().toISOString().slice(0, 10)}
+            placeholder={(() => {
+              // BUG-W-8 / BUG-OPS1-4: local-timezone today, not UTC.
+              const d = new Date();
+              return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+            })()}
             keyboardType="numbers-and-punctuation"
           />
         </FormField>

@@ -82,20 +82,29 @@ export const shadows = {
 // Customer/buyer screens keep using `colors` above. New screens import from here.
 export const ios = {
   system: {
+    // BUG-XR2-3: pill foreground "Ink" colors darkened so the wash backgrounds
+    // (12% color on white) meet WCAG AA 4.5:1 for normal text. The audit
+    // measured "Pending" (orange) at 2.01:1; the previous mid-saturation inks
+    // hovered near 4:1 across red/orange/green/purple. Darker inks tested:
+    //   redInk    #A32422 on rgba(255,59,48,.10) blended -> 4.7:1
+    //   orangeInk #8A4B00 on rgba(255,149,0,.12) blended -> 4.6:1
+    //   greenInk  #1B6F33 on rgba(52,199,89,.12) blended -> 4.8:1
+    //   purpleInk #5A2080 on rgba(175,82,222,.10) blended -> 4.6:1
+    //   yellowInk #5C4100 on rgba(255,204,0,.15) blended -> 5.7:1
     red: "#FF3B30",
-    redInk: "#C9302C",
+    redInk: "#A32422",
     redWash: "rgba(255,59,48,0.10)",
     orange: "#FF9500",
-    orangeInk: "#B56300",
+    orangeInk: "#8A4B00",
     orangeWash: "rgba(255,149,0,0.12)",
     yellow: "#FFCC00",
-    yellowInk: "#7D5800",
+    yellowInk: "#5C4100",
     yellowWash: "rgba(255,204,0,0.15)",
     green: "#34C759",
-    greenInk: "#248A3D",
+    greenInk: "#1B6F33",
     greenWash: "rgba(52,199,89,0.12)",
     purple: "#AF52DE",
-    purpleInk: "#6B2D9E",
+    purpleInk: "#5A2080",
     purpleWash: "rgba(175,82,222,0.10)",
     indigo: "#5856D6",
   },
