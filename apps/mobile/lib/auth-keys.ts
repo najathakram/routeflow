@@ -20,3 +20,12 @@ export const BUYER_KEYS = {
   refreshToken: "rf:buyer:refreshToken",
   activeSeller: "rf:buyer:activeSeller",
 } as const;
+
+/**
+ * Marker for the role whose token should currently be used. Written on
+ * successful login, cleared on logout. Without it, getStoredUser() falls
+ * back to an op-then-driver iteration and any stale token in another bucket
+ * can hijack the active session (deep-audit 2026-05-02 BUG-XR1-4).
+ */
+export const CURRENT_ROLE_KEY = "rf:currentRole";
+export type CurrentRole = "operator" | "driver" | "buyer";

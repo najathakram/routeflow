@@ -3,7 +3,7 @@ import { Platform } from "react-native";
 import * as Notifications from "expo-notifications";
 import * as WebBrowser from "expo-web-browser";
 import { apiClient } from "./api-client";
-import { OP_KEYS, DRIVER_KEYS } from "./auth-keys";
+import { OP_KEYS, DRIVER_KEYS, BUYER_KEYS, CURRENT_ROLE_KEY, type CurrentRole } from "./auth-keys";
 
 // ─── Web-safe storage (SecureStore is native-only) ────────────────────────────
 
@@ -57,6 +57,10 @@ function keysForRole(role: string): typeof OP_KEYS | typeof DRIVER_KEYS {
   return DRIVER_ROLE_SET.has(role) ? DRIVER_KEYS : OP_KEYS;
 }
 
+function currentRoleFromJwtRole(role: string): CurrentRole {
+  return DRIVER_ROLE_SET.has(role) ? "driver" : "operator";
+}
+
 // ─── Legacy key migration (NEW-m2-1 / RF-077) ────────────────────────────────
 
 const LEGACY_ACCESS = "accessToken";
@@ -84,26 +88,47 @@ export async function migrateLegacyToken(): Promise<void> {
   await storage.del(LEGACY_REFRESH);
 }
 
+function authUserFromToken(token: string): AuthUser | null {
+  const payload = parseJwtPayload(token);
+  if (!payload) return null;
+  if (typeof payload.exp === "number" && payload.exp * 1000 < Date.now()) return null;
+  return {
+    id: payload.sub as string,
+    username: payload.username as string,
+    role: payload.role as AuthUser["role"],
+    status: payload.status as AuthUser["status"],
+    forcePasswordChange: payload.forcePasswordChange as boolean,
+    isAdmin: (payload.isAdmin as boolean) ?? false,
+    canActAsDriver: (payload.canActAsDriver as boolean) ?? false,
+  };
+}
+
 /**
- * Get the stored user from the appropriate role key.
- * Checks operator slot first, then driver slot (supports the dual-role picker).
+ * Get the stored staff user from the appropriate role bucket.
+ *
+ * BUG-XR1-4: prefer the bucket explicitly marked as the current role, falling
+ * back to operator-then-driver iteration only when the marker is missing
+ * (legacy sessions seeded before this change). Iteration order alone is not
+ * enough — an expired operator token would otherwise let a stale driver token
+ * "hijack" the session and route a re-logged-in operator to /route.
  */
 export async function getStoredUser(): Promise<AuthUser | null> {
+  const marker = (await storage.get(CURRENT_ROLE_KEY)) as CurrentRole | null;
+  if (marker === "operator" || marker === "driver") {
+    const keys = marker === "driver" ? DRIVER_KEYS : OP_KEYS;
+    const token = await storage.get(keys.accessToken);
+    if (token) {
+      const user = authUserFromToken(token);
+      if (user) return user;
+    }
+    // Marker pointed to a bucket whose token is missing/expired — fall
+    // through to the iteration so we don't silently strand the user.
+  }
   for (const keySet of [OP_KEYS, DRIVER_KEYS]) {
     const token = await storage.get(keySet.accessToken);
     if (!token) continue;
-    const payload = parseJwtPayload(token);
-    if (!payload) continue;
-    if (typeof payload.exp === "number" && payload.exp * 1000 < Date.now()) continue;
-    return {
-      id: payload.sub as string,
-      username: payload.username as string,
-      role: payload.role as AuthUser["role"],
-      status: payload.status as AuthUser["status"],
-      forcePasswordChange: payload.forcePasswordChange as boolean,
-      isAdmin: (payload.isAdmin as boolean) ?? false,
-      canActAsDriver: (payload.canActAsDriver as boolean) ?? false,
-    };
+    const user = authUserFromToken(token);
+    if (user) return user;
   }
   return null;
 }
@@ -158,6 +183,8 @@ export async function login(
   const keys = keysForRole(data.user.role);
   await storage.set(keys.accessToken, data.accessToken);
   await storage.set(keys.refreshToken, data.refreshToken);
+  // BUG-XR1-4: pin the active role so subsequent reads target the right bucket.
+  await storage.set(CURRENT_ROLE_KEY, currentRoleFromJwtRole(data.user.role));
   // Register push token after successful login
   await registerPushToken();
   return data;
@@ -195,6 +222,8 @@ export async function loginWithGoogle(tenantSlug: string): Promise<AuthResponse>
   const keys = keysForRole(role ?? "OPERATOR");
   await storage.set(keys.accessToken, accessToken);
   await storage.set(keys.refreshToken, refreshToken);
+  // BUG-XR1-4: pin the active role for the same reason as the password login path.
+  await storage.set(CURRENT_ROLE_KEY, currentRoleFromJwtRole(role ?? "OPERATOR"));
 
   // Decode the user from the JWT — same shape getStoredUser returns
   const payload = parseJwtPayload(accessToken);
@@ -238,16 +267,31 @@ export async function logout(): Promise<void> {
   } catch {
     // Best-effort — clear tokens regardless of server response
   }
-  // RF-077: clear both operator and driver slots
+  // BUG-XR1-2 / audit-cluster: clear EVERY role bucket on staff logout,
+  // including buyer slots and the active-seller pointer. The previous code
+  // left rf:buyer:accessToken in localStorage, which let useBuyerSocket
+  // open an orphan WebSocket under the next operator's session.
   await storage.del(OP_KEYS.accessToken);
   await storage.del(OP_KEYS.refreshToken);
   await storage.del(DRIVER_KEYS.accessToken);
   await storage.del(DRIVER_KEYS.refreshToken);
+  await storage.del(BUYER_KEYS.accessToken);
+  await storage.del(BUYER_KEYS.refreshToken);
+  await storage.del(BUYER_KEYS.activeSeller);
+  await storage.del(CURRENT_ROLE_KEY);
 }
 
 export async function refreshTokens(): Promise<AuthResponse | null> {
-  // Try whichever role has a stored refresh token (op first, then driver)
-  for (const keys of [OP_KEYS, DRIVER_KEYS]) {
+  // Prefer the bucket matching the active-role marker; fall back to
+  // op-then-driver iteration for legacy sessions.
+  const marker = (await storage.get(CURRENT_ROLE_KEY)) as CurrentRole | null;
+  const order =
+    marker === "driver"
+      ? [DRIVER_KEYS, OP_KEYS]
+      : marker === "operator"
+        ? [OP_KEYS, DRIVER_KEYS]
+        : [OP_KEYS, DRIVER_KEYS];
+  for (const keys of order) {
     const refreshToken = await storage.get(keys.refreshToken);
     if (!refreshToken) continue;
     try {
@@ -257,6 +301,7 @@ export async function refreshTokens(): Promise<AuthResponse | null> {
       const newKeys = keysForRole(data.user.role);
       await storage.set(newKeys.accessToken, data.accessToken);
       await storage.set(newKeys.refreshToken, data.refreshToken);
+      await storage.set(CURRENT_ROLE_KEY, currentRoleFromJwtRole(data.user.role));
       return data;
     } catch {
       // Try next slot

@@ -1,7 +1,7 @@
 import axios, { type InternalAxiosRequestConfig } from "axios";
 import { Platform } from "react-native";
 import { useOfflineQueue } from "../store/offlineQueue";
-import { OP_KEYS, DRIVER_KEYS } from "./auth-keys";
+import { OP_KEYS, DRIVER_KEYS, CURRENT_ROLE_KEY, type CurrentRole } from "./auth-keys";
 
 const BASE_URL =
   process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:3000";
@@ -29,16 +29,36 @@ async function storageDel(key: string): Promise<void> {
 }
 
 /**
- * Return whichever namespaced access token is present (op slot first, then driver).
- * NEW-m2-1 / RF-077: tokens are keyed by role to prevent cross-role overwrite.
+ * Return whichever namespaced access token is present, preferring the bucket
+ * matching the rf:currentRole marker (BUG-XR1-4). Without this, an expired
+ * operator token from a prior session would let a stale driver token answer
+ * for an operator request, hijacking the role context.
  */
 async function getActiveAccessToken(): Promise<string | null> {
+  const marker = (await storageGet(CURRENT_ROLE_KEY)) as CurrentRole | null;
+  if (marker === "driver") {
+    const driver = await storageGet(DRIVER_KEYS.accessToken);
+    if (driver) return driver;
+  } else if (marker === "operator") {
+    const op = await storageGet(OP_KEYS.accessToken);
+    if (op) return op;
+  }
+  // Marker missing or its bucket empty — fall back to op-then-driver order
+  // so legacy sessions seeded before the marker still work.
   const op = await storageGet(OP_KEYS.accessToken);
   if (op) return op;
   return storageGet(DRIVER_KEYS.accessToken);
 }
 
 async function getActiveRefreshToken(): Promise<{ token: string; isDriver: boolean } | null> {
+  const marker = (await storageGet(CURRENT_ROLE_KEY)) as CurrentRole | null;
+  if (marker === "driver") {
+    const driver = await storageGet(DRIVER_KEYS.refreshToken);
+    if (driver) return { token: driver, isDriver: true };
+  } else if (marker === "operator") {
+    const op = await storageGet(OP_KEYS.refreshToken);
+    if (op) return { token: op, isDriver: false };
+  }
   const op = await storageGet(OP_KEYS.refreshToken);
   if (op) return { token: op, isDriver: false };
   const driver = await storageGet(DRIVER_KEYS.refreshToken);
@@ -171,6 +191,7 @@ apiClient.interceptors.response.use(
       await storageDel(OP_KEYS.refreshToken);
       await storageDel(DRIVER_KEYS.accessToken);
       await storageDel(DRIVER_KEYS.refreshToken);
+      await storageDel(CURRENT_ROLE_KEY);
       // Navigation is handled by the auth store watching user state
       return Promise.reject(refreshError);
     } finally {

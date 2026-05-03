@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { Platform } from "react-native";
 import {
   getStoredBuyer,
   getActiveSeller,
@@ -8,6 +9,7 @@ import {
   type BuyerUser,
   type BuyerSeller,
 } from "./buyer-auth";
+import { BUYER_KEYS } from "./auth-keys";
 // RF-013: import cart store so we can clear it on logout
 import { useCartStore } from "../store/cartStore";
 
@@ -35,6 +37,12 @@ export const useBuyerSessionStore = create<BuyerSessionState>()((set) => ({
       useCartStore.getState().clear();
       set({ buyer: null, activeSeller: null });
     });
+    // BUG-XR1-3: cross-tab buyer logout. When another tab clears the buyer
+    // token, mirror the sign-out so this tab redirects to /customer-login.
+    installBuyerCrossTabLogoutListener(() => {
+      useCartStore.getState().clear();
+      set({ buyer: null, activeSeller: null });
+    });
   },
 
   setBuyer: (buyer) => set({ buyer }),
@@ -51,3 +59,17 @@ export const useBuyerSessionStore = create<BuyerSessionState>()((set) => ({
     set({ buyer: null, activeSeller: null });
   },
 }));
+
+let buyerCrossTabInstalled = false;
+function installBuyerCrossTabLogoutListener(onLogout: () => void) {
+  if (Platform.OS !== "web") return;
+  if (buyerCrossTabInstalled) return;
+  if (typeof window === "undefined") return;
+  buyerCrossTabInstalled = true;
+  const KEYS = new Set<string>([BUYER_KEYS.accessToken, BUYER_KEYS.activeSeller]);
+  window.addEventListener("storage", (e: StorageEvent) => {
+    if (!e.key || e.newValue !== null) return;
+    if (!KEYS.has(e.key)) return;
+    onLogout();
+  });
+}
