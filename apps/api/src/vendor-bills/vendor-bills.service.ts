@@ -10,6 +10,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { Prisma, MovementType } from "@prisma/client";
 import Anthropic from "@anthropic-ai/sdk";
+import sharp from "sharp";
 
 @Injectable()
 export class VendorBillsService {
@@ -430,7 +431,7 @@ export class VendorBillsService {
     });
   }
 
-  async scanInvoice(imageBuffer: Buffer, mimeType: string) {
+  async scanInvoice(files: Array<{ buffer: Buffer; mimeType: string }>) {
     // Look up API key: DB-stored key takes precedence over env var
     const storedKey = await this.systemConfig.get("anthropic.apiKey");
     const apiKey =
@@ -443,30 +444,58 @@ export class VendorBillsService {
       );
     }
 
-    // ── Phase 1: AI extraction (raw text only — no product catalog in prompt) ──
-    const anthropic = new Anthropic({ apiKey });
-    const base64Data = imageBuffer.toString("base64");
-    const isPdf = mimeType === "application/pdf";
+    // ── Phase 0: Normalise inputs ─────────────────────────────────────────────
+    // Multi-page invoices arrive as N images (HEIC from iPhone, JPEG, PNG, etc.)
+    // or one PDF. HEIC isn't a Claude vision media type, so convert it to JPEG
+    // server-side with sharp before sending. PDFs go through as-is via the
+    // `document` content block.
+    const fileContentBlocks: any[] = [];
+    for (const f of files) {
+      const isPdf = f.mimeType === "application/pdf";
+      if (isPdf) {
+        fileContentBlocks.push({
+          type: "document",
+          source: {
+            type: "base64",
+            media_type: "application/pdf",
+            data: f.buffer.toString("base64"),
+          },
+        });
+        continue;
+      }
+      // HEIC / HEIF → JPEG via sharp (libvips). Strip orientation metadata via
+      // .rotate() so iPhone photos show right-side up to Claude.
+      const isHeic = f.mimeType === "image/heic" || f.mimeType === "image/heif";
+      let buf = f.buffer;
+      let mediaType: "image/jpeg" | "image/png" | "image/gif" | "image/webp" =
+        f.mimeType as any;
+      if (isHeic) {
+        try {
+          buf = await sharp(f.buffer).rotate().jpeg({ quality: 85 }).toBuffer();
+          mediaType = "image/jpeg";
+        } catch (e) {
+          this.logger.error(`scanInvoice: HEIC→JPEG conversion failed: ${(e as Error).message}`);
+          throw new BadRequestException(
+            "Couldn't read one of the HEIC images. Try exporting it as JPEG and re-uploading.",
+          );
+        }
+      }
+      fileContentBlocks.push({
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: mediaType,
+          data: buf.toString("base64"),
+        },
+      });
+    }
 
-    const fileContentBlock = isPdf
-      ? ({
-          type: "document" as const,
-          source: {
-            type: "base64" as const,
-            media_type: "application/pdf" as const,
-            data: base64Data,
-          },
-        } as any)
-      : {
-          type: "image" as const,
-          source: {
-            type: "base64" as const,
-            media_type: mimeType as "image/jpeg" | "image/png" | "image/gif" | "image/webp",
-            data: base64Data,
-          },
-        };
+    // Phase 1 uses Haiku — cheap OCR, no catalog reasoning required at this step.
+    const anthropic = new Anthropic({ apiKey });
 
     const promptText = `Extract data from this supplier invoice and return JSON only (no markdown, no explanation).
+
+The invoice may span MULTIPLE pages — each input image/PDF is one page of the same invoice. Combine all line items across all pages into one items[] array. Use the supplier/invoice#/date/totals from whichever page they appear on (usually page 1 for header, last page for totals).
 
 Return exactly this structure:
 {
@@ -491,10 +520,16 @@ Return exactly this structure:
 
 IMPORTANT: Always read the actual quantity from each line item. Do not default to 1 unless the invoice truly shows no quantity. Return ONLY the JSON object.`;
 
+    // Phase 1 uses Haiku — cheap OCR, no catalog reasoning required at this step.
     const message = await anthropic.messages.create({
-      model: "claude-sonnet-4-6",
+      model: "claude-haiku-4-5",
       max_tokens: 4096,
-      messages: [{ role: "user", content: [fileContentBlock, { type: "text", text: promptText }] }],
+      messages: [
+        {
+          role: "user",
+          content: [...fileContentBlocks, { type: "text", text: promptText }],
+        },
+      ],
     });
 
     const content = message.content[0];

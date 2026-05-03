@@ -3,7 +3,7 @@
 import * as React from "react";
 import * as Tabs from "@radix-ui/react-tabs";
 import Link from "next/link";
-import { Plus, Eye, Send, PackageCheck, X, ChevronDown, ChevronUp, Info } from "lucide-react";
+import { Plus, Eye, Send, PackageCheck, X, ChevronDown, ChevronUp, Info, Sparkles } from "lucide-react";
 import { Badge, Button, Card, cn, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import {
@@ -25,6 +25,7 @@ import {
 import { useProducts } from "@/lib/api/products";
 import { useVendorBills } from "@/lib/api/vendor-bills";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
+import { ScanInvoiceModal } from "@/components/ScanInvoiceModal";
 
 const DECIMAL_UNITS = ["kg", "g", "liter", "litre", "l", "oz", "lb", "pound", "ml"];
 function isDecimalUnit(unit: string) {
@@ -1539,6 +1540,7 @@ export default function InventoryPage() {
 
   const [showRestockModal, setShowPurchaseModal] = React.useState(false);
   const [showAdjustModal, setShowAdjustModal] = React.useState(false);
+  const [showScanModal, setShowScanModal] = React.useState(false);
   const [showSupplierModal, setShowSupplierModal] = React.useState(false);
   const [showAddProductModal, setShowAddProductModal] = React.useState(false);
 
@@ -1633,6 +1635,9 @@ export default function InventoryPage() {
               </Button>
               <Button size="sm" variant="secondary" leftIcon={<Plus className="h-4 w-4" />} onClick={() => setShowAddProductModal(true)}>
                 Add Product
+              </Button>
+              <Button size="sm" variant="secondary" leftIcon={<Sparkles className="h-4 w-4" />} onClick={() => setShowScanModal(true)}>
+                Scan Invoice
               </Button>
               <Button size="sm" leftIcon={<Plus className="h-4 w-4" />} onClick={() => setShowPurchaseModal(true)}>
                 Quick Restock
@@ -1814,6 +1819,11 @@ export default function InventoryPage() {
         isOpen={showAddProductModal}
         onClose={() => setShowAddProductModal(false)}
         onCreated={() => setShowAddProductModal(false)}
+      />
+      <ScanInvoiceModal
+        open={showScanModal}
+        onClose={() => setShowScanModal(false)}
+        onCreated={() => setShowScanModal(false)}
       />
     </div>
   );
