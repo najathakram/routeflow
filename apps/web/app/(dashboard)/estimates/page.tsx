@@ -23,6 +23,7 @@ import {
 } from "@/lib/api/estimates";
 import { useCustomers, useCustomerPrices } from "@/lib/api/customers";
 import { useProducts } from "@/lib/api/products";
+import { computeLineSubtotal } from "@/lib/pricing";
 import { apiClient } from "@/lib/api-client";
 import { getTierPrice } from "@/lib/pricing";
 import { fmt, fmtDate } from "@/lib/formatting";
@@ -308,7 +309,18 @@ function CreateEstimateModal({
     ));
   };
 
-  const subtotal = lineItems.reduce((sum, li) => sum + li.unitPrice * li.qty, 0);
+  const subtotal = lineItems.reduce(
+    (sum, li) =>
+      sum +
+      computeLineSubtotal({
+        unitPrice: li.unitPrice,
+        qty: li.qty,
+        boxes: li.boxes ?? null,
+        pieces: li.pieces ?? null,
+        unitsPerBox: li.unitsPerBox ?? null,
+      }),
+    0,
+  );
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -542,7 +554,17 @@ function CreateEstimateModal({
                   )}
 
                   {/* Subtotal */}
-                  <span className="w-20 text-right text-sm font-semibold text-navy">{fmt(li.unitPrice * li.qty)}</span>
+                  <span className="w-20 text-right text-sm font-semibold text-navy">
+                    {fmt(
+                      computeLineSubtotal({
+                        unitPrice: li.unitPrice,
+                        qty: li.qty,
+                        boxes: li.boxes ?? null,
+                        pieces: li.pieces ?? null,
+                        unitsPerBox: li.unitsPerBox ?? null,
+                      }),
+                    )}
+                  </span>
 
                   {/* Remove */}
                   <button type="button" onClick={() => removeLineItem(li.tempId)} className="rounded p-1 text-navy/30 hover:text-danger transition-colors">

@@ -8,6 +8,7 @@ import {
 } from "@nestjs/common";
 import { randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
+import { computeLineSubtotal } from "../common/pricing";
 import { InvoiceStatus, UserRole } from "@prisma/client";
 import {
   CreateInvoiceDto,
@@ -130,15 +131,24 @@ export class InvoicesService {
       let qty = item.qty;
       let boxes: number | undefined;
       let pieces: number | undefined;
+      let unitsPerBox: number | undefined;
       if (item.productId && (item.boxes != null || item.pieces != null)) {
         const product = productMap.get(item.productId);
         if (product?.unitsPerBox) {
           boxes = item.boxes ?? 0;
           pieces = item.pieces ?? 0;
+          unitsPerBox = product.unitsPerBox;
           qty = boxes * product.unitsPerBox + pieces;
         }
       }
-      const lineSub = qty * item.unitPrice - (item.discount ?? 0);
+      const beforeDiscount = computeLineSubtotal({
+        unitPrice: item.unitPrice,
+        qty,
+        boxes,
+        pieces,
+        unitsPerBox,
+      });
+      const lineSub = beforeDiscount - (item.discount ?? 0);
       subtotal += lineSub;
       return {
         description: item.description,
@@ -827,15 +837,24 @@ export class InvoicesService {
         let qty = item.qty;
         let boxes: number | undefined;
         let pieces: number | undefined;
+        let unitsPerBox: number | undefined;
         if (item.productId && (item.boxes != null || item.pieces != null)) {
           const product = productMap.get(item.productId);
           if (product?.unitsPerBox) {
             boxes = item.boxes ?? 0;
             pieces = item.pieces ?? 0;
+            unitsPerBox = product.unitsPerBox;
             qty = boxes * product.unitsPerBox + pieces;
           }
         }
-        const lineSub = qty * item.unitPrice - (item.discount ?? 0);
+        const beforeDiscount = computeLineSubtotal({
+          unitPrice: item.unitPrice,
+          qty,
+          boxes,
+          pieces,
+          unitsPerBox,
+        });
+        const lineSub = beforeDiscount - (item.discount ?? 0);
         subtotal += lineSub;
         return {
           description: item.description,

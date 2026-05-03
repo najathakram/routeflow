@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from "@nestjs/comm
 import { PriceType } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { getTierPrice } from "../utils/pricing";
+import { computeLineSubtotal } from "../common/pricing";
 
 @Injectable()
 export class EstimatesService {
@@ -86,7 +87,13 @@ export class EstimatesService {
         unitPrice = Number(i.unitPrice);
       }
 
-      const sub = unitPrice * qty;
+      const sub = computeLineSubtotal({
+        unitPrice,
+        qty,
+        boxes: i.boxes ?? null,
+        pieces: i.pieces ?? null,
+        unitsPerBox: product?.unitsPerBox ?? null,
+      });
       subtotal += sub;
       return {
         description: i.description ?? product?.name ?? "",

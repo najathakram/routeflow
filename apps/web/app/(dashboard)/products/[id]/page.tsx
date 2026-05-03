@@ -390,7 +390,9 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
     } else {
       createProduct.mutate(
         {
-          name: `${product.name} - ${variantForm.variantName}`,
+          // `name` stores only the variant name; parent context comes from
+          // `parentProductId`. UI composes the display name when needed.
+          name: variantForm.variantName,
           parentProductId: product.id,
           variantName: variantForm.variantName,
           sku: variantForm.sku || undefined,

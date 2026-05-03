@@ -12,6 +12,7 @@ import { InjectQueue } from "@nestjs/bull";
 import type { Queue } from "bull";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtPayload } from "../auth/jwt-payload.interface";
+import { computeLineSubtotal } from "../common/pricing";
 import {
   OrderStatus,
   UserRole,
@@ -619,7 +620,15 @@ export class OrdersService implements OnApplicationBootstrap {
         priceType = PriceType.STANDARD;
       }
 
-      const itemSubtotal = unitPrice * qty;
+      // For boxed products `unitPrice` is the BOX price; loose pieces are
+      // prorated. See apps/api/src/common/pricing.ts for the full reasoning.
+      const itemSubtotal = computeLineSubtotal({
+        unitPrice,
+        qty,
+        boxes: item.boxes ?? null,
+        pieces: item.pieces ?? null,
+        unitsPerBox: product.unitsPerBox,
+      });
       subtotal += itemSubtotal;
       return {
         productId: item.productId,
