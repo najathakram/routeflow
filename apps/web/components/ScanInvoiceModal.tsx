@@ -284,7 +284,7 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
       const results: string[] = [];
 
       if (createVendorBill) {
-        const bill = await createBill.mutateAsync({
+        await createBill.mutateAsync({
           supplierId,
           billDate,
           dueDate: dueDate || "",
@@ -295,17 +295,6 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
             unitCost: parseFloat(item.unitCost) || 0,
           })),
         });
-        // Attach scanned invoice image to the bill record
-        if (previewUrl && (bill as any)?.id) {
-          try {
-            const blob = await fetch(previewUrl).then((r) => r.blob());
-            const ext = previewType === "pdf" ? "pdf" : "jpg";
-            const file = new File([blob], `invoice-scan.${ext}`, { type: blob.type });
-            const fd = new FormData();
-            fd.append("file", file);
-            await fetch(`/api/vendor-bills/${(bill as any).id}/receipt`, { method: "POST", body: fd });
-          } catch { /* non-critical — bill already created */ }
-        }
         results.push("Vendor bill created");
       }
 
