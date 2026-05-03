@@ -295,6 +295,13 @@ export default function StopDetailScreen() {
               onPress={() => router.push(`/route/stop/${stopId}/return`)}
             />
           </View>
+          {/* Optional split-invoice flow: lets the driver issue 2+ invoices for the
+              stop's order(s), each with its own due date. After splitting, the
+              auto-invoice on stop completion sees fully-invoiced items and skips. */}
+          <SecondaryBtn
+            label="Split into invoices…"
+            onPress={() => router.push(`/route/stop/${stopId}/split-invoice`)}
+          />
           <Pressable
             style={styles.greenBtn}
             onPress={() => router.push(`/route/stop/${stopId}/payment`)}

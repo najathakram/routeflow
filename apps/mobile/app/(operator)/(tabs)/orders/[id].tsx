@@ -340,6 +340,18 @@ export default function OrderDetailScreen() {
           <View style={styles.card}>
             <Text style={styles.cardTitle}>More</Text>
             <View style={styles.actionsCol}>
+              {/* Split into multiple invoices — available once the order has items
+                  and isn't a draft / cancelled. The screen prevents over-invoicing via
+                  OrderItem.invoicedQty. */}
+              {order.status !== "DRAFT" && order.status !== "CANCELLED" && (order.lineItems?.length ?? 0) > 0 ? (
+                <Pressable
+                  style={[styles.actionBtn, styles.secondaryAction]}
+                  onPress={() => router.push(`/(operator)/orders/${order.id}/split-invoice`)}
+                >
+                  <Ionicons name="document-outline" size={18} color={ios.brand} />
+                  <Text style={styles.actionBtnText}>Split into invoice…</Text>
+                </Pressable>
+              ) : null}
               {!isTerminal ? (
                 <Pressable
                   style={[styles.actionBtn, styles.secondaryAction]}
