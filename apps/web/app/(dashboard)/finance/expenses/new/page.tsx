@@ -13,6 +13,7 @@ import {
 import { useSuppliers } from "@/lib/api/suppliers";
 import { useCustomers } from "@/lib/api/customers";
 import { useToast } from "@routeflow/ui/web";
+import { SupplierSelect } from "@/components/SupplierSelect";
 
 // ─── Shared field styles ───────────────────────────────────────────────────────
 
@@ -185,10 +186,12 @@ function RecordExpenseTab({ onSaved }: { onSaved: () => void }) {
         {/* Supplier */}
         <div>
           <label className={labelCls}>Supplier / Vendor</label>
-          <select value={form.supplierId} onChange={e => setForm(f => ({ ...f, supplierId: e.target.value }))} className={fieldCls}>
-            <option value="">None</option>
-            {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-          </select>
+          <SupplierSelect
+            value={form.supplierId}
+            onChange={(id) => setForm((f) => ({ ...f, supplierId: id }))}
+            suppliers={suppliers}
+            placeholder="None"
+          />
         </div>
 
         {/* Customer */}

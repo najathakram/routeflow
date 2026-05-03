@@ -50,6 +50,7 @@ import { usePreferences, useSavePreferences } from "@/lib/api/users";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { ScanInvoiceModal } from "@/components/ScanInvoiceModal";
+import { SupplierSelect } from "@/components/SupplierSelect";
 import Link from "next/link";
 import { fmt, fmtDate, todayIso } from "@/lib/formatting";
 import { apiClient } from "@/lib/api-client";
@@ -413,11 +414,16 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
           </div>
           <div>
             <label className="mb-1.5 block text-sm font-medium text-navy/80">Supplier</label>
-            <select value={supplierId} onChange={(e) => setSupplierId(e.target.value)}
-              className={cn("h-10 w-full rounded-lg border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500", errors.supplierId ? "border-danger" : "border-surface-border")}>
-              <option value="">Select supplier…</option>
-              {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
+            <SupplierSelect
+              value={supplierId}
+              onChange={setSupplierId}
+              suppliers={suppliers}
+              placeholder="Select supplier…"
+              className={cn(
+                "h-10",
+                errors.supplierId ? "border-danger" : undefined,
+              )}
+            />
             {errors.supplierId && <p className="mt-1 text-xs text-danger">{errors.supplierId}</p>}
           </div>
           <div>
