@@ -1546,6 +1546,10 @@ export default function InventoryPage() {
   const [adjustPreselectId, setAdjustPreselectId] = React.useState<string | undefined>();
   const [showScanModal, setShowScanModal] = React.useState(false);
   const [stockSearch, setStockSearch] = React.useState("");
+  // Typeahead state for the Stock-tab search box
+  const [stockSuggestOpen, setStockSuggestOpen] = React.useState(false);
+  const [stockSuggestHighlight, setStockSuggestHighlight] = React.useState(0);
+  const stockSearchContainerRef = React.useRef<HTMLDivElement>(null);
   const [showSupplierModal, setShowSupplierModal] = React.useState(false);
   const [showAddProductModal, setShowAddProductModal] = React.useState(false);
 
@@ -1554,6 +1558,47 @@ export default function InventoryPage() {
     0,
   );
   const outOfStockCount = (stockItems as StockItem[]).filter((i) => i.currentStock <= 0).length;
+
+  // Close the typeahead when clicking outside, and reset the highlight whenever
+  // the query changes so the first match is always preselected.
+  React.useEffect(() => {
+    if (!stockSuggestOpen) return;
+    const onClick = (e: MouseEvent) => {
+      if (
+        stockSearchContainerRef.current &&
+        !stockSearchContainerRef.current.contains(e.target as Node)
+      ) {
+        setStockSuggestOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, [stockSuggestOpen]);
+  React.useEffect(() => setStockSuggestHighlight(0), [stockSearch]);
+
+  // Filtered suggestions for the typeahead dropdown. Capped at 8 so a long
+  // catalog doesn't push the dropdown off-screen — the user can still see
+  // every match in the table beneath. Match SKU first so a barcode scan
+  // surfaces the exact-SKU result above name-substring matches.
+  const stockSuggestions = React.useMemo(() => {
+    const q = stockSearch.trim().toLowerCase();
+    if (!q) return [] as StockItem[];
+    const rows = stockItems as StockItem[];
+    const skuExact: StockItem[] = [];
+    const skuPrefix: StockItem[] = [];
+    const nameMatch: StockItem[] = [];
+    const other: StockItem[] = [];
+    for (const r of rows) {
+      const sku = (r.sku ?? "").toLowerCase();
+      const name = r.name.toLowerCase();
+      const cat = (r.category ?? "").toLowerCase();
+      if (sku === q) skuExact.push(r);
+      else if (sku.startsWith(q)) skuPrefix.push(r);
+      else if (name.includes(q)) nameMatch.push(r);
+      else if (sku.includes(q) || cat.includes(q)) other.push(r);
+    }
+    return [...skuExact, ...skuPrefix, ...nameMatch, ...other].slice(0, 8);
+  }, [stockSearch, stockItems]);
 
   const tabs = [
     { value: "stock", label: "Stock" },
@@ -1635,25 +1680,129 @@ export default function InventoryPage() {
           <div className="mb-3 flex flex-wrap items-center gap-3">
             {/* Search — filters the stock table by name, SKU, or category so
                 operators can jump to a product before adjusting its stock,
-                instead of scrolling a long list. */}
-            <div className="relative flex-1 min-w-[220px]">
+                instead of scrolling a long list. Also surfaces a typeahead
+                dropdown with the top 8 matches so the operator can click
+                "Adjust" without scrolling the table at all. */}
+            <div ref={stockSearchContainerRef} className="relative flex-1 min-w-[220px]">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-navy/40" />
               <input
                 type="search"
                 value={stockSearch}
-                onChange={(e) => setStockSearch(e.target.value)}
+                onChange={(e) => {
+                  setStockSearch(e.target.value);
+                  setStockSuggestOpen(true);
+                }}
+                onFocus={() => setStockSuggestOpen(true)}
+                onKeyDown={(e) => {
+                  if (!stockSuggestOpen && (e.key === "ArrowDown" || e.key === "Enter")) {
+                    setStockSuggestOpen(true);
+                    return;
+                  }
+                  if (e.key === "ArrowDown") {
+                    e.preventDefault();
+                    setStockSuggestHighlight((h) =>
+                      Math.min(h + 1, stockSuggestions.length - 1),
+                    );
+                  } else if (e.key === "ArrowUp") {
+                    e.preventDefault();
+                    setStockSuggestHighlight((h) => Math.max(h - 1, 0));
+                  } else if (e.key === "Enter") {
+                    const pick = stockSuggestions[stockSuggestHighlight];
+                    if (pick) {
+                      e.preventDefault();
+                      setAdjustPreselectId(pick.id);
+                      setShowAdjustModal(true);
+                      setStockSuggestOpen(false);
+                    }
+                  } else if (e.key === "Escape") {
+                    setStockSuggestOpen(false);
+                  }
+                }}
                 placeholder="Search by name, SKU, or category…"
                 className="h-9 w-full rounded-lg border border-surface-border bg-white pl-9 pr-9 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+                role="combobox"
+                aria-expanded={stockSuggestOpen && stockSuggestions.length > 0}
+                aria-autocomplete="list"
               />
               {stockSearch && (
                 <button
                   type="button"
-                  onClick={() => setStockSearch("")}
+                  onClick={() => {
+                    setStockSearch("");
+                    setStockSuggestOpen(false);
+                  }}
                   className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-navy/30 transition-colors hover:bg-surface-raised hover:text-navy"
                   aria-label="Clear search"
                 >
                   <X className="h-3.5 w-3.5" />
                 </button>
+              )}
+
+              {/* Typeahead dropdown */}
+              {stockSuggestOpen && stockSearch.trim() && (
+                <div className="absolute left-0 right-0 top-full z-30 mt-1 max-h-80 overflow-y-auto rounded-lg border border-surface-border bg-white shadow-lg">
+                  {stockSuggestions.length === 0 ? (
+                    <p className="px-3 py-2 text-xs text-navy/40">
+                      No products match &quot;{stockSearch}&quot;.
+                    </p>
+                  ) : (
+                    <ul role="listbox" className="py-1">
+                      {stockSuggestions.map((s, idx) => {
+                        const stockColor =
+                          s.currentStock <= 0
+                            ? "text-danger"
+                            : s.currentStock <= 5
+                              ? "text-warning"
+                              : "text-navy/60";
+                        const stockLabel =
+                          Number(s.currentStock) % 1 === 0
+                            ? Number(s.currentStock).toFixed(0)
+                            : Number(s.currentStock).toFixed(2);
+                        return (
+                          <li
+                            key={s.id}
+                            role="option"
+                            aria-selected={idx === stockSuggestHighlight}
+                            onMouseEnter={() => setStockSuggestHighlight(idx)}
+                            onMouseDown={(e) => {
+                              // mousedown so it fires before the input loses focus / closes the menu
+                              e.preventDefault();
+                              setAdjustPreselectId(s.id);
+                              setShowAdjustModal(true);
+                              setStockSuggestOpen(false);
+                            }}
+                            className={cn(
+                              "flex cursor-pointer items-center gap-3 px-3 py-2 text-sm transition-colors",
+                              idx === stockSuggestHighlight
+                                ? "bg-brand-50"
+                                : "hover:bg-surface-raised",
+                            )}
+                          >
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate font-medium text-navy" title={s.name}>
+                                {s.name}
+                              </p>
+                              <p className="truncate text-[11px] text-navy/40">
+                                {s.sku ? (
+                                  <span className="font-mono">{s.sku}</span>
+                                ) : (
+                                  <span className="italic">no SKU</span>
+                                )}
+                                {s.category ? <span> · {s.category}</span> : null}
+                              </p>
+                            </div>
+                            <div className="text-right">
+                              <p className={cn("text-xs font-medium tabular-nums", stockColor)}>
+                                {stockLabel} {s.unit}
+                              </p>
+                              <p className="text-[10px] text-brand-600">Adjust →</p>
+                            </div>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </div>
               )}
             </div>
             <p className="text-sm text-navy/50 whitespace-nowrap">
