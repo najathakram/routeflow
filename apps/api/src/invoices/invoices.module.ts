@@ -12,6 +12,6 @@ import { SystemConfigModule } from "../system-config/system-config.module";
   imports: [PrismaModule, GatewaysModule, StorageModule, EmailModule, SystemConfigModule],
   controllers: [InvoicesController],
   providers: [InvoicesService, InvoicePdfService],
-  exports: [InvoicesService],
+  exports: [InvoicesService, InvoicePdfService],
 })
 export class InvoicesModule {}
