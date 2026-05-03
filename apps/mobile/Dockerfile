@@ -22,11 +22,7 @@ COPY apps/mobile/package.json apps/mobile/
 # Install all workspace dependencies.
 # --force bypasses the EBADPLATFORM error for @next/swc-win32-x64-msvc which
 # ends up in the lockfile when generated on Windows.
-# Use `ci` (NOT `install`) so the lockfile is honoured — every build pulls the
-# exact same versions. Past incident: `npm install --force` silently pulled a
-# breaking Expo/RN patch that produced a bundle which loaded but never mounted
-# React. Pinning via the lockfile prevents that from happening again.
-RUN npm ci --force
+RUN npm install --force
 
 # ── Copy full source ──
 COPY packages/ packages/
