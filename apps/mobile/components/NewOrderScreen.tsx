@@ -15,7 +15,7 @@ import { ios } from "@routeflow/ui/tokens";
 import { NavAction, NavBackButton, NavBar, SearchBar } from "@routeflow/ui/mobile/ios";
 import { useAdminCustomers } from "../lib/api/admin";
 import { useProducts } from "../lib/api/products";
-import { useCreateOrderAsDriver, useActiveOrderForCustomer } from "../lib/api/orders";
+import { useCreateOrderAsDriver } from "../lib/api/orders";
 import { showToast } from "../lib/toast";
 import { apiClient } from "../lib/api-client";
 import { BarcodeScanner } from "./BarcodeScanner";
@@ -265,62 +265,8 @@ function ProductPickView({
   const dec = (id: string) => setItems((m) => ({ ...m, [id]: Math.max(0, (m[id] ?? 0) - 1) }));
 
   const createOrder = useCreateOrderAsDriver();
-  // Pre-check the customer's open draft/pending order so we can ask before submitting.
-  const { data: activeOrder } = useActiveOrderForCustomer(customerId);
 
   const canSave = totalItems > 0 && !createOrder.isPending;
-
-  /** Submit with a specific (or no) merge choice. */
-  const submitOrder = (mergeChoice?: 'merge' | 'separate') => {
-    const itemPayload = Object.entries(items)
-      .filter(([, q]) => q > 0)
-      .map(([productId, qty]) => ({ productId, qty }));
-
-    createOrder.mutate(
-      {
-        customerId,
-        items: itemPayload,
-        routeRunId: runId,
-        routeRunStopId: stopId,
-        ...(mergeChoice ? { mergeChoice } : {}),
-      },
-      {
-        onSuccess: (order) => {
-          if (mergeChoice === 'merge') {
-            showToast(`Merged into order ${order.orderNumber}`);
-          }
-          onSaved(order.orderNumber);
-        },
-        onError: (err: Error) => {
-          const errAny = err as unknown as {
-            response?: { status?: number; data?: { message?: string; code?: string; activeOrder?: any } };
-          };
-          // Belt-and-braces: if the API reports 409 MERGE_CHOICE_REQUIRED (e.g. the
-          // pre-check missed a race), prompt the operator now from the error response.
-          const body = errAny?.response?.data;
-          if (errAny?.response?.status === 409 && body?.code === 'MERGE_CHOICE_REQUIRED' && body?.activeOrder) {
-            promptMergeChoice(body.activeOrder);
-            return;
-          }
-          const msg = body?.message ?? err?.message ?? "Unable to save order.";
-          Alert.alert("Couldn't save order", String(msg));
-        },
-      },
-    );
-  };
-
-  const promptMergeChoice = (existing: { orderNumber: string | null; itemCount: number; total: number }) => {
-    Alert.alert(
-      "Open order exists",
-      `This customer has an open order ${existing.orderNumber ?? ""} with ${existing.itemCount} item${existing.itemCount === 1 ? "" : "s"} ($${existing.total.toFixed(2)}). Merge into it or create a separate order?`,
-      [
-        { text: "Cancel", style: "cancel" },
-        { text: "Merge", onPress: () => submitOrder('merge') },
-        { text: "Create separate", onPress: () => submitOrder('separate') },
-      ],
-      { cancelable: true },
-    );
-  };
 
   const onSave = () => {
     const itemPayload = Object.entries(items)
@@ -332,13 +278,27 @@ function ProductPickView({
       return;
     }
 
-    // If the customer already has an active draft/pending order, ask the operator
-    // explicitly — never silently merge or silently duplicate.
-    if (activeOrder) {
-      promptMergeChoice(activeOrder);
-      return;
-    }
-    submitOrder();
+    createOrder.mutate(
+      {
+        customerId,
+        items: itemPayload,
+        routeRunId: runId,
+        routeRunStopId: stopId,
+      },
+      {
+        onSuccess: (order) => {
+          onSaved(order.orderNumber);
+        },
+        onError: (err: Error) => {
+          const msg =
+            (err as unknown as { response?: { data?: { message?: string } } })?.response?.data
+              ?.message ??
+            err?.message ??
+            "Unable to save order.";
+          Alert.alert("Couldn't save order", String(msg));
+        },
+      },
+    );
   };
 
   return (
