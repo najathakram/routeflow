@@ -2,18 +2,6 @@ import { apiClient } from "./api-client";
 import { setTenantCookie, clearTenantCookie } from "./tenant-cookie";
 import { OP_KEYS } from "./auth-keys";
 
-export const OP_PRESENCE_COOKIE = "rf-op-auth";
-
-function setOpPresenceCookie(): void {
-  if (typeof document === "undefined") return;
-  document.cookie = `${OP_PRESENCE_COOKIE}=1; path=/; max-age=${60 * 60 * 24 * 30}; samesite=lax`;
-}
-
-function clearOpPresenceCookie(): void {
-  if (typeof document === "undefined") return;
-  document.cookie = `${OP_PRESENCE_COOKIE}=; path=/; max-age=0; samesite=lax`;
-}
-
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface AuthUser {
@@ -105,7 +93,6 @@ export async function login(username: string, password: string): Promise<AuthRes
   });
   localStorage.setItem(OP_KEYS.accessToken, data.accessToken);
   localStorage.setItem(OP_KEYS.refreshToken, data.refreshToken);
-  setOpPresenceCookie();
   // Correct the tenant cookie to match the authenticated user's actual tenant.
   // This ensures that even if the browser had a stale cookie from a previous
   // session or impersonation, all subsequent API calls use the correct tenant.
@@ -123,7 +110,6 @@ export async function logout(): Promise<void> {
   }
   localStorage.removeItem(OP_KEYS.accessToken);
   localStorage.removeItem(OP_KEYS.refreshToken);
-  clearOpPresenceCookie();
   clearTenantCookie();
   window.location.href = "/login";
 }
@@ -144,16 +130,7 @@ export async function refreshTokens(): Promise<AuthResponse | null> {
 }
 
 export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
-  const { data } = await apiClient.post<{
-    message: string;
-    accessToken?: string;
-    refreshToken?: string;
-  }>("/auth/change-password", { currentPassword, newPassword });
-  if (data.accessToken && data.refreshToken) {
-    localStorage.setItem(OP_KEYS.accessToken, data.accessToken);
-    localStorage.setItem(OP_KEYS.refreshToken, data.refreshToken);
-    setOpPresenceCookie();
-  }
+  await apiClient.post("/auth/change-password", { currentPassword, newPassword });
 }
 
 // ─── Cross-tab isolation listener (NEW-m2-1 / RF-077) ────────────────────────

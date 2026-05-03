@@ -42,17 +42,12 @@ function ChangeDriverModal({
   onClose: () => void;
 }) {
   const { toast } = useToast();
-  const { data: driversData } = useDrivers({ status: "ACTIVE", limit: 100 });
+  const { data: driversData } = useDrivers({ limit: 100 });
   const updateRun = useUpdateRouteRun();
-  const initialDriverId = run.driverId ?? "";
-  const [driverId, setDriverId] = React.useState(initialDriverId);
+  const [driverId, setDriverId] = React.useState(run.driverId ?? "");
   const drivers = driversData?.data ?? [];
 
   const handleSave = () => {
-    if (driverId === initialDriverId) {
-      onClose();
-      return;
-    }
     updateRun.mutate(
       { id: run.id, driverId: driverId || null },
       {

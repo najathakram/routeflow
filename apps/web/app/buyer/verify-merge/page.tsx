@@ -23,7 +23,7 @@ function VerifyMergeContent() {
       return;
     }
 
-    const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000/api/v1";
+    const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000";
     fetch(`${apiBase}/buyer/auth/verify-merge/${token}`)
       .then(async (res) => {
         const data = await res.json();

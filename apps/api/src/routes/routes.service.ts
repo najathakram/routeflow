@@ -230,15 +230,17 @@ export class RoutesService {
 
   async reorderStops(routeId: string, order: { id: string; stopNumber: number }[]) {
     await this.findRouteOrThrow(routeId);
-    const allStops = await this.prisma
-      .forTenant()
-      .routeStop.findMany({ where: { routeId }, select: { id: true, stopNumber: true } });
-    const offset = allStops.length + order.length + 100;
+    // Two-phase update to avoid @@unique([routeId, stopNumber]) constraint violations:
+    // Phase 1 — shift all stops to temporary positions (current target + large offset)
+    // Phase 2 — set the actual target positions
+    // Without this, updating stop A from 2→5 while stop B still sits at 5 causes a
+    // unique-constraint violation mid-transaction.
+    const offset = order.length + 100;
     await this.prisma.$transaction([
-      ...allStops.map((s) =>
+      ...order.map(({ id, stopNumber }) =>
         this.prisma.forTenant().routeStop.update({
-          where: { id: s.id },
-          data: { stopNumber: s.stopNumber + offset },
+          where: { id },
+          data: { stopNumber: stopNumber + offset },
         }),
       ),
       ...order.map(({ id, stopNumber }) =>
@@ -296,15 +298,15 @@ export class RoutesService {
     if (run.status === "IN_PROGRESS" || run.status === "COMPLETED") {
       throw new BadRequestException("Cannot reorder stops on an active or completed route run");
     }
-    const allStops = await this.prisma
-      .forTenant()
-      .routeRunStop.findMany({ where: { routeRunId: runId }, select: { id: true, stopNumber: true } });
-    const offset = allStops.length + order.length + 100;
+    // Two-phase update to avoid @@unique([routeRunId, stopNumber]) constraint violations:
+    // Phase 1 — shift all stops to temporary positions (current target + large offset)
+    // Phase 2 — set the actual target positions
+    const offset = order.length + 100;
     await this.prisma.$transaction([
-      ...allStops.map((s) =>
+      ...order.map(({ id, stopNumber }) =>
         this.prisma.forTenant().routeRunStop.update({
-          where: { id: s.id },
-          data: { stopNumber: s.stopNumber + offset },
+          where: { id },
+          data: { stopNumber: stopNumber + offset },
         }),
       ),
       ...order.map(({ id, stopNumber }) =>
@@ -899,18 +901,6 @@ export class RoutesService {
 
     const stopIds = run.stops.map((s) => s.id);
 
-    if (stopIds.length > 0) {
-      const existingMutation = await this.prisma.forTenant().deliveryMutation.findFirst({
-        where: { routeRunStopId: { in: stopIds } },
-        select: { id: true },
-      });
-      if (existingMutation) {
-        throw new BadRequestException(
-          "This run has recorded deliveries; cancel it instead of deleting.",
-        );
-      }
-    }
-
     await this.prisma.tenantTransaction(async (tx) => {
       // 1. Unlink orders from run and stops
       await tx.order.updateMany({
@@ -994,24 +984,11 @@ export class RoutesService {
     runId: string,
     stopId: string,
     dto: { status: "IN_PROGRESS" | "SKIPPED"; driverNote?: string },
-    user: JwtPayload,
   ) {
     const stop = await this.prisma.forTenant().routeRunStop.findFirst({
       where: { id: stopId, routeRunId: runId },
     });
     if (!stop) throw new NotFoundException("Stop not found");
-
-    if (user.role === UserRole.DRIVER) {
-      const run = await this.prisma
-        .forTenant()
-        .routeRun.findUnique({ where: { id: runId }, select: { driverId: true } });
-      const driver = await this.prisma
-        .forTenant()
-        .driver.findFirst({ where: { userId: user.sub } });
-      if (!driver || !run || run.driverId !== driver.id) {
-        throw new ForbiddenException("You do not have access to this route run");
-      }
-    }
 
     const updates: any = { status: dto.status };
     if (dto.driverNote !== undefined) updates.driverNote = dto.driverNote;
@@ -1109,7 +1086,6 @@ export class RoutesService {
         ? await this.prisma.forTenant().driver.findFirst({ where: { userId: user.sub } })
         : null;
 
-    let autoCompleted = false;
     await this.prisma.tenantTransaction(async (tx) => {
       // 1. Mark stop completed
       await tx.routeRunStop.update({
@@ -1171,27 +1147,8 @@ export class RoutesService {
           where: { id: runId },
           data: { status: RouteRunStatus.COMPLETED, completedAt: new Date() },
         });
-        autoCompleted = true;
       }
     });
-
-    if (autoCompleted) {
-      const completed = await this.prisma.forTenant().routeRun.findUnique({
-        where: { id: runId },
-        include: {
-          driver: { select: { id: true, contactName: true, user: { select: { username: true } } } },
-        },
-      });
-      if (completed?.driver) {
-        this.gateway.emitDriverStatusUpdated(this.prisma.getTenantId(), {
-          driverId: completed.driver.id,
-          driverName:
-            completed.driver.contactName ?? completed.driver.user?.username ?? "Driver",
-          status: RouteRunStatus.COMPLETED,
-          updatedAt: new Date().toISOString(),
-        });
-      }
-    }
 
     const result = await this.prisma
       .forTenant()
@@ -1272,7 +1229,6 @@ export class RoutesService {
         ? await this.prisma.forTenant().driver.findFirst({ where: { userId: user.sub } })
         : null;
 
-    let autoCompleted = false;
     await this.prisma.tenantTransaction(async (tx) => {
       // 1. Mark stop completed
       await tx.routeRunStop.update({
@@ -1361,27 +1317,8 @@ export class RoutesService {
           where: { id: runId },
           data: { status: RouteRunStatus.COMPLETED, completedAt: new Date() },
         });
-        autoCompleted = true;
       }
     });
-
-    if (autoCompleted) {
-      const completed = await this.prisma.forTenant().routeRun.findUnique({
-        where: { id: runId },
-        include: {
-          driver: { select: { id: true, contactName: true, user: { select: { username: true } } } },
-        },
-      });
-      if (completed?.driver) {
-        this.gateway.emitDriverStatusUpdated(this.prisma.getTenantId(), {
-          driverId: completed.driver.id,
-          driverName:
-            completed.driver.contactName ?? completed.driver.user?.username ?? "Driver",
-          status: RouteRunStatus.COMPLETED,
-          updatedAt: new Date().toISOString(),
-        });
-      }
-    }
 
     const result = await this.prisma
       .forTenant()

@@ -36,7 +36,6 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { Badge, Button, Modal, cn, useToast } from "@routeflow/ui/web";
-import { useQueryClient } from "@tanstack/react-query";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useAuth } from "@/lib/auth-context";
 import {
@@ -200,13 +199,11 @@ export default function RouteRunDetailPage({ params }: { params: { id: string } 
   const { mutate: optimizeRoute, isPending: isOptimizing } = useOptimizeRoute();
   const { mutate: reorderRunStops } = useReorderRunStops();
   const { mutate: deleteRun, isPending: isDeleting } = useDeleteRouteRun();
-  const { mutate: updateStatus, isPending: isCancelling } = useUpdateRouteRunStatus();
+  const { mutate: updateStatus } = useUpdateRouteRunStatus();
 
   const isOperator = user?.role === "OPERATOR";
-  const queryClient = useQueryClient();
   const [showEditModal, setShowEditModal] = React.useState(false);
   const [confirmDelete, setConfirmDelete] = React.useState(false);
-  const [confirmCancel, setConfirmCancel] = React.useState(false);
 
   // Local stops state for optimistic DnD reordering
   const [localStops, setLocalStops] = React.useState<RouteRunStop[]>([]);
@@ -235,7 +232,7 @@ export default function RouteRunDetailPage({ params }: { params: { id: string } 
       { runId: params.id, order: reordered.map((s) => ({ id: s.id, stopNumber: s.stopNumber })) },
       {
         onError: (err) => {
-          queryClient.invalidateQueries({ queryKey: ["route-runs", params.id] });
+          setLocalStops(run?.stops ?? []);
           toast({ title: "Reorder failed", description: err.message, variant: "error" });
         },
       },
@@ -286,19 +283,10 @@ export default function RouteRunDetailPage({ params }: { params: { id: string } 
   };
 
   const handleCancel = () => {
-    if (isCancelling) return;
-    updateStatus(
-      { id: params.id, status: "CANCELLED" },
-      {
-        onSuccess: () => {
-          toast({ title: "Route run cancelled", variant: "success" });
-          setConfirmCancel(false);
-          router.push("/routes");
-        },
-        onError: (err) =>
-          toast({ title: "Cancel failed", description: err.message, variant: "error" }),
-      },
-    );
+    updateStatus({ id: params.id, status: "CANCELLED" }, {
+      onSuccess: () => toast({ title: "Route run cancelled", variant: "success" }),
+      onError: (err) => toast({ title: "Cancel failed", description: err.message, variant: "error" }),
+    });
   };
 
   const name = run?.route?.name ?? "Route";
@@ -330,7 +318,7 @@ export default function RouteRunDetailPage({ params }: { params: { id: string } 
     : null;
 
   const canReorder = isOperator && run.status === "SCHEDULED";
-  const canEdit = isOperator && run.status !== "COMPLETED" && run.status !== "CANCELLED";
+  const canEdit = isOperator && (run.status === "SCHEDULED");
   const canDelete = isOperator && (run.status === "SCHEDULED");
   const canCancel = isOperator && (run.status === "IN_PROGRESS" || run.status === "SCHEDULED");
 
@@ -339,27 +327,6 @@ export default function RouteRunDetailPage({ params }: { params: { id: string } 
       {showEditModal && (
         <EditRunModal run={run} onClose={() => setShowEditModal(false)} />
       )}
-
-      <Modal
-        open={confirmCancel}
-        onClose={() => setConfirmCancel(false)}
-        title="Cancel this run?"
-        description={`Cancel the run for ${run.route?.name ?? "this route"}? The run will be marked CANCELLED and the route can be dispatched again.`}
-        footer={
-          <>
-            <Button variant="secondary" onClick={() => setConfirmCancel(false)} disabled={isCancelling}>
-              Keep run
-            </Button>
-            <Button variant="danger" onClick={handleCancel} loading={isCancelling}>
-              Cancel run
-            </Button>
-          </>
-        }
-      >
-        <p className="text-sm text-navy/70">
-          Any in-progress stops will stop counting toward this run. This cannot be undone.
-        </p>
-      </Modal>
 
       <Modal
         open={confirmDelete}
@@ -420,7 +387,7 @@ export default function RouteRunDetailPage({ params }: { params: { id: string } 
 
             {/* Cancel — SCHEDULED or IN_PROGRESS */}
             {canCancel && run.status !== "CANCELLED" && !canDelete && (
-              <Button variant="secondary" size="sm" onClick={() => setConfirmCancel(true)}>
+              <Button variant="secondary" size="sm" onClick={handleCancel}>
                 Cancel Run
               </Button>
             )}

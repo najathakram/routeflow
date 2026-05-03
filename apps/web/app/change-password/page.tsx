@@ -7,7 +7,7 @@ import { z } from "zod";
 import { useRouter } from "next/navigation";
 import { PasswordInput, Button } from "@routeflow/ui/web";
 import { useAuth } from "@/lib/auth-context";
-import { changePassword } from "@/lib/auth";
+import { changePassword, refreshTokens } from "@/lib/auth";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -50,6 +50,8 @@ export default function ChangePasswordPage() {
     setApiError(null);
     try {
       await changePassword(data.currentPassword, data.newPassword);
+      // Refresh tokens to get a new JWT with forcePasswordChange: false
+      await refreshTokens();
       // Full navigation so AuthProvider reinitialises with the new token
       window.location.href = "/dashboard";
     } catch (err: unknown) {

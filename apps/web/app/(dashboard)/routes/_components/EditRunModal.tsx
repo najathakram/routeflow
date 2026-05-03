@@ -4,22 +4,13 @@ import * as React from "react";
 import { Loader2, Save, X } from "lucide-react";
 import { Button, useToast } from "@routeflow/ui/web";
 import { useUpdateRouteRun } from "@/lib/api/routes";
-import { useDrivers, useDriver } from "@/lib/api/drivers";
+import { useDrivers } from "@/lib/api/drivers";
 
 export interface EditableRun {
   id: string;
   driverId?: string | null;
   scheduledDate: string;
   notes?: string | null;
-  status?: "SCHEDULED" | "IN_PROGRESS" | "COMPLETED" | "CANCELLED";
-}
-
-function formatLocalDate(value: string): string {
-  const d = new Date(value);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
 }
 
 export function EditRunModal({
@@ -30,44 +21,29 @@ export function EditRunModal({
   onClose: () => void;
 }) {
   const { toast } = useToast();
-  const { data: activeDriversData } = useDrivers({ status: "ACTIVE", limit: 100 });
-  const initialDriverId = run.driverId ?? "";
-  const { data: assignedDriver } = useDriver(initialDriverId);
+  const { data: driversData } = useDrivers({ limit: 100 });
   const updateRun = useUpdateRouteRun();
 
-  const [driverId, setDriverId] = React.useState(initialDriverId);
-  const [date, setDate] = React.useState(formatLocalDate(run.scheduledDate));
+  const [driverId, setDriverId] = React.useState(run.driverId ?? "");
+  const [date, setDate] = React.useState(
+    new Date(run.scheduledDate).toISOString().slice(0, 10),
+  );
   const [notes, setNotes] = React.useState(run.notes ?? "");
 
-  const activeDrivers = activeDriversData?.data ?? [];
-  const drivers = React.useMemo(() => {
-    if (
-      assignedDriver &&
-      assignedDriver.status === "INACTIVE" &&
-      !activeDrivers.some((d) => d.id === assignedDriver.id)
-    ) {
-      return [assignedDriver, ...activeDrivers];
-    }
-    return activeDrivers;
-  }, [activeDrivers, assignedDriver]);
-
-  const isInProgress = run.status === "IN_PROGRESS";
+  const drivers = driversData?.data ?? [];
 
   const handleSave = () => {
-    const body: { id: string; driverId?: string | null; scheduledDate?: string; notes?: string } = {
-      id: run.id,
-      notes,
-    };
-    if (driverId !== initialDriverId) body.driverId = driverId || null;
-    if (!isInProgress) body.scheduledDate = date;
-    updateRun.mutate(body, {
-      onSuccess: () => {
-        toast({ title: "Run updated", variant: "success" });
-        onClose();
+    updateRun.mutate(
+      { id: run.id, driverId: driverId || null, scheduledDate: date, notes },
+      {
+        onSuccess: () => {
+          toast({ title: "Run updated", variant: "success" });
+          onClose();
+        },
+        onError: (err) =>
+          toast({ title: "Update failed", description: err.message, variant: "error" }),
       },
-      onError: (err) =>
-        toast({ title: "Update failed", description: err.message, variant: "error" }),
-    });
+    );
   };
 
   return (
@@ -86,14 +62,12 @@ export function EditRunModal({
             <select
               value={driverId}
               onChange={(e) => setDriverId(e.target.value)}
-              disabled={isInProgress}
-              className="h-9 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:bg-surface-raised disabled:text-navy/50"
+              className="h-9 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
             >
               <option value="">No driver assigned</option>
               {drivers.map((d) => (
                 <option key={d.id} value={d.id}>
                   {d.contactName}
-                  {d.status === "INACTIVE" ? " (inactive)" : ""}
                 </option>
               ))}
             </select>
@@ -105,8 +79,7 @@ export function EditRunModal({
               type="date"
               value={date}
               onChange={(e) => setDate(e.target.value)}
-              disabled={isInProgress}
-              className="h-9 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:bg-surface-raised disabled:text-navy/50"
+              className="h-9 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
             />
           </div>
 

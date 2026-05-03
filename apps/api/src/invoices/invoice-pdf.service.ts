@@ -17,7 +17,7 @@ export class InvoicePdfService {
   ) {}
 
   async getOrGenerate(invoiceId: string, opts?: { force?: boolean }): Promise<string> {
-    const inv = await this.prisma.forTenant().invoice.findUnique({
+    const inv = await this.prisma.invoice.findUnique({
       where: { id: invoiceId },
       select: { id: true, pdfUrl: true },
     });
@@ -33,7 +33,7 @@ export class InvoicePdfService {
   }
 
   async generateAndUpload(invoiceId: string): Promise<string> {
-    const inv = await this.prisma.forTenant().invoice.findUnique({
+    const inv = await this.prisma.invoice.findUnique({
       where: { id: invoiceId },
       include: {
         customer: {

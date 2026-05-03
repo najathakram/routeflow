@@ -80,23 +80,10 @@ export function clearActiveSeller(): void {
   localStorage.removeItem(BUYER_KEYS.activeSeller);
 }
 
-export const BUYER_PRESENCE_COOKIE = "rf-buyer-auth";
-
-function setBuyerPresenceCookie(): void {
-  if (typeof document === "undefined") return;
-  document.cookie = `${BUYER_PRESENCE_COOKIE}=1; path=/; max-age=${60 * 60 * 24 * 30}; samesite=lax`;
-}
-
-function clearBuyerPresenceCookie(): void {
-  if (typeof document === "undefined") return;
-  document.cookie = `${BUYER_PRESENCE_COOKIE}=; path=/; max-age=0; samesite=lax`;
-}
-
 export async function buyerLogin(email: string, password: string): Promise<BuyerAuthResponse> {
   const { data } = await axios.post<BuyerAuthResponse>(`${BASE_URL}/buyer/auth/login`, { email, password });
   localStorage.setItem(BUYER_KEYS.accessToken, data.accessToken);
   localStorage.setItem(BUYER_KEYS.refreshToken, data.refreshToken);
-  setBuyerPresenceCookie();
   return data;
 }
 
@@ -104,7 +91,6 @@ export async function buyerRegister(email: string, password: string, name: strin
   const { data } = await axios.post<BuyerAuthResponse>(`${BASE_URL}/buyer/auth/register`, { email, password, name });
   localStorage.setItem(BUYER_KEYS.accessToken, data.accessToken);
   localStorage.setItem(BUYER_KEYS.refreshToken, data.refreshToken);
-  setBuyerPresenceCookie();
   return data;
 }
 
@@ -118,8 +104,6 @@ export async function buyerLogout(): Promise<void> {
   localStorage.removeItem(BUYER_KEYS.accessToken);
   localStorage.removeItem(BUYER_KEYS.refreshToken);
   localStorage.removeItem(BUYER_KEYS.activeSeller);
-  Object.keys(localStorage).filter((k) => k.startsWith("buyerCart_")).forEach((k) => localStorage.removeItem(k));
-  clearBuyerPresenceCookie();
 }
 
 export async function buyerRefreshTokens(): Promise<BuyerAuthResponse | null> {

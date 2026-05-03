@@ -6,7 +6,7 @@
  */
 
 import axios from "axios";
-import { OP_KEYS, BUYER_KEYS } from "./auth-keys";
+import { OP_KEYS } from "./auth-keys";
 
 const BASE_URL =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000/api/v1";
@@ -109,11 +109,9 @@ apiClient.interceptors.response.use(
       return apiClient(original);
     } catch (refreshError) {
       processQueue(refreshError, null);
-      const buyerToken = localStorage.getItem(BUYER_KEYS.accessToken);
-      const opToken = localStorage.getItem(OP_KEYS.accessToken);
       localStorage.removeItem(OP_KEYS.accessToken);
       localStorage.removeItem(OP_KEYS.refreshToken);
-      window.location.href = buyerToken && !opToken ? "/buyer/login" : "/login";
+      window.location.href = "/login";
       return Promise.reject(refreshError);
     } finally {
       isRefreshing = false;

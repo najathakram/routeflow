@@ -40,8 +40,6 @@ export class CreateInvoiceDto {
   @IsOptional() @IsNumber() @Min(0) shippingFee?: number;
   @IsOptional() @IsString() notes?: string;
   @IsOptional() @IsString() terms?: string;
-  @IsOptional() @IsString() referenceNumber?: string;
-  @IsOptional() @IsString() subject?: string;
   /** If true, immediately send the invoice after creation (DRAFT → SENT). */
   @IsOptional() @IsBoolean() send?: boolean;
 }

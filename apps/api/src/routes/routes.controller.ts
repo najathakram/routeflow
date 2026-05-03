@@ -226,9 +226,8 @@ export class RouteRunsController {
     @Param("id") id: string,
     @Param("stopId") stopId: string,
     @Body() body: { status: "IN_PROGRESS" | "SKIPPED"; driverNote?: string },
-    @CurrentUser() user: JwtPayload,
   ) {
-    return this.routesService.updateStopStatus(id, stopId, body, user);
+    return this.routesService.updateStopStatus(id, stopId, body);
   }
 
   @Patch(":id/stops/reorder")

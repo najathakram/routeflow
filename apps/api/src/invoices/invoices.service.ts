@@ -186,8 +186,6 @@ export class InvoicesService {
           issueDate: dto.issueDate ? new Date(dto.issueDate) : new Date(),
           notes: dto.notes ?? tenantDefaults.notes,
           terms: dto.terms ?? tenantDefaults.terms,
-          referenceNumber: dto.referenceNumber ?? null,
-          subject: dto.subject ?? null,
           items: { create: itemsData },
         },
         include: {
@@ -670,15 +668,10 @@ export class InvoicesService {
           tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
         };
       });
-      const customerForTax = await this.prisma
-        .forTenant()
-        .customer.findUnique({ where: { id: inv.customerId }, select: { isTaxExempt: true } });
-      const taxTotal = (customerForTax as any)?.isTaxExempt
-        ? 0
-        : dto.items.reduce(
-            (s, i) => s + (i.qty * i.unitPrice - (i.discount ?? 0)) * (i.taxRate ?? 0),
-            0,
-          );
+      const taxTotal = dto.items.reduce(
+        (s, i) => s + (i.qty * i.unitPrice - (i.discount ?? 0)) * (i.taxRate ?? 0),
+        0,
+      );
       const invDiscount = dto.discount ?? Number(inv.discount);
       const shipping = dto.shippingFee ?? Number(inv.shippingFee);
       const total = subtotal - invDiscount + shipping + taxTotal;
@@ -694,9 +687,6 @@ export class InvoicesService {
           issueDate: dto.issueDate ? new Date(dto.issueDate) : undefined,
           notes: dto.notes,
           terms: dto.terms,
-          ...(dto.referenceNumber !== undefined && { referenceNumber: dto.referenceNumber }),
-          ...(dto.subject !== undefined && { subject: dto.subject }),
-          pdfUrl: null,
           items: { create: itemsData },
         },
         include: {
@@ -737,8 +727,6 @@ export class InvoicesService {
         ...(dto.issueDate && { issueDate: new Date(dto.issueDate) }),
         ...(dto.notes !== undefined && { notes: dto.notes }),
         ...(dto.terms !== undefined && { terms: dto.terms }),
-        ...(dto.referenceNumber !== undefined && { referenceNumber: dto.referenceNumber }),
-        ...(dto.subject !== undefined && { subject: dto.subject }),
         ...recalcData,
       },
       include: {
@@ -932,7 +920,7 @@ export class InvoicesService {
     }
     return this.prisma.forTenant().invoice.update({
       where: { id },
-      data: { status: InvoiceStatus.DRAFT, sentAt: null, pdfUrl: null },
+      data: { status: InvoiceStatus.DRAFT, sentAt: null },
     });
   }
 
@@ -980,50 +968,30 @@ export class InvoicesService {
         "Cannot duplicate an order-linked invoice. Create a new invoice or issue a credit note instead.",
       );
     }
-
-    const customer = await this.prisma
-      .forTenant()
-      .customer.findUnique({ where: { id: inv.customerId }, select: { isTaxExempt: true } });
-
-    const itemsData = inv.items.map((i) => {
-      const lineSub = Number(i.qty) * Number(i.unitPrice) - Number(i.discount ?? 0);
-      return {
-        description: i.description,
-        productId: i.productId,
-        qty: i.qty,
-        unitPrice: i.unitPrice,
-        discount: i.discount,
-        taxRate: i.taxRate,
-        subtotal: lineSub,
-        tenantId: this.prisma.getTenantId(),
-      };
-    });
-    const subtotal = itemsData.reduce((s, i) => s + Number(i.subtotal), 0);
-    const taxTotal = (customer as any)?.isTaxExempt
-      ? 0
-      : itemsData.reduce(
-          (s, i) => s + Number(i.subtotal) * Number(i.taxRate ?? 0),
-          0,
-        );
-    const invDiscount = Number(inv.discount ?? 0);
-    const shipping = Number(inv.shippingFee ?? 0);
-    const total = subtotal - invDiscount + shipping + taxTotal;
-
     return this.prisma.forTenant().invoice.create({
       data: {
         invoiceNumber: await this.nextInvoiceNumber(),
         customerId: inv.customerId,
         status: InvoiceStatus.DRAFT,
-        subtotal,
-        taxAmount: taxTotal,
-        discount: invDiscount,
-        shippingFee: shipping,
-        total,
+        subtotal: inv.subtotal,
+        taxAmount: inv.taxAmount,
+        discount: inv.discount,
+        shippingFee: inv.shippingFee,
+        total: inv.total,
         notes: inv.notes,
         terms: inv.terms,
-        referenceNumber: (inv as any).referenceNumber ?? null,
-        subject: (inv as any).subject ?? null,
-        items: { create: itemsData },
+        items: {
+          create: inv.items.map((i) => ({
+            description: i.description,
+            productId: i.productId,
+            qty: i.qty,
+            unitPrice: i.unitPrice,
+            discount: i.discount,
+            taxRate: i.taxRate,
+            subtotal: i.subtotal,
+            tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
+          })),
+        },
       },
       include: {
         customer: { select: { id: true, businessName: true } },
@@ -1151,11 +1119,6 @@ export class InvoicesService {
   // ─── Payment recording ────────────────────────────────────────────────────
 
   async recordPayment(id: string, dto: RecordInvoicePaymentDto) {
-    if ((dto.method as any) === "CREDIT_NOTE" || (dto.method as any) === "ADVANCE") {
-      throw new BadRequestException(
-        "Use the dedicated 'Apply Credit Note' or 'Apply Advance Payment' actions for these methods so the source balance is properly debited.",
-      );
-    }
     return this.prisma.tenantTransaction(async (tx) => {
       // Lock the invoice row so concurrent payment requests serialize here
       await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${id} FOR UPDATE`;
@@ -1232,11 +1195,6 @@ export class InvoicesService {
   }
 
   async updatePayment(invoiceId: string, paymentId: string, dto: UpdatePaymentDto) {
-    if ((dto.method as any) === "CREDIT_NOTE" || (dto.method as any) === "ADVANCE") {
-      throw new BadRequestException(
-        "Cannot edit a payment to method CREDIT_NOTE or ADVANCE. Void this payment and apply the credit note / advance via the dedicated action.",
-      );
-    }
     return this.prisma.tenantTransaction(async (tx) => {
       const inv = await tx.invoice.findUnique({
         where: { id: invoiceId },
@@ -1642,11 +1600,7 @@ export class InvoicesService {
     if (!invoice) throw new NotFoundException("Invoice not found");
 
     // Block adjustments on fully PAID invoices — create a credit note instead
-    if (
-      invoice.status === InvoiceStatus.PAID ||
-      invoice.status === InvoiceStatus.WRITTEN_OFF ||
-      invoice.status === InvoiceStatus.VOID
-    ) {
+    if (invoice.status === InvoiceStatus.PAID || invoice.status === InvoiceStatus.WRITTEN_OFF) {
       throw new BadRequestException(
         `Cannot adjust prices on a ${invoice.status} invoice. Issue a credit note instead.`,
       );
@@ -1660,7 +1614,7 @@ export class InvoicesService {
 
     // Helper: update items on a single invoice and recalculate totals
     const applyToInvoice = async (inv: typeof invoice, localPriceMap: Map<string, number>) => {
-      const auditLine = `[${new Date().toLocaleDateString()} — Price adjusted by operator]`;
+      const auditLine = `\n[${new Date().toLocaleDateString()} — Price adjusted by operator]`;
 
       for (const item of inv.items) {
         const newPrice = localPriceMap.get(item.id);
@@ -1683,14 +1637,13 @@ export class InvoicesService {
       );
       const total = subtotal - Number(inv.discount ?? 0) + Number(inv.shippingFee ?? 0) + taxAmount;
 
-      const existingInternal = (inv as any).internalNotes ?? "";
       await this.prisma.forTenant().invoice.update({
         where: { id: inv.id },
         data: {
           subtotal,
           taxAmount,
           total,
-          internalNotes: existingInternal ? `${existingInternal}\n${auditLine}` : auditLine,
+          notes: (inv.notes ?? "") + auditLine,
         },
       });
     };
@@ -1712,9 +1665,6 @@ export class InvoicesService {
         where: {
           customerId: invoice.customerId,
           createdAt: { gte: new Date(dto.sinceDate) },
-          status: {
-            notIn: [InvoiceStatus.PAID, InvoiceStatus.VOID, InvoiceStatus.WRITTEN_OFF],
-          },
         },
         include: { items: true },
       });

@@ -63,28 +63,6 @@ export function middleware(request: NextRequest) {
     }
   }
 
-  // Buyer-only guard: signed-in buyers without an operator session must not be
-  // able to reach operator surfaces — bounce them back to the buyer portal.
-  const OPERATOR_PATH_PREFIXES = [
-    "/dashboard", "/settings", "/invoices", "/customers", "/products",
-    "/routes", "/orders", "/finance", "/credit-notes", "/estimates",
-    "/inventory", "/suppliers", "/purchases", "/vendor-bills", "/returns",
-    "/analytics", "/bookkeeping", "/drivers",
-  ];
-  const isOperatorPath = OPERATOR_PATH_PREFIXES.some(
-    (p) => pathname === p || pathname.startsWith(`${p}/`),
-  );
-  if (isOperatorPath) {
-    const buyerCookie = request.cookies.get("rf-buyer-auth")?.value;
-    const opCookie = request.cookies.get("rf-op-auth")?.value;
-    if (buyerCookie && !opCookie) {
-      const target = url.clone();
-      target.pathname = "/buyer/portal";
-      target.search = "";
-      return NextResponse.redirect(target);
-    }
-  }
-
   // Remember the desktop opt-out so subsequent nav on the phone stays here.
   if (url.searchParams.get("desktop") === "1") {
     const res = NextResponse.next();

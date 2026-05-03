@@ -282,6 +282,50 @@ export class AuthService {
     return { message: "Session revoked" };
   }
 
+  // ─── OAuth helpers ─────────────────────────────────────────────────────────────
+
+  async findOrCreateGoogleUser(profile: any, tenantId?: string | null) {
+    const email = profile.emails?.[0]?.value;
+    if (!email) throw new Error("No email from Google");
+
+    // Try find by googleId first, then by email — scoped to tenant
+    let user = await this.prisma.user.findFirst({
+      where: {
+        tenantId: tenantId ?? null,
+        OR: [{ googleId: profile.id }, { email }],
+      },
+    });
+
+    if (!user) {
+      // Create new OPERATOR user for the tenant
+      user = await this.prisma.user.create({
+        data: {
+          email,
+          username:
+            email
+              .split("@")[0]
+              .replace(/[^a-z0-9_]/gi, "_")
+              .toLowerCase() +
+            "_" +
+            Date.now(),
+          password: null,
+          role: "OPERATOR",
+          googleId: profile.id,
+          status: "ACTIVE",
+          tenantId: tenantId ?? null,
+        },
+      });
+    } else if (!user.googleId) {
+      // Link existing user to Google
+      user = await this.prisma.user.update({
+        where: { id: user.id },
+        data: { googleId: profile.id },
+      });
+    }
+
+    return user;
+  }
+
   // ─── Email verification ────────────────────────────────────────────────────────
 
   /**
@@ -419,56 +463,15 @@ export class AuthService {
     if (sameAsOld) throw new BadRequestException("New password must differ from current password");
 
     const newHash = await bcrypt.hash(newPassword, 10);
-    const updated = await this.prisma.user.update({
+    await this.prisma.user.update({
       where: { id: userId },
       data: { password: newHash, forcePasswordChange: false },
     });
 
-    // Revoke all existing refresh tokens (other sessions / stale tokens) then
-    // mint a fresh access+refresh pair for the caller so the just-fixed
-    // forcePasswordChange flag is reflected in their JWT.
+    // Revoke all refresh tokens so compromised sessions are invalidated
     await this.prisma.refreshToken.deleteMany({ where: { userId } });
 
-    const jwtConfig = this.configService.get<AppConfig["jwt"]>("jwt")!;
-
-    let tenantSlug: string | null = null;
-    if (updated.tenantId) {
-      const tenant = await this.prisma.tenant.findUnique({
-        where: { id: updated.tenantId },
-        select: { slug: true },
-      });
-      tenantSlug = tenant?.slug ?? null;
-    }
-
-    const payload: JwtPayload = {
-      sub: updated.id,
-      username: updated.username,
-      role: updated.role,
-      status: updated.status,
-      forcePasswordChange: false,
-      tenantId: updated.tenantId ?? null,
-      tenantSlug,
-      isAdmin: updated.isAdmin || updated.role === "TENANT_ADMIN",
-      canActAsDriver: updated.canActAsDriver,
-    };
-
-    const accessToken = this.jwtService.sign(payload, {
-      secret: jwtConfig.secret,
-      expiresIn: jwtConfig.expiresIn as any,
-    });
-
-    const refreshToken = this.jwtService.sign(
-      { sub: updated.id },
-      { secret: jwtConfig.refreshSecret, expiresIn: jwtConfig.refreshExpiresIn as any },
-    );
-
-    await this.storeRefreshToken(updated.id, refreshToken);
-
-    return {
-      message: "Password changed successfully. All other sessions have been invalidated.",
-      accessToken,
-      refreshToken,
-    };
+    return { message: "Password changed successfully. All sessions have been invalidated." };
   }
 
   // ─── Helpers ─────────────────────────────────────────────────────────────────
