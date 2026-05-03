@@ -23,12 +23,24 @@ export class TenantResolutionMiddleware implements NestMiddleware {
     "support",
   ]);
 
+  // Hosting-provider base domains — never extract a tenant slug from these.
+  // Mirrors HOSTING_PROVIDER_DOMAINS in apps/web/middleware.ts.
+  private static readonly HOSTING_PROVIDER_DOMAINS = new Set([
+    "railway.app",
+    "up.railway.app",
+    "vercel.app",
+    "netlify.app",
+    "render.com",
+    "fly.dev",
+    "onrender.com",
+    "herokuapp.com",
+  ]);
+
   constructor(private readonly prisma: PrismaService) {}
 
   async use(req: Request, res: Response, next: NextFunction) {
-    const slug =
-      (req.headers["x-tenant-slug"] as string | undefined) ||
-      this.extractSubdomain(req.headers.host);
+    const headerSlug = req.headers["x-tenant-slug"] as string | undefined;
+    const slug = headerSlug || this.extractSubdomain(req.headers.host);
 
     if (slug && !TenantResolutionMiddleware.RESERVED_SLUGS.has(slug)) {
       const tenant = await this.prisma.tenant.findUnique({
@@ -50,6 +62,14 @@ export class TenantResolutionMiddleware implements NestMiddleware {
     const parts = hostname.split(".");
     // Only treat as subdomain if there are at least 3 parts (sub.domain.tld)
     if (parts.length < 3) return null;
+    const twoPartBase = parts.slice(-2).join(".");
+    const threePartBase = parts.slice(-3).join(".");
+    if (
+      TenantResolutionMiddleware.HOSTING_PROVIDER_DOMAINS.has(twoPartBase) ||
+      TenantResolutionMiddleware.HOSTING_PROVIDER_DOMAINS.has(threePartBase)
+    ) {
+      return null;
+    }
     const sub = parts[0];
     return sub || null;
   }

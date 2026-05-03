@@ -23,6 +23,7 @@ import {
 import { useCustomers, useCustomerPrices, type Customer } from "@/lib/api/customers";
 import { useProducts } from "@/lib/api/products";
 import { apiClient } from "@/lib/api-client";
+import axios from "axios";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { fmt } from "@/lib/formatting";
@@ -519,11 +520,9 @@ export default function NewInvoicePage() {
         taxRate: it.taxable ? taxRate : 0,
         ...(it.unitsPerBox ? { boxes: it.boxes ?? 0, pieces: it.pieces ?? 0 } : {}),
       })),
-      notes: [
-        reference.trim() ? `Ref: ${reference.trim()}` : "",
-        subject.trim() ? `For: ${subject.trim()}` : "",
-        notes.trim(),
-      ].filter(Boolean).join("\n") || undefined,
+      notes: notes.trim() || undefined,
+      referenceNumber: reference.trim() || undefined,
+      subject: subject.trim() || undefined,
       // Map adjustment to discount (negative = reduce price) or shippingFee (positive = surcharge)
       ...(adjustment < 0 ? { discount: Math.abs(adjustment) } : {}),
       ...(adjustment > 0 ? { shippingFee: adjustment } : {}),
@@ -558,9 +557,10 @@ export default function NewInvoicePage() {
       if (!meta.data?.url) {
         setPreviewUrl(null);
       } else {
-        const pdfRes = await apiClient.get<Blob>(meta.data.url, {
-          responseType: "blob",
-        });
+        const isAbsolute = /^https?:\/\//i.test(meta.data.url);
+        const pdfRes = isAbsolute
+          ? await axios.get<Blob>(meta.data.url, { responseType: "blob" })
+          : await apiClient.get<Blob>(meta.data.url, { responseType: "blob" });
         // Replace any previous preview blob URL to avoid memory leaks.
         setPreviewUrl((prev) => {
           if (prev && prev.startsWith("blob:")) URL.revokeObjectURL(prev);

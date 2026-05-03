@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import axios from 'axios';
 import { apiClient } from '../api-client';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -56,6 +57,9 @@ export interface Invoice {
   tax?: number;
   total: number;
   notes?: string;
+  internalNotes?: string;
+  referenceNumber?: string;
+  subject?: string;
   terms?: string;
   pdfUrl?: string;
   writeOffReason?: string;
@@ -186,6 +190,8 @@ export interface CreateInvoiceDto {
   items: CreateInvoiceItem[];
   notes?: string;
   terms?: string;
+  referenceNumber?: string;
+  subject?: string;
   /** If true, invoice transitions DRAFT → SENT immediately after creation. */
   send?: boolean;
 }
@@ -318,7 +324,10 @@ export function useDownloadInvoicePdf() {
       const { url } = await apiClient
         .get<{ url: string }>(`/invoices/${id}/pdf`)
         .then((r) => r.data);
-      const pdfRes = await apiClient.get<Blob>(url, { responseType: "blob" });
+      const isAbsolute = /^https?:\/\//i.test(url);
+      const pdfRes = isAbsolute
+        ? await axios.get<Blob>(url, { responseType: "blob" })
+        : await apiClient.get<Blob>(url, { responseType: "blob" });
       return { url, blob: pdfRes.data };
     },
   });

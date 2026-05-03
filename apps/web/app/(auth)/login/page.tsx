@@ -78,7 +78,7 @@ function GoogleIcon({ className }: { className?: string }) {
 export default function LoginPage() {
   const router = useRouter();
   const { login: authLogin } = useAuth();
-  const { branding, slug: tenantSlug } = useTenant();
+  const { branding } = useTenant();
   const [isLoading, setIsLoading] = React.useState(false);
   const [apiError, setApiError] = React.useState<string | null>(null);
   const [showPassword, setShowPassword] = React.useState(false);
@@ -175,11 +175,16 @@ export default function LoginPage() {
     setGoogleError(null);
     try {
       const params = new URLSearchParams({ context: "staff" });
-      // Prefer the workspace the user just typed over the cookie/subdomain
-      // slug — on platform hosts the latter is the DEFAULT_TENANT fallback,
-      // which would route OAuth to the wrong tenant.
-      const oauthTenant = (workspaceValue || "").trim().toLowerCase() || tenantSlug;
-      if (oauthTenant) params.set("tenant", oauthTenant);
+      // Require an explicit workspace the user typed — never fall back to the
+      // cookie/subdomain-derived slug, which on platform hosts may be a stale
+      // value from a previous session and silently route OAuth to the wrong tenant.
+      const oauthTenant = (workspaceValue || "").trim().toLowerCase();
+      if (!oauthTenant) {
+        setGoogleError("Please enter your workspace before signing in with Google.");
+        setGoogleLoading(false);
+        return;
+      }
+      params.set("tenant", oauthTenant);
       const res = await fetch(`${apiUrl}/auth/google?${params}`);
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));

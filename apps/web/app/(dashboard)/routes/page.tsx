@@ -18,6 +18,7 @@ import {
   type RouteRun,
 } from "@/lib/api/routes";
 import { useDrivers } from "@/lib/api/drivers";
+import { useQueryClient } from "@tanstack/react-query";
 import { EditRunModal } from "./_components/EditRunModal";
 
 // ─── Status helpers ───────────────────────────────────────────────────────────
@@ -239,14 +240,18 @@ export default function RoutesPage() {
   const deleteRoute = useDeleteRoute();
   const updateRunStatus = useUpdateRouteRunStatus();
   const deleteRun = useDeleteRouteRun();
+  const qc = useQueryClient();
   const { toast } = useToast();
 
   const handleConfirmCancelRun = () => {
     if (!cancellingRun) return;
+    if (updateRunStatus.isPending) return;
+    const runId = cancellingRun.id;
     updateRunStatus.mutate(
-      { id: cancellingRun.id, status: "CANCELLED" },
+      { id: runId, status: "CANCELLED" },
       {
-        onSuccess: () => {
+        onSuccess: async () => {
+          await qc.refetchQueries({ queryKey: ["route-runs", runId] });
           toast({ title: "Run cancelled", variant: "success" });
           setCancellingRun(null);
         },
@@ -258,6 +263,7 @@ export default function RoutesPage() {
 
   const handleConfirmDeleteRun = () => {
     if (!deletingRun) return;
+    if (deleteRun.isPending) return;
     deleteRun.mutate(deletingRun.id, {
       onSuccess: () => {
         toast({ title: "Run deleted", variant: "success" });
@@ -344,6 +350,7 @@ export default function RoutesPage() {
             driverId: editingRun.driverId,
             scheduledDate: editingRun.scheduledDate,
             notes: editingRun.notes,
+            status: editingRun.status,
           }}
           onClose={() => setEditingRun(null)}
         />
@@ -504,7 +511,7 @@ export default function RoutesPage() {
                     >
                       <Eye className="h-3.5 w-3.5" /> View
                     </Link>
-                    {run.status === "SCHEDULED" && (
+                    {run.status !== "COMPLETED" && run.status !== "CANCELLED" && (
                       <button
                         onClick={() => setEditingRun(run)}
                         className="inline-flex items-center gap-1 rounded-lg border border-surface-border bg-white px-2.5 py-1.5 text-xs font-medium text-navy hover:bg-surface-raised transition-colors"

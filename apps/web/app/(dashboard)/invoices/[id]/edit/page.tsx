@@ -169,6 +169,8 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
   const [shippingFee, setShippingFee] = React.useState("0");
   const [notes, setNotes] = React.useState("");
   const [terms, setTerms] = React.useState("");
+  const [referenceNumber, setReferenceNumber] = React.useState("");
+  const [subject, setSubject] = React.useState("");
   const [items, setItems] = React.useState<LineItemState[]>([createEmptyItem()]);
   const [errors, setErrors] = React.useState<Record<string, string>>({});
 
@@ -187,6 +189,8 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
       setShippingFee(String(Number(invoice.shippingFee ?? 0)));
       setNotes(invoice.notes ?? "");
       setTerms(invoice.terms ?? "");
+      setReferenceNumber(invoice.referenceNumber ?? "");
+      setSubject(invoice.subject ?? "");
       setItems(
         (invoice.items ?? []).length > 0
           ? (invoice.items ?? []).map((it) => ({
@@ -256,6 +260,8 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
       shippingFee: shipping,
       notes: notes.trim() || undefined,
       terms: terms.trim() || undefined,
+      referenceNumber: referenceNumber.trim() || undefined,
+      subject: subject.trim() || undefined,
       items: items.map((it): CreateInvoiceItem => ({
         productId: it.productId,
         description: it.description,
@@ -432,6 +438,32 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
           {/* Notes & Terms */}
           <Card title="Notes & Terms">
             <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-navy/80">
+                    Reference / PO Number <span className="text-navy/40 font-normal">(optional)</span>
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. PO-1234"
+                    value={referenceNumber}
+                    onChange={(e) => setReferenceNumber(e.target.value)}
+                    className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-navy/80">
+                    Subject <span className="text-navy/40 font-normal">(optional)</span>
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="What is this invoice for?"
+                    value={subject}
+                    onChange={(e) => setSubject(e.target.value)}
+                    className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  />
+                </div>
+              </div>
               <div>
                 <label className="mb-1.5 block text-sm font-medium text-navy/80">Notes</label>
                 <textarea

@@ -1206,6 +1206,9 @@ model Invoice {
   viewedAt      DateTime?
   paidAt        DateTime?
   notes              String?
+  internalNotes      String?
+  referenceNumber    String?
+  subject            String?
   terms              String?
   issueDate          DateTime  @default(now())
   pdfUrl             String?
