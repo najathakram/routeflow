@@ -55,7 +55,7 @@ function ConfidenceBadge({ confidence }: { confidence: ScannedItem["confidence"]
   return (
     <span
       className={cn(
-        "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium",
+        "inline-flex items-center whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium",
         styles[confidence],
       )}
     >
@@ -763,25 +763,39 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                     )}
                   </div>
                   <div className="overflow-x-auto rounded-xl border border-surface-border">
-                    <table className="w-full text-sm">
+                    {/*
+                      table-fixed forces explicit column widths to be honored — without
+                      it, the Product cell's <select> stretches and starves the
+                      narrow numeric columns. Min-width keeps numeric inputs readable
+                      even when the modal is preview-open and the right pane is ~580px.
+                    */}
+                    <table className="w-full table-fixed text-sm" style={{ minWidth: 720 }}>
+                      <colgroup>
+                        <col />
+                        <col style={{ width: 116 }} />
+                        <col style={{ width: 104 }} />
+                        <col style={{ width: 132 }} />
+                        <col style={{ width: 108 }} />
+                        <col style={{ width: 44 }} />
+                      </colgroup>
                       <thead>
                         <tr className="border-b border-surface-border bg-surface-raised">
                           <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-navy/70">
                             Product
                           </th>
-                          <th className="w-32 px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-navy/70">
+                          <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-navy/70">
                             Match
                           </th>
-                          <th className="w-24 px-3 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-navy/70">
+                          <th className="px-3 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-navy/70">
                             Qty
                           </th>
-                          <th className="w-32 px-3 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-navy/70">
+                          <th className="px-3 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-navy/70">
                             Unit Price
                           </th>
-                          <th className="w-28 px-3 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-navy/70">
+                          <th className="px-3 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-navy/70">
                             Line Total
                           </th>
-                          <th className="w-10 px-2 py-2.5" />
+                          <th className="px-2 py-2.5" />
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-surface-border">
@@ -841,14 +855,17 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                               <td className="px-3 py-3">
                                 <ConfidenceBadge confidence={item.confidence} />
                               </td>
-                              <td className="px-3 py-3">
+                              <td className="px-2 py-3">
                                 <input
                                   type="number"
                                   min="0.001"
                                   step="0.001"
+                                  inputMode="decimal"
                                   value={item.qty}
                                   onChange={(e) => updateItem(i, { qty: e.target.value })}
-                                  className="w-full rounded-lg border border-surface-border px-2 py-1.5 text-right text-sm tabular-nums text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                                  // appearance:textfield + spin-button overrides hide the native
+                                  // up/down arrows that eat ~18px of input width in Chrome/Firefox
+                                  className="w-full rounded-lg border border-surface-border px-2 py-1.5 text-right text-sm tabular-nums text-navy focus:outline-none focus:ring-2 focus:ring-brand-500 [appearance:textfield] [&::-webkit-inner-spin-button]:m-0 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:m-0 [&::-webkit-outer-spin-button]:appearance-none"
                                 />
                                 {qtyChanged && (
                                   <div className="mt-1 flex items-center justify-end gap-1 text-[10px] text-brand-500">
@@ -857,7 +874,7 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                                   </div>
                                 )}
                               </td>
-                              <td className="px-3 py-3">
+                              <td className="px-2 py-3">
                                 <div className="relative">
                                   <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-sm text-navy/40">
                                     $
@@ -866,9 +883,10 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                                     type="number"
                                     min="0"
                                     step="0.0001"
+                                    inputMode="decimal"
                                     value={item.unitCost}
                                     onChange={(e) => updateItem(i, { unitCost: e.target.value })}
-                                    className="w-full rounded-lg border border-surface-border py-1.5 pl-5 pr-2 text-right text-sm tabular-nums text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                                    className="w-full rounded-lg border border-surface-border py-1.5 pl-5 pr-2 text-right text-sm tabular-nums text-navy focus:outline-none focus:ring-2 focus:ring-brand-500 [appearance:textfield] [&::-webkit-inner-spin-button]:m-0 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:m-0 [&::-webkit-outer-spin-button]:appearance-none"
                                   />
                                 </div>
                                 {costChanged && (
