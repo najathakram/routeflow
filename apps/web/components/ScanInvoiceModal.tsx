@@ -12,6 +12,7 @@ import {
   FileText,
   ShoppingCart,
   Receipt,
+  Layers,
 } from "lucide-react";
 import { Button, useToast, cn } from "@routeflow/ui/web";
 import { scanInvoice, type ScannedItem, type ScanResult } from "@/lib/api/invoice-scan";
@@ -19,6 +20,7 @@ import { useSuppliers } from "@/lib/api/inventory";
 import { useProducts } from "@/lib/api/products";
 import { useCreateVendorBill, useReceiveVendorBill, useSaveProductMapping } from "@/lib/api/vendor-bills";
 import { useCreateExpense, useExpenseCategories } from "@/lib/api/finance";
+import { SupplierSelect } from "./SupplierSelect";
 
 const fmt = (n: number | null | undefined) =>
   n != null
@@ -26,6 +28,11 @@ const fmt = (n: number | null | undefined) =>
     : "—";
 
 type CreateMode = "bill" | "expense" | "both";
+
+interface VarietySplit {
+  productId: string;
+  qty: string;
+}
 
 interface ReviewItem {
   extractedName: string;
@@ -37,6 +44,13 @@ interface ReviewItem {
   extractedQty: string;          // original AI-extracted qty (for hint display)
   extractedUnitCost: string;     // original AI-extracted unit cost (for hint display)
   confidence: ScannedItem["confidence"];
+  /**
+   * When set, the operator has split the row across product variants
+   * (e.g. "Geek Next 50K — 20 ea" → 10 Strawberry + 4 Mango + 6 Butterscotch).
+   * On submit, each entry with qty > 0 becomes its own VendorBillItem and
+   * the row-level productId/qty are ignored.
+   */
+  splits?: VarietySplit[];
 }
 
 function ConfidenceBadge({ confidence }: { confidence: ScannedItem["confidence"] }) {
@@ -107,8 +121,45 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
 
   const { data: productsData } = useProducts({ limit: 1000 });
   const products =
-    (productsData as { data: { id: string; name: string; unit: string; averageCost?: string }[] } | undefined)
-      ?.data ?? [];
+    (productsData as
+      | {
+          data: {
+            id: string;
+            name: string;
+            unit: string;
+            averageCost?: string;
+            parentProductId?: string | null;
+            variantName?: string | null;
+          }[];
+        }
+      | undefined)?.data ?? [];
+
+  /**
+   * Given the productId of a matched row, return the full set of
+   * variant siblings (including the matched product itself) so the
+   * operator can split a single invoice line across flavors.
+   *
+   * - If matched product has a parent → all children of that parent.
+   * - If matched product IS a parent → all its children.
+   * - If matched product is standalone (no parent, no children) → empty.
+   */
+  const getVariantSiblings = React.useCallback(
+    (productId: string) => {
+      const matched = products.find((p) => p.id === productId);
+      if (!matched) return [] as typeof products;
+      const parentId = matched.parentProductId ?? matched.id;
+      return products
+        .filter((p) => (p.parentProductId ?? p.id) === parentId)
+        .filter((p) => p.id !== parentId || p.parentProductId === parentId)
+        // Keep the originally-matched item first for stable UX
+        .sort((a, b) => {
+          if (a.id === productId) return -1;
+          if (b.id === productId) return 1;
+          return (a.variantName ?? a.name).localeCompare(b.variantName ?? b.name);
+        });
+    },
+    [products],
+  );
 
   const { data: expenseCategories } = useExpenseCategories();
   const categories = expenseCategories ?? [];
@@ -287,9 +338,15 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
         productId,
         description: product.name,
         // unitCost intentionally NOT overwritten — preserve the extracted invoice price
+        // Changing the matched product invalidates any in-progress split.
+        splits: undefined,
       });
     } else {
-      updateItem(i, { productId: "", description: item.extractedName });
+      updateItem(i, {
+        productId: "",
+        description: item.extractedName,
+        splits: undefined,
+      });
     }
 
     // Save the mapping so the AI learns from this correction
@@ -303,15 +360,57 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
     }
   };
 
-  const computedTotal = reviewItems.reduce(
-    (s, item) => s + (parseFloat(item.qty) || 0) * (parseFloat(item.unitCost) || 0),
-    0,
-  );
+  /**
+   * Open the variant-split panel on a row. Pre-allocates the full extracted
+   * qty to the originally-matched variant so the operator only has to edit
+   * the rows whose qty actually changed.
+   */
+  const startSplit = (i: number) => {
+    const item = reviewItems[i];
+    if (!item.productId) return;
+    const siblings = getVariantSiblings(item.productId);
+    if (siblings.length === 0) return;
+    const splits: VarietySplit[] = siblings.map((s) => ({
+      productId: s.id,
+      qty: s.id === item.productId ? item.qty : "0",
+    }));
+    updateItem(i, { splits });
+  };
+
+  const cancelSplit = (i: number) => {
+    updateItem(i, { splits: undefined });
+  };
+
+  const updateSplitQty = (rowIdx: number, splitIdx: number, qty: string) => {
+    setReviewItems((prev) =>
+      prev.map((row, idx) => {
+        if (idx !== rowIdx || !row.splits) return row;
+        const next = row.splits.map((s, j) => (j === splitIdx ? { ...s, qty } : s));
+        return { ...row, splits: next };
+      }),
+    );
+  };
+
+  const splitSum = (splits: VarietySplit[] | undefined) =>
+    (splits ?? []).reduce((s, x) => s + (parseFloat(x.qty) || 0), 0);
+
+  const computedTotal = reviewItems.reduce((s, item) => {
+    const cost = parseFloat(item.unitCost) || 0;
+    if (item.splits && item.splits.length > 0) {
+      return s + splitSum(item.splits) * cost;
+    }
+    return s + (parseFloat(item.qty) || 0) * cost;
+  }, 0);
 
   const handleCreate = async () => {
-    const validItems = reviewItems.filter(
-      (item) => item.description && parseFloat(item.qty) > 0,
-    );
+    // A row is "valid" if either (a) it has a description + qty, or
+    // (b) it's been split and at least one split has qty > 0.
+    const validItems = reviewItems.filter((item) => {
+      if (item.splits && item.splits.length > 0) {
+        return item.splits.some((s) => parseFloat(s.qty) > 0);
+      }
+      return item.description && parseFloat(item.qty) > 0;
+    });
 
     const createVendorBill = createMode === "bill" || createMode === "both";
     const createExpenseRecord = createMode === "expense" || createMode === "both";
@@ -333,21 +432,42 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
       const results: string[] = [];
 
       if (createVendorBill) {
+        // Expand split rows: one VendorBillItem per non-zero variant entry.
+        // Split entries inherit the row's unitCost (same SKU family on the invoice).
+        const billItems = validItems.flatMap((item) => {
+          if (item.splits && item.splits.length > 0) {
+            return item.splits
+              .filter((s) => parseFloat(s.qty) > 0)
+              .map((s) => {
+                const variant = products.find((p) => p.id === s.productId);
+                return {
+                  productId: s.productId,
+                  description: variant?.name ?? item.description,
+                  qty: parseFloat(s.qty) || 0,
+                  unitCost: parseFloat(item.unitCost) || 0,
+                };
+              });
+          }
+          return [
+            {
+              productId: item.productId || undefined,
+              description: item.description,
+              qty: parseFloat(item.qty) || 1,
+              unitCost: parseFloat(item.unitCost) || 0,
+            },
+          ];
+        });
+
         const bill = await createBill.mutateAsync({
           supplierId,
           billDate,
           dueDate: dueDate || "",
-          items: validItems.map((item) => ({
-            productId: item.productId || undefined,
-            description: item.description,
-            qty: parseFloat(item.qty) || 1,
-            unitCost: parseFloat(item.unitCost) || 0,
-          })),
+          items: billItems,
         });
         // Auto-receive: transitions DRAFT → RECEIVED, which triggers stock movements
         // and recalculates average cost for every product-linked line item.
         const billId = (bill as { id?: string })?.id;
-        const matchedItems = validItems.filter((it) => it.productId).length;
+        const matchedItems = billItems.filter((it) => it.productId).length;
         if (billId) {
           try {
             await receiveBill.mutateAsync(billId);
@@ -628,16 +748,11 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                   <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-navy">
                     Supplier
                   </label>
-                  <select
+                  <SupplierSelect
                     value={supplierId}
-                    onChange={(e) => setSupplierId(e.target.value)}
-                    className="w-full rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  >
-                    <option value="">— Select supplier —</option>
-                    {suppliers.map((s) => (
-                      <option key={s.id} value={s.id}>{s.name}</option>
-                    ))}
-                  </select>
+                    onChange={setSupplierId}
+                    suppliers={suppliers}
+                  />
                   {scanResult?.supplier && (
                     <p className="mt-1 text-xs text-navy/40">Detected: {scanResult.supplier}</p>
                   )}
@@ -800,18 +915,33 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                       </thead>
                       <tbody className="divide-y divide-surface-border">
                         {reviewItems.map((item, i) => {
-                          const qty = parseFloat(item.qty) || 0;
+                          const isSplit = !!(item.splits && item.splits.length > 0);
+                          const splitTotal = isSplit ? splitSum(item.splits) : 0;
+                          const effectiveQty = isSplit
+                            ? splitTotal
+                            : parseFloat(item.qty) || 0;
                           const cost = parseFloat(item.unitCost) || 0;
-                          const calculated = qty > 0 && cost > 0 ? qty * cost : null;
+                          const calculated =
+                            effectiveQty > 0 && cost > 0 ? effectiveQty * cost : null;
                           const invoiceTotal = item.lineTotal;
                           const qtyChanged =
+                            !isSplit &&
                             item.qty !== item.extractedQty &&
                             item.extractedQty &&
                             item.extractedQty !== "1";
                           const costChanged =
                             item.unitCost !== item.extractedUnitCost && item.extractedUnitCost;
+                          // Sibling variants exist only for catalog-linked items.
+                          const siblings = item.productId
+                            ? getVariantSiblings(item.productId)
+                            : [];
+                          const hasSiblings = siblings.length > 1;
+                          const originalQty = parseFloat(item.qty) || 0;
+                          const sumMatchesOriginal =
+                            originalQty === 0 || Math.abs(splitTotal - originalQty) < 0.001;
                           return (
-                            <tr key={i} className="group align-top transition-colors hover:bg-brand-50/30">
+                          <React.Fragment key={i}>
+                            <tr className="group align-top transition-colors hover:bg-brand-50/30">
                               <td className="px-3 py-3">
                                 <div className="space-y-1.5">
                                   {item.extractedName &&
@@ -856,22 +986,58 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                                 <ConfidenceBadge confidence={item.confidence} />
                               </td>
                               <td className="px-2 py-3">
-                                <input
-                                  type="number"
-                                  min="0.001"
-                                  step="0.001"
-                                  inputMode="decimal"
-                                  value={item.qty}
-                                  onChange={(e) => updateItem(i, { qty: e.target.value })}
-                                  // appearance:textfield + spin-button overrides hide the native
-                                  // up/down arrows that eat ~18px of input width in Chrome/Firefox
-                                  className="w-full rounded-lg border border-surface-border px-2 py-1.5 text-right text-sm tabular-nums text-navy focus:outline-none focus:ring-2 focus:ring-brand-500 [appearance:textfield] [&::-webkit-inner-spin-button]:m-0 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:m-0 [&::-webkit-outer-spin-button]:appearance-none"
-                                />
-                                {qtyChanged && (
-                                  <div className="mt-1 flex items-center justify-end gap-1 text-[10px] text-brand-500">
-                                    <Sparkles className="h-2.5 w-2.5" />
-                                    AI: {item.extractedQty}
+                                {isSplit ? (
+                                  <div className="flex flex-col items-end gap-1">
+                                    <div
+                                      className={cn(
+                                        "rounded-lg border px-2 py-1.5 text-right text-sm font-semibold tabular-nums",
+                                        sumMatchesOriginal
+                                          ? "border-green-200 bg-green-50 text-green-700"
+                                          : "border-amber-200 bg-amber-50 text-amber-700",
+                                      )}
+                                      title={
+                                        sumMatchesOriginal
+                                          ? "Split totals match the extracted qty"
+                                          : `Split totals ${splitTotal} don't match the extracted qty ${originalQty}`
+                                      }
+                                    >
+                                      {splitTotal} / {originalQty}
+                                    </div>
+                                    <span className="text-[10px] text-navy/40">
+                                      across {item.splits!.length} flavors
+                                    </span>
                                   </div>
+                                ) : (
+                                  <>
+                                    <input
+                                      type="number"
+                                      min="0.001"
+                                      step="0.001"
+                                      inputMode="decimal"
+                                      value={item.qty}
+                                      onChange={(e) => updateItem(i, { qty: e.target.value })}
+                                      // appearance:textfield + spin-button overrides hide the native
+                                      // up/down arrows that eat ~18px of input width in Chrome/Firefox
+                                      className="w-full rounded-lg border border-surface-border px-2 py-1.5 text-right text-sm tabular-nums text-navy focus:outline-none focus:ring-2 focus:ring-brand-500 [appearance:textfield] [&::-webkit-inner-spin-button]:m-0 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:m-0 [&::-webkit-outer-spin-button]:appearance-none"
+                                    />
+                                    {qtyChanged && (
+                                      <div className="mt-1 flex items-center justify-end gap-1 text-[10px] text-brand-500">
+                                        <Sparkles className="h-2.5 w-2.5" />
+                                        AI: {item.extractedQty}
+                                      </div>
+                                    )}
+                                    {hasSiblings && (
+                                      <button
+                                        type="button"
+                                        onClick={() => startSplit(i)}
+                                        className="mt-1 inline-flex items-center gap-1 rounded px-1 text-[10px] font-medium text-brand-600 transition-colors hover:bg-brand-50"
+                                        title={`This product has ${siblings.length - 1} other variants — split the qty across flavors`}
+                                      >
+                                        <Layers className="h-2.5 w-2.5" />
+                                        Split by variety
+                                      </button>
+                                    )}
+                                  </>
                                 )}
                               </td>
                               <td className="px-2 py-3">
@@ -930,6 +1096,72 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                                 </button>
                               </td>
                             </tr>
+                            {isSplit && (
+                              <tr className="bg-brand-50/30">
+                                <td colSpan={6} className="px-3 py-3">
+                                  <div className="rounded-lg border border-brand-200 bg-white p-3">
+                                    <div className="mb-2 flex items-center justify-between gap-2">
+                                      <div className="flex items-center gap-2 text-xs font-semibold text-navy">
+                                        <Layers className="h-3.5 w-3.5 text-brand-500" />
+                                        Split across {item.splits!.length} varieties
+                                        <span className="font-normal text-navy/50">
+                                          — same unit price ({fmt(cost)} ea)
+                                        </span>
+                                      </div>
+                                      <button
+                                        type="button"
+                                        onClick={() => cancelSplit(i)}
+                                        className="rounded px-2 py-0.5 text-[11px] font-medium text-navy/60 transition-colors hover:bg-surface-raised hover:text-navy"
+                                      >
+                                        Cancel split
+                                      </button>
+                                    </div>
+                                    <div className="grid gap-1.5">
+                                      {item.splits!.map((split, j) => {
+                                        const variantProduct = products.find(
+                                          (p) => p.id === split.productId,
+                                        );
+                                        return (
+                                          <div
+                                            key={split.productId}
+                                            className="flex items-center gap-2 rounded border border-surface-border bg-surface-raised/40 px-2.5 py-1.5"
+                                          >
+                                            <span
+                                              className="flex-1 truncate text-xs text-navy"
+                                              title={variantProduct?.name}
+                                            >
+                                              {variantProduct?.variantName ??
+                                                variantProduct?.name ??
+                                                "Unknown variant"}
+                                            </span>
+                                            <input
+                                              type="number"
+                                              min="0"
+                                              step="0.001"
+                                              inputMode="decimal"
+                                              value={split.qty}
+                                              onChange={(e) =>
+                                                updateSplitQty(i, j, e.target.value)
+                                              }
+                                              className="w-20 rounded border border-surface-border px-2 py-1 text-right text-xs tabular-nums text-navy focus:outline-none focus:ring-2 focus:ring-brand-500 [appearance:textfield] [&::-webkit-inner-spin-button]:m-0 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:m-0 [&::-webkit-outer-spin-button]:appearance-none"
+                                            />
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                    {!sumMatchesOriginal && (
+                                      <p className="mt-2 flex items-start gap-1 text-[11px] text-amber-700">
+                                        <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
+                                        Variety totals ({splitTotal}) don't match the extracted
+                                        qty ({originalQty}). You can still save — totals will
+                                        recompute from the splits.
+                                      </p>
+                                    )}
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </React.Fragment>
                           );
                         })}
                       </tbody>

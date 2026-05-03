@@ -26,6 +26,7 @@ import { useProducts } from "@/lib/api/products";
 import { useVendorBills } from "@/lib/api/vendor-bills";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { ScanInvoiceModal } from "@/components/ScanInvoiceModal";
+import { SupplierSelect } from "@/components/SupplierSelect";
 
 const DECIMAL_UNITS = ["kg", "g", "liter", "litre", "l", "oz", "lb", "pound", "ml"];
 function isDecimalUnit(unit: string) {
@@ -209,16 +210,12 @@ function QuickRestockModal({
         <form onSubmit={handleSubmit} className="space-y-4 px-6 py-4">
           <div>
             <label className="mb-1 block text-xs text-navy">Supplier</label>
-            <select
+            <SupplierSelect
               value={form.supplierId}
-              onChange={(e) => setForm((f) => ({ ...f, supplierId: e.target.value }))}
-              className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-            >
-              <option value="">No supplier</option>
-              {suppliers.filter((s) => s.isActive).map((s) => (
-                <option key={s.id} value={s.id}>{s.name}</option>
-              ))}
-            </select>
+              onChange={(id) => setForm((f) => ({ ...f, supplierId: id }))}
+              suppliers={suppliers.filter((s) => s.isActive)}
+              placeholder="No supplier"
+            />
           </div>
 
           <div>

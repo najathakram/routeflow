@@ -31,6 +31,7 @@ import {
   type CreateVendorBillItem,
 } from "@/lib/api/vendor-bills";
 import { useSuppliers } from "@/lib/api/inventory";
+import { SupplierSelect } from "@/components/SupplierSelect";
 import { useProducts } from "@/lib/api/products";
 import { fmt, fmtDate } from "@/lib/formatting";
 import { usePreferences, useSavePreferences } from "@/lib/api/users";
@@ -709,16 +710,13 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
                     <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-navy/40">
                       Supplier
                     </label>
-                    <select
+                    <SupplierSelect
                       value={editSupplierId}
-                      onChange={(e) => setEditSupplierId(e.target.value)}
-                      className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                    >
-                      <option value="">Select supplier…</option>
-                      {suppliers.map((s) => (
-                        <option key={s.id} value={s.id}>{s.name}</option>
-                      ))}
-                    </select>
+                      onChange={setEditSupplierId}
+                      suppliers={suppliers}
+                      placeholder="Select supplier…"
+                      className="h-10"
+                    />
                   </div>
                   <div className="grid grid-cols-2 gap-2">
                     <div>
