@@ -1,0 +1,141 @@
+worker: BUYER-2
+squad: BUYER
+surface: web-buyer
+date: 2026-05-02
+scenarios_covered: 7
+scenarios_total: 8
+skipped: "Scenario 3 (returns/credit-note) — blocked by invoice 401 preventing invoice list access; Scenario 5 (forced password change) — blocked; Scenario 8 (profile update) — session cleared by 401 before reaching profile screen"
+
+bugs:
+
+- id: BUG-B2-1
+  title: "buyer/invoices filtered endpoint returns 400 (array query params)"
+  surface: web-buyer
+  severity: P0
+  category: flow-broken
+  repro: |
+    1. Login as ux_buyer3 or any buyer at /customer-login
+    2. Navigate to /invoices via bottom nav
+    3. App calls GET /api/v1/buyer/invoices?limit=50&statuses[]=SENT&statuses[]=OVERDUE&statuses[]=PARTIAL
+    4. Observe network tab
+  expected: 200 with filtered invoice list
+  actual: "400 Bad Request on /api/v1/buyer/invoices?limit=50&statuses%5B%5D=SENT&statuses%5B%5D=OVERDUE&statuses%5B%5D=PARTIAL"
+  root_cause: >
+    The buyer invoices API endpoint does not accept array-style query parameters
+    (statuses[]) — likely expects a different format (CSV or repeated param name).
+  proposed_fix: "apps/api/src/invoices/invoices.controller.ts — accept @Query('statuses') as string | string[] with ParseArrayPipe or change client to pass statuses=SENT,OVERDUE,PARTIAL"
+  evidence: "Network: GET /api/v1/buyer/invoices?limit=50&statuses%5B%5D=SENT&statuses%5B%5D=OVERDUE&statuses%5B%5D=PARTIAL → 400; observed in every buyer session across ux_buyer1, ux_buyer2, ux_buyer3"
+
+- id: BUG-B2-2
+  title: "/invoices buyer route redirects to random pages (home/orders/catalog)"
+  surface: web-buyer
+  severity: P0
+  category: flow-broken
+  repro: |
+    1. Login as any buyer at /customer-login
+    2. Navigate to https://routeflowmobile-production.up.railway.app/invoices via address bar
+    3. Observe redirect destination (non-deterministic)
+  expected: Invoices list page renders at /invoices URL
+  actual: "Redirects to /home, /orders, or /catalog randomly; no error shown; invoice content only sometimes loads when navigating via bottom-nav button"
+  root_cause: >
+    The 400 on /buyer/invoices triggers an unhandled error state that causes the
+    router to fall back to whatever cached route or default the router has; the
+    guard/redirect logic is non-deterministic.
+  proposed_fix: "web-buyer app router — catch 400/401 on buyer/invoices and render empty state with error message instead of redirecting"
+  evidence: "URL bar shows /invoices → immediately becomes /home, /orders, or /catalog; confirmed across 6+ navigation attempts; no API call for /buyer/invoices when redirect occurs"
+
+- id: BUG-B2-3
+  title: "buyer/invoices returns 401 when navigated via bottom-nav Invoices button"
+  surface: web-buyer
+  severity: P0
+  category: security
+  repro: |
+    1. Login as ux_buyer2 at /customer-login, navigate to /orders
+    2. Click Invoices in the bottom nav bar (button click, not URL navigation)
+    3. Check network requests for /api/v1/buyer/invoices
+  expected: 200 with buyer's invoice list
+  actual: "GET /api/v1/buyer/invoices?limit=30 → 401 Unauthorized; invoice tab shows 'No invoices yet.'"
+  root_cause: >
+    The bottom-nav click path sends the request without the Authorization header
+    (or with an expired/missing token), while the URL-navigation path sends the
+    filtered-statuses request. Different code paths for same route produce
+    different auth behavior.
+  proposed_fix: "web-buyer InvoicesScreen — ensure useApiClient hook attaches rf:buyer:accessToken on all invoice fetch calls regardless of navigation source"
+  evidence: "Network capture: GET /api/v1/buyer/invoices?limit=30 status=401; page renders 'No invoices yet.' for ux_buyer2 who has delivered orders and associated invoices"
+
+- id: BUG-B2-4
+  title: "Dashboard outstanding-balance tile shows $0.00 for buyer with overdue invoices"
+  surface: web-buyer
+  severity: P1
+  category: data-integrity
+  repro: |
+    1. Login as ux_buyer3 (overdue invoice buyer) at /customer-login
+    2. View home dashboard
+    3. Check Outstanding Balance tile
+  expected: Outstanding balance shows sum of OVERDUE+SENT invoice amounts; tile color escalates visually (e.g. red for overdue)
+  actual: "Outstanding balance $0.00 / 'All invoices paid' — despite ux_buyer3 having an overdue invoice; no color escalation for overdue status"
+  root_cause: >
+    The /api/v1/buyer/dashboard response returns outstandingBalance=0 either
+    because: (a) ux_buyer3's invoice is in DRAFT (not SENT/OVERDUE) status so
+    not counted, or (b) the dashboard aggregation query excludes OVERDUE status.
+    No visual severity escalation logic exists in the tile component.
+  proposed_fix: "apps/api/src/buyer/buyer.service.ts — include OVERDUE status in outstanding balance aggregation; web-buyer HomeScreen — add red/amber color to balance tile when outstandingBalance > 0"
+  evidence: "DOM: 'Outstanding balance $0.00 All invoices paid' visible for ux_buyer3; /api/v1/buyer/dashboard returns 200 with outstandingBalance=0"
+
+- id: BUG-B2-5
+  title: "Unauthenticated /invoices/:id redirects to marketing homepage not /customer-login"
+  surface: web-buyer
+  severity: P1
+  category: security
+  repro: |
+    1. Log out (or use a tab with no rf:buyer:accessToken in localStorage)
+    2. Navigate directly to /invoices/aa5f3e01-5dee-4351-9617-ab20af20a480
+  expected: Redirect to /customer-login (preserving intended URL for post-login return)
+  actual: "Redirects to https://routeflowmobile-production.up.railway.app/ (marketing homepage); intended URL is not preserved; buyer cannot deep-link to invoice"
+  root_cause: >
+    The buyer route guard redirects unauthenticated users to '/' rather than
+    '/customer-login'; no return-URL parameter is set so the deep-link is lost.
+  proposed_fix: "web-buyer _layout.tsx route guard — redirect to /customer-login?returnTo=<encodedPath> instead of /"
+  evidence: "Navigated to /invoices/aa5f3e01-5dee-4351-9617-ab20af20a480 with empty localStorage; ended at https://routeflowmobile-production.up.railway.app/ (marketing page)"
+
+- id: BUG-B2-6
+  title: "Auth guard does not redirect to /customer-login after token deleted from localStorage"
+  surface: web-buyer
+  severity: P1
+  category: security
+  repro: |
+    1. Login as ux_buyer2, navigate to /catalog
+    2. Via javascript_tool: localStorage.removeItem('rf:buyer:accessToken'); localStorage.removeItem('rf:buyer:refreshToken')
+    3. Click Orders in the bottom nav
+  expected: App detects missing token, redirects to /customer-login immediately
+  actual: "App navigates to /orders and renders page shell (with 'No orders yet.' since API calls fail without token); no redirect to /customer-login"
+  root_cause: >
+    The route guard reads the token from in-memory store on initial render but
+    does not re-check localStorage on subsequent navigation events; stale
+    in-memory auth state keeps the buyer session "alive" after token deletion.
+  proposed_fix: "web-buyer _layout.tsx or useAuthGuard hook — add storage event listener or re-read localStorage on every route change to detect token removal"
+  evidence: "localStorage.hasToken=false confirmed via javascript_tool; tab stayed at /orders URL and rendered buyer app shell instead of redirecting"
+
+- id: BUG-B2-7
+  title: "Buyer /customer-login has no Forgot Password link despite /forgot-password existing"
+  surface: web-buyer
+  severity: P2
+  category: ux
+  repro: |
+    1. Navigate to /customer-login
+    2. Inspect page content for password reset option
+    3. Separately navigate to /forgot-password directly
+  expected: /customer-login shows a "Forgot password?" link pointing to /forgot-password
+  actual: "No forgot-password link on /customer-login; /forgot-password page exists and works but is inaccessible through the normal buyer login flow"
+  root_cause: >
+    The CustomerLoginScreen component was not updated to include the forgot-
+    password link that exists in the operator/driver login variant.
+  proposed_fix: "web-buyer app/customer-login.tsx — add Forgot? link below password field pointing to /forgot-password"
+  evidence: "Page text of /customer-login: 'Back Customer Portal Sign in with your buyer account EMAIL PASSWORD Sign in or Sign in with Google Don't have an account?...' — no forgot password mention"
+
+## Suspected (no repro)
+
+# Scenario 3 (returns/credit note): blocked — invoice list 401 prevented accessing delivered order invoice to initiate return from invoice detail.
+# Scenario 5 (forced password change): not tested — required ux_admin tab setup which would require separate browser context.
+# Scenario 8 (profile update): session cleared by 401 before reaching /more/profile; profile screen was visible once (More page loaded) but second nav attempt failed.
+# Scenario 2 (PDF download): could not reach invoice detail page due to BUG-B2-2 and BUG-B2-3; PDF endpoint behavior untested.

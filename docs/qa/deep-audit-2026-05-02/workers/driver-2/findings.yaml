@@ -1,0 +1,120 @@
+worker: DRIVER-2
+squad: DRIVER
+surface: web-driver
+date: 2026-05-02
+tester: ux_driver_a / UxDriver@123!
+tenant: ux-audit-1777265477001
+viewport: 375x667
+scenarios_attempted: 8
+scenarios_covered: 4  # S1 partial, S2 code, S3 code, S4 code, S6 live, S8 live; S5/S7 BLOCKED
+login_status: BLOCKED after 2 retries (auth throttled — shared IP with other workers)
+
+bugs:
+
+- id: BUG-DRV2-1
+  title: Driver access token not persisted to localStorage on web
+  surface: web-driver
+  severity: P1
+  category: flow-broken
+  status: 🔴 BUG-NEW
+  repro: |
+    1. Navigate to /login, set tenantSlug=ux-audit-1777265477001 in localStorage.
+    2. Fill username=ux_driver_a, password=UxDriver@123! and click Sign in.
+    3. Login POST /api/v1/auth/login returns 200, app navigates to /route.
+    4. Open DevTools console and run: Object.keys(localStorage).filter(k=>k.includes('driver'))
+    5. Result is [] — no rf:driver:accessToken key exists.
+    6. Refresh the page → redirected to marketing home (/) — driver is logged out.
+  expected: rf:driver:accessToken and rf:driver:refreshToken written to localStorage after login; session survives page refresh.
+  actual: "[] — no driver token in localStorage after successful driver login. Refresh loses session."
+  root_cause: |
+    apps/mobile/lib/auth.ts login() calls `await storage.set(keys.accessToken, data.accessToken)` which on web maps to localStorage.setItem. However, on the Expo web bundle the `getStoredUser()` is called synchronously during initial render before the async storage.set resolves, or the Zustand persist middleware is not configured for the driver store. The token exists only in Zustand in-memory state and is not read back from storage on fresh page load.
+  proposed_fix: apps/mobile/lib/auth-store.ts — ensure driverAuth Zustand slice uses `persist` middleware writing to localStorage key rf:driver:accessToken, mirroring the operator store pattern.
+  evidence: "localStorage.keys()=[] after driver login; console shows [socket] storage read key=rf:driver:accessToken token=[present] immediately after login but key absent on inspect"
+
+- id: BUG-DRV2-2
+  title: Raw ThrottlerException error displayed verbatim on login UI
+  surface: web-driver
+  severity: P3
+  category: ux
+  status: 🔴 BUG-NEW
+  repro: |
+    1. Attempt driver login 6+ times in 5 minutes (or use same IP as other workers).
+    2. POST /api/v1/auth/login returns HTTP 429.
+    3. Observe login page text.
+  expected: User-friendly message such as "Too many login attempts. Please wait a few minutes."
+  actual: '"ThrottlerException: Too Many Requests" displayed verbatim in the login error area'
+  root_cause: The login error handler in the auth form does not map 429 status to a friendly message; it displays the raw API response body string.
+  proposed_fix: apps/mobile/app/(auth)/login.tsx (or web equivalent) — catch 429 in error handler and display friendly text instead of error.message.
+  evidence: "page text: 'ThrottlerException: Too Many Requests' visible between form title and USERNAME field"
+
+- id: BUG-DRV2-3
+  title: Driver Standing tab shows My Orders screen, not standing-order schedule
+  surface: web-driver
+  severity: P2
+  category: ux
+  status: 🔴 BUG-NEW
+  repro: |
+    1. Log in as ux_driver_a.
+    2. Tap the "Standing" tab in driver bottom nav (calendar icon).
+    3. Observe screen title and content.
+  expected: Standing-order schedule — showing today's auto-generated standing orders for stops on the route, allowing driver to see recurring orders.
+  actual: "Screen title is 'My orders' — shows the driver's assigned delivery orders filtered by status (OUT_FOR_DELIVERY / CONFIRMED / DELIVERED / ALL), not standing-order templates."
+  root_cause: apps/mobile/app/(driver)/_layout.tsx maps the "orders" screen to tab title "Standing" but orders.tsx renders the driver's orders list. No standing-orders screen exists for the driver.
+  proposed_fix: |
+    apps/mobile/app/(driver)/_layout.tsx line 53 — either rename tab title to "Orders", or create a standing-orders screen and update the route mapping.
+  evidence: "Source code: _layout.tsx title='Standing' maps to name='orders'; orders.tsx shows NavBar largeTitle='My orders' with status filter chips"
+
+- id: BUG-DRV2-4
+  title: Cash drawer screen is an unimplemented stub — cannot record collections
+  surface: web-driver
+  severity: P2
+  category: empty-state
+  status: 🔴 BUG-NEW
+  repro: |
+    1. Log in as ux_driver_a.
+    2. Tap the "Cash" tab in driver bottom nav.
+    3. Observe screen content.
+  expected: Cash collection UI allowing driver to record payment amounts per stop, with running total and end-of-day reconciliation.
+  actual: '"End-of-day cash-up is coming soon" empty state with wallet icon — no input fields, no running total, no reconciliation.'
+  root_cause: apps/mobile/app/(driver)/cash.tsx is a stub (confirmed in source code comments): "End-of-day cash-up isn't live yet — no /driver/cash-up endpoint, no denomination tracking in the schema."
+  proposed_fix: Implement /driver/cash-up endpoint in API and build cash collection form in apps/mobile/app/(driver)/cash.tsx
+  evidence: "Source: cash.tsx line 7 comment confirms stub; IosEmptyState with title='End-of-day cash-up is coming soon'"
+
+- id: BUG-DRV2-5
+  title: getStoredUser checks operator token before driver token — operator masks driver session
+  surface: web-driver
+  severity: P1
+  category: security
+  status: 🔴 BUG-NEW
+  repro: |
+    1. Log in as ux_admin in one tab (writes rf:op:accessToken to localStorage).
+    2. In same incognito window, log in as ux_driver_a in another tab.
+    3. Both tabs share localStorage. The driver token is written to rf:driver:accessToken.
+    4. getStoredUser() iterates [OP_KEYS, DRIVER_KEYS] — finds op token first.
+    5. Driver tab shows operator UI (redirected to /home operator dashboard).
+  expected: Driver session in driver tab operates independently; role is determined by the tab's own auth context, not shared localStorage priority.
+  actual: "When both op and driver tokens coexist, getStoredUser returns operator role. Driver tab renders operator dashboard instead of driver app."
+  root_cause: apps/mobile/lib/auth.ts getStoredUser() line 92 iterates [OP_KEYS, DRIVER_KEYS] — returns the first valid token found. If operator token exists in shared localStorage, it wins regardless of which role the tab is supposed to be.
+  proposed_fix: apps/mobile/lib/auth.ts — pass the expected role as a parameter to getStoredUser, or use the role stored in Zustand state to determine which key to read.
+  evidence: "Source: auth.ts lines 91-108 loop order; observed: driver tab redirected to /home operator dashboard after shared localStorage had rf:op:accessToken"
+
+blocked:
+  - scenario: S1 (Map screen)
+    reason: Driver login blocked by auth throttle; no active run exists for ux_driver_a (route run is already COMPLETED status)
+  - scenario: S5 (Cancel run while list open)
+    reason: Driver login blocked by auth throttle
+  - scenario: S7 (Socket.IO live update)
+    reason: Driver login blocked by auth throttle
+
+design_questions:
+  - id: DQ-DRV2-1
+    scenario: S2
+    note: "ux_driver_a route run has COMPLETED status — standing orders not auto-generated for today's route. Is this expected behavior for completed/historical runs? Scenario requires a SCHEDULED run with standing orders to verify."
+  - id: DQ-DRV2-2
+    scenario: S4
+    note: "No dedicated Stats tab in driver layout (Route/Map/Standing/Cash/More). Stats referenced in scenario 4 (totalStopsCompleted) may be exposed via route screen inline stats or an undiscovered endpoint — verify where RF-016 stats surface in UI."
+
+## Suspected (no repro)
+# - Map screen may show empty state for all routes without an active IN_PROGRESS run (by design; useActiveRouteRun query only fetches IN_PROGRESS)
+# - Scenario 6 token isolation: confirmed analytically — OP token wins over DRIVER token in shared localStorage (BUG-DRV2-5)
+# - Scenario 8 (/home, /customers, /routes unauthenticated): all redirect to / marketing page correctly; driver-authed behavior untested

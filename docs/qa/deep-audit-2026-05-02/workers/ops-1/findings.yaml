@@ -1,0 +1,102 @@
+## OPS-1 findings — web-op surface — 2026-05-02
+## Worker: OPS-1 | Squad: OPS | Scenarios covered: 3,4(partial),5(partial),6(partial),7,8(partial)
+
+bugs:
+
+- id: BUG-OPS1-1
+  title: "$0 order confirm button enabled — silently no-ops instead of blocking"
+  surface: web-op
+  severity: P1
+  category: money
+  repro: |
+    1. Operator login → Orders → New → select any customer (UX Empty Cafe tested)
+    2. Do NOT add any line items (form shows "0 ITEMS $0.00")
+    3. Observe "Confirm order →" button: green, opacity:1, pointerEvents:auto (fully enabled)
+    4. Click "Confirm order →"
+  expected: Button disabled/greyed with tooltip "Add at least one item" OR error toast on click
+  actual: Button renders as fully active green CTA; click is silently ignored with no error, no toast, no API call fired; user gets no feedback
+  root_cause: The React onPress handler likely checks items.length === 0 and returns early, but the button's visual disabled state and aria-disabled are never set, creating a deceptive UI
+  proposed_fix: apps/web/src/screens/new-order.tsx — add `disabled={items.length === 0}` and `style={{ opacity: items.length === 0 ? 0.4 : 1 }}` to Confirm order button
+  evidence: "DOM: confirmed via window.getComputedStyle — disabled:false, opacity:1, pointerEvents:auto with 0 items; also INV-2026-0021 (id: e5c55cfb-851c-4b2f-ad5b-50bb7ebd457b) exists as a $0 Draft invoice with orderId:null proving backend has accepted $0 orders historically"
+
+- id: BUG-OPS1-2
+  title: "Invoice tax computed as $3,369 on $22.46 subtotal (~15,000% effective rate)"
+  surface: web-op
+  severity: P0
+  category: money
+  repro: |
+    1. Operator login → Invoices → open INV-2026-0026 (UX Empty Cafe, Draft, $3391.46)
+    2. Observe Items section: Apple Juice 1L x3 = $13.47, Almond Mix 16oz x1 = $8.99
+    3. Observe Subtotal: $22.46
+    4. Observe Tax: $3,369.00
+    5. Observe Total: $3,391.46
+  expected: Tax should be ~15% of $22.46 ≈ $3.37; total ≈ $25.83
+  actual: "API response: subtotal='22.46', taxAmount='3369', total='3391.46' — tax is 14,997% of subtotal; invoice id: 7cf5d188-5563-46de-b09a-a56d35d69472"
+  root_cause: Tax calculation bug — likely taxRate stored in cents (e.g. 15000 basis points instead of 15.00) or taxAmount = subtotal * taxRate where taxRate is not divided by 100 in the computation
+  proposed_fix: apps/api/src/invoices/invoices.service.ts — verify taxAmount = subtotal * (taxRate / 100) not subtotal * taxRate; check DB taxRate field unit
+  evidence: "API GET /api/v1/invoices/7cf5d188-5563-46de-b09a-a56d35d69472 — {subtotal:'22.46', taxAmount:'3369', total:'3391.46'}; screenshot ss_1265ub43u shows Tax: $3,369.00"
+
+- id: BUG-OPS1-3
+  title: "Invoice deep-link URLs redirect to /home — no shareable invoice links"
+  surface: web-op
+  severity: P2
+  category: flow-broken
+  repro: |
+    1. While logged in as operator, navigate directly to /invoices/<uuid>
+    2. Example: /invoices/0608c97f-1589-4eee-9de6-9f24c8f73b28
+    3. Observe URL after 2 seconds
+  expected: Invoice detail page loads at the deep-link URL
+  actual: App immediately redirects to /home; invoice UUID is ignored; invoice detail can only be reached by navigating through /invoices list and clicking a row
+  root_cause: Expo Router / React Navigation is not registering the /invoices/:id route as a valid direct-navigation target; route guard intercepts unauthenticated-looking deep links and redirects
+  proposed_fix: apps/web/src/app/(operator)/invoices/[id].tsx — ensure route is registered and auth guard allows navigation to deep-linked invoice IDs for authenticated sessions
+  evidence: "window.location.href after navigate('/invoices/0608c97f-...') → 'https://routeflowmobile-production.up.railway.app/home'; confirmed across 3 attempts"
+
+- id: BUG-OPS1-4
+  title: "Record Payment date placeholder shows hardcoded '2025-06-01' (wrong year)"
+  surface: web-op
+  severity: P2
+  category: ux
+  repro: |
+    1. Operator login → Invoices → open INV-2026-0024 (Sent, $100.00)
+    2. Tap "Record payment"
+    3. Observe PAYMENT DATE field placeholder
+  expected: Placeholder shows current date format hint like "YYYY-MM-DD" or actual today's date
+  actual: "Placeholder is hardcoded '2025-06-01' — a date 11 months in the past (today is 2026-05-02); read_page output: textbox '2025-06-01' [ref_178] type='text' placeholder='2025-06-01'"
+  root_cause: Hardcoded date string in placeholder attribute of the payment date input; not dynamically generated from new Date()
+  proposed_fix: apps/web/src/screens/record-payment.tsx — replace placeholder="2025-06-01" with placeholder={new Date().toISOString().split('T')[0]}
+  evidence: "read_page ref_178: textbox '2025-06-01' type='text' placeholder='2025-06-01'; screenshot ss_8334okm69 payment date field"
+
+- id: BUG-OPS1-5
+  title: "Login throttle error exposes internal class name 'ThrottlerException'"
+  surface: web-op
+  severity: P3
+  category: adversarial-input
+  repro: |
+    1. Attempt operator login (wrong or right credentials) 5+ times within 5 minutes
+    2. Observe error message displayed in the login form
+  expected: User-friendly message e.g. "Too many login attempts. Please wait 5 minutes."
+  actual: "Error banner shows: 'ThrottlerException: Too Many Requests' — exposes the NestJS internal exception class name and HTTP client library implementation detail; API returns retryAfter:300"
+  root_cause: The frontend renders the raw API error.message field without mapping it to a user-friendly string; the ThrottlerException message is the NestJS default
+  proposed_fix: apps/web/src/screens/login.tsx — map statusCode 429 error to friendly string "Too many attempts. Try again in 5 minutes." before displaying; also fix API to sanitize exception class from message
+  evidence: "Screenshot ss_9547r894u — ThrottlerException: Too Many Requests error banner on login screen; network: POST /auth/login → 429 {statusCode:429, error:'Too Many Requests', message:'ThrottlerException: Too Many Requests', retryAfter:300}"
+
+- id: BUG-OPS1-6
+  title: "Dispatch run button enabled on route with 0 stops and no driver"
+  surface: web-op
+  severity: P1
+  category: flow-broken
+  repro: |
+    1. Operator login → Dispatch → open QA-OPS2-Route-A (0 stops, No driver assigned)
+    2. Observe "Dispatch run" button
+  expected: "Dispatch run" button disabled/hidden when route has 0 stops and no assigned driver
+  actual: "Dispatch run" button fully enabled (green CTA) on route with 0 stops and unassigned driver; tapping it would attempt to dispatch an empty unassigned run
+  root_cause: The dispatch button does not validate that stops > 0 AND driver is assigned before enabling; both guard conditions are bypassed
+  proposed_fix: apps/web/src/screens/route-detail.tsx — disable "Dispatch run" button when route.stops.length === 0 or route.driverId === null
+  evidence: "Screenshot ss_02914zj30 — QA-OPS2-Route-A detail screen: 'Stops (0) No stops yet', 'Driver Not assigned', 'Dispatch run' button fully active green; route id: 756ea776-be1a-4cf7-96b1-c64b14e60ecf"
+
+## Suspected (no repro)
+## - Scenario 6 (dual-tab stale data race): Could not maintain two stable operator sessions simultaneously due to shared localStorage being overwritten by concurrent agents; untested
+## - Scenario 7 (AR Aging real-time refresh): Socket.IO present (confirmed polling /socket.io/) but dashboard tile freshness after payment not verified; suspected stale until manual refresh
+## - Scenario 1 (30 line items perf): Unable to reach the new-order product form cleanly; catalog re-fetch on every dropdown open suspected from single API call per page load
+## - Scenario 2 (tax-exempt customer): No tax-exempt flag visible in customer list; INV-2026-0026 anomalous tax BUG-OPS1-2 may be related
+## - Scenario 4/5 (negative discount / credit note clamping): No "Adjust Prices" button on Sent invoices; API correctly rejects overpayment (400: "Payment exceeds remaining balance")

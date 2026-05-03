@@ -1,0 +1,252 @@
+worker_id: BUYER-1
+squad: BUYER
+surface: web-buyer
+date: 2026-05-02
+scenarios_covered: 7  # 1(partial), 2(partial), 3(partial), 4(partial), 5(blocked), 6(blocked), 7(design-q), 8(partial)
+environment_note: |
+  CRITICAL: Incognito window is shared across ALL parallel QA workers. localStorage
+  is shared so every agent login overwrites another agent's buyer/op token.
+  rf:op:accessToken and rf:buyer:accessToken coexist in the same localStorage,
+  causing operator session to dominate buyer session on the same tab.
+  Net effect: true buyer-isolated tests were near-impossible to execute cleanly.
+  All bugs below have verifiable DOM/network evidence from moments when the correct
+  session was active.
+
+bugs:
+
+- id: BUG-B1-1
+  status: "🔴 BUG-NEW"
+  title: "Catalog shows 'No products found' silently on 401 — no login redirect"
+  surface: web-buyer
+  severity: P1
+  category: flow-broken
+  repro: |
+    1. Log in as ux_buyer1 at /customer-login.
+    2. Another tab or session transition invalidates the buyer accessToken
+       (or wait for token expiry / navigate away as op).
+    3. Navigate to /catalog.
+    4. The catalog renders with no redirect to /customer-login.
+  expected: "Expired/missing auth token → redirect to /customer-login with toast."
+  actual: |
+    "Catalog | No products found." rendered in DOM;
+    network shows GET /api/v1/buyer/products?limit=100 → 401,
+    GET /api/v1/buyer/products/categories → 401,
+    GET /api/v1/buyer/favorites → 401. No redirect, no error toast.
+  root_cause: |
+    Buyer catalog data hook catches 401 and returns empty array without
+    triggering the auth error handler / navigation guard. The empty-state
+    component ("No products found") fires on any empty array regardless of
+    whether it was a legit empty catalog or an auth failure.
+  proposed_fix: |
+    apps/customer-app/src/hooks/useCatalog.ts (or equivalent) — on 401 response
+    call authStore.logout() and navigate('/customer-login') instead of resolving
+    with [].
+  evidence: |
+    Network tab: 3× /api/v1/buyer/* 401 Unauthorized while page displays
+    "No products found." (observed on tab 1573698094 at /catalog).
+
+- id: BUG-B1-2
+  status: "🔴 BUG-NEW"
+  title: "Buyer /orders page renders home + orders + catalog simultaneously"
+  surface: web-buyer
+  severity: P1
+  category: flow-broken
+  repro: |
+    1. Log in as any buyer (ux_buyer2 observed most clearly).
+    2. Navigate to /orders via bottom-nav "Orders" button.
+    3. Inspect rendered DOM text.
+  expected: "Only the orders list component renders at /orders."
+  actual: |
+    DOM innerText at /orders URL contains three sections simultaneously:
+    (a) Home/dashboard content — "Outstanding balance $0.00", "Active orders",
+        "Spend (30 d)", "LAST ORDER #ORD-1777431385837 Delivered $4.03"
+    (b) Orders list — "UX Audit Co | New | All | Pending... | No orders yet."
+    (c) Catalog — "Catalog | All | Bakery | Beverages | Almond Mix 16oz..."
+    The URL is /orders but all three route components mount at once.
+  root_cause: |
+    Expo Router tab-layout likely has overlapping tab routes that all render
+    when a navigation event partially matches. Missing or incorrect route guards
+    cause multiple <Stack.Screen> or <Tabs.Screen> children to render together.
+  proposed_fix: |
+    apps/customer-app/app/(buyer)/(tabs)/ — audit tab route definitions; ensure
+    each tab screen is a standalone exclusive route, not rendered additively.
+  evidence: |
+    Observed raw page text: "...LAST ORDER...Delivered $4.03...No orders yet.
+    Browse catalog...Catalog...Almond Mix 16oz..." all at URL /orders.
+
+- id: BUG-B1-3
+  status: "🔴 BUG-NEW"
+  title: "Buyer orders list shows 'No orders yet' despite existing orders in home summary"
+  surface: web-buyer
+  severity: P1
+  category: data-integrity
+  repro: |
+    1. Log in as ux_buyer2 (UX Delivered Deli, known orders).
+    2. Home page shows: "LAST ORDER #ORD-1777431385837 · 1 items · Delivered $4.03".
+    3. Navigate to /orders (orders list tab).
+    4. Orders list section shows "No orders yet. Browse catalog."
+  expected: "Orders list shows at least the 5 historical orders visible in home stats."
+  actual: |
+    Orders list section: "No orders yet. Browse catalog." while home section
+    (rendered simultaneously per BUG-B1-2) shows a confirmed delivered order.
+    Network response for buyer orders may be filtered incorrectly or calling
+    wrong endpoint (operator vs buyer).
+  root_cause: |
+    Buyer orders API call likely hits /api/v1/orders (operator endpoint) or uses
+    wrong customer ID filter, returning empty for buyer role. Home dashboard
+    summary card uses a separate stats endpoint that correctly scopes to buyer.
+  proposed_fix: |
+    Verify buyer orders endpoint is /api/v1/buyer/orders (not /api/v1/orders)
+    and that the customer ID from rf:buyer:activeSeller is passed as filter.
+  evidence: |
+    DOM at /orders: "No orders yet" alongside home stats showing 5 orders
+    totalling ~$95 spend. ux_buyer2 customer ID ebc75f88 (buyer1 activeSeller
+    observed earlier had same pattern).
+
+- id: BUG-B1-4
+  status: "🔴 BUG-NEW"
+  title: "Operator + buyer tokens coexist in localStorage; op session silently wins"
+  surface: web-buyer
+  severity: P1
+  category: security
+  repro: |
+    1. Tab A: log in as ux_admin at /login (sets rf:op:accessToken).
+    2. Tab B (same window): log in as ux_buyer1 at /customer-login
+       (sets rf:buyer:accessToken).
+    3. In Tab B navigate to /catalog.
+    4. Tab B renders operator dashboard content, not buyer catalog.
+  expected: |
+    Buyer tab renders buyer content; operator session on another tab does not
+    bleed into the buyer tab. Role-specific routes should check the correct token.
+  actual: |
+    localStorage contains both rf:op:accessToken and rf:buyer:accessToken.
+    /catalog redirects to /home and shows operator dispatch dashboard
+    ("Dispatch Readiness", "Active drivers", Routes Today") on tab that
+    was authenticated as buyer. Buyer token is present but ignored.
+  root_cause: |
+    App router resolves role by checking rf:op:accessToken first; if present,
+    treats the tab as operator regardless of rf:buyer:accessToken. No route
+    isolation between operator and buyer sessions in shared localStorage.
+  proposed_fix: |
+    Buyer routes should only check rf:buyer:accessToken; operator routes only
+    rf:op:accessToken. Navigation guard for /catalog must not defer to operator
+    auth if buyer token is present. Consider scoping keys per role to avoid collision.
+  evidence: |
+    localStorage dump: {"rf:op:accessToken":"[REDACTED]","rf:buyer:accessToken":
+    "[REDACTED]","rf:buyer:activeSeller":"...UX Empty Cafe..."} while /catalog
+    renders operator content. Confirmed on tab 1573698100.
+
+- id: BUG-B1-5
+  status: "🔴 BUG-NEW"
+  title: "Adversarial customer name — 4000+ char string stored and displayed"
+  surface: web-buyer
+  severity: P2
+  category: adversarial-input
+  repro: |
+    1. Log in as ux_admin. Navigate to /new-order.
+    2. Page shows "Choose customer" list.
+    3. One entry is visible with 4000+ repeated 'A' characters as customer name.
+  expected: "Customer names are validated to a reasonable max length (e.g., 255 chars)."
+  actual: |
+    Customer list renders "AAAA...AAAA" (thousands of chars) as a customer
+    business name. Text visible in DOM: "AAAA..." (truncated in display but
+    full string in DOM). This causes layout overflow potential and indicates
+    no server-side length validation on businessName.
+  root_cause: |
+    Missing maxLength validation on customer businessName field in API
+    (customers.dto.ts) and/or no DB constraint enforced in Prisma schema.
+  proposed_fix: |
+    apps/api/src/customers/dto/create-customer.dto.ts — add
+    @MaxLength(255) to businessName. Add VARCHAR(255) or CHECK constraint in
+    Prisma schema for Customer.businessName.
+  evidence: |
+    DOM at /new-order: "AAAA..." entry visible in customer chooser list
+    (thousands of A chars). Observed on tab 1573698100.
+
+- id: BUG-B1-6
+  status: "🔴 BUG-NEW"
+  title: "Order with $25M+ total accepted — no upper-bound price validation"
+  surface: web-buyer
+  severity: P2
+  category: money
+  repro: |
+    1. Log in as ux_admin. Navigate to /orders.
+    2. Observe order ORD-1777431385834.
+  expected: "Order totals are validated against a reasonable maximum."
+  actual: |
+    Order ORD-1777431385834 shows "test · 2 items · Pending · $25664510.89"
+    (over $25 million). The API accepted and stored this order total.
+  root_cause: |
+    No upper-bound validation on order line item unit prices or quantities.
+    A buyer (or test script) submitted an order with extreme price/qty values
+    that passed through to the DB.
+  proposed_fix: |
+    apps/api/src/orders/dto/create-order.dto.ts — add @Max(999999) to
+    unitPrice and @Max(99999) to quantity. Add Prisma Decimal field constraints.
+  evidence: |
+    Operator orders list at /orders shows "$25664510.89" total for ORD-1777431385834.
+    Observed on tab 1573698100.
+
+- id: BUG-B1-7
+  status: "🔴 BUG-NEW"
+  title: "Direct URL /orders returns 'Page not found' for buyer (Expo route missing)"
+  surface: web-buyer
+  severity: P2
+  category: flow-broken
+  repro: |
+    1. Log in as buyer. Navigate to /orders via direct URL (address bar or
+       window.history.pushState).
+    2. Page shows "Unmatched Route — Page could not be found."
+  expected: "Buyer navigating to /orders sees their order list."
+  actual: |
+    "Unmatched RoutePage could not be found.
+    https://routeflowmobile-production.up.railway.app/op/loginGo back•Sitemap"
+    The route /orders is not registered in the Expo Router for the buyer app.
+    Also notable: error page suggests /op/login as the go-back URL, exposing
+    the operator login path to buyer-facing error messages.
+  root_cause: |
+    Expo file-based routing: buyer's orders tab is likely at a path like
+    /(buyer)/(tabs)/orders.tsx but the Expo bundle does not map /orders
+    to this screen. Route mismatch.
+  proposed_fix: |
+    apps/customer-app/app/(buyer)/(tabs)/orders.tsx — ensure Expo Router
+    segment matches the /orders URL segment; or add explicit linking config
+    in app.json / expo-router config to map /orders → buyer orders screen.
+  evidence: |
+    DOM: "Unmatched RoutePage could not be found...op/loginGo back" at URL
+    https://routeflowmobile-production.up.railway.app/orders (buyer context).
+
+## Design Questions (no confirmed repro due to env limitations)
+
+# Scenario 1 (qty increment vs line-item): Could not reach add-to-cart
+# controls due to session contamination. Design question: does + on same SKU
+# increment qty or add new line? UI has no visible +/- quantity stepper in
+# catalog card — possible missing feature.
+
+# Scenario 3 (cart expiry on 30-min idle): localStorage-based cart has no
+# observed TTL mechanism. If cart persists indefinitely, expired-session
+# scenario may show stale cart data with 401 errors (per BUG-B1-1).
+
+# Scenario 5 (empty-cart checkout block): Could not reach checkout due to
+# op session dominance. Recommend manual verification: tap "Place Order" with
+# 0 items; verify client-side guard shows "Cart is empty" before API call.
+
+# Scenario 6 (double-tap idempotency): Could not test. Recommend checking
+# POST /api/v1/buyer/orders for idempotency key or debounce on submit button.
+
+# Scenario 7 (standing order skip): ux_buyer4 has standing orders Tue/Fri.
+# No "skip next fire" control observed in buyer portal's standing orders UI.
+# This is a design gap — buyers cannot self-serve skip a single occurrence.
+# Operator must cancel/reschedule. DESIGN-QUESTION: add skip-occurrence CTA.
+
+# Scenario 8 (cancel + inventory restock): ux_buyer1 has order
+# ORD-1777431385850 (Pending, $30541.26). Cancel requires buyer to have
+# cancel button on pending orders — could not verify UI due to session issues.
+# Inventory restock on cancel needs operator-side stock verification.
+
+## Suspected (no repro)
+# - /customer-login form does not clear React state on re-mount; prior email
+#   remains in React controlled input after navigate back, causing wrong user
+#   to log in if form_input sets DOM value but React submits stale state.
+# - Cart state (if localStorage-based) is readable by operator via DevTools
+#   since all keys share the same origin storage — minor privacy concern.

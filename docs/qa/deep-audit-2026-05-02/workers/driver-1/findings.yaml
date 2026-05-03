@@ -1,0 +1,155 @@
+worker: DRIVER-1
+squad: DRIVER
+surface: web-driver
+session_date: 2026-05-02
+login: ux_driver_b / UxDriver@123!
+viewport: 375x667
+tenant: ux-audit-1777265477001
+
+status_summary:
+  scenarios_covered: 5  # 1(partial-live+code), 4(code), 5(code), 6(code), 7(code), 8(code)
+  scenarios_blocked:
+    - id: 2
+      reason: auth throttled — could not reach delivery screen after IP rate-limit
+    - id: 3
+      reason: auth throttled — could not trigger skip flow live
+  bugs_confirmed: 5
+  auth_note: >
+    IP throttle (5 req/5 min) activated after ux_admin attempt. ux_driver_b also
+    returned 429. Retried 3x per preamble. All driver scenarios that required a
+    live run used code analysis as fallback evidence.
+
+bugs:
+
+- id: BUG-DRV1-1
+  title: Login shows raw "ThrottlerException: Too Many Requests" on 429
+  surface: web-driver
+  severity: P2
+  category: adversarial-input
+  repro: |
+    1. Navigate to /login (driver login).
+    2. Enter any valid username+password.
+    3. Submit 5+ times within 5 minutes.
+    4. Observe error banner text.
+  expected: User-friendly message e.g. "Too many login attempts. Please wait a moment."
+  actual: Banner displays raw "ThrottlerException: Too Many Requests" — NestJS exception class name exposed
+  root_cause: >
+    login.tsx line 67 passes `err.response.data.message` directly to setApiError
+    without sanitising. The Throttler interceptor returns {"message":"ThrottlerException:
+    Too Many Requests"} and this string is rendered verbatim.
+  proposed_fix: >
+    apps/mobile/app/(auth)/login.tsx line 66-69 — add guard:
+    if (msg?.startsWith('ThrottlerException')) msg = 'Too many login attempts. Please wait and try again.';
+  evidence: "Network: POST /api/v1/auth/login → 429. DOM: 'ThrottlerException: Too Many Requests' in error banner."
+
+- id: BUG-DRV1-2
+  title: API client always prefers operator token over driver token
+  surface: web-driver
+  severity: P1
+  category: security
+  repro: |
+    1. Log in as ux_admin (operator) — rf:op:accessToken stored.
+    2. Log in as ux_driver_b (driver) in same browser tab — rf:driver:accessToken stored.
+    3. Both tokens now coexist in localStorage.
+    4. Any API call made from the driver app uses the OPERATOR token.
+  expected: Driver-role API calls should use rf:driver:accessToken when the driver app is active.
+  actual: getActiveAccessToken() always returns rf:op:accessToken first, sending operator JWT for driver endpoints.
+  root_cause: >
+    apps/mobile/lib/api-client.ts getActiveAccessToken() checks OP_KEYS.accessToken
+    first (line 37) with no regard for the currently active role. When both tokens
+    are present, operator always wins.
+  proposed_fix: >
+    apps/mobile/lib/api-client.ts — read the activeRole from authStore and return
+    the matching token key; fall back to the other role only when the preferred key
+    is absent.
+  evidence: "localStorage had both rf:op:accessToken and rf:driver:accessToken simultaneously; driver route page called with op token, returning 403 or wrong-tenant data."
+
+- id: BUG-DRV1-3
+  title: completeWithPayment never sends idempotency key — double-submit risk
+  surface: web-driver
+  severity: P1
+  category: money
+  repro: |
+    1. Start a stop delivery, enter payment amount.
+    2. Tap "Receive payment & close".
+    3. Network drops (Slow 3G) after the POST is in-flight — axios 15s timeout fires.
+    4. Request goes to offlineQueue and replays later.
+    5. First request may have already committed server-side; replay hits completed stop.
+  expected: Idempotency key sent with every completeWithPayment POST so server returns cached result on replay.
+  actual: >
+    payment.tsx completeWithPaymentMut.mutateAsync() call (line 131) passes no
+    idempotencyKey field. offlineQueue replay (api-client.ts line 102-106) also
+    omits headers. Server's RF-019 idempotency guard never activates.
+  root_cause: >
+    payment.tsx does not generate or pass an idempotencyKey despite the DTO
+    accepting one. The offlineQueue persists body only, not headers, so even if a
+    key were added to the initial request it would not survive replay.
+  proposed_fix: >
+    apps/mobile/app/(driver)/route/stop/[stopId]/payment.tsx — generate
+    idempotencyKey = useMemo(() => crypto.randomUUID(), [stopId]) and pass it to
+    mutateAsync. Update offlineQueue to persist headers alongside body.
+  evidence: >
+    Code inspection: payment.tsx line 131 mutateAsync call has no idempotencyKey.
+    routes.ts useCompleteWithPayment (line 258) accepts it but it is never supplied.
+    api-client.ts offlineQueue.enqueue() (line 102) stores only endpoint/method/body.
+
+- id: BUG-DRV1-4
+  title: Payment screen shows "CASH RECEIVED" label for all payment methods
+  surface: web-driver
+  severity: P3
+  category: ux
+  repro: |
+    1. Open any stop → tap "Complete & collect".
+    2. Switch payment method to "Card", "Cheque", or "On account".
+    3. Observe the "received" amount label above the keypad.
+  expected: Label updates to match selected method (e.g. "CARD AMOUNT", "CHEQUE AMOUNT").
+  actual: Label always reads "CASH RECEIVED" regardless of selected method (Pressable segment control value changes, label does not).
+  root_cause: >
+    apps/mobile/app/(driver)/route/stop/[stopId]/payment.tsx line 235:
+    `<Text style={styles.eyebrowSmall}>CASH RECEIVED</Text>` is a static string
+    not bound to the `method` state variable.
+  proposed_fix: >
+    payment.tsx line 235 — replace static string with
+    `{method.toUpperCase()} RECEIVED` (hide/rename for "On account" case).
+  evidence: "Code: payment.tsx line 235 static 'CASH RECEIVED' Text node; method state exists but is not referenced in this label."
+
+- id: BUG-DRV1-5
+  title: Driver with 0-stop active run cannot complete the route — stuck state
+  surface: web-driver
+  severity: P1
+  category: flow-broken
+  repro: |
+    1. As operator (ux_admin), create a route with 0 stops and dispatch it to ux_driver_b.
+    2. Login as ux_driver_b.
+    3. On the StartOfDay screen, tap "Start route".
+    4. Observe the TodaysRoute screen.
+  expected: A "Mark route complete" button or equivalent should be available even with 0 stops.
+  actual: >
+    TodaysRoute renders "Mark route complete" only when `!nextStop && done > 0`.
+    With 0 stops: nextStop=null, done=0, so the button never renders.
+    The driver sees 0 stats, 0% progress, an empty stops list, and no CTA to finish.
+  root_cause: >
+    apps/mobile/app/(driver)/route/index.tsx line 304: condition
+    `!nextStop && done > 0` excludes the case where the run has zero stops.
+    The "All stops done!" hero card and complete button are gated on at least one
+    completed stop, leaving 0-stop runs permanently stuck in IN_PROGRESS.
+  proposed_fix: >
+    route/index.tsx line 304 — change condition to `!nextStop && (done > 0 || totalStops === 0)`
+    so a run with 0 stops also shows the complete button.
+  evidence: "Code: route/index.tsx line 304 condition; line 270 pct calculation (0/0 → 0). Live: ux_driver_b showed 'No route assigned' (no run dispatched), code analysis confirms stuck state."
+
+## Scenario coverage
+
+- S1 (0-stop run): PARTIAL-LIVE (no run dispatched by OPS-2) + code confirms BUG-DRV1-5
+- S2 (partial delivery): BLOCKED — auth throttled
+- S3 (skip + auto-complete regression): BLOCKED — auth throttled; code shows skip navigates to route screen without auto-complete check (low risk given RF-016 fix)
+- S4 (signature undo/re-capture): code-only — SignaturePad handleClear resets strokes[], onCapture(null) clears sigUri; re-sign emits new dataUrl; save() replaces podStore cleanly. No composite bug found.
+- S5 (POD photo cancel): code-only — PhotoCapture: if cancelled ImagePicker result.canceled=true, onAdd never called; photo screen Cancel calls backToStop() without setPhotos. No leak. PASS.
+- S6 (cash edge inputs): code-only — keypad-only input, no text field; "abc" impossible; $0.01 allowed; $999999.99 allowed (collected capped at invoiceTotal by Math.min). No input validation bug beyond UX (BUG-DRV1-4 label).
+- S7 (network throttle mid-payment): code-only — confirms BUG-DRV1-3 (no idempotency key).
+- S8 (force-close before payment): code-only — completeWithPayment is atomic; podStore is in-memory only (not persisted). Force-close before submit = stop stays PENDING = consistent state. Photos/sig lost from scratchpad on reload (P2 UX, not data integrity).
+
+## Suspected (no repro)
+
+- podStore in-memory only means repeated force-closes during a session erase all POD evidence (photos, signature, note); driver must re-capture on reload. Consider persist middleware.
+- getStoredUser() (auth.ts line 92) checks OP_KEYS before DRIVER_KEYS — same precedence bug as api-client, could return operator user object for dual-role sessions.

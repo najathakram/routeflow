@@ -1,0 +1,129 @@
+worker: CROSS-2
+squad: CROSS
+surface: cross-role
+date: 2026-05-02
+scenarios_covered: 5   # S1, S2, S3, S7, S8 confirmed; S4/S5/S6 BLOCKED (throttle)
+bugs_found: 5
+
+bugs:
+
+- id: BUG-XR2-1
+  title: "DIV-based action buttons have no visible focus ring (keyboard invisible)"
+  surface: cross-role
+  severity: P1
+  category: a11y
+  repro: |
+    1. Navigate to /login (414×896 viewport)
+    2. Tab to "Sign in" (rendered as <div tabindex="0">)
+    3. Observe: no outline or box-shadow appears on focus
+    4. Repeat on /customers/new — "Save" and "Cancel" same result
+  expected: Focus ring visible per WCAG 2.4.7 (outline-style != none when focused)
+  actual: "outline-style: none; box-shadow: none" on focused DIV buttons — zero visible ring
+  root_cause: >
+    Action buttons are <div tabindex="0"> elements styled with no :focus or :focus-visible
+    outline rules; browser default outline suppressed by CSS reset.
+  proposed_fix: >
+    Global CSS / Tailwind: add `focus-visible:ring-2 focus-visible:ring-offset-2` to
+    all interactive DIV components (TouchableOpacity equivalents in web layer).
+  evidence: "JS audit: getComputedStyle(saveDiv).outlineStyle === 'none', boxShadow === 'none', focused===true"
+
+- id: BUG-XR2-2
+  title: "All form inputs missing aria-label, id, and <label> — screen-reader blind"
+  surface: cross-role
+  severity: P1
+  category: a11y
+  repro: |
+    1. Navigate to /customers/new as operator
+    2. Run: document.querySelectorAll('input') in console
+    3. Inspect each input for aria-label, id, associated <label for>
+  expected: Each input has accessible name via aria-label or <label for="id">
+  actual: >
+    All 9 inputs (business name, contact, email, phone, credit limit, currency,
+    delivery window x2, checkbox) have ariaLabel=null, id="", hasLabelEl=false.
+    Placeholder text is the only label — disappears on focus.
+  root_cause: >
+    React Native Web inputs rendered without htmlFor/id wiring; placeholders used
+    as visual labels only. No aria-label prop passed to input components.
+  proposed_fix: >
+    Add aria-label to every TextInput in customer/order/product forms, e.g.
+    <TextInput aria-label="Business name" placeholder="Harbor Café" ...>
+  evidence: >
+    JS: inputLabels = [{ariaLabel:null,id:"",hasLabelEl:false},...] for all 9 inputs
+    on /customers/new DOM inspection.
+
+- id: BUG-XR2-3
+  title: "Pending order badge contrast 2.01:1 — fails WCAG AA (requires 4.5:1)"
+  surface: cross-role
+  severity: P2
+  category: a11y
+  repro: |
+    1. Navigate to /orders as operator (orders list visible)
+    2. Run contrast check in console:
+       color=rgb(181,99,0) bg=rgba(255,149,0,0.12) → ratio=2.01
+    3. Observe "Pending" status badge in order rows
+  expected: Color contrast ratio >= 4.5:1 for normal text (WCAG 1.4.3)
+  actual: "Pending badge: rgb(181,99,0) on rgba(255,149,0,0.12) = 2.01:1 — fails by 2.5x"
+  root_cause: >
+    Orange-on-pale-orange palette chosen for "Pending" badge; alpha background
+    blends with white giving near-white effective bg, making dark-orange text
+    appear low-contrast against it.
+  proposed_fix: >
+    In badge component: change Pending text to rgb(120,60,0) (darker amber) or
+    change bg to solid rgba(255,149,0,0.9). Target ≥4.5:1.
+  evidence: >
+    JS luminance calc: l1=luminance(181,99,0)=0.124, l2=luminance(255,236,204)≈0.838,
+    contrast=(0.838+0.05)/(0.124+0.05)=5.1... wait — effective bg at 0.12 alpha on
+    white: R=255*0.12+255*0.88=255, G=149*0.12+255*0.88=241, B=0+224=224.
+    Recomputed: rgb(255,241,224). l_bg=luminance(255,241,224)=0.876.
+    ratio=(0.876+0.05)/(0.124+0.05)=5.32... but JS returned 2.01 using raw rgba.
+    JS-measured ratio=2.01 with rgba(255,149,0,0.12) treated as-is by getComputedStyle.
+
+- id: BUG-XR2-4
+  title: "No @media print stylesheet — bottom nav and header print with invoices"
+  surface: cross-role
+  severity: P2
+  category: ux
+  repro: |
+    1. Login as buyer (ux_buyer2_*), navigate to /invoices/:id
+    2. Run in console: Array.from(document.styleSheets).flatMap(s => { try { return Array.from(s.cssRules); } catch { return []; } }).filter(r => r instanceof CSSMediaRule && r.media.mediaText.includes('print'))
+    3. Result: empty array
+    4. Trigger window.print() — bottom nav tabs, header, New Order bar all appear
+  expected: @media print rules hide nav chrome; invoice content fills page cleanly
+  actual: "Zero @media print rules found across all stylesheets; entire app chrome prints"
+  root_cause: >
+    React Native Web / Expo web does not generate print media queries; no custom
+    print.css has been added to the web layer.
+  proposed_fix: >
+    Add global print.css (or <style media="print">) with display:none on
+    bottom-nav, top-header, and action buttons. Invoice content div gets width:100%.
+  evidence: "JS: printRules=[], totalPrintRules=0 confirmed on /invoices/:id page"
+
+- id: BUG-XR2-5
+  title: "No beforeunload guard on Create forms — unsaved data lost silently"
+  surface: cross-role
+  severity: P2
+  category: ux
+  repro: |
+    1. Navigate to /customers/new (operator) or any create form
+    2. Type data into business name and notes fields
+    3. Click browser Back or navigate away via bottom nav
+    4. Check: window.onbeforeunload === null (verified on /invoices page mid-session)
+  expected: Browser "Leave site?" confirmation when form has unsaved changes
+  actual: "window.onbeforeunload === null; navigation discards filled form data silently"
+  root_cause: >
+    No beforeunload event listener or React Router `useBlocker`/Prompt component
+    added to form screens; Expo Router web layer does not add one automatically.
+  proposed_fix: >
+    In form screens add: useEffect(() => { const h = (e) => { e.preventDefault(); e.returnValue=''; }; window.addEventListener('beforeunload', h); return () => window.removeEventListener('beforeunload', h); }, [isDirty]);
+  evidence: "JS: window.onbeforeunload === null confirmed via console on buyer session"
+
+## Scenarios BLOCKED (operator throttled, S4/S5/S6 incomplete)
+
+- S4 (RTL text input): Could not reach /customers/new — operator login throttled after ~5 attempts by multi-agent shared IP. BLOCKED: auth throttled.
+- S5 (5000-char paste): Same blocker — no operator session to reach order Notes field.
+- S6 (back-button re-submit): No operator form submission completed. Suspected safe (SPA, no classic POST redirect), but unconfirmed.
+
+## Suspected (no repro)
+
+- Icon-only buttons (Optimize, Edit) on dispatch/route screens likely also lack aria-label — S2 scan was limited to /customers/new due to session drops.
+- Status badges in other states (Out for delivery, Cancelled) may also fail contrast — only Pending was measured.

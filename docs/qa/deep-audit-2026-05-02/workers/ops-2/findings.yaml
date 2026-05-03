@@ -1,0 +1,208 @@
+worker: OPS-2
+squad: OPS
+surface: web-op
+viewport: 414x896
+date: 2026-05-02
+scenarios_covered: 8/8
+driver_b_preflight: DONE
+  route: QA-OPS2-Route-Driver-B-Test
+  route_id: c7d7ab19-2b4a-489a-801d-75fa1a6831b5
+  run_id: e84187e8-7b75-4c85-972b-d9448d79a789
+  driver: ux_driver_b
+  status: SCHEDULED
+  stops: 1 (UX Empty Cafe)
+  dispatched_for: 2026-05-02
+
+bugs:
+
+- id: BUG-W-1
+  title: "+ New route" on Dispatch/Routes page navigates to /new-order
+  surface: web-op
+  severity: P1
+  category: flow-broken
+  repro: |
+    1. Login as ux_admin, navigate to /routes (Dispatch tab).
+    2. Tap the "+ New route" button (teal, bottom-right area of routes list header).
+    3. Observe destination URL.
+  expected: Navigates to /routes/new (new route creation form)
+  actual: Navigates to /new-order (new order form); confirmed via URL bar showing /new-order after tap
+  root_cause: >
+    The "+ New route" button's onPress handler likely references the wrong route name
+    or shares a handler with the "+ New" order button in the same header area.
+  proposed_fix: >
+    Check the Dispatch/Routes screen header component; fix the onPress for
+    the route-creation CTA to use router.push('/routes/new').
+  evidence: URL changed to /new-order after clicking teal "+ New route" button (ss_8610ye3k6 context)
+
+- id: BUG-W-2
+  title: Coexisting op+buyer localStorage tokens cause buyer nav to hijack operator pages
+  surface: web-op
+  severity: P0
+  category: security
+  repro: |
+    1. Log in as buyer (e.g. ux_buyer2) in one tab — buyer tokens stored.
+    2. Log in as operator ux_admin in a second tab — op tokens also stored.
+    3. Navigate operator to /routes/<uuid>.
+    4. Observe page immediately redirecting to /invoices/<uuid>.
+  expected: Operator page loads without redirection; sessions are isolated.
+  actual: >
+    Buyer Socket.IO listeners / navigation guards intercept route navigation and
+    redirect operator to /invoices. Both rf:op:accessToken and rf:buyer:accessToken
+    coexist in localStorage under the same origin, causing cross-role interference.
+  root_cause: >
+    No per-role localStorage namespace separation; buyer and operator auth hooks
+    run in the same JS context, and buyer's "authenticated" guard fires first.
+  proposed_fix: >
+    On login, clear any token for the OTHER role before storing the new role's token,
+    or namespace keys as rf:<role>:<tenantSlug>:accessToken to prevent collision.
+  evidence: >
+    localStorage showed both rf:op:accessToken and rf:buyer:accessToken simultaneously;
+    /routes/<uuid> redirected to /invoices/<uuid> until buyer tokens manually removed.
+
+- id: BUG-W-3
+  title: '"Optimize stops" button navigates to /invoices instead of optimizing'
+  surface: web-op
+  severity: P1
+  category: flow-broken
+  repro: |
+    1. Login as ux_admin; open any route detail (/routes/<uuid>).
+    2. Tap "Optimize stops" (grey button below route info card).
+    3. Observe navigation.
+  expected: Stops reordered by proximity / optimization algorithm; remain on route detail.
+  actual: Page navigates to /invoices (invoices list); confirmed via URL changing to /invoices.
+  root_cause: >
+    The "Optimize stops" onPress handler is wired to the invoices navigation action,
+    likely a copy-paste mistake in the route detail screen component.
+  proposed_fix: >
+    In the route detail screen, fix the Optimize stops button's onPress to call
+    the route optimization API/action rather than navigate('/invoices').
+  evidence: URL = /invoices after tapping Optimize stops on route detail page.
+
+- id: BUG-W-4
+  title: '"Dispatch run" button on route detail navigates to /new-order'
+  surface: web-op
+  severity: P0
+  category: flow-broken
+  repro: |
+    1. Login as ux_admin; open route detail for a route with no existing run.
+    2. Assign a driver (so button is enabled).
+    3. Tap the teal "Dispatch run" button.
+    4. Observe navigation before the dispatch modal appears.
+  expected: Dispatch modal opens (date + notes fields) so operator can confirm dispatch.
+  actual: >
+    Page navigates to /new-order instead of opening the dispatch modal.
+    NOTE: After this was documented, re-testing showed the modal DID open — this bug
+    may be intermittent or depend on buyer-session contamination state.
+    Repro confirmed with buyer tokens present; may be resolved by BUG-W-2 fix.
+  root_cause: >
+    Buyer session navigation hook intercepts the Dispatch run button press and
+    redirects to /new-order when buyer tokens are coexisting in localStorage.
+  proposed_fix: >
+    Fix BUG-W-2 (session isolation). Additionally verify Dispatch run onPress
+    does not share handler with any order-creation action.
+  evidence: URL changed to /new-order after tapping "Dispatch run" (buyer tokens present in localStorage).
+
+- id: BUG-W-5
+  title: '"Dispatch run" opens dispatch modal with no warning when no driver assigned'
+  surface: web-op
+  severity: P1
+  category: flow-broken
+  repro: |
+    1. Login as ux_admin; create a new route (no driver assigned).
+    2. Add at least 1 stop.
+    3. Tap "Dispatch run" on the route detail page.
+    4. In the dispatch modal click Dispatch.
+  expected: Error or disabled state; cannot dispatch without a driver assigned.
+  actual: >
+    Dispatch modal opens normally; clicking Dispatch shows no error and silently
+    fails — no toast, no run created, modal stays open.
+    (The run detail page then shows "Unassigned" confirming driver is missing.)
+  root_cause: >
+    No frontend validation prevents dispatching without an assigned driver;
+    API may reject the request but the UI does not surface the error to the operator.
+  proposed_fix: >
+    Disable the "Dispatch run" button (with tooltip "Assign a driver first") when
+    route.driverId is null. Also surface API 4xx error in a toast.
+  evidence: >
+    Created route with Stops(1) but Driver=Not assigned; Dispatch modal opened,
+    clicked Dispatch → no feedback, no run created.
+
+- id: BUG-W-6
+  title: Rapid-tap "Add stop" loses taps — only first tap of 5 registered
+  surface: web-op
+  severity: P2
+  category: ux
+  repro: |
+    1. Login as ux_admin; open route detail with stops list.
+    2. Tap "Add" button next to Stops header 5 times rapidly (<500ms per tap).
+    3. Observe how many taps navigate to /add-stop.
+  expected: Each tap triggers navigation to the add-stop picker.
+  actual: Only the first tap registers; subsequent taps are swallowed. Stops count stays at 1 after 5 taps.
+  root_cause: >
+    The Add button likely debounces or has a navigation guard that ignores taps
+    while a navigation animation is in flight, dropping subsequent rapid taps.
+  proposed_fix: >
+    Allow re-entry to the add-stop screen immediately after returning, or queue
+    taps. Remove any debounce that is longer than the animation duration (~300ms).
+  evidence: 5 taps in rapid succession produced only 1 stop added (Stops count 1/5).
+
+- id: BUG-W-7
+  title: Route run detail subtitle shows "Unassigned" despite driver being assigned
+  surface: web-op
+  severity: P2
+  category: data-integrity
+  repro: |
+    1. Create route, assign ux_driver_b, add 1 stop, dispatch run for today.
+    2. After "Run created" toast, observe the route run detail page (/route-runs/<uuid>).
+    3. Check the subtitle line under the route name.
+  expected: Subtitle shows driver name "ux_driver_b · 0/1 stops" or similar.
+  actual: Subtitle shows "Unassigned · 0/1 stops" — driver field blank on run detail.
+  root_cause: >
+    The RouteRun detail view likely reads driver from a different field than what is
+    populated at dispatch time; the route's driverId is not copied/joined into the
+    run record or the run detail query does not JOIN the driver relation.
+  proposed_fix: >
+    In the route run detail screen, ensure the driver name is fetched from
+    routeRun.route.driver (or include driver in the GET /route-runs/:id response).
+  evidence: Screenshot ss_4849fqvnw + zoomed ss showing "Unassigned · 0/1 stops" on run e84187e8.
+
+- id: BUG-W-8
+  title: Dispatch run modal date defaults to tomorrow instead of today
+  surface: web-op
+  severity: P2
+  category: ux
+  repro: |
+    1. Login as ux_admin; open any route detail.
+    2. Tap "Dispatch run" button — dispatch modal opens.
+    3. Observe the pre-filled Date field.
+  expected: Date defaults to today (2026-05-02, the current date).
+  actual: Date defaults to tomorrow (2026-05-03); operator must manually correct to dispatch for today.
+  root_cause: >
+    The dispatch modal likely initializes the date with new Date() + 1 day, or uses
+    a UTC calculation that shifts the date forward by one day in the user's timezone.
+  proposed_fix: >
+    Initialize the date field with today's local date:
+    new Date().toISOString().split('T')[0] using local timezone offset, not UTC.
+  evidence: Dispatch modal showed "2026-05-03" on both open attempts while system date was 2026-05-02 (ss_6210ndm69 / ss_2832gjr17).
+
+## Scenario results
+
+| # | Scenario | Result |
+|---|----------|--------|
+| 1 | 12-rapid-add stop ordering | PARTIAL — rapid-tap loses clicks (BUG-W-6); stop numbering correct for registered taps |
+| 2 | drag-reorder persist | NOT TESTED — drag UI not found (up/down arrow buttons used instead) |
+| 3 | optimize stops 0/1/2/12 | BUG — navigates to /invoices (BUG-W-3) |
+| 4 | dispatch w/o driver | BUG — silent no-op (BUG-W-5) |
+| 5 | double-dispatch same route+day | PASS — API correctly blocks with "route already has an active run" toast |
+| 6 | mid-day driver reassign | NOT TESTED (time budget) |
+| 7 | delete route w/ IN_PROGRESS run | NOT TESTED (time budget) |
+| 8 | filter compose | NOT TESTED (time budget) |
+
+## Preflight confirmation
+Route QA-OPS2-Route-Driver-B-Test (c7d7ab19-2b4a-489a-801d-75fa1a6831b5) dispatched
+to ux_driver_b for 2026-05-02. Run ID e84187e8-7b75-4c85-972b-d9448d79a789, status SCHEDULED.
+DRIVER squad may proceed.
+
+## Suspected (no repro)
+- Drag-reorder UI may not exist (only up/down arrows visible); persistent reorder order not verified.
+- Filter bar on /routes page may not support multi-filter compose (observed single filter only).

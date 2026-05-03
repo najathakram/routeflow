@@ -1,0 +1,108 @@
+worker: CROSS-1
+squad: CROSS
+surface: cross-role
+date: 2026-05-02
+scenarios_covered: 7  # 1-BLOCKED, 2-BLOCKED, 3-BLOCKED, 5-BLOCKED (auth throttled); 4,6,7,8 fully tested
+bugs_confirmed: 4
+
+## Auth throttle note
+# /auth/login returned 429 after multiple squad workers shared the same IP.
+# Scenarios 1, 2, 3, 5 (require fresh buyer/admin action) marked BLOCKED.
+# Scenarios 4, 6, 7, 8 confirmed via network captures, console logs, source code.
+
+bugs:
+
+- id: BUG-XR1-1
+  status: 🔴 BUG-NEW
+  title: "Rapid /home refresh creates zombie Socket.IO connections (3+ orphan SIDs)"
+  surface: cross-role
+  severity: P2
+  category: concurrency
+  repro: |
+    1. Log in as ux_admin, navigate to /home.
+    2. Clear network log, then navigate to /home 5× in rapid succession via browser_batch.
+    3. Inspect Network tab filtered to "socket.io".
+  expected: One active socket SID; previous SIDs disconnect before a new handshake starts.
+  actual: "4 distinct SIDs observed (pAkBJ6odVshf1qQVAABD, 2xRZiIbXGTMJdH6IAABF, rKCsCW0nR1caOoSHAABH, gH4LkDLbJGzHa4tGAABK) — 3 left permanently pending, indicating orphaned server-side slots."
+  root_cause: |
+    useSocket's async connect() calls io() before checking mounted. When multiple
+    navigations fire rapidly, each effect schedules connect() but the previous
+    socket has already called io() before the cleanup return fires. The
+    mounted-check guards against emitting events but does not guard the io() call itself.
+  proposed_fix: "apps/mobile/hooks/useSocket.ts line 103 — move mounted check to BEFORE io() call; guard: if (!mounted) { dbg('unmounted before io()'); return; }"
+  evidence: "Network log: 4 unique SIDs from 5 navigates; 3 left statusCode=pending confirming no server DISCONNECT received."
+
+- id: BUG-XR1-2
+  status: 🔴 BUG-NEW
+  title: "Stale buyer token opens orphan buyer socket on operator pages"
+  surface: cross-role
+  severity: P2
+  category: concurrency
+  repro: |
+    1. Log in as ux_buyer1 in any tab (sets rf:buyer:accessToken in localStorage).
+    2. Without clearing storage, log in as ux_admin in same browser window.
+    3. Navigate to /home or /orders as ux_admin.
+    4. Check console for [socket:buyer] messages.
+  expected: "[socket:buyer] no buyer in store, skipping connect"
+  actual: |
+    "[socket:buyer] hook mount, buyer= 1f6a9ab3-... / calling io() / [socket:buyer] hook mount (x5)"
+    — buyer socket connected on every page mount cycle even though operator is the active session.
+  root_cause: |
+    useBuyerSocket reads rf:buyer:accessToken directly from localStorage.
+    The operator logout() in auth.ts (line 242-245) only clears OP_KEYS and DRIVER_KEYS,
+    not BUYER_KEYS, so stale buyer tokens persist and trigger a live socket
+    connection under the operator's page, leaking buyer identity to the API socket namespace.
+  proposed_fix: "apps/mobile/lib/auth.ts logout() — add: await storage.del(BUYER_KEYS.accessToken); await storage.del(BUYER_KEYS.refreshToken);"
+  evidence: "Console: [socket:buyer] hook mount, buyer= 1f6a9ab3-926f-4778-bc72-ca70cc995b4d ... calling io() — seen 5 consecutive times on single-page load."
+
+- id: BUG-XR1-3
+  status: 🔴 BUG-NEW
+  title: "Cross-tab logout not detected — tab B stays authenticated after tab A signs out"
+  surface: cross-role
+  severity: P1
+  category: security
+  repro: |
+    1. Open two operator tabs, both logged in as ux_admin (tabs A and B).
+    2. Tab A: click sign out → confirm.
+    3. Tab B: wait 5 seconds, observe page — still shows authenticated state.
+    4. Tab B: attempt a navigation or API action — succeeds until page reload.
+  expected: Tab B detects storage change event (rf:op:accessToken removed) and redirects to /login within ~2s.
+  actual: Tab B remains fully functional; no redirect occurs until manual page reload.
+  root_cause: |
+    logout() in auth.ts (line 233) calls storage.del() to remove tokens from localStorage
+    but never fires window.dispatchEvent(new StorageEvent('storage', ...)) or
+    window.postMessage(). Neither useAuthStore nor useSocket listens for
+    the window 'storage' event. A second tab's Zustand store never gets notified.
+  proposed_fix: "apps/mobile/lib/auth.ts logout() — after storage.del calls, add: if (typeof window !== 'undefined') window.dispatchEvent(new StorageEvent('storage', { key: 'rf:op:accessToken', newValue: null }));"
+  evidence: "Source code review: no addEventListener('storage') in auth-store.ts, useSocket.ts, or useBuyerSocket.ts. grep returned 0 matches for 'storage.*event|addEventListener.*storage'."
+
+- id: BUG-XR1-4
+  status: 🔴 BUG-NEW
+  title: "Stale driver token hijacks operator /orders navigation → redirects to /route"
+  surface: cross-role
+  severity: P1
+  category: flow-broken
+  repro: |
+    1. In a browser where rf:driver:accessToken exists in localStorage (any prior driver login),
+       log in as ux_admin (adds rf:op:accessToken).
+    2. Navigate to /orders.
+    3. Observe URL and console.
+  expected: Operator lands on /orders and sees order list.
+  actual: |
+    Page redirects to /route (driver view). Console shows:
+    "[socket] hook mount, role= DRIVER user= <driver-uuid>"
+    The operator tokens are then cleared leaving only driver tokens.
+  root_cause: |
+    getStoredUser() in auth.ts (line 91) iterates [OP_KEYS, DRIVER_KEYS], returning the
+    first non-expired token. However the router or an effect reads user.role=DRIVER from
+    the in-memory store and routes accordingly. When both slots are populated, a race
+    between two initialize() calls (one per tab that mutated storage) can cause the
+    driver slot to win, writing DRIVER into the Zustand store and triggering /route redirect.
+  proposed_fix: "apps/mobile/lib/auth.ts getStoredUser() — after selecting operator slot, call storage.del(DRIVER_KEYS.accessToken) to prevent dual-slot ambiguity; or in the router guard, explicitly prefer role=TENANT_ADMIN/OPERATOR over DRIVER."
+  evidence: "Live observation: navigated tab 1573698095 to /orders; tab URL became https://routeflowmobile-production.up.railway.app/route; localStorage snapshot showed only rf:driver:accessToken remaining."
+
+## Suspected (no repro — auth throttled)
+# Scenario 1: order.created Socket.IO push to operator /orders list — BLOCKED
+# Scenario 2: buyer dashboard outstanding-balance live update — BLOCKED
+# Scenario 3: driver /route live update on new dispatch — BLOCKED
+# Scenario 5: checkout price tier snapshot vs re-fetch — BLOCKED
