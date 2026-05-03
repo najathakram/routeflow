@@ -145,10 +145,14 @@ export class OrdersService implements OnApplicationBootstrap {
    * Used by the buyer portal to merge new items into an existing order.
    */
   async findActiveOrder(customerId: string) {
+    // Orders flagged skipAutoMerge are intentionally kept separate by an operator —
+    // do NOT propose them as a merge target. The next operator-initiated create for
+    // the same customer should still see no "active" order to merge into.
     return this.prisma.forTenant().order.findFirst({
       where: {
         customerId,
         status: { in: [OrderStatus.DRAFT, OrderStatus.PENDING] },
+        skipAutoMerge: false,
       },
       include: {
         lineItems: {
@@ -186,6 +190,7 @@ export class OrdersService implements OnApplicationBootstrap {
         transaction: { is: null },
         invoices: { none: {} },
         returns: { none: {} },
+        skipAutoMerge: false,
       },
       include: {
         lineItems: {
@@ -432,6 +437,7 @@ export class OrdersService implements OnApplicationBootstrap {
         transaction: { is: null },
         invoices: { none: {} },
         returns: { none: {} },
+        skipAutoMerge: false,
       },
       _count: { _all: true },
       having: { customerId: { _count: { gt: 1 } } },
@@ -472,7 +478,11 @@ export class OrdersService implements OnApplicationBootstrap {
     }
   }
 
-  async create(dto: CreateOrderDto, user: JwtPayload) {
+  async create(
+    dto: CreateOrderDto,
+    user: JwtPayload,
+    options: { skipAutoMerge?: boolean } = {},
+  ) {
     // Resolve which customer this order is for
     let customerId: string;
 
@@ -701,6 +711,7 @@ export class OrdersService implements OnApplicationBootstrap {
               discountAmount: orderDiscount,
               notes: dto.notes,
               urgent: dto.urgent ?? false,
+              skipAutoMerge: options.skipAutoMerge ?? false,
               requestedDeliveryDate: dto.requestedDeliveryDate
                 ? new Date(dto.requestedDeliveryDate)
                 : undefined,

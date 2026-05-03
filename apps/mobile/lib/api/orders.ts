@@ -51,6 +51,21 @@ export interface CreateOrderAsDriverDto {
   routeRunId?: string;
   routeRunStopId?: string;
   immediateDelivery?: boolean;
+  /**
+   * Operator's choice when an active draft/pending order already exists for the customer.
+   * If omitted and an active order exists, the API responds 409 with the active-order
+   * summary so the UI can prompt.
+   */
+  mergeChoice?: 'merge' | 'separate';
+}
+
+export interface ActiveOrderSummary {
+  id: string;
+  orderNumber: string | null;
+  status: 'DRAFT' | 'PENDING';
+  itemCount: number;
+  total: number;
+  createdAt: string;
 }
 
 // ─── Queries ──────────────────────────────────────────────────────────────────
@@ -162,9 +177,22 @@ export function useChangeOrderStatus() {
 
 export function useCreateAdminOrder() {
   const qc = useQueryClient();
-  return useMutation<Order, Error, { customerId: string; items: { productId: string; qty: number }[]; notes?: string; urgent?: boolean; immediateDelivery?: boolean }>({
+  return useMutation<Order, Error, { customerId: string; items: { productId: string; qty: number }[]; notes?: string; urgent?: boolean; immediateDelivery?: boolean; mergeChoice?: 'merge' | 'separate' }>({
     mutationFn: (dto) => apiClient.post('/orders', dto).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['orders'] }),
+  });
+}
+
+/**
+ * Look up the most recent DRAFT/PENDING order for a customer (operator only).
+ * Used by the operator's create-order screen to ask whether to merge or keep separate.
+ */
+export function useActiveOrderForCustomer(customerId: string | null | undefined) {
+  return useQuery<ActiveOrderSummary | null>({
+    queryKey: ['orders', 'active', customerId],
+    queryFn: () =>
+      apiClient.get('/orders/active', { params: { customerId } }).then((r) => r.data),
+    enabled: !!customerId,
   });
 }
 

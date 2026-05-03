@@ -9,7 +9,7 @@ import { Modal, Textarea, Button, cn, useToast } from "@routeflow/ui/web";
 import { useQuery } from "@tanstack/react-query";
 import { useCustomers, useCustomerPrices, useCustomer } from "@/lib/api/customers";
 import { useProducts } from "@/lib/api/products";
-import { useCreateOrder } from "@/lib/api/orders";
+import { useCreateOrder, useActiveOrderForCustomer, type ActiveOrderSummary } from "@/lib/api/orders";
 import { apiClient } from "@/lib/api-client";
 import { getTierPrice } from "@/lib/pricing";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
@@ -93,6 +93,13 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
   const [createProductOpen, setCreateProductOpen] = React.useState(false);
   const [createProductInitialName, setCreateProductInitialName] = React.useState("");
   const [createProductInitialSku, setCreateProductInitialSku] = React.useState("");
+
+  // Merge-vs-separate prompt state. Set when the operator submits and the API
+  // (or our pre-check) reports an existing active order for the same customer.
+  const [mergePrompt, setMergePrompt] = React.useState<ActiveOrderSummary | null>(null);
+  // Pre-check: as soon as a customer is selected, look up their active order so we can
+  // surface the prompt the moment "Create Order" is clicked.
+  const { data: activeOrderForCustomer } = useActiveOrderForCustomer(selectedCustomer?.id);
 
   // Debounce customer search
   React.useEffect(() => {
@@ -322,6 +329,61 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
 
   const [requestedDeliveryDate, setRequestedDeliveryDate] = React.useState("");
 
+  // Stash form values across the merge-prompt round-trip so we can re-submit with the choice.
+  const pendingFormValuesRef = React.useRef<FormValues | null>(null);
+
+  /**
+   * Actually fire the create-order request with the operator's chosen mergeChoice
+   * (or no choice, if the customer has no active order).
+   */
+  const submitOrder = (data: FormValues, mergeChoice?: 'merge' | 'separate') => {
+    createOrder.mutate(
+      {
+        customerId: selectedCustomer!.id,
+        items: lineItems.map((li) => ({
+          productId: li.productId,
+          qty: li.qty,
+          ...(li.unitsPerBox ? { boxes: li.boxes ?? 0, pieces: li.pieces ?? 0 } : {}),
+          // Only send unitPrice for one-time discounts (not permanent special prices — backend handles those via CustomerPrice)
+          ...(li.priceType === 'DISCOUNTED' && li.discountedPrice != null ? { unitPrice: li.discountedPrice } : {}),
+        })),
+        notes: data.notes,
+        urgent: data.urgent,
+        requestedDeliveryDate: requestedDeliveryDate || undefined,
+        ...(discountAmt > 0 ? { discountAmount: discountAmt } : {}),
+        ...(mergeChoice ? { mergeChoice } : {}),
+      },
+      {
+        onSuccess: (created: any) => {
+          if (mergeChoice === 'merge') {
+            toast({
+              title: `Merged into order ${created?.orderNumber ?? '#' + created?.id?.slice(0, 6)}`,
+              variant: 'success',
+            });
+          } else {
+            toast({ title: "Order created", variant: "success" });
+          }
+          setMergePrompt(null);
+          pendingFormValuesRef.current = null;
+          onClose();
+        },
+        onError: (err: any) => {
+          // Belt-and-braces: if our pre-check missed an active order (race) the API
+          // returns 409 with code MERGE_CHOICE_REQUIRED. Surface the modal from that.
+          const body = err?.response?.data;
+          if (
+            err?.response?.status === 409 &&
+            body?.code === 'MERGE_CHOICE_REQUIRED' &&
+            body?.activeOrder
+          ) {
+            pendingFormValuesRef.current = data;
+            setMergePrompt(body.activeOrder as ActiveOrderSummary);
+          }
+        },
+      },
+    );
+  };
+
   const onSubmit = (data: FormValues) => {
     let hasErrors = false;
     if (!selectedCustomer) {
@@ -338,28 +400,14 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
     }
     if (hasErrors) return;
 
-    createOrder.mutate(
-      {
-        customerId: selectedCustomer!.id,
-        items: lineItems.map((li) => ({
-          productId: li.productId,
-          qty: li.qty,
-          ...(li.unitsPerBox ? { boxes: li.boxes ?? 0, pieces: li.pieces ?? 0 } : {}),
-          // Only send unitPrice for one-time discounts (not permanent special prices — backend handles those via CustomerPrice)
-          ...(li.priceType === 'DISCOUNTED' && li.discountedPrice != null ? { unitPrice: li.discountedPrice } : {}),
-        })),
-        notes: data.notes,
-        urgent: data.urgent,
-        requestedDeliveryDate: requestedDeliveryDate || undefined,
-        ...(discountAmt > 0 ? { discountAmount: discountAmt } : {}),
-      },
-      {
-        onSuccess: () => {
-          toast({ title: "Order created", variant: "success" });
-          onClose();
-        },
-      },
-    );
+    // If the customer already has an active draft/pending order, ask the operator
+    // explicitly — never silently merge or silently duplicate.
+    if (activeOrderForCustomer) {
+      pendingFormValuesRef.current = data;
+      setMergePrompt(activeOrderForCustomer);
+      return;
+    }
+    submitOrder(data);
   };
 
   // Extract the API's error message from Axios error structure
@@ -857,6 +905,59 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
         initialName={createProductInitialName}
         initialSku={createProductInitialSku}
       />
+
+      {/* Merge-or-separate prompt: shown when the selected customer already has an
+          unconfirmed order. Operator must choose explicitly — no default. */}
+      <Modal
+        open={!!mergePrompt}
+        onClose={() => {
+          setMergePrompt(null);
+          pendingFormValuesRef.current = null;
+        }}
+        title="Open order exists"
+        description={
+          mergePrompt
+            ? `This customer already has an open ${mergePrompt.status.toLowerCase()} order. Merge these items into it, or create a fully separate order?`
+            : undefined
+        }
+        className="max-w-md"
+        footer={
+          mergePrompt ? (
+            <div className="flex w-full flex-col gap-2">
+              <Button
+                type="button"
+                loading={createOrder.isPending}
+                onClick={() => {
+                  if (pendingFormValuesRef.current) submitOrder(pendingFormValuesRef.current, 'merge');
+                }}
+              >
+                Merge into {mergePrompt.orderNumber ?? 'existing order'}
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                loading={createOrder.isPending}
+                onClick={() => {
+                  if (pendingFormValuesRef.current) submitOrder(pendingFormValuesRef.current, 'separate');
+                }}
+              >
+                Create as separate order
+              </Button>
+            </div>
+          ) : null
+        }
+      >
+        {mergePrompt && (
+          <div className="rounded-md border border-surface-border bg-surface-raised px-3 py-2 text-sm">
+            <div className="font-medium text-navy">
+              {mergePrompt.orderNumber ?? mergePrompt.id.slice(0, 8)}
+            </div>
+            <div className="text-navy/60">
+              {mergePrompt.itemCount} item{mergePrompt.itemCount === 1 ? "" : "s"} · ${mergePrompt.total.toFixed(2)}
+            </div>
+          </div>
+        )}
+      </Modal>
     </Modal>
   );
 }

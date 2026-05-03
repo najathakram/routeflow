@@ -814,6 +814,9 @@ model Order {
   discountAmount        Decimal     @default(0) @db.Decimal(10, 2)
   requestedDeliveryDate DateTime?
   deliveredAt           DateTime?
+  // When true, the auto-merge cron + on-create merge will skip this order entirely.
+  // Set when an operator explicitly chose "Create as separate order" despite an active draft existing.
+  skipAutoMerge         Boolean     @default(false)
   createdAt             DateTime    @default(now())
   updatedAt             DateTime    @updatedAt
   tenantId              String?
@@ -851,6 +854,8 @@ model OrderItem {
   status    ItemStatus @default(PENDING)
   qty           Decimal    @db.Decimal(10, 3)
   deliveredQty  Decimal    @default(0) @db.Decimal(10, 3)
+  // Cumulative qty already covered by issued invoices (full or partial). Capped at qty.
+  invoicedQty   Decimal    @default(0) @db.Decimal(10, 3)
   unitPrice     Decimal    @db.Decimal(10, 2)
   subtotal      Decimal    @default(0) @db.Decimal(10, 2)
   priceType     PriceType  @default(STANDARD)

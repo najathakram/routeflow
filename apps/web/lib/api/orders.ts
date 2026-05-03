@@ -33,6 +33,17 @@ export interface OrderItem {
   pieces?: number | null;
   status: string;
   notes?: string;
+  /** Cumulative qty already covered by issued invoices for this item. */
+  invoicedQty?: number;
+}
+
+export interface ActiveOrderSummary {
+  id: string;
+  orderNumber: string | null;
+  status: 'DRAFT' | 'PENDING';
+  itemCount: number;
+  total: number;
+  createdAt: string;
 }
 
 interface PaginatedResponse<T> {
@@ -68,9 +79,28 @@ export function useCreateOrder() {
     urgent?: boolean;
     requestedDeliveryDate?: string;
     discountAmount?: number;
+    /**
+     * Operator's choice when an active draft/pending order already exists for the customer.
+     * If omitted and an active order exists, the API responds 409 with the active-order
+     * summary so the UI can prompt.
+     */
+    mergeChoice?: 'merge' | 'separate';
   }>({
     mutationFn: (dto) => apiClient.post('/orders', dto).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['orders'] }),
+  });
+}
+
+/**
+ * Look up the most recent DRAFT/PENDING order for a customer (operator only).
+ * Used by the create-order modal to ask the operator whether to merge or keep separate.
+ */
+export function useActiveOrderForCustomer(customerId: string | null | undefined) {
+  return useQuery<ActiveOrderSummary | null>({
+    queryKey: ['orders', 'active', customerId],
+    queryFn: () =>
+      apiClient.get('/orders/active', { params: { customerId } }).then((r) => r.data),
+    enabled: !!customerId,
   });
 }
 

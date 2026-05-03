@@ -26,6 +26,7 @@ import {
   UpdatePaymentDto,
   WriteOffDto,
 } from "./dto/create-invoice.dto";
+import { CreatePartialInvoiceDto } from "./dto/create-partial-invoice.dto";
 import { ListInvoicesDto } from "./dto/list-invoices.dto";
 import { PriceAdjustmentDto } from "./dto/price-adjustment.dto";
 
@@ -47,6 +48,20 @@ export class InvoicesController {
   @Roles(UserRole.OPERATOR)
   createFromOrder(@Param("orderId") orderId: string) {
     return this.invoicesService.createInvoiceFromOrder(orderId);
+  }
+
+  /**
+   * Create one of many partial invoices for an order. Operator (or driver, at delivery
+   * time) picks which OrderItem rows + how many of each to bill on this invoice, plus a
+   * due date. Each call increments OrderItem.invoicedQty so the order can't be over-billed.
+   */
+  @Post("from-order/:orderId/partial")
+  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
+  createPartialFromOrder(
+    @Param("orderId") orderId: string,
+    @Body() dto: CreatePartialInvoiceDto,
+  ) {
+    return this.invoicesService.createPartialFromOrder(orderId, dto);
   }
 
   @Get()

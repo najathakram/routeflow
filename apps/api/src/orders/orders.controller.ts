@@ -8,6 +8,7 @@ import {
   Param,
   Query,
   UseGuards,
+  ConflictException,
 } from "@nestjs/common";
 import { ApiTags, ApiBearerAuth } from "@nestjs/swagger";
 import { OrdersService } from "./orders.service";
@@ -42,38 +43,85 @@ export class OrdersController {
   @Roles(UserRole.OPERATOR, UserRole.CUSTOMER, UserRole.DRIVER)
   async create(@Body() dto: CreateOrderDto, @CurrentUser() user: JwtPayload) {
     const isStaff = user.role === UserRole.OPERATOR || (user.role as string) === "TENANT_ADMIN";
-    if (isStaff && dto.customerId && !dto.forceNew) {
+    // Legacy: forceNew=true is treated as an explicit "separate" choice.
+    const choice: "merge" | "separate" | undefined =
+      dto.mergeChoice ?? (dto.forceNew ? "separate" : undefined);
+
+    if (isStaff && dto.customerId) {
       const activeOrder = await this.ordersService.findActiveOrder(dto.customerId);
       if (activeOrder) {
-        const mergedMap = new Map<string, number>();
-        for (const li of activeOrder.lineItems) {
-          mergedMap.set(li.productId, Number(li.qty));
+        // Operator hasn't told us what to do — make them choose.
+        if (!choice) {
+          throw new ConflictException({
+            code: "MERGE_CHOICE_REQUIRED",
+            message: "An open draft/pending order exists for this customer.",
+            activeOrder: {
+              id: activeOrder.id,
+              orderNumber: activeOrder.orderNumber,
+              status: activeOrder.status,
+              itemCount: activeOrder.lineItems.length,
+              total: Number(activeOrder.total),
+              createdAt: activeOrder.createdAt,
+            },
+          });
         }
-        for (const item of dto.items ?? []) {
-          mergedMap.set(item.productId, (mergedMap.get(item.productId) ?? 0) + item.qty);
+        if (choice === "merge") {
+          const mergedMap = new Map<string, number>();
+          for (const li of activeOrder.lineItems) {
+            mergedMap.set(li.productId, Number(li.qty));
+          }
+          for (const item of dto.items ?? []) {
+            mergedMap.set(item.productId, (mergedMap.get(item.productId) ?? 0) + item.qty);
+          }
+          const mergedItems = Array.from(mergedMap.entries()).map(([productId, qty]) => ({
+            productId,
+            qty,
+          }));
+          await this.ordersService.updateOrderItems(
+            activeOrder.id,
+            { items: mergedItems } as any,
+            user,
+          );
+          // After merging, sweep any other unflagged PENDING orders for this customer.
+          await this.ordersService.mergeAllPendingForCustomer(dto.customerId);
+          return this.ordersService.findOne(activeOrder.id, user);
         }
-        const mergedItems = Array.from(mergedMap.entries()).map(([productId, qty]) => ({
-          productId,
-          qty,
-        }));
-        await this.ordersService.updateOrderItems(
-          activeOrder.id,
-          { items: mergedItems } as any,
-          user,
-        );
-        // Sweep any other PENDING orders for this customer into the winner.
-        await this.ordersService.mergeAllPendingForCustomer(dto.customerId);
-        return this.ordersService.findOne(activeOrder.id, user);
+        // choice === "separate" — fall through to plain create with skipAutoMerge=true
       }
     }
-    const created = await this.ordersService.create(dto, user);
-    // Newly-created order may share a customer with pre-existing PENDINGs
-    // (e.g. driver/customer-initiated path) — consolidate them too.
-    if (created.customerId) {
+
+    const created = await this.ordersService.create(dto, user, {
+      skipAutoMerge: choice === "separate",
+    });
+    // For non-staff (driver / customer) callers, keep the old auto-consolidate behaviour
+    // for newly-created orders that don't have skipAutoMerge set.
+    if (!isStaff && created.customerId) {
       const merged = await this.ordersService.mergeAllPendingForCustomer(created.customerId);
       if (merged) return merged;
     }
     return created;
+  }
+
+  /**
+   * Returns the most recent DRAFT/PENDING order summary for a customer, or null.
+   * The operator UI calls this when a customer is picked so it can prompt
+   * "Merge into existing order or create separate?"
+   */
+  @Get("active")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR)
+  async getActiveOrderForCustomer(@Query("customerId") customerId: string) {
+    if (!customerId) return null;
+    const order = await this.ordersService.findActiveOrder(customerId);
+    if (!order) return null;
+    return {
+      id: order.id,
+      orderNumber: order.orderNumber,
+      status: order.status,
+      itemCount: order.lineItems.length,
+      total: Number(order.total),
+      createdAt: order.createdAt,
+    };
   }
 
   @Get(":id/tracking")

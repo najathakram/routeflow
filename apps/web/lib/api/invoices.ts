@@ -586,6 +586,40 @@ export function useCreateInvoiceFromOrder() {
   });
 }
 
+// ─── Split / partial invoice from order ───────────────────────────────────────
+
+export interface CreatePartialInvoiceItem {
+  orderItemId: string;
+  qty: number;
+}
+
+export interface CreatePartialInvoiceDto {
+  orderId: string;
+  items: CreatePartialInvoiceItem[];
+  dueDate?: string;
+  terms?: string;
+  notes?: string;
+  send?: boolean;
+}
+
+/**
+ * Create one of N partial invoices from an order. Operator picks which order items
+ * (and how many of each) to bill on this invoice + a due date. Each call increments
+ * OrderItem.invoicedQty server-side so the order can't be over-invoiced.
+ */
+export function useCreatePartialInvoiceFromOrder() {
+  const qc = useQueryClient();
+  return useMutation<Invoice, Error, CreatePartialInvoiceDto>({
+    mutationFn: ({ orderId, ...dto }) =>
+      apiClient.post(`/invoices/from-order/${orderId}/partial`, dto).then((r) => r.data),
+    onSuccess: (_, { orderId }) => {
+      qc.invalidateQueries({ queryKey: ['invoices'] });
+      qc.invalidateQueries({ queryKey: ['orders'] });
+      qc.invalidateQueries({ queryKey: ['orders', orderId] });
+    },
+  });
+}
+
 // ─── Price Adjustment ─────────────────────────────────────────────────────────
 
 export interface PriceAdjustmentItem {

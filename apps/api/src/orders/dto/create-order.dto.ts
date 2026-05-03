@@ -54,4 +54,13 @@ export class CreateOrderDto {
   @IsOptional() @IsNumber() @Min(0) @Max(1_000_000) discountAmount?: number;
   /** When true, always create a new order even if a PENDING one already exists for this customer */
   @IsOptional() @IsBoolean() forceNew?: boolean;
+  /**
+   * Operator's explicit choice when an active DRAFT/PENDING order exists for this customer.
+   *  - "merge"    → fold these items into the existing active order
+   *  - "separate" → create a new isolated order; sets Order.skipAutoMerge=true so the cron sweep
+   *                 won't fold it back in
+   * If omitted AND an active order exists AND the caller is staff, the API responds 409 with
+   * `{ code: 'MERGE_CHOICE_REQUIRED', activeOrder: {...} }` so the UI can prompt.
+   */
+  @IsOptional() @IsEnum(["merge", "separate"]) mergeChoice?: "merge" | "separate";
 }

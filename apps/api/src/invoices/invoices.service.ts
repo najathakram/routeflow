@@ -16,6 +16,7 @@ import {
   UpdatePaymentDto,
   WriteOffDto,
 } from "./dto/create-invoice.dto";
+import { CreatePartialInvoiceDto } from "./dto/create-partial-invoice.dto";
 import { ListInvoicesDto } from "./dto/list-invoices.dto";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
@@ -223,12 +224,6 @@ export class InvoicesService {
   async createInvoiceFromOrder(orderId: string, txClient?: any) {
     const db = txClient ?? this.prisma;
 
-    // Idempotency: skip if ANY invoice already exists for this order (manual or batch)
-    const existing = await db.invoice.findFirst({
-      where: { orderId },
-    });
-    if (existing) return existing;
-
     // Fetch order with non-cancelled line items
     const order = await db.order.findUnique({
       where: { id: orderId },
@@ -241,30 +236,53 @@ export class InvoicesService {
     });
     if (!order) throw new NotFoundException("Order not found");
 
+    // Build per-item remaining qty (qty - invoicedQty). If all items are fully invoiced,
+    // skip — the order has already been split-invoiced by the operator/driver and there's
+    // nothing left to bill.
+    const remainingItems = order.lineItems
+      .map((li: any) => ({
+        li,
+        remainingQty: Number(li.qty) - Number(li.invoicedQty ?? 0),
+      }))
+      .filter((x: any) => x.remainingQty > 0.001);
+
+    if (remainingItems.length === 0) {
+      // Everything already invoiced. Return the most recent invoice for the order if any
+      // (callers historically expect a non-null result).
+      const existing = await db.invoice.findFirst({
+        where: { orderId },
+        orderBy: { createdAt: "desc" },
+      });
+      return existing;
+    }
+
     // RF-079: check customer tax-exempt status
     const customer = await db.customer.findUnique({
       where: { id: order.customerId },
       select: { isTaxExempt: true },
     });
 
-    // Build invoice items from order items, carrying price type info
+    // Build invoice items from REMAINING qty per order item (carries price type info).
     const tenantId = this.prisma.getTenantId();
-    const itemsData = order.lineItems.map((li: any) => ({
+    const itemsData = remainingItems.map(({ li, remainingQty }: any) => ({
       description: li.product?.name ?? `Product`,
       productId: li.productId,
-      qty: Number(li.qty),
+      qty: remainingQty,
       unitPrice: Number(li.unitPrice),
       discount: li.originalPrice != null ? Number(li.originalPrice) - Number(li.unitPrice) : 0,
       originalPrice: li.originalPrice != null ? Number(li.originalPrice) : null,
       priceType: li.priceType ?? "STANDARD",
       taxRate: 0,
-      subtotal: Number(li.subtotal),
+      subtotal: remainingQty * Number(li.unitPrice),
       tenantId, // nested creates bypass forTenant() extension
     }));
 
-    const subtotal = Number(order.subtotal);
+    const subtotal = itemsData.reduce((s: number, it: any) => s + it.subtotal, 0);
+    // Use the order's tax rate proportionally: tax = (subtotal_remaining / order.subtotal) * order.tax
+    const orderSubtotal = Number(order.subtotal) || 1;
+    const proportion = subtotal / orderSubtotal;
     // RF-079: tax-exempt customers owe $0 tax
-    const taxAmount = customer?.isTaxExempt ? 0 : Number(order.tax);
+    const taxAmount = customer?.isTaxExempt ? 0 : Number(order.tax) * proportion;
     const total = subtotal + taxAmount;
 
     // Due date from configured payment terms (e.g. "Net 30")
@@ -315,6 +333,15 @@ export class InvoicesService {
       throw err;
     }
 
+    // Bump invoicedQty on each affected order item so a subsequent auto-trigger or
+    // partial-invoice call sees the correct remaining qty.
+    for (const { li, remainingQty } of remainingItems) {
+      await db.orderItem.update({
+        where: { id: li.id },
+        data: { invoicedQty: { increment: remainingQty } },
+      });
+    }
+
     return invoice;
   }
 
@@ -324,12 +351,6 @@ export class InvoicesService {
    * (which is lost when the call is not awaited in the request lifecycle).
    */
   async createInvoiceFromOrderWithTenant(orderId: string, tenantId: string | null) {
-    // Use raw prisma queries with explicit tenantId filtering
-    const existing = await this.prisma.invoice.findFirst({
-      where: { orderId, ...(tenantId ? { tenantId } : {}) },
-    });
-    if (existing) return existing;
-
     const order = await this.prisma.order.findFirst({
       where: { id: orderId, ...(tenantId ? { tenantId } : {}) },
       include: {
@@ -341,16 +362,31 @@ export class InvoicesService {
     });
     if (!order) throw new NotFoundException("Order not found");
 
-    const itemsData = order.lineItems.map((li: any) => ({
+    const remainingItems = order.lineItems
+      .map((li: any) => ({
+        li,
+        remainingQty: Number(li.qty) - Number(li.invoicedQty ?? 0),
+      }))
+      .filter((x: any) => x.remainingQty > 0.001);
+
+    if (remainingItems.length === 0) {
+      // Nothing left to invoice — return the latest existing invoice (or null).
+      return this.prisma.invoice.findFirst({
+        where: { orderId, ...(tenantId ? { tenantId } : {}) },
+        orderBy: { createdAt: "desc" },
+      });
+    }
+
+    const itemsData = remainingItems.map(({ li, remainingQty }: any) => ({
       description: li.product?.name ?? `Product`,
       productId: li.productId,
-      qty: Number(li.qty),
+      qty: remainingQty,
       unitPrice: Number(li.unitPrice),
       discount: li.originalPrice != null ? Number(li.originalPrice) - Number(li.unitPrice) : 0,
       originalPrice: li.originalPrice != null ? Number(li.originalPrice) : null,
       priceType: li.priceType ?? "STANDARD",
       taxRate: 0,
-      subtotal: Number(li.subtotal),
+      subtotal: remainingQty * Number(li.unitPrice),
       tenantId,
     }));
 
@@ -361,8 +397,10 @@ export class InvoicesService {
           select: { isTaxExempt: true },
         })
       : null;
-    const subtotal = Number(order.subtotal);
-    const taxAmount = customerForTax?.isTaxExempt ? 0 : Number(order.tax);
+    const subtotal = itemsData.reduce((s: number, it: any) => s + it.subtotal, 0);
+    const orderSubtotal = Number(order.subtotal) || 1;
+    const proportion = subtotal / orderSubtotal;
+    const taxAmount = customerForTax?.isTaxExempt ? 0 : Number(order.tax) * proportion;
     const total = subtotal + taxAmount;
 
     // Resolve default terms — read SystemConfig with explicit tenantId since we're
@@ -397,8 +435,9 @@ export class InvoicesService {
 
     const invoiceNumber = await this.generateInvoiceNumber();
 
+    let invoice: any;
     try {
-      return await this.prisma.invoice.create({
+      invoice = await this.prisma.invoice.create({
         data: {
           invoiceNumber,
           customerId: order.customerId,
@@ -430,6 +469,133 @@ export class InvoicesService {
         throw new ConflictException("Invoice number conflict — please retry.");
       throw err;
     }
+
+    // Bump invoicedQty on each affected order item.
+    for (const { li, remainingQty } of remainingItems) {
+      await this.prisma.orderItem.update({
+        where: { id: li.id },
+        data: { invoicedQty: { increment: remainingQty } },
+      });
+    }
+
+    return invoice;
+  }
+
+  /**
+   * Create one of N partial invoices for an order. Operator picks which order items
+   * (and how many of each) go on this invoice + a due date. Each call increments
+   * OrderItem.invoicedQty so we never over-bill.
+   */
+  async createPartialFromOrder(orderId: string, dto: CreatePartialInvoiceDto) {
+    const order = await this.prisma.forTenant().order.findUnique({
+      where: { id: orderId },
+      include: {
+        lineItems: {
+          where: { status: { not: "CANCELLED" } },
+          include: { product: { select: { name: true } } },
+        },
+      },
+    });
+    if (!order) throw new NotFoundException("Order not found");
+
+    const itemById = new Map(order.lineItems.map((li: any) => [li.id, li]));
+
+    // Validate every requested item exists on the order and qty is within remaining.
+    const itemsData: any[] = [];
+    let subtotal = 0;
+    for (const req of dto.items) {
+      const li: any = itemById.get(req.orderItemId);
+      if (!li) {
+        throw new BadRequestException(`Order item ${req.orderItemId} not found on order ${orderId}`);
+      }
+      const remaining = Number(li.qty) - Number(li.invoicedQty ?? 0);
+      if (req.qty > remaining + 0.001) {
+        throw new BadRequestException(
+          `Requested qty ${req.qty} exceeds remaining ${remaining} for ${li.product?.name ?? li.productId}`,
+        );
+      }
+      const lineSub = req.qty * Number(li.unitPrice);
+      subtotal += lineSub;
+      itemsData.push({
+        description: li.product?.name ?? "Product",
+        productId: li.productId,
+        qty: req.qty,
+        unitPrice: Number(li.unitPrice),
+        discount: li.originalPrice != null ? Number(li.originalPrice) - Number(li.unitPrice) : 0,
+        originalPrice: li.originalPrice != null ? Number(li.originalPrice) : null,
+        priceType: li.priceType ?? "STANDARD",
+        taxRate: 0,
+        subtotal: lineSub,
+        tenantId: this.prisma.getTenantId(),
+      });
+    }
+
+    const customer = await this.prisma
+      .forTenant()
+      .customer.findUnique({ where: { id: order.customerId }, select: { isTaxExempt: true } });
+    const orderSubtotal = Number(order.subtotal) || 1;
+    const proportion = subtotal / orderSubtotal;
+    const taxAmount = (customer as any)?.isTaxExempt ? 0 : Number(order.tax) * proportion;
+    const total = subtotal + taxAmount;
+
+    // Resolve due date: explicit dto.dueDate wins, else default term.
+    const { terms: defaultTerms, dueDays } = await this.resolveDefaultTerms();
+    let dueDate: Date;
+    if (dto.dueDate) {
+      dueDate = new Date(dto.dueDate);
+    } else {
+      dueDate = new Date();
+      dueDate.setDate(dueDate.getDate() + dueDays);
+    }
+
+    const tenantDefaults = await this.resolveTenantInvoiceDefaults();
+    const tenantId = this.prisma.getTenantId();
+    const invoiceNumber = await this.generateInvoiceNumber();
+
+    let invoice: any;
+    try {
+      invoice = await this.prisma.forTenant().invoice.create({
+        data: {
+          invoiceNumber,
+          customerId: order.customerId,
+          orderId: order.id,
+          status: InvoiceStatus.DRAFT,
+          subtotal,
+          taxAmount,
+          discount: 0,
+          shippingFee: 0,
+          total,
+          dueDate,
+          terms: dto.terms ?? tenantDefaults.terms ?? defaultTerms,
+          issueDate: new Date(),
+          notes: dto.notes ?? tenantDefaults.notes ?? (order.orderNumber ? `Order #${order.orderNumber}` : null),
+          items: { create: itemsData },
+          ...(tenantId ? { tenantId } : {}),
+        },
+        include: {
+          customer: { select: { id: true, businessName: true, email: true, phone: true, mobile: true } },
+          items: true,
+          payments: true,
+        },
+      });
+    } catch (err: any) {
+      if (err?.code === "P2002")
+        throw new ConflictException("Invoice number conflict — please retry.");
+      throw err;
+    }
+
+    // Increment invoicedQty on each chosen order item.
+    for (const req of dto.items) {
+      await this.prisma.forTenant().orderItem.update({
+        where: { id: req.orderItemId },
+        data: { invoicedQty: { increment: req.qty } },
+      });
+    }
+
+    if (dto.send) {
+      return this.send(invoice.id);
+    }
+    return invoice;
   }
 
   /**

@@ -33,6 +33,7 @@ import { useCreateInvoiceFromOrder, useSendInvoice, useSendInvoiceEmail } from "
 import { useProducts } from "@/lib/api/products";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
+import { SplitInvoiceModal } from "../_components/SplitInvoiceModal";
 import { apiClient } from "@/lib/api-client";
 
 // ─── Send Invoice Modal ────────────────────────────────────────────────────────
@@ -712,6 +713,9 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
 
   // Invoice send modal (shown after marking delivered)
   const [invoiceModal, setInvoiceModal] = React.useState<InvoiceModalData | null>(null);
+
+  // Split-invoice modal (operator can split an order into multiple invoices)
+  const [splitInvoiceOpen, setSplitInvoiceOpen] = React.useState(false);
 
   const { toast } = useToast();
 
@@ -1463,10 +1467,11 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
             </dl>
           </Card>
 
-          {/* Invoice link(s) */}
-          {(localStatus === "DELIVERED" || (localStatus as string) === "PARTIALLY_DELIVERED") && (
+          {/* Invoice card — show for any non-draft, non-cancelled order so the operator
+              can split into multiple invoices any time after the order is confirmed. */}
+          {localStatus !== "DRAFT" && localStatus !== "CANCELLED" && (
             <Card title={`Invoice${((order as any).invoices?.length ?? 0) > 1 ? "s" : ""}`}>
-              {(order as any).invoices?.length > 0 ? (
+              {(order as any).invoices?.length > 0 && (
                 <div className="space-y-3">
                   {(order as any).invoices.map((inv: any) => (
                     <div key={inv.id} className="space-y-1">
@@ -1476,7 +1481,14 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                           {inv.invoiceNumber}
                         </span>
                       </div>
-                      <Badge status={inv.status as BadgeStatus} />
+                      <div className="flex items-center gap-2">
+                        <Badge status={inv.status as BadgeStatus} />
+                        {inv.dueDate && (
+                          <span className="text-xs text-navy/60">
+                            Due {new Date(inv.dueDate).toLocaleDateString()}
+                          </span>
+                        )}
+                      </div>
                       <Link
                         href={`/invoices/${inv.id}`}
                         className="block text-xs text-brand-500 hover:underline"
@@ -1486,23 +1498,60 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                     </div>
                   ))}
                 </div>
-              ) : (
-                <div className="space-y-2">
-                  <p className="text-xs text-navy/50">No invoice generated yet.</p>
-                  <Button
-                    size="sm"
-                    leftIcon={<FileText className="h-4 w-4" />}
-                    loading={createInvoiceFromOrder.isPending}
-                    onClick={() => createInvoiceFromOrder.mutate(order.id)}
-                  >
-                    Generate Invoice
-                  </Button>
-                </div>
               )}
+
+              {(() => {
+                const items = (order.lineItems ?? []) as any[];
+                const hasRemaining = items.some(
+                  (li) => Number(li.qty) - Number((li as any).invoicedQty ?? 0) > 0.001,
+                );
+                const hasNoInvoiceYet = !((order as any).invoices?.length > 0);
+                if (!hasRemaining && !hasNoInvoiceYet) return null;
+                return (
+                  <div className="mt-3 space-y-2 border-t border-surface-border pt-3">
+                    {hasNoInvoiceYet && (
+                      <Button
+                        size="sm"
+                        leftIcon={<FileText className="h-4 w-4" />}
+                        loading={createInvoiceFromOrder.isPending}
+                        onClick={() => createInvoiceFromOrder.mutate(order.id)}
+                      >
+                        Generate Invoice (full order)
+                      </Button>
+                    )}
+                    {hasRemaining && (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => setSplitInvoiceOpen(true)}
+                      >
+                        Split into invoice…
+                      </Button>
+                    )}
+                  </div>
+                );
+              })()}
             </Card>
           )}
         </div>
       </div>
+
+      {/* Split-invoice modal: operator picks per-item qty + due date, and we POST to
+          /invoices/from-order/:orderId/partial. Each call increments invoicedQty. */}
+      <SplitInvoiceModal
+        isOpen={splitInvoiceOpen}
+        onClose={() => setSplitInvoiceOpen(false)}
+        orderId={order.id}
+        orderNumber={order.orderNumber ?? null}
+        items={(order.lineItems ?? []).map((li: any) => ({
+          id: li.id,
+          productName: li.product?.name ?? "Item",
+          qty: Number(li.qty),
+          invoicedQty: Number((li as any).invoicedQty ?? 0),
+          unitPrice: Number(li.unitPrice),
+          unit: li.product?.unit,
+        }))}
+      />
 
       {/* Cancel confirmation */}
       <ConfirmDialog
