@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { Platform } from "react-native";
 import { io, type Socket } from "socket.io-client";
 import { useQueryClient } from "@tanstack/react-query";
@@ -32,7 +32,6 @@ function dbgErr(...args: unknown[]) {
 export function useBuyerSocket() {
   const qc = useQueryClient();
   const { buyer } = useBuyerSessionStore();
-  const socketRef = useRef<Socket | null>(null);
 
   useEffect(() => {
     dbg("hook mount, buyer=", buyer ? buyer.id : null);
@@ -55,6 +54,9 @@ export function useBuyerSocket() {
     }
 
     let mounted = true;
+    // BUG-XR1-1: per-effect closure variable instead of useRef so cleanup
+    // disconnects whatever connect() assigns even if cleanup ran first.
+    let localSocket: Socket | null = null;
 
     const connect = async () => {
       let token: string | null = null;
@@ -90,7 +92,13 @@ export function useBuyerSocket() {
         reconnectionDelayMax: 30_000,
         reconnectionAttempts: Infinity,
       });
-      socketRef.current = socket;
+      // Race-check: cleanup may have run between the await above and now.
+      if (!mounted) {
+        dbg("unmounted during io() handshake — disconnecting");
+        socket.disconnect();
+        return;
+      }
+      localSocket = socket;
 
       socket.on("connect", () => {
         dbg("connected", socket.id);
@@ -128,9 +136,9 @@ export function useBuyerSocket() {
 
     return () => {
       mounted = false;
-      if (socketRef.current) {
-        socketRef.current.disconnect();
-        socketRef.current = null;
+      if (localSocket) {
+        localSocket.disconnect();
+        localSocket = null;
       }
     };
   }, [buyer, qc]);

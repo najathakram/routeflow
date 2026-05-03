@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { Platform } from "react-native";
 import { io, type Socket } from "socket.io-client";
 import { useQueryClient } from "@tanstack/react-query";
@@ -52,7 +52,6 @@ interface RouteDispatchedPayload {
 export function useSocket() {
   const qc = useQueryClient();
   const { user } = useAuthStore();
-  const socketRef = useRef<Socket | null>(null);
 
   useEffect(() => {
     const role = user?.role ?? "(none)";
@@ -76,6 +75,13 @@ export function useSocket() {
     }
 
     let mounted = true;
+    // BUG-XR1-1: capture the socket in this effect's closure, not in a
+    // useRef. The useRef approach leaked sockets when cleanup ran before
+    // connect()'s async storage read finished — the cleanup saw socketRef
+    // still null, then connect() created and assigned a socket that nobody
+    // ever disconnected. With a per-effect local variable the cleanup
+    // closure can disconnect whatever connect() assigns.
+    let localSocket: Socket | null = null;
 
     const connect = async () => {
       let token: string | null = null;
@@ -114,7 +120,14 @@ export function useSocket() {
         reconnectionAttempts: Infinity,
       });
 
-      socketRef.current = socket;
+      // Race-check: cleanup may have run between the await above and now;
+      // disconnect immediately and abandon if so.
+      if (!mounted) {
+        dbg("unmounted during io() handshake — disconnecting");
+        socket.disconnect();
+        return;
+      }
+      localSocket = socket;
 
       socket.on("connect", () => {
         dbg("connected", socket.id);
@@ -177,9 +190,9 @@ export function useSocket() {
 
     return () => {
       mounted = false;
-      if (socketRef.current) {
-        socketRef.current.disconnect();
-        socketRef.current = null;
+      if (localSocket) {
+        localSocket.disconnect();
+        localSocket = null;
       }
     };
   }, [user, qc]);
