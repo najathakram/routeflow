@@ -8,11 +8,11 @@ import {
   Patch,
   Post,
   Query,
-  UploadedFile,
+  UploadedFiles,
   UseGuards,
   UseInterceptors,
 } from "@nestjs/common";
-import { FileInterceptor } from "@nestjs/platform-express";
+import { FilesInterceptor } from "@nestjs/platform-express";
 import { UserRole } from "@prisma/client";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
@@ -50,15 +50,36 @@ export class VendorBillsController {
   }
 
   @Post("scan-invoice")
-  @UseInterceptors(FileInterceptor("image", { limits: { fileSize: 20 * 1024 * 1024 } }))
-  scanInvoice(@UploadedFile() file: Express.Multer.File) {
-    if (!file) throw new BadRequestException("No file provided");
-    const mimeType = file.mimetype || "image/jpeg";
-    const allowed = ["image/jpeg", "image/png", "image/gif", "image/webp", "application/pdf"];
-    if (!allowed.includes(mimeType)) {
-      throw new BadRequestException("Only JPEG, PNG, WebP, GIF, or PDF files are accepted");
+  @UseInterceptors(
+    // Up to 10 pages, 25MB per file. Field name accepts both `image` (legacy single-file
+    // clients) and `images` (multi-page clients) — multer matches by field name and the
+    // interceptor returns whichever was sent.
+    FilesInterceptor("images", 10, { limits: { fileSize: 25 * 1024 * 1024 } }),
+  )
+  scanInvoice(@UploadedFiles() files: Express.Multer.File[]) {
+    if (!files || files.length === 0) {
+      throw new BadRequestException("No file provided");
     }
-    return this.vendorBillsService.scanInvoice(file.buffer, mimeType);
+    const allowed = [
+      "image/jpeg",
+      "image/png",
+      "image/gif",
+      "image/webp",
+      "image/heic",
+      "image/heif",
+      "application/pdf",
+    ];
+    for (const f of files) {
+      const mt = f.mimetype || "image/jpeg";
+      if (!allowed.includes(mt)) {
+        throw new BadRequestException(
+          `Unsupported file type "${mt}" — accepted: JPEG, PNG, WebP, GIF, HEIC, PDF`,
+        );
+      }
+    }
+    return this.vendorBillsService.scanInvoice(
+      files.map((f) => ({ buffer: f.buffer, mimeType: f.mimetype || "image/jpeg" })),
+    );
   }
 
   // Product mapping memory — must be before :id routes

@@ -121,17 +121,26 @@ const DRIVER_NAV: NavEntry[] = [
 function getNavForRole(role: string | undefined, canActAsDriver?: boolean): NavEntry[] {
   if (role === "CUSTOMER") return CUSTOMER_NAV;
   if (role === "DRIVER")   return DRIVER_NAV;
-  // Operators who can also act as drivers get "My Routes" in their nav
+  // Operators who can also act as drivers get "My Routes" inside the Dispatch
+  // group (alongside Overview / Routes / Drivers) instead of as a stand-alone
+  // top-level item — keeps the sidebar tidy and groups all dispatch tools.
   if (canActAsDriver) {
-    const hasMyRoutes = OPERATOR_NAV.some(
-      (e) => e.kind === "leaf" && e.href === "/routes/my-runs",
-    );
-    if (!hasMyRoutes) {
-      return [
-        ...OPERATOR_NAV,
-        { kind: "leaf", label: "My Routes", href: "/routes/my-runs", icon: MapPin },
-      ];
-    }
+    return OPERATOR_NAV.map((entry): NavEntry => {
+      if (entry.kind === "group" && entry.label === "Dispatch") {
+        const alreadyHasMyRoutes = entry.children.some(
+          (c) => c.href === "/routes/my-runs",
+        );
+        if (alreadyHasMyRoutes) return entry;
+        return {
+          ...entry,
+          children: [
+            ...entry.children,
+            { kind: "leaf", label: "My Routes", href: "/routes/my-runs", icon: MapPin },
+          ],
+        };
+      }
+      return entry;
+    });
   }
   return OPERATOR_NAV; // OPERATOR, SUPER_ADMIN, TENANT_ADMIN, unknown
 }
