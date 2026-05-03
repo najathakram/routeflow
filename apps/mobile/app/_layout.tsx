@@ -227,12 +227,12 @@ export default function RootLayout() {
     if (fontsLoaded || fontsError) SplashScreen.hideAsync();
   }, [fontsLoaded, fontsError]);
 
-  // Don't block the entire app on font loading. The previous gate
+  // Font loading is best-effort. The previous gate
   // (`if (!fontsLoaded) return null`) caused the web bundle to render an
-  // empty <div id="root"> — the app appeared "not loading" — when
-  // expo-font's promise hung or the font assets failed silently. Render with
-  // the system font fallback while custom fonts load in the background; the
-  // tree re-renders once they're ready.
+  // empty <div id="root"> when expo-font's promise hung or errored. Render
+  // immediately with the system font fallback; the tree re-renders once the
+  // Inter family is available. fontsError unblocks the splash screen so it
+  // can never sit forever if font loading genuinely fails.
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
