@@ -52,7 +52,7 @@ export default function ScanInvoiceScreen() {
     setStep("scanning");
 
     const formData = new FormData();
-    formData.append("file", {
+    formData.append("image", {
       uri: asset.uri,
       name: "invoice.jpg",
       type: asset.mimeType ?? "image/jpeg",
