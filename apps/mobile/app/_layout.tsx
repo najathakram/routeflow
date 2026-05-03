@@ -216,7 +216,7 @@ const webStyles = StyleSheet.create({
 });
 
 export default function RootLayout() {
-  const [fontsLoaded] = useFonts({
+  const [fontsLoaded, fontsError] = useFonts({
     Inter_400Regular,
     Inter_500Medium,
     Inter_600SemiBold,
@@ -224,10 +224,15 @@ export default function RootLayout() {
   });
 
   useEffect(() => {
-    if (fontsLoaded) SplashScreen.hideAsync();
-  }, [fontsLoaded]);
+    if (fontsLoaded || fontsError) SplashScreen.hideAsync();
+  }, [fontsLoaded, fontsError]);
 
-  if (!fontsLoaded) return null;
+  // Don't block the entire app on font loading. The previous gate
+  // (`if (!fontsLoaded) return null`) caused the web bundle to render an
+  // empty <div id="root"> — the app appeared "not loading" — when
+  // expo-font's promise hung or the font assets failed silently. Render with
+  // the system font fallback while custom fonts load in the background; the
+  // tree re-renders once they're ready.
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
