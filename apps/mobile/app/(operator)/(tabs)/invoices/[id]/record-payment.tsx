@@ -149,7 +149,7 @@ export default function RecordPaymentScreen() {
           <FormTextInput
             value={paidAt}
             onChangeText={setPaidAt}
-            placeholder="2025-06-01"
+            placeholder={new Date().toISOString().slice(0, 10)}
             keyboardType="numbers-and-punctuation"
           />
         </FormField>

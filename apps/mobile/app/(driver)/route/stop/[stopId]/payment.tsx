@@ -232,7 +232,7 @@ export default function PaymentScreen() {
 
         <View style={styles.receivedBlock}>
           <View>
-            <Text style={styles.eyebrowSmall}>CASH RECEIVED</Text>
+            <Text style={styles.eyebrowSmall}>{method.toUpperCase()} RECEIVED</Text>
             <Text style={styles.receivedValue}>${received}</Text>
           </View>
           <View style={styles.changeBlock}>

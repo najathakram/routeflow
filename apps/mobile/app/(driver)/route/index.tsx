@@ -301,13 +301,15 @@ function TodaysRoute({
           </View>
         </View>
 
-        {!nextStop && done > 0 ? (
+        {!nextStop ? (
           <View style={{ padding: 16, paddingTop: 14 }}>
             <View style={[styles.heroCard, { backgroundColor: ios.system.greenInk }]}>
               <Ionicons name="checkmark-circle" size={32} color="#fff" style={{ marginBottom: 8 }} />
-              <Text style={styles.heroTitleLg}>All stops done!</Text>
+              <Text style={styles.heroTitleLg}>
+                {totalStops === 0 ? "No stops on this route" : "All stops done!"}
+              </Text>
               <Text style={[styles.heroSub, { marginBottom: 16 }]}>
-                {done} of {totalStops} delivered
+                {totalStops === 0 ? "Mark complete to finish the run." : `${done} of ${totalStops} delivered`}
               </Text>
               <Pressable
                 style={[styles.heroBtnGhost, { alignSelf: "stretch", justifyContent: "center" }]}

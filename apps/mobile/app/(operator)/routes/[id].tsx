@@ -368,16 +368,34 @@ export default function RouteDetailScreen() {
             </Text>
           </Pressable>
 
-          <Pressable
-            style={[styles.dispatchBtn]}
-            onPress={() => {
-              setDispatchDate(new Date().toISOString().slice(0, 10));
-              setDispatchVisible(true);
-            }}
-          >
-            <Ionicons name="play-circle-outline" size={18} color="#fff" />
-            <Text style={styles.dispatchBtnText}>Dispatch run</Text>
-          </Pressable>
+          {(() => {
+            const cannotDispatch = !driver || stops.length === 0;
+            const dispatchHint = !driver
+              ? "Assign a driver before dispatching"
+              : stops.length === 0
+                ? "Add at least one stop before dispatching"
+                : null;
+            return (
+              <>
+                <Pressable
+                  style={[styles.dispatchBtn, cannotDispatch && { opacity: 0.4 }]}
+                  onPress={() => {
+                    setDispatchDate(new Date().toISOString().slice(0, 10));
+                    setDispatchVisible(true);
+                  }}
+                  disabled={cannotDispatch}
+                >
+                  <Ionicons name="play-circle-outline" size={18} color="#fff" />
+                  <Text style={styles.dispatchBtnText}>Dispatch run</Text>
+                </Pressable>
+                {dispatchHint ? (
+                  <Text style={{ color: ios.label3, fontSize: 13, textAlign: "center", marginTop: -6 }}>
+                    {dispatchHint}
+                  </Text>
+                ) : null}
+              </>
+            );
+          })()}
 
           <Pressable style={styles.deleteBtn} onPress={handleDelete} disabled={deleteMut.isPending}>
             <Ionicons name="trash-outline" size={18} color={ios.system.red} />

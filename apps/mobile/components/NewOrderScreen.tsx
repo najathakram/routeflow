@@ -419,19 +419,27 @@ function ProductPickView({
             </Text>
             <Text style={styles.footerTotal}>${total.toFixed(2)}</Text>
           </View>
-          <Pressable
-            style={[
-              styles.confirmBtn,
-              (!canSave || createOrder.isPending) && styles.confirmBtnDisabled,
-            ]}
-            disabled={!canSave}
-            onPress={onSave}
-          >
-            <Text style={styles.confirmBtnText}>
-              {createOrder.isPending ? "Saving…" : "Confirm order"}
-            </Text>
-            <Ionicons name="arrow-forward" size={14} color="#fff" />
-          </Pressable>
+          <View style={{ alignItems: "flex-end" }}>
+            <Pressable
+              style={[
+                styles.confirmBtn,
+                (!canSave || createOrder.isPending) && styles.confirmBtnDisabled,
+              ]}
+              disabled={!canSave}
+              onPress={onSave}
+              accessibilityState={{ disabled: !canSave }}
+            >
+              <Text style={styles.confirmBtnText}>
+                {createOrder.isPending ? "Saving…" : "Confirm order"}
+              </Text>
+              <Ionicons name="arrow-forward" size={14} color="#fff" />
+            </Pressable>
+            {totalItems === 0 && !createOrder.isPending ? (
+              <Text style={{ color: ios.label3, fontSize: 12, marginTop: 4 }}>
+                Add at least one item
+              </Text>
+            ) : null}
+          </View>
         </View>
       </View>
 
@@ -608,6 +616,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 6,
   },
-  confirmBtnDisabled: { opacity: 0.55 },
+  confirmBtnDisabled: { opacity: 0.35 },
   confirmBtnText: { color: "#fff", fontSize: 16, fontFamily: "Inter_600SemiBold" },
 });
