@@ -71,7 +71,21 @@ export class InvoicesService {
     return this.generateInvoiceNumber();
   }
 
-  private recomputeStatus(totalPaid: number, total: number, dueDate: Date | null): InvoiceStatus {
+  private recomputeStatus(
+    totalPaid: number,
+    total: number,
+    dueDate: Date | null,
+    currentStatus?: InvoiceStatus,
+  ): InvoiceStatus {
+    // DRAFT, VOID, and WRITTEN_OFF are terminal/deliberate states — payment-driven
+    // recalculation must never override them.
+    if (
+      currentStatus === InvoiceStatus.DRAFT ||
+      currentStatus === InvoiceStatus.VOID ||
+      currentStatus === InvoiceStatus.WRITTEN_OFF
+    ) {
+      return currentStatus;
+    }
     if (totalPaid >= total - 0.001) return InvoiceStatus.PAID;
     if (totalPaid > 0) return InvoiceStatus.PARTIAL;
     if (dueDate && new Date(dueDate) < new Date()) return InvoiceStatus.OVERDUE;
@@ -1375,7 +1389,9 @@ export class InvoicesService {
 
       const newPaid = paymentStatus === "PAID" ? alreadyPaid + dto.amount : alreadyPaid;
       const newStatus =
-        paymentStatus === "PAID" ? this.recomputeStatus(newPaid, total, inv.dueDate) : inv.status;
+        paymentStatus === "PAID"
+          ? this.recomputeStatus(newPaid, total, inv.dueDate, inv.status)
+          : inv.status;
 
       const paid = await tx.invoice.update({
         where: { id },
@@ -1443,7 +1459,7 @@ export class InvoicesService {
       });
 
       const newPaid = othersTotal + effectiveAmount;
-      const newStatus = this.recomputeStatus(newPaid, total, inv.dueDate);
+      const newStatus = this.recomputeStatus(newPaid, total, inv.dueDate, inv.status);
       const updated = await tx.invoice.update({
         where: { id: invoiceId },
         data: { status: newStatus, paidAt: newStatus === InvoiceStatus.PAID ? new Date() : null },
@@ -1483,7 +1499,7 @@ export class InvoicesService {
         .filter((p) => p.id !== paymentId)
         .reduce((s, p) => s + Number(p.amount), 0);
       const total = Number(inv.total);
-      const newStatus = this.recomputeStatus(remaining, total, inv.dueDate);
+      const newStatus = this.recomputeStatus(remaining, total, inv.dueDate, inv.status);
       const updated = await tx.invoice.update({
         where: { id: invoiceId },
         data: { status: newStatus, paidAt: newStatus === InvoiceStatus.PAID ? new Date() : null },
@@ -1624,7 +1640,12 @@ export class InvoicesService {
             where: { invoiceId: alloc.invoiceId, status: { not: "VOID" as any } },
           });
           const totalPaid = allPayments.reduce((s, p) => s + Number(p.amount), 0);
-          const newStatus = this.recomputeStatus(totalPaid, Number(invoice.total), invoice.dueDate);
+          const newStatus = this.recomputeStatus(
+            totalPaid,
+            Number(invoice.total),
+            invoice.dueDate,
+            invoice.status,
+          );
           await tx.invoice.update({
             where: { id: alloc.invoiceId },
             data: {
@@ -1681,7 +1702,12 @@ export class InvoicesService {
       const totalPaid = invoice.payments
         .filter((p) => p.id !== paymentId)
         .reduce((s, p) => s + Number(p.amount), 0);
-      const newStatus = this.recomputeStatus(totalPaid, Number(invoice.total), invoice.dueDate);
+      const newStatus = this.recomputeStatus(
+        totalPaid,
+        Number(invoice.total),
+        invoice.dueDate,
+        invoice.status,
+      );
       await tx.invoice.update({
         where: { id: invoiceId },
         data: {

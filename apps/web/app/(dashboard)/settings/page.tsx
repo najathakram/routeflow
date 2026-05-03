@@ -1096,10 +1096,12 @@ function ImportCard({ section }: { section: typeof IMPORT_SECTIONS[number] }) {
         timeout: 300_000,
       });
       setResult(res.data);
-      // Inventory returns { updated, created, skipped }; others return { imported, skipped }
-      const total = res.data.imported ?? ((res.data.updated ?? 0) + (res.data.created ?? 0));
+      // Endpoints return one of: { imported, skipped }, { updated, created, skipped },
+      // or (invoices) { imported, updated, skipped } where imported = newly-created.
+      const created = res.data.created ?? res.data.imported ?? 0;
+      const total = (res.data.updated ?? 0) + created;
       const detail = res.data.updated !== undefined
-        ? `${res.data.updated} updated, ${res.data.created ?? 0} new, ${res.data.skipped} skipped`
+        ? `${res.data.updated} updated, ${created} new, ${res.data.skipped} skipped`
         : `${total} imported, ${res.data.skipped} skipped`;
       toast({ title: `${section.label} imported`, description: detail, variant: "success" });
     } catch (err: any) {
@@ -1124,7 +1126,7 @@ function ImportCard({ section }: { section: typeof IMPORT_SECTIONS[number] }) {
             {result.updated !== undefined ? (
               <>
                 <span className="flex items-center gap-1 text-success"><CheckCircle2 className="h-3.5 w-3.5" />{result.updated} updated</span>
-                {(result.created ?? 0) > 0 && <span className="flex items-center gap-1 text-brand-500 ml-1">+{result.created} new</span>}
+                {((result.created ?? result.imported) ?? 0) > 0 && <span className="flex items-center gap-1 text-brand-500 ml-1">+{result.created ?? result.imported} new</span>}
               </>
             ) : (
               <span className="flex items-center gap-1 text-success"><CheckCircle2 className="h-3.5 w-3.5" />{result.imported ?? 0} imported</span>

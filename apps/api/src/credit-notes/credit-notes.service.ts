@@ -27,7 +27,20 @@ export class CreditNotesService {
     return `${prefix}${String(seq).padStart(4, "0")}`;
   }
 
-  private recomputeStatus(totalPaid: number, total: number, dueDate: Date | null): InvoiceStatus {
+  private recomputeStatus(
+    totalPaid: number,
+    total: number,
+    dueDate: Date | null,
+    currentStatus?: InvoiceStatus,
+  ): InvoiceStatus {
+    // DRAFT, VOID, and WRITTEN_OFF are terminal/deliberate states — never auto-override.
+    if (
+      currentStatus === InvoiceStatus.DRAFT ||
+      currentStatus === InvoiceStatus.VOID ||
+      currentStatus === InvoiceStatus.WRITTEN_OFF
+    ) {
+      return currentStatus;
+    }
     if (totalPaid >= total - 0.001) return InvoiceStatus.PAID;
     if (totalPaid > 0) return InvoiceStatus.PARTIAL;
     if (dueDate && new Date(dueDate) < new Date()) return InvoiceStatus.OVERDUE;
@@ -224,7 +237,7 @@ export class CreditNotesService {
 
         // Recompute invoice status
         const newPaid = alreadyPaid + applyAmount;
-        const newStatus = this.recomputeStatus(newPaid, Number(inv.total), inv.dueDate);
+        const newStatus = this.recomputeStatus(newPaid, Number(inv.total), inv.dueDate, inv.status);
         const updatedInv = await tx.invoice.update({
           where: { id: invoiceId },
           data: { status: newStatus, paidAt: newStatus === InvoiceStatus.PAID ? new Date() : null },

@@ -470,9 +470,10 @@ export class ImportService {
   async importInvoices(
     buffer: Buffer,
     userId: string,
-  ): Promise<{ imported: number; skipped: number; errors: string[] }> {
+  ): Promise<{ imported: number; updated: number; skipped: number; errors: string[] }> {
     const rows = this.parseCsv(buffer);
     let imported = 0,
+      updated = 0,
       skipped = 0;
     const errors: string[] = [];
 
@@ -675,13 +676,28 @@ export class ImportService {
       }
 
       try {
-        // Skip if invoice number already exists
+        // If the invoice already exists, only sync the Zoho-authoritative status
+        // and dueDate. Totals/items/customer assignment are preserved so any
+        // local edits aren't clobbered, but re-importing the same CSV will
+        // repair any status drift (e.g. a Draft that got auto-flipped to
+        // Overdue by an earlier buggy recalc).
         const existing = await this.prisma
           .forTenant()
           .invoice.findFirst({ where: { invoiceNumber } });
         if (existing) {
-          skipped++;
-          errors.push(`${invoiceNumber}: already imported`);
+          const needsUpdate =
+            existing.status !== status ||
+            (existing.dueDate?.getTime() ?? 0) !== (dueDate?.getTime() ?? 0) ||
+            (existing.paidAt?.getTime() ?? 0) !== (paidAt?.getTime() ?? 0);
+          if (needsUpdate) {
+            await this.prisma.forTenant().invoice.update({
+              where: { id: existing.id },
+              data: { status, dueDate, paidAt },
+            });
+            updated++;
+          } else {
+            skipped++;
+          }
           continue;
         }
 
@@ -732,7 +748,7 @@ export class ImportService {
         skipped++;
       }
     }
-    return { imported, skipped, errors };
+    return { imported, updated, skipped, errors };
   }
 
   async importPayments(
@@ -810,13 +826,22 @@ export class ImportService {
       }
     }
 
-    // Update invoice statuses based on total payments — wrapped in a single transaction
+    // Update invoice statuses based on total payments — wrapped in a single transaction.
+    // DRAFT, VOID, and WRITTEN_OFF are deliberate user/system states that must NOT be
+    // auto-flipped by the payment-based recalc — otherwise an unsent draft or a voided
+    // invoice with a past due date would silently appear as OVERDUE in receivables.
     const allInvoices = await this.prisma
       .forTenant()
       .invoice.findMany({ include: { payments: true } });
     const now = new Date();
+    const TERMINAL_STATUSES: InvoiceStatus[] = [
+      InvoiceStatus.DRAFT,
+      InvoiceStatus.VOID,
+      InvoiceStatus.WRITTEN_OFF,
+    ];
     const statusUpdates: Array<{ id: string; status: InvoiceStatus; paidAt: Date | null }> = [];
     for (const inv of allInvoices) {
+      if (TERMINAL_STATUSES.includes(inv.status)) continue;
       const totalPaid = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
       const total = Number(inv.total);
       let newStatus: InvoiceStatus;

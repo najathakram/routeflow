@@ -140,9 +140,10 @@ function ImportCard({ section, step }: { section: ImportSection; step: number })
       setResult(res.data);
       const d = res.data;
       const skipped = d.skipped ?? 0;
+      const created = d.created ?? d.imported ?? 0;
       let summary =
         d.updated !== undefined
-          ? `${d.updated} updated, ${d.created} created, ${skipped} skipped`
+          ? `${d.updated} updated, ${created} created, ${skipped} skipped`
           : `${d.imported} records imported, ${skipped} skipped`;
       if (d.suppliersCreated || d.suppliersUpdated) {
         const parts: string[] = [];
@@ -192,7 +193,7 @@ function ImportCard({ section, step }: { section: ImportSection; step: number })
             <span className="flex items-center gap-1 text-success">
               <CheckCircle2 className="h-3.5 w-3.5" />
               {result.updated !== undefined
-                ? `${result.updated} updated, ${result.created} created`
+                ? `${result.updated} updated, ${result.created ?? result.imported ?? 0} created`
                 : `${result.imported} imported`}
             </span>
             {skipped > 0 && (
