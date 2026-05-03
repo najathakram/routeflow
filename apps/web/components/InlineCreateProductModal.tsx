@@ -7,6 +7,7 @@ import { useCreateProduct, useProducts } from "@/lib/api/products";
 import { apiClient } from "@/lib/api-client";
 import { BarcodeScannerButton } from "./BarcodeScannerButton";
 import { UnitCombobox } from "./UnitCombobox";
+import { SearchableProductPicker } from "./SearchableProductPicker";
 
 interface CreatedProduct {
   id: string;
@@ -53,9 +54,13 @@ export function InlineCreateProductModal({
   // Loading state while resolving a scanned barcode → parent product
   const [variantOfScanLoading, setVariantOfScanLoading] = React.useState(false);
 
-  // Fetch existing non-variant products for the "Variant of" dropdown
-  const { data: allProductsData } = useProducts({ limit: 0, isActive: true });
-  const parentCandidates = (allProductsData?.data ?? []).filter((p: any) => !p.parentProductId);
+  // Fetch every product (active + inactive) so the operator can pick any
+  // standalone product as a parent — including ones they archived earlier
+  // but want to revive as a variant root.
+  const { data: allProductsData } = useProducts({ limit: 0 });
+  const parentCandidates = (allProductsData?.data ?? []).filter(
+    (p: any) => !p.parentProductId,
+  );
 
   // Derived: the selected parent product object (for name preview)
   const selectedParent = parentCandidates.find((p: any) => p.id === form.parentProductId) as any;
@@ -160,17 +165,16 @@ export function InlineCreateProductModal({
               <label className="mb-1 block text-xs font-medium text-navy">
                 Variant of <span className="font-normal text-navy/40">(optional)</span>
               </label>
-              <div className="flex gap-2">
-                <select
+              <div className="flex items-stretch gap-2">
+                <SearchableProductPicker
                   value={form.parentProductId}
-                  onChange={(e) => setForm((f) => ({ ...f, parentProductId: e.target.value }))}
-                  className="flex-1 rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                >
-                  <option value="">— Standalone product —</option>
-                  {parentCandidates.map((p: any) => (
-                    <option key={p.id} value={p.id}>{p.name}</option>
-                  ))}
-                </select>
+                  onChange={(id) =>
+                    setForm((f) => ({ ...f, parentProductId: id }))
+                  }
+                  products={parentCandidates}
+                  placeholder="Standalone product (type to search)…"
+                  className="flex-1"
+                />
                 <BarcodeScannerButton
                   onScan={handleVariantOfScan}
                   title="Scan a product barcode to auto-select its master"

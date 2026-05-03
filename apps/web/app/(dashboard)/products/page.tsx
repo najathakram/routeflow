@@ -9,6 +9,7 @@ import { usePageTitle } from "@/lib/page-title-context";
 import { useToast } from "@routeflow/ui/web";
 import { useDebounce } from "@/lib/hooks/useDebounce";
 import { useProducts, useCreateProduct, useUpdateProduct, useBulkDeleteProducts, uploadProductImages } from "@/lib/api/products";
+import { GroupAsVariantsModal } from "@/components/GroupAsVariantsModal";
 import { apiClient } from "@/lib/api-client";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { QuickEditCell, type EditRecord } from "./_components/QuickEditCell";
@@ -833,6 +834,7 @@ export default function ProductsPage() {
   const searchInputRef = React.useRef<HTMLInputElement>(null);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [selectMode, setSelectMode] = React.useState(false);
+  const [showGroupAsVariants, setShowGroupAsVariants] = React.useState(false);
   const [page, setPage] = React.useState(1);
   const [pageSize, setPageSize] = React.useState(50);
   const createProduct = useCreateProduct();
@@ -1223,7 +1225,7 @@ export default function ProductsPage() {
 
       {/* Selection action bar */}
       {selectMode && selected.size > 0 && (
-        <div className="flex items-center justify-between rounded-lg border border-danger/30 bg-danger-bg px-4 py-3">
+        <div className="flex items-center justify-between rounded-lg border border-brand-200 bg-brand-50 px-4 py-3">
           <span className="text-sm font-medium text-navy">
             {selected.size} item{selected.size !== 1 ? "s" : ""} selected
           </span>
@@ -1235,6 +1237,14 @@ export default function ProductsPage() {
               Deselect all
             </button>
             <Button
+              variant="secondary"
+              leftIcon={<GitBranch className="h-4 w-4" />}
+              onClick={() => setShowGroupAsVariants(true)}
+              disabled={selected.size < 1}
+            >
+              Group as variants of…
+            </Button>
+            <Button
               variant="danger"
               leftIcon={<Trash2 className="h-4 w-4" />}
               loading={bulkDelete.isPending}
@@ -1245,6 +1255,22 @@ export default function ProductsPage() {
           </div>
         </div>
       )}
+
+      {/* Group as variants modal */}
+      <GroupAsVariantsModal
+        isOpen={showGroupAsVariants}
+        onClose={() => setShowGroupAsVariants(false)}
+        selectedIds={Array.from(selected)}
+        onSuccess={(result) => {
+          if (result.failed.length === 0) {
+            setSelected(new Set());
+            setSelectMode(false);
+          } else {
+            // Keep only the failed ones selected so the operator can retry
+            setSelected(new Set(result.failed.map((f) => f.id)));
+          }
+        }}
+      />
 
       {/* Content */}
       {isLoading ? (
