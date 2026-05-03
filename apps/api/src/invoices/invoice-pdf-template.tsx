@@ -108,9 +108,14 @@ function buildStyles(primary: string, navy: string) {
       fontSize: 9,
       color: navy,
       paddingTop: 40,
-      paddingBottom: 40,
+      // Extra room at the bottom so the fixed footer + the floating Terms
+      // block both fit without colliding with line items or totals.
+      paddingBottom: 50,
       paddingHorizontal: 44,
       backgroundColor: "#ffffff",
+      // Column flex lets `marginTop: "auto"` on the Terms wrapper push it
+      // to the bottom of the page above the footer.
+      flexDirection: "column",
     },
     header: {
       flexDirection: "row",
@@ -215,6 +220,35 @@ function buildStyles(primary: string, navy: string) {
     },
     footerText: { fontSize: 7, color: GRAY },
     footerMuted: { fontSize: 7, color: "#94a3b8" },
+    // Terms block — fills the remaining space above the page footer so the
+    // T&Cs always sit at the bottom of the printed page rather than directly
+    // under the totals. The light-gray fill + accent border make them feel
+    // like a separate section without dominating the rest of the layout.
+    termsWrapper: {
+      marginTop: "auto",
+      paddingTop: 14,
+    },
+    termsBox: {
+      borderTopWidth: 2,
+      borderTopColor: navy,
+      backgroundColor: LIGHT_GRAY,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      borderRadius: 4,
+    },
+    termsLabel: {
+      fontSize: 8,
+      fontFamily: "Helvetica-Bold",
+      color: navy,
+      textTransform: "uppercase",
+      letterSpacing: 1,
+      marginBottom: 6,
+    },
+    termsBody: {
+      fontSize: 8.5,
+      color: "#475569",
+      lineHeight: 1.45,
+    },
   });
 }
 
@@ -464,11 +498,19 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
           </View>
         ) : null}
 
-        {/* Terms */}
+        {/*
+          Terms & Conditions — pushed to the bottom of the page via
+          `marginTop: auto` so it consistently sits above the fixed footer
+          regardless of how many line items the invoice has. Styled as a
+          distinct callout block (accent top border + light fill) so it
+          reads as a separate section rather than another row of body copy.
+        */}
         {invoice.terms ? (
-          <View style={{ marginTop: 12 }}>
-            <Text style={styles.sectionTitle}>Terms & Conditions</Text>
-            <Text style={{ fontSize: 9, color: GRAY }}>{invoice.terms}</Text>
+          <View style={styles.termsWrapper} wrap={false}>
+            <View style={styles.termsBox}>
+              <Text style={styles.termsLabel}>Terms &amp; Conditions</Text>
+              <Text style={styles.termsBody}>{invoice.terms}</Text>
+            </View>
           </View>
         ) : null}
 

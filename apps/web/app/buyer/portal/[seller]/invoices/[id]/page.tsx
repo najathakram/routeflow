@@ -13,9 +13,11 @@ import {
   CheckCircle2,
   Clock,
 } from "lucide-react";
-import { Badge } from "@routeflow/ui/web";
+import { Badge, useToast } from "@routeflow/ui/web";
+import axios from "axios";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { useBuyerInvoice } from "@/lib/api/buyer";
+import { buyerApiClient } from "@/lib/buyer-api-client";
 
 function fmt(n: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
@@ -41,10 +43,58 @@ export default function BuyerInvoiceDetailPage() {
   const invoiceId = params.id as string;
 
   const { data: invoice, isLoading, isError } = useBuyerInvoice(invoiceId);
+  const { toast } = useToast();
+  const [pdfDownloading, setPdfDownloading] = React.useState(false);
 
   React.useEffect(() => {
     if (!authLoading && !activeSeller) router.push("/buyer/portal");
   }, [authLoading, activeSeller, router]);
+
+  /**
+   * Download the invoice PDF via auth-fetched blob.
+   *
+   * `invoice.pdfUrl` from the API may be either a presigned R2 URL (no auth
+   * needed — `axios.get` works) or a local-storage `/uploads/...` URL behind
+   * the JWT-protected uploads endpoint. A plain `<a href={pdfUrl}>` strips
+   * the buyer's Bearer token because top-level navigation doesn't carry
+   * `localStorage`-held credentials, returning 401 in production.
+   *
+   * Routing absolute URLs through `axios` (no auth header) and relative URLs
+   * through `buyerApiClient` (which auto-attaches the buyer JWT) makes the
+   * download work in both deployment modes.
+   */
+  async function handleDownloadPdf() {
+    if (!invoice?.pdfUrl) return;
+    setPdfDownloading(true);
+    try {
+      const isAbsolute = /^https?:\/\//i.test(invoice.pdfUrl);
+      const res = isAbsolute
+        ? await axios.get<Blob>(invoice.pdfUrl, { responseType: "blob" })
+        : await buyerApiClient.get<Blob>(invoice.pdfUrl, { responseType: "blob" });
+      const blobUrl = URL.createObjectURL(res.data);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = `${invoice.invoiceNumber || invoice.id}.pdf`;
+      a.rel = "noopener noreferrer";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      // Revoke after the browser has had a chance to start the download.
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+    } catch (err) {
+      const status = (err as { response?: { status?: number } })?.response?.status;
+      toast({
+        title: "Couldn't download PDF",
+        description:
+          status === 401
+            ? "Please refresh the page and try again."
+            : "Try again in a moment.",
+        variant: "error",
+      });
+    } finally {
+      setPdfDownloading(false);
+    }
+  }
 
   if (authLoading || isLoading) {
     return (
@@ -89,14 +139,19 @@ export default function BuyerInvoiceDetailPage() {
             {invoice.status.replace(/_/g, " ")}
           </Badge>
           {invoice.pdfUrl && (
-            <a
-              href={invoice.pdfUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-1.5 rounded-lg border border-surface-border bg-white px-3 py-2 text-sm font-medium text-navy hover:bg-surface-raised transition-colors"
+            <button
+              type="button"
+              onClick={() => void handleDownloadPdf()}
+              disabled={pdfDownloading}
+              className="flex items-center gap-1.5 rounded-lg border border-surface-border bg-white px-3 py-2 text-sm font-medium text-navy transition-colors hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-60"
             >
-              <Download className="h-4 w-4" /> PDF
-            </a>
+              {pdfDownloading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Download className="h-4 w-4" />
+              )}
+              PDF
+            </button>
           )}
         </div>
       </div>
