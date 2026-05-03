@@ -108,6 +108,13 @@ export function CustomerForm({ title, submitLabel, initial, submitting, onSubmit
   const set = <K extends keyof CustomerFormValues>(k: K, v: CustomerFormValues[K]) =>
     setForm((f) => ({ ...f, [k]: v }));
 
+  // BUG-XR2-5: warn on tab close / refresh / nav-away while the form is dirty.
+  const isDirty = React.useMemo(() => {
+    return (Object.keys(form) as Array<keyof CustomerFormValues>).some(
+      (k) => form[k] !== initial[k],
+    );
+  }, [form, initial]);
+
   const submit = () => {
     const res = buildPayload(form);
     if ("error" in res) {
@@ -119,7 +126,13 @@ export function CustomerForm({ title, submitLabel, initial, submitting, onSubmit
   };
 
   return (
-    <FormSheet title={title} submitLabel={submitLabel} submitting={submitting} onSubmit={submit}>
+    <FormSheet
+      title={title}
+      submitLabel={submitLabel}
+      submitting={submitting}
+      onSubmit={submit}
+      warnIfDirty={isDirty && !submitting}
+    >
       {error ? (
         <View style={styles.errorBanner}>
           <Ionicons name="warning-outline" size={16} color={ios.system.redInk} />

@@ -26,7 +26,30 @@ interface FormSheetProps {
   submitting?: boolean;
   submitDisabled?: boolean;
   destructive?: boolean;
+  /**
+   * BUG-XR2-5: when true, web users get a native "Leave site?" confirmation
+   * if they refresh / close the tab / navigate away with unsaved changes.
+   * Caller computes the boolean from its form-dirty state.
+   */
+  warnIfDirty?: boolean;
   children: React.ReactNode;
+}
+
+/** Web-only: native beforeunload prompt while `dirty` is true. */
+function useBeforeUnloadGuard(dirty: boolean) {
+  React.useEffect(() => {
+    if (Platform.OS !== "web") return;
+    if (!dirty) return;
+    if (typeof window === "undefined") return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      // Modern browsers ignore the returnValue text but still need it set
+      // to trigger the native confirm dialog.
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [dirty]);
 }
 
 /**
@@ -44,9 +67,11 @@ export function FormSheet({
   submitting,
   submitDisabled,
   destructive,
+  warnIfDirty,
   children,
 }: FormSheetProps) {
   const router = useRouter();
+  useBeforeUnloadGuard(!!warnIfDirty);
 
   const handleCancel = () => {
     if (onCancel) onCancel();
@@ -116,6 +141,12 @@ export function FormSheet({
 
 // ─── Reusable field primitives ───────────────────────────────────────────────
 
+// BUG-XR2-2: FormField renders a sibling <Text> label which is not associated
+// with its child inputs in the accessibility tree. Pass the label via context
+// so FormTextInput can pick it up as accessibilityLabel automatically. On RN-
+// Web this becomes aria-label on the underlying <input>, fixing WCAG 1.3.1.
+const FormFieldLabelContext = React.createContext<string | undefined>(undefined);
+
 export function FormField({
   label,
   hint,
@@ -128,11 +159,13 @@ export function FormField({
   children: React.ReactNode;
 }) {
   return (
-    <View style={styles.field}>
-      {label ? <Text style={styles.label}>{label}</Text> : null}
-      {children}
-      {error ? <Text style={styles.error}>{error}</Text> : hint ? <Text style={styles.hint}>{hint}</Text> : null}
-    </View>
+    <FormFieldLabelContext.Provider value={label}>
+      <View style={styles.field}>
+        {label ? <Text style={styles.label}>{label}</Text> : null}
+        {children}
+        {error ? <Text style={styles.error}>{error}</Text> : hint ? <Text style={styles.hint}>{hint}</Text> : null}
+      </View>
+    </FormFieldLabelContext.Provider>
   );
 }
 
@@ -149,10 +182,15 @@ export const FormTextInput = React.forwardRef<TextInput, TextInputProps>(functio
   props,
   ref,
 ) {
+  const fieldLabel = React.useContext(FormFieldLabelContext);
   return (
     <TextInput
       ref={ref}
       placeholderTextColor={ios.label3}
+      // BUG-XR2-2: inherit the surrounding FormField label so screen-readers
+      // announce something meaningful. Caller-provided accessibilityLabel
+      // wins if explicitly set.
+      accessibilityLabel={props.accessibilityLabel ?? fieldLabel}
       {...props}
       style={[styles.input, props.style]}
     />
