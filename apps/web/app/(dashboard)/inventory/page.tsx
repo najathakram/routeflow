@@ -3,7 +3,7 @@
 import * as React from "react";
 import * as Tabs from "@radix-ui/react-tabs";
 import Link from "next/link";
-import { Plus, Eye, Send, PackageCheck, X, ChevronDown, ChevronUp, Info, Sparkles } from "lucide-react";
+import { Plus, Eye, Send, PackageCheck, X, ChevronDown, ChevronUp, Info, Sparkles, Search, SlidersHorizontal } from "lucide-react";
 import { Badge, Button, Card, cn, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import {
@@ -352,14 +352,17 @@ function QuickRestockModal({
 
 function AdjustStockModal({
   products,
+  defaultProductId,
   onClose,
 }: {
   products: { id: string; name: string; sku?: string; unit: string; currentStock: number }[];
+  /** Pre-select a product when opened from an inline "Adjust" row action */
+  defaultProductId?: string;
   onClose: () => void;
 }) {
   const recordAdjustment = useRecordAdjustment();
   const [form, setForm] = React.useState({
-    productId: "",
+    productId: defaultProductId ?? "",
     quantity: "",
     notes: "",
     reference: "",
@@ -1537,7 +1540,12 @@ export default function InventoryPage() {
 
   const [showRestockModal, setShowPurchaseModal] = React.useState(false);
   const [showAdjustModal, setShowAdjustModal] = React.useState(false);
+  // When set, the next AdjustStockModal opens with this product pre-selected.
+  // Cleared after the modal closes so the next "Adjust Stock" header click
+  // opens with no pre-selection.
+  const [adjustPreselectId, setAdjustPreselectId] = React.useState<string | undefined>();
   const [showScanModal, setShowScanModal] = React.useState(false);
+  const [stockSearch, setStockSearch] = React.useState("");
   const [showSupplierModal, setShowSupplierModal] = React.useState(false);
   const [showAddProductModal, setShowAddProductModal] = React.useState(false);
 
@@ -1624,10 +1632,54 @@ export default function InventoryPage() {
 
         {/* ── Stock tab ── */}
         <Tabs.Content value="stock" className="pt-4">
-          <div className="mb-3 flex items-center justify-between">
-            <p className="text-sm text-navy/50">{(stockItems as StockItem[]).length} products</p>
+          <div className="mb-3 flex flex-wrap items-center gap-3">
+            {/* Search — filters the stock table by name, SKU, or category so
+                operators can jump to a product before adjusting its stock,
+                instead of scrolling a long list. */}
+            <div className="relative flex-1 min-w-[220px]">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-navy/40" />
+              <input
+                type="search"
+                value={stockSearch}
+                onChange={(e) => setStockSearch(e.target.value)}
+                placeholder="Search by name, SKU, or category…"
+                className="h-9 w-full rounded-lg border border-surface-border bg-white pl-9 pr-9 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+              />
+              {stockSearch && (
+                <button
+                  type="button"
+                  onClick={() => setStockSearch("")}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-navy/30 transition-colors hover:bg-surface-raised hover:text-navy"
+                  aria-label="Clear search"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+            <p className="text-sm text-navy/50 whitespace-nowrap">
+              {(() => {
+                const total = (stockItems as StockItem[]).length;
+                if (!stockSearch.trim()) return `${total} product${total === 1 ? "" : "s"}`;
+                const q = stockSearch.trim().toLowerCase();
+                const shown = (stockItems as StockItem[]).filter(
+                  (i) =>
+                    i.name.toLowerCase().includes(q) ||
+                    (i.sku ?? "").toLowerCase().includes(q) ||
+                    (i.category ?? "").toLowerCase().includes(q),
+                ).length;
+                return `${shown} of ${total}`;
+              })()}
+            </p>
             <div className="flex gap-2">
-              <Button size="sm" variant="secondary" onClick={() => setShowAdjustModal(true)}>
+              <Button
+                size="sm"
+                variant="secondary"
+                leftIcon={<SlidersHorizontal className="h-4 w-4" />}
+                onClick={() => {
+                  setAdjustPreselectId(undefined);
+                  setShowAdjustModal(true);
+                }}
+              >
                 Adjust Stock
               </Button>
               <Button size="sm" variant="secondary" leftIcon={<Plus className="h-4 w-4" />} onClick={() => setShowAddProductModal(true)}>
@@ -1669,48 +1721,92 @@ export default function InventoryPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-surface-border">
-                  {(stockItems as StockItem[]).map((item) => (
-                    <tr
-                      key={item.id}
-                      className={cn(
-                        "transition-colors hover:bg-surface-raised/50",
-                        item.currentStock <= 0 && "bg-danger-bg/30",
-                      )}
-                    >
-                      <td className="px-4 py-3 font-medium text-navy">{item.name}</td>
-                      <td className="px-4 py-3 font-mono text-navy">{item.sku ?? "—"}</td>
-                      <td className="px-4 py-3 text-navy/70">{item.category ?? "—"}</td>
-                      <td className="px-4 py-3">
-                        <span className={cn("font-medium", item.currentStock <= 0 ? "text-danger" : item.currentStock <= 5 ? "text-warning" : "text-navy")}>
-                          {Number(item.currentStock) % 1 === 0 ? Number(item.currentStock).toFixed(0) : Number(item.currentStock).toFixed(2)} {item.unit}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-navy/70">
-                        {item.unitsPerBox != null ? item.unitsPerBox : "—"}
-                      </td>
-                      <td className="px-4 py-3 text-navy/70">
-                        {item.averageCost != null ? `$${Number(item.averageCost).toFixed(2)}` : "—"}
-                      </td>
-                      <td className="px-4 py-3 text-navy/70">
-                        {item.totalValue != null ? `$${Number(item.totalValue).toFixed(2)}` : "—"}
-                      </td>
-                      <td className="px-4 py-3">
-                        <Link
-                          href={`/inventory/movements?product=${item.id}`}
-                          className="text-xs text-brand-500 hover:underline"
-                        >
-                          Movements
-                        </Link>
-                      </td>
-                    </tr>
-                  ))}
-                  {(stockItems as StockItem[]).length === 0 && (
-                    <tr>
-                      <td colSpan={8} className="px-4 py-10 text-center text-navy/40">
-                        No products found.
-                      </td>
-                    </tr>
-                  )}
+                  {(() => {
+                    const q = stockSearch.trim().toLowerCase();
+                    const filtered = q
+                      ? (stockItems as StockItem[]).filter(
+                          (i) =>
+                            i.name.toLowerCase().includes(q) ||
+                            (i.sku ?? "").toLowerCase().includes(q) ||
+                            (i.category ?? "").toLowerCase().includes(q),
+                        )
+                      : (stockItems as StockItem[]);
+                    if (filtered.length === 0) {
+                      return (
+                        <tr>
+                          <td colSpan={8} className="px-4 py-10 text-center text-navy/40">
+                            {q
+                              ? `No products match "${stockSearch}"`
+                              : "No products found."}
+                          </td>
+                        </tr>
+                      );
+                    }
+                    return filtered.map((item) => (
+                      <tr
+                        key={item.id}
+                        className={cn(
+                          "group transition-colors hover:bg-surface-raised/50",
+                          item.currentStock <= 0 && "bg-danger-bg/30",
+                        )}
+                      >
+                        <td className="px-4 py-3 font-medium text-navy">{item.name}</td>
+                        <td className="px-4 py-3 font-mono text-navy">{item.sku ?? "—"}</td>
+                        <td className="px-4 py-3 text-navy/70">{item.category ?? "—"}</td>
+                        <td className="px-4 py-3">
+                          <span
+                            className={cn(
+                              "font-medium",
+                              item.currentStock <= 0
+                                ? "text-danger"
+                                : item.currentStock <= 5
+                                  ? "text-warning"
+                                  : "text-navy",
+                            )}
+                          >
+                            {Number(item.currentStock) % 1 === 0
+                              ? Number(item.currentStock).toFixed(0)
+                              : Number(item.currentStock).toFixed(2)}{" "}
+                            {item.unit}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-navy/70">
+                          {item.unitsPerBox != null ? item.unitsPerBox : "—"}
+                        </td>
+                        <td className="px-4 py-3 text-navy/70">
+                          {item.averageCost != null
+                            ? `$${Number(item.averageCost).toFixed(2)}`
+                            : "—"}
+                        </td>
+                        <td className="px-4 py-3 text-navy/70">
+                          {item.totalValue != null
+                            ? `$${Number(item.totalValue).toFixed(2)}`
+                            : "—"}
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center justify-end gap-3">
+                            {/* Inline Adjust opens the modal pre-selected to this product */}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setAdjustPreselectId(item.id);
+                                setShowAdjustModal(true);
+                              }}
+                              className="text-xs font-medium text-brand-600 transition-colors hover:underline"
+                            >
+                              Adjust
+                            </button>
+                            <Link
+                              href={`/inventory/movements?product=${item.id}`}
+                              className="text-xs text-brand-500 hover:underline"
+                            >
+                              Movements
+                            </Link>
+                          </div>
+                        </td>
+                      </tr>
+                    ));
+                  })()}
                 </tbody>
               </table>
             </div>
@@ -1806,7 +1902,11 @@ export default function InventoryPage() {
             unit: p.unit,
             currentStock: Number(p.currentStock ?? 0),
           }))}
-          onClose={() => setShowAdjustModal(false)}
+          defaultProductId={adjustPreselectId}
+          onClose={() => {
+            setShowAdjustModal(false);
+            setAdjustPreselectId(undefined);
+          }}
         />
       )}
       {showSupplierModal && (
