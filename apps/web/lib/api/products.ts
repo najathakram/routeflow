@@ -137,6 +137,60 @@ export function useBulkDeleteProducts() {
   });
 }
 
+/**
+ * Promote multiple existing standalone products to variants of a single
+ * parent product. Used by the "Group as variants of…" bulk action so the
+ * operator can fix up a catalog where each flavor was entered as its own
+ * standalone product, without re-creating anything.
+ *
+ * No dedicated bulk endpoint on the API — issues parallel PATCH /products/:id
+ * calls and reports per-item success/failure to the caller.
+ */
+export interface BulkAssignParentResult {
+  succeeded: string[];
+  failed: Array<{ id: string; reason: string }>;
+}
+
+export function useBulkAssignParent() {
+  const qc = useQueryClient();
+  return useMutation<
+    BulkAssignParentResult,
+    Error,
+    {
+      parentProductId: string;
+      assignments: Array<{ id: string; variantName: string }>;
+    }
+  >({
+    mutationFn: async ({ parentProductId, assignments }) => {
+      const settled = await Promise.allSettled(
+        assignments.map((a) =>
+          apiClient
+            .patch(`/products/${a.id}`, {
+              parentProductId,
+              variantName: a.variantName,
+            })
+            .then(() => a.id),
+        ),
+      );
+      const succeeded: string[] = [];
+      const failed: Array<{ id: string; reason: string }> = [];
+      settled.forEach((r, idx) => {
+        if (r.status === "fulfilled") {
+          succeeded.push(r.value);
+        } else {
+          const e = r.reason as { response?: { data?: { message?: string } } };
+          failed.push({
+            id: assignments[idx].id,
+            reason: e?.response?.data?.message ?? "Update failed",
+          });
+        }
+      });
+      return { succeeded, failed };
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["products"] }),
+  });
+}
+
 export function useUploadProductImages(id: string) {
   const qc = useQueryClient();
   return useMutation({
