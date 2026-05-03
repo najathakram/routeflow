@@ -650,6 +650,9 @@ export class OrdersService implements OnApplicationBootstrap {
         order = await this.prisma.tenantTransaction(async (tx) => {
           // RF-017: stock validation — only for non-draft orders that have items.
           // Lock product rows first so concurrent requests serialise here.
+          // Operators (and TENANT_ADMINs) are explicitly allowed to oversell — they may
+          // be backordering or knowingly placing an order that will be fulfilled when
+          // restocked. The customer / driver paths still hard-block on insufficient stock.
           if (!isDraft && lineItemsData.length > 0) {
             const productIds = lineItemsData.map((li) => li.productId);
             // SELECT … FOR UPDATE acquires row-level locks in the current transaction.
@@ -675,10 +678,18 @@ export class OrdersService implements OnApplicationBootstrap {
               }
             }
             if (oosItems.length > 0) {
-              throw new ConflictException(`Insufficient stock: ${oosItems.join("; ")}`);
+              if (isStaffRole) {
+                this.logger.warn(
+                  `Operator-initiated order will go below stock: ${oosItems.join("; ")}`,
+                );
+              } else {
+                throw new ConflictException(`Insufficient stock: ${oosItems.join("; ")}`);
+              }
             }
 
-            // Decrement stock atomically while the lock is held.
+            // Decrement stock atomically while the lock is held. For operator-initiated
+            // overselling, this lets currentStock go negative — the inventory page can
+            // surface that and the operator can reconcile after restock.
             for (const li of lineItemsData) {
               await tx.product.update({
                 where: { id: li.productId },

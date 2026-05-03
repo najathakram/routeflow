@@ -329,30 +329,42 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
 
   const [requestedDeliveryDate, setRequestedDeliveryDate] = React.useState("");
 
-  // Stash form values across the merge-prompt round-trip so we can re-submit with the choice.
+  // Stash form values + intended status across the merge-prompt round-trip so we can
+  // re-submit with the operator's choice. Both "Save as Draft" and "Create Order"
+  // funnel through here so the prompt fires for either action.
   const pendingFormValuesRef = React.useRef<FormValues | null>(null);
+  const pendingAsDraftRef = React.useRef<boolean>(false);
 
   /**
    * Actually fire the create-order request with the operator's chosen mergeChoice
    * (or no choice, if the customer has no active order).
    */
-  const submitOrder = (data: FormValues, mergeChoice?: 'merge' | 'separate') => {
+  const submitOrder = (
+    data: FormValues,
+    options: { mergeChoice?: 'merge' | 'separate'; asDraft?: boolean } = {},
+  ) => {
+    const { mergeChoice, asDraft } = options;
+    const itemsForSubmit = (asDraft
+      ? lineItems.filter((li) => li.productId && li.qty > 0)
+      : lineItems
+    ).map((li) => ({
+      productId: li.productId,
+      qty: li.qty,
+      ...(li.unitsPerBox ? { boxes: li.boxes ?? 0, pieces: li.pieces ?? 0 } : {}),
+      // Only send unitPrice for one-time discounts (not permanent special prices — backend handles those via CustomerPrice)
+      ...(li.priceType === 'DISCOUNTED' && li.discountedPrice != null ? { unitPrice: li.discountedPrice } : {}),
+    }));
     createOrder.mutate(
       {
         customerId: selectedCustomer!.id,
-        items: lineItems.map((li) => ({
-          productId: li.productId,
-          qty: li.qty,
-          ...(li.unitsPerBox ? { boxes: li.boxes ?? 0, pieces: li.pieces ?? 0 } : {}),
-          // Only send unitPrice for one-time discounts (not permanent special prices — backend handles those via CustomerPrice)
-          ...(li.priceType === 'DISCOUNTED' && li.discountedPrice != null ? { unitPrice: li.discountedPrice } : {}),
-        })),
+        items: itemsForSubmit,
         notes: data.notes,
         urgent: data.urgent,
         requestedDeliveryDate: requestedDeliveryDate || undefined,
         ...(discountAmt > 0 ? { discountAmount: discountAmt } : {}),
+        ...(asDraft ? { status: 'DRAFT' as const } : {}),
         ...(mergeChoice ? { mergeChoice } : {}),
-      },
+      } as any,
       {
         onSuccess: (created: any) => {
           if (mergeChoice === 'merge') {
@@ -360,11 +372,14 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
               title: `Merged into order ${created?.orderNumber ?? '#' + created?.id?.slice(0, 6)}`,
               variant: 'success',
             });
+          } else if (asDraft) {
+            toast({ title: "Order saved as draft", variant: "success" });
           } else {
             toast({ title: "Order created", variant: "success" });
           }
           setMergePrompt(null);
           pendingFormValuesRef.current = null;
+          pendingAsDraftRef.current = false;
           onClose();
         },
         onError: (err: any) => {
@@ -377,11 +392,36 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
             body?.activeOrder
           ) {
             pendingFormValuesRef.current = data;
+            pendingAsDraftRef.current = !!asDraft;
             setMergePrompt(body.activeOrder as ActiveOrderSummary);
           }
         },
       },
     );
+  };
+
+  /**
+   * Save-as-Draft entry point — looser validation (items optional), but still
+   * goes through the merge-prompt flow when the customer has an active order.
+   */
+  const onSaveDraft = () => {
+    if (!selectedCustomer) {
+      setCustomerError("Select a customer");
+      return;
+    }
+    const data: FormValues = {
+      notes:
+        (document.getElementById("order-notes") as HTMLTextAreaElement | null)?.value ||
+        undefined,
+      urgent: false,
+    };
+    if (activeOrderForCustomer) {
+      pendingFormValuesRef.current = data;
+      pendingAsDraftRef.current = true;
+      setMergePrompt(activeOrderForCustomer);
+      return;
+    }
+    submitOrder(data, { asDraft: true });
   };
 
   const onSubmit = (data: FormValues) => {
@@ -404,6 +444,7 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
     // explicitly — never silently merge or silently duplicate.
     if (activeOrderForCustomer) {
       pendingFormValuesRef.current = data;
+      pendingAsDraftRef.current = false;
       setMergePrompt(activeOrderForCustomer);
       return;
     }
@@ -433,24 +474,7 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
             className="bg-amber-500 text-white hover:bg-amber-600 focus-visible:ring-amber-400"
             type="button"
             loading={createOrder.isPending}
-            onClick={() => {
-              // Validate customer only (items optional for draft)
-              if (!selectedCustomer) { setCustomerError("Select a customer"); return; }
-              createOrder.mutate(
-                {
-                  customerId: selectedCustomer.id,
-                  status: "DRAFT" as any,
-                  items: lineItems.filter((li) => li.productId && li.qty > 0).map((li) => ({
-                    productId: li.productId,
-                    qty: li.qty,
-                    ...(li.unitsPerBox ? { boxes: li.boxes ?? 0, pieces: li.pieces ?? 0 } : {}),
-                    ...(li.priceType === 'DISCOUNTED' && li.discountedPrice != null ? { unitPrice: li.discountedPrice } : {}),
-                  })),
-                  notes: (document.getElementById("order-notes") as HTMLTextAreaElement)?.value || undefined,
-                } as any,
-                { onSuccess: () => { toast({ title: "Order saved as draft", variant: "success" }); onClose(); } },
-              );
-            }}
+            onClick={onSaveDraft}
           >
             Save as Draft
           </Button>
@@ -913,6 +937,7 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
         onClose={() => {
           setMergePrompt(null);
           pendingFormValuesRef.current = null;
+          pendingAsDraftRef.current = false;
         }}
         title="Open order exists"
         description={
@@ -928,7 +953,11 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
                 type="button"
                 loading={createOrder.isPending}
                 onClick={() => {
-                  if (pendingFormValuesRef.current) submitOrder(pendingFormValuesRef.current, 'merge');
+                  if (pendingFormValuesRef.current)
+                    submitOrder(pendingFormValuesRef.current, {
+                      mergeChoice: 'merge',
+                      asDraft: pendingAsDraftRef.current,
+                    });
                 }}
               >
                 Merge into {mergePrompt.orderNumber ?? 'existing order'}
@@ -938,10 +967,14 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
                 variant="secondary"
                 loading={createOrder.isPending}
                 onClick={() => {
-                  if (pendingFormValuesRef.current) submitOrder(pendingFormValuesRef.current, 'separate');
+                  if (pendingFormValuesRef.current)
+                    submitOrder(pendingFormValuesRef.current, {
+                      mergeChoice: 'separate',
+                      asDraft: pendingAsDraftRef.current,
+                    });
                 }}
               >
-                Create as separate order
+                Create as separate {pendingAsDraftRef.current ? 'draft' : 'order'}
               </Button>
             </div>
           ) : null
