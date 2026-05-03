@@ -67,8 +67,9 @@ const OPERATOR_NAV: NavEntry[] = [
   {
     kind: "group", label: "Dispatch", icon: Truck,
     children: [
-      { kind: "leaf", label: "Routes",  href: "/routes",  icon: MapPin },
-      { kind: "leaf", label: "Drivers", href: "/drivers", icon: Truck },
+      { kind: "leaf", label: "Overview", href: "/dispatch", icon: LayoutDashboard },
+      { kind: "leaf", label: "Routes",   href: "/routes",   icon: MapPin },
+      { kind: "leaf", label: "Drivers",  href: "/drivers",  icon: Truck },
     ],
   },
   { kind: "leaf", label: "Customers", href: "/customers", icon: Users },
