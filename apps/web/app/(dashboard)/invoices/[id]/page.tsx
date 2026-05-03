@@ -235,7 +235,7 @@ function WhatsNextBanner({
 // ─── Record payment modal ─────────────────────────────────────────────────────
 
 interface PaymentFormState {
-  method: "CASH" | "CHECK" | "ACH" | "OTHER" | "CREDIT_NOTE" | "ADVANCE" | "CREDIT_CARD";
+  method: "CASH" | "CHECK" | "ACH" | "OTHER" | "CREDIT_CARD";
   amount: string;
   reference: string;
   notes: string;
@@ -323,8 +323,6 @@ function RecordPaymentModal({
             <option value="CHECK">Check</option>
             <option value="ACH">ACH / Bank Transfer</option>
             <option value="CREDIT_CARD">Credit Card</option>
-            <option value="CREDIT_NOTE">Credit Note</option>
-            <option value="ADVANCE">Advance Payment</option>
             <option value="OTHER">Other</option>
           </select>
         </div>
@@ -458,8 +456,6 @@ function EditPaymentModal({
             <option value="CHECK">Check</option>
             <option value="ACH">ACH / Bank Transfer</option>
             <option value="CREDIT_CARD">Credit Card</option>
-            <option value="CREDIT_NOTE">Credit Note</option>
-            <option value="ADVANCE">Advance Payment</option>
             <option value="OTHER">Other</option>
           </select>
         </div>
@@ -1021,6 +1017,8 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
         unitPrice: Number(it.unitPrice),
       })),
       notes: invoice.notes,
+      referenceNumber: invoice.referenceNumber,
+      subject: invoice.subject,
     };
     createInvoice.mutate(dto, {
       onSuccess: (newInv) => {

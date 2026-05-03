@@ -7,6 +7,7 @@ import {
   login as apiLogin,
   logout as apiLogout,
   refreshTokens,
+  onCrossTabTokenChange,
 } from "./auth";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -42,6 +43,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         })
         .finally(() => setIsLoading(false));
     }
+  }, []);
+
+  React.useEffect(() => {
+    return onCrossTabTokenChange(() => {
+      window.location.href = "/login";
+    });
   }, []);
 
   const login = React.useCallback(

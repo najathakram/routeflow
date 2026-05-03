@@ -29,6 +29,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { BuyerCreateOrderDto } from "./dto/buyer-create-order.dto";
 import { OrdersService } from "../orders/orders.service";
 import { InvoicesService } from "../invoices/invoices.service";
+import { InvoicePdfService } from "../invoices/invoice-pdf.service";
 import { CustomersService } from "../customers/customers.service";
 import { OrderTemplatesService } from "../order-templates/order-templates.service";
 import { ListOrdersDto } from "../orders/dto/list-orders.dto";
@@ -70,6 +71,7 @@ export class BuyerController {
     private readonly dashboardService: BuyerDashboardService,
     private readonly ordersService: OrdersService,
     private readonly invoicesService: InvoicesService,
+    private readonly invoicePdfService: InvoicePdfService,
     private readonly customersService: CustomersService,
     private readonly templatesService: OrderTemplatesService,
     private readonly prisma: PrismaService,
@@ -183,6 +185,9 @@ export class BuyerController {
         where: { id },
         data: { viewedAt: new Date() },
       });
+    }
+    if ((invoice as any).pdfUrl) {
+      (invoice as any).pdfUrl = await this.invoicePdfService.getOrGenerate(id);
     }
     return invoice;
   }
