@@ -24,10 +24,17 @@ export class ThrottlerExceptionFilter implements ExceptionFilter {
 
     this.logger.warn(`Rate limit hit: ${req.path} ip=${req.ip}`);
 
+    // BUG-OPS1-5: NestJS's ThrottlerException.message exposes the internal
+    // class name ("ThrottlerException: Too Many Requests"). Rewrite to a
+    // plain, user-facing string so client UIs that render `error.message`
+    // verbatim do not leak the implementation detail.
+    const minutes = Math.max(1, Math.round(retryAfter / 60));
+    const friendly = `Too many requests. Please try again in ${minutes} minute${minutes === 1 ? "" : "s"}.`;
+
     res.status(HttpStatus.TOO_MANY_REQUESTS).header("Retry-After", String(retryAfter)).json({
       statusCode: HttpStatus.TOO_MANY_REQUESTS,
       error: "Too Many Requests",
-      message: exception.message,
+      message: friendly,
       retryAfter,
     });
   }

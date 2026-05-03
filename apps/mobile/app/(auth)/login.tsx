@@ -63,9 +63,17 @@ export default function LoginScreen() {
     try {
       await login(data.username, data.password);
     } catch (err: unknown) {
-      const msg =
-        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
-        "Invalid username or password.";
+      // BUG-OPS1-5: NestJS's default ThrottlerException renders as "Too Many
+      // Requests" with the class name leaked into err.message; map 429s to a
+      // friendly message before showing the user.
+      const e = err as { response?: { status?: number; data?: { message?: string; retryAfter?: number } } };
+      if (e?.response?.status === 429) {
+        const retryAfter = e?.response?.data?.retryAfter;
+        const minutes = retryAfter ? Math.max(1, Math.round(retryAfter / 60)) : 5;
+        setApiError(`Too many login attempts. Please try again in ${minutes} minute${minutes === 1 ? "" : "s"}.`);
+        return;
+      }
+      const msg = e?.response?.data?.message ?? "Invalid username or password.";
       setApiError(typeof msg === "string" ? msg : "Login failed.");
     }
   };

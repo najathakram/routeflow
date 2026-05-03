@@ -514,8 +514,12 @@ export class RoutesService {
       }
     }
 
-    // Drivers can only create runs for themselves
-    let resolvedDriverId = dto.driverId;
+    // Drivers can only create runs for themselves.
+    // BUG-W-7: when an operator dispatches a route without an explicit
+    // dto.driverId, fall back to the route's assigned driver. Otherwise the
+    // run is created with driverId=null and the run-detail subtitle reads
+    // "Unassigned" even though the underlying Route has a driver.
+    let resolvedDriverId = dto.driverId ?? route.driverId ?? undefined;
     if (user?.role === UserRole.DRIVER) {
       const driver = await this.prisma
         .forTenant()

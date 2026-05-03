@@ -71,6 +71,14 @@ export default function CustomerLoginScreen() {
       // Multiple sellers — show picker
       showSellerPicker(sellers);
     } catch (e: any) {
+      // BUG-OPS1-5: friendly message for the 429 throttle response.
+      if (e?.response?.status === 429) {
+        const retryAfter = e?.response?.data?.retryAfter;
+        const minutes = retryAfter ? Math.max(1, Math.round(retryAfter / 60)) : 5;
+        setError(`Too many login attempts. Please try again in ${minutes} minute${minutes === 1 ? "" : "s"}.`);
+        setLoading(false);
+        return;
+      }
       const msg = e?.response?.data?.message ?? e?.message ?? "Login failed.";
       setError(typeof msg === "string" ? msg : "Login failed.");
     } finally {

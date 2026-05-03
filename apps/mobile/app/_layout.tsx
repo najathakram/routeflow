@@ -131,9 +131,29 @@ function RootLayoutNav() {
     // RF-087: staff users must be able to access /(auth)/customer-login to sign
     // in to the buyer portal. Do NOT redirect them away from that screen.
     const onCustomerLogin = segments[0] === "(auth)" && segments[1] === "customer-login";
+
+    // BUG-OPS1-3: shared resource paths like /invoices/[id] live under both
+    // (operator)/(tabs)/invoices/[id] and (customer)/invoices/[id]. Expo
+    // Router picks one deterministically; when an operator URL-bar deep-links
+    // to /invoices/<uuid>, they may land on the (customer) variant. Instead
+    // of bouncing them to /home — destroying the deep-link intent — map the
+    // shared paths over to the operator equivalent.
+    function mapSharedCustomerPathToOperator(): string | null {
+      if (segments[0] !== "(customer)") return null;
+      // segments[1] is the route segment (no leading "/").
+      if (segments[1] === "invoices" && segments[2]) {
+        return `/(operator)/(tabs)/invoices/${segments[2]}`;
+      }
+      if (segments[1] === "orders" && segments[2]) {
+        return `/(operator)/(tabs)/orders/${segments[2]}`;
+      }
+      return null;
+    }
+
     if (activeRole === "operator") {
       if (segments[0] !== "(operator)" && !onCustomerLogin) {
-        router.replace("/(operator)/home");
+        const mapped = mapSharedCustomerPathToOperator();
+        router.replace(mapped ?? "/(operator)/home");
       }
       return;
     }
