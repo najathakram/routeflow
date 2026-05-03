@@ -88,6 +88,11 @@ const BASE_URL =
 export const buyerApiClient = axios.create({
   baseURL: `${BASE_URL}/api/v1`,
   timeout: 15000,
+  // Serialize array params as repeated keys (?statuses=A&statuses=B) instead of
+  // axios's default bracket notation (?statuses[]=A&statuses[]=B). The API's
+  // ValidationPipe runs forbidNonWhitelisted=true and rejects the literal key
+  // "statuses[]" because the server-side query parser doesn't unwrap brackets.
+  paramsSerializer: { indexes: null },
 });
 
 // ─── Request interceptor: attach buyer token + active tenant slug ─────────────
