@@ -80,13 +80,6 @@ async function bootstrap() {
   // trust proxy = 2 skips both hops → req.ip = real client IP from XFF.
   app.getHttpAdapter().getInstance().set("trust proxy", 2);
 
-  // ─── Query parser ───────────────────────────────────────────────────────────
-  // Use `qs` (extended) so bracketed array notation `?statuses[]=A&statuses[]=B`
-  // is parsed into `{statuses: ['A','B']}`. Without this, the literal key
-  // `statuses[]` survives and ValidationPipe (forbidNonWhitelisted=true)
-  // rejects it with 400.
-  app.getHttpAdapter().getInstance().set("query parser", "extended");
-
   // ─── Security headers (helmet) ──────────────────────────────────────────────
   app.use(helmet());
 
