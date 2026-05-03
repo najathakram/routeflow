@@ -32,6 +32,7 @@ import { useOrder, useUpdateOrderStatus, useUpdateOrderItems, useReopenOrder, us
 import { useCreateInvoiceFromOrder, useSendInvoice, useSendInvoiceEmail } from "@/lib/api/invoices";
 import { useProducts } from "@/lib/api/products";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { apiClient } from "@/lib/api-client";
 
 // ─── Send Invoice Modal ────────────────────────────────────────────────────────
@@ -405,6 +406,8 @@ function EditableLineItems({
   const [addSearch, setAddSearch] = React.useState("");
   const [addOpen, setAddOpen] = React.useState(false);
   const [addLoading, setAddLoading] = React.useState(false);
+  const [createProductOpen, setCreateProductOpen] = React.useState(false);
+  const [createProductInitialSku, setCreateProductInitialSku] = React.useState("");
   const addRef = React.useRef<HTMLDivElement>(null);
   const addInputRef = React.useRef<HTMLInputElement>(null);
   const { data: productsData } = useProducts({ search: addSearch || undefined, limit: 20, isActive: true });
@@ -460,13 +463,18 @@ function EditableLineItems({
         const res = await apiClient.get(`/products/barcode/${encodeURIComponent(code)}`);
         if (res.data?.id) { addProduct(res.data); return; }
       } catch { /* not found */ }
-      // 2. Exact SKU match in current results
-      const skuMatch = products.find((p) => p.sku === code);
-      if (skuMatch) { addProduct(skuMatch); return; }
-      // 3. Only one search result — add it directly
-      if (products.length === 1) { addProduct(products[0]); return; }
-      // 4. Not found — open dropdown for manual selection
-      setAddOpen(true);
+      // 2. Search by code — exact SKU match first, then single result fallback
+      try {
+        const res = await apiClient.get("/products", { params: { search: code, limit: 10, isActive: true, includeVariants: true } });
+        const matches: any[] = res.data?.data ?? [];
+        const skuMatch = matches.find((p) => (p.sku ?? "").toLowerCase() === code.toLowerCase());
+        if (skuMatch) { addProduct(skuMatch); return; }
+        if (matches.length === 1) { addProduct(matches[0]); return; }
+        if (matches.length > 1) { setAddOpen(true); return; }
+      } catch { /* fall through to create */ }
+      // 3. Nothing found — open create-product modal with scanned code as SKU
+      setCreateProductInitialSku(code);
+      setCreateProductOpen(true);
     } finally {
       setAddLoading(false);
     }
@@ -650,6 +658,25 @@ function EditableLineItems({
           </div>
         )}
       </div>
+
+      <InlineCreateProductModal
+        isOpen={createProductOpen}
+        onClose={() => {
+          setCreateProductOpen(false);
+          setAddSearch("");
+        }}
+        onCreated={(product) => {
+          addProduct({
+            id: product.id,
+            name: product.name,
+            sku: product.sku,
+            unit: product.unit,
+            pricePerUnit: product.pricePerUnit,
+          });
+          setCreateProductOpen(false);
+        }}
+        initialSku={createProductInitialSku}
+      />
     </div>
   );
 }
