@@ -22,9 +22,11 @@ export default function AdjustPickerScreen() {
   const [search, setSearch] = useState("");
   const [scanOpen, setScanOpen] = useState(false);
 
+  // limit: 0 → return everything matching the search term so the operator
+  // can find any SKU in their catalogue, not just the first 50.
   const { data, isLoading } = useAdminProducts({
     search: search.trim() || undefined,
-    limit: 50,
+    limit: 0,
   });
   const products = data?.data ?? [];
 

@@ -124,7 +124,22 @@ export class OrdersService implements OnApplicationBootstrap {
             email: true,
           },
         },
-        lineItems: { include: { product: { select: { id: true, name: true, unit: true } } } },
+        // Include `unitsPerBox` + `pricePerUnit` so the mobile/web edit UIs
+        // can render the boxes/pieces split for boxed products and recompute
+        // line subtotals locally without a second roundtrip.
+        lineItems: {
+          include: {
+            product: {
+              select: {
+                id: true,
+                name: true,
+                unit: true,
+                unitsPerBox: true,
+                pricePerUnit: true,
+              },
+            },
+          },
+        },
         transaction: true,
         invoices: { select: { id: true, invoiceNumber: true, status: true, total: true } },
       },
@@ -1001,7 +1016,8 @@ export class OrdersService implements OnApplicationBootstrap {
 
       if (allNewItems) {
         // Mobile "replace-all" pattern: client sends full item list without IDs.
-        // Delete existing items then re-create, honoring any per-line price override.
+        // Delete existing items then re-create, honoring any per-line price override
+        // and any boxes/pieces split (boxed products use BOX-price proration).
         const productIds = dto.items.map((i) => i.productId).filter(Boolean) as string[];
         const products = await this.prisma
           .forTenant()
@@ -1010,20 +1026,39 @@ export class OrdersService implements OnApplicationBootstrap {
 
         await this.prisma.forTenant().orderItem.deleteMany({ where: { orderId } });
         for (const item of dto.items) {
-          if (!item.productId || !item.qty) continue;
+          if (!item.productId) continue;
           const product = productMap.get(item.productId);
           if (!product) throw new BadRequestException(`Product ${item.productId} not found`);
+
+          // Recompute qty from boxes/pieces when the operator split a boxed
+          // product (matches createOrder's authority). Falls back to plain qty.
+          let qty = item.qty ?? 0;
+          if (item.boxes != null || item.pieces != null) {
+            const upb = Number(product.unitsPerBox ?? 0);
+            qty = (item.boxes ?? 0) * upb + (item.pieces ?? 0);
+          }
+          if (qty <= 0) continue;
+
           const catalogPrice = Number(product.pricePerUnit);
           const overridePrice = item.unitPrice !== undefined ? Number(item.unitPrice) : null;
           const isManualOverride = overridePrice !== null && overridePrice !== catalogPrice;
           const unitPrice = isManualOverride ? overridePrice : catalogPrice;
+          const subtotal = computeLineSubtotal({
+            unitPrice,
+            qty,
+            boxes: item.boxes ?? null,
+            pieces: item.pieces ?? null,
+            unitsPerBox: product.unitsPerBox,
+          });
           await this.prisma.forTenant().orderItem.create({
             data: {
               orderId,
               productId: item.productId,
-              qty: item.qty,
+              qty,
+              boxes: item.boxes ?? null,
+              pieces: item.pieces ?? null,
               unitPrice,
-              subtotal: item.qty * unitPrice,
+              subtotal,
               status: "PENDING",
               notes: item.notes,
               priceType: isManualOverride ? PriceType.MANUAL : PriceType.STANDARD,
@@ -1036,23 +1071,41 @@ export class OrdersService implements OnApplicationBootstrap {
       } else {
         // Individual item updates (dispatcher workflow with explicit item IDs)
         for (const item of dto.items) {
-          // New item (no id, has productId + qty)
-          if (!item.id && item.productId && item.qty) {
+          // New item (no id, has productId; qty OR boxes/pieces)
+          const newQtyHint =
+            item.boxes != null || item.pieces != null ? 1 : (item.qty ?? 0);
+          if (!item.id && item.productId && newQtyHint > 0) {
             const product = await this.prisma
               .forTenant()
               .product.findUnique({ where: { id: item.productId } });
             if (!product) continue;
+            // Recompute qty from boxes/pieces when present.
+            let qty = item.qty ?? 0;
+            if (item.boxes != null || item.pieces != null) {
+              const upb = Number(product.unitsPerBox ?? 0);
+              qty = (item.boxes ?? 0) * upb + (item.pieces ?? 0);
+            }
+            if (qty <= 0) continue;
             const catalogPrice = Number(product.pricePerUnit);
             const overridePrice = item.unitPrice !== undefined ? Number(item.unitPrice) : null;
             const isManualOverride = overridePrice !== null && overridePrice !== catalogPrice;
             const unitPrice = isManualOverride ? overridePrice : catalogPrice;
+            const subtotal = computeLineSubtotal({
+              unitPrice,
+              qty,
+              boxes: item.boxes ?? null,
+              pieces: item.pieces ?? null,
+              unitsPerBox: product.unitsPerBox,
+            });
             await this.prisma.forTenant().orderItem.create({
               data: {
                 orderId,
                 productId: item.productId,
-                qty: item.qty,
+                qty,
+                boxes: item.boxes ?? null,
+                pieces: item.pieces ?? null,
                 unitPrice,
-                subtotal: item.qty * unitPrice,
+                subtotal,
                 status: "PENDING",
                 notes: item.notes,
                 priceType: isManualOverride ? PriceType.MANUAL : PriceType.STANDARD,
@@ -1066,22 +1119,37 @@ export class OrdersService implements OnApplicationBootstrap {
           if (item.action === "CANCEL") {
             await this.prisma.forTenant().orderItem.update({
               where: { id: item.id },
-              data: { status: "CANCELLED", qty: 0, subtotal: 0 },
+              data: { status: "CANCELLED", qty: 0, subtotal: 0, boxes: null, pieces: null },
             });
           } else if (item.substituteProductId) {
             const product = await this.prisma.forTenant().product.findUniqueOrThrow({
               where: { id: item.substituteProductId },
             });
             const existingQty = order.lineItems.find((li) => li.id === item.id)?.qty ?? 1;
-            const qtyVal = item.qty ?? Number(existingQty);
+            // Substitution may also carry a box/piece split when the substitute
+            // is itself a boxed product. Honor it the same way as a fresh add.
+            let qtyVal = item.qty ?? Number(existingQty);
+            if (item.boxes != null || item.pieces != null) {
+              const upb = Number(product.unitsPerBox ?? 0);
+              qtyVal = (item.boxes ?? 0) * upb + (item.pieces ?? 0);
+            }
             const unitPrice = Number(product.pricePerUnit);
+            const subtotal = computeLineSubtotal({
+              unitPrice,
+              qty: qtyVal,
+              boxes: item.boxes ?? null,
+              pieces: item.pieces ?? null,
+              unitsPerBox: product.unitsPerBox,
+            });
             await this.prisma.forTenant().orderItem.update({
               where: { id: item.id },
               data: {
                 productId: item.substituteProductId,
                 unitPrice,
                 qty: qtyVal,
-                subtotal: qtyVal * unitPrice,
+                boxes: item.boxes ?? null,
+                pieces: item.pieces ?? null,
+                subtotal,
                 status: "PENDING",
                 notes: item.notes,
                 priceType: PriceType.STANDARD,
@@ -1090,19 +1158,49 @@ export class OrdersService implements OnApplicationBootstrap {
                 overriddenBy: null,
               },
             });
-          } else if (item.qty !== undefined) {
+          } else if (
+            item.qty !== undefined ||
+            item.boxes != null ||
+            item.pieces != null
+          ) {
             const li = order.lineItems.find((li) => li.id === item.id);
             if (!li) continue;
+            // For qty math we need the product's unitsPerBox even if it's not
+            // changing — the caller may have edited boxes/pieces only.
+            let unitsPerBox: number | null = null;
+            if (item.boxes != null || item.pieces != null) {
+              const product = await this.prisma
+                .forTenant()
+                .product.findUnique({
+                  where: { id: li.productId },
+                  select: { unitsPerBox: true },
+                });
+              unitsPerBox = product?.unitsPerBox ?? null;
+            }
+            let qty = item.qty ?? Number(li.qty);
+            if (item.boxes != null || item.pieces != null) {
+              qty = (item.boxes ?? 0) * Number(unitsPerBox ?? 0) + (item.pieces ?? 0);
+            }
+            if (qty <= 0) continue;
             const existingUnitPrice = Number(li.unitPrice);
             const overridePrice = item.unitPrice !== undefined ? Number(item.unitPrice) : null;
             const isManualOverride = overridePrice !== null && overridePrice !== existingUnitPrice;
             const unitPrice = isManualOverride ? overridePrice : existingUnitPrice;
+            const subtotal = computeLineSubtotal({
+              unitPrice,
+              qty,
+              boxes: item.boxes ?? null,
+              pieces: item.pieces ?? null,
+              unitsPerBox,
+            });
             await this.prisma.forTenant().orderItem.update({
               where: { id: item.id },
               data: {
-                qty: item.qty,
+                qty,
+                ...(item.boxes != null ? { boxes: item.boxes } : {}),
+                ...(item.pieces != null ? { pieces: item.pieces } : {}),
                 unitPrice,
-                subtotal: item.qty * unitPrice,
+                subtotal,
                 ...(item.notes !== undefined ? { notes: item.notes } : {}),
                 ...(isManualOverride
                   ? {

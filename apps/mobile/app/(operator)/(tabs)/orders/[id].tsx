@@ -241,36 +241,53 @@ export default function OrderDetailScreen() {
             {order.lineItems.length === 0 ? (
               <Text style={styles.empty}>No items on this order.</Text>
             ) : (
-              order.lineItems.map((li, i) => (
-                <View
-                  key={li.id}
-                  style={[
-                    styles.itemRow,
-                    i > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: ios.separator },
-                  ]}
-                >
-                  <View style={{ flex: 1, minWidth: 0 }}>
-                    <Text style={styles.itemName} numberOfLines={1}>
-                      {li.product?.name ?? "Item"}
-                    </Text>
-                    <Text style={styles.itemSub}>
-                      {li.qty} {li.product?.unit ?? "ea"} · {formatCurrency(li.unitPrice)}
-                    </Text>
+              order.lineItems.map((li, i) => {
+                const upbRaw = (li as any).product?.unitsPerBox;
+                const upb = upbRaw == null ? 0 : Number(upbRaw);
+                const isBoxed = upb > 1;
+                // Show "1 box + 2 pcs · $30 / box" when split, otherwise the
+                // existing "8 ea · $5.00" form.
+                const qtyLine = (() => {
+                  if (li.boxes != null && li.boxes >= 0 && (li.boxes > 0 || (li.pieces ?? 0) > 0)) {
+                    const parts: string[] = [];
+                    if (li.boxes > 0) parts.push(`${li.boxes} box${li.boxes === 1 ? "" : "es"}`);
+                    if ((li.pieces ?? 0) > 0) parts.push(`${li.pieces} ${li.product?.unit ?? "pcs"}`);
+                    return parts.join(" + ");
+                  }
+                  return `${li.qty} ${li.product?.unit ?? "ea"}`;
+                })();
+                return (
+                  <View
+                    key={li.id}
+                    style={[
+                      styles.itemRow,
+                      i > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: ios.separator },
+                    ]}
+                  >
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text style={styles.itemName} numberOfLines={1}>
+                        {li.product?.name ?? "Item"}
+                      </Text>
+                      <Text style={styles.itemSub}>
+                        {qtyLine} · {formatCurrency(li.unitPrice)}
+                        {isBoxed ? ` / box of ${upb}` : ""}
+                      </Text>
+                    </View>
+                    <View style={{ alignItems: "flex-end", gap: 4 }}>
+                      <Text style={styles.itemTotal}>{formatCurrency(li.subtotal)}</Text>
+                      {li.status && li.status !== "PENDING" ? (
+                        <Pill
+                          variant={li.status === "DELIVERED" ? "green" : li.status === "PARTIAL" ? "orange" : "gray"}
+                          small
+                          dot={false}
+                        >
+                          {li.status.toLowerCase()}
+                        </Pill>
+                      ) : null}
+                    </View>
                   </View>
-                  <View style={{ alignItems: "flex-end", gap: 4 }}>
-                    <Text style={styles.itemTotal}>{formatCurrency(li.subtotal)}</Text>
-                    {li.status && li.status !== "PENDING" ? (
-                      <Pill
-                        variant={li.status === "DELIVERED" ? "green" : li.status === "PARTIAL" ? "orange" : "gray"}
-                        small
-                        dot={false}
-                      >
-                        {li.status.toLowerCase()}
-                      </Pill>
-                    ) : null}
-                  </View>
-                </View>
-              ))
+                );
+              })
             )}
             <View style={styles.totalRow}>
               <Text style={styles.totalLabel}>Subtotal</Text>

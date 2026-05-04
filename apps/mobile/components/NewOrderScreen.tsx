@@ -249,9 +249,15 @@ function ProductPickView({
    */
   const [scannedById, setScannedById] = useState<Record<string, Product>>({});
 
+  // limit: 0 → API treats as "all" (capped server-side at 100k). The previous
+  // 200 cap chopped catalogues with > 200 products in half — the user's
+  // "suggestions stop halfway" report. Server-side `search` already trims the
+  // payload by the typed query, so the only inflated path is the empty-search
+  // browse list, which is acceptable on mobile (single-tenant catalogues are
+  // typically a few hundred SKUs at most).
   const { data: productsData, isLoading: productsLoading } = useProducts({
     search: search.trim() || undefined,
-    limit: 200,
+    limit: 0,
   });
   const products: Product[] = productsData?.data ?? [];
 
@@ -671,9 +677,10 @@ function ProductPickView({
 
       <View style={styles.footer}>
         <View style={styles.footerRow}>
-          {/* Tap the running total to open the cart review. The hint nudges
-              the operator that there's more to see — they were missing the
-              ability to inspect/adjust before confirming. */}
+          {/* Tap the running total OR the explicit "View" button to open the
+              cart review. The button is now visible on its own (the implicit
+              "tap the total" hint was missed by users who wanted an obvious
+              way to see + edit before confirming). */}
           <Pressable
             style={styles.footerTotalTap}
             onPress={totalItems > 0 ? () => setCartOpen(true) : undefined}
@@ -682,11 +689,22 @@ function ProductPickView({
           >
             <Text style={styles.footerEyebrow}>
               {totalItems} ITEM{totalItems === 1 ? "" : "S"}
-              {totalItems > 0 ? " · TAP TO REVIEW" : ""}
             </Text>
             <Text style={styles.footerTotal}>${total.toFixed(2)}</Text>
           </Pressable>
-          <View style={{ alignItems: "flex-end" }}>
+          <View style={styles.footerActions}>
+            {totalItems > 0 ? (
+              <Pressable
+                style={styles.viewBtn}
+                onPress={() => setCartOpen(true)}
+                accessibilityRole="button"
+                accessibilityLabel="View and edit order"
+                hitSlop={4}
+              >
+                <Ionicons name="list-outline" size={14} color={ios.brand} />
+                <Text style={styles.viewBtnText}>View / edit</Text>
+              </Pressable>
+            ) : null}
             <Pressable
               style={[
                 styles.confirmBtn,
@@ -697,17 +715,15 @@ function ProductPickView({
               accessibilityState={{ disabled: !canSave }}
             >
               <Text style={styles.confirmBtnText}>
-                {createOrder.isPending ? "Saving…" : "Confirm order"}
+                {createOrder.isPending ? "Saving…" : "Confirm"}
               </Text>
               <Ionicons name="arrow-forward" size={14} color="#fff" />
             </Pressable>
-            {totalItems === 0 && !createOrder.isPending ? (
-              <Text style={{ color: ios.label3, fontSize: 12, marginTop: 4 }}>
-                Add at least one item
-              </Text>
-            ) : null}
           </View>
         </View>
+        {totalItems === 0 && !createOrder.isPending ? (
+          <Text style={styles.footerHint}>Add at least one item to confirm.</Text>
+        ) : null}
       </View>
 
       {scanOpen ? (
@@ -1203,6 +1219,26 @@ const styles = StyleSheet.create({
   },
   confirmBtnDisabled: { opacity: 0.35 },
   confirmBtnText: { color: "#fff", fontSize: 16, fontFamily: "Inter_600SemiBold" },
+
+  // ── Footer extras ─────────────────────────────────────────────────────────
+  footerActions: { flexDirection: "row", alignItems: "center", gap: 8 },
+  viewBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: ios.brandWash,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    borderRadius: 14,
+  },
+  viewBtnText: { color: ios.brand, fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  footerHint: {
+    color: ios.label3,
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    marginTop: 6,
+    textAlign: "right",
+  },
 
   // ── Cart review modal ─────────────────────────────────────────────────────
   footerTotalTap: { paddingVertical: 4, paddingRight: 8 },

@@ -23,10 +23,21 @@ import { useUpdateOrderItems } from "../../../../../lib/api/orders";
 import { useProducts } from "../../../../../lib/api/products";
 import { showToast } from "../../../../../lib/toast";
 import { confirm } from "../../../../../lib/confirm";
+import { computeLineSubtotal, effectiveQty } from "../../../../../lib/pricing";
+import { useAuthStore } from "../../../../../lib/auth-store";
 
+/**
+ * One row of the in-progress edit. `qty` is total pieces (server's source of
+ * truth). For products with `unitsPerBox > 1` operators may also set
+ * `boxes`/`pieces` and the server recomputes qty + uses BOX-price proration
+ * (see apps/api/src/orders/orders.service.ts:594).
+ */
 type DraftItem = {
   productId: string;
   qty: number;
+  boxes?: number;
+  pieces?: number;
+  unitsPerBox?: number | null;
   unitPrice: number;
   catalogPrice: number;
   name: string;
@@ -47,6 +58,11 @@ export default function EditOrderItemsScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data: order, isLoading } = useAdminOrder(id ?? "");
+  const userRole = useAuthStore((s) => s.user?.role);
+  // Customer accounts shouldn't reach this screen, but defend anyway —
+  // box-splitting is operator/driver-only by product policy.
+  const canSplitBoxes = userRole !== "CUSTOMER";
+
   const [draft, setDraft] = useState<Record<string, DraftItem>>({});
   const [showPicker, setShowPicker] = useState(false);
   const [substituteFor, setSubstituteFor] = useState<string | null>(null);
@@ -57,39 +73,139 @@ export default function EditOrderItemsScreen() {
     if (!order) return;
     const next: Record<string, DraftItem> = {};
     for (const li of order.lineItems) {
-      const catalogPrice = toNumber((li as any).product?.pricePerUnit ?? li.unitPrice);
+      const product = (li as any).product ?? {};
+      const catalogPrice = toNumber(product.pricePerUnit ?? li.unitPrice);
+      const upbRaw = product.unitsPerBox;
+      const unitsPerBox = upbRaw == null ? null : Number(upbRaw);
       next[li.productId] = {
         productId: li.productId,
         qty: toNumber(li.qty),
+        boxes: li.boxes ?? undefined,
+        pieces: li.pieces ?? undefined,
+        unitsPerBox,
         unitPrice: toNumber(li.unitPrice),
         catalogPrice,
-        name: li.product?.name ?? "Item",
-        unit: li.product?.unit,
-        overrideReason: (li as any).overrideReason ?? undefined,
+        name: product.name ?? "Item",
+        unit: product.unit,
+        overrideReason: li.overrideReason ?? undefined,
       };
     }
     setDraft(next);
   }, [order]);
 
-  const totalCents = useMemo(
-    () =>
-      Math.round(
-        Object.values(draft).reduce((sum, it) => sum + it.qty * it.unitPrice * 100, 0),
-      ),
-    [draft],
-  );
-  const total = totalCents / 100;
+  // Live total mirrors the server math (BOX-price proration when split).
+  const total = useMemo(() => {
+    let t = 0;
+    for (const it of Object.values(draft)) {
+      const qty = effectiveQty(it, it.unitsPerBox);
+      if (qty <= 0) continue;
+      t += computeLineSubtotal({
+        unitPrice: it.unitPrice,
+        qty,
+        boxes: it.boxes ?? null,
+        pieces: it.pieces ?? null,
+        unitsPerBox: it.unitsPerBox ?? null,
+      });
+    }
+    return t;
+  }, [draft]);
+
+  const itemCount = Object.values(draft).filter(
+    (it) => effectiveQty(it, it.unitsPerBox) > 0,
+  ).length;
+
+  // ── Per-line helpers ──────────────────────────────────────────────────────
+
+  const setQty = (id: string, qty: number) =>
+    setDraft((d) => {
+      const cur = d[id];
+      if (!cur) return d;
+      const q = Math.max(0, Math.floor(qty));
+      const next = { ...d };
+      if (q === 0) delete next[id];
+      // Plain qty path — clear boxes/pieces so the server treats it as flat.
+      else next[id] = { ...cur, qty: q, boxes: undefined, pieces: undefined };
+      return next;
+    });
+
+  const setBoxes = (id: string, boxes: number) =>
+    setDraft((d) => {
+      const cur = d[id];
+      if (!cur) return d;
+      const upb = Number(cur.unitsPerBox ?? 0);
+      const b = Math.max(0, Math.floor(boxes));
+      const pcs = cur.pieces ?? 0;
+      const qty = b * upb + pcs;
+      const next = { ...d };
+      if (qty === 0) delete next[id];
+      else next[id] = { ...cur, boxes: b, pieces: pcs, qty };
+      return next;
+    });
+
+  const setPieces = (id: string, pieces: number) =>
+    setDraft((d) => {
+      const cur = d[id];
+      if (!cur) return d;
+      const upb = Number(cur.unitsPerBox ?? 0);
+      const pcs = Math.max(0, Math.floor(pieces));
+      const b = cur.boxes ?? 0;
+      const qty = b * upb + pcs;
+      const next = { ...d };
+      if (qty === 0) delete next[id];
+      else next[id] = { ...cur, boxes: b, pieces: pcs, qty };
+      return next;
+    });
+
+  const incQty = (id: string) => {
+    const cur = draft[id];
+    if (!cur) return;
+    const upb = Number(cur.unitsPerBox ?? 0);
+    if (upb > 1) setBoxes(id, (cur.boxes ?? 0) + 1);
+    else setQty(id, (cur.qty ?? 0) + 1);
+  };
+
+  const decQty = (id: string) => {
+    const cur = draft[id];
+    if (!cur) return;
+    const upb = Number(cur.unitsPerBox ?? 0);
+    if (upb > 1) setBoxes(id, Math.max(0, (cur.boxes ?? 0) - 1));
+    else setQty(id, Math.max(0, (cur.qty ?? 0) - 1));
+  };
+
+  const removeLine = (id: string) =>
+    setDraft((d) => {
+      const next = { ...d };
+      delete next[id];
+      return next;
+    });
+
+  // ── Save ─────────────────────────────────────────────────────────────────
 
   const save = () => {
     if (!id) return;
     const items = Object.values(draft)
-      .filter((i) => i.qty > 0)
-      .map((i) => ({
-        productId: i.productId,
-        qty: i.qty,
-        unitPrice: i.unitPrice,
-        ...(i.overrideReason ? { overrideReason: i.overrideReason } : {}),
-      }));
+      .map((i) => {
+        const qty = effectiveQty(i, i.unitsPerBox);
+        const base: {
+          productId: string;
+          qty: number;
+          unitPrice: number;
+          boxes?: number;
+          pieces?: number;
+          overrideReason?: string;
+        } = {
+          productId: i.productId,
+          qty,
+          unitPrice: i.unitPrice,
+        };
+        if (i.boxes != null || i.pieces != null) {
+          base.boxes = i.boxes ?? 0;
+          base.pieces = i.pieces ?? 0;
+        }
+        if (i.overrideReason) base.overrideReason = i.overrideReason;
+        return base;
+      })
+      .filter((i) => i.qty > 0);
     if (items.length === 0) {
       showToast("Orders can't be saved empty.");
       return;
@@ -128,7 +244,6 @@ export default function EditOrderItemsScreen() {
         leading={<NavBackButton label={order.orderNumber} onPress={() => router.back()} />}
       />
 
-      {/* Price override modal */}
       {priceEditItem ? (
         <PriceOverrideModal
           item={priceEditItem}
@@ -152,8 +267,9 @@ export default function EditOrderItemsScreen() {
           title={substituteFor ? "Substitute with…" : "Add product"}
           onPick={(p) => {
             const catalogPrice = toNumber(p.pricePerUnit);
+            const upbRaw = p.unitsPerBox;
+            const unitsPerBox = upbRaw == null ? null : Number(upbRaw);
             if (substituteFor) {
-              // Replace the old product with the new one, preserving qty
               setDraft((d) => {
                 const next = { ...d };
                 const old = next[substituteFor];
@@ -162,6 +278,7 @@ export default function EditOrderItemsScreen() {
                 next[p.id] = {
                   productId: p.id,
                   qty: inheritedQty,
+                  unitsPerBox,
                   unitPrice: catalogPrice,
                   catalogPrice,
                   name: p.name,
@@ -171,18 +288,53 @@ export default function EditOrderItemsScreen() {
               });
               setSubstituteFor(null);
             } else {
-              setDraft((d) => ({
-                ...d,
-                [p.id]: {
-                  productId: p.id,
-                  qty: (d[p.id]?.qty ?? 0) + 1,
-                  unitPrice: d[p.id]?.unitPrice ?? catalogPrice,
-                  catalogPrice,
-                  name: p.name,
-                  unit: p.unit,
-                  overrideReason: d[p.id]?.overrideReason,
-                },
-              }));
+              setDraft((d) => {
+                const existing = d[p.id];
+                if (existing) {
+                  // Re-add increments by 1 of the canonical unit (box if boxed,
+                  // otherwise piece).
+                  const upb = Number(existing.unitsPerBox ?? 0);
+                  if (upb > 1) {
+                    const boxes = (existing.boxes ?? 0) + 1;
+                    const pieces = existing.pieces ?? 0;
+                    return {
+                      ...d,
+                      [p.id]: { ...existing, boxes, pieces, qty: boxes * upb + pieces },
+                    };
+                  }
+                  return { ...d, [p.id]: { ...existing, qty: (existing.qty ?? 0) + 1 } };
+                }
+                // Fresh add: 1 box for boxed, 1 piece for non-boxed.
+                if (Number(unitsPerBox ?? 0) > 1) {
+                  const upb = Number(unitsPerBox ?? 0);
+                  return {
+                    ...d,
+                    [p.id]: {
+                      productId: p.id,
+                      qty: upb,
+                      boxes: 1,
+                      pieces: 0,
+                      unitsPerBox,
+                      unitPrice: catalogPrice,
+                      catalogPrice,
+                      name: p.name,
+                      unit: p.unit,
+                    },
+                  };
+                }
+                return {
+                  ...d,
+                  [p.id]: {
+                    productId: p.id,
+                    qty: 1,
+                    unitsPerBox,
+                    unitPrice: catalogPrice,
+                    catalogPrice,
+                    name: p.name,
+                    unit: p.unit,
+                  },
+                };
+              });
             }
             setShowPicker(false);
           }}
@@ -191,137 +343,47 @@ export default function EditOrderItemsScreen() {
       ) : (
         <>
           <ScrollView showsVerticalScrollIndicator={false}>
-            <View style={{ padding: 16, gap: 8 }}>
+            <View style={{ paddingHorizontal: 16, paddingTop: 12, gap: 10 }}>
               {Object.values(draft).length === 0 ? (
                 <Text style={styles.empty}>No items. Add one below.</Text>
               ) : (
-                Object.values(draft).map((it) => {
-                  const isOverridden = it.unitPrice !== it.catalogPrice;
-                  return (
-                    <View key={it.productId} style={styles.row}>
-                      {/* Delete item */}
-                      <Pressable
-                        style={styles.deleteBtn}
-                        onPress={() =>
-                          confirm("Remove item?", it.name, () =>
-                            setDraft((d) => {
-                              const next = { ...d };
-                              delete next[it.productId];
-                              return next;
-                            }),
-                            { confirmText: "Remove", destructive: true },
-                          )
-                        }
-                        hitSlop={4}
-                      >
-                        <Ionicons name="trash-outline" size={16} color={ios.system.red} />
-                      </Pressable>
-
-                      <View style={{ flex: 1, minWidth: 0 }}>
-                        <Text style={styles.name} numberOfLines={1}>
-                          {it.name}
-                        </Text>
-                        {/* Price + override + substitute row */}
-                        <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 3 }}>
-                          <Pressable
-                            onPress={() => setPriceEditItem(it)}
-                            style={styles.priceRow}
-                            hitSlop={8}
-                          >
-                            {isOverridden ? (
-                              <Text style={styles.priceStrike}>
-                                ${it.catalogPrice.toFixed(2)}
-                              </Text>
-                            ) : null}
-                            <Text
-                              style={[styles.sub, isOverridden && { color: ios.system.orange }]}
-                            >
-                              ${it.unitPrice.toFixed(2)}
-                              {it.unit ? ` / ${it.unit}` : ""}
-                            </Text>
-                            <Ionicons
-                              name="pencil-outline"
-                              size={12}
-                              color={isOverridden ? ios.system.orange : ios.label3}
-                            />
-                          </Pressable>
-                          <Pressable
-                            style={styles.subBtn}
-                            onPress={() => {
-                              // Open product picker in substitute mode
-                              setSubstituteFor(it.productId);
-                              setShowPicker(true);
-                            }}
-                            hitSlop={4}
-                          >
-                            <Ionicons name="swap-horizontal-outline" size={12} color={ios.brand} />
-                            <Text style={styles.subBtnText}>Sub</Text>
-                          </Pressable>
-                        </View>
-                      </View>
-
-                      {/* Stepper with typeable qty */}
-                      <View style={styles.stepper}>
-                        <Pressable
-                          style={styles.stepBtn}
-                          onPress={() =>
-                            setDraft((d) => {
-                              const next = { ...d };
-                              const cur = next[it.productId];
-                              if (!cur) return next;
-                              const q = Math.max(0, cur.qty - 1);
-                              if (q === 0) delete next[it.productId];
-                              else next[it.productId] = { ...cur, qty: q };
-                              return next;
-                            })
-                          }
-                        >
-                          <Text style={styles.stepText}>−</Text>
-                        </Pressable>
-                        <TextInput
-                          style={styles.qtyInput}
-                          value={String(it.qty)}
-                          onChangeText={(val) => {
-                            const n = parseInt(val, 10);
-                            if (!isNaN(n) && n > 0) {
-                              setDraft((d) => ({ ...d, [it.productId]: { ...it, qty: n } }));
-                            } else if (val === "" || val === "0") {
-                              setDraft((d) => {
-                                const next = { ...d };
-                                delete next[it.productId];
-                                return next;
-                              });
-                            }
-                          }}
-                          keyboardType="number-pad"
-                          selectTextOnFocus
-                        />
-                        <Pressable
-                          style={styles.stepBtn}
-                          onPress={() =>
-                            setDraft((d) => ({
-                              ...d,
-                              [it.productId]: { ...it, qty: Number(it.qty) + 1 },
-                            }))
-                          }
-                        >
-                          <Text style={styles.stepText}>+</Text>
-                        </Pressable>
-                      </View>
-                    </View>
-                  );
-                })
+                Object.values(draft).map((it) => (
+                  <DraftItemCard
+                    key={it.productId}
+                    item={it}
+                    canSplitBoxes={canSplitBoxes}
+                    onIncQty={() => incQty(it.productId)}
+                    onDecQty={() => decQty(it.productId)}
+                    onSetQty={(n) => setQty(it.productId, n)}
+                    onSetBoxes={(n) => setBoxes(it.productId, n)}
+                    onSetPieces={(n) => setPieces(it.productId, n)}
+                    onPressPrice={() => setPriceEditItem(it)}
+                    onPressSubstitute={() => {
+                      setSubstituteFor(it.productId);
+                      setShowPicker(true);
+                    }}
+                    onRemove={() =>
+                      confirm("Remove item?", it.name, () => removeLine(it.productId), {
+                        confirmText: "Remove",
+                        destructive: true,
+                      })
+                    }
+                  />
+                ))
               )}
               <Pressable style={styles.addBtn} onPress={() => setShowPicker(true)}>
                 <Ionicons name="add-circle-outline" size={18} color={ios.brand} />
                 <Text style={styles.addBtnText}>Add product</Text>
               </Pressable>
             </View>
+            <View style={{ height: 16 }} />
           </ScrollView>
 
           <View style={styles.footer}>
             <View>
-              <Text style={styles.footerEyebrow}>TOTAL</Text>
+              <Text style={styles.footerEyebrow}>
+                {itemCount} ITEM{itemCount === 1 ? "" : "S"}
+              </Text>
               <Text style={styles.footerTotal}>${total.toFixed(2)}</Text>
             </View>
             <Pressable
@@ -339,6 +401,239 @@ export default function EditOrderItemsScreen() {
     </SafeAreaView>
   );
 }
+
+// ─── Per-row card ────────────────────────────────────────────────────────────
+
+/**
+ * Draft line as a card with three zones:
+ *   ┌─────────────────────────────────────────────┐
+ *   │ Name                            $line total │  ← header
+ *   │ $unit · per box of N · SKU                  │  ← meta
+ *   ├─────────────────────────────────────────────┤
+ *   │ Boxes  [- 2 +]    Loose pieces  [- 3 +]     │  ← editor (boxed)
+ *   │   or                                        │
+ *   │ Qty    [- 4 +]                              │  ← editor (loose)
+ *   ├─────────────────────────────────────────────┤
+ *   │ [Sub]  [Override]  [trash]                  │  ← actions
+ *   └─────────────────────────────────────────────┘
+ *
+ * The previous design crammed everything into one row + tiny trash + tiny
+ * stepper, which the user called out as ugly and missing the box/piece
+ * controls. This stacked layout gives each function room to breathe.
+ */
+function DraftItemCard({
+  item,
+  canSplitBoxes,
+  onIncQty,
+  onDecQty,
+  onSetQty,
+  onSetBoxes,
+  onSetPieces,
+  onPressPrice,
+  onPressSubstitute,
+  onRemove,
+}: {
+  item: DraftItem;
+  canSplitBoxes: boolean;
+  onIncQty: () => void;
+  onDecQty: () => void;
+  onSetQty: (n: number) => void;
+  onSetBoxes: (n: number) => void;
+  onSetPieces: (n: number) => void;
+  onPressPrice: () => void;
+  onPressSubstitute: () => void;
+  onRemove: () => void;
+}) {
+  const isOverridden = item.unitPrice !== item.catalogPrice;
+  const upb = Number(item.unitsPerBox ?? 0);
+  const isBoxed = upb > 1 && canSplitBoxes;
+  const qty = effectiveQty(item, item.unitsPerBox);
+  const lineTotal = computeLineSubtotal({
+    unitPrice: item.unitPrice,
+    qty,
+    boxes: item.boxes ?? null,
+    pieces: item.pieces ?? null,
+    unitsPerBox: item.unitsPerBox ?? null,
+  });
+
+  return (
+    <View style={styles.card}>
+      {/* Header: name + line total */}
+      <View style={styles.cardHeader}>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={styles.cardName} numberOfLines={2}>
+            {item.name}
+          </Text>
+          {/* Meta line: unit price + box hint + override badge */}
+          <View style={styles.cardMetaRow}>
+            <Pressable
+              onPress={onPressPrice}
+              style={styles.priceTap}
+              hitSlop={6}
+            >
+              {isOverridden ? (
+                <Text style={styles.priceStrike}>${item.catalogPrice.toFixed(2)}</Text>
+              ) : null}
+              <Text
+                style={[styles.cardMeta, isOverridden && { color: ios.system.orangeInk }]}
+              >
+                ${item.unitPrice.toFixed(2)}
+                {isBoxed
+                  ? ` / box of ${upb}`
+                  : item.unit
+                    ? ` / ${item.unit}`
+                    : ""}
+              </Text>
+              <Ionicons
+                name="pencil-outline"
+                size={11}
+                color={isOverridden ? ios.system.orangeInk : ios.label3}
+              />
+            </Pressable>
+          </View>
+        </View>
+        <Text style={styles.cardTotal}>${lineTotal.toFixed(2)}</Text>
+      </View>
+
+      {/* Editor */}
+      {isBoxed ? (
+        <View style={{ gap: 8 }}>
+          <StepperRow
+            label="Boxes"
+            value={item.boxes ?? 0}
+            onChange={onSetBoxes}
+          />
+          <StepperRow
+            label={`Loose ${item.unit ?? "pieces"}`}
+            value={item.pieces ?? 0}
+            onChange={onSetPieces}
+            max={upb - 1}
+            hint={`${upb} per box`}
+          />
+        </View>
+      ) : (
+        <StepperRow
+          label={`Qty${item.unit ? ` (${item.unit})` : ""}`}
+          value={item.qty}
+          onChange={onSetQty}
+          onIncrement={onIncQty}
+          onDecrement={onDecQty}
+        />
+      )}
+
+      {/* Actions */}
+      <View style={styles.cardActions}>
+        <Pressable style={styles.actionChip} onPress={onPressSubstitute} hitSlop={4}>
+          <Ionicons name="swap-horizontal-outline" size={14} color={ios.brand} />
+          <Text style={styles.actionChipText}>Substitute</Text>
+        </Pressable>
+        <Pressable
+          style={[styles.actionChip, isOverridden && styles.actionChipActive]}
+          onPress={onPressPrice}
+          hitSlop={4}
+        >
+          <Ionicons
+            name="pricetag-outline"
+            size={14}
+            color={isOverridden ? ios.system.orangeInk : ios.brand}
+          />
+          <Text
+            style={[
+              styles.actionChipText,
+              isOverridden && { color: ios.system.orangeInk },
+            ]}
+          >
+            {isOverridden ? "Price overridden" : "Override price"}
+          </Text>
+        </Pressable>
+        <View style={{ flex: 1 }} />
+        <Pressable style={styles.deleteBtn} onPress={onRemove} hitSlop={6}>
+          <Ionicons name="trash-outline" size={16} color={ios.system.redInk} />
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+// ─── Reusable stepper row (Boxes/Pieces/Qty) ─────────────────────────────────
+
+function StepperRow({
+  label,
+  value,
+  onChange,
+  onIncrement,
+  onDecrement,
+  max,
+  hint,
+}: {
+  label: string;
+  value: number;
+  onChange: (n: number) => void;
+  onIncrement?: () => void;
+  onDecrement?: () => void;
+  max?: number;
+  hint?: string;
+}) {
+  // Local draft so the user can clear the input without it snapping back to 0.
+  const [draft, setDraft] = useState(String(value));
+  useEffect(() => {
+    setDraft(String(value));
+  }, [value]);
+
+  const dec = () => {
+    if (onDecrement) onDecrement();
+    else onChange(Math.max(0, value - 1));
+  };
+  const inc = () => {
+    if (onIncrement) onIncrement();
+    else {
+      const next = max != null ? Math.min(max, value + 1) : value + 1;
+      onChange(next);
+    }
+  };
+
+  return (
+    <View style={styles.stepperRow}>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.stepperLabel}>{label}</Text>
+        {hint ? <Text style={styles.stepperHint}>{hint}</Text> : null}
+      </View>
+      <View style={styles.stepper}>
+        <Pressable style={styles.stepBtn} onPress={dec} hitSlop={6}>
+          <Text style={styles.stepText}>−</Text>
+        </Pressable>
+        <TextInput
+          style={styles.qtyInput}
+          value={draft}
+          onChangeText={(txt) => {
+            if (/^\d*$/.test(txt)) {
+              setDraft(txt);
+              if (txt === "") return;
+              const n = Number(txt);
+              if (Number.isFinite(n)) {
+                const clamped = max != null ? Math.min(max, n) : n;
+                onChange(clamped);
+              }
+            }
+          }}
+          onBlur={() => {
+            if (draft === "") onChange(0);
+            setDraft(String(value));
+          }}
+          keyboardType="number-pad"
+          returnKeyType="done"
+          maxLength={5}
+          selectTextOnFocus
+        />
+        <Pressable style={styles.stepBtn} onPress={inc} hitSlop={6}>
+          <Text style={styles.stepText}>+</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+// ─── Price override modal ────────────────────────────────────────────────────
 
 function PriceOverrideModal({
   item,
@@ -401,22 +696,37 @@ function PriceOverrideModal({
   );
 }
 
+// ─── Product picker ──────────────────────────────────────────────────────────
+
 function ProductPicker({
   title = "Add product",
   onPick,
   onClose,
 }: {
   title?: string;
-  onPick: (p: { id: string; name: string; pricePerUnit: number | string; unit?: string }) => void;
+  onPick: (p: {
+    id: string;
+    name: string;
+    pricePerUnit: number | string;
+    unit?: string;
+    unitsPerBox?: number | null;
+  }) => void;
   onClose: () => void;
 }) {
   const [search, setSearch] = useState("");
-  const { data, isLoading } = useProducts({ search: search.trim() || undefined });
+  // limit: 0 → all products. Previously this defaulted to the API's 20-row
+  // page so suggestion lists "stopped halfway" for any catalogue larger than
+  // 20 SKUs. Server-side `search` already narrows the payload.
+  const { data, isLoading } = useProducts({
+    search: search.trim() || undefined,
+    limit: 0,
+  });
   const products = (data?.data ?? []) as Array<{
     id: string;
     name: string;
     sku?: string;
     unit?: string;
+    unitsPerBox?: number | null;
     pricePerUnit: number | string;
   }>;
 
@@ -438,20 +748,23 @@ function ProductPicker({
           </View>
         ) : (
           <View style={{ paddingHorizontal: 16, gap: 6, paddingBottom: 24 }}>
-            {products.map((p) => (
-              <Pressable key={p.id} style={styles.pickRow} onPress={() => onPick(p)}>
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={styles.name} numberOfLines={1}>
-                    {p.name}
-                  </Text>
-                  <Text style={styles.sub}>
-                    {p.sku ? `SKU ${p.sku} · ` : ""}${toNumber(p.pricePerUnit).toFixed(2)}
-                    {p.unit ? ` / ${p.unit}` : ""}
-                  </Text>
-                </View>
-                <Ionicons name="add-circle" size={22} color={ios.brand} />
-              </Pressable>
-            ))}
+            {products.map((p) => {
+              const upb = Number(p.unitsPerBox ?? 0);
+              return (
+                <Pressable key={p.id} style={styles.pickRow} onPress={() => onPick(p)}>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={styles.cardName} numberOfLines={1}>
+                      {p.name}
+                    </Text>
+                    <Text style={styles.cardMeta}>
+                      {p.sku ? `SKU ${p.sku} · ` : ""}${toNumber(p.pricePerUnit).toFixed(2)}
+                      {upb > 1 ? ` / box of ${upb}` : p.unit ? ` / ${p.unit}` : ""}
+                    </Text>
+                  </View>
+                  <Ionicons name="add-circle" size={22} color={ios.brand} />
+                </Pressable>
+              );
+            })}
           </View>
         )}
       </ScrollView>
@@ -463,28 +776,36 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: ios.bg },
   center: { padding: 40, alignItems: "center" },
   empty: { fontSize: 14, fontFamily: "Inter_400Regular", color: ios.label2 },
-  row: {
+
+  // ── Card ───────────────────────────────────────────────────────────────────
+  card: {
     backgroundColor: ios.bgElev,
-    borderRadius: 12,
-    padding: 12,
+    borderRadius: 14,
+    padding: 14,
+    gap: 12,
+  },
+  cardHeader: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     gap: 10,
   },
-  pickRow: {
-    backgroundColor: ios.bgElev,
-    borderRadius: 10,
-    padding: 12,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
+  cardName: {
+    fontSize: 15,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label,
+    letterSpacing: -0.2,
   },
-  name: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: ios.label },
-  priceRow: {
+  cardMetaRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 3 },
+  cardMeta: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    color: ios.label2,
+    fontVariant: ["tabular-nums"],
+  },
+  priceTap: {
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
-    marginTop: 2,
   },
   priceStrike: {
     fontSize: 11,
@@ -492,7 +813,30 @@ const styles = StyleSheet.create({
     color: ios.label3,
     textDecorationLine: "line-through",
   },
-  sub: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2 },
+  cardTotal: {
+    fontSize: 15,
+    fontFamily: "Inter_700Bold",
+    color: ios.label,
+    fontVariant: ["tabular-nums"],
+  },
+
+  // ── Stepper row ───────────────────────────────────────────────────────────
+  stepperRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  stepperLabel: {
+    fontSize: 13,
+    fontFamily: "Inter_500Medium",
+    color: ios.label,
+  },
+  stepperHint: {
+    fontSize: 11,
+    fontFamily: "Inter_400Regular",
+    color: ios.label3,
+    marginTop: 1,
+  },
   stepper: {
     flexDirection: "row",
     alignItems: "center",
@@ -502,16 +846,9 @@ const styles = StyleSheet.create({
   },
   stepBtn: { width: 30, height: 30, alignItems: "center", justifyContent: "center" },
   stepText: { color: ios.brand, fontSize: 18 },
-  qty: {
-    minWidth: 28,
-    textAlign: "center",
-    fontSize: 16,
-    fontFamily: "Inter_700Bold",
-    color: ios.label,
-    fontVariant: ["tabular-nums"],
-  },
   qtyInput: {
-    minWidth: 36,
+    minWidth: 44,
+    paddingHorizontal: 4,
     textAlign: "center",
     fontSize: 16,
     fontFamily: "Inter_700Bold",
@@ -519,28 +856,43 @@ const styles = StyleSheet.create({
     fontVariant: ["tabular-nums"],
     paddingVertical: 2,
   },
+
+  // ── Card actions ──────────────────────────────────────────────────────────
+  cardActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingTop: 4,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: ios.separator,
+  },
+  actionChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: ios.brandWash,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  actionChipActive: {
+    backgroundColor: ios.system.orangeWash,
+  },
+  actionChipText: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.brand,
+  },
   deleteBtn: {
-    width: 30,
-    height: 30,
+    width: 32,
+    height: 32,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: ios.system.redWash,
     borderRadius: 8,
   },
-  subBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 2,
-    backgroundColor: ios.brandWash,
-    borderRadius: 6,
-    paddingHorizontal: 6,
-    paddingVertical: 3,
-  },
-  subBtnText: {
-    fontSize: 11,
-    fontFamily: "Inter_600SemiBold",
-    color: ios.brand,
-  },
+
+  // ── Add product CTA ───────────────────────────────────────────────────────
   addBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -552,6 +904,18 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   addBtnText: { color: ios.brand, fontSize: 15, fontFamily: "Inter_600SemiBold" },
+
+  // ── Product picker rows ───────────────────────────────────────────────────
+  pickRow: {
+    backgroundColor: ios.bgElev,
+    borderRadius: 10,
+    padding: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+
+  // ── Footer ────────────────────────────────────────────────────────────────
   footer: {
     padding: 16,
     flexDirection: "row",
@@ -563,7 +927,7 @@ const styles = StyleSheet.create({
   },
   footerEyebrow: { fontSize: 12, fontFamily: "Inter_600SemiBold", color: ios.label2, letterSpacing: 0.4 },
   footerTotal: {
-    fontSize: 22,
+    fontSize: 24,
     fontFamily: "Inter_700Bold",
     color: ios.label,
     fontVariant: ["tabular-nums"],
@@ -576,7 +940,8 @@ const styles = StyleSheet.create({
   },
   saveBtnDisabled: { opacity: 0.5 },
   saveBtnText: { color: "#fff", fontSize: 15, fontFamily: "Inter_600SemiBold" },
-  // Price override modal
+
+  // ── Price override modal ──────────────────────────────────────────────────
   modalOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.45)",
