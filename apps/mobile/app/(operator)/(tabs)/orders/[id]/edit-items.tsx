@@ -215,7 +215,12 @@ export default function EditOrderItemsScreen() {
       {
         onSuccess: () => {
           showToast("Items updated");
-          router.back();
+          // Land on the orders LIST after a successful save instead of
+          // popping back to the order detail. The user reported "Back" not
+          // taking them to all orders after submit; explicit navigation
+          // sidesteps any unstable back-stack state when the screen was
+          // reached via deep link or a fresh tab switch.
+          router.replace("/(operator)/(tabs)/orders" as any);
         },
         onError: (e: any) =>
           showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
