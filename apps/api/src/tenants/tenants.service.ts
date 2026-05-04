@@ -312,6 +312,17 @@ export class TenantsService {
 
     const updated = await this.prisma.tenantConfig.update({ where: { tenantId }, data });
 
+    // Any branding change (name or color) means cached invoice PDFs are out
+    // of date — clear their stored pdfUrl so the next download regenerates
+    // against the new branding. New invoices already pull live tenant config
+    // at render time.
+    const brandingChanged =
+      (dto.businessName !== undefined && dto.businessName !== cfg.businessName) ||
+      (dto.primaryColor !== undefined && dto.primaryColor !== cfg.primaryColor);
+    if (brandingChanged) {
+      await this.invalidateInvoicePdfCache(tenantId);
+    }
+
     // Resolve logoUrl if a logo is stored
     const logoUrl = updated.logoKey ? await this.storage.presignedUrl(updated.logoKey) : null;
 
@@ -340,7 +351,28 @@ export class TenantsService {
     await this.storage.upload(key, file.buffer, file.mimetype);
     await this.prisma.tenantConfig.update({ where: { tenantId }, data: { logoKey: key } });
 
+    // The tenant's logo just changed — flush every cached invoice PDF so the
+    // next download for any invoice (new or old) re-renders with the new logo.
+    await this.invalidateInvoicePdfCache(tenantId);
+
     const logoUrl = await this.storage.presignedUrl(key);
     return { logoKey: key, logoUrl };
+  }
+
+  /**
+   * Clear the cached `pdfUrl` on every invoice for this tenant so the next
+   * `InvoicePdfService.getOrGenerate(id)` call regenerates the PDF instead of
+   * returning the stale cached copy. The actual PDF objects in storage are
+   * left in place — they get overwritten at the same key on regeneration.
+   *
+   * Called whenever something visible on the PDF changes at the tenant level
+   * (logo, business name, primary color). Invoice-level edits already mark
+   * the invoice "dirty" through their own flows.
+   */
+  private async invalidateInvoicePdfCache(tenantId: string): Promise<void> {
+    await this.prisma.invoice.updateMany({
+      where: { tenantId, pdfUrl: { not: null } },
+      data: { pdfUrl: null },
+    });
   }
 }

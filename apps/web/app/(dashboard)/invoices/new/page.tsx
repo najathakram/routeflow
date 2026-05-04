@@ -468,6 +468,137 @@ export default function NewInvoicePage() {
     setItems((prev) => [...prev, createEmptyItem()]);
   }
 
+  /**
+   * Add a product from the catalog as a new line item, mirroring the order
+   * modal's flow. If the only existing row is the seeded blank row, replace
+   * it instead of appending so the table doesn't grow a stray empty line.
+   * If the product is already on the invoice, just bump its qty by one box
+   * (or 1 unit) — same ergonomics as the order scan flow.
+   */
+  function addProductFromCatalog(product: any) {
+    const upb = product.unitsPerBox ? Number(product.unitsPerBox) : undefined;
+    const specialPrice: number | undefined = priceMap[product.id];
+    const listPrice = parseFloat(String(product.pricePerUnit ?? 0));
+    const effectivePrice = specialPrice ?? listPrice;
+
+    const lineItem: LineItemState = {
+      key: Math.random().toString(36).slice(2),
+      productId: product.id,
+      description: product.name,
+      qty: upb ? upb : 1,
+      unitPrice: effectivePrice,
+      discount: 0,
+      taxable: false,
+      regularPrice: specialPrice !== undefined ? listPrice : undefined,
+      isSpecialPrice: specialPrice !== undefined,
+      avgCost: product.averageCost ? parseFloat(String(product.averageCost)) : undefined,
+      unitsPerBox: upb,
+      boxes: upb ? 1 : undefined,
+      pieces: upb ? 0 : undefined,
+    };
+
+    setItems((prev) => {
+      // If product is already on the invoice, increment its qty instead of duplicating.
+      const existingIdx = prev.findIndex((it) => it.productId === product.id);
+      if (existingIdx >= 0) {
+        return prev.map((it, idx) => {
+          if (idx !== existingIdx) return it;
+          if (it.unitsPerBox) {
+            const nextBoxes = (it.boxes ?? 0) + 1;
+            return {
+              ...it,
+              boxes: nextBoxes,
+              qty: nextBoxes * it.unitsPerBox + (it.pieces ?? 0),
+            };
+          }
+          return { ...it, qty: Number(it.qty) + 1 };
+        });
+      }
+      // Replace the seeded blank row if it's the only one and is empty.
+      const onlyBlank =
+        prev.length === 1 &&
+        !prev[0].productId &&
+        !prev[0].description &&
+        Number(prev[0].qty) <= 1 &&
+        Number(prev[0].unitPrice) === 0;
+      return onlyBlank ? [lineItem] : [...prev, lineItem];
+    });
+    setErrors((e) => ({ ...e, items: "" }));
+    // Refocus the scanner input so a sequence of scans is uninterrupted.
+    setTimeout(() => scanInputRef.current?.focus(), 30);
+  }
+
+  // ── Top-of-table scan/search input ───────────────────────────────────────────
+
+  const scanInputRef = React.useRef<HTMLInputElement>(null);
+  const [scanQuery, setScanQuery] = React.useState("");
+  const [debouncedScanQuery, setDebouncedScanQuery] = React.useState("");
+  React.useEffect(() => {
+    const t = setTimeout(() => setDebouncedScanQuery(scanQuery), 200);
+    return () => clearTimeout(t);
+  }, [scanQuery]);
+
+  const { data: scanProductsData } = useProducts({
+    search: debouncedScanQuery || undefined,
+    isActive: true,
+    limit: 10,
+    includeVariants: true,
+  });
+  const scanSuggestions = React.useMemo(() => {
+    if (!debouncedScanQuery.trim()) return [] as any[];
+    return ((scanProductsData?.data as any[]) ?? [])
+      .filter((p: any) => !p.parentProductId)
+      .slice(0, 8);
+  }, [scanProductsData, debouncedScanQuery]);
+
+  /**
+   * Resolve a scanned/typed code to a product and add it to the invoice.
+   * Mirrors the order modal's flow: barcode endpoint → product search by
+   * SKU/name → create-product modal as last resort.
+   */
+  async function handleScanCode(rawCode: string) {
+    const code = rawCode.trim();
+    if (!code) return;
+    setScanQuery("");
+    setDebouncedScanQuery("");
+    // 1) Dedicated barcode field
+    try {
+      const product = await apiClient
+        .get(`/products/barcode/${encodeURIComponent(code)}`)
+        .then((r) => r.data);
+      if (product?.id) {
+        addProductFromCatalog(product);
+        return;
+      }
+    } catch {
+      // not found by barcode — fall through to SKU/name search
+    }
+    // 2) SKU / name search; prefer exact SKU
+    try {
+      const res = await apiClient
+        .get("/products", {
+          params: { search: code, limit: 10, isActive: true, includeVariants: true },
+        })
+        .then((r) => r.data);
+      const matches: any[] = res?.data ?? [];
+      const skuExact = matches.find(
+        (p) => (p.sku ?? "").toLowerCase() === code.toLowerCase(),
+      );
+      const toAdd = skuExact ?? matches[0];
+      if (toAdd) {
+        addProductFromCatalog(toAdd);
+        return;
+      }
+    } catch {
+      // fall through to create-product modal
+    }
+    // 3) Nothing matched — open create-product pre-filled with this code as SKU
+    setCreateProductInitialName("");
+    setCreateProductInitialSku(code);
+    setCreateProductTargetIdx(null);
+    setCreateProductOpen(true);
+  }
+
   // ── Validation ──────────────────────────────────────────────────────────────
 
   function validate() {
@@ -774,6 +905,89 @@ export default function NewInvoicePage() {
                 {errors.items && (
                   <p className="text-xs text-danger">{errors.items}</p>
                 )}
+
+                {/* Top-level scan/search — mirrors the order modal's flow.
+                    Scan a barcode (or type a name/SKU and press Enter) and the
+                    matched product is added as a new line item, then the input
+                    re-focuses so the operator can keep scanning. */}
+                <div className="relative mb-3">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-navy/40" />
+                  <input
+                    ref={scanInputRef}
+                    type="search"
+                    value={scanQuery}
+                    onChange={(e) => setScanQuery(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        // If a suggestion is open and user picked one with mouse, that path
+                        // already handles add. Otherwise treat the typed text as a scan code.
+                        void handleScanCode(scanQuery);
+                      }
+                    }}
+                    placeholder="Scan barcode, or type product name / SKU and press Enter…"
+                    className="h-10 w-full rounded-lg border border-surface-border bg-white pl-9 pr-9 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  />
+                  {scanQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setScanQuery("")}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-navy/30 transition-colors hover:bg-surface-raised hover:text-navy"
+                      aria-label="Clear"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                  {/* Live suggestion dropdown */}
+                  {scanQuery.trim() && scanSuggestions.length > 0 && (
+                    <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-72 overflow-y-auto rounded-lg border border-surface-border bg-white shadow-lg">
+                      <p className="border-b border-surface-border px-3 py-1 text-[10px] font-medium uppercase tracking-wide text-navy/40">
+                        {scanSuggestions.length} suggestion{scanSuggestions.length === 1 ? "" : "s"}
+                        <span className="ml-2 normal-case text-navy/30">
+                          (Enter or click to add)
+                        </span>
+                      </p>
+                      <ul role="listbox" className="py-1">
+                        {scanSuggestions.map((p: any) => {
+                          const alreadyAdded = items.some((it) => it.productId === p.id);
+                          return (
+                            <li key={p.id}>
+                              <button
+                                type="button"
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  addProductFromCatalog(p);
+                                  setScanQuery("");
+                                  setDebouncedScanQuery("");
+                                }}
+                                className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm text-navy transition-colors hover:bg-brand-50"
+                              >
+                                <div className="min-w-0 flex-1">
+                                  <p className="truncate font-medium" title={p.name}>
+                                    {p.name}
+                                  </p>
+                                  <p className="truncate text-[11px] text-navy/40">
+                                    {p.sku ? <span className="font-mono">{p.sku}</span> : <span className="italic">no SKU</span>}
+                                    {p.unitsPerBox ? <span> · {p.unitsPerBox} per box</span> : null}
+                                  </p>
+                                </div>
+                                <div className="text-right">
+                                  <p className="text-xs font-medium text-navy/70 tabular-nums">
+                                    ${parseFloat(String(p.pricePerUnit ?? 0)).toFixed(2)}
+                                  </p>
+                                  <p className={cn("text-[10px]", alreadyAdded ? "text-amber-600" : "text-brand-600")}>
+                                    {alreadyAdded ? "Already added · +1" : "Add →"}
+                                  </p>
+                                </div>
+                              </button>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+
                 {/* Avg cost toggle */}
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-xs font-medium text-navy/60">Line Items</span>
