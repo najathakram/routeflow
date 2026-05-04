@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   Modal,
   Pressable,
   ScrollView,
@@ -22,6 +21,10 @@ import { showToast } from "../lib/toast";
 import { resolveProductByCode } from "../lib/barcode-resolve";
 import { computeLineSubtotal, effectiveQty } from "../lib/pricing";
 import { useAuthStore } from "../lib/auth-store";
+// chooseAction + alertInfo render the same dialogs cross-platform — RN's
+// Alert.alert silently no-ops 3-button alerts on Expo Web (the user's
+// "Confirm button frozen" report), so use these everywhere instead.
+import { alertInfo, chooseAction } from "../lib/confirm";
 import { BarcodeScanner } from "./BarcodeScanner";
 
 export interface NewOrderScreenProps {
@@ -412,13 +415,13 @@ function ProductPickView({
     // 3) Nothing matched. Mirror web's behaviour: offer to create the product
     //    with the scanned code prefilled, so the operator isn't dead-ended.
     if (canCreateProducts) {
-      Alert.alert(
+      chooseAction(
         `No product for "${trimmed}"`,
         "Add it as a new product? (Your in-progress order won't be saved if you continue.)",
         [
-          { text: "Cancel", style: "cancel" },
+          { label: "Cancel", style: "cancel" },
           {
-            text: "Create",
+            label: "Create",
             onPress: () =>
               router.push({
                 pathname: "/(operator)/products/new",
@@ -523,28 +526,27 @@ function ProductPickView({
             return;
           }
           const msg = body?.message ?? err?.message ?? "Unable to save order.";
-          Alert.alert("Couldn't save order", String(msg));
+          alertInfo("Couldn't save order", String(msg));
         },
       },
     );
   };
 
   const promptMergeChoice = (existing: { orderNumber: string | null; itemCount: number; total: number }) => {
-    Alert.alert(
+    chooseAction(
       "Open order exists",
       `This customer has an open order ${existing.orderNumber ?? ""} with ${existing.itemCount} item${existing.itemCount === 1 ? "" : "s"} ($${existing.total.toFixed(2)}). Merge into it or create a separate order?`,
       [
-        { text: "Cancel", style: "cancel" },
-        { text: "Merge", onPress: () => submitOrder('merge') },
-        { text: "Create separate", onPress: () => submitOrder('separate') },
+        { label: "Cancel", style: "cancel" },
+        { label: "Merge", onPress: () => submitOrder('merge') },
+        { label: "Create separate", onPress: () => submitOrder('separate') },
       ],
-      { cancelable: true },
     );
   };
 
   const onSave = () => {
     if (totalItems === 0) {
-      Alert.alert("Add at least one item", "Tap + on any product to start the order.");
+      alertInfo("Add at least one item", "Tap + on any product to start the order.");
       return;
     }
 
