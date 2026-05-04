@@ -14,6 +14,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import {
   FilterChipRow,
+  NavAction,
   NavBar,
   Pill,
   SearchBar,
@@ -75,7 +76,16 @@ export default function InvoicesListScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
-      <NavBar largeTitle="Invoices" />
+      <NavBar
+        largeTitle="Invoices"
+        trailing={
+          <NavAction
+            label="New"
+            bold
+            onPress={() => router.push("/(operator)/invoices/new" as any)}
+          />
+        }
+      />
       <SearchBar placeholder="Search number, customer…" value={search} onChangeText={setSearch} />
       <FilterChipRow
         chips={FILTERS.map((f) => ({ label: f.label }))}

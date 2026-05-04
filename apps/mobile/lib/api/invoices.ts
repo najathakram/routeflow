@@ -95,11 +95,33 @@ export function useRecordInvoicePayment() {
   });
 }
 
+export interface CreateInvoiceItem {
+  description: string;
+  productId?: string;
+  qty: number;
+  unitPrice: number;
+  /** Optional box/piece split for boxed products. Server prorates the line. */
+  boxes?: number;
+  pieces?: number;
+}
+
+export interface CreateInvoiceDto {
+  customerId: string;
+  items: CreateInvoiceItem[];
+  dueDate?: string;
+  terms?: string;
+  notes?: string;
+  send?: boolean;
+}
+
 export function useCreateInvoice() {
   const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (dto: any) => apiClient.post('/invoices', dto).then(r => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['invoices'] }),
+  return useMutation<Invoice, Error, CreateInvoiceDto>({
+    mutationFn: (dto) => apiClient.post('/invoices', dto).then(r => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['invoices'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'invoices'] });
+    },
   });
 }
 
