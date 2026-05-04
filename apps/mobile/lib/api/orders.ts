@@ -144,6 +144,9 @@ export function useUpdateOrderItems() {
       items: Array<{
         productId: string;
         qty: number;
+        /** Optional box/piece split for boxed products (server recomputes qty) */
+        boxes?: number;
+        pieces?: number;
         unitPrice: number;
         overrideReason?: string;
       }>;

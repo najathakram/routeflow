@@ -123,10 +123,24 @@ export interface AdminOrder {
     id: string;
     productId: string;
     qty: number;
+    /**
+     * When the operator split a boxed product, `boxes` + `pieces` are stored
+     * alongside the total `qty`. The line subtotal uses BOX-price proration
+     * (unitPrice × (boxes + pieces / unitsPerBox)) — see common/pricing.ts.
+     */
+    boxes?: number | null;
+    pieces?: number | null;
     unitPrice: number;
     subtotal: number;
     status: string;
-    product?: { name: string; unit: string };
+    overrideReason?: string | null;
+    product?: {
+      id?: string;
+      name: string;
+      unit: string;
+      unitsPerBox?: number | null;
+      pricePerUnit?: number | string;
+    };
   }>;
 }
 

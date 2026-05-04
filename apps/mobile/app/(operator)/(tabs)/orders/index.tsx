@@ -21,13 +21,16 @@ import {
 } from "@routeflow/ui/mobile/ios";
 import { useAdminOrders, type AdminOrder } from "../../../../lib/api/admin";
 
+// Default filter is "All" so operators land on the full picture rather than
+// only Pending. Reordered to surface All first, then statuses left-to-right
+// in delivery-flow order.
 const STATUS_FILTERS = [
+  { id: "ALL", label: "All" },
   { id: "PENDING", label: "Pending" },
   { id: "CONFIRMED", label: "Confirmed" },
   { id: "OUT_FOR_DELIVERY", label: "Out" },
   { id: "DELIVERED", label: "Delivered" },
   { id: "CANCELLED", label: "Cancelled" },
-  { id: "ALL", label: "All" },
 ] as const;
 
 type StatusFilter = (typeof STATUS_FILTERS)[number]["id"];
@@ -66,7 +69,7 @@ export default function OrdersListScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ status?: string }>();
   const initialFilter: StatusFilter =
-    STATUS_FILTERS.find((f) => f.id === params.status)?.id ?? "PENDING";
+    STATUS_FILTERS.find((f) => f.id === params.status)?.id ?? "ALL";
 
   const [filter, setFilter] = useState<StatusFilter>(initialFilter);
   const [search, setSearch] = useState("");
