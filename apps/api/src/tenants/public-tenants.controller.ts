@@ -136,6 +136,15 @@ export class PublicTenantsController {
     // attachment per RF-078).
     res.setHeader("Content-Disposition", "inline");
     res.setHeader("X-Content-Type-Options", "nosniff");
+    // Override the global Helmet defaults that would otherwise block this
+    // image from being embedded cross-origin:
+    //   - The web app loads from www.routeflow.info but the API serves from
+    //     routeflowapi-production.up.railway.app, so CORP: same-origin (the
+    //     default) makes the browser silently fail the image.
+    //   - The API never serves HTML so a permissive CSP here is moot — but
+    //     leaving the global same-origin CSP in place is fine; it doesn't
+    //     affect cross-origin <img> loads.
+    res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
     // Public branding — safe to cache at edges. Short max-age so a logo swap
     // is visible without users having to bust their cache; the in-app upload
     // flow ALSO bumps the URL via tenantConfig.updatedAt (used as a cache key
