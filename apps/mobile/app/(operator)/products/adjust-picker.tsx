@@ -14,6 +14,7 @@ import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar, SearchBar } from "@routeflow/ui/mobile/ios";
 import { useAdminProducts, type AdminProduct } from "../../../lib/api/admin";
 import { BarcodeScanner } from "../../../components/BarcodeScanner";
+import { BarcodeFab } from "../../../components/BarcodeFab";
 import { resolveProductByCode } from "../../../lib/barcode-resolve";
 import { showToast } from "../../../lib/toast";
 
@@ -91,6 +92,8 @@ export default function AdjustPickerScreen() {
       {scanOpen ? (
         <BarcodeScanner onScanned={onScanned} onClose={() => setScanOpen(false)} />
       ) : null}
+
+      <BarcodeFab onScanned={onScanned} hidden={scanOpen} />
     </SafeAreaView>
   );
 }

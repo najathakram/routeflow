@@ -24,6 +24,7 @@ import {
   type MovementType,
 } from "../../lib/api/inventory";
 import { BarcodeScanner } from "../../components/BarcodeScanner";
+import { BarcodeFab } from "../../components/BarcodeFab";
 import { resolveProductByCode } from "../../lib/barcode-resolve";
 import { showToast } from "../../lib/toast";
 
@@ -162,6 +163,9 @@ export default function MovementsScreen() {
       {scanOpen ? (
         <BarcodeScanner onScanned={onScanned} onClose={() => setScanOpen(false)} />
       ) : null}
+
+      {/* Draggable scan FAB — same handler as the inline barcode icon. */}
+      <BarcodeFab onScanned={onScanned} hidden={scanOpen} />
     </SafeAreaView>
   );
 }

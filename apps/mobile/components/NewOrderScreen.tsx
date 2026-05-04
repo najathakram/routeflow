@@ -26,6 +26,7 @@ import { useAuthStore } from "../lib/auth-store";
 // "Confirm button frozen" report), so use these everywhere instead.
 import { alertInfo, chooseAction } from "../lib/confirm";
 import { BarcodeScanner } from "./BarcodeScanner";
+import { BarcodeFab } from "./BarcodeFab";
 
 export interface NewOrderScreenProps {
   /** When present, customer is locked (e.g. invoked from a specific stop). */
@@ -804,6 +805,15 @@ function ProductPickView({
           onClose={() => setScanOpen(false)}
         />
       ) : null}
+
+      {/* Floating, draggable scan button — keeps the scanner one tap away even
+          when the operator has scrolled deep into the product list. Hidden
+          while the cart sheet or the in-list scanner is up so it doesn't
+          stack on top of either. */}
+      <BarcodeFab
+        onScanned={handleBarcodeScanned}
+        hidden={cartOpen || scanOpen}
+      />
 
       <CartModal
         open={cartOpen}
