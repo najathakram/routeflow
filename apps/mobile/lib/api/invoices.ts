@@ -126,6 +126,27 @@ export function useVoidInvoice() {
       qc.invalidateQueries({ queryKey: ['invoices'] });
       qc.invalidateQueries({ queryKey: ['invoices', id] });
       qc.invalidateQueries({ queryKey: ['admin', 'invoices'] });
+      // Detail screen reads from ['admin', 'invoices', id] — without this the
+      // status pill stayed on its pre-void value until the next manual refetch
+      // and the Delete action (only shown for VOID) didn't appear.
+      qc.invalidateQueries({ queryKey: ['admin', 'invoices', id] });
+    },
+  });
+}
+
+/**
+ * Permanently delete an invoice. Server rejects if any payments are recorded
+ * (operator must remove payments first or void). Typically used after voiding.
+ */
+export function useDeleteInvoice() {
+  const qc = useQueryClient();
+  return useMutation<{ id: string; message: string }, Error, string>({
+    mutationFn: (id) => apiClient.delete(`/invoices/${id}`).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['invoices'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'invoices'] });
+      qc.invalidateQueries({ queryKey: ['orders'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'orders'] });
     },
   });
 }
@@ -173,6 +194,14 @@ export function useCreatePartialInvoiceFromOrder() {
       qc.invalidateQueries({ queryKey: ['invoices'] });
       qc.invalidateQueries({ queryKey: ['orders'] });
       qc.invalidateQueries({ queryKey: ['orders', orderId] });
+      // Mobile order detail uses `useAdminOrder` (key `['admin', 'orders', id]`)
+      // and the orders list uses `useAdminOrders`. Without these invalidations
+      // the operator would tap "Split into invoice…" again and see the same
+      // remaining qty (cached invoicedQty), then the second invoice would 400
+      // with "Requested qty exceeds remaining." Whole flow looked broken.
+      qc.invalidateQueries({ queryKey: ['admin', 'orders'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'orders', orderId] });
+      qc.invalidateQueries({ queryKey: ['admin', 'invoices'] });
     },
   });
 }

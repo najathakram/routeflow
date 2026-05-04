@@ -17,6 +17,7 @@ import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar, Pill } from "@routeflow/ui/mobile/ios";
 import { useAdminInvoice } from "../../../../lib/api/admin";
 import {
+  useDeleteInvoice,
   useInvoicePdf,
   useSendInvoice,
   useUpdateInvoice,
@@ -64,6 +65,7 @@ export default function InvoiceDetailScreen() {
   const { data: invoice, isLoading, refetch } = useAdminInvoice(isCreateAlias ? "" : (id ?? ""));
   const sendMut = useSendInvoice();
   const voidMut = useVoidInvoice();
+  const deleteMut = useDeleteInvoice();
   const pdfMut = useInvoicePdf();
   const updateMut = useUpdateInvoice();
   const [dueDateModal, setDueDateModal] = useState(false);
@@ -114,6 +116,30 @@ export default function InvoiceDetailScreen() {
           showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
       }),
       { confirmText: "Void", destructive: true },
+    );
+  };
+
+  /**
+   * Permanently delete the invoice (server enforces no-payments). Reachable
+   * only from the VOID state per the user's policy: "after voiding an invoice,
+   * it should be able to delete them from mobile too." Operator-only — there
+   * is no customer-facing delete affordance.
+   */
+  const handleDelete = () => {
+    if (!id) return;
+    confirm(
+      "Delete invoice?",
+      `${invoice.invoiceNumber} will be permanently removed. This cannot be undone.`,
+      () =>
+        deleteMut.mutate(id, {
+          onSuccess: () => {
+            showToast("Invoice deleted");
+            router.back();
+          },
+          onError: (e: any) =>
+            showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        }),
+      { confirmText: "Delete", destructive: true },
     );
   };
 
@@ -197,7 +223,16 @@ export default function InvoiceDetailScreen() {
                 tone="danger"
                 onPress={handleVoid}
               />
-            ) : null}
+            ) : (
+              // Voided invoices can be deleted entirely (server still rejects
+              // if payments exist). Mirrors the web's delete affordance.
+              <ActionTile
+                icon="trash-outline"
+                label={deleteMut.isPending ? "Deleting…" : "Delete invoice"}
+                tone="danger"
+                onPress={handleDelete}
+              />
+            )}
           </View>
 
           {/* Items */}
