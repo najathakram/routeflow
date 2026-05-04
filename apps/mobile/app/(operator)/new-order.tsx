@@ -5,19 +5,15 @@ import { NewOrderScreen } from "../../components/NewOrderScreen";
  * Operator-initiated order from Home or Dispatch. Picks a customer, then
  * renders products + save. Posts to POST /orders with the operator as creator.
  *
- * After save (including after the merge/replace decision), land on the
- * orders LIST so the operator can navigate freely. Default `router.back()`
- * would dump them on whatever they came from (e.g. /home), and the user
- * reported that as feeling stuck.
+ * Both Back and post-save land on the orders LIST so the operator can
+ * navigate freely. The defaults (`router.back()`) silently no-op when the
+ * URL was opened directly with no back stack — that was the user's "back
+ * is not working" report.
  */
 export default function OperatorNewOrderScreen() {
   const router = useRouter();
+  const goToOrders = () => router.replace("/(operator)/(tabs)/orders" as any);
   return (
-    <NewOrderScreen
-      backLabel="Back"
-      onSaved={() => {
-        router.replace("/(operator)/(tabs)/orders" as any);
-      }}
-    />
+    <NewOrderScreen backLabel="Orders" onBack={goToOrders} onSaved={goToOrders} />
   );
 }
