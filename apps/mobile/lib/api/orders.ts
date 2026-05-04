@@ -46,7 +46,12 @@ export interface CreateOrderDto {
 
 export interface CreateOrderAsDriverDto {
   customerId: string;
-  items: { productId: string; qty: number }[];
+  /**
+   * `qty` is total pieces. When the operator splits a boxed product into
+   * boxes+pieces, also include those — the server recomputes `qty` from
+   * them and uses them for line-subtotal proration (BOX price × box-equivalent).
+   */
+  items: { productId: string; qty: number; boxes?: number; pieces?: number }[];
   notes?: string;
   routeRunId?: string;
   routeRunStopId?: string;
