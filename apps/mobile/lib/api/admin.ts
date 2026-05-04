@@ -124,6 +124,13 @@ export interface AdminOrder {
     productId: string;
     qty: number;
     /**
+     * Total pieces already invoiced across all partial invoices for this
+     * order line. The split-invoice flow reads `qty - invoicedQty` to
+     * compute "remaining" — without this exposed in the type, the screens
+     * had to cast through `any`, which masked stale-cache bugs.
+     */
+    invoicedQty?: number;
+    /**
      * When the operator split a boxed product, `boxes` + `pieces` are stored
      * alongside the total `qty`. The line subtotal uses BOX-price proration
      * (unitPrice × (boxes + pieces / unitsPerBox)) — see common/pricing.ts.
