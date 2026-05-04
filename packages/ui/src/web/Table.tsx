@@ -56,17 +56,35 @@ export function Table<TData>({
                   <th
                     key={header.id}
                     className={cn(
-                      "px-4 py-3 text-left font-medium text-navy/60 whitespace-nowrap",
+                      "group px-4 py-3 text-left font-medium text-navy/60 whitespace-nowrap",
                       canSort && "cursor-pointer select-none hover:text-navy transition-colors",
                     )}
                     onClick={header.column.getToggleSortingHandler()}
+                    aria-sort={
+                      sorted === "asc"
+                        ? "ascending"
+                        : sorted === "desc"
+                          ? "descending"
+                          : canSort
+                            ? "none"
+                            : undefined
+                    }
                   >
                     <span className="inline-flex items-center gap-1">
                       {header.isPlaceholder
                         ? null
                         : flexRender(header.column.columnDef.header, header.getContext())}
                       {canSort && (
-                        <span className="text-navy/30">
+                        // The chevron is invisible by default, fades in when the
+                        // column header is hovered, and stays visible when the
+                        // column is currently the active sort. Keeps the table
+                        // header chrome clean until the operator wants it.
+                        <span
+                          className={cn(
+                            "text-navy/40 transition-opacity",
+                            sorted ? "opacity-100" : "opacity-0 group-hover:opacity-100",
+                          )}
+                        >
                           {sorted === "asc" ? (
                             <ChevronUp className="h-3.5 w-3.5" />
                           ) : sorted === "desc" ? (
