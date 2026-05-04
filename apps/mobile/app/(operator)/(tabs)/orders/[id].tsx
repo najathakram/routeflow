@@ -192,7 +192,18 @@ export default function OrderDetailScreen() {
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <NavBar
         inlineTitle={order.orderNumber}
-        leading={<NavBackButton label="Orders" onPress={() => router.back()} />}
+        leading={
+          <NavBackButton
+            label="Orders"
+            onPress={() => {
+              // Always go to the orders list — `router.back()` would go to
+              // wherever the user came from (e.g. /home), and after editing
+              // an order they expect "Back to Orders" to mean the list, not
+              // the deep link they originally followed.
+              router.replace("/(operator)/(tabs)/orders" as any);
+            }}
+          />
+        }
       />
 
       <ScrollView showsVerticalScrollIndicator={false}>
