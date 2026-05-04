@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { ProductVideo } from "./(marketing)/product-video";
 import { InstallAppButton } from "@/components/InstallAppButton";
+import { AutoRedirectIfAuthed } from "@/components/AutoRedirectIfAuthed";
 
 // ─── Feature Card ────────────────────────────────────────────────────────────
 
@@ -61,6 +62,10 @@ function Step({
 export default function SellerLandingPage() {
   return (
     <div className="min-h-screen bg-white">
+      {/* Returning logged-in users skip the marketing copy and land on
+          their dashboard instead. Renders a quick splash while the
+          client-side check runs (no server-side cookies for tokens). */}
+      <AutoRedirectIfAuthed />
       {/* Navbar */}
       <nav className="sticky top-0 z-50 border-b border-navy/5 bg-white/80 backdrop-blur-md">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">

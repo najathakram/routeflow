@@ -10,6 +10,7 @@ import {
   Shield,
 } from "lucide-react";
 import { InstallAppButton } from "@/components/InstallAppButton";
+import { AutoRedirectIfAuthed } from "@/components/AutoRedirectIfAuthed";
 
 // ─── Feature Card ────────────────────────────────────────────────────────────
 
@@ -60,6 +61,9 @@ function Step({
 export default function BuyerLandingPage() {
   return (
     <div className="min-h-screen bg-white">
+      {/* Returning logged-in users (operators or buyers) skip the landing
+          and go straight to their dashboard. */}
+      <AutoRedirectIfAuthed />
       {/* Navbar */}
       <nav className="sticky top-0 z-50 border-b border-buyer-800/10 bg-white/80 backdrop-blur-md">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
