@@ -106,7 +106,7 @@ type ProfileFormValues = z.infer<typeof profileSchema>;
 function BusinessProfileTab() {
   const { toast } = useToast();
   const qc = useQueryClient();
-  const { branding } = useTenant();
+  const { branding, refresh: refreshBranding } = useTenant();
   const [logoPreview, setLogoPreview] = React.useState<string | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
@@ -122,6 +122,40 @@ function BusinessProfileTab() {
       toast({ title: "Profile saved", description: "Your business profile has been updated.", variant: "success" });
     },
     onError: () => toast({ title: "Failed to save settings", variant: "error" }),
+  });
+
+  // Logo upload — POSTs the file to /tenants/me/config/branding/logo as
+  // multipart with field name "logo". Server invalidates every cached invoice
+  // PDF for this tenant on success (apps/api/src/tenants/tenants.service.ts
+  // uploadLogo → invalidateInvoicePdfCache), so all existing invoices will
+  // re-render with the new logo on next download.
+  const uploadLogo = useMutation<
+    { logoKey: string; logoUrl: string },
+    Error,
+    File
+  >({
+    mutationFn: async (file) => {
+      const fd = new FormData();
+      fd.append("logo", file);
+      const r = await apiClient.post("/tenants/me/config/branding/logo", fd);
+      return r.data;
+    },
+    onSuccess: async () => {
+      // Pull the freshly stored logo URL into the TenantProvider so the
+      // sidebar / login screen / any other consumer updates without a reload.
+      await refreshBranding();
+      toast({
+        title: "Logo uploaded",
+        description: "It will appear on new and existing invoices.",
+        variant: "success",
+      });
+    },
+    onError: (err: any) => {
+      const msg = err?.response?.data?.message ?? "Try a PNG, JPG, or WEBP under 5 MB.";
+      toast({ title: "Logo upload failed", description: msg, variant: "error" });
+      // Drop the local preview so the saved logo (if any) shows instead of a stale one.
+      setLogoPreview(null);
+    },
   });
 
   const { register, handleSubmit, reset, watch, setValue, formState: { errors, isSubmitting } } = useForm<ProfileFormValues>({
@@ -160,8 +194,13 @@ function BusinessProfileTab() {
   const handleLogoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    // Show local preview immediately so the operator sees feedback while the
+    // multipart upload is in flight.
     const url = URL.createObjectURL(file);
     setLogoPreview(url);
+    uploadLogo.mutate(file);
+    // Reset the file input so picking the same file again still triggers onChange.
+    e.target.value = "";
   };
 
   const onSubmit = async (data: ProfileFormValues) => {
@@ -231,20 +270,31 @@ function BusinessProfileTab() {
             )}
           </div>
           <div className="space-y-2">
-            <p className="text-sm text-navy/60">Upload a PNG or SVG. Recommended size: 256 × 256 px.</p>
+            <p className="text-sm text-navy/60">
+              PNG, JPG, or WEBP under 5 MB. Recommended size: 256 × 256 px.
+              {/* SVG removed — the API rejects it (RF-076) because SVGs can
+                  embed scripts and we serve logos inline. */}
+            </p>
             <Button
               variant="secondary"
               size="sm"
               type="button"
-              leftIcon={<Upload className="h-4 w-4" />}
+              leftIcon={
+                uploadLogo.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Upload className="h-4 w-4" />
+                )
+              }
               onClick={() => fileInputRef.current?.click()}
+              disabled={uploadLogo.isPending}
             >
-              Choose File
+              {uploadLogo.isPending ? "Uploading…" : "Choose File"}
             </Button>
             <input
               ref={fileInputRef}
               type="file"
-              accept="image/png,image/svg+xml,image/jpeg"
+              accept="image/png,image/jpeg,image/webp"
               className="sr-only"
               onChange={handleLogoChange}
             />

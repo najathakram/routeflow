@@ -150,6 +150,30 @@ export class SettingsController {
           create: { tenantId, ...configUpdate },
           update: configUpdate,
         });
+
+        // Anything we just updated shows on the invoice header (address /
+        // phone / customer email / business name) or on the body (notes /
+        // terms). Cached invoice PDFs would still show the OLD values until
+        // the next regeneration — invalidate them so the next download for
+        // any invoice picks up the change.
+        const invoiceVisibleKeys = [
+          "addressLine1",
+          "city",
+          "state",
+          "zip",
+          "phone",
+          "customerEmail",
+          "ownerName",
+          "invoiceNotes",
+          "invoiceTerms",
+        ];
+        const touchesInvoice = invoiceVisibleKeys.some((k) => k in configUpdate);
+        if (touchesInvoice) {
+          await this.prisma.invoice.updateMany({
+            where: { tenantId, pdfUrl: { not: null } },
+            data: { pdfUrl: null },
+          });
+        }
       }
     }
 
