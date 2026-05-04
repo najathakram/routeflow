@@ -149,11 +149,25 @@ export class ProductsService {
   }
 
   async create(dto: CreateProductDto) {
+    // Name uniqueness is scoped by parent, matching the partial unique
+    // indexes in the DB (see prisma/migrations/.../variant_name_per_parent).
+    //   - Standalone product → unique among other STANDALONE products.
+    //   - Variant            → unique among siblings of the same parent.
+    // Two flavors named "Strawberry" under different parents are allowed.
+    const parentScope = dto.parentProductId
+      ? { parentProductId: dto.parentProductId }
+      : { parentProductId: null };
     const nameTaken = await this.prisma.forTenant().product.findFirst({
-      where: { name: { equals: dto.name, mode: "insensitive" } },
+      where: { name: { equals: dto.name, mode: "insensitive" }, ...parentScope },
       select: { id: true },
     });
-    if (nameTaken) throw new ConflictException(`A product named "${dto.name}" already exists`);
+    if (nameTaken) {
+      throw new ConflictException(
+        dto.parentProductId
+          ? `A variant named "${dto.name}" already exists for this product`
+          : `A product named "${dto.name}" already exists`,
+      );
+    }
     // Auto-generate a SKU if none supplied: first 3 alpha chars of name + 4 hex digits
     if (!dto.sku) {
       const prefix = dto.name
@@ -207,13 +221,33 @@ export class ProductsService {
   }
 
   async update(id: string, dto: UpdateProductDto) {
-    await this.findOne(id);
-    if (dto.name) {
+    const existing = await this.findOne(id);
+    if (dto.name || dto.parentProductId !== undefined) {
+      // The product's effective parent is the dto value if provided (could be
+      // null to promote a variant to standalone), otherwise the existing one.
+      // The check has to use this effective parent, otherwise reparenting +
+      // renaming in one PATCH would check the WRONG scope.
+      const effectiveParentId =
+        dto.parentProductId !== undefined ? dto.parentProductId : existing.parentProductId;
+      const effectiveName = dto.name ?? existing.name;
+      const parentScope = effectiveParentId
+        ? { parentProductId: effectiveParentId }
+        : { parentProductId: null };
       const nameTaken = await this.prisma.forTenant().product.findFirst({
-        where: { name: { equals: dto.name, mode: "insensitive" }, id: { not: id } },
+        where: {
+          name: { equals: effectiveName, mode: "insensitive" },
+          id: { not: id },
+          ...parentScope,
+        },
         select: { id: true },
       });
-      if (nameTaken) throw new ConflictException(`A product named "${dto.name}" already exists`);
+      if (nameTaken) {
+        throw new ConflictException(
+          effectiveParentId
+            ? `A variant named "${effectiveName}" already exists for this product`
+            : `A product named "${effectiveName}" already exists`,
+        );
+      }
     }
     if (dto.sku) {
       const existing = await this.prisma.forTenant().product.findFirst({
