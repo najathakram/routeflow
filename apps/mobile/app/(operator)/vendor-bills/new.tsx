@@ -16,7 +16,7 @@ import { BarcodeScanner } from "../../../components/BarcodeScanner";
 import { useCreateVendorBill } from "../../../lib/api/vendor-bills";
 import { useSuppliers } from "../../../lib/api/purchase-orders";
 import { useProducts } from "../../../lib/api/products";
-import { apiClient } from "../../../lib/api-client";
+import { resolveProductByCode } from "../../../lib/barcode-resolve";
 import { showToast } from "../../../lib/toast";
 
 interface LineItem {
@@ -212,13 +212,13 @@ function LineItemRow({
     const trimmed = code.trim();
     if (!trimmed) return;
     try {
-      const res = await apiClient.get(
-        `/products/barcode/${encodeURIComponent(trimmed)}`,
-      );
-      const product = res.data as
-        | { id: string; name: string; pricePerUnit?: number | string }
-        | undefined;
-      if (product?.id) {
+      const result = await resolveProductByCode<{
+        id: string;
+        name: string;
+        pricePerUnit?: number | string;
+      }>(trimmed);
+      if (!result.notFound) {
+        const product = result.product;
         setSearch(product.name);
         onUpdate(index, "description", product.name);
         if (product.pricePerUnit) {
@@ -229,7 +229,7 @@ function LineItemRow({
         return;
       }
     } catch {
-      // fall through
+      // network error → fall through
     }
     showToast(`No product for "${trimmed}"`);
   };

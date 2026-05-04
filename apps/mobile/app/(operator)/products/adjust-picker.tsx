@@ -14,7 +14,7 @@ import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar, SearchBar } from "@routeflow/ui/mobile/ios";
 import { useAdminProducts, type AdminProduct } from "../../../lib/api/admin";
 import { BarcodeScanner } from "../../../components/BarcodeScanner";
-import { apiClient } from "../../../lib/api-client";
+import { resolveProductByCode } from "../../../lib/barcode-resolve";
 import { showToast } from "../../../lib/toast";
 
 export default function AdjustPickerScreen() {
@@ -36,15 +36,13 @@ export default function AdjustPickerScreen() {
     const trimmed = code.trim();
     if (!trimmed) return;
     try {
-      const res = await apiClient.get(
-        `/products/barcode/${encodeURIComponent(trimmed)}`,
-      );
-      if (res.data?.id) {
-        goToAdjust(res.data.id);
+      const result = await resolveProductByCode(trimmed);
+      if (!result.notFound) {
+        goToAdjust(result.product.id);
         return;
       }
     } catch {
-      // fall through
+      // network error → fall through
     }
     showToast(`No product for "${trimmed}"`);
   };

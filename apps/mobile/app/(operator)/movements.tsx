@@ -24,7 +24,7 @@ import {
   type MovementType,
 } from "../../lib/api/inventory";
 import { BarcodeScanner } from "../../components/BarcodeScanner";
-import { apiClient } from "../../lib/api-client";
+import { resolveProductByCode } from "../../lib/barcode-resolve";
 import { showToast } from "../../lib/toast";
 
 const FILTERS: { id: "ALL" | MovementType; label: string }[] = [
@@ -84,15 +84,13 @@ export default function MovementsScreen() {
     const trimmed = code.trim();
     if (!trimmed) return;
     try {
-      const res = await apiClient.get(
-        `/products/barcode/${encodeURIComponent(trimmed)}`,
-      );
-      if (res.data?.id) {
-        setProductFilter({ id: res.data.id, label: res.data.name });
+      const result = await resolveProductByCode(trimmed);
+      if (!result.notFound) {
+        setProductFilter({ id: result.product.id, label: result.product.name });
         return;
       }
     } catch {
-      // fall through
+      // network error → fall through to the friendly toast below
     }
     showToast(`No product for "${trimmed}"`);
   };
