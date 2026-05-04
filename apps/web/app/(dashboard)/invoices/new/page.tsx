@@ -25,6 +25,7 @@ import { useCustomers, useCustomerPrices, type Customer } from "@/lib/api/custom
 import { useProducts } from "@/lib/api/products";
 import { apiClient } from "@/lib/api-client";
 import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";
+import { displayProductName } from "@/lib/product-display";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { fmt } from "@/lib/formatting";
@@ -485,7 +486,11 @@ export default function NewInvoicePage() {
     const lineItem: LineItemState = {
       key: Math.random().toString(36).slice(2),
       productId: product.id,
-      description: product.name,
+      // Variants store just the variant name in `product.name` (PR #44).
+      // Compose "<Parent> - <Variant>" so the invoice line is meaningful
+      // standalone — "Strawberry" by itself doesn't tell the customer
+      // which product family it came from.
+      description: displayProductName(product),
       qty: upb ? upb : 1,
       unitPrice: effectivePrice,
       discount: 0,
@@ -1049,9 +1054,14 @@ export default function NewInvoicePage() {
                                 className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm text-navy transition-colors hover:bg-brand-50"
                               >
                                 <div className="min-w-0 flex-1">
-                                  <p className="truncate font-medium" title={p.name}>
-                                    {p.name}
-                                  </p>
+                                  {(() => {
+                                    const display = displayProductName(p);
+                                    return (
+                                      <p className="truncate font-medium" title={display}>
+                                        {display}
+                                      </p>
+                                    );
+                                  })()}
                                   <p className="truncate text-[11px] text-navy/40">
                                     {p.sku ? <span className="font-mono">{p.sku}</span> : <span className="italic">no SKU</span>}
                                     {p.unitsPerBox ? <span> · {p.unitsPerBox} per box</span> : null}
@@ -1387,7 +1397,12 @@ export default function NewInvoicePage() {
             setItems((prev) =>
               prev.map((item, i) =>
                 i === createProductTargetIdx
-                  ? { ...item, description: product.name, productId: product.id, unitPrice: parseFloat(product.pricePerUnit) || 0 }
+                  ? {
+                      ...item,
+                      description: displayProductName(product),
+                      productId: product.id,
+                      unitPrice: parseFloat(product.pricePerUnit) || 0,
+                    }
                   : item
               )
             );

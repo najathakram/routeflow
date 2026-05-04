@@ -12,6 +12,7 @@ import { useProducts } from "@/lib/api/products";
 import { useCreateOrder, useActiveOrderForCustomer, type ActiveOrderSummary } from "@/lib/api/orders";
 import { apiClient } from "@/lib/api-client";
 import { getTierPrice, computeLineSubtotal } from "@/lib/pricing";
+import { displayProductName } from "@/lib/product-display";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
@@ -262,7 +263,10 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
       {
         tempId: product.id + "-" + Date.now(),
         productId: product.id,
-        productName: product.name,
+        // Show the full "<Parent> - <Variant>" name on the order line so the
+        // customer knows which flavor / variety they ordered. Variants store
+        // just the variant name in `product.name` (PR #44).
+        productName: displayProductName(product),
         unit: product.unit ?? "each",
         listPrice,
         specialPrice: effectiveTier !== 1 ? tierPrice : undefined,
