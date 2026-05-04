@@ -11,6 +11,7 @@ import {
   Loader2,
   Eye,
   ChevronRight,
+  Download,
 } from "lucide-react";
 import { Button, Card, Input, useToast, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
@@ -621,6 +622,25 @@ export default function NewInvoicePage() {
     return Object.keys(errs).length === 0;
   }
 
+  /**
+   * Lenient validation for Preview / mid-flight Download. The operator
+   * almost always wants to see what the invoice looks like before they
+   * have entered every field, so we only insist on the things the PDF
+   * literally cannot render without:
+   *   - a customer (the "Bill To" block has no fallback)
+   *   - issue + due dates (default to today / today+30 — already pre-filled)
+   *
+   * Empty / partial line items are filtered out at submit time below.
+   */
+  function validateForPreview() {
+    const errs: Record<string, string> = {};
+    if (!customer) errs.customer = "Please select a customer.";
+    if (!issueDate) errs.issueDate = "Issue date is required.";
+    if (!dueDate) errs.dueDate = "Due date is required.";
+    setErrors(errs);
+    return Object.keys(errs).length === 0;
+  }
+
   // ── Submit ──────────────────────────────────────────────────────────────────
 
   function buildInvoiceDto(sendNow: boolean) {
@@ -661,11 +681,30 @@ export default function NewInvoicePage() {
     };
   }
 
+  /**
+   * Build a partial DTO suitable for preview / mid-flight save: empty-row
+   * line items are stripped so the PDF doesn't render junk lines while the
+   * operator is still typing. Wraps `buildInvoiceDto` so all the existing
+   * field-mapping logic stays in one place.
+   */
+  function buildPartialInvoiceDto(): ReturnType<typeof buildInvoiceDto> {
+    const dto = buildInvoiceDto(false) as ReturnType<typeof buildInvoiceDto> & {
+      items?: CreateInvoiceItem[];
+    };
+    return {
+      ...dto,
+      items: (dto.items ?? []).filter(
+        (it) => it.description.trim().length > 0 && Number(it.qty) > 0,
+      ),
+    };
+  }
+
   async function handlePreview() {
-    if (!validate()) return;
+    // Lenient check — only customer + dates required. Empty rows are dropped.
+    if (!validateForPreview()) return;
     setPreviewLoading(true);
     try {
-      const dto = buildInvoiceDto(false);
+      const dto = buildPartialInvoiceDto();
       let invoiceId = currentDraftId;
       if (invoiceId) {
         // Update the existing draft so the preview reflects edits
@@ -703,6 +742,56 @@ export default function NewInvoicePage() {
       });
     } finally {
       setPreviewLoading(false);
+    }
+  }
+
+  /**
+   * Download the invoice PDF without sending it. Mirrors handlePreview
+   * (saves a draft so the PDF reflects current edits) but writes the
+   * bytes to a file via a blob URL instead of stuffing them into the
+   * preview iframe. Useful when the operator wants a printable copy
+   * before finalising / emailing.
+   */
+  const [downloadLoading, setDownloadLoading] = React.useState(false);
+  async function handleDownload() {
+    if (!validateForPreview()) return;
+    setDownloadLoading(true);
+    try {
+      const dto = buildPartialInvoiceDto();
+      let invoiceId = currentDraftId;
+      if (invoiceId) {
+        await updateInvoice.mutateAsync({ id: invoiceId, ...dto } as any);
+      } else {
+        const created: any = await createInvoice.mutateAsync(
+          dto as Parameters<typeof createInvoice.mutate>[0],
+        );
+        invoiceId = created.id;
+        setCurrentDraftId(invoiceId);
+      }
+      const meta = await apiClient.get<{ url: string; invoiceNumber?: string }>(
+        `/invoices/${invoiceId}/pdf`,
+        { params: { refresh: 1 } },
+      );
+      if (!meta.data?.url) throw new Error("No PDF URL returned");
+      const blob = await fetchPdfBlob(meta.data.url, apiClient);
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = `invoice-${meta.data.invoiceNumber ?? invoiceId}.pdf`;
+      a.rel = "noopener noreferrer";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+      toast({ title: "Invoice downloaded", variant: "success" });
+    } catch {
+      toast({
+        title: "Couldn't generate PDF",
+        description: "Please try again.",
+        variant: "error",
+      });
+    } finally {
+      setDownloadLoading(false);
     }
   }
 
@@ -1322,6 +1411,16 @@ export default function NewInvoicePage() {
               disabled={previewLoading || createInvoice.isPending}
             >
               Preview
+            </Button>
+            <Button
+              variant="secondary"
+              leftIcon={<Download className="h-4 w-4" />}
+              onClick={handleDownload}
+              loading={downloadLoading}
+              disabled={downloadLoading || createInvoice.isPending || updateInvoice.isPending}
+              title="Save as draft and download the PDF without sending"
+            >
+              Download
             </Button>
             <Button
               variant="secondary"
