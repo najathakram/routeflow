@@ -17,7 +17,7 @@ import { useAdminCustomers } from "../lib/api/admin";
 import { useProducts } from "../lib/api/products";
 import { useCreateOrderAsDriver, useActiveOrderForCustomer } from "../lib/api/orders";
 import { showToast } from "../lib/toast";
-import { apiClient } from "../lib/api-client";
+import { resolveProductByCode } from "../lib/barcode-resolve";
 import { BarcodeScanner } from "./BarcodeScanner";
 
 export interface NewOrderScreenProps {
@@ -231,15 +231,15 @@ function ProductPickView({
     }
 
     try {
-      const res = await apiClient.get(`/products/barcode/${encodeURIComponent(trimmed)}`);
-      const matched = res.data as Product | undefined;
-      if (matched?.id) {
+      const result = await resolveProductByCode<Product>(trimmed);
+      if (!result.notFound) {
+        const matched = result.product;
         setItems((m) => ({ ...m, [matched.id]: (m[matched.id] ?? 0) + 1 }));
         showToast(`Added ${matched.name}`);
         return;
       }
     } catch {
-      // fall through
+      // network error → fall through
     }
     showToast(`No product for "${trimmed}"`);
   };
