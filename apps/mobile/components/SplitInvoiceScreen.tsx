@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -15,6 +14,9 @@ import { ios } from "@routeflow/ui/tokens";
 import { NavBar, NavBackButton, NavAction } from "@routeflow/ui/mobile/ios";
 import { useCreatePartialInvoiceFromOrder } from "../lib/api/invoices";
 import { showToast } from "../lib/toast";
+// RN Alert.alert is a no-op for multi-button alerts on Expo Web; alertInfo
+// routes through the cross-platform confirm modal instead.
+import { alertInfo } from "../lib/confirm";
 
 export interface SplitInvoiceItem {
   id: string;
@@ -225,7 +227,7 @@ export function SplitInvoiceScreen({
       (d) => !createdDraftIds.has(d.id) && draftHasItems(d),
     );
     if (submitable.length === 0) {
-      Alert.alert(
+      alertInfo(
         "Nothing to create",
         "Allocate at least one item to a draft before creating invoices.",
       );
@@ -234,7 +236,7 @@ export function SplitInvoiceScreen({
     // Validate each draft has a usable due date.
     for (const d of submitable) {
       if (!d.dueDate || !/^\d{4}-\d{2}-\d{2}$/.test(d.dueDate)) {
-        Alert.alert(
+        alertInfo(
           "Bad due date",
           `Invoice draft has an invalid due date (${d.dueDate || "blank"}). Format: YYYY-MM-DD.`,
         );
@@ -271,7 +273,7 @@ export function SplitInvoiceScreen({
     } catch (err: any) {
       const msg =
         err?.response?.data?.message ?? err?.message ?? "One or more invoices failed.";
-      Alert.alert("Couldn't create all invoices", msg);
+      alertInfo("Couldn't create all invoices", msg);
     } finally {
       setBulkPending(false);
     }

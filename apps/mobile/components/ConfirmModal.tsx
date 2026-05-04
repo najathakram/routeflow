@@ -1,14 +1,24 @@
 import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
 import { ios } from "@routeflow/ui/tokens";
-import { useConfirmStore } from "../lib/confirm-store";
+import { useConfirmStore, type ConfirmAction } from "../lib/confirm-store";
 
+/**
+ * Cross-platform replacement for RN Alert.alert on web. Renders the action
+ * list from the confirm-store as one button per action — supports the
+ * "Cancel / Merge / Create separate" 3-button case the new-order screen
+ * needs (RN Web's Alert.alert silently drops multi-button alerts, which is
+ * why "Confirm" felt frozen — the prompt fired but never appeared).
+ */
 export function ConfirmModal() {
-  const { visible, title, message, confirmText, destructive, onConfirm, hide } =
-    useConfirmStore();
+  const { visible, title, message, actions, hide } = useConfirmStore();
 
-  const handleConfirm = () => {
+  // 1-2 buttons render side-by-side (iOS dialog convention); 3+ stack
+  // vertically so labels never wrap.
+  const stack = (actions?.length ?? 0) > 2;
+
+  const handlePress = (action: ConfirmAction) => {
     hide();
-    onConfirm();
+    if (action.onPress) action.onPress();
   };
 
   return (
@@ -24,21 +34,35 @@ export function ConfirmModal() {
         <View style={styles.card}>
           <Text style={styles.title}>{title}</Text>
           {message ? <Text style={styles.message}>{message}</Text> : null}
-          <View style={styles.actions}>
-            <Pressable style={[styles.btn, styles.cancelBtn]} onPress={hide}>
-              <Text style={styles.cancelText}>Cancel</Text>
-            </Pressable>
-            <View style={styles.divider} />
-            <Pressable
-              style={[styles.btn, styles.confirmBtn]}
-              onPress={handleConfirm}
-            >
-              <Text
-                style={[styles.confirmText, destructive && styles.destructiveText]}
-              >
-                {confirmText}
-              </Text>
-            </Pressable>
+          <View style={[styles.actions, stack && styles.actionsStack]}>
+            {(actions ?? []).map((action, i) => {
+              const isDestructive = action.style === "destructive";
+              const isCancel = action.style === "cancel";
+              const showDivider = i > 0;
+              return (
+                <View
+                  key={`${action.label}-${i}`}
+                  style={stack ? styles.stackItem : styles.rowItem}
+                >
+                  {showDivider ? (
+                    <View
+                      style={stack ? styles.dividerHorizontal : styles.dividerVertical}
+                    />
+                  ) : null}
+                  <Pressable style={styles.btn} onPress={() => handlePress(action)}>
+                    <Text
+                      style={[
+                        styles.actionText,
+                        isCancel && styles.cancelText,
+                        isDestructive && styles.destructiveText,
+                      ]}
+                    >
+                      {action.label}
+                    </Text>
+                  </Pressable>
+                </View>
+              );
+            })}
           </View>
         </View>
       </View>
@@ -62,6 +86,7 @@ const styles = StyleSheet.create({
     backgroundColor: ios.bgElev,
     borderRadius: 14,
     overflow: "hidden",
+    maxWidth: 380,
   },
   title: {
     fontSize: 17,
@@ -81,10 +106,31 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     lineHeight: 18,
   },
+
+  // Side-by-side (1-2 actions): row with vertical dividers between buttons.
   actions: {
     flexDirection: "row",
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: ios.separator,
+  },
+  // Stacked (3+ actions): column with horizontal dividers between buttons.
+  actionsStack: {
+    flexDirection: "column",
+  },
+  rowItem: {
+    flex: 1,
+    flexDirection: "row",
+  },
+  stackItem: {
+    width: "100%",
+  },
+  dividerVertical: {
+    width: StyleSheet.hairlineWidth,
+    backgroundColor: ios.separator,
+  },
+  dividerHorizontal: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: ios.separator,
   },
   btn: {
     flex: 1,
@@ -92,21 +138,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  cancelBtn: {},
-  confirmBtn: {},
-  divider: {
-    width: StyleSheet.hairlineWidth,
-    backgroundColor: ios.separator,
-  },
-  cancelText: {
-    fontSize: 15,
-    fontFamily: "Inter_400Regular",
-    color: ios.brand,
-  },
-  confirmText: {
+  actionText: {
     fontSize: 15,
     fontFamily: "Inter_600SemiBold",
     color: ios.brand,
+  },
+  cancelText: {
+    fontFamily: "Inter_400Regular",
   },
   destructiveText: {
     color: ios.system.redInk,
