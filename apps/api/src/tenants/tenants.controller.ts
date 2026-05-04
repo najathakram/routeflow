@@ -8,11 +8,13 @@ import {
   Param,
   Post,
   Put,
+  Req,
   UploadedFile,
   UseGuards,
   UseInterceptors,
 } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
+import type { Request } from "express";
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiConsumes, ApiBody } from "@nestjs/swagger";
 import { TenantsService } from "./tenants.service";
 import { EmailService } from "../email/email.service";
@@ -112,10 +114,15 @@ export class TenantsController {
   @Roles(UserRole.TENANT_ADMIN)
   @ApiBearerAuth()
   @ApiOperation({ summary: "Get current tenant branding settings" })
-  async getBranding(@CurrentUser() user: JwtPayload) {
+  async getBranding(@CurrentUser() user: JwtPayload, @Req() req: Request) {
     const tenant = await this.tenantsService.getBranding(user.tenantSlug!);
     if (!tenant) return { businessName: null, primaryColor: null, logoKey: null, logoUrl: null };
-    const logoUrl = tenant.logoKey ? await this.tenantsService.getLogoUrl(tenant.logoKey) : null;
+    // Use the public /public/tenants/:slug/logo endpoint (no auth, inline
+    // disposition) so an `<img src>` can render the logo. The raw uploads
+    // URL is JWT-protected AND served as Content-Disposition: attachment.
+    const logoUrl = tenant.logoKey
+      ? `${req.protocol}://${req.get("host")}/api/v1/public/tenants/${encodeURIComponent(user.tenantSlug!)}/logo`
+      : null;
     return { ...tenant, logoUrl };
   }
 
@@ -139,7 +146,11 @@ export class TenantsController {
     schema: { type: "object", properties: { logo: { type: "string", format: "binary" } } },
   })
   @ApiOperation({ summary: "Upload tenant logo (max 5 MB; PNG, JPG, WEBP)" })
-  async uploadLogo(@CurrentUser() user: JwtPayload, @UploadedFile() file: Express.Multer.File) {
+  async uploadLogo(
+    @CurrentUser() user: JwtPayload,
+    @UploadedFile() file: Express.Multer.File,
+    @Req() req: Request,
+  ) {
     if (!file) throw new BadRequestException("No file uploaded");
     // RF-076: SVG removed from allowlist. SVGs can embed <script> tags and were
     // served inline as image/svg+xml, enabling stored XSS via tenant logos.
@@ -151,6 +162,14 @@ export class TenantsController {
     ) {
       throw new BadRequestException("Only PNG, JPG, and WEBP images are allowed");
     }
-    return this.tenantsService.uploadLogo(user.tenantId!, file);
+    const result = await this.tenantsService.uploadLogo(user.tenantId!, file);
+    // Override the storage's protected uploads URL with the public endpoint so
+    // the front-end can drop the returned URL straight into an `<img src>`.
+    // Cache-buster query (?v=<timestamp>) forces browsers to fetch the new
+    // bytes immediately when the operator re-uploads.
+    return {
+      ...result,
+      logoUrl: `${req.protocol}://${req.get("host")}/api/v1/public/tenants/${encodeURIComponent(user.tenantSlug!)}/logo?v=${Date.now()}`,
+    };
   }
 }
