@@ -34,6 +34,12 @@ export interface CreateProductDto {
   description?: string;
   category?: string;
   unit?: string;
+  /**
+   * Loose pieces per box. When present and > 1, `pricePerUnit` is the BOX
+   * price; loose pieces are prorated. Drives the boxes/pieces editor in
+   * order screens.
+   */
+  unitsPerBox?: number;
   pricePerUnit: number;
   standardCost?: number;
   currentStock?: number;

@@ -635,38 +635,108 @@ function ProductPickView({
               const price = toNumber(p.pricePerUnit);
               const upb = Number(p.unitsPerBox ?? 0);
               const isBoxed = upb > 1;
-              const stepLabel = isBoxed
-                ? `${line?.boxes ?? 0} box${(line?.boxes ?? 0) === 1 ? "" : "es"}${
-                    (line?.pieces ?? 0) > 0 ? ` + ${line?.pieces ?? 0}` : ""
-                  }`
-                : `${q}`;
               return (
-                <View key={p.id} style={styles.productRow}>
-                  <View style={styles.productImg} />
-                  <View style={{ flex: 1, minWidth: 0 }}>
-                    <Text style={styles.productName} numberOfLines={1}>
-                      {displayName(p)}
-                    </Text>
-                    <Text style={styles.productMeta}>
-                      {p.sku ? `SKU ${p.sku} · ` : ""}${price.toFixed(2)}
-                      {isBoxed ? ` / box of ${upb}` : p.unit ? ` / ${p.unit}` : ""}
-                    </Text>
-                  </View>
-                  {q > 0 ? (
-                    <View style={styles.stepper}>
-                      <Pressable style={styles.stepBtn} onPress={() => dec(p.id)}>
-                        <Text style={styles.stepBtnText}>−</Text>
+                <View
+                  key={p.id}
+                  style={[
+                    styles.productRow,
+                    // Boxed + added: switch to a column layout so we can stack
+                    // Box and Loose pieces steppers below the product header.
+                    isBoxed && q > 0 && { flexDirection: "column", alignItems: "stretch" },
+                  ]}
+                >
+                  {/* Top row: image + name + meta + add button (or qty for non-boxed) */}
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 12,
+                      width: "100%",
+                    }}
+                  >
+                    <View style={styles.productImg} />
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text style={styles.productName} numberOfLines={1}>
+                        {displayName(p)}
+                      </Text>
+                      <Text style={styles.productMeta}>
+                        {p.sku ? `SKU ${p.sku} · ` : ""}${price.toFixed(2)}
+                        {isBoxed ? ` / box of ${upb}` : p.unit ? ` / ${p.unit}` : ""}
+                      </Text>
+                    </View>
+                    {q === 0 ? (
+                      <Pressable style={styles.addBtn} onPress={() => inc(p.id)}>
+                        <Text style={styles.addBtnText}>+</Text>
                       </Pressable>
-                      <Text style={styles.stepQty}>{stepLabel}</Text>
-                      <Pressable style={styles.stepBtn} onPress={() => inc(p.id)}>
-                        <Text style={styles.stepBtnText}>+</Text>
+                    ) : !isBoxed ? (
+                      <View style={styles.stepper}>
+                        <Pressable style={styles.stepBtn} onPress={() => dec(p.id)}>
+                          <Text style={styles.stepBtnText}>−</Text>
+                        </Pressable>
+                        <Text style={styles.stepQty}>{q}</Text>
+                        <Pressable style={styles.stepBtn} onPress={() => inc(p.id)}>
+                          <Text style={styles.stepBtnText}>+</Text>
+                        </Pressable>
+                      </View>
+                    ) : null}
+                  </View>
+
+                  {/* Boxed + added: dual stepper row so the operator can dial
+                      Boxes and Loose pieces independently without opening the
+                      cart sheet. (The cart sheet still works for the same edits.) */}
+                  {isBoxed && q > 0 ? (
+                    <View style={styles.boxedDualRow}>
+                      <View style={styles.boxedQtyControl}>
+                        <Text style={styles.boxedQtyLabel}>Boxes</Text>
+                        <View style={styles.miniStepper}>
+                          <Pressable
+                            style={styles.miniStepBtn}
+                            onPress={() => setBoxes(p.id, Math.max(0, (line?.boxes ?? 0) - 1))}
+                          >
+                            <Text style={styles.miniStepText}>−</Text>
+                          </Pressable>
+                          <Text style={styles.miniStepQty}>{line?.boxes ?? 0}</Text>
+                          <Pressable
+                            style={styles.miniStepBtn}
+                            onPress={() => setBoxes(p.id, (line?.boxes ?? 0) + 1)}
+                          >
+                            <Text style={styles.miniStepText}>+</Text>
+                          </Pressable>
+                        </View>
+                      </View>
+                      <View style={styles.boxedQtyControl}>
+                        <Text style={styles.boxedQtyLabel}>
+                          Loose {p.unit ?? "pcs"}
+                        </Text>
+                        <View style={styles.miniStepper}>
+                          <Pressable
+                            style={styles.miniStepBtn}
+                            onPress={() =>
+                              setPieces(p.id, Math.max(0, (line?.pieces ?? 0) - 1))
+                            }
+                          >
+                            <Text style={styles.miniStepText}>−</Text>
+                          </Pressable>
+                          <Text style={styles.miniStepQty}>{line?.pieces ?? 0}</Text>
+                          <Pressable
+                            style={styles.miniStepBtn}
+                            onPress={() =>
+                              setPieces(p.id, Math.min(upb - 1, (line?.pieces ?? 0) + 1))
+                            }
+                          >
+                            <Text style={styles.miniStepText}>+</Text>
+                          </Pressable>
+                        </View>
+                      </View>
+                      <Pressable
+                        onPress={() => removeLine(p.id)}
+                        hitSlop={6}
+                        style={styles.boxedRemoveBtn}
+                      >
+                        <Ionicons name="trash-outline" size={16} color={ios.system.redInk} />
                       </Pressable>
                     </View>
-                  ) : (
-                    <Pressable style={styles.addBtn} onPress={() => inc(p.id)}>
-                      <Text style={styles.addBtnText}>+</Text>
-                    </Pressable>
-                  )}
+                  ) : null}
                 </View>
               );
             })}
@@ -1219,6 +1289,55 @@ const styles = StyleSheet.create({
   },
   confirmBtnDisabled: { opacity: 0.35 },
   confirmBtnText: { color: "#fff", fontSize: 16, fontFamily: "Inter_600SemiBold" },
+
+  // ── Inline boxed product editor (dual stepper) ───────────────────────────
+  boxedDualRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: ios.separator,
+  },
+  boxedQtyControl: {
+    flex: 1,
+    alignItems: "center",
+    gap: 4,
+  },
+  boxedQtyLabel: {
+    fontSize: 11,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label2,
+    letterSpacing: 0.3,
+  },
+  miniStepper: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: ios.bgElev,
+    borderRadius: 10,
+    padding: 2,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: ios.separator,
+  },
+  miniStepBtn: { width: 26, height: 26, alignItems: "center", justifyContent: "center" },
+  miniStepText: { color: ios.brand, fontSize: 16 },
+  miniStepQty: {
+    minWidth: 24,
+    textAlign: "center",
+    fontSize: 14,
+    fontFamily: "Inter_700Bold",
+    color: ios.label,
+    fontVariant: ["tabular-nums"],
+  },
+  boxedRemoveBtn: {
+    width: 28,
+    height: 28,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: ios.system.redWash,
+    borderRadius: 8,
+  },
 
   // ── Footer extras ─────────────────────────────────────────────────────────
   footerActions: { flexDirection: "row", alignItems: "center", gap: 8 },
