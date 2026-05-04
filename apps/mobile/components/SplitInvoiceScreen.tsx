@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -127,13 +127,35 @@ export function SplitInvoiceScreen({
   const [bulkPending, setBulkPending] = useState(false);
   const createPartial = useCreatePartialInvoiceFromOrder();
 
+  // One-shot flag: pre-fill the first draft with all billable items at full
+  // remaining qty when the order data first arrives. Operator can then dial
+  // qtys down to free items for additional invoices. Per the user:
+  // "the default to start with should be all assigned to the first invoice."
+  const firstFillDone = useRef(false);
+
   // Reset draft state when the order's billable set is empty (everything
   // already invoiced) so the screen shows a clean done state.
   useEffect(() => {
     if (billable.length === 0) {
       setDrafts([]);
+      firstFillDone.current = false;
+      return;
     }
-  }, [billable.length]);
+    if (firstFillDone.current) return;
+    setDrafts((prev) => {
+      // Only auto-populate when there's still exactly the seeded empty draft.
+      if (prev.length !== 1) return prev;
+      const first = prev[0]!;
+      if (Object.keys(first.qtyById).length > 0) return prev;
+      const qtyById: Record<string, string> = {};
+      for (const it of billable) {
+        const remaining = Math.max(0, it.qty - it.invoicedQty);
+        qtyById[it.id] = String(remaining);
+      }
+      return [{ ...first, qtyById }];
+    });
+    firstFillDone.current = true;
+  }, [billable]);
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -373,7 +395,12 @@ export function SplitInvoiceScreen({
                     Number.isFinite(numValue) && numValue > 0
                       ? numValue * it.unitPrice
                       : 0;
-                  const remainingDisplay = cap;
+                  // Global "left to allocate" (across all drafts in this
+                  // session). Updates live as the operator types — that's
+                  // what they asked for: "if we have 10 units ... and split
+                  // into 5, it should show 5 more left."
+                  const totalRemaining = it.qty - it.invoicedQty;
+                  const globalLeft = remainingForItem(it.id);
                   return (
                     <View key={it.id} style={styles.itemRow}>
                       <View style={{ flex: 1, minWidth: 0 }}>
@@ -381,8 +408,16 @@ export function SplitInvoiceScreen({
                           {it.productName}
                         </Text>
                         <Text style={styles.itemSub}>
-                          {remainingDisplay} {it.unit ?? "ea"} available · $
-                          {it.unitPrice.toFixed(2)}/ea
+                          <Text
+                            style={{
+                              color: globalLeft > 0 ? ios.system.orangeInk : ios.system.greenInk,
+                              fontFamily: "Inter_700Bold",
+                            }}
+                          >
+                            {globalLeft}
+                          </Text>{" "}
+                          of {totalRemaining} {it.unit ?? "ea"} left ·{" "}
+                          ${it.unitPrice.toFixed(2)}/ea
                         </Text>
                       </View>
                       <TextInput
