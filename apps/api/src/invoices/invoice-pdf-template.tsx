@@ -317,6 +317,14 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
   return (
     <Document title={`Invoice ${invoice.invoiceNumber}`} author={tenant?.businessName ?? undefined}>
       <Page size="A4" style={styles.page}>
+        {/*
+          Wrap everything *above* the Terms in a flexGrow:1 container.
+          react-pdf occasionally ignores `marginTop: auto` alone — making
+          the wrapper grow guarantees the Terms block ends up flush with
+          the bottom of the page (above the fixed footer) regardless of
+          how short the invoice body is.
+        */}
+        <View style={{ flexGrow: 1 }}>
         {/* Header */}
         <View style={styles.header}>
           <View>
@@ -497,13 +505,15 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
             <Text style={{ fontSize: 9, color: GRAY }}>{invoice.notes}</Text>
           </View>
         ) : null}
+        </View>{/* /flexGrow:1 wrapper */}
 
         {/*
-          Terms & Conditions — pushed to the bottom of the page via
-          `marginTop: auto` so it consistently sits above the fixed footer
-          regardless of how many line items the invoice has. Styled as a
-          distinct callout block (accent top border + light fill) so it
-          reads as a separate section rather than another row of body copy.
+          Terms & Conditions — sits OUTSIDE the flexGrow:1 wrapper above
+          and is therefore pushed to the bottom of the last page (above
+          the fixed footer) regardless of how short the invoice body is.
+          Styled as a distinct callout block (accent top border + light
+          fill) so it reads as a separate section rather than another row
+          of body copy.
         */}
         {invoice.terms ? (
           <View style={styles.termsWrapper} wrap={false}>

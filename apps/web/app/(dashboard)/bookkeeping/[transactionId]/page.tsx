@@ -16,6 +16,8 @@ import {
 import { Badge, Button, Card, Modal, Input, Select, cn, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useTransaction, useRecordPayment, useDownloadInvoice, type Payment } from "@/lib/api/bookkeeping";
+import { apiClient } from "@/lib/api-client";
+import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";
 
 // ─── Payment status badge ─────────────────────────────────────────────────────
 
@@ -129,14 +131,35 @@ export default function TransactionDetailPage({ params }: { params: { transactio
 
   const handleDownloadPdf = () => {
     downloadInvoice.mutate(params.transactionId, {
-      onSuccess: (result) => {
+      onSuccess: async (result) => {
         if (!result) {
           toast({
             title: "PDF generating",
             description: "Your invoice PDF is being generated. Check back in a moment.",
           });
-        } else {
-          window.open(result.url, "_blank");
+          return;
+        }
+        // `window.open(url)` would 401 — the URL points at our same-origin
+        // /api/v1/uploads/ endpoint which requires a JWT, and a top-level
+        // navigation strips localStorage credentials. Fetch the bytes via
+        // the auth'd client and trigger a same-origin blob download.
+        try {
+          const blob = await fetchPdfBlob(result.url, apiClient);
+          const blobUrl = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = blobUrl;
+          a.download = `invoice-${params.transactionId}.pdf`;
+          a.rel = "noopener noreferrer";
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+        } catch {
+          toast({
+            title: "Download failed",
+            description: "Unable to retrieve the invoice PDF. Please try again.",
+            variant: "error",
+          });
         }
       },
       onError: () => {
