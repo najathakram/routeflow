@@ -37,6 +37,15 @@ export interface NewOrderScreenProps {
   stopId?: string;
   /** Label shown on the back button. */
   backLabel?: string;
+  /**
+   * Where to land after a successful save. The default `router.back()`
+   * leaves the operator on whatever they came from (e.g. /home), but the
+   * user wanted "after creating an order it should go back to all orders
+   * and give the option to navigate as you need" — operator routes pass
+   * a custom callback that lands on /orders explicitly. Driver flows keep
+   * the default so they return to the stop.
+   */
+  onSaved?: (orderNumber: string) => void;
 }
 
 type Product = {
@@ -85,6 +94,7 @@ export function NewOrderScreen({
   runId,
   stopId,
   backLabel,
+  onSaved,
 }: NewOrderScreenProps) {
   const router = useRouter();
   const [pickedCustomerId, setPickedCustomerId] = useState<string | null>(
@@ -124,7 +134,8 @@ export function NewOrderScreen({
           }}
           onSaved={(orderNumber: string) => {
             showToast(`Order ${orderNumber} saved`);
-            router.back();
+            if (onSaved) onSaved(orderNumber);
+            else router.back();
           }}
         />
       )}
