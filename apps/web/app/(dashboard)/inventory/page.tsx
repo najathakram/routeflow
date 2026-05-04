@@ -27,6 +27,8 @@ import { useVendorBills } from "@/lib/api/vendor-bills";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { ScanInvoiceModal } from "@/components/ScanInvoiceModal";
 import { SupplierSelect } from "@/components/SupplierSelect";
+import { useSortableData } from "@/lib/use-sortable-data";
+import { SortableTh } from "@/components/SortableTh";
 
 const DECIMAL_UNITS = ["kg", "g", "liter", "litre", "l", "oz", "lb", "pound", "ml"];
 function isDecimalUnit(unit: string) {
@@ -344,6 +346,207 @@ function QuickRestockModal({
           </div>
         </form>
       </div>
+    </div>
+  );
+}
+
+// ─── Stock Table (search + sort) ──────────────────────────────────────────────
+
+/**
+ * Stock-tab table extracted into its own component so the sort hook + memoised
+ * filter live in a single place. Sort is hover-revealed per the shared
+ * convention — the chevron only appears on header hover or when the column is
+ * the active sort.
+ */
+function StockTable({
+  stockItems,
+  stockSearch,
+  setAdjustPreselectId,
+  setShowAdjustModal,
+}: {
+  stockItems: StockItem[];
+  stockSearch: string;
+  setAdjustPreselectId: (id: string | undefined) => void;
+  setShowAdjustModal: (v: boolean) => void;
+}) {
+  // 1) Filter by search first so sort only operates on visible rows.
+  const filtered = React.useMemo(() => {
+    const q = stockSearch.trim().toLowerCase();
+    if (!q) return stockItems;
+    return stockItems.filter(
+      (i) =>
+        i.name.toLowerCase().includes(q) ||
+        (i.sku ?? "").toLowerCase().includes(q) ||
+        (i.category ?? "").toLowerCase().includes(q),
+    );
+  }, [stockItems, stockSearch]);
+
+  // 2) Sort. Numeric columns get explicit comparators so "100" sorts after
+  // "20" (string compare would put it first).
+  const { sorted, sortKey, sortDir, requestSort } = useSortableData(filtered, {
+    defaultKey: "name",
+    defaultDir: "asc",
+    comparators: {
+      currentStock: (a, b) => Number(a.currentStock) - Number(b.currentStock),
+      unitsPerBox: (a, b) => (a.unitsPerBox ?? -1) - (b.unitsPerBox ?? -1),
+      averageCost: (a, b) =>
+        Number(a.averageCost ?? 0) - Number(b.averageCost ?? 0),
+      totalValue: (a, b) =>
+        Number(a.totalValue ?? 0) - Number(b.totalValue ?? 0),
+    },
+  });
+
+  if (filtered.length === 0) {
+    const q = stockSearch.trim();
+    return (
+      <div className="rounded-xl border border-surface-border bg-white py-10 text-center text-navy/40">
+        {q ? `No products match "${q}"` : "No products found."}
+      </div>
+    );
+  }
+
+  return (
+    <div className="overflow-x-auto rounded-xl border border-surface-border">
+      <table className="w-full text-sm">
+        <thead className="border-b border-surface-border bg-surface-raised text-xs text-navy/70">
+          <tr>
+            <SortableTh
+              name="name"
+              current={sortKey}
+              dir={sortDir}
+              onSort={requestSort}
+              className="px-4 py-3 font-medium"
+            >
+              Product
+            </SortableTh>
+            <SortableTh
+              name="sku"
+              current={sortKey}
+              dir={sortDir}
+              onSort={requestSort}
+              className="px-4 py-3 font-medium"
+            >
+              SKU
+            </SortableTh>
+            <SortableTh
+              name="category"
+              current={sortKey}
+              dir={sortDir}
+              onSort={requestSort}
+              className="px-4 py-3 font-medium"
+            >
+              Category
+            </SortableTh>
+            <SortableTh
+              name="currentStock"
+              current={sortKey}
+              dir={sortDir}
+              onSort={requestSort}
+              className="px-4 py-3 font-medium"
+            >
+              Current Stock
+            </SortableTh>
+            <SortableTh
+              name="unitsPerBox"
+              current={sortKey}
+              dir={sortDir}
+              onSort={requestSort}
+              className="px-4 py-3 font-medium"
+            >
+              Per Box
+            </SortableTh>
+            <SortableTh
+              name="averageCost"
+              current={sortKey}
+              dir={sortDir}
+              onSort={requestSort}
+              className="px-4 py-3 font-medium"
+            >
+              <span className="inline-flex items-center gap-1">
+                Unit Cost
+                <span title="Shows standard cost for STANDARD-costing products, or weighted average cost for AVCO/FIFO/LIFO. Updates automatically when vendor bills are received.">
+                  <Info className="h-3 w-3 text-navy/30 cursor-help" />
+                </span>
+              </span>
+            </SortableTh>
+            <SortableTh
+              name="totalValue"
+              current={sortKey}
+              dir={sortDir}
+              onSort={requestSort}
+              className="px-4 py-3 font-medium"
+            >
+              Total Value
+            </SortableTh>
+            <th className="px-4 py-3" />
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-surface-border">
+          {sorted.map((item) => (
+            <tr
+              key={item.id}
+              className={cn(
+                "group transition-colors hover:bg-surface-raised/50",
+                item.currentStock <= 0 && "bg-danger-bg/30",
+              )}
+            >
+              <td className="px-4 py-3 font-medium text-navy">{item.name}</td>
+              <td className="px-4 py-3 font-mono text-navy">{item.sku ?? "—"}</td>
+              <td className="px-4 py-3 text-navy/70">{item.category ?? "—"}</td>
+              <td className="px-4 py-3">
+                <span
+                  className={cn(
+                    "font-medium",
+                    item.currentStock <= 0
+                      ? "text-danger"
+                      : item.currentStock <= 5
+                        ? "text-warning"
+                        : "text-navy",
+                  )}
+                >
+                  {Number(item.currentStock) % 1 === 0
+                    ? Number(item.currentStock).toFixed(0)
+                    : Number(item.currentStock).toFixed(2)}{" "}
+                  {item.unit}
+                </span>
+              </td>
+              <td className="px-4 py-3 text-navy/70">
+                {item.unitsPerBox != null ? item.unitsPerBox : "—"}
+              </td>
+              <td className="px-4 py-3 text-navy/70">
+                {item.averageCost != null
+                  ? `$${Number(item.averageCost).toFixed(2)}`
+                  : "—"}
+              </td>
+              <td className="px-4 py-3 text-navy/70">
+                {item.totalValue != null
+                  ? `$${Number(item.totalValue).toFixed(2)}`
+                  : "—"}
+              </td>
+              <td className="px-4 py-3">
+                <div className="flex items-center justify-end gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAdjustPreselectId(item.id);
+                      setShowAdjustModal(true);
+                    }}
+                    className="text-xs font-medium text-brand-600 transition-colors hover:underline"
+                  >
+                    Adjust
+                  </button>
+                  <Link
+                    href={`/inventory/movements?product=${item.id}`}
+                    className="text-xs text-brand-500 hover:underline"
+                  >
+                    Movements
+                  </Link>
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -1850,115 +2053,12 @@ export default function InventoryPage() {
               ))}
             </div>
           ) : (
-            <div className="overflow-x-auto rounded-xl border border-surface-border">
-              <table className="w-full text-sm">
-                <thead className="border-b border-surface-border bg-surface-raised text-xs text-navy/70">
-                  <tr>
-                    {["Product", "SKU", "Category", "Current Stock", "Per Box"].map((h) => (
-                      <th key={h} className="px-4 py-3 text-left font-medium">{h}</th>
-                    ))}
-                    <th className="px-4 py-3 text-left font-medium">
-                      <span className="flex items-center gap-1">
-                        Unit Cost
-                        <span title="Shows standard cost for STANDARD-costing products, or weighted average cost for AVCO/FIFO/LIFO. Updates automatically when vendor bills are received.">
-                          <Info className="h-3 w-3 text-navy/30 cursor-help" />
-                        </span>
-                      </span>
-                    </th>
-                    <th className="px-4 py-3 text-left font-medium">Total Value</th>
-                    <th className="px-4 py-3" />
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-surface-border">
-                  {(() => {
-                    const q = stockSearch.trim().toLowerCase();
-                    const filtered = q
-                      ? (stockItems as StockItem[]).filter(
-                          (i) =>
-                            i.name.toLowerCase().includes(q) ||
-                            (i.sku ?? "").toLowerCase().includes(q) ||
-                            (i.category ?? "").toLowerCase().includes(q),
-                        )
-                      : (stockItems as StockItem[]);
-                    if (filtered.length === 0) {
-                      return (
-                        <tr>
-                          <td colSpan={8} className="px-4 py-10 text-center text-navy/40">
-                            {q
-                              ? `No products match "${stockSearch}"`
-                              : "No products found."}
-                          </td>
-                        </tr>
-                      );
-                    }
-                    return filtered.map((item) => (
-                      <tr
-                        key={item.id}
-                        className={cn(
-                          "group transition-colors hover:bg-surface-raised/50",
-                          item.currentStock <= 0 && "bg-danger-bg/30",
-                        )}
-                      >
-                        <td className="px-4 py-3 font-medium text-navy">{item.name}</td>
-                        <td className="px-4 py-3 font-mono text-navy">{item.sku ?? "—"}</td>
-                        <td className="px-4 py-3 text-navy/70">{item.category ?? "—"}</td>
-                        <td className="px-4 py-3">
-                          <span
-                            className={cn(
-                              "font-medium",
-                              item.currentStock <= 0
-                                ? "text-danger"
-                                : item.currentStock <= 5
-                                  ? "text-warning"
-                                  : "text-navy",
-                            )}
-                          >
-                            {Number(item.currentStock) % 1 === 0
-                              ? Number(item.currentStock).toFixed(0)
-                              : Number(item.currentStock).toFixed(2)}{" "}
-                            {item.unit}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-navy/70">
-                          {item.unitsPerBox != null ? item.unitsPerBox : "—"}
-                        </td>
-                        <td className="px-4 py-3 text-navy/70">
-                          {item.averageCost != null
-                            ? `$${Number(item.averageCost).toFixed(2)}`
-                            : "—"}
-                        </td>
-                        <td className="px-4 py-3 text-navy/70">
-                          {item.totalValue != null
-                            ? `$${Number(item.totalValue).toFixed(2)}`
-                            : "—"}
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center justify-end gap-3">
-                            {/* Inline Adjust opens the modal pre-selected to this product */}
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setAdjustPreselectId(item.id);
-                                setShowAdjustModal(true);
-                              }}
-                              className="text-xs font-medium text-brand-600 transition-colors hover:underline"
-                            >
-                              Adjust
-                            </button>
-                            <Link
-                              href={`/inventory/movements?product=${item.id}`}
-                              className="text-xs text-brand-500 hover:underline"
-                            >
-                              Movements
-                            </Link>
-                          </div>
-                        </td>
-                      </tr>
-                    ));
-                  })()}
-                </tbody>
-              </table>
-            </div>
+            <StockTable
+              stockItems={stockItems as StockItem[]}
+              stockSearch={stockSearch}
+              setAdjustPreselectId={setAdjustPreselectId}
+              setShowAdjustModal={setShowAdjustModal}
+            />
           )}
         </Tabs.Content>
 
