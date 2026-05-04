@@ -11,6 +11,14 @@ export interface ProductFormValues {
   barcode: string;
   category: string;
   unit: string;
+  /**
+   * Loose pieces per box. Leave blank for products sold individually.
+   * When set (>1), `pricePerUnit` is treated as the BOX price; loose pieces
+   * are prorated as `pricePerUnit / unitsPerBox` (apps/api/src/common/pricing.ts).
+   * The new-order + edit-order screens then offer the operator a Boxes +
+   * Loose pieces editor instead of a single qty stepper.
+   */
+  unitsPerBox: string;
   description: string;
   pricePerUnit: string;
   standardCost: string;
@@ -27,6 +35,7 @@ export function emptyProductForm(): ProductFormValues {
     barcode: "",
     category: "",
     unit: "ea",
+    unitsPerBox: "",
     description: "",
     pricePerUnit: "",
     standardCost: "",
@@ -46,6 +55,7 @@ export function productFormFromValues(
     barcode: p.barcode ?? "",
     category: p.category ?? "",
     unit: p.unit ?? "ea",
+    unitsPerBox: p.unitsPerBox != null ? String(p.unitsPerBox) : "",
     description: p.description ?? "",
     pricePerUnit: p.pricePerUnit != null ? String(p.pricePerUnit) : "",
     standardCost: (p.standardCost ?? p.costPerUnit) != null ? String(p.standardCost ?? p.costPerUnit) : "",
@@ -69,6 +79,7 @@ export interface SubmitPayload {
   barcode?: string;
   category?: string;
   unit?: string;
+  unitsPerBox?: number;
   description?: string;
   pricePerUnit: number;
   standardCost?: number;
@@ -83,12 +94,21 @@ export function buildProductPayload(form: ProductFormValues): SubmitPayload | { 
   if (!name) return { error: "Name is required." };
   const price = parseOptionalNumber(form.pricePerUnit);
   if (price == null || price < 0) return { error: "Enter a valid price." };
+  // unitsPerBox: any positive integer is allowed, but values <= 1 (or empty)
+  // mean "no box packaging" — we omit the field so the API treats the product
+  // as sold by piece.
+  const upbRaw = parseOptionalNumber(form.unitsPerBox);
+  const unitsPerBox =
+    upbRaw != null && Number.isFinite(upbRaw) && upbRaw > 1
+      ? Math.floor(upbRaw)
+      : undefined;
   return {
     name,
     sku: form.sku.trim() || undefined,
     barcode: form.barcode.trim() || undefined,
     category: form.category.trim() || undefined,
     unit: form.unit.trim() || undefined,
+    unitsPerBox,
     description: form.description.trim() || undefined,
     pricePerUnit: price,
     standardCost: parseOptionalNumber(form.standardCost),
@@ -214,10 +234,28 @@ export function ProductForm({
             placeholder="ea, kg, box"
           />
         </FormField>
+        <FormField
+          label="Pieces per box (optional)"
+          hint="Leave blank for products sold individually. Set to N if 1 box contains N loose pieces — orders can then be issued as boxes + loose units."
+        >
+          <FormTextInput
+            value={form.unitsPerBox}
+            onChangeText={(v) => set("unitsPerBox", v)}
+            placeholder="e.g. 12"
+            keyboardType="number-pad"
+          />
+        </FormField>
       </FormSection>
 
       <FormSection title="Pricing">
-        <FormField label="Price per unit">
+        <FormField
+          label="Price per unit"
+          hint={
+            parseOptionalNumber(form.unitsPerBox) && parseOptionalNumber(form.unitsPerBox)! > 1
+              ? "This is the BOX price. A loose piece costs price ÷ pieces-per-box."
+              : undefined
+          }
+        >
           <FormTextInput
             value={form.pricePerUnit}
             onChangeText={(v) => set("pricePerUnit", v)}
