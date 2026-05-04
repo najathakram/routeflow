@@ -8,9 +8,12 @@ import {
   NotFoundException,
   HttpCode,
   HttpStatus,
+  Res,
+  Req,
 } from "@nestjs/common";
 import { ApiTags, ApiOperation } from "@nestjs/swagger";
 import { Throttle } from "@nestjs/throttler";
+import type { Request, Response } from "express";
 import { TenantsService } from "./tenants.service";
 import { StorageService } from "../storage/storage.service";
 import { RegisterTenantDto } from "./dto/register-tenant.dto";
@@ -73,15 +76,71 @@ export class PublicTenantsController {
   }
 
   @Get(":slug/branding")
-  @ApiOperation({ summary: "Get public branding info for a tenant (includes presigned logoUrl)" })
+  @ApiOperation({
+    summary:
+      "Get public branding info for a tenant (logoUrl points at the public /logo endpoint below)",
+  })
   @Throttle({ default: { ttl: 60_000, limit: 100 } })
-  async getBranding(@Param("slug") slug: string) {
+  async getBranding(@Param("slug") slug: string, @Req() req: Request) {
     const branding = await this.tenantsService.getBranding(slug);
     if (!branding) throw new NotFoundException("Tenant not found");
 
-    // Resolve logoUrl so clients can display the logo without extra round-trips
-    const logoUrl = branding.logoKey ? await this.storage.presignedUrl(branding.logoKey) : null;
+    // The raw `/api/v1/uploads/<key>` URL requires a JWT (RF-075) AND serves
+    // every file as Content-Disposition: attachment (RF-078) — neither works
+    // for an `<img src>` rendering the tenant's logo. Hand back the public
+    // /public/tenants/:slug/logo URL instead, which streams the bytes inline
+    // with no auth (the logo is intentionally public branding).
+    const logoUrl = branding.logoKey
+      ? `${req.protocol}://${req.get("host")}/api/v1/public/tenants/${encodeURIComponent(slug)}/logo`
+      : null;
 
     return { ...branding, logoUrl };
+  }
+
+  @Get(":slug/logo")
+  @ApiOperation({
+    summary:
+      "Stream the tenant's logo image inline. Public — no auth required. Returns 404 if no logo set.",
+  })
+  @Throttle({ default: { ttl: 60_000, limit: 200 } })
+  async getLogo(@Param("slug") slug: string, @Res() res: Response) {
+    const branding = await this.tenantsService.getBranding(slug);
+    if (!branding?.logoKey) {
+      // Use 404 (not throw) so we control the body — keeps it cacheable.
+      res.status(HttpStatus.NOT_FOUND).end();
+      return;
+    }
+
+    let buffer: Buffer;
+    try {
+      buffer = await this.storage.download(branding.logoKey);
+    } catch {
+      res.status(HttpStatus.NOT_FOUND).end();
+      return;
+    }
+
+    // Best-effort MIME detection from the stored key extension. The upload
+    // endpoint (TenantsController.uploadLogo) already restricts to the safe
+    // raster types via mimetype check (PNG/JPG/WEBP), so this is a closed set.
+    const lower = branding.logoKey.toLowerCase();
+    const contentType = lower.endsWith(".png")
+      ? "image/png"
+      : lower.endsWith(".jpg") || lower.endsWith(".jpeg")
+        ? "image/jpeg"
+        : lower.endsWith(".webp")
+          ? "image/webp"
+          : "application/octet-stream";
+
+    res.setHeader("Content-Type", contentType);
+    // Inline so <img src> renders it (the protected /uploads route forces
+    // attachment per RF-078).
+    res.setHeader("Content-Disposition", "inline");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    // Public branding — safe to cache at edges. Short max-age so a logo swap
+    // is visible without users having to bust their cache; the in-app upload
+    // flow ALSO bumps the URL via tenantConfig.updatedAt (used as a cache key
+    // by the front-end if needed).
+    res.setHeader("Cache-Control", "public, max-age=300");
+    res.send(buffer);
   }
 }
