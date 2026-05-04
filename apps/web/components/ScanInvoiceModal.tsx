@@ -21,6 +21,7 @@ import { useProducts } from "@/lib/api/products";
 import { useCreateVendorBill, useReceiveVendorBill, useSaveProductMapping } from "@/lib/api/vendor-bills";
 import { useCreateExpense, useExpenseCategories } from "@/lib/api/finance";
 import { SupplierSelect } from "./SupplierSelect";
+import { displayProductName } from "@/lib/product-display";
 
 const fmt = (n: number | null | undefined) =>
   n != null
@@ -372,7 +373,10 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
       // The product's averageCost is our historical average, not the current invoice price.
       updateItem(i, {
         productId,
-        description: product.name,
+        // Compose "<Parent> - <Variant>" so the bill line reads
+        // meaningfully on its own (variants store just the variant
+        // name in `product.name` per PR #44).
+        description: displayProductName(product, products),
         // unitCost intentionally NOT overwritten — preserve the extracted invoice price
         // Changing the matched product invalidates any in-progress split.
         splits: undefined,

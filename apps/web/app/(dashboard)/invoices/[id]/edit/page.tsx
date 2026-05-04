@@ -12,6 +12,7 @@ import { useProducts } from "@/lib/api/products";
 import { apiClient } from "@/lib/api-client";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
+import { displayProductName } from "@/lib/product-display";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -573,7 +574,12 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
             setItems((prev) =>
               prev.map((item, i) =>
                 i === createProductTargetIdx
-                  ? { ...item, description: product.name, productId: product.id, unitPrice: parseFloat(product.pricePerUnit) || 0 }
+                  ? {
+                      ...item,
+                      description: displayProductName(product),
+                      productId: product.id,
+                      unitPrice: parseFloat(product.pricePerUnit) || 0,
+                    }
                   : item
               )
             );

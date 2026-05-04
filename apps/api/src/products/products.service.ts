@@ -49,9 +49,21 @@ export class ProductsService {
       where.currentStock = { gt: 5 };
     }
 
-    const variantsInclude = query.includeVariants
-      ? { variants: { where: { isActive: true }, orderBy: { variantName: "asc" as const } } }
-      : undefined;
+    // Always include `parent` so the web can compose "<Parent> - <Variant>"
+    // display names for line items. The parent row is small (no nested
+    // relations) so this is cheap. variants{} is still gated behind
+    // includeVariants since it materially expands the payload.
+    const includeRelations = {
+      parent: { select: { id: true, name: true } },
+      ...(query.includeVariants
+        ? {
+            variants: {
+              where: { isActive: true },
+              orderBy: { variantName: "asc" as const },
+            },
+          }
+        : {}),
+    };
 
     const [data, total] = await Promise.all([
       this.prisma.forTenant().product.findMany({
@@ -59,7 +71,7 @@ export class ProductsService {
         skip,
         take: limit,
         orderBy: { name: "asc" },
-        include: variantsInclude,
+        include: includeRelations,
       }),
       this.prisma.forTenant().product.count({ where }),
     ]);
