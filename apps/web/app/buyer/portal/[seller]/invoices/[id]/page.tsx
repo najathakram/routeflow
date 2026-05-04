@@ -14,10 +14,10 @@ import {
   Clock,
 } from "lucide-react";
 import { Badge, useToast } from "@routeflow/ui/web";
-import axios from "axios";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { useBuyerInvoice } from "@/lib/api/buyer";
 import { buyerApiClient } from "@/lib/buyer-api-client";
+import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";
 
 function fmt(n: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
@@ -54,24 +54,20 @@ export default function BuyerInvoiceDetailPage() {
    * Download the invoice PDF via auth-fetched blob.
    *
    * `invoice.pdfUrl` from the API may be either a presigned R2 URL (no auth
-   * needed — `axios.get` works) or a local-storage `/uploads/...` URL behind
+   * needed) or a local-storage `https://api…/api/v1/uploads/...` URL behind
    * the JWT-protected uploads endpoint. A plain `<a href={pdfUrl}>` strips
    * the buyer's Bearer token because top-level navigation doesn't carry
    * `localStorage`-held credentials, returning 401 in production.
    *
-   * Routing absolute URLs through `axios` (no auth header) and relative URLs
-   * through `buyerApiClient` (which auto-attaches the buyer JWT) makes the
-   * download work in both deployment modes.
+   * `fetchPdfBlob` picks the right transport: same-origin → buyerApiClient
+   * (auto-attaches JWT); external presigned URL → bare axios.
    */
   async function handleDownloadPdf() {
     if (!invoice?.pdfUrl) return;
     setPdfDownloading(true);
     try {
-      const isAbsolute = /^https?:\/\//i.test(invoice.pdfUrl);
-      const res = isAbsolute
-        ? await axios.get<Blob>(invoice.pdfUrl, { responseType: "blob" })
-        : await buyerApiClient.get<Blob>(invoice.pdfUrl, { responseType: "blob" });
-      const blobUrl = URL.createObjectURL(res.data);
+      const blob = await fetchPdfBlob(invoice.pdfUrl, buyerApiClient);
+      const blobUrl = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = blobUrl;
       a.download = `${invoice.invoiceNumber || invoice.id}.pdf`;
