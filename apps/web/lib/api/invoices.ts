@@ -251,6 +251,9 @@ export function useVoidInvoice() {
     onSuccess: (_, id) => {
       qc.invalidateQueries({ queryKey: ['invoices'] });
       qc.invalidateQueries({ queryKey: ['invoices', id] });
+      // Voiding releases OrderItem.invoicedQty, so the source order's
+      // "Split into invoice…" button should reappear immediately.
+      qc.invalidateQueries({ queryKey: ['orders'] });
     },
   });
 }
@@ -294,7 +297,12 @@ export function useDeleteInvoice() {
   const qc = useQueryClient();
   return useMutation<{ id: string; message: string }, Error, string>({
     mutationFn: (id) => apiClient.delete(`/invoices/${id}`).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['invoices'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['invoices'] });
+      // Same reason as void: releases OrderItem.invoicedQty so the order can
+      // be re-split.
+      qc.invalidateQueries({ queryKey: ['orders'] });
+    },
   });
 }
 

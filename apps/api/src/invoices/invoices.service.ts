@@ -1107,9 +1107,67 @@ export class InvoicesService {
       throw new BadRequestException(
         "Cannot void an invoice with partial payments. Reverse or refund payments first.",
       );
-    return this.prisma
-      .forTenant()
-      .invoice.update({ where: { id }, data: { status: InvoiceStatus.VOID } });
+
+    // Wrap in a transaction so the void + invoicedQty decrements are atomic.
+    // We need to free up the qty on the source order so the operator can
+    // re-split into multiple invoices after void — the user's "after delivering
+    // an order, it should be possible to split it into multiple invoices"
+    // scenario. The auto-create-on-DELIVERED captured all remaining qty; voiding
+    // releases it so a fresh split can run.
+    return this.prisma.tenantTransaction(async (tx) => {
+      const voided = await tx.invoice.update({
+        where: { id },
+        data: { status: InvoiceStatus.VOID },
+      });
+
+      await this.releaseInvoicedQtyForVoidedInvoice(tx, id, inv.orderId);
+      return voided;
+    });
+  }
+
+  /**
+   * Decrement OrderItem.invoicedQty for every line on the voided/deleted
+   * invoice that came from an order. Called from voidInvoice and deleteInvoice
+   * so the source order's `qty - invoicedQty` reflects what's still billable.
+   *
+   * Match is by `productId` within the same order. If the order has more than
+   * one line item for the same product (rare — and only happens via legacy
+   * data, since the create-order flow merges duplicate products) we decrement
+   * the first match by the invoice line's qty. Worst-case manual fixup is the
+   * operator can re-bill the remaining qty on the next split.
+   */
+  private async releaseInvoicedQtyForVoidedInvoice(
+    tx: any,
+    invoiceId: string,
+    orderId: string | null,
+  ): Promise<void> {
+    if (!orderId) return; // standalone invoice — nothing to release
+    const items = await tx.invoiceItem.findMany({
+      where: { invoiceId },
+      select: { productId: true, qty: true },
+    });
+    const productQty = new Map<string, number>();
+    for (const it of items) {
+      if (!it.productId) continue;
+      productQty.set(
+        it.productId,
+        (productQty.get(it.productId) ?? 0) + Number(it.qty),
+      );
+    }
+    if (productQty.size === 0) return;
+    const orderItems = await tx.orderItem.findMany({
+      where: { orderId },
+      select: { id: true, productId: true, invoicedQty: true },
+    });
+    for (const [productId, qtyToFree] of productQty) {
+      const target = orderItems.find((oi: any) => oi.productId === productId);
+      if (!target) continue;
+      const next = Math.max(0, Number(target.invoicedQty ?? 0) - qtyToFree);
+      await tx.orderItem.update({
+        where: { id: target.id },
+        data: { invoicedQty: next },
+      });
+    }
   }
 
   async revertInvoiceToDraft(id: string) {
@@ -1582,6 +1640,12 @@ export class InvoicesService {
           "Cannot delete an invoice that has recorded payments. Remove all payments first, or void the invoice.",
         );
       }
+
+      // Free up invoicedQty on the source order BEFORE deleting the invoice
+      // items (we read them inside the helper). Otherwise a delete leaves the
+      // source order's lines flagged as fully invoiced with no surviving
+      // record of why — operator can never split again.
+      await this.releaseInvoicedQtyForVoidedInvoice(tx, id, inv.orderId);
 
       // Unlink credit notes that were generated for this invoice
       await tx.creditNote.updateMany({
