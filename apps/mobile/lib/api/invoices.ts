@@ -148,10 +148,13 @@ export function useVoidInvoice() {
       qc.invalidateQueries({ queryKey: ['invoices'] });
       qc.invalidateQueries({ queryKey: ['invoices', id] });
       qc.invalidateQueries({ queryKey: ['admin', 'invoices'] });
-      // Detail screen reads from ['admin', 'invoices', id] — without this the
-      // status pill stayed on its pre-void value until the next manual refetch
-      // and the Delete action (only shown for VOID) didn't appear.
       qc.invalidateQueries({ queryKey: ['admin', 'invoices', id] });
+      // Voiding releases OrderItem.invoicedQty on the source order so the
+      // operator can re-split. The order detail's "Split into invoice…"
+      // visibility depends on `qty - invoicedQty` per line — without these
+      // invalidations it stayed hidden until manual refetch.
+      qc.invalidateQueries({ queryKey: ['orders'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'orders'] });
     },
   });
 }

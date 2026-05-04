@@ -332,7 +332,9 @@ export function SplitInvoiceScreen({
               <Ionicons name="checkmark-circle" size={32} color={ios.system.greenInk} />
               <Text style={styles.allDoneTitle}>All items invoiced</Text>
               <Text style={styles.allDoneSub}>
-                Nothing left on this order to bill. Tap Done to go back.
+                Nothing left on this order to bill. To re-split, open one of
+                the existing invoices and tap Void or Delete — that frees the
+                items so you can split again.
               </Text>
             </View>
           </View>
