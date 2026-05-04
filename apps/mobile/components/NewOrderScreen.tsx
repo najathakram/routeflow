@@ -46,6 +46,14 @@ export interface NewOrderScreenProps {
    * the default so they return to the stop.
    */
   onSaved?: (orderNumber: string) => void;
+  /**
+   * What to do when the back button is tapped. The default tries
+   * `router.back()` and falls back to `router.replace("/home")` if the
+   * back stack is empty (which is the case when the user opened this
+   * URL directly — `router.back()` was a silent no-op then, the user's
+   * "back is not working" report).
+   */
+  onBack?: () => void;
 }
 
 type Product = {
@@ -95,6 +103,7 @@ export function NewOrderScreen({
   stopId,
   backLabel,
   onSaved,
+  onBack,
 }: NewOrderScreenProps) {
   const router = useRouter();
   const [pickedCustomerId, setPickedCustomerId] = useState<string | null>(
@@ -108,12 +117,30 @@ export function NewOrderScreen({
   // If a customer isn't selected yet, the picker takes over — product list hidden.
   const needsCustomer = !pickedCustomerId;
 
+  /**
+   * Cross-platform-safe back handler. `router.back()` is a no-op on web when
+   * the user opened this URL directly (empty history stack) — the cause of
+   * the "back is not working" report. Fall back to a sensible default if the
+   * caller didn't supply one.
+   */
+  const handleBack = () => {
+    if (onBack) {
+      onBack();
+      return;
+    }
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace("/(operator)/(tabs)/home" as any);
+    }
+  };
+
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       {needsCustomer ? (
         <CustomerPickerView
           backLabel={backLabel}
-          onBack={() => router.back()}
+          onBack={handleBack}
           onPick={(id, name) => {
             setPickedCustomerId(id);
             setPickedCustomerName(name);
@@ -127,7 +154,7 @@ export function NewOrderScreen({
           runId={runId}
           stopId={stopId}
           backLabel={backLabel}
-          onBack={() => router.back()}
+          onBack={handleBack}
           onChangeCustomer={() => {
             setPickedCustomerId(null);
             setPickedCustomerName(null);
@@ -135,7 +162,8 @@ export function NewOrderScreen({
           onSaved={(orderNumber: string) => {
             showToast(`Order ${orderNumber} saved`);
             if (onSaved) onSaved(orderNumber);
-            else router.back();
+            else if (router.canGoBack()) router.back();
+            else router.replace("/(operator)/(tabs)/orders" as any);
           }}
         />
       )}

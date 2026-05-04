@@ -91,11 +91,18 @@ export default function NewInvoiceScreen() {
   const [pickedCustomerId, setPickedCustomerId] = useState<string | null>(null);
   const [pickedCustomerName, setPickedCustomerName] = useState<string | null>(null);
 
+  // `router.back()` is a silent no-op on web when this URL was opened
+  // directly (empty history stack). Always have a fallback destination.
+  const goBack = () => {
+    if (router.canGoBack()) router.back();
+    else router.replace("/(operator)/(tabs)/invoices" as any);
+  };
+
   if (!pickedCustomerId) {
     return (
       <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
         <CustomerPicker
-          onBack={() => router.back()}
+          onBack={goBack}
           onPick={(id, name) => {
             setPickedCustomerId(id);
             setPickedCustomerName(name);
@@ -110,7 +117,7 @@ export default function NewInvoiceScreen() {
       <InvoiceComposer
         customerId={pickedCustomerId}
         customerName={pickedCustomerName}
-        onBack={() => router.back()}
+        onBack={goBack}
         onChangeCustomer={() => {
           setPickedCustomerId(null);
           setPickedCustomerName(null);
