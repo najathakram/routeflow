@@ -183,15 +183,62 @@ describe("RF-078 — GET /uploads/* response headers", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("returns Content-Disposition: attachment for an image file (RF-078)", async () => {
+  it("returns Content-Disposition: inline for image MIMEs (so cross-origin <img> can render)", async () => {
     const res = await request(app.getHttpServer()).get(`/uploads/${TEST_FILENAME}`);
     // File exists — should be 200.
     expect(res.status).toBe(200);
-    expect(res.headers["content-disposition"]).toMatch(/^attachment/);
+    // RF-078 originally forced attachment for everything; that broke <img>
+    // rendering on cross-origin pages. We now force `inline` only for the
+    // strict image allowlist (JPEG/PNG/WEBP — all upload-time validated).
+    expect(res.headers["content-disposition"]).toBe("inline");
   });
 
   it("returns X-Content-Type-Options: nosniff (RF-076)", async () => {
     const res = await request(app.getHttpServer()).get(`/uploads/${TEST_FILENAME}`);
     expect(res.headers["x-content-type-options"]).toBe("nosniff");
+  });
+
+  it("returns Cross-Origin-Resource-Policy: cross-origin (so cross-origin <img> can load)", async () => {
+    const res = await request(app.getHttpServer()).get(`/uploads/${TEST_FILENAME}`);
+    expect(res.headers["cross-origin-resource-policy"]).toBe("cross-origin");
+  });
+});
+
+// ─── Non-image MIME (PDF) keeps attachment for safety ─────────────────────────
+
+describe("RF-078 — Non-image MIME still forces attachment", () => {
+  let app: INestApplication;
+  let tmpDir: string;
+  const TEST_FILENAME = "doc.pdf";
+
+  beforeAll(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "rf078-pdf-"));
+    fs.writeFileSync(path.join(tmpDir, TEST_FILENAME), Buffer.from("%PDF-1.4\n%minimal\n"));
+
+    const mockConfig = {
+      get: (key: string) => (key === "uploadDir" ? tmpDir : undefined),
+    };
+
+    const module: TestingModule = await Test.createTestingModule({
+      controllers: [UploadsController],
+      providers: [{ provide: ConfigService, useValue: mockConfig }],
+    })
+      .overrideGuard(UploadsAccessGuard)
+      .useValue({ canActivate: () => true })
+      .compile();
+
+    app = module.createNestApplication();
+    await app.init();
+  });
+
+  afterAll(async () => {
+    await app.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("forces attachment for application/pdf so the browser never tries to render it inline", async () => {
+    const res = await request(app.getHttpServer()).get(`/uploads/${TEST_FILENAME}`);
+    expect(res.status).toBe(200);
+    expect(res.headers["content-disposition"]).toMatch(/^attachment/);
   });
 });

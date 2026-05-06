@@ -170,8 +170,10 @@ describe("UploadsAccessGuard — end-to-end via supertest", () => {
       `/uploads/${TEST_FILENAME}?expires=${expiresAt}&sig=${encodeURIComponent(sig)}`,
     );
     expect(res.status).toBe(200);
-    expect(res.headers["content-disposition"]).toMatch(/^attachment/);
+    // PNG → inline so cross-origin <img> can render it.
+    expect(res.headers["content-disposition"]).toBe("inline");
     expect(res.headers["x-content-type-options"]).toBe("nosniff");
+    expect(res.headers["cross-origin-resource-policy"]).toBe("cross-origin");
   });
 
   it("rejects an expired signature", async () => {

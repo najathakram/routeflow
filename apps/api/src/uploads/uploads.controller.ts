@@ -104,11 +104,25 @@ export class UploadsController {
 
     const contentType = mime.lookup(resolved) || "application/octet-stream";
     res.setHeader("Content-Type", contentType);
-    // RF-078: Always force download — prevents browser from rendering any file inline
-    // (covers SVG XSS, HTML injection, and any future MIME confusion attacks).
-    res.setHeader("Content-Disposition", `attachment; filename="${path.basename(resolved)}"`);
+    // RF-078: Default to attachment so unknown / non-image content downloads
+    // instead of rendering inline (covers SVG XSS, HTML injection, etc).
+    // For the allowlisted raster image types we explicitly serve `inline`
+    // so cross-origin <img> tags can render them on the buyer/operator UI.
+    // Upload-time MIME validation in products.controller.ts already restricts
+    // these to JPEG/PNG/WEBP, so inline rendering is safe.
+    const RENDERABLE_INLINE_MIMES = new Set(["image/jpeg", "image/png", "image/webp"]);
+    if (RENDERABLE_INLINE_MIMES.has(contentType)) {
+      res.setHeader("Content-Disposition", "inline");
+    } else {
+      res.setHeader("Content-Disposition", `attachment; filename="${path.basename(resolved)}"`);
+    }
     // RF-076: Prevent MIME sniffing — browser must honour the declared Content-Type.
     res.setHeader("X-Content-Type-Options", "nosniff");
+    // The global Helmet defaults set Cross-Origin-Resource-Policy: same-origin,
+    // which silently blocks <img> on www.routeflow.info from loading files
+    // served by routeflowapi-production.up.railway.app. The signed URL is
+    // itself the auth gate, so allowing cross-origin embedding is safe.
+    res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
     // Cache only public assets (images); private documents must not be cached publicly.
     res.setHeader("Cache-Control", "private, max-age=31536000, immutable");
     fs.createReadStream(resolved).pipe(res);
