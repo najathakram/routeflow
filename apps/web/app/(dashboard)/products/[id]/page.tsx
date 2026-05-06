@@ -642,20 +642,21 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
 
             return (
               <div className="space-y-2">
-                {/* Main image / drop zone */}
+                {/* Main image / drop zone — square viewport so the image fills
+                    the column without horizontal letterboxing. object-contain
+                    keeps the original aspect ratio and centers the image. */}
                 <div
                   onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
                   onDragLeave={() => setIsDragging(false)}
                   onDrop={(e) => { e.preventDefault(); setIsDragging(false); handleUpload(e.dataTransfer.files); }}
                   className={cn(
-                    "relative overflow-hidden rounded-xl border",
+                    "relative aspect-square w-full overflow-hidden rounded-xl border",
                     isDragging && "ring-2 ring-brand-500",
                     !hasImages && "cursor-pointer",
                     stockStatus === "LOW" && "border-warning/30 bg-warning-bg",
                     stockStatus === "OUT_OF_STOCK" && "border-danger/30 bg-danger-bg",
                     stockStatus === "IN_STOCK" && "border-surface-border bg-surface-raised",
                   )}
-                  style={{ height: "13rem" }}
                   onClick={!hasImages ? () => fileInputRef.current?.click() : undefined}
                 >
                   {hasImages ? (
@@ -664,7 +665,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                       <img
                         src={images[safeIdx]}
                         alt={`${product.name} — image ${safeIdx + 1}`}
-                        className="h-full w-full object-contain cursor-zoom-in"
+                        className="absolute inset-0 h-full w-full object-contain cursor-zoom-in"
                         onClick={(e) => {
                           e.stopPropagation();
                           setLightboxIdx(safeIdx);
