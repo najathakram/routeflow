@@ -20,6 +20,7 @@ import {
   type BuyerFavoriteItem,
 } from "@/lib/api/buyer";
 import { useBuyerCart } from "@/lib/buyer-cart";
+import { objectPositionForUrl } from "@/lib/image-focal";
 
 function fmt(n: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
@@ -45,7 +46,12 @@ function FavoriteCard({
       {/* Image */}
       <div className="relative aspect-square bg-surface-raised flex items-center justify-center overflow-hidden">
         {item.thumbnailUrl ? (
-          <img src={item.thumbnailUrl} alt={item.name} className="h-full w-full object-cover" />
+          <img
+            src={item.thumbnailUrl}
+            alt={item.name}
+            className="h-full w-full object-cover"
+            style={{ objectPosition: objectPositionForUrl(item.thumbnailUrl) }}
+          />
         ) : (
           <Package className="h-12 w-12 text-navy/15" />
         )}

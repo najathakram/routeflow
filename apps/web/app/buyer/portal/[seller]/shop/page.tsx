@@ -27,6 +27,7 @@ import {
   type BuyerProduct,
 } from "@/lib/api/buyer";
 import { useBuyerCart } from "@/lib/buyer-cart";
+import { objectPositionForUrl } from "@/lib/image-focal";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -146,6 +147,7 @@ function ProductCard({
             src={product.thumbnailUrl}
             alt={product.name}
             className="h-full w-full object-cover"
+            style={{ objectPosition: objectPositionForUrl(product.thumbnailUrl) }}
           />
         ) : (
           <Package className="h-12 w-12 text-navy/15" />
@@ -437,7 +439,12 @@ export default function BuyerShopPage() {
                         <div className="flex items-center gap-3">
                           <div className="h-10 w-10 flex-shrink-0 rounded-lg bg-surface-raised flex items-center justify-center overflow-hidden">
                             {p.thumbnailUrl ? (
-                              <img src={p.thumbnailUrl} alt="" className="h-full w-full object-cover" />
+                              <img
+                                src={p.thumbnailUrl}
+                                alt=""
+                                className="h-full w-full object-cover"
+                                style={{ objectPosition: objectPositionForUrl(p.thumbnailUrl) }}
+                              />
                             ) : (
                               <Package className="h-5 w-5 text-navy/15" />
                             )}

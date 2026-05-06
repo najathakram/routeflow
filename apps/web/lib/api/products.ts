@@ -191,12 +191,28 @@ export function useBulkAssignParent() {
   });
 }
 
+export interface UploadProductImagesArgs {
+  files: File[];
+  /** Per-file focal point (0..100). If omitted, defaults to centre. */
+  focals?: Array<{ x: number; y: number }>;
+}
+
 export function useUploadProductImages(id: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (files: File[]): Promise<{ uploaded: { key: string; url: string }[] }> => {
+    mutationFn: (
+      args: UploadProductImagesArgs,
+    ): Promise<{ uploaded: { key: string; url: string }[] }> => {
+      const { files, focals } = args;
       const form = new FormData();
-      files.forEach((f) => form.append("files", f));
+      files.forEach((f, i) => {
+        form.append("files", f);
+        const focal = focals?.[i];
+        if (focal) {
+          form.append("focalX", String(focal.x));
+          form.append("focalY", String(focal.y));
+        }
+      });
       // Do NOT set Content-Type manually — Axios auto-sets multipart/form-data
       // WITH the correct boundary when it detects a FormData body.
       return apiClient.post(`/products/${id}/images`, form).then((r) => r.data);

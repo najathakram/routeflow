@@ -117,9 +117,23 @@ export class ProductsController {
       },
     }),
   )
-  async uploadImages(@Param("id") id: string, @UploadedFiles() files: Express.Multer.File[]) {
+  async uploadImages(
+    @Param("id") id: string,
+    @UploadedFiles() files: Express.Multer.File[],
+    @Body() body: { focalX?: string | string[]; focalY?: string | string[] },
+  ) {
+    // Multer + multipart: when one focal field per file is sent the form
+    // engine collapses single values to strings and multiples to arrays.
+    // Normalise to a per-index lookup. Missing/invalid → centre default.
+    const focalXs = toArray(body.focalX);
+    const focalYs = toArray(body.focalY);
     const results = await Promise.all(
-      files.map((f) => this.productsService.uploadImage(id, f.buffer, f.originalname, f.mimetype)),
+      files.map((f, i) => {
+        const x = parseFinite(focalXs[i]);
+        const y = parseFinite(focalYs[i]);
+        const focal = x !== null && y !== null ? { x, y } : undefined;
+        return this.productsService.uploadImage(id, f.buffer, f.originalname, f.mimetype, focal);
+      }),
     );
     return { uploaded: results };
   }
@@ -129,4 +143,15 @@ export class ProductsController {
   deleteImage(@Param("id") id: string, @Body() dto: { key: string }) {
     return this.productsService.deleteImage(id, dto.key);
   }
+}
+
+function toArray(v: string | string[] | undefined): (string | undefined)[] {
+  if (v === undefined) return [];
+  return Array.isArray(v) ? v : [v];
+}
+
+function parseFinite(s: string | undefined): number | null {
+  if (s === undefined) return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
 }

@@ -9,6 +9,7 @@ import { usePageTitle } from "@/lib/page-title-context";
 import { useToast } from "@routeflow/ui/web";
 import { useDebounce } from "@/lib/hooks/useDebounce";
 import { useProducts, useCreateProduct, useUpdateProduct, useBulkDeleteProducts, uploadProductImages } from "@/lib/api/products";
+import { objectPositionForUrl } from "@/lib/image-focal";
 import { GroupAsVariantsModal } from "@/components/GroupAsVariantsModal";
 import { SearchableProductPicker } from "@/components/SearchableProductPicker";
 import { apiClient } from "@/lib/api-client";
@@ -123,6 +124,7 @@ function ProductCard({
             src={product.thumbnailUrl}
             alt={product.name}
             className="h-full w-full object-cover"
+            style={{ objectPosition: objectPositionForUrl(product.thumbnailUrl) }}
             draggable={false}
           />
         ) : (

@@ -18,6 +18,7 @@ import { Badge, Button, cn } from "@routeflow/ui/web";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { useBuyerDashboard, useBuyerTemplates, useBuyerReorder, type OrderTemplate } from "@/lib/api/buyer";
 import { useBuyerCart } from "@/lib/buyer-cart";
+import { objectPositionForUrl } from "@/lib/image-focal";
 import { PwaInstallPrompt } from "@/components/PwaInstallPrompt";
 
 function fmt(n: number) {
@@ -285,7 +286,7 @@ export default function BuyerDashboardPage() {
               >
                 <div className="h-14 w-14 rounded-lg bg-surface-raised flex items-center justify-center overflow-hidden">
                   {p.thumbnailUrl ? (
-                    <img src={p.thumbnailUrl} alt="" className="h-full w-full object-cover" />
+                    <img src={p.thumbnailUrl} alt="" className="h-full w-full object-cover" style={{ objectPosition: objectPositionForUrl(p.thumbnailUrl) }} />
                   ) : (
                     <Package className="h-6 w-6 text-navy/15" />
                   )}
@@ -375,7 +376,7 @@ export default function BuyerDashboardPage() {
               >
                 <div className="h-16 w-16 rounded-lg bg-surface-raised flex items-center justify-center overflow-hidden">
                   {p.thumbnailUrl ? (
-                    <img src={p.thumbnailUrl} alt="" className="h-full w-full object-cover" />
+                    <img src={p.thumbnailUrl} alt="" className="h-full w-full object-cover" style={{ objectPosition: objectPositionForUrl(p.thumbnailUrl) }} />
                   ) : (
                     <Package className="h-7 w-7 text-navy/15" />
                   )}
@@ -425,7 +426,7 @@ export default function BuyerDashboardPage() {
               >
                 <div className="h-16 w-16 rounded-lg bg-surface-raised flex items-center justify-center overflow-hidden">
                   {p.thumbnailUrl ? (
-                    <img src={p.thumbnailUrl} alt="" className="h-full w-full object-cover" />
+                    <img src={p.thumbnailUrl} alt="" className="h-full w-full object-cover" style={{ objectPosition: objectPositionForUrl(p.thumbnailUrl) }} />
                   ) : (
                     <Package className="h-7 w-7 text-navy/15" />
                   )}
@@ -475,7 +476,7 @@ export default function BuyerDashboardPage() {
               >
                 <div className="h-16 w-16 rounded-lg bg-surface-raised flex items-center justify-center overflow-hidden">
                   {p.thumbnailUrl ? (
-                    <img src={p.thumbnailUrl} alt="" className="h-full w-full object-cover" />
+                    <img src={p.thumbnailUrl} alt="" className="h-full w-full object-cover" style={{ objectPosition: objectPositionForUrl(p.thumbnailUrl) }} />
                   ) : (
                     <Package className="h-7 w-7 text-navy/15" />
                   )}

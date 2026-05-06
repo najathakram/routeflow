@@ -35,6 +35,7 @@ import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { useAuth } from "@/lib/auth-context";
 import { CropModal } from "./CropModal";
 import { ImageLightbox } from "./ImageLightbox";
+import { objectPositionForUrl, type FocalPoint } from "@/lib/image-focal";
 
 const COMMON_UNITS = [
   "unit", "each", "case", "box", "bag", "pack", "dozen", "pallet",
@@ -155,10 +156,11 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
 
   // ── Crop-before-upload state ──────────────────────────────────────────────
   // When the user picks files we queue them here; CropModal works through them
-  // one-by-one. Once the queue is empty the cropped blobs are uploaded.
+  // one-by-one (crop → focal point per file). Once the queue is empty the
+  // cropped blobs and their focal points are uploaded together.
   const [cropState, setCropState] = React.useState<{
     queue: File[];
-    accumulated: Blob[];
+    accumulated: Array<{ blob: Blob; focal: FocalPoint }>;
   } | null>(null);
 
   // Derived: all known categories and units from the catalog
@@ -248,32 +250,31 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
     setCropState({ queue, accumulated: [] });
   };
 
-  /** Called by CropModal each time the user confirms one crop. */
-  const handleCropConfirm = async (blob: Blob) => {
+  /** Called by CropModal each time the user confirms one crop + focal. */
+  const handleCropConfirm = async (blob: Blob, focal: FocalPoint) => {
     if (!cropState) return;
-    const accumulated = [...cropState.accumulated, blob];
+    const accumulated = [...cropState.accumulated, { blob, focal }];
     const queue = cropState.queue.slice(1);
 
     if (queue.length === 0) {
       setCropState(null);
       try {
         if (cropExistingKey) {
-          // Replacing an existing image: upload cropped version first, then remove original
-          const file = new File(
-            [accumulated[0]],
-            `product-image-${Date.now()}.jpg`,
-            { type: "image/jpeg" },
-          );
-          await uploadImages.mutateAsync([file]);
+          // Replacing an existing image: upload cropped version first, then remove original.
+          const { blob: b, focal: f } = accumulated[0];
+          const file = new File([b], `product-image-${Date.now()}.jpg`, { type: "image/jpeg" });
+          await uploadImages.mutateAsync({ files: [file], focals: [f] });
           await deleteImage.mutateAsync(cropExistingKey);
           setCropExistingKey(null);
           toast({ title: "Image cropped and replaced", variant: "success" });
         } else {
-          // Normal upload flow
-          const files = accumulated.map((b, i) =>
-            new File([b], `product-image-${Date.now()}-${i}.jpg`, { type: "image/jpeg" }),
+          // Normal upload flow — upload all cropped blobs with their focals.
+          const files = accumulated.map(
+            ({ blob: b }, i) =>
+              new File([b], `product-image-${Date.now()}-${i}.jpg`, { type: "image/jpeg" }),
           );
-          await uploadImages.mutateAsync(files);
+          const focals = accumulated.map(({ focal: f }) => f);
+          await uploadImages.mutateAsync({ files, focals });
           toast({
             title: `${files.length} image${files.length !== 1 ? "s" : ""} uploaded`,
             variant: "success",
@@ -642,15 +643,17 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
 
             return (
               <div className="space-y-2">
-                {/* Main image / drop zone — square viewport so the image fills
-                    the column without horizontal letterboxing. object-contain
-                    keeps the original aspect ratio and centers the image. */}
+                {/* Main image / drop zone — 4:5 portrait viewport matching the
+                    upload ratio. object-cover + object-position uses each
+                    image's stored focal point to keep the right area visible
+                    even when the image is from before the focal-point
+                    feature (those default to centre). */}
                 <div
                   onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
                   onDragLeave={() => setIsDragging(false)}
                   onDrop={(e) => { e.preventDefault(); setIsDragging(false); handleUpload(e.dataTransfer.files); }}
                   className={cn(
-                    "relative aspect-square w-full overflow-hidden rounded-xl border",
+                    "relative aspect-[4/5] w-full overflow-hidden rounded-xl border",
                     isDragging && "ring-2 ring-brand-500",
                     !hasImages && "cursor-pointer",
                     stockStatus === "LOW" && "border-warning/30 bg-warning-bg",
@@ -665,7 +668,8 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                       <img
                         src={images[safeIdx]}
                         alt={`${product.name} — image ${safeIdx + 1}`}
-                        className="absolute inset-0 h-full w-full object-contain cursor-zoom-in"
+                        className="absolute inset-0 h-full w-full object-cover cursor-zoom-in"
+                        style={{ objectPosition: objectPositionForUrl(images[safeIdx]) }}
                         onClick={(e) => {
                           e.stopPropagation();
                           setLightboxIdx(safeIdx);
@@ -739,7 +743,12 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                           )}
                         >
                           {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={url} alt={`thumb ${i + 1}`} className="h-full w-full object-cover" />
+                          <img
+                            src={url}
+                            alt={`thumb ${i + 1}`}
+                            className="h-full w-full object-cover"
+                            style={{ objectPosition: objectPositionForUrl(url) }}
+                          />
                         </button>
                         {selectMode && (
                           <input
@@ -793,15 +802,16 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                       </button>
                     )}
 
-                    {/* Crop this image */}
+                    {/* Crop / re-set focal — re-runs the crop + focal-point
+                        flow on the existing image and replaces the original. */}
                     <button
                       onClick={() => handleCropExisting(images[safeIdx], (product as any).imageKeys?.[safeIdx])}
                       disabled={!!cropState || uploadImages.isPending}
-                      title="Crop this image (replaces original)"
+                      title="Re-crop and/or move the focal point (replaces the original image)"
                       className="flex items-center gap-1 rounded-lg border border-surface-border px-2.5 py-1 text-xs text-navy/50 hover:text-navy disabled:opacity-30 transition-colors"
                     >
                       <Scissors className="h-3 w-3" />
-                      Crop
+                      Crop / focal
                     </button>
                   </div>
                 )}

@@ -11,6 +11,22 @@ import { UpdateProductDto } from "./dto/update-product.dto";
 import { ListProductsDto, StockStatusFilter } from "./dto/list-products.dto";
 import { ImportProductsDto } from "./dto/import-products.dto";
 
+/** `-fp50x40` → focal point 50% across, 40% down. Omitted if focal is centre. */
+function encodeFocalSuffix(focal?: { x: number; y: number }): string {
+  if (!focal) return "";
+  const x = clampPct(focal.x);
+  const y = clampPct(focal.y);
+  if (x === 50 && y === 50) return ""; // skip the suffix for the default
+  return `-fp${x}x${y}`;
+}
+
+function clampPct(n: number): number {
+  if (!Number.isFinite(n)) return 50;
+  if (n < 0) return 0;
+  if (n > 100) return 100;
+  return Math.round(n);
+}
+
 @Injectable()
 export class ProductsService {
   constructor(
@@ -116,12 +132,19 @@ export class ProductsService {
     buffer: Buffer,
     originalName: string,
     mimetype: string,
+    /**
+     * Focal point as integer percentages (0..100). Encoded into the
+     * storage key as `-fp<X>x<Y>` so the frontend can recover it from
+     * the URL without a DB schema change. Defaults to centre.
+     */
+    focal?: { x: number; y: number },
   ): Promise<{ key: string; url: string }> {
     const product = await this.prisma.forTenant().product.findUnique({ where: { id } });
     if (!product) throw new NotFoundException("Product not found");
 
     const ext = originalName.split(".").pop() ?? "jpg";
-    const key = `products/${id}/${crypto.randomUUID()}.${ext}`;
+    const fpSuffix = encodeFocalSuffix(focal);
+    const key = `products/${id}/${crypto.randomUUID()}${fpSuffix}.${ext}`;
     await this.storage.upload(key, buffer, mimetype);
 
     // Append key to the product's imageKeys array

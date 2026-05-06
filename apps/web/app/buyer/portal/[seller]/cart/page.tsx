@@ -18,6 +18,7 @@ import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { useBuyerCart } from "@/lib/buyer-cart";
 import { useBuyerProducts, useBuyerCreateOrder, useBuyerActiveOrder } from "@/lib/api/buyer";
 import { computeLineSubtotal } from "@/lib/pricing";
+import { objectPositionForUrl } from "@/lib/image-focal";
 
 function fmt(n: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
@@ -241,7 +242,12 @@ export default function BuyerCartPage() {
                         <div className="flex items-center gap-3">
                           <div className="h-10 w-10 flex-shrink-0 rounded-lg bg-surface-raised flex items-center justify-center overflow-hidden">
                             {item.thumbnailUrl ? (
-                              <img src={item.thumbnailUrl} alt="" className="h-full w-full object-cover" />
+                              <img
+                                src={item.thumbnailUrl}
+                                alt=""
+                                className="h-full w-full object-cover"
+                                style={{ objectPosition: objectPositionForUrl(item.thumbnailUrl) }}
+                              />
                             ) : (
                               <Package className="h-5 w-5 text-navy/15" />
                             )}
