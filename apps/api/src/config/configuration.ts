@@ -27,6 +27,12 @@ export interface AppConfig {
     bucketName: string;
   };
   uploadDir: string;
+  storage: {
+    /** Secret used to HMAC-sign local-disk presigned URLs. Falls back to JWT secret. */
+    urlSigningSecret: string;
+    /** Lifetime in seconds for signed local-disk URLs. Default 1 hour. */
+    urlExpirySeconds: number;
+  };
   ors: {
     apiKey: string;
   };
@@ -77,6 +83,10 @@ export const configuration = (): AppConfig => ({
     bucketName: process.env.R2_BUCKET_NAME ?? "routeflow-assets",
   },
   uploadDir: process.env.UPLOAD_DIR ?? "",
+  storage: {
+    urlSigningSecret: process.env.STORAGE_URL_SIGNING_SECRET ?? process.env.JWT_SECRET ?? "",
+    urlExpirySeconds: parseInt(process.env.STORAGE_URL_EXPIRY_SECONDS ?? "3600", 10),
+  },
   ors: {
     apiKey: process.env.ORS_API_KEY ?? "",
   },

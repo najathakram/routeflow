@@ -1,3 +1,4 @@
+import * as crypto from "crypto";
 import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
@@ -13,6 +14,33 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 // Presigned GET URL expiry: 1 hour
 const GET_EXPIRY_SECONDS = 3600;
+
+/**
+ * HMAC-sign a storage key + expiry so the URL can be loaded by browser
+ * `<img>` tags cross-origin without sending the user's JWT. Mirrors how
+ * S3/R2 presigned URLs work; verified by `verifyLocalUrlSignature` in the
+ * uploads controller.
+ */
+export function signLocalUrl(secret: string, key: string, expiresAt: number): string {
+  const payload = `${key}|${expiresAt}`;
+  return crypto.createHmac("sha256", secret).update(payload).digest("base64url");
+}
+
+/** Constant-time compare returning true iff the signature is valid AND not expired. */
+export function verifyLocalUrlSignature(
+  secret: string,
+  key: string,
+  expiresAt: number,
+  providedSig: string,
+): boolean {
+  if (!secret || !providedSig || !Number.isFinite(expiresAt)) return false;
+  if (Date.now() > expiresAt) return false;
+  const expected = signLocalUrl(secret, key, expiresAt);
+  const a = Buffer.from(expected);
+  const b = Buffer.from(providedSig);
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
 
 @Injectable()
 export class StorageService {
@@ -96,10 +124,25 @@ export class StorageService {
     await this.s3!.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
   }
 
-  /** Return a URL to retrieve the file (presigned R2 URL or local API URL). */
+  /** Return a URL to retrieve the file (presigned R2 URL or local API URL).
+   *  Local-disk URLs include an HMAC signature in the query string so they
+   *  can be loaded by browser `<img>` tags cross-origin (which can't send
+   *  the user's JWT bearer token). */
   async presignedUrl(key: string): Promise<string> {
     if (this.useLocal) {
-      return `${this.publicBaseUrl}/api/v1/uploads/${key}`;
+      const expirySeconds =
+        this.config.get<number>("storage.urlExpirySeconds") ?? GET_EXPIRY_SECONDS;
+      const expiresAt = Date.now() + expirySeconds * 1000;
+      const secret = this.config.get<string>("storage.urlSigningSecret") ?? "";
+      const base = `${this.publicBaseUrl}/api/v1/uploads/${key}`;
+      if (!secret) {
+        // No signing secret configured — fall back to the unsigned URL.
+        // The uploads controller will reject this without a JWT, which is
+        // the safer default than emitting an unverifiable signature.
+        return base;
+      }
+      const sig = signLocalUrl(secret, key, expiresAt);
+      return `${base}?expires=${expiresAt}&sig=${sig}`;
     }
 
     return getSignedUrl(this.s3!, new GetObjectCommand({ Bucket: this.bucket, Key: key }), {

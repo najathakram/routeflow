@@ -241,9 +241,11 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
   /** Called by the drop zone / file input — opens the crop modal queue. */
   const queueForCrop = (files: FileList | null) => {
     if (!files || files.length === 0) return;
-    // Reset the input value so the same file(s) can be re-selected if cancelled.
+    // FileList is a live reference to the input's files; copy it BEFORE
+    // clearing the input value, otherwise the array becomes empty.
+    const queue = Array.from(files);
     if (fileInputRef.current) fileInputRef.current.value = "";
-    setCropState({ queue: Array.from(files), accumulated: [] });
+    setCropState({ queue, accumulated: [] });
   };
 
   /** Called by CropModal each time the user confirms one crop. */

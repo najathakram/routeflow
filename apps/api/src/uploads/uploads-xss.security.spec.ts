@@ -137,7 +137,7 @@ describe("RF-076/RF-157 — Tax-document MIME allowlist", () => {
 // ─── Uploads controller response headers (RF-078) ────────────────────────────
 
 import { UploadsController } from "./uploads.controller";
-import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
+import { UploadsAccessGuard } from "./uploads-access.guard";
 
 describe("RF-078 — GET /uploads/* response headers", () => {
   let app: INestApplication;
@@ -168,8 +168,9 @@ describe("RF-078 — GET /uploads/* response headers", () => {
       controllers: [UploadsController],
       providers: [{ provide: ConfigService, useValue: mockConfig }],
     })
-      // Bypass JWT auth for this unit test.
-      .overrideGuard(JwtAuthGuard)
+      // Bypass auth (signed URL OR JWT) for this unit test — we're testing
+      // response headers, not the auth path itself.
+      .overrideGuard(UploadsAccessGuard)
       .useValue({ canActivate: () => true })
       .compile();
 

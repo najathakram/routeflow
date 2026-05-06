@@ -14,23 +14,31 @@ import { ConfigService } from "@nestjs/config";
 import type { Request, Response } from "express";
 import * as fs from "fs";
 import * as mime from "mime-types";
-import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { UploadsAccessGuard } from "./uploads-access.guard";
 
 /**
  * Serves locally-stored upload files when Cloudflare R2 is not configured.
  * Route: GET /uploads/<key>  (key may contain slashes, e.g. products/id/uuid.jpg)
  *
+ * Auth (UploadsAccessGuard): accepts EITHER an HMAC-signed query string
+ * (?expires=&sig=) issued by StorageService.presignedUrl, OR a valid JWT
+ * bearer token. The signed-URL path is what allows browser `<img>` tags
+ * to load cross-origin (they can't send Authorization headers). The JWT
+ * path keeps server-to-server callers and any direct API consumers
+ * working unchanged.
+ *
  * RF-075: Endpoint was previously unauthenticated — any anonymous client could
  * fetch any file (product images, tenant logos, customer tax certificates,
- * driver POD photos, signatures). Now requires a valid JWT and enforces that
- * the file's `tenants/{tenantId}/...` prefix matches the caller's tenantId.
+ * driver POD photos, signatures). With a signed URL, the signature scopes
+ * access to one specific key for a bounded duration; with a JWT, the file's
+ * `tenants/{tenantId}/...` prefix is enforced against the caller's tenantId.
  *
  * NOTE: Express 5 + path-to-regexp v8 returns wildcard params as string[], not string.
  * We join them here and also fall back to extracting the key from req.path.
  */
 @Controller("uploads")
-@UseGuards(JwtAuthGuard)
+@UseGuards(UploadsAccessGuard)
 export class UploadsController {
   constructor(private readonly config: ConfigService) {}
 
@@ -64,13 +72,20 @@ export class UploadsController {
       throw new NotFoundException("Missing file key");
     }
 
-    // Tenant scoping: keys live under `tenants/<tenantId>/...`. Reject if the
-    // caller's tenantId doesn't match the prefix. SUPER_ADMIN bypasses.
-    const caller = req.user;
-    const tenantMatch = key.match(/^tenants\/([^/]+)\//);
-    if (tenantMatch && caller?.role !== "SUPER_ADMIN") {
-      if (!caller?.tenantId || tenantMatch[1] !== caller.tenantId) {
-        throw new ForbiddenException("Cross-tenant file access denied");
+    // Tenant scoping for the JWT-auth path. UploadsAccessGuard sets
+    // `req.signedUrlAuthorized = true` when the caller authenticated via
+    // the HMAC-signed query string — in that case the signature is itself
+    // a delegated capability bound to this exact key, so we don't re-check
+    // the tenant prefix (it would block legitimate cross-origin <img> loads
+    // for buyer/portal pages where there's no operator JWT).
+    const reqAny = req as Request & { user?: JwtPayload; signedUrlAuthorized?: boolean };
+    if (!reqAny.signedUrlAuthorized) {
+      const caller = reqAny.user;
+      const tenantMatch = key.match(/^tenants\/([^/]+)\//);
+      if (tenantMatch && caller?.role !== "SUPER_ADMIN") {
+        if (!caller?.tenantId || tenantMatch[1] !== caller.tenantId) {
+          throw new ForbiddenException("Cross-tenant file access denied");
+        }
       }
     }
 
