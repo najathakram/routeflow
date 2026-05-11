@@ -421,18 +421,7 @@ export function AudienceSplit() {
         <div
           style={{ textAlign: "center", marginTop: 24, fontSize: 13, color: "var(--rf-ink-3)" }}
         >
-          Already use RouteFlow?{" "}
-          <Link
-            href="/login"
-            style={{
-              color: "var(--rf-ink)",
-              fontWeight: 600,
-              textDecoration: "underline",
-              textUnderlineOffset: 3,
-            }}
-          >
-            Sign in
-          </Link>
+          Already use RouteFlow? Pick your side above to sign in.
         </div>
       </div>
     </section>

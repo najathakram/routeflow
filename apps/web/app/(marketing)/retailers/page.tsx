@@ -224,20 +224,29 @@ export default function RetailersPage() {
                 convenience.
               </p>
 
-              <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 32 }}>
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", marginBottom: 32 }}>
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 8,
+                    padding: "11px 18px",
+                    borderRadius: 999,
+                    background: "rgba(255,255,255,0.08)",
+                    color: "rgba(250,246,238,0.7)",
+                    fontSize: 13,
+                    fontWeight: 600,
+                    border: "1px solid rgba(255,255,255,0.12)",
+                  }}
+                >
+                  <AppleIcon /> iOS &amp; <AndroidIcon /> Android — coming soon
+                </span>
                 <a
-                  href="#"
+                  href="mailto:hello@routeflow.info?subject=Notify%20me%20when%20the%20RouteFlow%20Shop%20app%20launches"
                   className="btn"
                   style={{ background: "var(--rf-cream)", color: "var(--rf-ink)" }}
                 >
-                  <AppleIcon /> App Store
-                </a>
-                <a
-                  href="#"
-                  className="btn"
-                  style={{ background: "var(--rf-cream)", color: "var(--rf-ink)" }}
-                >
-                  <AndroidIcon /> Google Play
+                  Notify me at launch
                 </a>
               </div>
 

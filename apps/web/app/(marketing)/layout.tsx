@@ -3,7 +3,6 @@
 import { usePathname } from "next/navigation";
 import { MarketingNav } from "./components/nav";
 import { MarketingFooter } from "./components/footer";
-import { StickyAppBar } from "./components/sticky-app-bar";
 import { getSideFromPath } from "./components/use-side";
 import "./marketing.css";
 
@@ -23,7 +22,6 @@ export default function MarketingLayout({ children }: { children: React.ReactNod
       <MarketingNav />
       {children}
       <MarketingFooter />
-      <StickyAppBar />
     </div>
   );
 }

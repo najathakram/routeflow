@@ -22,8 +22,12 @@ export function MarketingNav() {
   const side = useSide();
   const links = side === "retailer" ? RETAILER_NAV : side === "wholesaler" ? WHOLESALER_NAV : null;
 
-  const ctaLabel =
-    side === "retailer" ? "Get the app" : side === "wholesaler" ? "Start free trial" : "Get started";
+  // Sign in / CTA only render on a side-themed page (`/retailers`, `/wholesalers`,
+  // `/pricing`). On neutral pages (`/`, `/product`, `/company`) we don't know
+  // which login to send the user to — pushing them to `/login` (operator)
+  // would silently bias the home toward wholesalers and confuse retailers.
+  // The audience-switch in the middle of the nav is the right entry point.
+  const ctaLabel = side === "retailer" ? "Get the app" : "Start free trial";
   const ctaHref = getAuthHref(side, "up");
 
   return (
@@ -62,17 +66,16 @@ export function MarketingNav() {
           ))}
         </div>
 
-        <div className="nav-actions">
-          <Link href={getAuthHref(side, "in")} className="signin">
-            Sign in
-          </Link>
-          <Link
-            href={ctaHref}
-            className={side === "neutral" ? "btn btn-primary btn-sm" : "btn btn-side btn-sm"}
-          >
-            {ctaLabel} <ArrowIcon />
-          </Link>
-        </div>
+        {side !== "neutral" && (
+          <div className="nav-actions">
+            <Link href={getAuthHref(side, "in")} className="signin">
+              Sign in
+            </Link>
+            <Link href={ctaHref} className="btn btn-side btn-sm">
+              {ctaLabel} <ArrowIcon />
+            </Link>
+          </div>
+        )}
       </div>
     </nav>
   );

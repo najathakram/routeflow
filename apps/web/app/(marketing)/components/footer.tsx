@@ -1,7 +1,10 @@
 import Link from "next/link";
 import { Logo } from "./logo";
-import { AppleIcon, AndroidIcon } from "./icons";
 
+// Columns are intentionally minimal: every link goes to a page that actually
+// exists and has real content. Anything we don't have yet (legal pages,
+// social accounts, app store listings, help center) is just left out — better
+// than dead `#` links or routes that 404 / loop back to /company.
 const COLUMNS: Array<[string, Array<[string, string]>]> = [
   [
     "Product",
@@ -10,7 +13,6 @@ const COLUMNS: Array<[string, Array<[string, string]>]> = [
       ["For wholesalers", "/wholesalers"],
       ["For retailers", "/retailers"],
       ["Pricing", "/pricing"],
-      ["Mobile app", "/retailers"],
     ],
   ],
   [
@@ -18,23 +20,13 @@ const COLUMNS: Array<[string, Array<[string, string]>]> = [
     [
       ["About", "/company"],
       ["Contact", "/contact"],
-      ["Customers", "/"],
     ],
   ],
   [
-    "Resources",
+    "Sign in",
     [
-      ["Help center", "/company"],
-      ["Sign in (wholesaler)", "/login"],
-      ["Sign in (retailer)", "/buyer/login"],
-    ],
-  ],
-  [
-    "Legal",
-    [
-      ["Terms", "/company"],
-      ["Privacy", "/company"],
-      ["Security", "/company"],
+      ["Wholesaler portal", "/login"],
+      ["Retailer portal", "/buyer/login"],
     ],
   ],
 ];
@@ -46,9 +38,9 @@ export function MarketingFooter() {
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "1.5fr 1fr 1fr 1fr 1fr",
+            gridTemplateColumns: "1.6fr 1fr 1fr 1fr",
             gap: 48,
-            paddingBottom: 64,
+            paddingBottom: 48,
             borderBottom: "1px solid rgba(250,246,238,0.12)",
           }}
         >
@@ -71,38 +63,23 @@ export function MarketingFooter() {
                 color: "rgba(250,246,238,0.6)",
                 lineHeight: 1.6,
                 maxWidth: 320,
-                marginBottom: 24,
+                marginBottom: 16,
               }}
             >
               The operating system for distribution. Connecting wholesalers and the retailers they
               serve.
             </p>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <a
-                href="#"
-                className="btn"
-                style={{
-                  background: "rgba(255,255,255,0.08)",
-                  color: "var(--rf-cream)",
-                  padding: "8px 14px",
-                  fontSize: 12,
-                }}
-              >
-                <AppleIcon /> App Store
-              </a>
-              <a
-                href="#"
-                className="btn"
-                style={{
-                  background: "rgba(255,255,255,0.08)",
-                  color: "var(--rf-cream)",
-                  padding: "8px 14px",
-                  fontSize: 12,
-                }}
-              >
-                <AndroidIcon /> Google Play
-              </a>
-            </div>
+            <a
+              href="mailto:hello@routeflow.info"
+              style={{
+                fontSize: 13,
+                color: "rgba(250,246,238,0.7)",
+                textDecoration: "underline",
+                textUnderlineOffset: 3,
+              }}
+            >
+              hello@routeflow.info
+            </a>
           </div>
 
           {COLUMNS.map(([title, links]) => (
@@ -132,22 +109,12 @@ export function MarketingFooter() {
 
         <div
           style={{
-            padding: "32px 0",
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            flexWrap: "wrap",
-            gap: 16,
+            padding: "28px 0 8px",
             fontSize: 12,
             color: "rgba(250,246,238,0.5)",
           }}
         >
-          <div>© {new Date().getFullYear()} RouteFlow · Austin, Texas</div>
-          <div style={{ display: "flex", gap: 16 }}>
-            <a href="#">Twitter</a>
-            <a href="#">LinkedIn</a>
-            <a href="#">YouTube</a>
-          </div>
+          © {new Date().getFullYear()} RouteFlow · Austin, Texas
         </div>
       </div>
 
