@@ -530,7 +530,9 @@ export class InvoicesService {
     for (const req of dto.items) {
       const li: any = itemById.get(req.orderItemId);
       if (!li) {
-        throw new BadRequestException(`Order item ${req.orderItemId} not found on order ${orderId}`);
+        throw new BadRequestException(
+          `Order item ${req.orderItemId} not found on order ${orderId}`,
+        );
       }
       const remaining = Number(li.qty) - Number(li.invoicedQty ?? 0);
       if (req.qty > remaining + 0.001) {
@@ -592,12 +594,17 @@ export class InvoicesService {
           dueDate,
           terms: dto.terms ?? tenantDefaults.terms ?? defaultTerms,
           issueDate: new Date(),
-          notes: dto.notes ?? tenantDefaults.notes ?? (order.orderNumber ? `Order #${order.orderNumber}` : null),
+          notes:
+            dto.notes ??
+            tenantDefaults.notes ??
+            (order.orderNumber ? `Order #${order.orderNumber}` : null),
           items: { create: itemsData },
           ...(tenantId ? { tenantId } : {}),
         },
         include: {
-          customer: { select: { id: true, businessName: true, email: true, phone: true, mobile: true } },
+          customer: {
+            select: { id: true, businessName: true, email: true, phone: true, mobile: true },
+          },
           items: true,
           payments: true,
         },
@@ -1149,10 +1156,7 @@ export class InvoicesService {
     const productQty = new Map<string, number>();
     for (const it of items) {
       if (!it.productId) continue;
-      productQty.set(
-        it.productId,
-        (productQty.get(it.productId) ?? 0) + Number(it.qty),
-      );
+      productQty.set(it.productId, (productQty.get(it.productId) ?? 0) + Number(it.qty));
     }
     if (productQty.size === 0) return;
     const orderItems = await tx.orderItem.findMany({
@@ -1258,10 +1262,7 @@ export class InvoicesService {
     const subtotal = itemsData.reduce((s, i) => s + Number(i.subtotal), 0);
     const taxTotal = (customer as any)?.isTaxExempt
       ? 0
-      : itemsData.reduce(
-          (s, i) => s + Number(i.subtotal) * Number(i.taxRate ?? 0),
-          0,
-        );
+      : itemsData.reduce((s, i) => s + Number(i.subtotal) * Number(i.taxRate ?? 0), 0);
     const invDiscount = Number(inv.discount ?? 0);
     const shipping = Number(inv.shippingFee ?? 0);
     const total = subtotal - invDiscount + shipping + taxTotal;

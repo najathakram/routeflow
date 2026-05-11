@@ -467,8 +467,7 @@ export class VendorBillsService {
       // .rotate() so iPhone photos show right-side up to Claude.
       const isHeic = f.mimeType === "image/heic" || f.mimeType === "image/heif";
       let buf = f.buffer;
-      let mediaType: "image/jpeg" | "image/png" | "image/gif" | "image/webp" =
-        f.mimeType as any;
+      let mediaType: "image/jpeg" | "image/png" | "image/gif" | "image/webp" = f.mimeType as any;
       if (isHeic) {
         try {
           buf = await sharp(f.buffer).rotate().jpeg({ quality: 85 }).toBuffer();

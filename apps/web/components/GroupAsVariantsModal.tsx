@@ -260,7 +260,7 @@ export function GroupAsVariantsModal({
           </div>
 
           <p className="mt-3 text-xs text-navy/50">
-            The product name itself isn't renamed — only the
+            The product name itself isn&apos;t renamed — only the
             <span className="mx-1 font-mono text-navy">parentProductId</span>
             and
             <span className="mx-1 font-mono text-navy">variantName</span>

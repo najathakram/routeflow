@@ -736,7 +736,7 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                             </div>
                             <p className="text-sm font-medium text-navy">{currentName}</p>
                             <p className="text-xs text-navy/50">
-                              HEIC preview isn't supported in this browser, but the page was
+                              HEIC preview isn&apos;t supported in this browser, but the page was
                               uploaded and Claude is reading it.
                             </p>
                           </div>
@@ -1281,7 +1281,7 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                                     {!sumMatchesOriginal && (
                                       <p className="mt-2 flex items-start gap-1 text-[11px] text-amber-700">
                                         <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
-                                        Variety totals ({splitTotal}) don't match the extracted
+                                        Variety totals ({splitTotal}) don&apos;t match the extracted
                                         qty ({originalQty}). You can still save — totals will
                                         recompute from the splits.
                                       </p>

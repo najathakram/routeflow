@@ -346,7 +346,7 @@ export function CropModal({ file, fileIndex, fileTotal, onConfirm, onCancel }: C
             {croppedUrl && (
               <>
                 <p className="text-xs text-white/70">
-                  Click or drag to set the focal point — this is the area we'll keep visible
+                  Click or drag to set the focal point — this is the area we&apos;ll keep visible
                   when the image is shown at other aspect ratios.
                 </p>
                 <div

@@ -57,10 +57,7 @@ export class InvoicesController {
    */
   @Post("from-order/:orderId/partial")
   @Roles(UserRole.OPERATOR, UserRole.DRIVER)
-  createPartialFromOrder(
-    @Param("orderId") orderId: string,
-    @Body() dto: CreatePartialInvoiceDto,
-  ) {
+  createPartialFromOrder(@Param("orderId") orderId: string, @Body() dto: CreatePartialInvoiceDto) {
     return this.invoicesService.createPartialFromOrder(orderId, dto);
   }
 
