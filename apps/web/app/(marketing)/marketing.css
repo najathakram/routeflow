@@ -1,0 +1,389 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+   RouteFlow marketing site — design tokens & primitives
+   Scoped under `.rf-marketing` so the teal/cream palette and serif display
+   font NEVER leak into operator dashboards or the buyer portal. The wrapping
+   div lives in app/(marketing)/layout.tsx.
+   ────────────────────────────────────────────────────────────────────────── */
+
+.rf-marketing {
+  /* Brand */
+  --rf-teal: #0B6E6B;
+  --rf-teal-deep: #073F3D;
+  --rf-teal-bright: #14a39f;
+  --rf-teal-50: #E8F2F1;
+  --rf-teal-100: #C7E2E0;
+
+  /* Ink */
+  --rf-ink: #0E1F36;
+  --rf-ink-2: #2A3A52;
+  --rf-ink-3: #5C6B82;
+  --rf-ink-4: #8B97AC;
+
+  /* Cream / paper */
+  --rf-cream: #FAF6EE;
+  --rf-cream-2: #F2EBDD;
+  --rf-paper: #FFFFFF;
+  --rf-line: rgba(14, 31, 54, 0.08);
+  --rf-line-2: rgba(14, 31, 54, 0.14);
+
+  /* Accents */
+  --rf-citron: #E0E26B;
+  --rf-rust: #C75A3D;
+  --rf-plum: #4B2C5E;
+
+  /* Type — Inter is already loaded for the whole app; we reuse it as the
+     marketing body font (Geist would have meant a new dependency). The
+     Instrument Serif italic face powers the display headings. */
+  --rf-display: var(--font-instrument-serif), "Times New Roman", serif;
+  --rf-sans: var(--font-inter), -apple-system, system-ui, sans-serif;
+  --rf-mono: ui-monospace, "SF Mono", "Cascadia Code", monospace;
+
+  /* Side accents — neutral default; overridden by [data-side] below */
+  --rf-side-accent: var(--rf-teal);
+  --rf-side-accent-deep: var(--rf-teal-deep);
+  --rf-side-accent-soft: var(--rf-teal-50);
+  --rf-side-accent-wash: rgba(11, 110, 107, 0.10);
+  --rf-side-accent-ink: var(--rf-teal-deep);
+
+  /* Background + base type */
+  background-color: var(--rf-cream);
+  color: var(--rf-ink);
+  font-family: var(--rf-sans);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: "ss01", "cv11";
+}
+
+.rf-marketing[data-side="retailer"] {
+  --rf-side-accent: #C75A3D;
+  --rf-side-accent-deep: #8B3520;
+  --rf-side-accent-soft: #FFF4E0;
+  --rf-side-accent-wash: rgba(199, 90, 61, 0.12);
+  --rf-side-accent-ink: #5A2412;
+  background-color: #FBF6E9;
+}
+
+.rf-marketing[data-side="wholesaler"] {
+  --rf-side-accent: #14a39f;
+  --rf-side-accent-deep: #0B6E6B;
+  --rf-side-accent-soft: #E8F2F1;
+  --rf-side-accent-wash: rgba(11, 110, 107, 0.12);
+  --rf-side-accent-ink: #073F3D;
+  background-color: var(--rf-cream);
+}
+
+/* ─── Layout ───────────────────────────────────────────────────────────── */
+.rf-marketing .wrap {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 0 32px;
+}
+.rf-marketing .wrap-narrow {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 0 32px;
+}
+.rf-marketing .sect { padding: 96px 0; }
+.rf-marketing .sect-sm { padding: 64px 0; }
+.rf-marketing .sect-lg { padding: 128px 0; }
+
+/* ─── Nav ──────────────────────────────────────────────────────────────── */
+.rf-marketing .nav {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: color-mix(in oklch, var(--rf-cream) 82%, transparent);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(20px) saturate(180%);
+  border-bottom: 1px solid var(--rf-line);
+}
+.rf-marketing .nav-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 32px;
+  max-width: 1240px;
+  margin: 0 auto;
+  gap: 32px;
+}
+.rf-marketing .brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  font-size: 17px;
+  color: var(--rf-ink);
+  text-decoration: none;
+}
+.rf-marketing .nav-links {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.rf-marketing .nav-link {
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--rf-ink-2);
+  transition: all 0.15s;
+  text-decoration: none;
+}
+.rf-marketing .nav-link:hover {
+  background: rgba(14, 31, 54, 0.05);
+  color: var(--rf-ink);
+}
+.rf-marketing .nav-link.active {
+  color: var(--rf-ink);
+  font-weight: 600;
+}
+.rf-marketing .nav-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.rf-marketing .signin {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--rf-ink-2);
+  padding: 8px 14px;
+  border-radius: 8px;
+  text-decoration: none;
+}
+.rf-marketing .signin:hover { color: var(--rf-ink); }
+
+/* ─── Side switch pill in nav ──────────────────────────────────────────── */
+.rf-marketing .side-switch {
+  display: inline-flex;
+  align-items: center;
+  background: rgba(14, 31, 54, 0.06);
+  border-radius: 999px;
+  padding: 3px;
+  gap: 2px;
+}
+.rf-marketing .side-switch a {
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--rf-ink-3);
+  letter-spacing: -0.005em;
+  white-space: nowrap;
+  text-decoration: none;
+  transition: all 0.15s;
+}
+.rf-marketing .side-switch a.active {
+  background: white;
+  color: var(--rf-ink);
+  box-shadow: 0 1px 3px rgba(14, 31, 54, 0.08);
+}
+.rf-marketing[data-side="retailer"] .side-switch a.active,
+.rf-marketing[data-side="wholesaler"] .side-switch a.active {
+  color: var(--rf-side-accent-deep);
+}
+.rf-marketing .side-tag {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--rf-side-accent-wash);
+  color: var(--rf-side-accent-deep);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-left: 6px;
+}
+
+/* ─── Buttons ──────────────────────────────────────────────────────────── */
+.rf-marketing .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 18px;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  transition: transform 0.15s, box-shadow 0.15s, background 0.15s;
+  white-space: nowrap;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  text-decoration: none;
+}
+.rf-marketing .btn-primary {
+  background: var(--rf-ink);
+  color: var(--rf-cream);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.1) inset, 0 6px 18px -8px rgba(14, 31, 54, 0.4);
+}
+.rf-marketing .btn-primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.1) inset, 0 12px 24px -10px rgba(14, 31, 54, 0.5);
+}
+.rf-marketing .btn-teal { background: var(--rf-teal); color: white; }
+.rf-marketing .btn-teal:hover { background: var(--rf-teal-deep); }
+.rf-marketing .btn-ghost {
+  background: transparent;
+  border: 1px solid var(--rf-line-2);
+  color: var(--rf-ink);
+}
+.rf-marketing .btn-ghost:hover { background: rgba(14, 31, 54, 0.04); }
+.rf-marketing .btn-side {
+  background: var(--rf-side-accent);
+  color: white;
+}
+.rf-marketing .btn-side:hover {
+  background: var(--rf-side-accent-deep);
+  transform: translateY(-1px);
+}
+.rf-marketing .btn-lg { padding: 14px 22px; font-size: 15px; }
+.rf-marketing .btn-sm { padding: 7px 12px; font-size: 13px; }
+
+/* ─── Eyebrow ──────────────────────────────────────────────────────────── */
+.rf-marketing .eyebrow {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--rf-teal);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.rf-marketing .eyebrow .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--rf-teal-bright);
+}
+.rf-marketing[data-side="retailer"] .eyebrow,
+.rf-marketing[data-side="wholesaler"] .eyebrow {
+  color: var(--rf-side-accent-deep);
+}
+.rf-marketing[data-side="retailer"] .eyebrow .dot,
+.rf-marketing[data-side="wholesaler"] .eyebrow .dot {
+  background: var(--rf-side-accent);
+}
+
+/* ─── Display type ─────────────────────────────────────────────────────── */
+.rf-marketing .display {
+  font-family: var(--rf-display);
+  font-weight: 400;
+  letter-spacing: -0.025em;
+  line-height: 1.04;
+  font-feature-settings: "ss01";
+  padding-bottom: 0.08em; /* room for italic descenders */
+}
+.rf-marketing .display em {
+  font-style: italic;
+  color: var(--rf-teal);
+}
+.rf-marketing[data-side="retailer"] .display em {
+  color: var(--rf-side-accent);
+}
+
+/* ─── Cards & chips ────────────────────────────────────────────────────── */
+.rf-marketing .card {
+  background: var(--rf-paper);
+  border: 1px solid var(--rf-line);
+  border-radius: 18px;
+  overflow: hidden;
+}
+.rf-marketing .card-soft {
+  background: var(--rf-cream);
+  border: 1px solid var(--rf-line);
+  border-radius: 18px;
+}
+.rf-marketing .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  background: rgba(14, 31, 54, 0.06);
+  color: var(--rf-ink-2);
+}
+.rf-marketing .chip-teal {
+  background: var(--rf-teal-50);
+  color: var(--rf-teal-deep);
+}
+.rf-marketing .chip-citron {
+  background: #F4F5C2;
+  color: #5A5C0A;
+}
+
+/* ─── Footer ───────────────────────────────────────────────────────────── */
+.rf-marketing .footer {
+  background: var(--rf-ink);
+  color: var(--rf-cream);
+  padding: 80px 0 40px;
+}
+.rf-marketing .footer a {
+  color: rgba(250, 246, 238, 0.7);
+  text-decoration: none;
+  transition: color 0.15s;
+}
+.rf-marketing .footer a:hover { color: var(--rf-cream); }
+
+/* ─── Animated marquee ─────────────────────────────────────────────────── */
+@keyframes rfMarquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+.rf-marketing .marquee {
+  display: flex;
+  gap: 48px;
+  animation: rfMarquee 40s linear infinite;
+  width: max-content;
+}
+
+/* ─── Reveal on scroll baseline (no JS) ───────────────────────────────── */
+.rf-marketing .fade-up {
+  opacity: 0;
+  transform: translateY(12px);
+  animation: rfFadeUp 0.6s 0.1s forwards;
+}
+@keyframes rfFadeUp {
+  to { opacity: 1; transform: none; }
+}
+
+/* ─── Utilities ────────────────────────────────────────────────────────── */
+.rf-marketing .muted { color: var(--rf-ink-3); }
+.rf-marketing .hairline {
+  height: 1px;
+  background: var(--rf-line);
+  border: 0;
+  margin: 0;
+}
+
+/* ─── Small viewport adjustments ───────────────────────────────────────── */
+@media (max-width: 1024px) {
+  .rf-marketing .footer-tail-mark {
+    font-size: 18vw !important;
+  }
+  .rf-marketing .audience-grid {
+    grid-template-columns: 1fr !important;
+  }
+  .rf-marketing .nav-side-links {
+    display: none !important;
+  }
+}
+
+@media (max-width: 768px) {
+  .rf-marketing .wrap,
+  .rf-marketing .wrap-narrow {
+    padding: 0 20px;
+  }
+  .rf-marketing .sect { padding: 64px 0; }
+  .rf-marketing .sect-lg { padding: 80px 0; }
+  .rf-marketing .nav-inner {
+    padding: 12px 20px;
+    gap: 16px;
+  }
+  .rf-marketing .side-switch {
+    display: none;
+  }
+}
