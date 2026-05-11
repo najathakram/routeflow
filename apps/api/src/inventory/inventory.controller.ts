@@ -7,6 +7,7 @@ import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { InventoryService } from "./inventory.service";
 import { RecordPurchaseDto } from "./dto/record-purchase.dto";
 import { RecordAdjustmentDto } from "./dto/record-adjustment.dto";
+import { CommitStockCountDto } from "./dto/commit-stock-count.dto";
 import { ListMovementsDto } from "./dto/list-movements.dto";
 import { CreateSupplierDto } from "./dto/create-supplier.dto";
 import { UpdateSupplierDto } from "./dto/update-supplier.dto";
@@ -39,6 +40,12 @@ export class InventoryController {
   @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   recordAdjustment(@Body() dto: RecordAdjustmentDto, @CurrentUser() user: { id: string }) {
     return this.inventoryService.recordAdjustment(dto, user.id);
+  }
+
+  @Post("stock-count/commit")
+  @Roles(UserRole.OPERATOR)
+  commitStockCount(@Body() dto: CommitStockCountDto, @CurrentUser() user: { id: string }) {
+    return this.inventoryService.commitStockCount(dto, user.id);
   }
 
   @Get("suppliers")

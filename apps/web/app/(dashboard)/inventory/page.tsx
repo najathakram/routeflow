@@ -26,6 +26,7 @@ import { useProducts } from "@/lib/api/products";
 import { useVendorBills } from "@/lib/api/vendor-bills";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { ScanInvoiceModal } from "@/components/ScanInvoiceModal";
+import { StockCountTab } from "@/components/inventory/StockCountTab";
 import { SupplierSelect } from "@/components/SupplierSelect";
 import { useSortableData } from "@/lib/use-sortable-data";
 import { SortableTh } from "@/components/SortableTh";
@@ -1805,6 +1806,7 @@ export default function InventoryPage() {
 
   const tabs = [
     { value: "stock", label: "Stock" },
+    { value: "count", label: "Stock Count" },
     { value: "suppliers", label: "Suppliers" },
     { value: "purchase-orders", label: "Purchase Orders" },
     { value: "forecasting", label: "Forecasting" },
@@ -2060,6 +2062,11 @@ export default function InventoryPage() {
               setShowAdjustModal={setShowAdjustModal}
             />
           )}
+        </Tabs.Content>
+
+        {/* ── Stock Count tab ── */}
+        <Tabs.Content value="count" className="pt-4">
+          <StockCountTab />
         </Tabs.Content>
 
         {/* ── Suppliers tab ── */}

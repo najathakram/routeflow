@@ -3,6 +3,7 @@ import { CostingMethod, MovementType, Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { RecordPurchaseDto } from "./dto/record-purchase.dto";
 import { RecordAdjustmentDto } from "./dto/record-adjustment.dto";
+import { CommitStockCountDto } from "./dto/commit-stock-count.dto";
 import { ListMovementsDto } from "./dto/list-movements.dto";
 import { CreateSupplierDto } from "./dto/create-supplier.dto";
 import { UpdateSupplierDto } from "./dto/update-supplier.dto";
@@ -211,6 +212,88 @@ export class InventoryService {
       }
 
       return movement;
+    });
+  }
+
+  // ─── Stock count / audit session ─────────────────────────────────────────────
+
+  async commitStockCount(dto: CommitStockCountDto, performedById: string) {
+    const productIds = Array.from(new Set(dto.items.map((i) => i.productId)));
+    const products = await this.prisma
+      .forTenant()
+      .product.findMany({ where: { id: { in: productIds } } });
+
+    const productMap = new Map(products.map((p) => [p.id, p]));
+    const missingProductIds = productIds.filter((id) => !productMap.has(id));
+    if (missingProductIds.length > 0) {
+      throw new NotFoundException({
+        message: "One or more products could not be found",
+        missingProductIds,
+      });
+    }
+
+    const effectiveDate = dto.effectiveDate ? new Date(dto.effectiveDate) : new Date();
+    const reference = `STOCK_COUNT-${dto.sessionId}`;
+
+    return this.prisma.tenantTransaction(async (tx) => {
+      const movementIds: string[] = [];
+      let skipped = 0;
+
+      for (const item of dto.items) {
+        const product = productMap.get(item.productId)!;
+        const counted = new Prisma.Decimal(item.quantity);
+        const delta =
+          item.mode === "REPLACE" ? counted.minus(product.currentStock) : counted;
+
+        if (delta.eq(0)) {
+          skipped += 1;
+          continue;
+        }
+
+        const itemNotes = dto.notes
+          ? `${dto.notes} (mode=${item.mode} counted=${counted.toString()})`
+          : `mode=${item.mode} counted=${counted.toString()}`;
+
+        const movement = await tx.stockMovement.create({
+          data: {
+            productId: item.productId,
+            type: MovementType.ADJUSTMENT,
+            quantity: delta,
+            reference,
+            notes: itemNotes,
+            performedById,
+            createdAt: effectiveDate,
+          },
+        });
+        movementIds.push(movement.id);
+
+        await tx.product.update({
+          where: { id: item.productId },
+          data: { currentStock: { increment: delta } },
+        });
+
+        if (delta.gt(0)) {
+          await tx.stockLot.create({
+            data: {
+              productId: item.productId,
+              purchaseDate: effectiveDate,
+              qty: delta,
+              remainingQty: delta,
+              unitCost: product.averageCost ?? new Prisma.Decimal(0),
+              reference,
+              notes: itemNotes,
+            },
+          });
+        }
+      }
+
+      return {
+        sessionId: dto.sessionId,
+        reference,
+        applied: movementIds.length,
+        skipped,
+        movementIds,
+      };
     });
   }
 
