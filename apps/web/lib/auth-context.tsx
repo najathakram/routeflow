@@ -47,6 +47,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   React.useEffect(() => {
     return onCrossTabTokenChange(() => {
+      // Don't punt the user to /login if they're on a public marketing route —
+      // they may not even know they were ever signed in. Marketing pages are
+      // public and should keep rendering regardless of token state.
+      const MARKETING_ROUTES = new Set([
+        "/", "/retailers", "/wholesalers", "/distributors", "/buyer",
+        "/product", "/pricing", "/company", "/contact",
+      ]);
+      if (typeof window !== "undefined" && MARKETING_ROUTES.has(window.location.pathname)) {
+        return;
+      }
       window.location.href = "/login";
     });
   }, []);
