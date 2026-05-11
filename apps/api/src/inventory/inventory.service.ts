@@ -242,8 +242,7 @@ export class InventoryService {
       for (const item of dto.items) {
         const product = productMap.get(item.productId)!;
         const counted = new Prisma.Decimal(item.quantity);
-        const delta =
-          item.mode === "REPLACE" ? counted.minus(product.currentStock) : counted;
+        const delta = item.mode === "REPLACE" ? counted.minus(product.currentStock) : counted;
 
         if (delta.eq(0)) {
           skipped += 1;
