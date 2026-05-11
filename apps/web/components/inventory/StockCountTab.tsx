@@ -7,6 +7,7 @@ import { Button, Card, cn, useToast } from "@routeflow/ui/web";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { resolveProductByCode } from "@/lib/barcode-resolve";
+import { useStockOverview } from "@/lib/api/inventory";
 import { useCommitStockCount } from "@/lib/api/stock-count";
 import {
   clearSession,
@@ -58,7 +59,15 @@ export function StockCountTab() {
 
   const [scanInput, setScanInput] = React.useState("");
   const scanInputRef = React.useRef<HTMLInputElement>(null);
+  const scanContainerRef = React.useRef<HTMLDivElement>(null);
   const [resolving, setResolving] = React.useState(false);
+
+  // Typeahead dropdown — mirrors the Stock tab's behaviour at inventory/page.tsx
+  // so operators can pick a product partway through typing without scanning a
+  // full code or hitting Enter.
+  const [suggestOpen, setSuggestOpen] = React.useState(false);
+  const [suggestIndex, setSuggestIndex] = React.useState(0);
+  const { data: stockOverview } = useStockOverview();
 
   const [unknownCode, setUnknownCode] = React.useState<string | null>(null);
   const [reviewOpen, setReviewOpen] = React.useState(false);
@@ -86,6 +95,64 @@ export function StockCountTab() {
     const handle = setTimeout(() => setFlashId(null), 800);
     return () => clearTimeout(handle);
   }, [flashId]);
+
+  // ─── Suggestion list ──────────────────────────────────────────────────────
+  // Filter the already-loaded product list (cached via useStockOverview, which
+  // is also what the Stock tab uses — so this is free if the operator has
+  // visited that tab in the session). Ranks: SKU exact → SKU prefix → name
+  // substring → other (SKU or category substring). Caps at 8 to avoid pushing
+  // the dropdown off-screen.
+  const suggestions = React.useMemo(() => {
+    const q = scanInput.trim().toLowerCase();
+    if (!q) return [] as Array<{
+      id: string;
+      name: string;
+      sku?: string | null;
+      unit: string;
+      currentStock: number;
+      category?: string | null;
+    }>;
+    const items = (stockOverview ?? []) as Array<{
+      id: string;
+      name: string;
+      sku?: string | null;
+      unit: string;
+      currentStock: number;
+      category?: string | null;
+      isActive?: boolean;
+    }>;
+    const skuExact: typeof items = [];
+    const skuPrefix: typeof items = [];
+    const nameMatch: typeof items = [];
+    const other: typeof items = [];
+    for (const p of items) {
+      if (p.isActive === false) continue;
+      const sku = (p.sku ?? "").toLowerCase();
+      const name = p.name.toLowerCase();
+      const cat = (p.category ?? "").toLowerCase();
+      if (sku === q) skuExact.push(p);
+      else if (sku.startsWith(q)) skuPrefix.push(p);
+      else if (name.includes(q)) nameMatch.push(p);
+      else if (sku.includes(q) || cat.includes(q)) other.push(p);
+    }
+    return [...skuExact, ...skuPrefix, ...nameMatch, ...other].slice(0, 8);
+  }, [scanInput, stockOverview]);
+
+  // Reset highlight when the query changes so the first match is always
+  // selected on Enter.
+  React.useEffect(() => setSuggestIndex(0), [scanInput]);
+
+  // Close on outside click.
+  React.useEffect(() => {
+    if (!suggestOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (!scanContainerRef.current?.contains(e.target as Node)) {
+        setSuggestOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [suggestOpen]);
 
   // ─── Mutators ──────────────────────────────────────────────────────────────
   const addOrIncrementProduct = React.useCallback(
@@ -295,7 +362,7 @@ export function StockCountTab() {
     <div className="space-y-4">
       <Card className="space-y-3">
         <div className="flex flex-wrap items-end gap-3">
-          <div className="flex-1 min-w-[260px]">
+          <div ref={scanContainerRef} className="relative flex-1 min-w-[260px]">
             <label className="mb-1 block text-xs font-medium text-navy">
               Scan or type SKU / barcode
             </label>
@@ -304,14 +371,42 @@ export function StockCountTab() {
                 ref={scanInputRef}
                 type="text"
                 value={scanInput}
-                onChange={(e) => setScanInput(e.target.value)}
+                onChange={(e) => {
+                  setScanInput(e.target.value);
+                  setSuggestOpen(true);
+                }}
+                onFocus={() => {
+                  if (scanInput.trim()) setSuggestOpen(true);
+                }}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") {
+                  if (e.key === "ArrowDown") {
                     e.preventDefault();
-                    handleScan(scanInput);
+                    setSuggestOpen(true);
+                    setSuggestIndex((i) =>
+                      Math.min(i + 1, Math.max(0, suggestions.length - 1)),
+                    );
+                  } else if (e.key === "ArrowUp") {
+                    e.preventDefault();
+                    setSuggestIndex((i) => Math.max(0, i - 1));
+                  } else if (e.key === "Escape") {
+                    setSuggestOpen(false);
+                  } else if (e.key === "Enter") {
+                    e.preventDefault();
+                    // If a suggestion is highlighted, pick it; otherwise fall
+                    // back to the resolver (handles SKUs not in the local
+                    // overview cache and unknown-code → create flow).
+                    if (suggestOpen && suggestions[suggestIndex]) {
+                      const p = suggestions[suggestIndex];
+                      addOrIncrementProduct(p, session.qtyPerScan);
+                      setScanInput("");
+                      setSuggestOpen(false);
+                    } else {
+                      handleScan(scanInput);
+                      setSuggestOpen(false);
+                    }
                   }
                 }}
-                placeholder="Scan with USB or webcam, or type and press Enter"
+                placeholder="Scan with USB or webcam, or type to search"
                 autoFocus
                 className="flex-1 rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
               />
@@ -319,6 +414,50 @@ export function StockCountTab() {
             </div>
             {resolving && (
               <p className="mt-1 text-xs text-navy/50">Looking up product…</p>
+            )}
+
+            {/* Typeahead dropdown */}
+            {suggestOpen && suggestions.length > 0 && (
+              <ul
+                role="listbox"
+                className="absolute left-0 right-12 top-full z-20 mt-1 max-h-72 overflow-y-auto rounded-md border border-surface-border bg-white shadow-lg"
+              >
+                {suggestions.map((p, idx) => (
+                  <li
+                    key={p.id}
+                    role="option"
+                    aria-selected={idx === suggestIndex}
+                    onMouseEnter={() => setSuggestIndex(idx)}
+                    onMouseDown={(e) => {
+                      // mousedown so the input doesn't blur first
+                      e.preventDefault();
+                      addOrIncrementProduct(p, session.qtyPerScan);
+                      setScanInput("");
+                      setSuggestOpen(false);
+                      scanInputRef.current?.focus();
+                    }}
+                    className={cn(
+                      "cursor-pointer px-3 py-2 text-sm",
+                      idx === suggestIndex ? "bg-brand-50" : "hover:bg-surface-raised",
+                    )}
+                  >
+                    <div className="font-medium text-navy">{p.name}</div>
+                    <div className="flex items-center gap-2 text-xs text-navy/50">
+                      {p.sku && <span>SKU {p.sku}</span>}
+                      <span>·</span>
+                      <span>
+                        {p.currentStock} {p.unit}
+                      </span>
+                      {p.category && (
+                        <>
+                          <span>·</span>
+                          <span>{p.category}</span>
+                        </>
+                      )}
+                    </div>
+                  </li>
+                ))}
+              </ul>
             )}
           </div>
 
