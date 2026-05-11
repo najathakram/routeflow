@@ -5,6 +5,7 @@ export const dynamic = "force-dynamic";
 import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { setTenantCookie } from "@/lib/tenant-cookie";
+import { OP_KEYS } from "@/lib/auth-keys";
 
 // This page handles the redirect after Google OAuth completes.
 // The API redirects here with ?accessToken=...&refreshToken=...&role=...
@@ -25,9 +26,14 @@ function AuthCallbackInner() {
     const tenantSlug = params.get("tenantSlug");
 
     if (accessToken && refreshToken) {
-      // Store tokens the same way the regular login flow does
+      // Store tokens under both the namespaced keys (read by AuthProvider /
+      // getStoredUser) and the legacy keys (read by any unmigrated code).
+      localStorage.setItem(OP_KEYS.accessToken, accessToken);
+      localStorage.setItem(OP_KEYS.refreshToken, refreshToken);
       localStorage.setItem("accessToken", accessToken);
       localStorage.setItem("refreshToken", refreshToken);
+      // Set the operator presence cookie so middleware path guards work.
+      document.cookie = `rf-op-auth=1; path=/; max-age=${60 * 60 * 24 * 30}; samesite=lax`;
       // Restore the tenant cookie so API calls include the right X-Tenant-Slug header
       if (tenantSlug) {
         setTenantCookie(tenantSlug);

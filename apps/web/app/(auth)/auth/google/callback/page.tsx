@@ -5,6 +5,7 @@ export const dynamic = "force-dynamic";
 import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { setTenantCookie } from "@/lib/tenant-cookie";
+import { OP_KEYS, BUYER_KEYS } from "@/lib/auth-keys";
 
 // ─── Error messages shown to the user ────────────────────────────────────────
 
@@ -77,16 +78,31 @@ function GoogleCallbackInner() {
     }
 
     if (type === "BUYER") {
-      // Store buyer tokens (same keys as regular buyer login)
+      // Store buyer tokens under the namespaced keys that `BuyerAuthProvider`
+      // and `getStoredBuyer()` actually read. Also keep the legacy keys
+      // populated for any code path that hasn't been migrated yet
+      // (e.g. /buyer/portal/page.tsx, /buyer/invite, buyer change-password).
+      localStorage.setItem(BUYER_KEYS.accessToken, accessToken);
+      localStorage.setItem(BUYER_KEYS.refreshToken, refreshToken);
       localStorage.setItem("buyerAccessToken", accessToken);
       localStorage.setItem("buyerRefreshToken", refreshToken);
+      // Set the buyer presence cookie that the dashboard middleware checks
+      // (without this the middleware can't tell a buyer apart from a
+      // logged-out user and may misroute them).
+      document.cookie = `rf-buyer-auth=1; path=/; max-age=${60 * 60 * 24 * 30}; samesite=lax`;
       // Redirect to buyer portal — show linked banner if just accepted an invite
       const destination = linked === "true" ? "/buyer/portal?linked=true" : "/buyer/portal";
       router.replace(destination);
     } else {
-      // Store staff tokens (same keys as regular staff login)
+      // Store staff tokens under both the namespaced keys (read by
+      // `AuthProvider` / `getStoredUser`) and the legacy keys (read by
+      // any unmigrated code path).
+      localStorage.setItem(OP_KEYS.accessToken, accessToken);
+      localStorage.setItem(OP_KEYS.refreshToken, refreshToken);
       localStorage.setItem("accessToken", accessToken);
       localStorage.setItem("refreshToken", refreshToken);
+      // Set the operator presence cookie so middleware path guards work.
+      document.cookie = `rf-op-auth=1; path=/; max-age=${60 * 60 * 24 * 30}; samesite=lax`;
 
       // Restore tenant cookie so API calls include X-Tenant-Slug header
       if (tenantSlug) {
