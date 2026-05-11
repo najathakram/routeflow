@@ -296,9 +296,10 @@ export class RoutesService {
     if (run.status === "IN_PROGRESS" || run.status === "COMPLETED") {
       throw new BadRequestException("Cannot reorder stops on an active or completed route run");
     }
-    const allStops = await this.prisma
-      .forTenant()
-      .routeRunStop.findMany({ where: { routeRunId: runId }, select: { id: true, stopNumber: true } });
+    const allStops = await this.prisma.forTenant().routeRunStop.findMany({
+      where: { routeRunId: runId },
+      select: { id: true, stopNumber: true },
+    });
     const offset = allStops.length + order.length + 100;
     await this.prisma.$transaction([
       ...allStops.map((s) =>
@@ -1189,8 +1190,7 @@ export class RoutesService {
       if (completed?.driver) {
         this.gateway.emitDriverStatusUpdated(this.prisma.getTenantId(), {
           driverId: completed.driver.id,
-          driverName:
-            completed.driver.contactName ?? completed.driver.user?.username ?? "Driver",
+          driverName: completed.driver.contactName ?? completed.driver.user?.username ?? "Driver",
           status: RouteRunStatus.COMPLETED,
           updatedAt: new Date().toISOString(),
         });
@@ -1379,8 +1379,7 @@ export class RoutesService {
       if (completed?.driver) {
         this.gateway.emitDriverStatusUpdated(this.prisma.getTenantId(), {
           driverId: completed.driver.id,
-          driverName:
-            completed.driver.contactName ?? completed.driver.user?.username ?? "Driver",
+          driverName: completed.driver.contactName ?? completed.driver.user?.username ?? "Driver",
           status: RouteRunStatus.COMPLETED,
           updatedAt: new Date().toISOString(),
         });

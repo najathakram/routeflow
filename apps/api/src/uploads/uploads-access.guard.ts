@@ -27,9 +27,7 @@ export class UploadsAccessGuard extends AuthGuard("jwt") implements CanActivate 
   }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    const req = context.switchToHttp().getRequest<
-      Request & { signedUrlAuthorized?: boolean }
-    >();
+    const req = context.switchToHttp().getRequest<Request & { signedUrlAuthorized?: boolean }>();
 
     // Derive the storage key from the URL the same way the controller does.
     const urlMatch = req.path.match(/\/uploads\/(.+)$/);

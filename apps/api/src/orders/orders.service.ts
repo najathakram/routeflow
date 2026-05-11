@@ -494,11 +494,7 @@ export class OrdersService implements OnApplicationBootstrap {
     }
   }
 
-  async create(
-    dto: CreateOrderDto,
-    user: JwtPayload,
-    options: { skipAutoMerge?: boolean } = {},
-  ) {
+  async create(dto: CreateOrderDto, user: JwtPayload, options: { skipAutoMerge?: boolean } = {}) {
     // Resolve which customer this order is for
     let customerId: string;
 
@@ -781,7 +777,7 @@ export class OrdersService implements OnApplicationBootstrap {
         },
       });
       if (dto.immediateDelivery) {
-        (order as any).status = OrderStatus.CONFIRMED;
+        order.status = OrderStatus.CONFIRMED;
       }
     }
 
@@ -1072,8 +1068,7 @@ export class OrdersService implements OnApplicationBootstrap {
         // Individual item updates (dispatcher workflow with explicit item IDs)
         for (const item of dto.items) {
           // New item (no id, has productId; qty OR boxes/pieces)
-          const newQtyHint =
-            item.boxes != null || item.pieces != null ? 1 : (item.qty ?? 0);
+          const newQtyHint = item.boxes != null || item.pieces != null ? 1 : (item.qty ?? 0);
           if (!item.id && item.productId && newQtyHint > 0) {
             const product = await this.prisma
               .forTenant()
@@ -1158,23 +1153,17 @@ export class OrdersService implements OnApplicationBootstrap {
                 overriddenBy: null,
               },
             });
-          } else if (
-            item.qty !== undefined ||
-            item.boxes != null ||
-            item.pieces != null
-          ) {
+          } else if (item.qty !== undefined || item.boxes != null || item.pieces != null) {
             const li = order.lineItems.find((li) => li.id === item.id);
             if (!li) continue;
             // For qty math we need the product's unitsPerBox even if it's not
             // changing — the caller may have edited boxes/pieces only.
             let unitsPerBox: number | null = null;
             if (item.boxes != null || item.pieces != null) {
-              const product = await this.prisma
-                .forTenant()
-                .product.findUnique({
-                  where: { id: li.productId },
-                  select: { unitsPerBox: true },
-                });
+              const product = await this.prisma.forTenant().product.findUnique({
+                where: { id: li.productId },
+                select: { unitsPerBox: true },
+              });
               unitsPerBox = product?.unitsPerBox ?? null;
             }
             let qty = item.qty ?? Number(li.qty);
