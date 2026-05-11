@@ -222,7 +222,7 @@ export default function CompanyPage() {
               Book a demo <ArrowIcon />
             </Link>
             <a
-              href="mailto:hello@routeflow.app"
+              href="mailto:hello@routeflow.info"
               className="btn btn-ghost btn-lg"
             >
               Email us
