@@ -81,38 +81,32 @@ export function GetAppSection() {
               orders stock from suppliers. Voice-first, English &amp; Spanish, works on any phone.
             </p>
 
-            <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-              <a
-                href="#"
-                className="btn"
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+              <span
                 style={{
-                  background: "var(--rf-cream)",
-                  color: "var(--rf-ink)",
-                  padding: "12px 18px",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "11px 18px",
+                  borderRadius: 999,
+                  background: "rgba(255,255,255,0.08)",
+                  color: "rgba(250,246,238,0.7)",
+                  fontSize: 13,
+                  fontWeight: 600,
+                  border: "1px solid rgba(255,255,255,0.12)",
                 }}
               >
-                <AppleIcon /> App Store
-              </a>
+                <AppleIcon /> iOS &amp; <AndroidIcon /> Android — coming soon
+              </span>
               <a
-                href="#"
-                className="btn"
-                style={{
-                  background: "var(--rf-cream)",
-                  color: "var(--rf-ink)",
-                  padding: "12px 18px",
-                }}
-              >
-                <AndroidIcon /> Google Play
-              </a>
-              <a
-                href="#"
+                href="mailto:hello@routeflow.info?subject=Notify%20me%20when%20the%20RouteFlow%20Shop%20app%20launches"
                 className="btn btn-ghost"
                 style={{
                   borderColor: "rgba(250,246,238,0.2)",
                   color: "var(--rf-cream)",
                 }}
               >
-                <LinkIcon /> SMS me a link
+                <LinkIcon /> Notify me at launch
               </a>
             </div>
 
