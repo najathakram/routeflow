@@ -20,13 +20,6 @@ export function getSideFromPath(pathname: string): Side {
   return "neutral";
 }
 
-// Landing-style routes where AutoRedirectIfAuthed should fire.
-// Browseable routes (product, pricing, company) are intentionally omitted — a
-// signed-in operator visiting /pricing for a referral shouldn't be punted away.
-export function isLandingRoute(pathname: string): boolean {
-  return pathname === "/" || pathname === "/wholesalers" || pathname === "/retailers";
-}
-
 export function useSide(): Side {
   const pathname = usePathname();
   return getSideFromPath(pathname);
