@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Inter } from "next/font/google";
+import { Inter, Instrument_Serif } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
 import { TenantProvider } from "@/components/tenant-provider";
@@ -9,6 +9,18 @@ const inter = Inter({
   subsets: ["latin"],
   variable: "--font-inter",
   weight: ["400", "500", "600", "700"],
+  display: "swap",
+});
+
+// Marketing site display font. The italic face drives the <em> styling in
+// display headings (`<h1 className="display">…<em>…</em>…`). Loaded once at
+// the root, but the marketing CSS scopes it under `.rf-marketing` so the
+// rest of the app keeps using Inter.
+const instrumentSerif = Instrument_Serif({
+  subsets: ["latin"],
+  weight: "400",
+  style: ["normal", "italic"],
+  variable: "--font-instrument-serif",
   display: "swap",
 });
 
@@ -56,7 +68,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`${inter.variable} font-sans antialiased`}>
+      <body className={`${inter.variable} ${instrumentSerif.variable} font-sans antialiased`}>
         <TenantProvider>
           <Providers>{children}</Providers>
           <ServiceWorkerRegistry />

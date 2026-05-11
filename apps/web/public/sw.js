@@ -1,7 +1,7 @@
 // RouteFlow service worker — enables "Add to Home Screen" on Chrome/Edge/Android.
 // Strategy: network-first for pages and API; cache-first for static assets.
 
-const CACHE_VERSION = "routeflow-v1";
+const CACHE_VERSION = "routeflow-v2";
 const STATIC_EXTENSIONS = [".js", ".css", ".woff2", ".woff", ".ttf", ".png", ".svg", ".ico"];
 
 self.addEventListener("install", () => {
