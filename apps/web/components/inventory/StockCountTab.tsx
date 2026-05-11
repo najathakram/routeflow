@@ -370,8 +370,8 @@ export function StockCountTab() {
         </div>
 
         <p className="text-[11px] text-navy/40">
-          Your draft is auto-saved on this device. Close the tab and it's still here next
-          time you open the Stock Count tab. The draft clears after a successful commit.
+          Your draft is auto-saved on this device. Close the tab and it&apos;s still here
+          next time you open the Stock Count tab. The draft clears after a successful commit.
         </p>
       </Card>
 
