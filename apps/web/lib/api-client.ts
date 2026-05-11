@@ -23,6 +23,20 @@ function getTenantSlugFromCookie(): string | null {
   return match ? decodeURIComponent(match[1]) : (process.env.NEXT_PUBLIC_DEFAULT_TENANT ?? null);
 }
 
+/** Public marketing routes — these must NEVER be redirected to /login when a
+ *  background API call 401s. Stale localStorage tokens are common (sessions
+ *  expire; tokens linger), and a stray 401 should clear those tokens silently
+ *  rather than punting the visitor off the marketing site they came to see. */
+const MARKETING_ROUTES = new Set([
+  "/", "/retailers", "/wholesalers", "/distributors", "/buyer",
+  "/product", "/pricing", "/company", "/contact",
+]);
+
+function isOnMarketingRoute(): boolean {
+  if (typeof window === "undefined") return false;
+  return MARKETING_ROUTES.has(window.location.pathname);
+}
+
 // ─── Request interceptor: attach access token + tenant slug ──────────────────
 
 apiClient.interceptors.request.use((config) => {
@@ -113,7 +127,13 @@ apiClient.interceptors.response.use(
       const opToken = localStorage.getItem(OP_KEYS.accessToken);
       localStorage.removeItem(OP_KEYS.accessToken);
       localStorage.removeItem(OP_KEYS.refreshToken);
-      window.location.href = buyerToken && !opToken ? "/buyer/login" : "/login";
+      // Don't punt the user off a marketing route just because a background
+      // API call 401'd against a stale token — let them keep browsing the
+      // marketing site. Tokens are now cleared, so the next dashboard click
+      // will go through the normal login flow.
+      if (!isOnMarketingRoute()) {
+        window.location.href = buyerToken && !opToken ? "/buyer/login" : "/login";
+      }
       return Promise.reject(refreshError);
     } finally {
       isRefreshing = false;
