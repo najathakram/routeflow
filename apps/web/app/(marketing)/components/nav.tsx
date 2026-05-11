@@ -6,28 +6,15 @@ import { getAuthHref } from "./auth-links";
 import { Logo } from "./logo";
 import { ArrowIcon } from "./icons";
 
-const RETAILER_NAV: Array<[string, string]> = [
-  ["/retailers", "Overview"],
-  ["/product", "Features"],
-  ["/company", "Help"],
-];
-const WHOLESALER_NAV: Array<[string, string]> = [
-  ["/wholesalers", "Overview"],
-  ["/product", "Features"],
-  ["/pricing", "Pricing"],
-  ["/company", "Company"],
-];
-
 export function MarketingNav() {
   const side = useSide();
-  const links = side === "retailer" ? RETAILER_NAV : side === "wholesaler" ? WHOLESALER_NAV : null;
 
-  // Sign in / CTA only render on a side-themed page (`/retailers`, `/wholesalers`,
-  // `/pricing`). On neutral pages (`/`, `/product`, `/company`) we don't know
-  // which login to send the user to — pushing them to `/login` (operator)
-  // would silently bias the home toward wholesalers and confuse retailers.
-  // The audience-switch in the middle of the nav is the right entry point.
-  const ctaLabel = side === "retailer" ? "Get the app" : "Start free trial";
+  // Sign in / CTA only render on a side-themed page (`/retailers`,
+  // `/wholesalers`, `/pricing`). On neutral pages (`/`, `/product`, `/company`)
+  // the audience-switch in the middle of the nav is the entry point.
+  // Retailer CTA is "Sign up" (free portal account) since the standalone
+  // mobile app isn't shipped yet — used to say "Get the app".
+  const ctaLabel = side === "retailer" ? "Sign up" : "Start free trial";
   const ctaHref = getAuthHref(side, "up");
 
   return (
@@ -41,10 +28,8 @@ export function MarketingNav() {
           )}
         </Link>
 
-        {/* Side switch — pinned to the visual center of the nav by CSS Grid
-            so it stays in the same screen position from page to page,
-            regardless of what's on the right (side-specific links + Sign in
-            + CTA on side pages, nothing on neutral pages). */}
+        {/* Side switch — pinned to the visual centre of the nav via
+            `position: absolute; left: 50%` in marketing.css. */}
         <div className="side-switch" role="tablist" aria-label="Choose your side">
           <Link href="/" className={side === "neutral" ? "active" : ""}>
             Overview
@@ -57,18 +42,11 @@ export function MarketingNav() {
           </Link>
         </div>
 
-        {/* Right-side container — always present (even when empty) so the
-            grid keeps the side switch centered. */}
+        {/* Right-side container. We deliberately do NOT render side-specific
+            links (Features / Pricing / Help / Company) here — they overlapped
+            the centred side-switch on side pages, and they're already in the
+            footer. The Sign in + CTA stays. */}
         <div className="nav-right">
-          {links && (
-            <div className="nav-links nav-side-links">
-              {links.map(([href, label]) => (
-                <Link key={href + label} href={href} className="nav-link">
-                  {label}
-                </Link>
-              ))}
-            </div>
-          )}
           {side !== "neutral" && (
             <div className="nav-actions">
               <Link href={getAuthHref(side, "in")} className="signin">
