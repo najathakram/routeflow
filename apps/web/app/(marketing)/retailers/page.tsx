@@ -1,10 +1,9 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { AppleIcon, AndroidIcon } from "../components/icons";
+import { ArrowIcon } from "../components/icons";
 import { PhoneShell } from "../components/mocks/phone-shell";
 import { PhoneRetailerHome } from "../components/mocks/phone-retailer-home";
 import { PhoneShop } from "../components/mocks/phone-shop";
-import { InstallAppButton } from "@/components/InstallAppButton";
 
 export const metadata: Metadata = {
   title: "For Retailers — Order stock between customers",
@@ -93,12 +92,9 @@ export default function RetailersPage() {
                 orders supplies from a wholesaler. Voice it. Tap it. Done.
               </p>
               <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                <InstallAppButton
-                  variant="buyer"
-                  className="btn btn-primary btn-lg"
-                >
-                  <AppleIcon /> Get the retailer app
-                </InstallAppButton>
+                <Link href="/buyer/register" className="btn btn-primary btn-lg">
+                  Sign up <ArrowIcon />
+                </Link>
                 <Link href="/buyer/login" className="btn btn-ghost btn-lg">
                   Sign in
                 </Link>
@@ -191,177 +187,60 @@ export default function RetailersPage() {
         </div>
       </section>
 
-      {/* Get the app */}
+      {/* Sign up CTA — replaces the old "Get the RouteFlow Shop app" section
+          since the standalone mobile app isn't shipped yet and the real
+          action for retailers is to create a free portal account. */}
       <section className="sect" style={{ background: "var(--rf-ink)", color: "var(--rf-cream)" }}>
-        <div className="wrap">
-          <div
+        <div className="wrap-narrow" style={{ textAlign: "center" }}>
+          <h2
+            className="display"
+            style={{ fontSize: 64, margin: "0 0 20px", color: "var(--rf-cream)" }}
+          >
+            Create your free
+            <br />
+            <em style={{ color: "var(--rf-teal-bright)" }}>retailer account.</em>
+          </h2>
+          <p
             style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr",
-              gap: 80,
-              alignItems: "center",
+              fontSize: 17,
+              color: "rgba(250,246,238,0.7)",
+              lineHeight: 1.55,
+              marginBottom: 32,
+              maxWidth: 520,
+              marginInline: "auto",
             }}
           >
-            <div>
-              <h2
-                className="display"
-                style={{ fontSize: 64, margin: "0 0 20px", color: "var(--rf-cream)" }}
-              >
-                Get the
-                <br />
-                <em style={{ color: "var(--rf-teal-bright)" }}>RouteFlow Shop</em> app.
-              </h2>
-              <p
-                style={{
-                  fontSize: 16,
-                  color: "rgba(250,246,238,0.7)",
-                  lineHeight: 1.55,
-                  marginBottom: 28,
-                  maxWidth: 460,
-                }}
-              >
-                Free forever for retailers. Your suppliers pay for the platform — you just get the
-                convenience.
-              </p>
-
-              <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", marginBottom: 32 }}>
-                <span
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 8,
-                    padding: "11px 18px",
-                    borderRadius: 999,
-                    background: "rgba(255,255,255,0.08)",
-                    color: "rgba(250,246,238,0.7)",
-                    fontSize: 13,
-                    fontWeight: 600,
-                    border: "1px solid rgba(255,255,255,0.12)",
-                  }}
-                >
-                  <AppleIcon /> iOS &amp; <AndroidIcon /> Android — coming soon
-                </span>
-                <a
-                  href="mailto:hello@routeflow.info?subject=Notify%20me%20when%20the%20RouteFlow%20Shop%20app%20launches"
-                  className="btn"
-                  style={{ background: "var(--rf-cream)", color: "var(--rf-ink)" }}
-                >
-                  Notify me at launch
-                </a>
-              </div>
-
-              <div
-                style={{
-                  padding: 16,
-                  background: "rgba(255,255,255,0.05)",
-                  borderRadius: 14,
-                  border: "1px solid rgba(255,255,255,0.1)",
-                  maxWidth: 420,
-                }}
-              >
-                <div
-                  style={{
-                    fontSize: 13,
-                    color: "rgba(250,246,238,0.75)",
-                    marginBottom: 4,
-                    fontWeight: 600,
-                  }}
-                >
-                  Already have an account?
-                </div>
-                <div style={{ fontSize: 13, color: "rgba(250,246,238,0.6)" }}>
-                  <Link
-                    href="/buyer/login"
-                    style={{ color: "var(--rf-teal-bright)", textDecoration: "underline" }}
-                  >
-                    Sign in to your retailer portal →
-                  </Link>
-                </div>
-              </div>
-            </div>
-
-            <div style={{ display: "flex", justifyContent: "center" }}>
-              <div
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  gap: 24,
-                }}
-              >
-                <div
-                  style={{
-                    width: 200,
-                    height: 200,
-                    background: "var(--rf-cream)",
-                    borderRadius: 16,
-                    padding: 16,
-                    position: "relative",
-                  }}
-                >
-                  {/* Decorative QR-ish artwork */}
-                  <svg viewBox="0 0 100 100" width="100%" height="100%" aria-hidden="true">
-                    {Array.from({ length: 100 }).map((_, i) => {
-                      const x = (i % 10) * 10;
-                      const y = Math.floor(i / 10) * 10;
-                      const fill = (i * 17 + 3) % 5 < 2;
-                      return fill ? (
-                        <rect key={i} x={x} y={y} width="10" height="10" fill="var(--rf-ink)" />
-                      ) : null;
-                    })}
-                    {[
-                      [0, 0],
-                      [70, 0],
-                      [0, 70],
-                    ].map(([cx, cy]) => (
-                      <g key={`${cx}-${cy}`}>
-                        <rect x={cx} y={cy} width="30" height="30" fill="var(--rf-ink)" />
-                        <rect x={cx + 5} y={cy + 5} width="20" height="20" fill="var(--rf-cream)" />
-                        <rect
-                          x={cx + 10}
-                          y={cy + 10}
-                          width="10"
-                          height="10"
-                          fill="var(--rf-ink)"
-                        />
-                      </g>
-                    ))}
-                  </svg>
-                  <div
-                    style={{
-                      position: "absolute",
-                      inset: "40% 40%",
-                      background: "var(--rf-cream)",
-                      display: "grid",
-                      placeItems: "center",
-                      borderRadius: 6,
-                    }}
-                  >
-                    <div
-                      style={{
-                        width: 28,
-                        height: 28,
-                        background: "var(--rf-teal)",
-                        borderRadius: 6,
-                      }}
-                    />
-                  </div>
-                </div>
-                <div
-                  style={{
-                    fontSize: 13,
-                    color: "rgba(250,246,238,0.7)",
-                    textAlign: "center",
-                  }}
-                >
-                  Scan with your camera
-                  <br />
-                  <span style={{ color: "rgba(250,246,238,0.5)", fontSize: 11 }}>
-                    iOS 14+ · Android 8+
-                  </span>
-                </div>
-              </div>
-            </div>
+            Free forever for retailers. Your suppliers pay for the platform — you just get the
+            convenience. Sign up takes under a minute.
+          </p>
+          <div
+            style={{
+              display: "flex",
+              gap: 12,
+              justifyContent: "center",
+              flexWrap: "wrap",
+            }}
+          >
+            <Link
+              href="/buyer/register"
+              className="btn btn-lg"
+              style={{ background: "var(--rf-cream)", color: "var(--rf-ink)" }}
+            >
+              Sign up <ArrowIcon />
+            </Link>
+            <Link
+              href="/buyer/login"
+              className="btn btn-ghost btn-lg"
+              style={{
+                borderColor: "rgba(250,246,238,0.2)",
+                color: "var(--rf-cream)",
+              }}
+            >
+              Already have an account? Sign in
+            </Link>
+          </div>
+          <div style={{ marginTop: 20, fontSize: 13, color: "rgba(250,246,238,0.5)" }}>
+            Mobile app for iOS &amp; Android — coming soon.
           </div>
         </div>
       </section>
