@@ -99,13 +99,29 @@
   border-bottom: 1px solid var(--rf-line);
 }
 .rf-marketing .nav-inner {
+  /* The side-switch is absolutely positioned at the geometric centre of
+     `.nav-inner` so it never moves when the right side of the nav grows
+     (side-links + Sign in + CTA on side pages) or shrinks (empty on neutral
+     pages). Brand stays left, `.nav-right` stays right via flex. */
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 16px 32px;
   max-width: 1240px;
   margin: 0 auto;
-  gap: 32px;
+  gap: 24px;
+}
+.rf-marketing .side-switch {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+.rf-marketing .nav-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
 }
 .rf-marketing .brand {
   display: flex;

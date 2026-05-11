@@ -41,7 +41,10 @@ export function MarketingNav() {
           )}
         </Link>
 
-        {/* Side switch — always visible (hidden on small screens via CSS) */}
+        {/* Side switch — pinned to the visual center of the nav by CSS Grid
+            so it stays in the same screen position from page to page,
+            regardless of what's on the right (side-specific links + Sign in
+            + CTA on side pages, nothing on neutral pages). */}
         <div className="side-switch" role="tablist" aria-label="Choose your side">
           <Link href="/" className={side === "neutral" ? "active" : ""}>
             Overview
@@ -54,28 +57,29 @@ export function MarketingNav() {
           </Link>
         </div>
 
-        {/* Side-specific page links — hidden on small screens via CSS */}
-        <div
-          className="nav-links nav-side-links"
-          style={{ flex: 1, justifyContent: "flex-end", marginRight: 8 }}
-        >
-          {links?.map(([href, label]) => (
-            <Link key={href + label} href={href} className="nav-link">
-              {label}
-            </Link>
-          ))}
+        {/* Right-side container — always present (even when empty) so the
+            grid keeps the side switch centered. */}
+        <div className="nav-right">
+          {links && (
+            <div className="nav-links nav-side-links">
+              {links.map(([href, label]) => (
+                <Link key={href + label} href={href} className="nav-link">
+                  {label}
+                </Link>
+              ))}
+            </div>
+          )}
+          {side !== "neutral" && (
+            <div className="nav-actions">
+              <Link href={getAuthHref(side, "in")} className="signin">
+                Sign in
+              </Link>
+              <Link href={ctaHref} className="btn btn-side btn-sm">
+                {ctaLabel} <ArrowIcon />
+              </Link>
+            </div>
+          )}
         </div>
-
-        {side !== "neutral" && (
-          <div className="nav-actions">
-            <Link href={getAuthHref(side, "in")} className="signin">
-              Sign in
-            </Link>
-            <Link href={ctaHref} className="btn btn-side btn-sm">
-              {ctaLabel} <ArrowIcon />
-            </Link>
-          </div>
-        )}
       </div>
     </nav>
   );
