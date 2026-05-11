@@ -89,19 +89,6 @@ export function AudienceSplit() {
               }}
             >
               <div>
-                <div
-                  style={{
-                    fontFamily: "var(--rf-mono)",
-                    fontSize: 11,
-                    fontWeight: 700,
-                    color: "#8B3520",
-                    letterSpacing: "0.18em",
-                    textTransform: "uppercase",
-                    marginBottom: 8,
-                  }}
-                >
-                  ◆ Side A
-                </div>
                 <div style={{ fontSize: 13, fontWeight: 600, color: "#5A2412" }}>
                   Corner stores · Bodegas · Cafés · Salons · Convenience
                 </div>
@@ -284,19 +271,6 @@ export function AudienceSplit() {
               }}
             >
               <div>
-                <div
-                  style={{
-                    fontFamily: "var(--rf-mono)",
-                    fontSize: 11,
-                    fontWeight: 700,
-                    color: "#7DDCD8",
-                    letterSpacing: "0.18em",
-                    textTransform: "uppercase",
-                    marginBottom: 8,
-                  }}
-                >
-                  ◆ Side B
-                </div>
                 <div
                   style={{ fontSize: 13, fontWeight: 600, color: "rgba(250,246,238,0.85)" }}
                 >

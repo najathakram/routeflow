@@ -213,8 +213,11 @@ export default function LoginPage() {
   // like "RouteFlow Legacy" from appearing for tenants without custom branding.
   const hasCustomBranding = branding?.logoKey;
   const businessName = hasCustomBranding ? (branding?.businessName ?? "RouteFlow") : "RouteFlow";
+  // `apiUrl` already ends with `/api/v1`, so the upload path must NOT include
+  // another `/api/v1/` — that would produce a 404 broken-image. Other pages
+  // (buyer/invite, buyer/portal) correctly use `${apiUrl}/uploads/<key>`.
   const logoUrl = branding?.logoKey
-    ? `${apiUrl}/api/v1/uploads/${branding.logoKey}`
+    ? `${apiUrl}/uploads/${branding.logoKey}`
     : null;
 
   return (
