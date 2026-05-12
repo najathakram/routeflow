@@ -175,9 +175,18 @@ export default function LoginPage() {
   // `apiUrl` already ends with `/api/v1`, so the upload path must NOT include
   // another `/api/v1/` — that would produce a 404 broken-image. Other pages
   // (buyer/invite, buyer/portal) correctly use `${apiUrl}/uploads/<key>`.
-  const hasCustomBranding = branding?.logoKey;
-  const businessName = hasCustomBranding ? (branding?.businessName ?? "RouteFlow") : "RouteFlow";
-  const logoUrl = branding?.logoKey ? `${apiUrl}/uploads/${branding.logoKey}` : null;
+  //
+  // Tenant branding is ONLY applied on a tenant subdomain (e.g.
+  // `affa.routeflow.info/login`). On platform hosts (`www.routeflow.info`,
+  // `app.routeflow.info`, localhost) this is the generic RouteFlow entry
+  // point — operators here may be signing into any workspace. A stale
+  // tenant-slug cookie from a previous session would otherwise leak that
+  // tenant's name and logo onto the platform-level login screen.
+  const useTenantBranding = !!subdomainWorkspace && !!branding?.logoKey;
+  const businessName = useTenantBranding
+    ? (branding?.businessName ?? "RouteFlow")
+    : "RouteFlow";
+  const logoUrl = useTenantBranding ? `${apiUrl}/uploads/${branding!.logoKey}` : null;
 
   return (
     <div
