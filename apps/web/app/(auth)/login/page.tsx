@@ -226,37 +226,36 @@ export default function LoginPage() {
             <ArrowLeft className="h-3.5 w-3.5" /> Back to home
           </Link>
 
-          {/* Logo — dark-background variant. The shared `/logo.svg` asset is the
-              light-bg version (navy rounded square on cream), which disappears
-              against this panel's #0E1F36 gradient start. Mirroring the
-              marketing Logo component's `dark` swap (cream square + navy
-              accents) keeps the mark visible without shipping a second asset. */}
+          {/* RouteFlow LogoLoop — dark-background variant. The shared
+              /logo.svg asset is the light-bg version (ink + teal on transparent),
+              which would render with poor contrast against this panel's
+              #0E1F36 gradient. Cream arc + teal accent + cream-filled origin +
+              teal-ringed ink destination match the design's `dark` tone. */}
           <svg
             width={48}
             height={48}
-            viewBox="0 0 28 28"
+            viewBox="0 0 64 64"
             fill="none"
             aria-label="RouteFlow"
             role="img"
             className="mb-8"
           >
-            <rect width="28" height="28" rx="7" fill="#FAF6EE" />
             <path
-              d="M7 17 C 7 11, 11 7, 17 7"
-              stroke="#0E1F36"
-              strokeWidth="1.6"
+              d="M 14 14 C 40 10, 56 24, 50 50"
+              stroke="#FAF6EE"
+              strokeWidth="3.2"
               strokeLinecap="round"
               fill="none"
             />
             <path
-              d="M14 21 L 21 14"
-              stroke="#0E1F36"
-              strokeWidth="1.6"
+              d="M 14 14 C 8 40, 24 54, 50 50"
+              stroke="#14a39f"
+              strokeWidth="3.2"
               strokeLinecap="round"
               fill="none"
-              opacity="0.5"
             />
-            <circle cx="21" cy="7" r="3" fill="#14a39f" stroke="#FAF6EE" strokeWidth="1.5" />
+            <circle cx="14" cy="14" r="5.5" fill="#FAF6EE" />
+            <circle cx="50" cy="50" r="5.5" fill="#0E1F36" stroke="#14a39f" strokeWidth="3" />
           </svg>
 
           <h2

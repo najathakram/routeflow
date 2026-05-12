@@ -3,17 +3,41 @@ interface LogoProps {
   dark?: boolean;
 }
 
-// RouteFlow brand mark — inline SVG so the marketing chunk stays tiny.
+// RouteFlow brand mark — "LogoLoop". Two nodes joined by a leaf-shaped loop:
+// top arc = stock outbound (ink/cream), bottom arc = money return (teal).
+// Solid origin + ringed destination encode the bidirectional, two-sided rail
+// between wholesaler and retailer. Inline SVG so the marketing chunk stays
+// tiny. Tenant logos (uploaded via branding.logoKey) are unaffected — this
+// component only renders the RouteFlow brand mark.
 export function Logo({ size = 28, dark = false }: LogoProps) {
-  const fg = dark ? "#FAF6EE" : "#0E1F36";
-  const bg = dark ? "#FAF6EE" : "#0E1F36";
-  const ring = dark ? "#0E1F36" : "#FAF6EE";
+  const arc = dark ? "#FAF6EE" : "#0E1F36";
+  const accent = "#14a39f";
+  const origin = dark ? "#FAF6EE" : "#0E1F36";
+  const destFill = dark ? "#0E1F36" : "#FAF6EE";
   return (
-    <svg width={size} height={size} viewBox="0 0 28 28" fill="none" aria-hidden="true">
-      <rect width="28" height="28" rx="7" fill={bg} />
-      <path d="M7 17 C 7 11, 11 7, 17 7" stroke={ring} strokeWidth="1.6" strokeLinecap="round" fill="none" />
-      <path d="M14 21 L 21 14" stroke={ring} strokeWidth="1.6" strokeLinecap="round" fill="none" opacity="0.5" />
-      <circle cx="21" cy="7" r="3" fill="#14a39f" stroke={fg} strokeWidth="1.5" />
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 64 64"
+      fill="none"
+      aria-hidden="true"
+    >
+      <path
+        d="M 14 14 C 40 10, 56 24, 50 50"
+        stroke={arc}
+        strokeWidth="3.2"
+        strokeLinecap="round"
+        fill="none"
+      />
+      <path
+        d="M 14 14 C 8 40, 24 54, 50 50"
+        stroke={accent}
+        strokeWidth="3.2"
+        strokeLinecap="round"
+        fill="none"
+      />
+      <circle cx="14" cy="14" r="5.5" fill={origin} />
+      <circle cx="50" cy="50" r="5.5" fill={destFill} stroke={accent} strokeWidth="3" />
     </svg>
   );
 }

@@ -29,7 +29,9 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 1,
   userScalable: false,
-  themeColor: "#2563eb",
+  // Match the RouteFlow brand: ink (#0E1F36) for the iOS/Android status-bar
+  // tint. The old #2563eb pre-dated the cream/ink/teal palette.
+  themeColor: "#0E1F36",
 };
 
 export const metadata: Metadata = {

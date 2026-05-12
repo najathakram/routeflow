@@ -1,6 +1,9 @@
-<svg viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <rect width="28" height="28" rx="7" fill="#0E1F36"/>
-  <path d="M7 17 C 7 11, 11 7, 17 7" stroke="#FAF6EE" stroke-width="1.6" stroke-linecap="round" fill="none"/>
-  <path d="M14 21 L 21 14" stroke="#FAF6EE" stroke-width="1.6" stroke-linecap="round" fill="none" opacity="0.5"/>
-  <circle cx="21" cy="7" r="3" fill="#14a39f" stroke="#0E1F36" stroke-width="1.5"/>
+<svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="RouteFlow">
+  <!-- LogoLoop — two nodes joined by a leaf-shaped loop.
+       Top arc (ink): stock outbound. Bottom arc (teal): money return.
+       Origin = solid ink. Destination = cream ring with teal stroke. -->
+  <path d="M 14 14 C 40 10, 56 24, 50 50" stroke="#0E1F36" stroke-width="3.2" stroke-linecap="round" fill="none"/>
+  <path d="M 14 14 C 8 40, 24 54, 50 50" stroke="#14a39f" stroke-width="3.2" stroke-linecap="round" fill="none"/>
+  <circle cx="14" cy="14" r="5.5" fill="#0E1F36"/>
+  <circle cx="50" cy="50" r="5.5" fill="#FAF6EE" stroke="#14a39f" stroke-width="3"/>
 </svg>
