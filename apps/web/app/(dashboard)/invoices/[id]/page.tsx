@@ -7,6 +7,7 @@ import {
   Send,
   CreditCard,
   Download,
+  Printer,
   Copy,
   Ban,
   Loader2,
@@ -641,6 +642,47 @@ function DeletePaymentModal({
   );
 }
 
+// ─── No-email guard modal ─────────────────────────────────────────────────────
+
+function NoEmailModal({
+  isOpen,
+  onClose,
+  customerName,
+  onMarkSent,
+  onDownload,
+  onPrint,
+  isPending,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  customerName: string;
+  onMarkSent: () => void;
+  onDownload: () => void;
+  onPrint: () => void;
+  isPending: boolean;
+}) {
+  return (
+    <Modal
+      open={isOpen}
+      onClose={onClose}
+      title="No email on file"
+      description={`${customerName} has no email address saved. You can download or print the invoice to send it manually, or mark it as sent to update its status.`}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={isPending}>Cancel</Button>
+          <Button variant="secondary" leftIcon={<Printer className="h-4 w-4" />} onClick={onPrint} disabled={isPending}>Print</Button>
+          <Button variant="secondary" leftIcon={<Download className="h-4 w-4" />} onClick={onDownload} disabled={isPending}>Download PDF</Button>
+          <Button variant="primary" onClick={onMarkSent} loading={isPending}>Mark as Sent</Button>
+        </>
+      }
+    >
+      <p className="text-sm text-navy/70">
+        Add an email address to this customer&apos;s profile to send invoices by email in the future.
+      </p>
+    </Modal>
+  );
+}
+
 // ─── Action Toolbar Dropdown ──────────────────────────────────────────────────
 
 function DropdownMenu({
@@ -848,6 +890,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
   const [isWriteOffOpen, setIsWriteOffOpen] = React.useState(false);
   const [isRevertToDraftOpen, setIsRevertToDraftOpen] = React.useState(false);
   const [isUnvoidOpen, setIsUnvoidOpen] = React.useState(false);
+  const [isNoEmailOpen, setIsNoEmailOpen] = React.useState(false);
   const [editingPayment, setEditingPayment] = React.useState<InvoicePayment | null>(null);
   const [deletingPayment, setDeletingPayment] = React.useState<InvoicePayment | null>(null);
 
@@ -885,18 +928,13 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
   const canRecordPayment = status === "SENT" || status === "VIEWED" || status === "PARTIAL" || status === "OVERDUE";
   const canWriteOff = status === "SENT" || status === "VIEWED" || status === "PARTIAL" || status === "OVERDUE";
   const canVoid = status !== "PAID" && status !== "VOID" && status !== "WRITTEN_OFF";
-  const canDownloadPdf = status !== "DRAFT";
 
   // ── Action handlers ─────────────────────────────────────────────────────────
 
   const handleSend = () => {
     const customerEmail = invoice.customer?.email;
     if (!customerEmail) {
-      // No email on file — just mark as sent without emailing
-      sendInvoice.mutate(invoice.id, {
-        onSuccess: () => toast({ title: "Invoice marked as sent", description: "No customer email on file — status updated only.", variant: "success" }),
-        onError: (e) => toast({ title: "Failed", description: e.message, variant: "error" }),
-      });
+      setIsNoEmailOpen(true);
       return;
     }
     sendInvoiceEmail.mutate(
@@ -906,6 +944,36 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
         onError: (e: any) => toast({ title: "Failed to send email", description: e?.response?.data?.message || e.message, variant: "error" }),
       },
     );
+  };
+
+  const handleMarkAsSent = () => {
+    sendInvoice.mutate(invoice.id, {
+      onSuccess: () => {
+        setIsNoEmailOpen(false);
+        toast({ title: "Invoice marked as sent", description: "Status updated — no email was sent.", variant: "success" });
+      },
+      onError: (e) => toast({ title: "Failed", description: e.message, variant: "error" }),
+    });
+  };
+
+  const handlePrint = () => {
+    downloadPdf.mutate(invoice.id, {
+      onSuccess: ({ blob }) => {
+        const blobUrl = URL.createObjectURL(blob);
+        const iframe = document.createElement("iframe");
+        iframe.style.display = "none";
+        iframe.src = blobUrl;
+        document.body.appendChild(iframe);
+        iframe.onload = () => {
+          iframe.contentWindow?.print();
+          setTimeout(() => {
+            iframe.remove();
+            URL.revokeObjectURL(blobUrl);
+          }, 60_000);
+        };
+      },
+      onError: () => toast({ title: "Failed to generate PDF", description: "Please try again.", variant: "error" }),
+    });
   };
 
   const handleReminder = () => {
@@ -1114,18 +1182,27 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
             </Button>
           )}
 
-          {/* PDF/Print */}
-          {canDownloadPdf && (
-            <Button
-              size="sm"
-              variant="secondary"
-              leftIcon={<Download className="h-3.5 w-3.5" />}
-              onClick={handleDownloadPdf}
-              loading={downloadPdf.isPending}
-            >
-              PDF
-            </Button>
-          )}
+          {/* Print — always available */}
+          <Button
+            size="sm"
+            variant="secondary"
+            leftIcon={<Printer className="h-3.5 w-3.5" />}
+            onClick={handlePrint}
+            loading={downloadPdf.isPending}
+          >
+            Print
+          </Button>
+
+          {/* PDF Download — always available */}
+          <Button
+            size="sm"
+            variant="secondary"
+            leftIcon={<Download className="h-3.5 w-3.5" />}
+            onClick={handleDownloadPdf}
+            loading={downloadPdf.isPending}
+          >
+            PDF
+          </Button>
 
           {/* Revert to Draft — SENT/VIEWED/OVERDUE with no payments */}
           {(status === "SENT" || status === "VIEWED" || status === "OVERDUE") && amountPaid === 0 && (
@@ -1645,6 +1722,16 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
           Are you sure you want to unvoid this invoice? It will return to Draft status and can be edited and re-sent.
         </p>
       </Modal>
+
+      <NoEmailModal
+        isOpen={isNoEmailOpen}
+        onClose={() => setIsNoEmailOpen(false)}
+        customerName={invoice.customer?.businessName ?? "This customer"}
+        onMarkSent={handleMarkAsSent}
+        onDownload={() => { handleDownloadPdf(); setIsNoEmailOpen(false); }}
+        onPrint={() => { handlePrint(); setIsNoEmailOpen(false); }}
+        isPending={sendInvoice.isPending}
+      />
     </div>
   );
 }
