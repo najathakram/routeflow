@@ -24,7 +24,7 @@ import {
   useVoidInvoice,
 } from "../../../../lib/api/invoices";
 import { showToast } from "../../../../lib/toast";
-import { confirm } from "../../../../lib/confirm";
+import { confirm, chooseAction } from "../../../../lib/confirm";
 
 function fmtCurrency(n: number | string | undefined): string {
   const v = typeof n === "string" ? Number(n) : (n ?? 0);
@@ -91,8 +91,36 @@ export default function InvoiceDetailScreen() {
 
   const handleSend = () => {
     if (!id) return;
+    const customerEmail = invoice.customer?.email;
+    if (!customerEmail) {
+      chooseAction(
+        "No email on file",
+        `${invoice.customer?.businessName ?? "This customer"} has no email address saved. View the PDF to send it manually, or mark it as sent to update the status.`,
+        [
+          {
+            label: "Mark as Sent",
+            style: "default",
+            onPress: () =>
+              sendMut.mutate(
+                { id },
+                {
+                  onSuccess: () => {
+                    showToast("Invoice marked as sent");
+                    refetch();
+                  },
+                  onError: (e: any) =>
+                    showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+                },
+              ),
+          },
+          { label: "View PDF", style: "default", onPress: handlePdf },
+          { label: "Cancel", style: "cancel" },
+        ],
+      );
+      return;
+    }
     sendMut.mutate(
-      { id },
+      { id, email: customerEmail },
       {
         onSuccess: () => {
           showToast("Invoice sent");
