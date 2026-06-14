@@ -255,7 +255,7 @@ export interface AdminInvoice {
   paidAmount?: number;
   isOverdue?: boolean;
   createdAt: string;
-  customer?: { id: string; businessName: string };
+  customer?: { id: string; businessName: string; email?: string };
   payments?: Array<{
     id: string;
     amount: number;
