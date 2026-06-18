@@ -73,6 +73,10 @@ backups/
 
 # ─── Claude Code internals ───────────────────────────────────────────────────
 .claude/worktrees/
+.claude/scheduled_tasks.lock
+
+# ─── Security audit report (lists unfixed vulns; repo goes public for CI) ────
+SECURITY_AUDIT.md
 
 # ─── QA / audit manifests (ephemeral, contain production IDs) ───────────────
 apps/api/scripts/*-manifest-*.json

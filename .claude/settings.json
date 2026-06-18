@@ -23,5 +23,18 @@
       "WebFetch",
       "Bash(tasklist *)"
     ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [{ "type": "command", "command": "node .claude/hooks/post_tool_use.mjs" }]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [{ "type": "command", "command": "node .claude/hooks/stop.mjs" }]
+      }
+    ]
   }
 }
