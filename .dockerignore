@@ -1,0 +1,13 @@
+# Build artifacts and deps are installed/produced inside the image — never ship
+# the host copies into the build context (huge, and wrong-platform binaries).
+**/node_modules
+**/.next
+**/dist
+**/.expo
+**/.turbo
+**/coverage
+**/playwright-report
+**/test-results
+.git
+.github
+**/*.log
