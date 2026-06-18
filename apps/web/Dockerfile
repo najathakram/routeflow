@@ -25,6 +25,16 @@ COPY apps/web/package.json apps/web/
 # installed automatically by Next.js; the Windows artifact is simply skipped.
 RUN npm install --force
 
+# Pin React 18 at the image root for this web-only build.
+# apps/mobile pins React 19 (RN 0.83), which npm hoists to /app/node_modules,
+# leaving web's react@18 / react-dom@18 nested under apps/web. The hoisted
+# `next` then resolves the wrong React (19) and can't find react-dom at all,
+# failing the build with "Cannot find module 'react-dom/server.browser'".
+# Installing web's React 18 at the root (no --save: the shared lockfile/
+# manifests are untouched, and api/mobile builds are unaffected) makes
+# `next build` resolve a consistent React 18 runtime.
+RUN npm install --force --no-save react@18.3.1 react-dom@18.3.1
+
 # ── Copy full source ──
 COPY packages/ packages/
 COPY apps/web/ apps/web/
