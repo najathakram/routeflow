@@ -275,7 +275,7 @@ function ArAgingReport({
       </div>
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b border-surface-border bg-navy text-white">
+          <tr className="border-b border-surface-border bg-gray-50 text-navy/70">
             <th className="px-4 py-3 text-left text-xs font-semibold uppercase">Customer</th>
             {colDefs.map((c) => (
               <th key={c.key} className="px-4 py-3 text-right text-xs font-semibold uppercase">
@@ -400,7 +400,7 @@ function SalesByCustomerReport({
       )}
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b border-surface-border bg-navy text-white">
+          <tr className="border-b border-surface-border bg-gray-50 text-navy/70">
             <th className="px-4 py-3 text-left text-xs font-semibold uppercase">Customer</th>
             <th className="px-4 py-3 text-right text-xs font-semibold uppercase">Invoices</th>
             <th className="px-4 py-3 text-right text-xs font-semibold uppercase">Sales Amount</th>
@@ -494,7 +494,7 @@ function SalesByItemReport({ from, to }: { from?: string; to?: string }) {
       )}
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b border-surface-border bg-navy text-white">
+          <tr className="border-b border-surface-border bg-gray-50 text-navy/70">
             <th className="px-4 py-3 text-left text-xs font-semibold uppercase">Item / Product</th>
             <th className="px-4 py-3 text-right text-xs font-semibold uppercase">Qty Sold</th>
             <th className="px-4 py-3 text-right text-xs font-semibold uppercase">Sales Amount</th>
@@ -588,7 +588,7 @@ function SalesByDriverReport({ from, to }: { from?: string; to?: string }) {
       )}
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b border-surface-border bg-navy text-white">
+          <tr className="border-b border-surface-border bg-gray-50 text-navy/70">
             <th className="px-4 py-3 text-left text-xs font-semibold uppercase">Driver Name</th>
             <th className="px-4 py-3 text-right text-xs font-semibold uppercase">Invoice Count</th>
             <th className="px-4 py-3 text-right text-xs font-semibold uppercase">Sales</th>
@@ -691,7 +691,7 @@ function InvoiceDetailsReport({
       </div>
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b border-surface-border bg-navy text-white">
+          <tr className="border-b border-surface-border bg-gray-50 text-navy/70">
             <th className="px-4 py-3 text-left text-xs font-semibold uppercase">Date</th>
             <th className="px-4 py-3 text-left text-xs font-semibold uppercase">Invoice #</th>
             <th className="px-4 py-3 text-left text-xs font-semibold uppercase">Customer</th>
@@ -750,7 +750,7 @@ function BadDebtsReport() {
   return (
     <table className="w-full text-sm">
       <thead>
-        <tr className="border-b border-surface-border bg-navy text-white">
+        <tr className="border-b border-surface-border bg-gray-50 text-navy/70">
           <th className="px-4 py-3 text-left text-xs font-semibold uppercase">Invoice #</th>
           <th className="px-4 py-3 text-left text-xs font-semibold uppercase">Customer</th>
           <th className="px-4 py-3 text-left text-xs font-semibold uppercase">Written Off</th>
@@ -882,7 +882,7 @@ function CustomerBalanceReport({
       )}
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b border-surface-border bg-navy text-white">
+          <tr className="border-b border-surface-border bg-gray-50 text-navy/70">
             <th className="px-4 py-3 text-left text-xs font-semibold uppercase">Customer</th>
             <th className="px-4 py-3 text-right text-xs font-semibold uppercase">Open Invoices</th>
             <th className="px-4 py-3 text-right text-xs font-semibold uppercase">Outstanding</th>
@@ -964,7 +964,7 @@ function ArAgingDetailsReport({
   return (
     <table className="w-full text-sm">
       <thead>
-        <tr className="border-b border-surface-border bg-navy text-white">
+        <tr className="border-b border-surface-border bg-gray-50 text-navy/70">
           <th className="px-4 py-3 text-left text-xs font-semibold uppercase">Date</th>
           <th className="px-4 py-3 text-left text-xs font-semibold uppercase">Due Date</th>
           <th className="px-4 py-3 text-left text-xs font-semibold uppercase">Invoice #</th>
@@ -1064,7 +1064,7 @@ function EstimateDetailsReport({ from, to }: { from?: string; to?: string }) {
       </div>
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b border-surface-border bg-navy text-white">
+          <tr className="border-b border-surface-border bg-gray-50 text-navy/70">
             <th className="px-4 py-3 text-left text-xs font-semibold uppercase">Status</th>
             <th className="px-4 py-3 text-left text-xs font-semibold uppercase">Date</th>
             <th className="px-4 py-3 text-left text-xs font-semibold uppercase">Expiry</th>
@@ -1144,7 +1144,7 @@ function RefundHistoryReport({ from, to }: { from?: string; to?: string }) {
       )}
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b border-surface-border bg-navy text-white">
+          <tr className="border-b border-surface-border bg-gray-50 text-navy/70">
             <th className="px-4 py-3 text-left text-xs font-semibold uppercase">Date</th>
             <th className="px-4 py-3 text-left text-xs font-semibold uppercase">Reference</th>
             <th className="px-4 py-3 text-left text-xs font-semibold uppercase">Customer</th>
@@ -1199,7 +1199,7 @@ function ReceivableSummaryReport({ from, to }: { from?: string; to?: string }) {
   return (
     <table className="w-full text-sm">
       <thead>
-        <tr className="border-b border-surface-border bg-navy text-white">
+        <tr className="border-b border-surface-border bg-gray-50 text-navy/70">
           <th className="px-4 py-3 text-left text-xs font-semibold uppercase">Customer</th>
           <th className="px-4 py-3 text-left text-xs font-semibold uppercase">Date</th>
           <th className="px-4 py-3 text-left text-xs font-semibold uppercase">Txn #</th>
@@ -1281,7 +1281,7 @@ function PaymentsReceivedReport({ from, to }: { from?: string; to?: string }) {
       )}
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b border-surface-border bg-navy text-white">
+          <tr className="border-b border-surface-border bg-gray-50 text-navy/70">
             <th className="px-4 py-3 text-left text-xs font-semibold uppercase">Date</th>
             <th className="px-4 py-3 text-left text-xs font-semibold uppercase">Invoice #</th>
             <th className="px-4 py-3 text-left text-xs font-semibold uppercase">Customer</th>
@@ -1407,7 +1407,7 @@ function TimeToGetPaidReport({ from, to }: { from?: string; to?: string }) {
       )}
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b border-surface-border bg-navy text-white">
+          <tr className="border-b border-surface-border bg-gray-50 text-navy/70">
             <th className="px-4 py-3 text-left text-xs font-semibold uppercase">Invoice #</th>
             <th className="px-4 py-3 text-left text-xs font-semibold uppercase">Customer</th>
             <th className="px-4 py-3 text-left text-xs font-semibold uppercase">Issued</th>
@@ -1483,7 +1483,7 @@ function ExpenseDetailsReport({
       )}
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b border-surface-border bg-navy text-white">
+          <tr className="border-b border-surface-border bg-gray-50 text-navy/70">
             <th className="px-4 py-3 text-left text-xs font-semibold uppercase">Date</th>
             <th className="px-4 py-3 text-left text-xs font-semibold uppercase">Category</th>
             <th className="px-4 py-3 text-left text-xs font-semibold uppercase">Supplier</th>
@@ -1573,7 +1573,7 @@ function ExpensesByCategoryReport({
       )}
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b border-surface-border bg-navy text-white">
+          <tr className="border-b border-surface-border bg-gray-50 text-navy/70">
             <th className="px-4 py-3 text-left text-xs font-semibold uppercase">Category</th>
             <th className="px-4 py-3 text-right text-xs font-semibold uppercase">Count</th>
             <th className="px-4 py-3 text-right text-xs font-semibold uppercase">Total</th>
@@ -1677,7 +1677,7 @@ function ExpensesByCustomerReport({ from, to }: { from?: string; to?: string }) 
       )}
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b border-surface-border bg-navy text-white">
+          <tr className="border-b border-surface-border bg-gray-50 text-navy/70">
             <th className="px-4 py-3 text-left text-xs font-semibold uppercase">Customer</th>
             <th className="px-4 py-3 text-right text-xs font-semibold uppercase">Count</th>
             <th className="px-4 py-3 text-right text-xs font-semibold uppercase">Total Amount</th>
@@ -1764,7 +1764,7 @@ function ProfitLossReport({ from, to }: { from?: string; to?: string }) {
       <div className="rounded-xl border border-surface-border bg-white overflow-hidden">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-surface-border bg-navy text-white">
+            <tr className="border-b border-surface-border bg-gray-50 text-navy/70">
               <th className="px-4 py-3 text-left text-xs font-semibold uppercase" colSpan={2}>
                 Profit &amp; Loss Statement
               </th>
@@ -2012,7 +2012,7 @@ function LedgerReport() {
       ) : (
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-surface-border bg-navy text-white">
+            <tr className="border-b border-surface-border bg-gray-50 text-navy/70">
               <th className="px-4 py-3 text-left text-xs font-semibold uppercase">Invoice #</th>
               <th className="px-4 py-3 text-left text-xs font-semibold uppercase">Customer</th>
               <th className="px-4 py-3 text-left text-xs font-semibold uppercase">Date</th>

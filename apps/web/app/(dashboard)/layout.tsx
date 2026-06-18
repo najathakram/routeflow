@@ -99,9 +99,11 @@ const OPERATOR_NAV: NavEntry[] = [
       { kind: "leaf", label: "Payments", href: "/finance/payments", icon: CreditCard },
       { kind: "leaf", label: "Expenses", href: "/finance/expenses", icon: ShoppingBag },
       { kind: "leaf", label: "Reports", href: "/finance/reports", icon: BarChart3 },
-      { kind: "leaf", label: "Analytics", href: "/analytics", icon: BarChart2 },
     ],
   },
+  // Analytics is app-wide (Revenue, Products & Inventory, Customers, Operations),
+  // so it lives at top level rather than nested under Finance.
+  { kind: "leaf", label: "Analytics", href: "/analytics", icon: BarChart2 },
   { kind: "leaf", label: "Settings", href: "/settings", icon: Settings },
 ];
 
