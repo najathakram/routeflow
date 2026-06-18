@@ -10,7 +10,7 @@ import { usePodStore } from "../../../../../store/podStore";
 export default function StopNoteScreen() {
   const router = useRouter();
   const { stopId } = useLocalSearchParams<{ stopId: string }>();
-  const stored = usePodStore((s) => (stopId ? s.pods[stopId]?.note ?? "" : ""));
+  const stored = usePodStore((s) => (stopId ? (s.pods[stopId]?.note ?? "") : ""));
   const setNote = usePodStore((s) => s.setNote);
   const [text, setText] = useState(stored);
 
@@ -36,8 +36,8 @@ export default function StopNoteScreen() {
       />
       <View style={{ padding: 16, gap: 12 }}>
         <Text style={styles.help}>
-          Anything operations should know about this stop — left at side door, customer not
-          home, etc.
+          Anything operations should know about this stop — left at side door, customer not home,
+          etc.
         </Text>
         <FormField label="Note">
           <FormTextInput

@@ -5,7 +5,16 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Eye, Play, Calendar, CheckSquare, X, Trash2, Pencil, Ban } from "lucide-react";
-import { PageHeader, Badge, Table, Button, Modal, useToast, cn } from "@routeflow/ui/web";
+import {
+  PageHeader,
+  Badge,
+  Table,
+  Button,
+  Modal,
+  useToast,
+  cn,
+  EmptyState,
+} from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import {
   useRoutes,
@@ -38,7 +47,7 @@ function ProgressBar({ done, total }: { done: number; total: number }) {
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
   return (
     <div className="space-y-1">
-      <div className="flex justify-between text-xs text-navy/60">
+      <div className="flex justify-between text-xs text-navy/70">
         <span>
           {done} of {total} stops
         </span>
@@ -204,14 +213,14 @@ function useTemplateColumns(
             <Link
               href={`/routes/templates/${row.original.id}`}
               title="View template"
-              className="rounded p-1.5 text-navy/40 hover:bg-surface-raised hover:text-navy transition-colors"
+              className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
             >
               <Eye className="h-4 w-4" />
             </Link>
             <button
               title="Dispatch run"
               onClick={() => onDispatch(row.original.id)}
-              className="rounded p-1.5 text-navy/40 hover:bg-surface-raised hover:text-success transition-colors"
+              className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-success transition-colors"
             >
               <Play className="h-4 w-4" />
             </button>
@@ -453,7 +462,9 @@ export default function RoutesPage() {
             <span className="text-sm text-danger">Failed to load data. Please try refreshing.</span>
           </div>
         ) : activeRuns.length === 0 ? (
-          <p className="text-sm text-navy/50">No active runs. Dispatch a template below to start one.</p>
+          <p className="text-sm text-navy/70">
+            No active runs. Dispatch a template below to start one.
+          </p>
         ) : (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {activeRuns.map((run) => {
@@ -491,12 +502,12 @@ export default function RoutesPage() {
                   <div className="flex items-start justify-between gap-2">
                     <div>
                       <p className="font-semibold text-navy">{routeName}</p>
-                      <p className="mt-0.5 text-sm text-navy/60">{driverName}</p>
+                      <p className="mt-0.5 text-sm text-navy/70">{driverName}</p>
                     </div>
                     {statusBadge(run.status)}
                   </div>
                   <ProgressBar done={done} total={total} />
-                  <div className="flex items-center justify-between text-xs text-navy/50">
+                  <div className="flex items-center justify-between text-xs text-navy/70">
                     {scheduledLabel && <span>Scheduled {scheduledLabel}</span>}
                     {startTime && <span>Started {startTime}</span>}
                     {endTime && <span>Finished {endTime}</span>}
@@ -567,7 +578,7 @@ export default function RoutesPage() {
                 }}
                 className="h-4 w-4 cursor-pointer rounded border-navy/30 accent-brand-500"
               />
-              <span className="text-sm text-navy/60">Select all</span>
+              <span className="text-sm text-navy/70">Select all</span>
             </label>
           )}
         </div>
@@ -581,7 +592,7 @@ export default function RoutesPage() {
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setSelected(new Set())}
-                className="text-sm text-navy/50 hover:text-navy transition-colors"
+                className="text-sm text-navy/70 hover:text-navy transition-colors"
               >
                 Deselect all
               </button>
@@ -611,6 +622,14 @@ export default function RoutesPage() {
               if (selectMode) toggleSelect(row.original.id);
               else router.push(`/routes/templates/${row.original.id}`);
             }}
+            emptyState={
+              <EmptyState
+                variant="routes"
+                size={56}
+                title="No route templates yet"
+                description="Create a route template to plan stops and dispatch runs to drivers."
+              />
+            }
           />
         )}
       </section>

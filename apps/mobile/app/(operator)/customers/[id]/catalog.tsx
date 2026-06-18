@@ -63,11 +63,7 @@ function EditTierOverrideModal({
     const q = productSearch.trim().toLowerCase();
     if (!q) return allProducts.slice(0, 20);
     return allProducts
-      .filter(
-        (p) =>
-          p.name.toLowerCase().includes(q) ||
-          (p.sku ?? "").toLowerCase().includes(q),
-      )
+      .filter((p) => p.name.toLowerCase().includes(q) || (p.sku ?? "").toLowerCase().includes(q))
       .slice(0, 20);
   }, [allProducts, productSearch]);
 
@@ -163,9 +159,7 @@ function EditTierOverrideModal({
                       {t}
                     </Text>
                     {price != null ? (
-                      <Text
-                        style={[styles.tierBtnPrice, active && styles.tierBtnPriceActive]}
-                      >
+                      <Text style={[styles.tierBtnPrice, active && styles.tierBtnPriceActive]}>
                         {fmt(price)}
                       </Text>
                     ) : null}
@@ -176,9 +170,7 @@ function EditTierOverrideModal({
             {selectedProduct ? (
               <Text style={styles.tierHint}>
                 Price at Tier {tier}:{" "}
-                <Text style={styles.tierHintPrice}>
-                  {fmt(getTierPrice(selectedProduct, tier))}
-                </Text>
+                <Text style={styles.tierHintPrice}>{fmt(getTierPrice(selectedProduct, tier))}</Text>
               </Text>
             ) : null}
           </View>
@@ -205,9 +197,7 @@ function EditTierOverrideModal({
               onPress={save}
               disabled={upsert.isPending || !productId}
             >
-              <Text style={styles.modalBtnSaveText}>
-                {upsert.isPending ? "Saving…" : "Save"}
-              </Text>
+              <Text style={styles.modalBtnSaveText}>{upsert.isPending ? "Saving…" : "Save"}</Text>
             </Pressable>
           </View>
         </View>
@@ -269,8 +259,8 @@ export default function CustomerCatalogScreen() {
           <View style={styles.hint}>
             <Ionicons name="information-circle-outline" size={14} color={ios.label2} />
             <Text style={styles.hintText}>
-              Override the pricing tier for specific products for this customer. Only
-              assigned overrides are listed.
+              Override the pricing tier for specific products for this customer. Only assigned
+              overrides are listed.
             </Text>
           </View>
 

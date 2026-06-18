@@ -12,18 +12,9 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
-import {
-  FilterChipRow,
-  NavBackButton,
-  NavBar,
-  Pill,
-} from "@routeflow/ui/mobile/ios";
+import { FilterChipRow, NavBackButton, NavBar, Pill } from "@routeflow/ui/mobile/ios";
 import { useAdminReturns, type AdminReturn } from "../../../lib/api/admin";
-import {
-  useApproveReturn,
-  useReceiveReturn,
-  useRejectReturn,
-} from "../../../lib/api/returns";
+import { useApproveReturn, useReceiveReturn, useRejectReturn } from "../../../lib/api/returns";
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
 
@@ -76,19 +67,20 @@ export default function ReturnsListScreen() {
         showToast("Return approved");
         refetch();
       },
-      onError: (e: any) =>
-        showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+      onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
     });
   const reject = (id: string) =>
-    confirm("Reject return?", "The return will be cancelled.", () =>
-      rejectMut.mutate(id, {
-        onSuccess: () => {
-          showToast("Return rejected");
-          refetch();
-        },
-        onError: (e: any) =>
-          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
-      }),
+    confirm(
+      "Reject return?",
+      "The return will be cancelled.",
+      () =>
+        rejectMut.mutate(id, {
+          onSuccess: () => {
+            showToast("Return rejected");
+            refetch();
+          },
+          onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        }),
       { confirmText: "Reject", destructive: true },
     );
   const receive = (id: string) =>
@@ -97,8 +89,7 @@ export default function ReturnsListScreen() {
         showToast("Marked received");
         refetch();
       },
-      onError: (e: any) =>
-        showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+      onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
     });
 
   return (
@@ -182,8 +173,10 @@ function ReturnRow({
           {r.items.map((i) => `${i.qty} × ${i.product?.name ?? "Item"}`).join(" · ")}
         </Text>
       ) : null}
-      {r.reason ? <Text style={styles.reason}>{r.reason.replace(/_/g, " ").toLowerCase()}</Text> : null}
-      {(isPending || isApproved) ? (
+      {r.reason ? (
+        <Text style={styles.reason}>{r.reason.replace(/_/g, " ").toLowerCase()}</Text>
+      ) : null}
+      {isPending || isApproved ? (
         <View style={styles.actions}>
           {isPending ? (
             <>
@@ -217,7 +210,13 @@ const styles = StyleSheet.create({
   title: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: ios.label },
   sub: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
   itemList: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label, marginTop: 4 },
-  reason: { fontSize: 12, fontFamily: "Inter_500Medium", color: ios.label2, marginTop: 2, textTransform: "capitalize" },
+  reason: {
+    fontSize: 12,
+    fontFamily: "Inter_500Medium",
+    color: ios.label2,
+    marginTop: 2,
+    textTransform: "capitalize",
+  },
   actions: { flexDirection: "row", gap: 8, marginTop: 8 },
   btn: {
     flex: 1,

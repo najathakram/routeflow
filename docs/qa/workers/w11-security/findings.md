@@ -15,6 +15,7 @@ Seven high-severity findings identified. The most critical is a **privilege esca
 ## Findings
 
 ### W11-001 — Any user can self-promote to OPERATOR via PATCH /users/:id (mass assignment)
+
 - **Severity:** P0
 - **File:** `apps/api/src/users/dto/update-user.dto.ts:7`, `apps/api/src/users/users.service.ts`
 - **Issue:** `UpdateUserDto` contains `@IsOptional() @IsEnum(UserRole) role?: UserRole`. The same DTO is used for both admin-editing a user and self-editing. `users.service.ts::update()` passes the DTO directly to Prisma without stripping the `role` field for non-admin callers. Any authenticated user who knows their own user ID can call `PATCH /users/:id` with `{"role": "OPERATOR"}` and gain operator privileges instantly.
@@ -33,6 +34,7 @@ Seven high-severity findings identified. The most critical is a **privilege esca
 ---
 
 ### W11-002 — GET /returns/:id exposes any return to any CUSTOMER (IDOR)
+
 - **Severity:** P1
 - **File:** `apps/api/src/returns/returns.controller.ts:44-48`
 - **Issue:** `GET /returns/:id` fetches the return by ID with a tenant check (`forTenant()`) but no ownership check for CUSTOMER role. A customer with a valid JWT can enumerate return IDs and read returns belonging to other customers in the same tenant.
@@ -47,6 +49,7 @@ Seven high-severity findings identified. The most critical is a **privilege esca
 ---
 
 ### W11-003 — POST /returns/:id/cancel has no ownership check for CUSTOMER role
+
 - **Severity:** P1
 - **File:** `apps/api/src/returns/returns.controller.ts` (cancel endpoint)
 - **Issue:** Same pattern as W11-002 — tenant isolation but no ownership enforcement. A customer can cancel another customer's return by ID.
@@ -56,6 +59,7 @@ Seven high-severity findings identified. The most critical is a **privilege esca
 ---
 
 ### W11-004 — GET /customers/:id is accessible by DRIVER role, returns full customer PII
+
 - **Severity:** P1
 - **File:** `apps/api/src/customers/customers.controller.ts:150-153`
 - **Issue:** `GET /customers/:id` allows `[OPERATOR, DRIVER]` roles. The response includes full customer PII: email, phone, full address, credit terms, balance, all order history. Drivers need to see delivery address for their current stop, but should not see billing info, credit balance, or contact details of customers not on their current route.
@@ -66,6 +70,7 @@ Seven high-severity findings identified. The most critical is a **privilege esca
 ---
 
 ### W11-005 — UpdateUserDto role field present in self-update path (same root as W11-001)
+
 - **Severity:** P1
 - **File:** `apps/api/src/users/dto/update-user.dto.ts`
 - **Issue:** Separate from the controller-level issue — even if controller is fixed, the DTO's role field being `@IsOptional()` (not `@IsNotAllowed()` or absent) means any future route reuse could re-introduce the vulnerability. The fix must be at the DTO level.
@@ -74,6 +79,7 @@ Seven high-severity findings identified. The most critical is a **privilege esca
 ---
 
 ### W11-006 — GET /orders/:id accessible by DRIVER with no route-assignment check
+
 - **Severity:** P2
 - **File:** `apps/api/src/orders/orders.controller.ts`
 - **Issue:** `GET /orders/:id` allows DRIVER role. The service filters by tenantId but does not verify that the order belongs to a stop on a run currently assigned to this driver. Drivers can read all orders in the tenant.
@@ -82,6 +88,7 @@ Seven high-severity findings identified. The most critical is a **privilege esca
 ---
 
 ### W11-007 — No rate limiting on auth endpoints
+
 - **Severity:** P2
 - **File:** `apps/api/src/auth/auth.controller.ts`
 - **Issue:** `POST /auth/login` and `POST /auth/register` have no rate limiting or account lockout. An attacker can brute-force passwords without restriction.
@@ -91,6 +98,7 @@ Seven high-severity findings identified. The most critical is a **privilege esca
 ---
 
 ### W11-008 — GET /public/places/config returns Google Maps API key unauthenticated
+
 - **Severity:** P2
 - **File:** `apps/api/src/public/public-places.controller.ts:34-39`
 - **Issue:** `GET /public/places/config` is a public (no auth) endpoint that returns the server's Google Maps API key to any caller. The key is intended for the mobile app's autocomplete, but being unauthenticated means any script can harvest it and use it for billing abuse.
@@ -100,6 +108,7 @@ Seven high-severity findings identified. The most critical is a **privilege esca
 ---
 
 ### W11-009 — JWT payload contains tenantId and role — no re-verification on sensitive writes
+
 - **Severity:** P2
 - **Note:** The JWT carries both `tenantId` and `role`. If a token is compromised, the server trusts the embedded role until expiry. There is no server-side session revocation. This is a design-level risk rather than a code bug, but should be flagged for the threat model.
 - **Fix:** Ensure JWT expiry is short (≤15 min) with refresh tokens, or add a server-side token blacklist on role change.
@@ -108,14 +117,14 @@ Seven high-severity findings identified. The most critical is a **privilege esca
 
 ## Summary Table
 
-| ID | Severity | Title |
-|----|----------|-------|
-| W11-001 | P0 | Any user can self-promote to OPERATOR via PATCH /users/:id |
-| W11-002 | P1 | GET /returns/:id — no ownership check for CUSTOMER role |
-| W11-003 | P1 | POST /returns/:id/cancel — no ownership check |
-| W11-004 | P1 | GET /customers/:id returns full PII to DRIVER role |
-| W11-005 | P1 | UpdateUserDto role field in self-update path |
-| W11-006 | P2 | GET /orders/:id accessible by DRIVER without route-assignment check |
-| W11-007 | P2 | No rate limiting on auth endpoints |
-| W11-008 | P2 | GET /public/places/config leaks Google Maps API key unauthenticated |
-| W11-009 | P2 | JWT role not re-verified server-side on role change |
+| ID      | Severity | Title                                                               |
+| ------- | -------- | ------------------------------------------------------------------- |
+| W11-001 | P0       | Any user can self-promote to OPERATOR via PATCH /users/:id          |
+| W11-002 | P1       | GET /returns/:id — no ownership check for CUSTOMER role             |
+| W11-003 | P1       | POST /returns/:id/cancel — no ownership check                       |
+| W11-004 | P1       | GET /customers/:id returns full PII to DRIVER role                  |
+| W11-005 | P1       | UpdateUserDto role field in self-update path                        |
+| W11-006 | P2       | GET /orders/:id accessible by DRIVER without route-assignment check |
+| W11-007 | P2       | No rate limiting on auth endpoints                                  |
+| W11-008 | P2       | GET /public/places/config leaks Google Maps API key unauthenticated |
+| W11-009 | P2       | JWT role not re-verified server-side on role change                 |

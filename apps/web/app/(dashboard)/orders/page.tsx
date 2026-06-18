@@ -2,8 +2,20 @@
 
 import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { AlertTriangle, Eye, Loader2, Calendar, X, CheckSquare, Trash2, ChevronUp, ChevronDown, ChevronsUpDown, Download } from "lucide-react";
-import { PageHeader, Badge, Select, Button, cn, useToast } from "@routeflow/ui/web";
+import {
+  AlertTriangle,
+  Eye,
+  Loader2,
+  Calendar,
+  X,
+  CheckSquare,
+  Trash2,
+  ChevronUp,
+  ChevronDown,
+  ChevronsUpDown,
+  Download,
+} from "lucide-react";
+import { PageHeader, Badge, Select, Button, cn, useToast, EmptyState } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useOrders, useUpdateOrderStatus, useBulkDeleteOrders, type Order } from "@/lib/api/orders";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
@@ -14,13 +26,13 @@ import { CreateOrderModal } from "./_components/CreateOrderModal";
 // ─── Saved view definitions ───────────────────────────────────────────────────
 
 const SAVED_VIEWS = [
-  { id: "all",      label: "All",              filters: {} as Record<string, string | boolean> },
-  { id: "pending",  label: "Pending",           filters: { status: "PENDING" } },
-  { id: "confirmed",label: "Confirmed",         filters: { status: "CONFIRMED" } },
-  { id: "delivery", label: "Out for Delivery",  filters: { status: "OUT_FOR_DELIVERY" } },
-  { id: "urgent",   label: "Urgent",            filters: { urgent: true } },
-  { id: "delivered",label: "Delivered",         filters: { status: "DELIVERED" } },
-  { id: "cancelled",label: "Cancelled",         filters: { status: "CANCELLED" } },
+  { id: "all", label: "All", filters: {} as Record<string, string | boolean> },
+  { id: "pending", label: "Pending", filters: { status: "PENDING" } },
+  { id: "confirmed", label: "Confirmed", filters: { status: "CONFIRMED" } },
+  { id: "delivery", label: "Out for Delivery", filters: { status: "OUT_FOR_DELIVERY" } },
+  { id: "urgent", label: "Urgent", filters: { urgent: true } },
+  { id: "delivered", label: "Delivered", filters: { status: "DELIVERED" } },
+  { id: "cancelled", label: "Cancelled", filters: { status: "CANCELLED" } },
 ];
 
 // ─── Status filter options ────────────────────────────────────────────────────
@@ -42,16 +54,21 @@ export default function OrdersPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { setTitle } = usePageTitle();
-  React.useEffect(() => { setTitle("Orders"); }, [setTitle]);
+  React.useEffect(() => {
+    setTitle("Orders");
+  }, [setTitle]);
 
   // URL-backed filter state
   const [urlFilters, setFilter, clearFilters] = useUrlFilters({
-    status: "", urgent: false, dateFrom: "", dateTo: "",
+    status: "",
+    urgent: false,
+    dateFrom: "",
+    dateTo: "",
   });
   const statusFilter = (urlFilters.status as string) ?? "";
-  const urgentOnly   = (urlFilters.urgent as boolean) ?? false;
-  const dateFrom     = (urlFilters.dateFrom as string) ?? "";
-  const dateTo       = (urlFilters.dateTo as string) ?? "";
+  const urgentOnly = (urlFilters.urgent as boolean) ?? false;
+  const dateFrom = (urlFilters.dateFrom as string) ?? "";
+  const dateTo = (urlFilters.dateTo as string) ?? "";
 
   // Customer search stays local (too transient for URL)
   const [customerSearch, setCustomerSearch] = React.useState("");
@@ -76,30 +93,48 @@ export default function OrdersPage() {
 
   const toggleSort = (col: string) => {
     if (sortCol === col) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    else { setSortCol(col); setSortDir("asc"); }
+    else {
+      setSortCol(col);
+      setSortDir("asc");
+    }
   };
 
   const SortIcon = ({ col }: { col: string }) => {
     if (sortCol !== col) return <ChevronsUpDown className="h-3 w-3 ml-0.5 text-navy/30 inline" />;
-    return sortDir === "asc" ? <ChevronUp className="h-3 w-3 ml-0.5 inline" /> : <ChevronDown className="h-3 w-3 ml-0.5 inline" />;
+    return sortDir === "asc" ? (
+      <ChevronUp className="h-3 w-3 ml-0.5 inline" />
+    ) : (
+      <ChevronDown className="h-3 w-3 ml-0.5 inline" />
+    );
   };
   const { toast } = useToast();
   const updateStatus = useUpdateOrderStatus();
   const bulkDelete = useBulkDeleteOrders();
 
   const toggleSelect = (id: string) =>
-    setSelected((prev) => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
 
-  const exitSelectMode = () => { setSelectMode(false); setSelected(new Set()); setDeleteConfirm(false); };
+  const exitSelectMode = () => {
+    setSelectMode(false);
+    setSelected(new Set());
+    setDeleteConfirm(false);
+  };
 
   const handleBulkCancel = async () => {
     if (isCancelling) return;
     setIsCancelling(true);
     try {
-      await Promise.all(Array.from(selected).map((id) =>
-        updateStatus.mutateAsync({ id, status: "CANCELLED" }),
-      ));
-      toast({ title: `${selected.size} order${selected.size !== 1 ? "s" : ""} cancelled`, variant: "success" });
+      await Promise.all(
+        Array.from(selected).map((id) => updateStatus.mutateAsync({ id, status: "CANCELLED" })),
+      );
+      toast({
+        title: `${selected.size} order${selected.size !== 1 ? "s" : ""} cancelled`,
+        variant: "success",
+      });
       exitSelectMode();
     } catch {
       toast({ title: "Failed to cancel some orders", variant: "error" });
@@ -114,9 +149,15 @@ export default function OrdersPage() {
     try {
       const result = await bulkDelete.mutateAsync(Array.from(selected));
       if (result.errors.length > 0) {
-        toast({ title: `${result.deleted} deleted, ${result.errors.length} failed (only PENDING/CANCELLED orders can be deleted)`, variant: "error" });
+        toast({
+          title: `${result.deleted} deleted, ${result.errors.length} failed (only PENDING/CANCELLED orders can be deleted)`,
+          variant: "error",
+        });
       } else {
-        toast({ title: `${result.deleted} order${result.deleted !== 1 ? "s" : ""} deleted`, variant: "success" });
+        toast({
+          title: `${result.deleted} order${result.deleted !== 1 ? "s" : ""} deleted`,
+          variant: "success",
+        });
       }
       exitSelectMode();
     } catch {
@@ -128,17 +169,25 @@ export default function OrdersPage() {
   };
 
   // Reset page when filters change (page state stays local)
-  React.useEffect(() => { setPage(1); }, [statusFilter, urgentOnly, dateFrom, dateTo]);
+  React.useEffect(() => {
+    setPage(1);
+  }, [statusFilter, urgentOnly, dateFrom, dateTo]);
 
   // Active saved view detection
   const activeSavedView = React.useMemo(() => {
-    return SAVED_VIEWS.find((v) => {
-      const keys = Object.keys(v.filters);
-      if (keys.length === 0) {
-        return !statusFilter && !urgentOnly && !dateFrom && !dateTo;
-      }
-      return keys.every((k) => String((urlFilters as Record<string, unknown>)[k]) === String((v.filters as Record<string, unknown>)[k]));
-    })?.id ?? null;
+    return (
+      SAVED_VIEWS.find((v) => {
+        const keys = Object.keys(v.filters);
+        if (keys.length === 0) {
+          return !statusFilter && !urgentOnly && !dateFrom && !dateTo;
+        }
+        return keys.every(
+          (k) =>
+            String((urlFilters as Record<string, unknown>)[k]) ===
+            String((v.filters as Record<string, unknown>)[k]),
+        );
+      })?.id ?? null
+    );
   }, [urlFilters, statusFilter, urgentOnly, dateFrom, dateTo]);
 
   const applyView = (view: (typeof SAVED_VIEWS)[0]) => {
@@ -163,7 +212,12 @@ export default function OrdersPage() {
   const filtered = React.useMemo(() => {
     const q = customerSearch.toLowerCase();
     const list = orders.filter((o) => {
-      if (q && !o.customer?.businessName?.toLowerCase().includes(q) && !o.orderNumber?.toLowerCase().includes(q)) return false;
+      if (
+        q &&
+        !o.customer?.businessName?.toLowerCase().includes(q) &&
+        !o.orderNumber?.toLowerCase().includes(q)
+      )
+        return false;
       return true;
     });
     return [...list].sort((a, b) => {
@@ -171,11 +225,14 @@ export default function OrdersPage() {
       if (a.urgent && !b.urgent) return -1;
       if (!a.urgent && b.urgent) return 1;
       const dir = sortDir === "asc" ? 1 : -1;
-      if (sortCol === "orderNumber") return dir * (a.orderNumber ?? "").localeCompare(b.orderNumber ?? "");
-      if (sortCol === "customer") return dir * ((a.customer?.businessName ?? "").localeCompare(b.customer?.businessName ?? ""));
+      if (sortCol === "orderNumber")
+        return dir * (a.orderNumber ?? "").localeCompare(b.orderNumber ?? "");
+      if (sortCol === "customer")
+        return dir * (a.customer?.businessName ?? "").localeCompare(b.customer?.businessName ?? "");
       if (sortCol === "total") return dir * (Number(a.total) - Number(b.total));
       if (sortCol === "status") return dir * (a.status ?? "").localeCompare(b.status ?? "");
-      if (sortCol === "deliveryDate") return dir * ((a.requestedDeliveryDate ?? "").localeCompare(b.requestedDeliveryDate ?? ""));
+      if (sortCol === "deliveryDate")
+        return dir * (a.requestedDeliveryDate ?? "").localeCompare(b.requestedDeliveryDate ?? "");
       // default: createdAt
       return dir * (new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
     });
@@ -204,7 +261,12 @@ export default function OrdersPage() {
       const allOrders = payload.data ?? [];
       const q = customerSearch.toLowerCase();
       const rows = allOrders.filter((o) => {
-        if (q && !o.customer?.businessName?.toLowerCase().includes(q) && !o.orderNumber?.toLowerCase().includes(q)) return false;
+        if (
+          q &&
+          !o.customer?.businessName?.toLowerCase().includes(q) &&
+          !o.orderNumber?.toLowerCase().includes(q)
+        )
+          return false;
         return true;
       });
       downloadCsv(
@@ -244,7 +306,13 @@ export default function OrdersPage() {
             <Button
               variant="secondary"
               size="sm"
-              leftIcon={isExporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+              leftIcon={
+                isExporting ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Download className="h-3.5 w-3.5" />
+                )
+              }
               onClick={handleExport}
               disabled={isExporting}
               title="Export filtered orders as CSV"
@@ -253,7 +321,9 @@ export default function OrdersPage() {
             </Button>
             <Button
               variant="secondary"
-              leftIcon={selectMode ? <X className="h-4 w-4" /> : <CheckSquare className="h-4 w-4" />}
+              leftIcon={
+                selectMode ? <X className="h-4 w-4" /> : <CheckSquare className="h-4 w-4" />
+              }
               onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
             >
               {selectMode ? "Cancel" : "Select"}
@@ -270,24 +340,41 @@ export default function OrdersPage() {
             {selected.size} order{selected.size !== 1 ? "s" : ""} selected
           </span>
           <div className="flex items-center gap-2">
-            <button onClick={() => setSelected(new Set())} className="text-sm text-navy/50 hover:text-navy transition-colors">
+            <button
+              onClick={() => setSelected(new Set())}
+              className="text-sm text-navy/70 hover:text-navy transition-colors"
+            >
               Deselect all
             </button>
-            <Button variant="secondary" leftIcon={<X className="h-4 w-4" />} loading={isCancelling} onClick={handleBulkCancel}>
+            <Button
+              variant="secondary"
+              leftIcon={<X className="h-4 w-4" />}
+              loading={isCancelling}
+              onClick={handleBulkCancel}
+            >
               Cancel {selected.size}
             </Button>
             {deleteConfirm ? (
               <div className="flex items-center gap-2">
-                <span className="text-sm text-danger font-medium">Delete {selected.size} orders?</span>
+                <span className="text-sm text-danger font-medium">
+                  Delete {selected.size} orders?
+                </span>
                 <Button variant="danger" size="sm" loading={isDeleting} onClick={handleBulkDelete}>
                   Confirm Delete
                 </Button>
-                <button onClick={() => setDeleteConfirm(false)} className="text-sm text-navy/50 hover:text-navy transition-colors">
+                <button
+                  onClick={() => setDeleteConfirm(false)}
+                  className="text-sm text-navy/70 hover:text-navy transition-colors"
+                >
                   No
                 </button>
               </div>
             ) : (
-              <Button variant="danger" leftIcon={<Trash2 className="h-4 w-4" />} onClick={() => setDeleteConfirm(true)}>
+              <Button
+                variant="danger"
+                leftIcon={<Trash2 className="h-4 w-4" />}
+                onClick={() => setDeleteConfirm(true)}
+              >
                 Delete {selected.size}
               </Button>
             )}
@@ -305,7 +392,7 @@ export default function OrdersPage() {
               "shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition-colors",
               activeSavedView === view.id
                 ? "bg-brand-600 text-white"
-                : "bg-surface-raised text-navy/60 hover:bg-brand-50 hover:text-brand-700",
+                : "bg-surface-raised text-navy/70 hover:bg-brand-50 hover:text-brand-700",
             )}
           >
             {view.label}
@@ -320,14 +407,19 @@ export default function OrdersPage() {
             <input
               type="checkbox"
               checked={filtered.every((o) => selected.has(o.id))}
-              ref={(el) => { if (el) el.indeterminate = filtered.some((o) => selected.has(o.id)) && !filtered.every((o) => selected.has(o.id)); }}
+              ref={(el) => {
+                if (el)
+                  el.indeterminate =
+                    filtered.some((o) => selected.has(o.id)) &&
+                    !filtered.every((o) => selected.has(o.id));
+              }}
               onChange={() => {
                 if (filtered.every((o) => selected.has(o.id))) setSelected(new Set());
                 else setSelected(new Set(filtered.map((o) => o.id)));
               }}
               className="h-4 w-4 cursor-pointer rounded border-navy/30 accent-brand-500"
             />
-            <span className="text-sm text-navy/60">Select all</span>
+            <span className="text-sm text-navy/70">Select all</span>
           </label>
         )}
         <input
@@ -335,7 +427,7 @@ export default function OrdersPage() {
           placeholder="Search by customer or order #…"
           value={customerSearch}
           onChange={(e) => setCustomerSearch(e.target.value)}
-          className="h-10 w-64 rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/40 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+          className="h-10 w-64 rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/70 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
         />
         <div className="w-48">
           <Select
@@ -351,7 +443,7 @@ export default function OrdersPage() {
             "flex h-10 items-center gap-2 rounded border px-3 text-sm font-medium transition-colors",
             urgentOnly
               ? "border-danger/40 bg-danger-bg text-danger"
-              : "border-surface-border bg-white text-navy/60 hover:text-navy",
+              : "border-surface-border bg-white text-navy/70 hover:text-navy",
           )}
         >
           <AlertTriangle className="h-4 w-4" />
@@ -365,8 +457,8 @@ export default function OrdersPage() {
 
         {/* Delivery date range filter */}
         <div className="flex items-center gap-1.5">
-          <Calendar className="h-4 w-4 text-navy/40" />
-          <span className="text-xs text-navy/50 font-medium">Delivery:</span>
+          <Calendar className="h-4 w-4 text-navy/70" />
+          <span className="text-xs text-navy/70 font-medium">Delivery:</span>
           <input
             type="date"
             value={dateFrom}
@@ -375,7 +467,7 @@ export default function OrdersPage() {
             className="h-10 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             title="Delivery date from"
           />
-          <span className="text-navy/40">–</span>
+          <span className="text-navy/70">–</span>
           <input
             type="date"
             value={dateTo}
@@ -386,8 +478,11 @@ export default function OrdersPage() {
           />
           {(dateFrom || dateTo) && (
             <button
-              onClick={() => { setFilter("dateFrom", ""); setFilter("dateTo", ""); }}
-              className="rounded p-1.5 text-navy/40 hover:text-danger transition-colors"
+              onClick={() => {
+                setFilter("dateFrom", "");
+                setFilter("dateTo", "");
+              }}
+              className="rounded p-1.5 text-navy/70 hover:text-danger transition-colors"
               title="Clear dates"
             >
               <X className="h-3.5 w-3.5" />
@@ -398,7 +493,10 @@ export default function OrdersPage() {
         {/* Clear active filters */}
         {(statusFilter || urgentOnly || dateFrom || dateTo || customerSearch) && (
           <button
-            onClick={() => { clearFilters(); setCustomerSearch(""); }}
+            onClick={() => {
+              clearFilters();
+              setCustomerSearch("");
+            }}
             className="flex items-center gap-1 text-sm text-brand-500 hover:underline"
           >
             <X className="h-3.5 w-3.5" />
@@ -414,13 +512,43 @@ export default function OrdersPage() {
             <tr>
               {selectMode && <th className="w-10 px-3 py-3" />}
               <th className="w-4 px-3 py-3" />
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy transition-colors" onClick={() => toggleSort("orderNumber")}>Order # <SortIcon col="orderNumber" /></th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy transition-colors" onClick={() => toggleSort("customer")}>Customer <SortIcon col="customer" /></th>
+              <th
+                className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                onClick={() => toggleSort("orderNumber")}
+              >
+                Order # <SortIcon col="orderNumber" />
+              </th>
+              <th
+                className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                onClick={() => toggleSort("customer")}
+              >
+                Customer <SortIcon col="customer" />
+              </th>
               <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Items</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy transition-colors" onClick={() => toggleSort("total")}>Total <SortIcon col="total" /></th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy transition-colors" onClick={() => toggleSort("status")}>Status <SortIcon col="status" /></th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy transition-colors" onClick={() => toggleSort("deliveryDate")}>Delivery Date <SortIcon col="deliveryDate" /></th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy transition-colors" onClick={() => toggleSort("createdAt")}>Created <SortIcon col="createdAt" /></th>
+              <th
+                className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                onClick={() => toggleSort("total")}
+              >
+                Total <SortIcon col="total" />
+              </th>
+              <th
+                className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                onClick={() => toggleSort("status")}
+              >
+                Status <SortIcon col="status" />
+              </th>
+              <th
+                className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                onClick={() => toggleSort("deliveryDate")}
+              >
+                Delivery Date <SortIcon col="deliveryDate" />
+              </th>
+              <th
+                className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                onClick={() => toggleSort("createdAt")}
+              >
+                Created <SortIcon col="createdAt" />
+              </th>
               <th className="w-10 px-3 py-3" />
             </tr>
           </thead>
@@ -428,25 +556,51 @@ export default function OrdersPage() {
             {isLoading ? (
               <tr>
                 <td colSpan={selectMode ? 10 : 9} className="px-4 py-12 text-center">
-                  <Loader2 className="mx-auto h-6 w-6 animate-spin text-navy/40" />
+                  <Loader2 className="mx-auto h-6 w-6 animate-spin text-navy/70" />
                 </td>
               </tr>
             ) : isError ? (
               <tr>
-                <td colSpan={selectMode ? 10 : 9} className="px-4 py-12 text-center text-sm text-danger">
+                <td
+                  colSpan={selectMode ? 10 : 9}
+                  className="px-4 py-12 text-center text-sm text-danger"
+                >
                   Failed to load orders. Please try again.
                 </td>
               </tr>
             ) : filtered.length === 0 ? (
               <tr>
-                <td colSpan={selectMode ? 10 : 9} className="px-4 py-12 text-center text-sm text-navy/40">
-                  No orders match your filters.{" "}
-                  <button
-                    className="text-brand-500 hover:underline"
-                    onClick={() => { setCustomerSearch(""); clearFilters(); }}
-                  >
-                    Clear filters
-                  </button>
+                <td colSpan={selectMode ? 10 : 9} className="p-0">
+                  {statusFilter || urgentOnly || dateFrom || dateTo || customerSearch ? (
+                    <EmptyState
+                      variant="orders"
+                      title="No matching orders"
+                      description="No orders match your current search and filters."
+                      action={
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => {
+                            setCustomerSearch("");
+                            clearFilters();
+                          }}
+                        >
+                          Clear filters
+                        </Button>
+                      }
+                    />
+                  ) : (
+                    <EmptyState
+                      variant="orders"
+                      title="No orders yet"
+                      description="Create an order on behalf of a customer to get started."
+                      action={
+                        <Button size="sm" onClick={() => setIsCreateOpen(true)}>
+                          Create order
+                        </Button>
+                      }
+                    />
+                  )}
                 </td>
               </tr>
             ) : (
@@ -455,8 +609,16 @@ export default function OrdersPage() {
                   key={order.id}
                   role="link"
                   tabIndex={0}
-                  onClick={() => { if (selectMode) toggleSelect(order.id); else router.push(`/orders/${order.id}`); }}
-                  onKeyDown={(e) => { if (e.key === "Enter") { if (selectMode) toggleSelect(order.id); else router.push(`/orders/${order.id}`); } }}
+                  onClick={() => {
+                    if (selectMode) toggleSelect(order.id);
+                    else router.push(`/orders/${order.id}`);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      if (selectMode) toggleSelect(order.id);
+                      else router.push(`/orders/${order.id}`);
+                    }
+                  }}
                   className={cn(
                     "cursor-pointer transition-colors hover:bg-surface-raised focus:outline-none focus:ring-2 focus:ring-inset focus:ring-brand-500",
                     order.urgent && "border-l-2 border-l-danger",
@@ -464,7 +626,13 @@ export default function OrdersPage() {
                   )}
                 >
                   {selectMode && (
-                    <td className="px-3 py-3" onClick={(e) => { e.stopPropagation(); toggleSelect(order.id); }}>
+                    <td
+                      className="px-3 py-3"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleSelect(order.id);
+                      }}
+                    >
                       <input
                         type="checkbox"
                         checked={selected.has(order.id)}
@@ -474,9 +642,7 @@ export default function OrdersPage() {
                     </td>
                   )}
                   <td className="px-3 py-3">
-                    {order.urgent && (
-                      <AlertTriangle className="h-4 w-4 text-danger" />
-                    )}
+                    {order.urgent && <AlertTriangle className="h-4 w-4 text-danger" />}
                   </td>
                   <td className="px-4 py-3 font-mono text-xs font-semibold text-navy">
                     {order.orderNumber}
@@ -494,21 +660,35 @@ export default function OrdersPage() {
                   <td className="px-4 py-3 text-sm">
                     {order.requestedDeliveryDate ? (
                       <span className="font-medium text-navy">
-                        {(() => { const [y,m,d] = order.requestedDeliveryDate.split('T')[0].split('-').map(Number); return new Date(y, m-1, d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }); })()}
+                        {(() => {
+                          const [y, m, d] = order.requestedDeliveryDate
+                            .split("T")[0]
+                            .split("-")
+                            .map(Number);
+                          return new Date(y, m - 1, d).toLocaleDateString("en-US", {
+                            month: "short",
+                            day: "numeric",
+                            year: "numeric",
+                          });
+                        })()}
                       </span>
                     ) : (
                       <span className="text-navy/30">—</span>
                     )}
                   </td>
                   <td className="px-4 py-3 text-sm text-navy">
-                    {new Date(order.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                    {new Date(order.createdAt).toLocaleDateString("en-US", {
+                      month: "short",
+                      day: "numeric",
+                      year: "numeric",
+                    })}
                   </td>
                   <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
                     <button
                       title="View order"
                       aria-label="View order details"
                       onClick={() => router.push(`/orders/${order.id}`)}
-                      className="rounded p-1.5 text-navy/40 hover:bg-surface-raised hover:text-navy transition-colors"
+                      className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
                     >
                       <Eye className="h-4 w-4" />
                     </button>
@@ -524,7 +704,7 @@ export default function OrdersPage() {
       {meta && (
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-3">
-            <p className="text-sm text-navy/50">
+            <p className="text-sm text-navy/70">
               {customerSearch
                 ? filtered.length > 0
                   ? `Showing ${filtered.length} of ${meta.total} order${meta.total !== 1 ? "s" : ""} (filtered)`
@@ -534,16 +714,23 @@ export default function OrdersPage() {
                   : "No orders found"}
             </p>
             {!customerSearch && (
-            <div className="flex items-center gap-1.5">
-              <span className="text-xs text-navy/40">Per page:</span>
-              <select
-                value={limit}
-                onChange={(e) => { setLimit(Number(e.target.value)); setPage(1); }}
-                className="h-8 rounded border border-surface-border bg-white px-2 text-xs text-navy focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-              >
-                {[10, 20, 50, 100].map((n) => <option key={n} value={n}>{n}</option>)}
-              </select>
-            </div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-navy/70">Per page:</span>
+                <select
+                  value={limit}
+                  onChange={(e) => {
+                    setLimit(Number(e.target.value));
+                    setPage(1);
+                  }}
+                  className="h-8 rounded border border-surface-border bg-white px-2 text-xs text-navy focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                >
+                  {[10, 20, 50, 100].map((n) => (
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
+                  ))}
+                </select>
+              </div>
             )}
           </div>
           {!customerSearch && (meta.totalPages ?? 1) > 1 && (
@@ -586,10 +773,7 @@ export default function OrdersPage() {
         </div>
       )}
 
-      <CreateOrderModal
-        isOpen={isCreateOpen}
-        onClose={() => setIsCreateOpen(false)}
-      />
+      <CreateOrderModal isOpen={isCreateOpen} onClose={() => setIsCreateOpen(false)} />
     </div>
   );
 }

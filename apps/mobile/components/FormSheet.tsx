@@ -163,7 +163,11 @@ export function FormField({
       <View style={styles.field}>
         {label ? <Text style={styles.label}>{label}</Text> : null}
         {children}
-        {error ? <Text style={styles.error}>{error}</Text> : hint ? <Text style={styles.hint}>{hint}</Text> : null}
+        {error ? (
+          <Text style={styles.error}>{error}</Text>
+        ) : hint ? (
+          <Text style={styles.hint}>{hint}</Text>
+        ) : null}
       </View>
     </FormFieldLabelContext.Provider>
   );
@@ -178,24 +182,23 @@ export function FormSection({ title, children }: { title?: string; children: Rea
   );
 }
 
-export const FormTextInput = React.forwardRef<TextInput, TextInputProps>(function FormTextInput(
-  props,
-  ref,
-) {
-  const fieldLabel = React.useContext(FormFieldLabelContext);
-  return (
-    <TextInput
-      ref={ref}
-      placeholderTextColor={ios.label3}
-      // BUG-XR2-2: inherit the surrounding FormField label so screen-readers
-      // announce something meaningful. Caller-provided accessibilityLabel
-      // wins if explicitly set.
-      accessibilityLabel={props.accessibilityLabel ?? fieldLabel}
-      {...props}
-      style={[styles.input, props.style]}
-    />
-  );
-});
+export const FormTextInput = React.forwardRef<TextInput, TextInputProps>(
+  function FormTextInput(props, ref) {
+    const fieldLabel = React.useContext(FormFieldLabelContext);
+    return (
+      <TextInput
+        ref={ref}
+        placeholderTextColor={ios.label3}
+        // BUG-XR2-2: inherit the surrounding FormField label so screen-readers
+        // announce something meaningful. Caller-provided accessibilityLabel
+        // wins if explicitly set.
+        accessibilityLabel={props.accessibilityLabel ?? fieldLabel}
+        {...props}
+        style={[styles.input, props.style]}
+      />
+    );
+  },
+);
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: ios.bg },

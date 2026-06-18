@@ -16,11 +16,7 @@ import {
 import { Button, Card, Input, useToast, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useQuery } from "@tanstack/react-query";
-import {
-  useCreateInvoice,
-  useUpdateInvoice,
-  type CreateInvoiceItem,
-} from "@/lib/api/invoices";
+import { useCreateInvoice, useUpdateInvoice, type CreateInvoiceItem } from "@/lib/api/invoices";
 import { useCustomers, useCustomerPrices, type Customer } from "@/lib/api/customers";
 import { useProducts } from "@/lib/api/products";
 import { apiClient } from "@/lib/api-client";
@@ -43,12 +39,18 @@ const TERMS_OPTIONS = [
 
 function getDaysForTerms(terms: string): number | null {
   switch (terms) {
-    case "Due on Receipt": return 0;
-    case "Net 15": return 15;
-    case "Net 30": return 30;
-    case "Net 45": return 45;
-    case "Net 60": return 60;
-    default: return null;
+    case "Due on Receipt":
+      return 0;
+    case "Net 15":
+      return 15;
+    case "Net 30":
+      return 30;
+    case "Net 45":
+      return 45;
+    case "Net 60":
+      return 60;
+    default:
+      return null;
   }
 }
 
@@ -97,13 +99,11 @@ function CustomerSearch({
       >
         <div>
           <p className="text-sm font-semibold text-navy">{value.businessName}</p>
-          {value.contactName && (
-            <p className="text-xs text-navy/50">{value.contactName}</p>
-          )}
+          {value.contactName && <p className="text-xs text-navy/70">{value.contactName}</p>}
         </div>
         <button
           onClick={() => onSelect(null)}
-          className="rounded p-1 text-navy/40 hover:text-danger transition-colors"
+          className="rounded p-1 text-navy/70 hover:text-danger transition-colors"
           title="Remove customer"
         >
           <Trash2 className="h-4 w-4" />
@@ -120,10 +120,13 @@ function CustomerSearch({
           type="text"
           placeholder="Search customers…"
           value={query}
-          onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setOpen(true);
+          }}
           onFocus={() => setOpen(true)}
           className={cn(
-            "h-10 w-full rounded-lg border bg-white pl-9 pr-3 text-sm text-navy placeholder:text-navy/40 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500",
+            "h-10 w-full rounded-lg border bg-white pl-9 pr-3 text-sm text-navy placeholder:text-navy/70 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500",
             error ? "border-danger" : "border-surface-border",
           )}
         />
@@ -132,19 +135,21 @@ function CustomerSearch({
       {open && (
         <div className="absolute z-10 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg">
           {customers.length === 0 ? (
-            <p className="px-3 py-2 text-sm text-navy/50">No customers found.</p>
+            <p className="px-3 py-2 text-sm text-navy/70">No customers found.</p>
           ) : (
             <ul className="max-h-48 overflow-y-auto">
               {customers.map((c) => (
                 <li key={c.id}>
                   <button
                     className="flex w-full flex-col px-3 py-2 text-left hover:bg-surface-raised"
-                    onClick={() => { onSelect(c); setOpen(false); setQuery(""); }}
+                    onClick={() => {
+                      onSelect(c);
+                      setOpen(false);
+                      setQuery("");
+                    }}
                   >
                     <span className="text-sm font-medium text-navy">{c.businessName}</span>
-                    {c.contactName && (
-                      <span className="text-xs text-navy/50">{c.contactName}</span>
-                    )}
+                    {c.contactName && <span className="text-xs text-navy/70">{c.contactName}</span>}
                   </button>
                 </li>
               ))}
@@ -165,7 +170,13 @@ function ProductSearchInput({
   onBarcodeNotFound,
 }: {
   value: string;
-  onChange: (description: string, productId: string, unitPrice: string, avgCost?: number, unitsPerBox?: number) => void;
+  onChange: (
+    description: string,
+    productId: string,
+    unitPrice: string,
+    avgCost?: number,
+    unitsPerBox?: number,
+  ) => void;
   onCreateProduct?: (searchTerm: string) => void;
   onBarcodeNotFound?: (barcode: string) => void;
 }) {
@@ -181,7 +192,12 @@ function ProductSearchInput({
     return () => clearTimeout(t);
   }, [query]);
 
-  const { data } = useProducts({ search: debouncedQuery || undefined, isActive: true, limit: 20, includeVariants: true });
+  const { data } = useProducts({
+    search: debouncedQuery || undefined,
+    isActive: true,
+    limit: 20,
+    includeVariants: true,
+  });
   // Only top-level products (parents + standalones) shown at root; variants appear as children
   const products = (data?.data ?? []).filter((p: any) => !p.parentProductId);
 
@@ -228,8 +244,13 @@ function ProductSearchInput({
         inputRef={inputRef}
         onScan={async (code) => {
           try {
-            const product = await apiClient.get(`/products/barcode/${encodeURIComponent(code)}`).then(r => r.data);
-            if (product) { selectProduct(product); return; }
+            const product = await apiClient
+              .get(`/products/barcode/${encodeURIComponent(code)}`)
+              .then((r) => r.data);
+            if (product) {
+              selectProduct(product);
+              return;
+            }
           } catch {
             // product not found by barcode
           }
@@ -243,7 +264,7 @@ function ProductSearchInput({
         <div className="absolute left-0 top-full z-10 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg">
           <ul className="max-h-48 overflow-y-auto">
             {products.length === 0 && (
-              <li className="px-3 py-2 text-sm text-navy/50">No products found.</li>
+              <li className="px-3 py-2 text-sm text-navy/70">No products found.</li>
             )}
             {products.map((p: any) => {
               const hasVariants = p.variants?.length > 0;
@@ -263,29 +284,52 @@ function ProductSearchInput({
                     >
                       <div className="flex items-center gap-1.5 min-w-0">
                         {hasVariants && (
-                          <ChevronRight className={cn("h-3.5 w-3.5 shrink-0 text-navy/40 transition-transform", isExpanded && "rotate-90")} />
+                          <ChevronRight
+                            className={cn(
+                              "h-3.5 w-3.5 shrink-0 text-navy/70 transition-transform",
+                              isExpanded && "rotate-90",
+                            )}
+                          />
                         )}
                         <span className="text-sm font-medium text-navy truncate">{p.name}</span>
-                        {p.sku && <span className="ml-1 text-xs text-navy/40 shrink-0">{p.sku}</span>}
-                        {hasVariants && <span className="text-[10px] text-navy/40 shrink-0">{p.variants.length} variants</span>}
+                        {p.sku && (
+                          <span className="ml-1 text-xs text-navy/70 shrink-0">{p.sku}</span>
+                        )}
+                        {hasVariants && (
+                          <span className="text-[10px] text-navy/70 shrink-0">
+                            {p.variants.length} variants
+                          </span>
+                        )}
                       </div>
-                      {!hasVariants && <span className="text-xs text-navy/60 shrink-0 ml-2">{fmt(Number(p.pricePerUnit))}</span>}
+                      {!hasVariants && (
+                        <span className="text-xs text-navy/70 shrink-0 ml-2">
+                          {fmt(Number(p.pricePerUnit))}
+                        </span>
+                      )}
                     </button>
                   </li>
-                  {hasVariants && isExpanded && p.variants.map((v: any) => (
-                    <li key={v.id} className="bg-surface-raised/50">
-                      <button
-                        className="flex w-full items-center justify-between pl-8 pr-3 py-2 text-left hover:bg-surface-raised"
-                        onClick={() => selectProduct(v)}
-                      >
-                        <div className="flex items-center gap-1.5 min-w-0">
-                          <span className="text-sm font-medium text-navy truncate">{v.variantName ?? v.name}</span>
-                          {v.sku && <span className="text-xs text-navy/40 shrink-0">{v.sku}</span>}
-                        </div>
-                        <span className="text-xs text-navy/60 shrink-0 ml-2">{fmt(Number(v.pricePerUnit))}</span>
-                      </button>
-                    </li>
-                  ))}
+                  {hasVariants &&
+                    isExpanded &&
+                    p.variants.map((v: any) => (
+                      <li key={v.id} className="bg-surface-raised/50">
+                        <button
+                          className="flex w-full items-center justify-between pl-8 pr-3 py-2 text-left hover:bg-surface-raised"
+                          onClick={() => selectProduct(v)}
+                        >
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span className="text-sm font-medium text-navy truncate">
+                              {v.variantName ?? v.name}
+                            </span>
+                            {v.sku && (
+                              <span className="text-xs text-navy/70 shrink-0">{v.sku}</span>
+                            )}
+                          </div>
+                          <span className="text-xs text-navy/70 shrink-0 ml-2">
+                            {fmt(Number(v.pricePerUnit))}
+                          </span>
+                        </button>
+                      </li>
+                    ))}
                 </React.Fragment>
               );
             })}
@@ -320,12 +364,12 @@ interface LineItemState {
   unitPrice: number;
   discount: number;
   taxable: boolean;
-  regularPrice?: number;      // original product price before special pricing
-  isSpecialPrice?: boolean;   // true if a customer-specific price was applied
-  avgCost?: number;           // average cost of the product (display only, never submitted)
-  unitsPerBox?: number;       // set when product has box packaging
-  boxes?: number;             // whole boxes (only when unitsPerBox is set)
-  pieces?: number;            // extra loose pieces (only when unitsPerBox is set)
+  regularPrice?: number; // original product price before special pricing
+  isSpecialPrice?: boolean; // true if a customer-specific price was applied
+  avgCost?: number; // average cost of the product (display only, never submitted)
+  unitsPerBox?: number; // set when product has box packaging
+  boxes?: number; // whole boxes (only when unitsPerBox is set)
+  pieces?: number; // extra loose pieces (only when unitsPerBox is set)
 }
 
 function createEmptyItem(): LineItemState {
@@ -359,22 +403,20 @@ export default function NewInvoicePage() {
   const [previewUrl, setPreviewUrl] = React.useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = React.useState(false);
 
-  React.useEffect(() => { setTitle("New Invoice"); }, [setTitle]);
+  React.useEffect(() => {
+    setTitle("New Invoice");
+  }, [setTitle]);
 
   const [customer, setCustomer] = React.useState<Customer | null>(null);
   const [reference, setReference] = React.useState("");
   const [subject, setSubject] = React.useState("");
   const [terms, setTerms] = React.useState("");
-  const [issueDate, setIssueDate] = React.useState(
-    () => new Date().toISOString().slice(0, 10),
-  );
-  const [dueDate, setDueDate] = React.useState(
-    () => {
-      const d = new Date();
-      d.setDate(d.getDate() + 30);
-      return d.toISOString().slice(0, 10);
-    },
-  );
+  const [issueDate, setIssueDate] = React.useState(() => new Date().toISOString().slice(0, 10));
+  const [dueDate, setDueDate] = React.useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 30);
+    return d.toISOString().slice(0, 10);
+  });
   const [items, setItems] = React.useState<LineItemState[]>([createEmptyItem()]);
   const [notes, setNotes] = React.useState("");
   const [termsText, setTermsText] = React.useState("");
@@ -450,9 +492,7 @@ export default function NewInvoicePage() {
   // ── Calculations ────────────────────────────────────────────────────────────
 
   const subtotal = items.reduce((s, it) => s + lineTotal(it), 0);
-  const tax = items
-    .filter((it) => it.taxable)
-    .reduce((s, it) => s + lineTotal(it) * taxRate, 0);
+  const tax = items.filter((it) => it.taxable).reduce((s, it) => s + lineTotal(it) * taxRate, 0);
   const total = subtotal + tax + adjustment;
   const totalQty = items.reduce((s, it) => s + Number(it.qty), 0);
 
@@ -587,9 +627,7 @@ export default function NewInvoicePage() {
         })
         .then((r) => r.data);
       const matches: any[] = res?.data ?? [];
-      const skuExact = matches.find(
-        (p) => (p.sku ?? "").toLowerCase() === code.toLowerCase(),
-      );
+      const skuExact = matches.find((p) => (p.sku ?? "").toLowerCase() === code.toLowerCase());
       const toAdd = skuExact ?? matches[0];
       if (toAdd) {
         addProductFromCatalog(toAdd);
@@ -666,16 +704,18 @@ export default function NewInvoicePage() {
       // making the configured Terms & Conditions invisible on every new
       // invoice. The dropdown's effect is preserved via dueDate above.
       terms: termsText.trim() || undefined,
-      items: items.map((it): CreateInvoiceItem => ({
-        productId: it.productId,
-        description: it.description,
-        qty: Number(it.qty),
-        unitPrice: Number(it.unitPrice),
-        discount: Number(it.discount) || undefined,
-        // Map the taxable checkbox to an actual tax rate sent to the API
-        taxRate: it.taxable ? taxRate : 0,
-        ...(it.unitsPerBox ? { boxes: it.boxes ?? 0, pieces: it.pieces ?? 0 } : {}),
-      })),
+      items: items.map(
+        (it): CreateInvoiceItem => ({
+          productId: it.productId,
+          description: it.description,
+          qty: Number(it.qty),
+          unitPrice: Number(it.unitPrice),
+          discount: Number(it.discount) || undefined,
+          // Map the taxable checkbox to an actual tax rate sent to the API
+          taxRate: it.taxable ? taxRate : 0,
+          ...(it.unitsPerBox ? { boxes: it.boxes ?? 0, pieces: it.pieces ?? 0 } : {}),
+        }),
+      ),
       notes: notes.trim() || undefined,
       referenceNumber: reference.trim() || undefined,
       subject: subject.trim() || undefined,
@@ -825,32 +865,29 @@ export default function NewInvoicePage() {
     // If we already have a preview draft, just update it and optionally send.
     if (currentDraftId) {
       const dto = buildInvoiceDto(false);
-      updateInvoice.mutate(
-        { id: currentDraftId, ...dto } as any,
-        {
-          onSuccess: async () => {
-            if (sendNow) {
-              try {
-                await apiClient.post(`/invoices/${currentDraftId}/send`);
-              } catch {
-                // fall through to toast below
-              }
+      updateInvoice.mutate({ id: currentDraftId, ...dto } as any, {
+        onSuccess: async () => {
+          if (sendNow) {
+            try {
+              await apiClient.post(`/invoices/${currentDraftId}/send`);
+            } catch {
+              // fall through to toast below
             }
-            toast({
-              title: sendNow ? "Invoice sent" : "Draft saved",
-              variant: "success",
-            });
-            router.push(`/invoices/${currentDraftId}`);
-          },
-          onError: () => {
-            toast({
-              title: "Failed to save invoice",
-              description: "Please check your inputs and try again.",
-              variant: "error",
-            });
-          },
+          }
+          toast({
+            title: sendNow ? "Invoice sent" : "Draft saved",
+            variant: "success",
+          });
+          router.push(`/invoices/${currentDraftId}`);
         },
-      );
+        onError: () => {
+          toast({
+            title: "Failed to save invoice",
+            description: "Please check your inputs and try again.",
+            variant: "error",
+          });
+        },
+      });
       return;
     }
 
@@ -883,7 +920,7 @@ export default function NewInvoicePage() {
         {/* Back */}
         <Link
           href="/invoices"
-          className="flex items-center gap-1.5 text-sm text-navy/60 hover:text-navy transition-colors"
+          className="flex items-center gap-1.5 text-sm text-navy/70 hover:text-navy transition-colors"
         >
           <ArrowLeft className="h-4 w-4" />
           Invoices
@@ -894,14 +931,9 @@ export default function NewInvoicePage() {
         <div className="grid grid-cols-1 gap-5 lg:grid-cols-5">
           {/* ── Left column (3/5) ── */}
           <div className="space-y-5 lg:col-span-3">
-
             {/* Customer */}
             <Card title="Customer *">
-              <CustomerSearch
-                value={customer}
-                onSelect={setCustomer}
-                error={errors.customer}
-              />
+              <CustomerSearch value={customer} onSelect={setCustomer} error={errors.customer} />
             </Card>
 
             {/* Invoice details */}
@@ -911,7 +943,8 @@ export default function NewInvoicePage() {
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="mb-1.5 block text-sm font-medium text-navy/80">
-                      Reference / PO Number <span className="text-navy/40 font-normal">(optional)</span>
+                      Reference / PO Number{" "}
+                      <span className="text-navy/70 font-normal">(optional)</span>
                     </label>
                     <input
                       type="text"
@@ -923,7 +956,7 @@ export default function NewInvoicePage() {
                   </div>
                   <div>
                     <label className="mb-1.5 block text-sm font-medium text-navy/80">
-                      Subject <span className="text-navy/40 font-normal">(optional)</span>
+                      Subject <span className="text-navy/70 font-normal">(optional)</span>
                     </label>
                     <input
                       type="text"
@@ -955,16 +988,16 @@ export default function NewInvoicePage() {
                     )}
                   </div>
                   <div>
-                    <label className="mb-1.5 block text-sm font-medium text-navy/80">
-                      Terms
-                    </label>
+                    <label className="mb-1.5 block text-sm font-medium text-navy/80">Terms</label>
                     <select
                       value={terms}
                       onChange={(e) => handleTermsChange(e.target.value)}
                       className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
                     >
                       {TERMS_OPTIONS.map((opt) => (
-                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
                       ))}
                     </select>
                   </div>
@@ -982,9 +1015,7 @@ export default function NewInvoicePage() {
                         errors.dueDate ? "border-danger" : "border-surface-border",
                       )}
                     />
-                    {errors.dueDate && (
-                      <p className="mt-1 text-xs text-danger">{errors.dueDate}</p>
-                    )}
+                    {errors.dueDate && <p className="mt-1 text-xs text-danger">{errors.dueDate}</p>}
                   </div>
                 </div>
               </div>
@@ -993,16 +1024,14 @@ export default function NewInvoicePage() {
             {/* Line items */}
             <Card title="Item Table">
               <div className="space-y-2">
-                {errors.items && (
-                  <p className="text-xs text-danger">{errors.items}</p>
-                )}
+                {errors.items && <p className="text-xs text-danger">{errors.items}</p>}
 
                 {/* Top-level scan/search — mirrors the order modal's flow.
                     Scan a barcode (or type a name/SKU and press Enter) and the
                     matched product is added as a new line item, then the input
                     re-focuses so the operator can keep scanning. */}
                 <div className="relative mb-3">
-                  <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-navy/40" />
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-navy/70" />
                   <input
                     ref={scanInputRef}
                     type="search"
@@ -1032,7 +1061,7 @@ export default function NewInvoicePage() {
                   {/* Live suggestion dropdown */}
                   {scanQuery.trim() && scanSuggestions.length > 0 && (
                     <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-72 overflow-y-auto rounded-lg border border-surface-border bg-white shadow-lg">
-                      <p className="border-b border-surface-border px-3 py-1 text-[10px] font-medium uppercase tracking-wide text-navy/40">
+                      <p className="border-b border-surface-border px-3 py-1 text-[10px] font-medium uppercase tracking-wide text-navy/70">
                         {scanSuggestions.length} suggestion{scanSuggestions.length === 1 ? "" : "s"}
                         <span className="ml-2 normal-case text-navy/30">
                           (Enter or click to add)
@@ -1062,8 +1091,12 @@ export default function NewInvoicePage() {
                                       </p>
                                     );
                                   })()}
-                                  <p className="truncate text-[11px] text-navy/40">
-                                    {p.sku ? <span className="font-mono">{p.sku}</span> : <span className="italic">no SKU</span>}
+                                  <p className="truncate text-[11px] text-navy/70">
+                                    {p.sku ? (
+                                      <span className="font-mono">{p.sku}</span>
+                                    ) : (
+                                      <span className="italic">no SKU</span>
+                                    )}
                                     {p.unitsPerBox ? <span> · {p.unitsPerBox} per box</span> : null}
                                   </p>
                                 </div>
@@ -1071,7 +1104,12 @@ export default function NewInvoicePage() {
                                   <p className="text-xs font-medium text-navy/70 tabular-nums">
                                     ${parseFloat(String(p.pricePerUnit ?? 0)).toFixed(2)}
                                   </p>
-                                  <p className={cn("text-[10px]", alreadyAdded ? "text-amber-600" : "text-brand-600")}>
+                                  <p
+                                    className={cn(
+                                      "text-[10px]",
+                                      alreadyAdded ? "text-amber-600" : "text-brand-600",
+                                    )}
+                                  >
                                     {alreadyAdded ? "Already added · +1" : "Add →"}
                                   </p>
                                 </div>
@@ -1086,30 +1124,36 @@ export default function NewInvoicePage() {
 
                 {/* Avg cost toggle */}
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-medium text-navy/60">Line Items</span>
+                  <span className="text-xs font-medium text-navy/70">Line Items</span>
                   <button
                     type="button"
-                    onClick={() => setShowAvgCost(v => !v)}
+                    onClick={() => setShowAvgCost((v) => !v)}
                     className={cn(
                       "flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors",
-                      showAvgCost ? "bg-brand-500/10 text-brand-500" : "text-navy/40 hover:text-navy"
+                      showAvgCost
+                        ? "bg-brand-500/10 text-brand-500"
+                        : "text-navy/70 hover:text-navy",
                     )}
                     title="Toggle average cost column (not included in invoice)"
                   >
                     <Eye className="h-3.5 w-3.5" />
-                    {showAvgCost ? 'Hide avg. cost' : 'Show avg. cost'}
+                    {showAvgCost ? "Hide avg. cost" : "Show avg. cost"}
                   </button>
                 </div>
                 {/* Table header */}
-                <div className={cn(
-                  "gap-2 rounded-t bg-gray-50 px-1 py-2 text-xs font-semibold uppercase tracking-wider text-gray-500",
-                  showAvgCost ? "grid grid-cols-[1fr_70px_100px_90px_72px_44px_32px]" : "grid grid-cols-[1fr_70px_100px_90px_44px_32px]"
-                )}>
+                <div
+                  className={cn(
+                    "gap-2 rounded-t bg-gray-50 px-1 py-2 text-xs font-semibold uppercase tracking-wider text-gray-500",
+                    showAvgCost
+                      ? "grid grid-cols-[1fr_70px_100px_90px_72px_44px_32px]"
+                      : "grid grid-cols-[1fr_70px_100px_90px_44px_32px]",
+                  )}
+                >
                   <span>Item Details</span>
                   <span className="text-right">Qty</span>
                   <span className="text-right">Rate</span>
                   <span className="text-right">Discount</span>
-                  {showAvgCost && <span className="text-right text-navy/40">Avg. Cost</span>}
+                  {showAvgCost && <span className="text-right text-navy/70">Avg. Cost</span>}
                   <span className="text-center">Tax</span>
                   <span />
                 </div>
@@ -1119,7 +1163,9 @@ export default function NewInvoicePage() {
                     key={item.key}
                     className={cn(
                       "items-center gap-2 border-b border-surface-border pb-2",
-                      showAvgCost ? "grid grid-cols-[1fr_70px_100px_90px_72px_44px_32px]" : "grid grid-cols-[1fr_70px_100px_90px_44px_32px]"
+                      showAvgCost
+                        ? "grid grid-cols-[1fr_70px_100px_90px_72px_44px_32px]"
+                        : "grid grid-cols-[1fr_70px_100px_90px_44px_32px]",
                     )}
                   >
                     {/* Description / product search */}
@@ -1142,7 +1188,8 @@ export default function NewInvoicePage() {
                       }}
                       onChange={(desc, pid, price, avgCost, unitsPerBox) => {
                         const specialPrice = pid ? priceMap[pid] : undefined;
-                        const effectivePrice = specialPrice ?? (price ? parseFloat(price) : item.unitPrice);
+                        const effectivePrice =
+                          specialPrice ?? (price ? parseFloat(price) : item.unitPrice);
                         const upb = unitsPerBox ?? undefined;
                         updateItem(item.key, {
                           description: desc,
@@ -1154,7 +1201,7 @@ export default function NewInvoicePage() {
                           unitsPerBox: upb,
                           boxes: upb ? 1 : undefined,
                           pieces: upb ? 0 : undefined,
-                          qty: upb ? upb : (item.qty || 1),
+                          qty: upb ? upb : item.qty || 1,
                         });
                       }}
                     />
@@ -1170,13 +1217,16 @@ export default function NewInvoicePage() {
                             onChange={(e) => {
                               const boxes = Math.max(0, parseInt(e.target.value, 10) || 0);
                               const pieces = item.pieces ?? 0;
-                              updateItem(item.key, { boxes, qty: boxes * item.unitsPerBox! + pieces });
+                              updateItem(item.key, {
+                                boxes,
+                                qty: boxes * item.unitsPerBox! + pieces,
+                              });
                             }}
                             onFocus={(e) => e.target.select()}
                             className="w-8 rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
                             title="Boxes"
                           />
-                          <span className="text-[10px] text-navy/40">b+</span>
+                          <span className="text-[10px] text-navy/70">b+</span>
                           <input
                             type="number"
                             min={0}
@@ -1185,7 +1235,10 @@ export default function NewInvoicePage() {
                             onChange={(e) => {
                               const pieces = Math.max(0, parseInt(e.target.value, 10) || 0);
                               const boxes = item.boxes ?? 0;
-                              updateItem(item.key, { pieces, qty: boxes * item.unitsPerBox! + pieces });
+                              updateItem(item.key, {
+                                pieces,
+                                qty: boxes * item.unitsPerBox! + pieces,
+                              });
                             }}
                             onFocus={(e) => e.target.select()}
                             className="w-8 rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
@@ -1200,7 +1253,9 @@ export default function NewInvoicePage() {
                         min={0.01}
                         step={0.01}
                         value={item.qty}
-                        onChange={(e) => updateItem(item.key, { qty: parseFloat(e.target.value) || 0 })}
+                        onChange={(e) =>
+                          updateItem(item.key, { qty: parseFloat(e.target.value) || 0 })
+                        }
                         className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
                       />
                     )}
@@ -1208,7 +1263,7 @@ export default function NewInvoicePage() {
                     {/* Unit price */}
                     <div>
                       {item.isSpecialPrice && item.regularPrice !== undefined && (
-                        <p className="text-xs line-through text-navy/40 mb-0.5 text-right">
+                        <p className="text-xs line-through text-navy/70 mb-0.5 text-right">
                           ${item.regularPrice.toFixed(2)}
                         </p>
                       )}
@@ -1217,11 +1272,13 @@ export default function NewInvoicePage() {
                         min={0}
                         step={0.01}
                         value={item.unitPrice}
-                        onChange={(e) => updateItem(item.key, { unitPrice: parseFloat(e.target.value) || 0 })}
+                        onChange={(e) =>
+                          updateItem(item.key, { unitPrice: parseFloat(e.target.value) || 0 })
+                        }
                         className="h-9 w-full rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
                       />
                       {item.unitsPerBox && item.unitsPerBox > 1 && item.unitPrice > 0 && (
-                        <p className="text-[9px] text-navy/40 text-right mt-0.5">
+                        <p className="text-[9px] text-navy/70 text-right mt-0.5">
                           ${(item.unitPrice / item.unitsPerBox).toFixed(2)}/pc
                         </p>
                       )}
@@ -1234,14 +1291,16 @@ export default function NewInvoicePage() {
                       step={0.01}
                       placeholder="0.00"
                       value={item.discount || ""}
-                      onChange={(e) => updateItem(item.key, { discount: parseFloat(e.target.value) || 0 })}
+                      onChange={(e) =>
+                        updateItem(item.key, { discount: parseFloat(e.target.value) || 0 })
+                      }
                       className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
                     />
 
                     {/* Avg cost (optional column) */}
                     {showAvgCost && (
-                      <span className="text-right text-xs text-navy/50">
-                        {item.avgCost ? '$' + item.avgCost.toFixed(2) : '—'}
+                      <span className="text-right text-xs text-navy/70">
+                        {item.avgCost ? "$" + item.avgCost.toFixed(2) : "—"}
                       </span>
                     )}
 
@@ -1273,13 +1332,15 @@ export default function NewInvoicePage() {
                     key={item.key + "-total"}
                     className={cn(
                       "gap-2 px-1",
-                      showAvgCost ? "grid grid-cols-[1fr_70px_100px_90px_72px_44px_32px]" : "grid grid-cols-[1fr_70px_100px_90px_44px_32px]"
+                      showAvgCost
+                        ? "grid grid-cols-[1fr_70px_100px_90px_72px_44px_32px]"
+                        : "grid grid-cols-[1fr_70px_100px_90px_44px_32px]",
                     )}
                   >
                     <span />
                     <span />
                     <span />
-                    <span className="col-span-1 text-right text-xs font-medium text-navy/60">
+                    <span className="col-span-1 text-right text-xs font-medium text-navy/70">
                       = {fmt(lineTotal(item))}
                     </span>
                     {showAvgCost && <span />}
@@ -1358,20 +1419,23 @@ export default function NewInvoicePage() {
             <Card title="Invoice Summary">
               <dl className="space-y-2 text-sm">
                 <div className="flex justify-between">
-                  <dt className="text-navy/60">Subtotal</dt>
+                  <dt className="text-navy/70">Subtotal</dt>
                   <dd className="font-medium text-navy">{fmt(subtotal)}</dd>
                 </div>
                 {tax > 0 && (
                   <div className="flex justify-between">
-                    <dt className="text-navy/60">Tax ({(taxRate * 100).toFixed(0)}%)</dt>
+                    <dt className="text-navy/70">Tax ({(taxRate * 100).toFixed(0)}%)</dt>
                     <dd className="font-medium text-navy">{fmt(tax)}</dd>
                   </div>
                 )}
                 {adjustment !== 0 && (
                   <div className="flex justify-between">
-                    <dt className="text-navy/60">Adjustment</dt>
-                    <dd className={cn("font-medium", adjustment < 0 ? "text-success" : "text-navy")}>
-                      {adjustment < 0 ? "-" : "+"}{fmt(Math.abs(adjustment))}
+                    <dt className="text-navy/70">Adjustment</dt>
+                    <dd
+                      className={cn("font-medium", adjustment < 0 ? "text-success" : "text-navy")}
+                    >
+                      {adjustment < 0 ? "-" : "+"}
+                      {fmt(Math.abs(adjustment))}
                     </dd>
                   </div>
                 )}
@@ -1379,7 +1443,7 @@ export default function NewInvoicePage() {
                   <dt className="font-semibold text-navy">Total</dt>
                   <dd className="text-base font-bold text-navy">{fmt(total)}</dd>
                 </div>
-                <div className="flex justify-between pt-1 text-xs text-navy/50">
+                <div className="flex justify-between pt-1 text-xs text-navy/70">
                   <dt>Total Quantity</dt>
                   <dd>{totalQty}</dd>
                 </div>
@@ -1391,7 +1455,10 @@ export default function NewInvoicePage() {
 
       <InlineCreateProductModal
         isOpen={createProductOpen}
-        onClose={() => { setCreateProductOpen(false); setCreateProductTargetIdx(null); }}
+        onClose={() => {
+          setCreateProductOpen(false);
+          setCreateProductTargetIdx(null);
+        }}
         onCreated={(product) => {
           if (createProductTargetIdx !== null) {
             setItems((prev) =>
@@ -1403,8 +1470,8 @@ export default function NewInvoicePage() {
                       productId: product.id,
                       unitPrice: parseFloat(product.pricePerUnit) || 0,
                     }
-                  : item
-              )
+                  : item,
+              ),
             );
           }
           setCreateProductOpen(false);
@@ -1454,13 +1521,13 @@ export default function NewInvoicePage() {
             </Button>
             <button
               onClick={() => router.push("/invoices")}
-              className="px-3 py-1.5 text-sm text-navy/60 hover:text-navy transition-colors"
+              className="px-3 py-1.5 text-sm text-navy/70 hover:text-navy transition-colors"
             >
               Cancel
             </button>
           </div>
           <div className="text-right">
-            <p className="text-xs text-navy/50">Total Amount</p>
+            <p className="text-xs text-navy/70">Total Amount</p>
             <p className="text-lg font-bold text-navy">{fmt(total)}</p>
           </div>
         </div>

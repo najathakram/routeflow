@@ -54,7 +54,9 @@ export default function MergeRequestsPage() {
     }
   }, [page, statusFilter]);
 
-  React.useEffect(() => { fetchRequests(); }, [fetchRequests]);
+  React.useEffect(() => {
+    fetchRequests();
+  }, [fetchRequests]);
 
   return (
     <div className="p-6 md:p-8">
@@ -74,7 +76,10 @@ export default function MergeRequestsPage() {
         <div className="ml-auto flex items-center gap-3">
           <select
             value={statusFilter}
-            onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
+            onChange={(e) => {
+              setStatusFilter(e.target.value);
+              setPage(1);
+            }}
             className="h-9 rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
           >
             <option value="">All statuses</option>
@@ -109,11 +114,15 @@ export default function MergeRequestsPage() {
               {requests.map((req) => (
                 <tr key={req.id} className="hover:bg-slate-700/20">
                   <td className="px-4 py-3">
-                    <p className="font-medium text-white">{req.primaryAccount.name ?? req.primaryAccount.email}</p>
+                    <p className="font-medium text-white">
+                      {req.primaryAccount.name ?? req.primaryAccount.email}
+                    </p>
                     <p className="text-xs text-slate-500">{req.primaryAccount.email}</p>
                   </td>
                   <td className="px-4 py-3">
-                    <p className="font-medium text-white">{req.secondaryAccount.name ?? req.secondaryAccount.email}</p>
+                    <p className="font-medium text-white">
+                      {req.secondaryAccount.name ?? req.secondaryAccount.email}
+                    </p>
                     <p className="text-xs text-slate-500">{req.secondaryAccount.email}</p>
                   </td>
                   <td className="px-4 py-3 text-slate-400">
@@ -123,7 +132,9 @@ export default function MergeRequestsPage() {
                     )}
                   </td>
                   <td className="px-4 py-3">
-                    <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${STATUS_COLORS[req.status] ?? "bg-slate-700 text-slate-400"}`}>
+                    <span
+                      className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${STATUS_COLORS[req.status] ?? "bg-slate-700 text-slate-400"}`}
+                    >
                       {req.status.replace(/_/g, " ")}
                     </span>
                   </td>
@@ -147,10 +158,24 @@ export default function MergeRequestsPage() {
 
       {total > 20 && (
         <div className="mt-4 flex items-center justify-between text-sm text-slate-400">
-          <span>Page {page} of {Math.ceil(total / 20)}</span>
+          <span>
+            Page {page} of {Math.ceil(total / 20)}
+          </span>
           <div className="flex gap-2">
-            <button disabled={page <= 1} onClick={() => setPage(p => p - 1)} className="rounded px-3 py-1 hover:bg-slate-700 disabled:opacity-40">← Prev</button>
-            <button disabled={page >= Math.ceil(total / 20)} onClick={() => setPage(p => p + 1)} className="rounded px-3 py-1 hover:bg-slate-700 disabled:opacity-40">Next →</button>
+            <button
+              disabled={page <= 1}
+              onClick={() => setPage((p) => p - 1)}
+              className="rounded px-3 py-1 hover:bg-slate-700 disabled:opacity-40"
+            >
+              ← Prev
+            </button>
+            <button
+              disabled={page >= Math.ceil(total / 20)}
+              onClick={() => setPage((p) => p + 1)}
+              className="rounded px-3 py-1 hover:bg-slate-700 disabled:opacity-40"
+            >
+              Next →
+            </button>
           </div>
         </div>
       )}

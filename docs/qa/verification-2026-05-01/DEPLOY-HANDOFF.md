@@ -27,21 +27,21 @@ Do NOT skip step 2.1 — applying step 2.3 first will fail with a unique-violati
 
 ## New commits (oldest → newest)
 
-| SHA | Title | Worker | Notes |
-|-----|-------|--------|-------|
-| `dc751ed` | fix(security): RF-076/157/078 — strict MIME allowlist and always-attachment Content-Disposition | F2 | 13 tests; cleanup script written |
-| `91f463e` | fix(deploy): NEW-v1-1 Expo production build using stale API host | F3 | eas.json fix; **needs EAS rebuild** |
-| `99839ad` | fix(realtime): RF-015/RF-008 dispatch emit and cron ALS context | F4 | 19 tests; RF-002 confirmed already-wired |
-| `54a8936` | fix(buyer): NEW-rweb-1/2/3, RF-094/180 — Customer.deletedAt migration + bypass userId lookup | F1 | **MIGRATION #2** |
-| `725a256` | fix(security): RF-081/093/160/228 IDOR, forcePassword guard, Retry-After header | F10 | 10 tests |
-| `323639d` | fix(money): RF-011/012/014/017/172/079 financial correctness fixes | F7 | 22 tests; **MIGRATION #3 + dedupe script** |
-| `3df9ea4` | fix(auth): NEW-m2-1 / RF-077 per-role token isolation | F5 | 12 tests; storage-event re-auth listener |
-| `f3c568b` | fix(operator-ui): RF-203/090/213/211/212/rweb-7 operator UI gaps | F8 | 5 RFs shipped; 3 confirmed already OK |
-| `c7fb978` | fix(driver): RF-016/005/006/019/m1-1 driver flow atomic complete + idempotency | F9 | 26 tests; **MIGRATION #4** |
-| `990e219` | fix(settings): RF-214/225/226 validation, notifications, tenant editable fields | F11 | 7 polish RFs; 4 already OK |
-| `a3330b8` | fix(auth): RF-018 self-service password reset | F12 | 8 tests; Resend email; **MIGRATION #5** |
-| `6f160d5` | fix(polish): F13 loose-ends — RF-202/209/222 documented, NEW-m1-2/m1-3/rweb-4 fixed | F13 | 6 polish/loose-ends |
-| `d3053b6` | fix: resolve TypeScript type error on Button disabled prop | F13 | type-check fixup |
+| SHA       | Title                                                                                           | Worker | Notes                                      |
+| --------- | ----------------------------------------------------------------------------------------------- | ------ | ------------------------------------------ |
+| `dc751ed` | fix(security): RF-076/157/078 — strict MIME allowlist and always-attachment Content-Disposition | F2     | 13 tests; cleanup script written           |
+| `91f463e` | fix(deploy): NEW-v1-1 Expo production build using stale API host                                | F3     | eas.json fix; **needs EAS rebuild**        |
+| `99839ad` | fix(realtime): RF-015/RF-008 dispatch emit and cron ALS context                                 | F4     | 19 tests; RF-002 confirmed already-wired   |
+| `54a8936` | fix(buyer): NEW-rweb-1/2/3, RF-094/180 — Customer.deletedAt migration + bypass userId lookup    | F1     | **MIGRATION #2**                           |
+| `725a256` | fix(security): RF-081/093/160/228 IDOR, forcePassword guard, Retry-After header                 | F10    | 10 tests                                   |
+| `323639d` | fix(money): RF-011/012/014/017/172/079 financial correctness fixes                              | F7     | 22 tests; **MIGRATION #3 + dedupe script** |
+| `3df9ea4` | fix(auth): NEW-m2-1 / RF-077 per-role token isolation                                           | F5     | 12 tests; storage-event re-auth listener   |
+| `f3c568b` | fix(operator-ui): RF-203/090/213/211/212/rweb-7 operator UI gaps                                | F8     | 5 RFs shipped; 3 confirmed already OK      |
+| `c7fb978` | fix(driver): RF-016/005/006/019/m1-1 driver flow atomic complete + idempotency                  | F9     | 26 tests; **MIGRATION #4**                 |
+| `990e219` | fix(settings): RF-214/225/226 validation, notifications, tenant editable fields                 | F11    | 7 polish RFs; 4 already OK                 |
+| `a3330b8` | fix(auth): RF-018 self-service password reset                                                   | F12    | 8 tests; Resend email; **MIGRATION #5**    |
+| `6f160d5` | fix(polish): F13 loose-ends — RF-202/209/222 documented, NEW-m1-2/m1-3/rweb-4 fixed             | F13    | 6 polish/loose-ends                        |
+| `d3053b6` | fix: resolve TypeScript type error on Button disabled prop                                      | F13    | type-check fixup                           |
 
 (Plus prior commits already on master from earlier sessions — those are not in this bundle.)
 
@@ -124,17 +124,17 @@ eas submit --platform web --profile production   # or the equivalent web-deploy 
 
 After deploy is complete, re-fire the verification harness — it will spawn the same V1/V2/V3/M1/M2/M3 GUI workers used on 2026-05-01. Expected outcomes:
 
-| Domain | Expected post-deploy state |
-|--------|----------------------------|
-| /customers, /buyer/orders, /buyer/invoices 500s | RESOLVED (F1) |
-| RF-002 Socket.IO dead | RESOLVED (F4 — code was already wired; confirms after redeploy) |
-| RF-076/157 SVG XSS | RESOLVED (F2 + cleanup script) |
-| RF-203 Create forms spinner | RESOLVED (F8) |
-| RF-014 duplicate order numbers | RESOLVED (F7 + dedupe + index) |
-| RF-016 RouteRun auto-complete | RESOLVED (F9) |
-| RF-018 password reset | RESOLVED (F12) |
-| Operator/driver token collision (NEW-m2-1) | RESOLVED (F5) |
-| 7 settings polish RFs | RESOLVED (F11) |
+| Domain                                          | Expected post-deploy state                                      |
+| ----------------------------------------------- | --------------------------------------------------------------- |
+| /customers, /buyer/orders, /buyer/invoices 500s | RESOLVED (F1)                                                   |
+| RF-002 Socket.IO dead                           | RESOLVED (F4 — code was already wired; confirms after redeploy) |
+| RF-076/157 SVG XSS                              | RESOLVED (F2 + cleanup script)                                  |
+| RF-203 Create forms spinner                     | RESOLVED (F8)                                                   |
+| RF-014 duplicate order numbers                  | RESOLVED (F7 + dedupe + index)                                  |
+| RF-016 RouteRun auto-complete                   | RESOLVED (F9)                                                   |
+| RF-018 password reset                           | RESOLVED (F12)                                                  |
+| Operator/driver token collision (NEW-m2-1)      | RESOLVED (F5)                                                   |
+| 7 settings polish RFs                           | RESOLVED (F11)                                                  |
 
 The 4 P1s previously NOT COVERED (RF-005/006/009/019) become exercisable once Wave B4 re-seeds fresh PENDING stops. To re-seed, run a small targeted seed (I will supply this once deploy completes).
 

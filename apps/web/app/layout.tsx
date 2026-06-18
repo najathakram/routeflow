@@ -27,8 +27,9 @@ const instrumentSerif = Instrument_Serif({
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
+  // No maximumScale / userScalable lock — users must be able to pinch-zoom
+  // (WCAG 2.1 SC 1.4.4 Resize Text). Locking zoom breaks low-vision access on
+  // this data-dense app.
   // Match the RouteFlow brand: ink (#0E1F36) for the iOS/Android status-bar
   // tint. The old #2563eb pre-dated the cream/ink/teal palette.
   themeColor: "#0E1F36",
@@ -36,7 +37,8 @@ export const viewport: Viewport = {
 
 export const metadata: Metadata = {
   title: { default: "RouteFlow", template: "%s · RouteFlow" },
-  description: "The all-in-one platform for wholesale distribution. Manage orders, plan routes, track deliveries, and invoice customers.",
+  description:
+    "The all-in-one platform for wholesale distribution. Manage orders, plan routes, track deliveries, and invoice customers.",
   manifest: "/operator-manifest.json",
   appleWebApp: {
     capable: true,
@@ -49,9 +51,7 @@ export const metadata: Metadata = {
       { url: "/logo.svg", type: "image/svg+xml" },
       { url: "/favicon.png", type: "image/png", sizes: "64x64" },
     ],
-    apple: [
-      { url: "/logo-seller.png", sizes: "180x180" },
-    ],
+    apple: [{ url: "/logo-seller.png", sizes: "180x180" }],
     shortcut: "/favicon.png",
   },
   openGraph: {

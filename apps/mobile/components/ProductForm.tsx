@@ -47,7 +47,8 @@ export function emptyProductForm(): ProductFormValues {
 }
 
 export function productFormFromValues(
-  p: Partial<Record<keyof ProductFormValues | "pricePerUnit" | "currentStock", any>> & Record<string, any>,
+  p: Partial<Record<keyof ProductFormValues | "pricePerUnit" | "currentStock", any>> &
+    Record<string, any>,
 ): ProductFormValues {
   return {
     name: p.name ?? "",
@@ -58,7 +59,8 @@ export function productFormFromValues(
     unitsPerBox: p.unitsPerBox != null ? String(p.unitsPerBox) : "",
     description: p.description ?? "",
     pricePerUnit: p.pricePerUnit != null ? String(p.pricePerUnit) : "",
-    standardCost: (p.standardCost ?? p.costPerUnit) != null ? String(p.standardCost ?? p.costPerUnit) : "",
+    standardCost:
+      (p.standardCost ?? p.costPerUnit) != null ? String(p.standardCost ?? p.costPerUnit) : "",
     currentStock: p.currentStock != null ? String(p.currentStock) : "",
     reorderPoint: p.reorderPoint != null ? String(p.reorderPoint) : "",
     reorderQty: p.reorderQty != null ? String(p.reorderQty) : "",
@@ -99,9 +101,7 @@ export function buildProductPayload(form: ProductFormValues): SubmitPayload | { 
   // as sold by piece.
   const upbRaw = parseOptionalNumber(form.unitsPerBox);
   const unitsPerBox =
-    upbRaw != null && Number.isFinite(upbRaw) && upbRaw > 1
-      ? Math.floor(upbRaw)
-      : undefined;
+    upbRaw != null && Number.isFinite(upbRaw) && upbRaw > 1 ? Math.floor(upbRaw) : undefined;
   return {
     name,
     sku: form.sku.trim() || undefined,
@@ -152,12 +152,7 @@ export function ProductForm({
   };
 
   return (
-    <FormSheet
-      title={title}
-      submitLabel={submitLabel}
-      onSubmit={submit}
-      submitting={submitting}
-    >
+    <FormSheet title={title} submitLabel={submitLabel} onSubmit={submit} submitting={submitting}>
       {error ? (
         <View style={styles.errorBanner}>
           <Ionicons name="warning-outline" size={16} color={ios.system.redInk} />
@@ -205,7 +200,11 @@ export function ProductForm({
         </FormField>
         <FormField
           label="Barcode"
-          hint={Platform.OS === "web" ? "Scan via device camera on the native app." : "Tap the scan icon to auto-fill from camera."}
+          hint={
+            Platform.OS === "web"
+              ? "Scan via device camera on the native app."
+              : "Tap the scan icon to auto-fill from camera."
+          }
         >
           <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
             <View style={{ flex: 1 }}>
@@ -304,9 +303,7 @@ export function ProductForm({
         <View style={styles.switchRow}>
           <View style={{ flex: 1 }}>
             <Text style={styles.switchLabel}>Active</Text>
-            <Text style={styles.switchHint}>
-              Inactive products are hidden from order entry.
-            </Text>
+            <Text style={styles.switchHint}>Inactive products are hidden from order entry.</Text>
           </View>
           <Switch
             value={form.isActive}

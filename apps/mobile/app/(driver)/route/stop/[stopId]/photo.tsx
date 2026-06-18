@@ -10,7 +10,7 @@ import { usePodStore } from "../../../../../store/podStore";
 export default function StopPhotoScreen() {
   const router = useRouter();
   const { stopId } = useLocalSearchParams<{ stopId: string }>();
-  const stored = usePodStore((s) => (stopId ? s.pods[stopId]?.photoUrls ?? [] : []));
+  const stored = usePodStore((s) => (stopId ? (s.pods[stopId]?.photoUrls ?? []) : []));
   const setPhotos = usePodStore((s) => s.setPhotos);
   const [photos, setLocal] = useState<string[]>(stored);
 
@@ -36,8 +36,8 @@ export default function StopPhotoScreen() {
       />
       <View style={{ padding: 16, gap: 12 }}>
         <Text style={styles.help}>
-          Capture up to 3 photos showing the delivered goods. They'll be attached to this stop
-          when you complete it.
+          Capture up to 3 photos showing the delivered goods. They'll be attached to this stop when
+          you complete it.
         </Text>
         <PhotoCapture
           photos={photos}

@@ -70,7 +70,7 @@ function TabTrigger({ value, children }: { value: string; children: React.ReactN
     <Tabs.Trigger
       value={value}
       className={cn(
-        "px-4 py-2 text-sm font-medium text-navy/60 border-b-2 border-transparent transition-colors",
+        "px-4 py-2 text-sm font-medium text-navy/70 border-b-2 border-transparent transition-colors",
         "hover:text-navy data-[state=active]:text-brand-500 data-[state=active]:border-brand-500",
       )}
     >
@@ -92,8 +92,9 @@ function SortableStop({
   onSelect: () => void;
   onRemove: () => void;
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
-    useSortable({ id: stop.id });
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: stop.id,
+  });
 
   const [confirming, setConfirming] = React.useState(false);
 
@@ -125,7 +126,7 @@ function SortableStop({
         {...attributes}
         {...listeners}
         onClick={(e) => e.stopPropagation()}
-        className="mt-0.5 cursor-grab text-navy/25 hover:text-navy/50 active:cursor-grabbing"
+        className="mt-0.5 cursor-grab text-navy/25 hover:text-navy/70 active:cursor-grabbing"
         aria-label="Drag to reorder"
       >
         <GripVertical className="h-4 w-4" />
@@ -141,26 +142,26 @@ function SortableStop({
         <p className="truncate font-medium text-navy text-sm">
           {stop.customer?.businessName ?? stop.customerId}
         </p>
-        {addr && <p className="mt-0.5 truncate text-xs text-navy/50">{addr}</p>}
+        {addr && <p className="mt-0.5 truncate text-xs text-navy/70">{addr}</p>}
       </div>
 
       {/* Remove */}
-      <div
-        className="flex shrink-0 items-center gap-1"
-        onClick={(e) => e.stopPropagation()}
-      >
+      <div className="flex shrink-0 items-center gap-1" onClick={(e) => e.stopPropagation()}>
         {confirming ? (
           <>
             <span className="text-xs text-danger font-medium">Remove?</span>
             <button
-              onClick={() => { onRemove(); setConfirming(false); }}
+              onClick={() => {
+                onRemove();
+                setConfirming(false);
+              }}
               className="rounded px-1.5 py-0.5 text-xs font-medium text-white bg-danger hover:bg-danger/80 transition-colors"
             >
               Yes
             </button>
             <button
               onClick={() => setConfirming(false)}
-              className="rounded px-1.5 py-0.5 text-xs font-medium text-navy/60 hover:text-navy transition-colors"
+              className="rounded px-1.5 py-0.5 text-xs font-medium text-navy/70 hover:text-navy transition-colors"
             >
               Cancel
             </button>
@@ -205,9 +206,7 @@ function AddStopSearch({
 
   const suggestions = React.useMemo(() => {
     if (!debounced) return [];
-    return allCustomers
-      .filter((c: any) => !existingCustomerIds.includes(c.id))
-      .slice(0, 8);
+    return allCustomers.filter((c: any) => !existingCustomerIds.includes(c.id)).slice(0, 8);
   }, [allCustomers, debounced, existingCustomerIds]);
 
   React.useEffect(() => {
@@ -241,14 +240,19 @@ function AddStopSearch({
   return (
     <div ref={ref} className="relative mt-3 border-t border-surface-border pt-3">
       <div className="relative">
-        <Plus className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-navy/40" />
+        <Plus className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-navy/70" />
         <input
           type="text"
           value={search}
-          onChange={(e) => { setSearch(e.target.value); setOpen(true); }}
-          onFocus={() => { if (search) setOpen(true); }}
+          onChange={(e) => {
+            setSearch(e.target.value);
+            setOpen(true);
+          }}
+          onFocus={() => {
+            if (search) setOpen(true);
+          }}
           placeholder="Add customer to route…"
-          className="h-9 w-full rounded border border-surface-border bg-white pl-8 pr-3 text-sm text-navy placeholder:text-navy/40 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+          className="h-9 w-full rounded border border-surface-border bg-white pl-8 pr-3 text-sm text-navy placeholder:text-navy/70 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
         />
       </div>
       {open && suggestions.length > 0 && (
@@ -257,10 +261,13 @@ function AddStopSearch({
             <li key={c.id}>
               <button
                 className="flex w-full flex-col px-3 py-2 text-left hover:bg-surface-raised transition-colors"
-                onMouseDown={(e) => { e.preventDefault(); handleAdd(c); }}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  handleAdd(c);
+                }}
               >
                 <span className="text-sm font-medium text-navy">{c.businessName}</span>
-                <span className="text-xs text-navy/50">{c.contactName}</span>
+                <span className="text-xs text-navy/70">{c.contactName}</span>
               </button>
             </li>
           ))}
@@ -301,7 +308,12 @@ function DispatchModal({
 
   const handleDispatch = () => {
     createRun.mutate(
-      { routeId, scheduledDate: date, driverId: driverId || undefined, startTime: startTime || undefined },
+      {
+        routeId,
+        scheduledDate: date,
+        driverId: driverId || undefined,
+        startTime: startTime || undefined,
+      },
       {
         onSuccess: (run) => {
           toast({ title: "Route run dispatched", variant: "success" });
@@ -348,7 +360,7 @@ function DispatchModal({
             onChange={(e) => setStartTime(e.target.value)}
             className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
           />
-          <p className="mt-1 text-xs text-navy/50">When the driver leaves the depot</p>
+          <p className="mt-1 text-xs text-navy/70">When the driver leaves the depot</p>
         </div>
         <div>
           <label className="mb-1 block text-sm font-medium text-navy">Driver (optional)</label>
@@ -359,7 +371,9 @@ function DispatchModal({
           >
             <option value="">Unassigned</option>
             {drivers.map((d: any) => (
-              <option key={d.id} value={d.id}>{d.contactName}</option>
+              <option key={d.id} value={d.id}>
+                {d.contactName}
+              </option>
             ))}
           </select>
         </div>
@@ -370,11 +384,7 @@ function DispatchModal({
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-export default function RouteTemplateDetailPage({
-  params,
-}: {
-  params: { id: string };
-}) {
+export default function RouteTemplateDetailPage({ params }: { params: { id: string } }) {
   const router = useRouter();
   const { setTitle } = usePageTitle();
   const { toast } = useToast();
@@ -414,7 +424,9 @@ export default function RouteTemplateDetailPage({
   }, [route?.stops]);
 
   const name = route?.name ?? "Route Template";
-  React.useEffect(() => { setTitle(name); }, [setTitle, name]);
+  React.useEffect(() => {
+    setTitle(name);
+  }, [setTitle, name]);
 
   // DnD sensors
   const sensors = useSensors(
@@ -432,12 +444,19 @@ export default function RouteTemplateDetailPage({
 
   const handleSaveName = () => {
     const trimmed = nameValue.trim();
-    if (!trimmed || trimmed === route?.name) { setEditingName(false); return; }
+    if (!trimmed || trimmed === route?.name) {
+      setEditingName(false);
+      return;
+    }
     updateRoute.mutate(
       { id: params.id, name: trimmed },
       {
-        onSuccess: () => { setEditingName(false); toast({ title: "Route name saved", variant: "success" }); },
-        onError: (err) => toast({ title: "Save failed", description: err.message, variant: "error" }),
+        onSuccess: () => {
+          setEditingName(false);
+          toast({ title: "Route name saved", variant: "success" });
+        },
+        onError: (err) =>
+          toast({ title: "Save failed", description: err.message, variant: "error" }),
       },
     );
   };
@@ -446,7 +465,8 @@ export default function RouteTemplateDetailPage({
     updateRoute.mutate(
       { id: params.id, driverId: driverId || undefined },
       {
-        onError: (err) => toast({ title: "Save failed", description: err.message, variant: "error" }),
+        onError: (err) =>
+          toast({ title: "Save failed", description: err.message, variant: "error" }),
       },
     );
   };
@@ -455,8 +475,13 @@ export default function RouteTemplateDetailPage({
     updateRoute.mutate(
       { id: params.id, isActive: !route?.isActive },
       {
-        onSuccess: () => toast({ title: route?.isActive ? "Route deactivated" : "Route activated", variant: "success" }),
-        onError: (err) => toast({ title: "Save failed", description: err.message, variant: "error" }),
+        onSuccess: () =>
+          toast({
+            title: route?.isActive ? "Route deactivated" : "Route activated",
+            variant: "success",
+          }),
+        onError: (err) =>
+          toast({ title: "Save failed", description: err.message, variant: "error" }),
       },
     );
   };
@@ -467,7 +492,8 @@ export default function RouteTemplateDetailPage({
         toast({ title: "Route deleted", variant: "success" });
         router.push("/routes");
       },
-      onError: (err) => toast({ title: "Delete failed", description: err.message, variant: "error" }),
+      onError: (err) =>
+        toast({ title: "Delete failed", description: err.message, variant: "error" }),
     });
   };
 
@@ -489,13 +515,15 @@ export default function RouteTemplateDetailPage({
         });
         toast({
           title: result.usedFallback ? "Route optimized (local fallback)" : "Route optimized",
-          description: result.reorderedCount > 0
-            ? `${result.reorderedCount} stop${result.reorderedCount === 1 ? "" : "s"} reordered`
-            : "Stops are already in optimal order",
+          description:
+            result.reorderedCount > 0
+              ? `${result.reorderedCount} stop${result.reorderedCount === 1 ? "" : "s"} reordered`
+              : "Stops are already in optimal order",
           variant: "success",
         });
       },
-      onError: (err) => toast({ title: "Optimization failed", description: err.message, variant: "error" }),
+      onError: (err) =>
+        toast({ title: "Optimization failed", description: err.message, variant: "error" }),
     });
   };
 
@@ -509,7 +537,8 @@ export default function RouteTemplateDetailPage({
       {
         onError: (err) => {
           toast({ title: "Remove failed", description: err.message, variant: "error" });
-          if (route?.stops) setLocalStops([...route.stops].sort((a, b) => a.stopNumber - b.stopNumber));
+          if (route?.stops)
+            setLocalStops([...route.stops].sort((a, b) => a.stopNumber - b.stopNumber));
         },
       },
     );
@@ -535,7 +564,8 @@ export default function RouteTemplateDetailPage({
         {
           onError: (err) => {
             toast({ title: "Reorder failed", description: err.message, variant: "error" });
-            if (route?.stops) setLocalStops([...route.stops].sort((a, b) => a.stopNumber - b.stopNumber));
+            if (route?.stops)
+              setLocalStops([...route.stops].sort((a, b) => a.stopNumber - b.stopNumber));
           },
         },
       );
@@ -572,7 +602,9 @@ export default function RouteTemplateDetailPage({
     return (
       <div className="flex flex-col items-center gap-4 p-12 text-center">
         <p className="text-base font-medium text-navy">Route template not found.</p>
-        <Button variant="secondary" href="/routes">Back to Routes</Button>
+        <Button variant="secondary" href="/routes">
+          Back to Routes
+        </Button>
       </div>
     );
   }
@@ -585,7 +617,7 @@ export default function RouteTemplateDetailPage({
       <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-surface-border bg-white px-6 py-3">
         <Link
           href="/routes"
-          className="flex items-center gap-1.5 text-sm text-navy/60 hover:text-navy transition-colors"
+          className="flex items-center gap-1.5 text-sm text-navy/70 hover:text-navy transition-colors"
         >
           <ArrowLeft className="h-4 w-4" /> Routes
         </Link>
@@ -598,7 +630,10 @@ export default function RouteTemplateDetailPage({
             value={nameValue}
             onChange={(e) => setNameValue(e.target.value)}
             onBlur={handleSaveName}
-            onKeyDown={(e) => { if (e.key === "Enter") handleSaveName(); if (e.key === "Escape") setEditingName(false); }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleSaveName();
+              if (e.key === "Escape") setEditingName(false);
+            }}
             className="rounded border border-brand-500 bg-white px-2 py-0.5 text-base font-bold text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
             autoFocus
           />
@@ -611,9 +646,12 @@ export default function RouteTemplateDetailPage({
             {route.name}
           </button>
         )}
-        {updateRoute.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin text-navy/40" />}
+        {updateRoute.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin text-navy/70" />}
 
-        <Badge variant={route.isActive ? "success" : "neutral"} label={route.isActive ? "Active" : "Inactive"} />
+        <Badge
+          variant={route.isActive ? "success" : "neutral"}
+          label={route.isActive ? "Active" : "Inactive"}
+        />
 
         {/* Depot badge */}
         {(route.depotAddress || routeSettings?.depotAddress) && (
@@ -632,7 +670,9 @@ export default function RouteTemplateDetailPage({
           >
             <option value="">No default driver</option>
             {drivers.map((d: any) => (
-              <option key={d.id} value={d.id}>{d.contactName}</option>
+              <option key={d.id} value={d.id}>
+                {d.contactName}
+              </option>
             ))}
           </select>
 
@@ -643,13 +683,21 @@ export default function RouteTemplateDetailPage({
             className={cn(
               "flex h-8 items-center gap-1.5 rounded border px-2.5 text-sm font-medium transition-colors",
               route.isActive
-                ? "border-surface-border bg-white text-navy/60 hover:border-warning hover:text-warning"
-                : "border-surface-border bg-white text-navy/60 hover:border-success hover:text-success",
+                ? "border-surface-border bg-white text-navy/70 hover:border-warning hover:text-warning"
+                : "border-surface-border bg-white text-navy/70 hover:border-success hover:text-success",
             )}
           >
-            {route.isActive
-              ? <><ToggleRight className="h-4 w-4" />Deactivate</>
-              : <><ToggleLeft className="h-4 w-4" />Activate</>}
+            {route.isActive ? (
+              <>
+                <ToggleRight className="h-4 w-4" />
+                Deactivate
+              </>
+            ) : (
+              <>
+                <ToggleLeft className="h-4 w-4" />
+                Activate
+              </>
+            )}
           </button>
 
           {/* Delete */}
@@ -665,7 +713,7 @@ export default function RouteTemplateDetailPage({
               </button>
               <button
                 onClick={() => setConfirmDelete(false)}
-                className="rounded px-2 py-1 text-xs font-medium text-navy/60 hover:text-navy transition-colors"
+                className="rounded px-2 py-1 text-xs font-medium text-navy/70 hover:text-navy transition-colors"
               >
                 Cancel
               </button>
@@ -674,7 +722,7 @@ export default function RouteTemplateDetailPage({
             <button
               onClick={() => setConfirmDelete(true)}
               title="Delete route"
-              className="flex h-8 items-center gap-1.5 rounded border border-surface-border bg-white px-2.5 text-sm font-medium text-navy/50 hover:border-danger hover:text-danger transition-colors"
+              className="flex h-8 items-center gap-1.5 rounded border border-surface-border bg-white px-2.5 text-sm font-medium text-navy/70 hover:border-danger hover:text-danger transition-colors"
             >
               <Trash2 className="h-4 w-4" />
             </button>
@@ -682,18 +730,23 @@ export default function RouteTemplateDetailPage({
 
           <Button
             variant="secondary"
-            leftIcon={optimizeTemplate.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+            leftIcon={
+              optimizeTemplate.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Sparkles className="h-4 w-4" />
+              )
+            }
             onClick={handleOptimize}
             disabled={optimizeTemplate.isPending || localStops.length < 2}
-            title={localStops.length < 2 ? "Need at least 2 stops to optimize" : "Optimize stop order"}
+            title={
+              localStops.length < 2 ? "Need at least 2 stops to optimize" : "Optimize stop order"
+            }
           >
             {optimizeTemplate.isPending ? "Optimizing…" : "Optimize"}
           </Button>
 
-          <Button
-            leftIcon={<Play className="h-4 w-4" />}
-            onClick={() => setDispatchOpen(true)}
-          >
+          <Button leftIcon={<Play className="h-4 w-4" />} onClick={() => setDispatchOpen(true)}>
             Dispatch Run
           </Button>
         </div>
@@ -735,7 +788,7 @@ export default function RouteTemplateDetailPage({
             <Tabs.Content value="stops" className="flex flex-1 flex-col overflow-hidden">
               <div className="flex-1 overflow-y-auto p-4">
                 {localStops.length === 0 ? (
-                  <div className="flex flex-col items-center gap-3 py-12 text-navy/40">
+                  <div className="flex flex-col items-center gap-3 py-12 text-navy/70">
                     <MapPin className="h-8 w-8" />
                     <p className="text-sm">No stops yet. Add customers below.</p>
                   </div>
@@ -755,7 +808,9 @@ export default function RouteTemplateDetailPage({
                             key={stop.id}
                             stop={stop}
                             isSelected={selectedStopId === stop.id}
-                            onSelect={() => setSelectedStopId(stop.id === selectedStopId ? null : stop.id)}
+                            onSelect={() =>
+                              setSelectedStopId(stop.id === selectedStopId ? null : stop.id)
+                            }
                             onRemove={() => handleRemoveStop(stop.id)}
                           />
                         ))}
@@ -771,15 +826,17 @@ export default function RouteTemplateDetailPage({
             {/* ── Orders Tab ── */}
             <Tabs.Content value="orders" className="flex-1 overflow-y-auto p-4">
               {ordersByCustomer.length === 0 ? (
-                <div className="flex flex-col items-center gap-3 py-12 text-navy/40">
+                <div className="flex flex-col items-center gap-3 py-12 text-navy/70">
                   <ShoppingCart className="h-8 w-8" />
-                  <p className="text-sm text-center">No pending orders for customers in this route.</p>
+                  <p className="text-sm text-center">
+                    No pending orders for customers in this route.
+                  </p>
                 </div>
               ) : (
                 <div className="space-y-4">
                   {ordersByCustomer.map((group) => (
                     <div key={group.name}>
-                      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-navy/50">
+                      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-navy/70">
                         {group.name}
                       </h3>
                       <div className="space-y-2">
@@ -789,7 +846,9 @@ export default function RouteTemplateDetailPage({
                             className="rounded-lg border border-surface-border bg-white p-3"
                           >
                             <div className="flex items-center justify-between">
-                              <span className="text-sm font-medium text-navy">#{order.orderNumber}</span>
+                              <span className="text-sm font-medium text-navy">
+                                #{order.orderNumber}
+                              </span>
                               <span
                                 className={cn(
                                   "rounded-full px-2 py-0.5 text-xs font-medium",
@@ -803,7 +862,7 @@ export default function RouteTemplateDetailPage({
                             </div>
                             <div className="mt-1 space-y-0.5">
                               {order.lineItems.map((li) => (
-                                <p key={li.id} className="text-xs text-navy/60">
+                                <p key={li.id} className="text-xs text-navy/70">
                                   {li.product?.name ?? "Item"} × {li.qty}
                                 </p>
                               ))}
@@ -820,7 +879,7 @@ export default function RouteTemplateDetailPage({
             {/* ── Packing List Tab ── */}
             <Tabs.Content value="packing" className="flex-1 overflow-y-auto p-4">
               {packingList.length === 0 ? (
-                <div className="flex flex-col items-center gap-3 py-12 text-navy/40">
+                <div className="flex flex-col items-center gap-3 py-12 text-navy/70">
                   <Package className="h-8 w-8" />
                   <p className="text-sm text-center">No pending orders to pack.</p>
                 </div>
@@ -840,7 +899,7 @@ export default function RouteTemplateDetailPage({
                   </div>
                   <div className="overflow-hidden rounded-lg border border-surface-border">
                     <table className="w-full text-sm">
-                      <thead className="bg-surface-raised text-xs text-navy/50">
+                      <thead className="bg-surface-raised text-xs text-navy/70">
                         <tr>
                           <th className="px-3 py-2 text-left font-medium">Product</th>
                           <th className="px-3 py-2 text-left font-medium">SKU</th>
@@ -852,11 +911,11 @@ export default function RouteTemplateDetailPage({
                           <tr key={item.productId}>
                             <td className="px-3 py-2">
                               <p className="font-medium text-navy">{item.productName}</p>
-                              <p className="mt-0.5 text-xs text-navy/50">
+                              <p className="mt-0.5 text-xs text-navy/70">
                                 {item.customers.map((c) => `${c.name} (${c.qty})`).join(", ")}
                               </p>
                             </td>
-                            <td className="px-3 py-2 text-navy/60">{item.sku ?? "—"}</td>
+                            <td className="px-3 py-2 text-navy/70">{item.sku ?? "—"}</td>
                             <td className="px-3 py-2 text-right font-bold text-navy">
                               {item.totalQty}
                             </td>
@@ -875,7 +934,9 @@ export default function RouteTemplateDetailPage({
                 {/* Controls */}
                 <div className="flex items-end gap-3">
                   <div className="flex-1">
-                    <label className="mb-1 block text-xs font-medium text-navy/60">Departure Time</label>
+                    <label className="mb-1 block text-xs font-medium text-navy/70">
+                      Departure Time
+                    </label>
                     <input
                       type="time"
                       value={analysisStartTime || routeSettings?.defaultStartTime || "08:00"}
@@ -884,7 +945,13 @@ export default function RouteTemplateDetailPage({
                     />
                   </div>
                   <Button
-                    leftIcon={analyzeRoute.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                    leftIcon={
+                      analyzeRoute.isPending ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Sparkles className="h-4 w-4" />
+                      )
+                    }
                     onClick={() => {
                       analyzeRoute.mutate(
                         { routeId: params.id, startTime: analysisStartTime || undefined },
@@ -903,7 +970,9 @@ export default function RouteTemplateDetailPage({
                     {/* Summary */}
                     {analysisResult.summary && (
                       <div className="rounded-lg border border-brand-200 bg-brand-50 p-3">
-                        <p className="text-sm font-medium text-brand-700">{analysisResult.summary}</p>
+                        <p className="text-sm font-medium text-brand-700">
+                          {analysisResult.summary}
+                        </p>
                       </div>
                     )}
 
@@ -918,43 +987,57 @@ export default function RouteTemplateDetailPage({
                     {/* ETA rows */}
                     <div className="overflow-hidden rounded-lg border border-surface-border">
                       <table className="w-full text-sm">
-                        <thead className="bg-surface-raised text-xs text-navy/50">
+                        <thead className="bg-surface-raised text-xs text-navy/70">
                           <tr>
                             <th className="px-3 py-2 text-left font-medium">#</th>
                             <th className="px-3 py-2 text-left font-medium">Customer</th>
                             <th className="px-3 py-2 text-left font-medium">ETA</th>
                             <th className="px-3 py-2 text-left font-medium">Window</th>
                             <th className="px-3 py-2 text-center font-medium">Status</th>
-                            {analysisResult.stops && <th className="px-3 py-2 text-left font-medium">AI Note</th>}
+                            {analysisResult.stops && (
+                              <th className="px-3 py-2 text-left font-medium">AI Note</th>
+                            )}
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-surface-border bg-white">
                           {analysisResult.etas.map((eta) => {
-                            const aiStop = analysisResult.stops?.find((s) => s.stopNumber === eta.stopNumber);
+                            const aiStop = analysisResult.stops?.find(
+                              (s) => s.stopNumber === eta.stopNumber,
+                            );
                             return (
                               <tr key={eta.stopId}>
                                 <td className="px-3 py-2 font-bold text-navy">{eta.stopNumber}</td>
                                 <td className="px-3 py-2 text-navy">{eta.customerName}</td>
                                 <td className="px-3 py-2">
                                   <span className="font-mono text-navy">{eta.arrivalTime}</span>
-                                  <span className="ml-1 text-xs text-navy/40">({eta.travelTimeMinutes}m)</span>
+                                  <span className="ml-1 text-xs text-navy/70">
+                                    ({eta.travelTimeMinutes}m)
+                                  </span>
                                 </td>
-                                <td className="px-3 py-2 text-navy/60">
+                                <td className="px-3 py-2 text-navy/70">
                                   {eta.deliveryWindowStart && eta.deliveryWindowEnd
                                     ? `${eta.deliveryWindowStart}–${eta.deliveryWindowEnd}`
                                     : "—"}
                                 </td>
                                 <td className="px-3 py-2 text-center">
                                   {aiStop ? (
-                                    <span className={cn(
-                                      "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium",
-                                      aiStop.status === "ok" && "bg-emerald-50 text-emerald-700",
-                                      aiStop.status === "warning" && "bg-amber-50 text-amber-700",
-                                      aiStop.status === "critical" && "bg-red-50 text-red-700",
-                                    )}>
-                                      {aiStop.status === "ok" && <CheckCircle className="h-3 w-3" />}
-                                      {aiStop.status === "warning" && <AlertTriangle className="h-3 w-3" />}
-                                      {aiStop.status === "critical" && <XCircle className="h-3 w-3" />}
+                                    <span
+                                      className={cn(
+                                        "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium",
+                                        aiStop.status === "ok" && "bg-emerald-50 text-emerald-700",
+                                        aiStop.status === "warning" && "bg-amber-50 text-amber-700",
+                                        aiStop.status === "critical" && "bg-red-50 text-red-700",
+                                      )}
+                                    >
+                                      {aiStop.status === "ok" && (
+                                        <CheckCircle className="h-3 w-3" />
+                                      )}
+                                      {aiStop.status === "warning" && (
+                                        <AlertTriangle className="h-3 w-3" />
+                                      )}
+                                      {aiStop.status === "critical" && (
+                                        <XCircle className="h-3 w-3" />
+                                      )}
                                       {aiStop.status}
                                     </span>
                                   ) : eta.withinWindow === true ? (
@@ -970,7 +1053,9 @@ export default function RouteTemplateDetailPage({
                                   )}
                                 </td>
                                 {analysisResult.stops && (
-                                  <td className="px-3 py-2 text-xs text-navy/60">{aiStop?.message ?? ""}</td>
+                                  <td className="px-3 py-2 text-xs text-navy/70">
+                                    {aiStop?.message ?? ""}
+                                  </td>
                                 )}
                               </tr>
                             );
@@ -982,7 +1067,9 @@ export default function RouteTemplateDetailPage({
                     {/* Suggestions */}
                     {analysisResult.suggestions && analysisResult.suggestions.length > 0 && (
                       <div className="rounded-lg border border-surface-border bg-white p-3">
-                        <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-navy/50">Suggestions</h4>
+                        <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-navy/70">
+                          Suggestions
+                        </h4>
                         <ul className="space-y-1">
                           {analysisResult.suggestions.map((s, i) => (
                             <li key={i} className="flex items-start gap-2 text-sm text-navy/70">
@@ -997,9 +1084,12 @@ export default function RouteTemplateDetailPage({
                 )}
 
                 {!analysisResult && !analyzeRoute.isPending && (
-                  <div className="flex flex-col items-center gap-3 py-12 text-navy/40">
+                  <div className="flex flex-col items-center gap-3 py-12 text-navy/70">
                     <Clock className="h-8 w-8" />
-                    <p className="text-sm text-center">Click &quot;Analyze Route&quot; to calculate ETAs and get AI-powered delivery window insights.</p>
+                    <p className="text-sm text-center">
+                      Click &quot;Analyze Route&quot; to calculate ETAs and get AI-powered delivery
+                      window insights.
+                    </p>
                   </div>
                 )}
               </div>

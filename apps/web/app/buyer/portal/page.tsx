@@ -13,9 +13,7 @@ import type { BuyerSeller } from "@/lib/buyer-auth";
 
 // ─── Status badge variant helper ─────────────────────────────────────────────
 
-function getLinkStatusVariant(
-  status: string,
-): "success" | "warning" | "danger" | "neutral" {
+function getLinkStatusVariant(status: string): "success" | "warning" | "danger" | "neutral" {
   switch (status) {
     case "ACTIVE":
       return "success";
@@ -39,13 +37,7 @@ function formatLinkStatus(status: string): string {
 
 // ─── Seller Card ──────────────────────────────────────────────────────────────
 
-function SellerCard({
-  seller,
-  onClick,
-}: {
-  seller: BuyerSeller;
-  onClick: () => void;
-}) {
+function SellerCard({ seller, onClick }: { seller: BuyerSeller; onClick: () => void }) {
   const apiUrl =
     process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") ?? "http://localhost:3000/api/v1";
 
@@ -72,7 +64,7 @@ function SellerCard({
       {/* Info */}
       <div className="flex-1 min-w-0">
         <p className="text-base font-semibold text-navy truncate">{seller.tenant.name}</p>
-        <p className="text-sm text-navy/60 truncate">{seller.customer.businessName}</p>
+        <p className="text-sm text-navy/70 truncate">{seller.customer.businessName}</p>
         <div className="mt-1">
           <Badge variant={getLinkStatusVariant(seller.linkStatus)}>
             {formatLinkStatus(seller.linkStatus)}
@@ -157,7 +149,9 @@ function ConnectSellerModal({
     // Overlay
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm"
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
     >
       <div className="w-full max-w-md rounded-2xl bg-white shadow-modal">
         {/* Header */}
@@ -171,7 +165,7 @@ function ConnectSellerModal({
           <button
             type="button"
             onClick={onClose}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-navy/40 hover:bg-surface-raised hover:text-navy transition-colors"
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
             aria-label="Close"
           >
             <X className="h-4 w-4" />
@@ -187,9 +181,9 @@ function ConnectSellerModal({
               </div>
               <div>
                 <p className="font-semibold text-navy">Request sent!</p>
-                <p className="mt-1 text-sm text-navy/60">
-                  Your seller will review and approve your connection. You&apos;ll see them in
-                  your seller list once approved.
+                <p className="mt-1 text-sm text-navy/70">
+                  Your seller will review and approve your connection. You&apos;ll see them in your
+                  seller list once approved.
                 </p>
               </div>
               <Button onClick={onClose} variant="secondary" className="w-full mt-2">
@@ -215,13 +209,13 @@ function ConnectSellerModal({
                   autoCapitalize="none"
                   autoCorrect="off"
                   spellCheck={false}
-                  className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/40 transition-colors focus:outline-none focus:ring-2 focus:ring-buyer-500 focus:border-transparent"
+                  className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/70 transition-colors focus:outline-none focus:ring-2 focus:ring-buyer-500 focus:border-transparent"
                   {...register("sellerSlug")}
                 />
                 {errors.sellerSlug && (
                   <p className="text-xs text-danger">{errors.sellerSlug.message}</p>
                 )}
-                <p className="text-xs text-navy/50">
+                <p className="text-xs text-navy/70">
                   Ask your seller for their company code. You&apos;ll usually find it on your
                   invoices, emails, or their website.
                 </p>
@@ -236,15 +230,15 @@ function ConnectSellerModal({
                   type="email"
                   placeholder="The email your seller knows you by"
                   autoComplete="email"
-                  className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/40 transition-colors focus:outline-none focus:ring-2 focus:ring-buyer-500 focus:border-transparent"
+                  className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/70 transition-colors focus:outline-none focus:ring-2 focus:ring-buyer-500 focus:border-transparent"
                   {...register("emailAtSeller")}
                 />
                 {errors.emailAtSeller && (
                   <p className="text-xs text-danger">{errors.emailAtSeller.message}</p>
                 )}
-                <p className="text-xs text-navy/50">
-                  This is the email address your seller has on file for you. It may differ from
-                  your RouteFlow login email.
+                <p className="text-xs text-navy/70">
+                  This is the email address your seller has on file for you. It may differ from your
+                  RouteFlow login email.
                 </p>
               </div>
 
@@ -368,24 +362,16 @@ function BuyerPortalInner() {
       <div className="mb-6 flex items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-navy">Your Sellers</h1>
-          <p className="text-sm text-navy/60 mt-1">
+          <p className="text-sm text-navy/70 mt-1">
             Select a seller to view your orders and invoices.
           </p>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={handleRefresh}
-            loading={isRefreshing}
-          >
+          <Button variant="secondary" size="sm" onClick={handleRefresh} loading={isRefreshing}>
             <RefreshCw className="h-4 w-4 mr-1.5" />
             Refresh
           </Button>
-          <Button
-            size="sm"
-            onClick={() => setConnectModalOpen(true)}
-          >
+          <Button size="sm" onClick={() => setConnectModalOpen(true)}>
             <Plus className="h-4 w-4 mr-1.5" />
             Connect Seller
           </Button>
@@ -404,9 +390,9 @@ function BuyerPortalInner() {
             <Building2 className="h-8 w-8 text-buyer-400" />
           </div>
           <h2 className="text-lg font-semibold text-navy mb-2">No sellers connected yet</h2>
-          <p className="text-sm text-navy/60 max-w-xs mx-auto mb-6">
-            Connect with your seller to view your orders, invoices, and delivery updates. All in
-            one place.
+          <p className="text-sm text-navy/70 max-w-xs mx-auto mb-6">
+            Connect with your seller to view your orders, invoices, and delivery updates. All in one
+            place.
           </p>
 
           {/* Primary CTA */}
@@ -420,10 +406,9 @@ function BuyerPortalInner() {
 
           {/* Secondary hint */}
           <div className="mt-5 rounded-lg bg-surface-raised px-4 py-3 max-w-xs mx-auto">
-            <p className="text-xs text-navy/60 text-left leading-relaxed">
-              <span className="font-medium text-navy">Got an invite link?</span>{" "}
-              Check your email from your seller and click the link. You&apos;ll be connected
-              instantly.
+            <p className="text-xs text-navy/70 text-left leading-relaxed">
+              <span className="font-medium text-navy">Got an invite link?</span> Check your email
+              from your seller and click the link. You&apos;ll be connected instantly.
             </p>
           </div>
         </div>

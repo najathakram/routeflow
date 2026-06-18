@@ -7,9 +7,7 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 /** Merge multiple React refs into one callback ref. */
-export function mergeRefs<T>(
-  ...refs: Array<React.Ref<T> | undefined>
-): React.RefCallback<T> {
+export function mergeRefs<T>(...refs: Array<React.Ref<T> | undefined>): React.RefCallback<T> {
   return (node) => {
     for (const ref of refs) {
       if (!ref) continue;

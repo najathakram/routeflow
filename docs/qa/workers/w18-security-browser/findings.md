@@ -16,6 +16,7 @@ SQL injection: blocked (Prisma parameterization). Cross-tenant IDOR: blocked. Bu
 ## Findings
 
 ### W18-003 — Driver Can Read All Customer Returns (P2)
+
 - **Severity:** P2
 - **Issue:** `GET /api/v1/returns` returns HTTP 200 with the full tenant returns list to a DRIVER-role JWT. Drivers should not see customer return records.
 - **Evidence:** `GET /api/v1/returns` with `ux_driver_a` token → 200 with full returns list (identical to TENANT_ADMIN response).
@@ -24,6 +25,7 @@ SQL injection: blocked (Prisma parameterization). Cross-tenant IDOR: blocked. Bu
 ---
 
 ### W18-004 — Driver Can Access Credit Notes Endpoint (P2)
+
 - **Severity:** P2
 - **Issue:** `GET /api/v1/credit-notes` returns HTTP 200 for DRIVER-role JWT. Returns empty array only because test tenant has 0 credit notes — not because of access control.
 - **Evidence:** `GET /api/v1/credit-notes` with driver token → 200 `{"data":[],"meta":{"total":0}}`. Same as operator response.
@@ -32,6 +34,7 @@ SQL injection: blocked (Prisma parameterization). Cross-tenant IDOR: blocked. Bu
 ---
 
 ### W18-005 — Stored XSS in Customer businessName (API Level) (P2)
+
 - **Severity:** P2
 - **Issue:** API accepts and stores raw HTML/JavaScript in `businessName` with no sanitization. React Native Web frontend correctly escapes via React's text renderer (no execution in tested UI). Risk: PDF generators, email templates, admin panels, WebViews with `dangerouslySetInnerHTML`.
 - **Evidence:**
@@ -47,6 +50,7 @@ SQL injection: blocked (Prisma parameterization). Cross-tenant IDOR: blocked. Bu
 ---
 
 ### W18-006 — Stored XSS in Order Notes (API Level) (P2)
+
 - **Severity:** P2
 - **Issue:** Order `notes` field stores raw `<script>` tags without sanitization. Same risk as W18-005.
 - **Evidence:**
@@ -61,19 +65,20 @@ SQL injection: blocked (Prisma parameterization). Cross-tenant IDOR: blocked. Bu
 
 ## Confirmed PASS Items
 
-| Test | Result |
-|------|--------|
-| Cross-tenant IDOR (fake UUIDs) | PASS — 404 returned, no data leak |
-| Buyer JWT against operator endpoints | PASS — 401 across all staff API routes |
-| Buyer-to-buyer order IDOR | PASS — 403 when accessing other buyer's orders |
-| Auth boundary (unauthenticated access) | PASS — immediate redirect, no content flash |
-| SQL injection in query params | PASS — Prisma parameterization + DTO validation block all tested payloads |
+| Test                                   | Result                                                                    |
+| -------------------------------------- | ------------------------------------------------------------------------- |
+| Cross-tenant IDOR (fake UUIDs)         | PASS — 404 returned, no data leak                                         |
+| Buyer JWT against operator endpoints   | PASS — 401 across all staff API routes                                    |
+| Buyer-to-buyer order IDOR              | PASS — 403 when accessing other buyer's orders                            |
+| Auth boundary (unauthenticated access) | PASS — immediate redirect, no content flash                               |
+| SQL injection in query params          | PASS — Prisma parameterization + DTO validation block all tested payloads |
 
 ---
 
 ## Cleanup Required
 
 XSS test artifacts in `ux-audit-1777265477001`:
+
 - Customer `ffcba95c-a168-491a-9d88-e82435593527` — businessName contains XSS payload
 - Customer `665e1007-c2ef-4c10-a1fd-2c4b1525d5d0` — businessName contains XSS payload
 - Order `6af05a85-7fb3-479b-ae6f-53fc6bff2a0e` — notes contains `<script>` payload
@@ -84,9 +89,9 @@ Run: `DELETE /api/v1/customers/<id>` and cancel the test order with operator tok
 
 ## Summary Table
 
-| ID | Severity | Title |
-|----|----------|-------|
-| W18-003 | P2 | Driver can read all customer returns |
-| W18-004 | P2 | Driver can access credit notes endpoint |
-| W18-005 | P2 | Stored XSS in customer businessName (API level) |
-| W18-006 | P2 | Stored XSS in order notes (API level) |
+| ID      | Severity | Title                                           |
+| ------- | -------- | ----------------------------------------------- |
+| W18-003 | P2       | Driver can read all customer returns            |
+| W18-004 | P2       | Driver can access credit notes endpoint         |
+| W18-005 | P2       | Stored XSS in customer businessName (API level) |
+| W18-006 | P2       | Stored XSS in order notes (API level)           |

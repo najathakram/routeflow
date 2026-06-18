@@ -1,11 +1,12 @@
 import { ActivityIndicator, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
+import { ProductForm, productFormFromValues } from "../../../../components/ProductForm";
 import {
-  ProductForm,
-  productFormFromValues,
-} from "../../../../components/ProductForm";
-import { useProduct, useUpdateProduct, useUpdateReorderSettings } from "../../../../lib/api/products";
+  useProduct,
+  useUpdateProduct,
+  useUpdateReorderSettings,
+} from "../../../../lib/api/products";
 import { showToast } from "../../../../lib/toast";
 
 export default function EditProductScreen() {

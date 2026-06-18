@@ -21,7 +21,11 @@ import {
   ProgressTrack,
   SearchBar,
 } from "@routeflow/ui/mobile/ios";
-import { useAdminProducts, type AdminProduct, type StockStatusFilter } from "../../../lib/api/admin";
+import {
+  useAdminProducts,
+  type AdminProduct,
+  type StockStatusFilter,
+} from "../../../lib/api/admin";
 
 function toNumber(v: number | string | null | undefined): number {
   if (typeof v === "number") return v;
@@ -65,20 +69,12 @@ export default function ProductsListScreen() {
             >
               <Ionicons name="barcode-outline" size={18} color={ios.label} />
             </Pressable>
-            <NavAction
-              label="Add"
-              bold
-              onPress={() => router.push("/(operator)/products/new")}
-            />
+            <NavAction label="Add" bold onPress={() => router.push("/(operator)/products/new")} />
           </View>
         }
       />
 
-      <SearchBar
-        placeholder="Search name, SKU, barcode…"
-        value={search}
-        onChangeText={setSearch}
-      />
+      <SearchBar placeholder="Search name, SKU, barcode…" value={search} onChangeText={setSearch} />
 
       <FilterChipRow
         chips={FILTERS.map((f) => ({ label: f.label }))}
@@ -131,11 +127,7 @@ function ProductRow({ p, onPress }: { p: AdminProduct; onPress: () => void }) {
   const pct = threshold > 0 ? Math.min(100, Math.round((stock / threshold) * 100)) : 100;
   const out = stock <= 0;
   const low = !out && stock <= threshold;
-  const fill: "red" | "orange" | "brand" | "green" = out
-    ? "red"
-    : low
-      ? "orange"
-      : "brand";
+  const fill: "red" | "orange" | "brand" | "green" = out ? "red" : low ? "orange" : "brand";
 
   return (
     <Pressable style={styles.row} onPress={onPress}>

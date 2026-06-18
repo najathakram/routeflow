@@ -51,10 +51,9 @@ async function main() {
   await client.connect();
 
   // 1. Verify the target tenant exists.
-  const tenantRes = await client.query(
-    'SELECT id, slug FROM "Tenant" WHERE id = $1 LIMIT 1',
-    [TARGET_TENANT_ID],
-  );
+  const tenantRes = await client.query('SELECT id, slug FROM "Tenant" WHERE id = $1 LIMIT 1', [
+    TARGET_TENANT_ID,
+  ]);
   if (tenantRes.rows.length === 0) {
     console.log(`[purge-xss-names] Tenant id=${TARGET_TENANT_ID} not found — nothing to do.`);
     await client.end();
@@ -107,10 +106,7 @@ async function main() {
   const ids = candidateRes.rows.map((r) => r.id);
   // Parameterised deletion — one round-trip, no string interpolation.
   const placeholders = ids.map((_, i) => `$${i + 1}`).join(", ");
-  const deleteRes = await client.query(
-    `DELETE FROM "Customer" WHERE id IN (${placeholders})`,
-    ids,
-  );
+  const deleteRes = await client.query(`DELETE FROM "Customer" WHERE id IN (${placeholders})`, ids);
 
   console.log(`[purge-xss-names] Deleted ${deleteRes.rowCount} Customer row(s).`);
 

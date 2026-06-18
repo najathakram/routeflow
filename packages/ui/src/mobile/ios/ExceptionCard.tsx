@@ -59,7 +59,9 @@ export function ExceptionCard({
               onPress={a.onPress}
               style={[styles.actionBtn, i === 0 ? styles.actionPrimary : styles.actionSecondary]}
             >
-              <Text style={[styles.actionText, i === 0 ? styles.actionTextOn : styles.actionTextOff]}>
+              <Text
+                style={[styles.actionText, i === 0 ? styles.actionTextOn : styles.actionTextOff]}
+              >
                 {a.label}
               </Text>
             </Pressable>

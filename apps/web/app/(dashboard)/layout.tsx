@@ -35,6 +35,8 @@ import {
   PieChart,
   ShoppingBag,
   Search,
+  Menu,
+  X,
   type LucideIcon,
 } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
@@ -50,7 +52,7 @@ import { PwaInstallPrompt } from "@/components/PwaInstallPrompt";
 
 // ─── Nav types & structure ────────────────────────────────────────────────────
 
-type NavLeaf  = { kind: "leaf";  label: string; href: string; icon: LucideIcon };
+type NavLeaf = { kind: "leaf"; label: string; href: string; icon: LucideIcon };
 type NavGroup = { kind: "group"; label: string; icon: LucideIcon; children: NavLeaf[] };
 type NavEntry = NavLeaf | NavGroup;
 
@@ -58,42 +60,52 @@ type NavEntry = NavLeaf | NavGroup;
 const OPERATOR_NAV: NavEntry[] = [
   { kind: "leaf", label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   {
-    kind: "group", label: "Orders", icon: ShoppingCart,
+    kind: "group",
+    label: "Orders",
+    icon: ShoppingCart,
     children: [
-      { kind: "leaf", label: "All Orders", href: "/orders",  icon: ShoppingCart },
-      { kind: "leaf", label: "Returns",    href: "/returns", icon: RotateCcw },
+      { kind: "leaf", label: "All Orders", href: "/orders", icon: ShoppingCart },
+      { kind: "leaf", label: "Returns", href: "/returns", icon: RotateCcw },
     ],
   },
   {
-    kind: "group", label: "Dispatch", icon: Truck,
+    kind: "group",
+    label: "Dispatch",
+    icon: Truck,
     children: [
       { kind: "leaf", label: "Overview", href: "/dispatch", icon: LayoutDashboard },
-      { kind: "leaf", label: "Routes",   href: "/routes",   icon: MapPin },
-      { kind: "leaf", label: "Drivers",  href: "/drivers",  icon: Truck },
+      { kind: "leaf", label: "Routes", href: "/routes", icon: MapPin },
+      { kind: "leaf", label: "Drivers", href: "/drivers", icon: Truck },
     ],
   },
   { kind: "leaf", label: "Customers", href: "/customers", icon: Users },
   {
-    kind: "group", label: "Warehouse", icon: Package,
+    kind: "group",
+    label: "Warehouse",
+    icon: Package,
     children: [
       { kind: "leaf", label: "Inventory", href: "/inventory", icon: Layers },
-      { kind: "leaf", label: "Products",  href: "/products",  icon: Package },
+      { kind: "leaf", label: "Products", href: "/products", icon: Package },
       { kind: "leaf", label: "Suppliers", href: "/suppliers", icon: Building2 },
     ],
   },
   {
-    kind: "group", label: "Finance", icon: Wallet,
+    kind: "group",
+    label: "Finance",
+    icon: Wallet,
     children: [
-      { kind: "leaf", label: "Overview",     href: "/finance/dashboard", icon: LayoutDashboard },
-      { kind: "leaf", label: "Invoices",     href: "/invoices",          icon: FileText },
-      { kind: "leaf", label: "Estimates",    href: "/estimates",         icon: FileCheck },
-      { kind: "leaf", label: "Credit Notes", href: "/credit-notes",      icon: Receipt },
-      { kind: "leaf", label: "Payments",     href: "/finance/payments",  icon: CreditCard },
-      { kind: "leaf", label: "Expenses",     href: "/finance/expenses",  icon: ShoppingBag },
-      { kind: "leaf", label: "Reports",      href: "/finance/reports",   icon: BarChart3 },
-      { kind: "leaf", label: "Analytics",    href: "/analytics",         icon: BarChart2 },
+      { kind: "leaf", label: "Overview", href: "/finance/dashboard", icon: LayoutDashboard },
+      { kind: "leaf", label: "Invoices", href: "/invoices", icon: FileText },
+      { kind: "leaf", label: "Estimates", href: "/estimates", icon: FileCheck },
+      { kind: "leaf", label: "Credit Notes", href: "/credit-notes", icon: Receipt },
+      { kind: "leaf", label: "Payments", href: "/finance/payments", icon: CreditCard },
+      { kind: "leaf", label: "Expenses", href: "/finance/expenses", icon: ShoppingBag },
+      { kind: "leaf", label: "Reports", href: "/finance/reports", icon: BarChart3 },
     ],
   },
+  // Analytics is app-wide (Revenue, Products & Inventory, Customers, Operations),
+  // so it lives at top level rather than nested under Finance.
+  { kind: "leaf", label: "Analytics", href: "/analytics", icon: BarChart2 },
   { kind: "leaf", label: "Settings", href: "/settings", icon: Settings },
 ];
 
@@ -101,10 +113,12 @@ const OPERATOR_NAV: NavEntry[] = [
 const CUSTOMER_NAV: NavEntry[] = [
   { kind: "leaf", label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   {
-    kind: "group", label: "Orders", icon: ShoppingCart,
+    kind: "group",
+    label: "Orders",
+    icon: ShoppingCart,
     children: [
-      { kind: "leaf", label: "My Orders",  href: "/orders",  icon: ShoppingCart },
-      { kind: "leaf", label: "Returns",    href: "/returns", icon: RotateCcw },
+      { kind: "leaf", label: "My Orders", href: "/orders", icon: ShoppingCart },
+      { kind: "leaf", label: "Returns", href: "/returns", icon: RotateCcw },
     ],
   },
   { kind: "leaf", label: "Invoices", href: "/invoices", icon: FileText },
@@ -114,22 +128,20 @@ const CUSTOMER_NAV: NavEntry[] = [
 /** Driver nav — routes and settings only */
 const DRIVER_NAV: NavEntry[] = [
   { kind: "leaf", label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
-  { kind: "leaf", label: "My Routes",  href: "/routes",   icon: MapPin },
-  { kind: "leaf", label: "Settings",   href: "/settings", icon: Settings },
+  { kind: "leaf", label: "My Routes", href: "/routes", icon: MapPin },
+  { kind: "leaf", label: "Settings", href: "/settings", icon: Settings },
 ];
 
 function getNavForRole(role: string | undefined, canActAsDriver?: boolean): NavEntry[] {
   if (role === "CUSTOMER") return CUSTOMER_NAV;
-  if (role === "DRIVER")   return DRIVER_NAV;
+  if (role === "DRIVER") return DRIVER_NAV;
   // Operators who can also act as drivers get "My Routes" inside the Dispatch
   // group (alongside Overview / Routes / Drivers) instead of as a stand-alone
   // top-level item — keeps the sidebar tidy and groups all dispatch tools.
   if (canActAsDriver) {
     return OPERATOR_NAV.map((entry): NavEntry => {
       if (entry.kind === "group" && entry.label === "Dispatch") {
-        const alreadyHasMyRoutes = entry.children.some(
-          (c) => c.href === "/routes/my-runs",
-        );
+        const alreadyHasMyRoutes = entry.children.some((c) => c.href === "/routes/my-runs");
         if (alreadyHasMyRoutes) return entry;
         return {
           ...entry,
@@ -150,7 +162,7 @@ function getNavForRole(role: string | undefined, canActAsDriver?: boolean): NavE
 /** Paths that CUSTOMER users may access (prefix-matched) */
 const CUSTOMER_ALLOWED: string[] = ["/dashboard", "/orders", "/returns", "/invoices", "/settings"];
 /** Paths that DRIVER users may access (prefix-matched) */
-const DRIVER_ALLOWED: string[]   = ["/dashboard", "/routes", "/settings"];
+const DRIVER_ALLOWED: string[] = ["/dashboard", "/routes", "/settings"];
 
 function isPathAllowed(pathname: string, allowed: string[]): boolean {
   return allowed.some((p) => pathname === p || pathname.startsWith(p + "/"));
@@ -159,14 +171,14 @@ function isPathAllowed(pathname: string, allowed: string[]): boolean {
 function RouteGuard({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   const pathname = usePathname();
-  const router   = useRouter();
+  const router = useRouter();
 
   React.useEffect(() => {
     const role = user?.role;
     if (!role) return;
     let allowed: string[] | null = null;
     if (role === "CUSTOMER") allowed = CUSTOMER_ALLOWED;
-    if (role === "DRIVER")   allowed = DRIVER_ALLOWED;
+    if (role === "DRIVER") allowed = DRIVER_ALLOWED;
     if (allowed && !isPathAllowed(pathname, allowed)) {
       router.replace("/dashboard");
     }
@@ -209,22 +221,24 @@ function NavLink({
   item,
   collapsed,
   active,
+  onNavigate,
 }: {
   item: NavLeaf;
   collapsed: boolean;
   active: boolean;
+  onNavigate?: () => void;
 }) {
   const Icon = item.icon;
   return (
     <Link
       href={item.href}
       title={collapsed ? item.label : undefined}
+      onClick={onNavigate}
+      aria-current={active ? "page" : undefined}
       className={cn(
         "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
         collapsed && "justify-center",
-        active
-          ? "bg-white text-navy"
-          : "text-white/70 hover:bg-white/10 hover:text-white",
+        active ? "bg-white text-navy" : "text-white/70 hover:bg-white/10 hover:text-white",
       )}
     >
       <Icon className="h-5 w-5 shrink-0" />
@@ -239,21 +253,27 @@ function NavGroupSection({
   group,
   collapsed,
   pathname,
+  open,
+  onToggle,
+  onNavigate,
 }: {
   group: NavGroup;
   collapsed: boolean;
   pathname: string;
+  /** Whether the parent accordion currently has this group expanded. */
+  open: boolean;
+  /** Ask the parent to toggle this group (single-open accordion). */
+  onToggle: (label: string) => void;
+  onNavigate?: () => void;
 }) {
   const isAnyChildActive = group.children.some((c) => pathname.startsWith(c.href));
-  const [open, setOpen] = React.useState(isAnyChildActive);
-
-  React.useEffect(() => {
-    if (isAnyChildActive) setOpen(true);
-  }, [isAnyChildActive]);
+  // The group holding the active route is always shown expanded so the current
+  // page is never hidden inside a collapsed group.
+  const expanded = open || isAnyChildActive;
 
   const Icon = group.icon;
 
-  // Collapsed: render each child as a flat icon-only link
+  // Collapsed rail: render each child as a flat icon-only link
   if (collapsed) {
     return (
       <>
@@ -263,6 +283,7 @@ function NavGroupSection({
               item={child}
               collapsed={true}
               active={pathname.startsWith(child.href)}
+              onNavigate={onNavigate}
             />
           </li>
         ))}
@@ -274,12 +295,12 @@ function NavGroupSection({
   return (
     <li>
       <button
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => onToggle(group.label)}
+        aria-expanded={expanded}
         className={cn(
           "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-xs font-semibold uppercase tracking-wider transition-colors",
-          isAnyChildActive
-            ? "text-white/90"
-            : "text-white/40 hover:text-white/70",
+          // /70 (5.28:1) clears WCAG AA; the old /40 inactive label was 3.23:1.
+          isAnyChildActive ? "text-white" : "text-white/70 hover:text-white",
         )}
       >
         <Icon className="h-4 w-4 shrink-0" />
@@ -287,11 +308,11 @@ function NavGroupSection({
         <ChevronRight
           className={cn(
             "h-3.5 w-3.5 shrink-0 transition-transform duration-150",
-            open && "rotate-90",
+            expanded && "rotate-90",
           )}
         />
       </button>
-      {open && (
+      {expanded && (
         <ul className="mt-0.5 flex flex-col gap-0.5 pl-3">
           {group.children.map((child) => (
             <li key={child.href}>
@@ -299,12 +320,73 @@ function NavGroupSection({
                 item={child}
                 collapsed={false}
                 active={pathname.startsWith(child.href)}
+                onNavigate={onNavigate}
               />
             </li>
           ))}
         </ul>
       )}
     </li>
+  );
+}
+
+// ─── Sidebar nav list (shared by desktop rail + mobile drawer) ─────────────────
+
+function SidebarNav({
+  navStructure,
+  collapsed,
+  pathname,
+  onNavigate,
+}: {
+  navStructure: NavEntry[];
+  collapsed: boolean;
+  pathname: string;
+  onNavigate?: () => void;
+}) {
+  // Single-open accordion: at most one group expanded at a time, so the nav
+  // never overflows when every group is opened. The group containing the
+  // active route stays open regardless.
+  const activeGroupLabel =
+    navStructure.find(
+      (e) => e.kind === "group" && e.children.some((c) => pathname.startsWith(c.href)),
+    )?.label ?? null;
+  const [openGroup, setOpenGroup] = React.useState<string | null>(activeGroupLabel);
+
+  React.useEffect(() => {
+    if (activeGroupLabel) setOpenGroup(activeGroupLabel);
+  }, [activeGroupLabel]);
+
+  const toggleGroup = (label: string) => setOpenGroup((cur) => (cur === label ? null : label));
+
+  return (
+    <ul className="flex flex-col gap-0.5">
+      {navStructure.map((entry) =>
+        entry.kind === "leaf" ? (
+          <li key={entry.href}>
+            <NavLink
+              item={entry}
+              collapsed={collapsed}
+              active={
+                entry.href === "/dashboard"
+                  ? pathname === "/dashboard"
+                  : pathname.startsWith(entry.href)
+              }
+              onNavigate={onNavigate}
+            />
+          </li>
+        ) : (
+          <NavGroupSection
+            key={entry.label}
+            group={entry}
+            collapsed={collapsed}
+            pathname={pathname}
+            open={openGroup === entry.label}
+            onToggle={toggleGroup}
+            onNavigate={onNavigate}
+          />
+        ),
+      )}
+    </ul>
   );
 }
 
@@ -347,7 +429,13 @@ function NotificationIcon({ type }: { type: AppNotification["type"] }) {
 
 // ─── Header ───────────────────────────────────────────────────────────────────
 
-function Header({ onOpenPalette }: { onOpenPalette: () => void }) {
+function Header({
+  onOpenPalette,
+  onOpenMobileNav,
+}: {
+  onOpenPalette: () => void;
+  onOpenMobileNav: () => void;
+}) {
   const { title } = usePageTitle();
   const { user, logout } = useAuth();
   const pathname = usePathname();
@@ -359,10 +447,19 @@ function Header({ onOpenPalette }: { onOpenPalette: () => void }) {
 
   return (
     <header className="flex h-16 shrink-0 items-center gap-4 border-b border-surface-border bg-white px-4">
+      {/* Mobile nav trigger — opens the sidebar drawer below the lg breakpoint */}
+      <button
+        onClick={onOpenMobileNav}
+        className="rounded-lg p-2 text-navy/70 transition-colors hover:bg-surface-raised hover:text-navy lg:hidden"
+        aria-label="Open navigation menu"
+      >
+        <Menu className="h-5 w-5" />
+      </button>
+
       {isSubPage ? (
         <button
           onClick={() => router.back()}
-          className="rounded-lg p-2 text-navy/60 transition-colors hover:bg-surface-raised hover:text-navy"
+          className="rounded-lg p-2 text-navy/70 transition-colors hover:bg-surface-raised hover:text-navy"
           aria-label="Go back"
         >
           <ArrowLeft className="h-5 w-5" />
@@ -379,7 +476,7 @@ function Header({ onOpenPalette }: { onOpenPalette: () => void }) {
         {/* Command palette trigger */}
         <button
           onClick={onOpenPalette}
-          className="hidden items-center gap-2 rounded-lg border border-surface-border bg-surface-raised px-3 py-1.5 text-sm text-navy/50 transition-colors hover:border-brand-300 hover:text-navy md:flex"
+          className="hidden items-center gap-2 rounded-lg border border-surface-border bg-surface-raised px-3 py-1.5 text-sm text-navy/70 transition-colors hover:border-brand-300 hover:text-navy md:flex"
           aria-label="Open command palette"
         >
           <Search className="h-3.5 w-3.5" />
@@ -390,17 +487,21 @@ function Header({ onOpenPalette }: { onOpenPalette: () => void }) {
         </button>
         <button
           onClick={onOpenPalette}
-          className="flex items-center justify-center rounded-lg p-2 text-navy/60 transition-colors hover:bg-surface-raised hover:text-navy md:hidden"
+          className="flex items-center justify-center rounded-lg p-2 text-navy/70 transition-colors hover:bg-surface-raised hover:text-navy md:hidden"
           aria-label="Open command palette"
         >
           <Search className="h-5 w-5" />
         </button>
 
         {/* Notification bell */}
-        <DropdownMenu.Root onOpenChange={(open) => { if (open) markAllRead(); }}>
+        <DropdownMenu.Root
+          onOpenChange={(open) => {
+            if (open) markAllRead();
+          }}
+        >
           <DropdownMenu.Trigger asChild>
             <button
-              className="relative rounded-lg p-2 text-navy/60 transition-colors hover:bg-surface-raised hover:text-navy"
+              className="relative rounded-lg p-2 text-navy/70 transition-colors hover:bg-surface-raised hover:text-navy"
               aria-label={unreadCount > 0 ? `${unreadCount} unread notifications` : "Notifications"}
             >
               <Bell className="h-5 w-5" />
@@ -423,7 +524,7 @@ function Header({ onOpenPalette }: { onOpenPalette: () => void }) {
                 {notifications.length > 0 && (
                   <button
                     onClick={clear}
-                    className="flex items-center gap-1 text-xs text-navy/40 hover:text-danger transition-colors"
+                    className="flex items-center gap-1 text-xs text-navy/70 hover:text-danger transition-colors"
                     title="Clear all"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
@@ -437,7 +538,7 @@ function Header({ onOpenPalette }: { onOpenPalette: () => void }) {
                 {notifications.length === 0 ? (
                   <div className="flex flex-col items-center gap-2 py-10 text-center">
                     <Bell className="h-8 w-8 text-navy/20" />
-                    <p className="text-sm text-navy/40">No notifications yet</p>
+                    <p className="text-sm text-navy/70">No notifications yet</p>
                     <p className="text-xs text-navy/30">
                       Urgent orders, driver updates, and low-stock alerts will appear here
                     </p>
@@ -455,7 +556,9 @@ function Header({ onOpenPalette }: { onOpenPalette: () => void }) {
                         <NotificationIcon type={n.type} />
                         <div className="min-w-0 flex-1">
                           <p className="text-sm font-medium text-navy">{n.title}</p>
-                          <p className="mt-0.5 text-xs text-navy/60 leading-snug">{n.description}</p>
+                          <p className="mt-0.5 text-xs text-navy/70 leading-snug">
+                            {n.description}
+                          </p>
                           <p className="mt-1 text-[10px] text-navy/30">{timeAgo(n.timestamp)}</p>
                         </div>
                       </li>
@@ -478,7 +581,7 @@ function Header({ onOpenPalette }: { onOpenPalette: () => void }) {
               <span className="hidden text-sm font-medium text-navy sm:block">
                 {user?.username}
               </span>
-              <ChevronDown className="hidden h-4 w-4 text-navy/40 sm:block" />
+              <ChevronDown className="hidden h-4 w-4 text-navy/70 sm:block" />
             </button>
           </DropdownMenu.Trigger>
           <DropdownMenu.Portal>
@@ -491,7 +594,7 @@ function Header({ onOpenPalette }: { onOpenPalette: () => void }) {
                 className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-navy outline-none hover:bg-surface-raised"
                 onSelect={() => router.push("/settings")}
               >
-                <UserIcon className="h-4 w-4 text-navy/40" />
+                <UserIcon className="h-4 w-4 text-navy/70" />
                 Profile &amp; Settings
               </DropdownMenu.Item>
               <DropdownMenu.Separator className="my-1 border-t border-surface-border" />
@@ -570,15 +673,28 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
       return next;
     });
 
-  // Auto-collapse sidebar on narrow viewports
+  // Below lg the static rail is hidden and replaced by an off-canvas drawer.
+  const [mobileNavOpen, setMobileNavOpen] = React.useState(false);
+
+  // Close the mobile drawer whenever the route changes.
   React.useEffect(() => {
-    const mq = window.matchMedia("(max-width: 767px)");
-    const handler = (e: MediaQueryListEvent) => {
-      if (e.matches) setCollapsed(true);
+    setMobileNavOpen(false);
+  }, [pathname]);
+
+  // Esc closes the mobile drawer; lock body scroll while it is open.
+  React.useEffect(() => {
+    if (!mobileNavOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMobileNavOpen(false);
     };
-    mq.addEventListener("change", handler);
-    return () => mq.removeEventListener("change", handler);
-  }, []);
+    window.addEventListener("keydown", onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [mobileNavOpen]);
 
   useRealtimeUpdates();
 
@@ -593,25 +709,53 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
     const handler = (e: KeyboardEvent) => {
       // Skip if user is typing in an input/textarea
       const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || (e.target as HTMLElement)?.isContentEditable) return;
+      if (
+        tag === "INPUT" ||
+        tag === "TEXTAREA" ||
+        tag === "SELECT" ||
+        (e.target as HTMLElement)?.isContentEditable
+      )
+        return;
       // Skip if modifier keys held (except shift for ?)
       if (e.metaKey || e.ctrlKey || e.altKey) return;
 
-      if (e.key === "?") { setShortcutHelpOpen((v) => !v); return; }
+      if (e.key === "?") {
+        setShortcutHelpOpen((v) => !v);
+        return;
+      }
 
       // Sequence shortcuts (g + letter)
       sequence += e.key.toLowerCase();
       if (seqTimer) clearTimeout(seqTimer);
-      seqTimer = setTimeout(() => { sequence = ""; }, 800);
+      seqTimer = setTimeout(() => {
+        sequence = "";
+      }, 800);
 
-      if (sequence === "go") { shellRouter.push("/orders");    sequence = ""; }
-      else if (sequence === "gr") { shellRouter.push("/routes");    sequence = ""; }
-      else if (sequence === "gd") { shellRouter.push("/drivers");   sequence = ""; }
-      else if (sequence === "gc") { shellRouter.push("/customers"); sequence = ""; }
-      else if (sequence === "gi") { shellRouter.push("/invoices");  sequence = ""; }
-      else if (sequence === "gf") { shellRouter.push("/finance/dashboard"); sequence = ""; }
-      else if (sequence === "gs") { shellRouter.push("/settings");  sequence = ""; }
-      else if (sequence === "gh") { shellRouter.push("/dashboard"); sequence = ""; }
+      if (sequence === "go") {
+        shellRouter.push("/orders");
+        sequence = "";
+      } else if (sequence === "gr") {
+        shellRouter.push("/routes");
+        sequence = "";
+      } else if (sequence === "gd") {
+        shellRouter.push("/drivers");
+        sequence = "";
+      } else if (sequence === "gc") {
+        shellRouter.push("/customers");
+        sequence = "";
+      } else if (sequence === "gi") {
+        shellRouter.push("/invoices");
+        sequence = "";
+      } else if (sequence === "gf") {
+        shellRouter.push("/finance/dashboard");
+        sequence = "";
+      } else if (sequence === "gs") {
+        shellRouter.push("/settings");
+        sequence = "";
+      } else if (sequence === "gh") {
+        shellRouter.push("/dashboard");
+        sequence = "";
+      }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
@@ -638,11 +782,11 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
       >
         Skip to content
       </a>
-      {/* Sidebar */}
+      {/* Sidebar — static rail on lg+, replaced by a drawer below lg */}
       <aside
         className={cn(
-          "flex shrink-0 flex-col overflow-hidden bg-navy transition-[width] duration-200 ease-in-out",
-          collapsed ? "w-16" : "w-60",
+          "hidden shrink-0 flex-col overflow-hidden bg-navy transition-[width] duration-200 ease-in-out lg:flex",
+          collapsed ? "lg:w-16" : "lg:w-60",
         )}
       >
         {/* Logo */}
@@ -661,30 +805,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
 
         {/* Nav */}
         <nav className="flex-1 overflow-y-auto px-2 py-3">
-          <ul className="flex flex-col gap-0.5">
-            {navStructure.map((entry) =>
-              entry.kind === "leaf" ? (
-                <li key={entry.href}>
-                  <NavLink
-                    item={entry}
-                    collapsed={collapsed}
-                    active={
-                      entry.href === "/dashboard"
-                        ? pathname === "/dashboard"
-                        : pathname.startsWith(entry.href)
-                    }
-                  />
-                </li>
-              ) : (
-                <NavGroupSection
-                  key={entry.label}
-                  group={entry}
-                  collapsed={collapsed}
-                  pathname={pathname}
-                />
-              )
-            )}
-          </ul>
+          <SidebarNav navStructure={navStructure} collapsed={collapsed} pathname={pathname} />
         </nav>
 
         {/* Collapse toggle */}
@@ -709,10 +830,53 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         </div>
       </aside>
 
+      {/* Mobile nav drawer — off-canvas sidebar below the lg breakpoint */}
+      {mobileNavOpen && (
+        <div
+          className="fixed inset-0 z-50 lg:hidden"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Navigation"
+        >
+          <div
+            className="absolute inset-0 bg-black/40 animate-in fade-in-0"
+            aria-hidden="true"
+            onClick={() => setMobileNavOpen(false)}
+          />
+          <aside className="absolute inset-y-0 left-0 flex w-64 max-w-[82%] flex-col bg-navy shadow-modal animate-in slide-in-from-left duration-200">
+            <div className="flex h-16 shrink-0 items-center justify-between border-b border-white/10 px-3">
+              <TenantLogo
+                className="h-8 w-8"
+                showName
+                nameClassName="text-lg font-bold text-white truncate"
+              />
+              <button
+                onClick={() => setMobileNavOpen(false)}
+                className="rounded-lg p-2 text-white/70 transition-colors hover:bg-white/10 hover:text-white"
+                aria-label="Close navigation menu"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <nav className="flex-1 overflow-y-auto px-2 py-3">
+              <SidebarNav
+                navStructure={navStructure}
+                collapsed={false}
+                pathname={pathname}
+                onNavigate={() => setMobileNavOpen(false)}
+              />
+            </nav>
+          </aside>
+        </div>
+      )}
+
       {/* Right column */}
       <div className="flex flex-1 flex-col overflow-hidden">
         <ImpersonationBanner />
-        <Header onOpenPalette={() => setPaletteOpen(true)} />
+        <Header
+          onOpenPalette={() => setPaletteOpen(true)}
+          onOpenMobileNav={() => setMobileNavOpen(true)}
+        />
         {/* pb-24 reserves 96px of clearance below page content so the
             floating PwaInstallPrompt (fixed bottom-4) and similar
             bottom-anchored UI never sit on top of bottom-aligned form
@@ -720,7 +884,10 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
             install prompt covers the Save button on Settings →
             Invoicing → Invoice Defaults and on the Business Profile
             tab, making the form look like it has no save action. */}
-        <main id="main-content" className="flex-1 overflow-x-hidden overflow-y-auto bg-surface-raised pb-24">
+        <main
+          id="main-content"
+          className="flex-1 overflow-x-hidden overflow-y-auto bg-surface-raised pb-24"
+        >
           {children}
         </main>
       </div>
@@ -742,7 +909,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
               <p className="text-sm font-semibold text-navy">Keyboard Shortcuts</p>
               <button
                 onClick={() => setShortcutHelpOpen(false)}
-                className="rounded p-1 text-navy/40 hover:bg-surface-raised hover:text-navy transition-colors"
+                className="rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
                 aria-label="Close"
               >
                 <ChevronRight className="h-4 w-4 rotate-90" />
@@ -754,7 +921,10 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
                   <span className="text-sm text-navy/70">{s.label}</span>
                   <div className="flex items-center gap-1">
                     {s.keys.map((k) => (
-                      <kbd key={k} className="rounded border border-surface-border bg-surface-raised px-1.5 py-0.5 text-xs font-medium text-navy">
+                      <kbd
+                        key={k}
+                        className="rounded border border-surface-border bg-surface-raised px-1.5 py-0.5 text-xs font-medium text-navy"
+                      >
                         {k}
                       </kbd>
                     ))}
@@ -771,11 +941,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
 
 // ─── Layout export ────────────────────────────────────────────────────────────
 
-export default function DashboardLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   return (
     <ToastProvider>
       <PageTitleProvider>

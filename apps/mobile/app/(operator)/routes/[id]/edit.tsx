@@ -2,12 +2,7 @@ import { useEffect, useState } from "react";
 import { ActivityIndicator, StyleSheet, Switch, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
-import {
-  FormField,
-  FormSection,
-  FormSheet,
-  FormTextInput,
-} from "../../../../components/FormSheet";
+import { FormField, FormSection, FormSheet, FormTextInput } from "../../../../components/FormSheet";
 import { useAdminRoute } from "../../../../lib/api/admin";
 import { useUpdateRoute } from "../../../../lib/api/routes";
 import { showToast } from "../../../../lib/toast";
@@ -57,8 +52,7 @@ export default function EditRouteScreen() {
           showToast("Saved");
           router.back();
         },
-        onError: (e: any) =>
-          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
       },
     );
   };

@@ -19,10 +19,7 @@ import DraggableFlatList, {
 } from "react-native-draggable-flatlist";
 import { ios } from "@routeflow/ui/tokens";
 import { NavAction, NavBackButton, NavBar, Pill } from "@routeflow/ui/mobile/ios";
-import {
-  useAdminDrivers,
-  useAdminRoute,
-} from "../../../lib/api/admin";
+import { useAdminDrivers, useAdminRoute } from "../../../lib/api/admin";
 import {
   useCreateRun,
   useDeleteRoute,
@@ -91,32 +88,38 @@ export default function RouteDetailScreen() {
     .slice()
     .sort((a, b) => a.stopNumber - b.stopNumber);
   const driverName = driver
-    ? `${driver.user?.firstName ?? ""} ${driver.user?.lastName ?? ""}`.trim() || driver.user?.username
+    ? `${driver.user?.firstName ?? ""} ${driver.user?.lastName ?? ""}`.trim() ||
+      driver.user?.username
     : null;
 
   const removeStop = (stopId: string) => {
     if (!id) return;
-    confirm("Remove stop?", "The customer will be removed from this route.", () => {
-      setRemovedIds((prev) => new Set([...prev, stopId]));
-      removeMut.mutate(
-        { routeId: id, stopId },
-        {
-          onSuccess: () => {
-            showToast("Stop removed");
-            refetch();
-            setRemovedIds(new Set());
+    confirm(
+      "Remove stop?",
+      "The customer will be removed from this route.",
+      () => {
+        setRemovedIds((prev) => new Set([...prev, stopId]));
+        removeMut.mutate(
+          { routeId: id, stopId },
+          {
+            onSuccess: () => {
+              showToast("Stop removed");
+              refetch();
+              setRemovedIds(new Set());
+            },
+            onError: (e: any) => {
+              setRemovedIds((prev) => {
+                const next = new Set(prev);
+                next.delete(stopId);
+                return next;
+              });
+              showToast(e?.response?.data?.message ?? e?.message ?? "Try again.");
+            },
           },
-          onError: (e: any) => {
-            setRemovedIds((prev) => {
-              const next = new Set(prev);
-              next.delete(stopId);
-              return next;
-            });
-            showToast(e?.response?.data?.message ?? e?.message ?? "Try again.");
-          },
-        },
-      );
-    }, { confirmText: "Remove", destructive: true });
+        );
+      },
+      { confirmText: "Remove", destructive: true },
+    );
   };
 
   const handleDragEnd = ({ data }: { data: typeof stops }) => {
@@ -126,8 +129,7 @@ export default function RouteDetailScreen() {
       { routeId: id, order },
       {
         onSuccess: () => refetch(),
-        onError: (e: any) =>
-          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
       },
     );
   };
@@ -140,15 +142,10 @@ export default function RouteDetailScreen() {
     }
     optimizeMut.mutate(id, {
       onSuccess: (res) => {
-        showToast(
-          res?.usedFallback
-            ? "Reordered (distance-based fallback)"
-            : "Route optimized",
-        );
+        showToast(res?.usedFallback ? "Reordered (distance-based fallback)" : "Route optimized");
         refetch();
       },
-      onError: (e: any) =>
-        showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+      onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
     });
   };
 
@@ -163,23 +160,24 @@ export default function RouteDetailScreen() {
           showToast("Run created");
           router.push(`/(operator)/route-runs/${run.id}` as any);
         },
-        onError: (e: any) =>
-          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
       },
     );
   };
 
   const handleDelete = () => {
     if (!id) return;
-    confirm("Delete route?", `${route.name} and all its stops will be removed.`, () =>
-      deleteMut.mutate(id, {
-        onSuccess: () => {
-          showToast("Route deleted");
-          router.back();
-        },
-        onError: (e: any) =>
-          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
-      }),
+    confirm(
+      "Delete route?",
+      `${route.name} and all its stops will be removed.`,
+      () =>
+        deleteMut.mutate(id, {
+          onSuccess: () => {
+            showToast("Route deleted");
+            router.back();
+          },
+          onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        }),
       { confirmText: "Delete", destructive: true },
     );
   };
@@ -190,7 +188,11 @@ export default function RouteDetailScreen() {
         inlineTitle={route.name}
         leading={<NavBackButton label="Routes" onPress={() => router.back()} />}
         trailing={
-          <NavAction label="Edit" bold onPress={() => router.push(`/(operator)/routes/${id}/edit`)} />
+          <NavAction
+            label="Edit"
+            bold
+            onPress={() => router.push(`/(operator)/routes/${id}/edit`)}
+          />
         }
       />
 
@@ -235,7 +237,10 @@ export default function RouteDetailScreen() {
                   key={s.id}
                   style={[
                     styles.stopRow,
-                    i > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: ios.separator },
+                    i > 0 && {
+                      borderTopWidth: StyleSheet.hairlineWidth,
+                      borderTopColor: ios.separator,
+                    },
                   ]}
                 >
                   <View style={styles.stopBadge}>
@@ -265,13 +270,21 @@ export default function RouteDetailScreen() {
                         });
                         reorderMut.mutate(
                           { routeId: id!, order },
-                          { onSuccess: () => refetch(), onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again.") },
+                          {
+                            onSuccess: () => refetch(),
+                            onError: (e: any) =>
+                              showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+                          },
                         );
                       }}
                       disabled={i === 0}
                       accessibilityLabel="Move up"
                     >
-                      <Ionicons name="chevron-up" size={16} color={i === 0 ? ios.label3 : ios.label2} />
+                      <Ionicons
+                        name="chevron-up"
+                        size={16}
+                        color={i === 0 ? ios.label3 : ios.label2}
+                      />
                     </Pressable>
                     <Pressable
                       style={styles.iconBtn}
@@ -284,13 +297,21 @@ export default function RouteDetailScreen() {
                         });
                         reorderMut.mutate(
                           { routeId: id!, order },
-                          { onSuccess: () => refetch(), onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again.") },
+                          {
+                            onSuccess: () => refetch(),
+                            onError: (e: any) =>
+                              showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+                          },
                         );
                       }}
                       disabled={i === stops.length - 1}
                       accessibilityLabel="Move down"
                     >
-                      <Ionicons name="chevron-down" size={16} color={i === stops.length - 1 ? ios.label3 : ios.label2} />
+                      <Ionicons
+                        name="chevron-down"
+                        size={16}
+                        color={i === stops.length - 1 ? ios.label3 : ios.label2}
+                      />
                     </Pressable>
                     <Pressable style={styles.iconBtn} onPress={() => removeStop(s.id)}>
                       <Ionicons name="trash-outline" size={14} color={ios.system.red} />
@@ -304,7 +325,12 @@ export default function RouteDetailScreen() {
                 keyExtractor={(s) => s.id}
                 onDragEnd={handleDragEnd}
                 scrollEnabled={false}
-                renderItem={({ item: s, getIndex, drag, isActive }: RenderItemParams<typeof stops[number]>) => {
+                renderItem={({
+                  item: s,
+                  getIndex,
+                  drag,
+                  isActive,
+                }: RenderItemParams<(typeof stops)[number]>) => {
                   const i = getIndex() ?? 0;
                   return (
                     <ScaleDecorator activeScale={1.03}>
@@ -328,7 +354,11 @@ export default function RouteDetailScreen() {
                           {typeof s.customerAddress?.lat !== "number" ||
                           typeof s.customerAddress?.lng !== "number" ? (
                             <View style={styles.noLocRow}>
-                              <Ionicons name="alert-circle" size={11} color={ios.system.orangeInk} />
+                              <Ionicons
+                                name="alert-circle"
+                                size={11}
+                                color={ios.system.orangeInk}
+                              />
                               <Text style={styles.noLocText}>No location</Text>
                             </View>
                           ) : null}
@@ -397,7 +427,9 @@ export default function RouteDetailScreen() {
                   <Text style={styles.dispatchBtnText}>Dispatch run</Text>
                 </Pressable>
                 {dispatchHint ? (
-                  <Text style={{ color: ios.label3, fontSize: 13, textAlign: "center", marginTop: -6 }}>
+                  <Text
+                    style={{ color: ios.label3, fontSize: 13, textAlign: "center", marginTop: -6 }}
+                  >
                     {dispatchHint}
                   </Text>
                 ) : null}
@@ -450,7 +482,11 @@ export default function RouteDetailScreen() {
               <Text style={[styles.modalBtnText, { color: ios.label }]}>Cancel</Text>
             </Pressable>
             <Pressable
-              style={[styles.modalBtn, { backgroundColor: ios.brand, flex: 1 }, createRunMut.isPending && { opacity: 0.6 }]}
+              style={[
+                styles.modalBtn,
+                { backgroundColor: ios.brand, flex: 1 },
+                createRunMut.isPending && { opacity: 0.6 },
+              ]}
               onPress={handleDispatchConfirm}
               disabled={createRunMut.isPending}
             >

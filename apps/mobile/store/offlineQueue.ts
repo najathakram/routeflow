@@ -46,8 +46,7 @@ export const useOfflineQueue = create<OfflineQueueState>()(
           ],
         })),
 
-      dequeue: (id) =>
-        set((state) => ({ queue: state.queue.filter((a) => a.id !== id) })),
+      dequeue: (id) => set((state) => ({ queue: state.queue.filter((a) => a.id !== id) })),
 
       setOnline: (isOnline) => set({ isOnline }),
       setSyncing: (isSyncing) => set({ isSyncing }),

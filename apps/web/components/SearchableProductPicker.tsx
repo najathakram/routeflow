@@ -49,10 +49,7 @@ export function SearchableProductPicker({
   const containerRef = React.useRef<HTMLDivElement>(null);
   const inputRef = React.useRef<HTMLInputElement>(null);
 
-  const excludeSet = React.useMemo(
-    () => new Set(excludeIds ?? []),
-    [excludeIds],
-  );
+  const excludeSet = React.useMemo(() => new Set(excludeIds ?? []), [excludeIds]);
 
   const visibleProducts = React.useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -67,19 +64,13 @@ export function SearchableProductPicker({
       .slice(0, 200); // safety cap so very large catalogs don't kill the DOM
   }, [products, excludeSet, search]);
 
-  const selected = React.useMemo(
-    () => products.find((p) => p.id === value),
-    [products, value],
-  );
+  const selected = React.useMemo(() => products.find((p) => p.id === value), [products, value]);
 
   // Click outside to close
   React.useEffect(() => {
     if (!open) return;
     const onClick = (e: MouseEvent) => {
-      if (
-        containerRef.current &&
-        !containerRef.current.contains(e.target as Node)
-      ) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
         setOpen(false);
       }
     };
@@ -128,11 +119,11 @@ export function SearchableProductPicker({
           open && "ring-2 ring-brand-500",
         )}
       >
-        <Search className="h-3.5 w-3.5 shrink-0 text-navy/40" />
+        <Search className="h-3.5 w-3.5 shrink-0 text-navy/70" />
         <input
           ref={inputRef}
           type="text"
-          value={open ? search : selected?.name ?? ""}
+          value={open ? search : (selected?.name ?? "")}
           placeholder={selected ? "" : placeholder}
           onChange={(e) => {
             setSearch(e.target.value);
@@ -158,10 +149,7 @@ export function SearchableProductPicker({
           </button>
         ) : (
           <ChevronDown
-            className={cn(
-              "h-3.5 w-3.5 text-navy/40 transition-transform",
-              open && "rotate-180",
-            )}
+            className={cn("h-3.5 w-3.5 text-navy/70 transition-transform", open && "rotate-180")}
           />
         )}
       </div>
@@ -169,12 +157,12 @@ export function SearchableProductPicker({
       {open && (
         <div className="absolute left-0 right-0 top-full z-30 mt-1 max-h-72 overflow-y-auto rounded-lg border border-surface-border bg-white shadow-lg">
           {visibleProducts.length === 0 ? (
-            <p className="px-3 py-2 text-xs text-navy/40">
+            <p className="px-3 py-2 text-xs text-navy/70">
               {search.trim() ? "No matches." : (emptyHint ?? "No products yet.")}
             </p>
           ) : (
             <>
-              <p className="border-b border-surface-border px-3 py-1 text-[10px] font-medium uppercase tracking-wide text-navy/40">
+              <p className="border-b border-surface-border px-3 py-1 text-[10px] font-medium uppercase tracking-wide text-navy/70">
                 {visibleProducts.length} result{visibleProducts.length === 1 ? "" : "s"}
                 {products.length > visibleProducts.length + excludeSet.size && (
                   <> of {products.length - excludeSet.size}</>
@@ -203,20 +191,14 @@ export function SearchableProductPicker({
                       <p className="truncate" title={p.name}>
                         {p.name}
                       </p>
-                      {p.sku && (
-                        <p className="truncate text-[11px] text-navy/40">
-                          SKU: {p.sku}
-                        </p>
-                      )}
+                      {p.sku && <p className="truncate text-[11px] text-navy/70">SKU: {p.sku}</p>}
                     </div>
                     {p.isActive === false && (
-                      <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-navy/50">
+                      <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-navy/70">
                         Inactive
                       </span>
                     )}
-                    {p.id === value && (
-                      <Check className="h-3.5 w-3.5 shrink-0 text-brand-600" />
-                    )}
+                    {p.id === value && <Check className="h-3.5 w-3.5 shrink-0 text-brand-600" />}
                   </li>
                 ))}
               </ul>

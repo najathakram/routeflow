@@ -40,10 +40,10 @@ export class BuyerPortalErrorBoundary extends React.Component<
               <AlertTriangle className="h-7 w-7 text-danger" />
             </div>
             <h2 className="text-lg font-semibold text-navy mb-2">Something went wrong</h2>
-            <p className="text-sm text-navy/60 mb-6">
+            <p className="text-sm text-navy/70 mb-6">
               An unexpected error occurred. Please try refreshing the page.
               {this.state.error?.message && (
-                <span className="mt-2 block text-xs text-navy/40 font-mono">
+                <span className="mt-2 block text-xs text-navy/70 font-mono">
                   {this.state.error.message}
                 </span>
               )}

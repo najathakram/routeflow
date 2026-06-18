@@ -15,9 +15,9 @@
 
 "use strict";
 const { Client } = require("pg");
-const path       = require("path");
-const fs         = require("fs");
-const readline   = require("readline");
+const path = require("path");
+const fs = require("fs");
+const readline = require("readline");
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -25,9 +25,15 @@ const DB_URL = "postgresql://routeflow:routeflow_prod_2026@gondola.proxy.rlwy.ne
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function ok(msg)   { console.log(`   ✓ ${msg}`); }
-function warn(msg) { console.log(`   ⚠  ${msg}`); }
-function step(msg) { console.log(`\n${"─".repeat(60)}\n  ${msg}`); }
+function ok(msg) {
+  console.log(`   ✓ ${msg}`);
+}
+function warn(msg) {
+  console.log(`   ⚠  ${msg}`);
+}
+function step(msg) {
+  console.log(`\n${"─".repeat(60)}\n  ${msg}`);
+}
 
 async function confirm(msg) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -40,11 +46,13 @@ async function confirm(msg) {
 }
 
 async function del(pg, table, col, uuids, label) {
-  if (!uuids?.length) { ok(`No ${label} to delete`); return 0; }
-  const r = await pg.query(
-    `DELETE FROM "${table}" WHERE "${col}" = ANY($1::text[]) RETURNING id`,
-    [uuids]
-  );
+  if (!uuids?.length) {
+    ok(`No ${label} to delete`);
+    return 0;
+  }
+  const r = await pg.query(`DELETE FROM "${table}" WHERE "${col}" = ANY($1::text[]) RETURNING id`, [
+    uuids,
+  ]);
   ok(`Deleted ${r.rowCount} ${label}`);
   return r.rowCount;
 }
@@ -54,11 +62,13 @@ async function softDel(pg, table, col, uuids, label) {
   try {
     const r = await pg.query(
       `DELETE FROM "${table}" WHERE "${col}" = ANY($1::text[]) RETURNING id`,
-      [uuids]
+      [uuids],
     );
     if (r.rowCount > 0) ok(`Deleted ${r.rowCount} ${label}`);
     return r.rowCount;
-  } catch { return 0; }
+  } catch {
+    return 0;
+  }
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
@@ -66,7 +76,9 @@ async function softDel(pg, table, col, uuids, label) {
 async function main() {
   const manifestArg = process.argv[2];
   if (!manifestArg) {
-    console.error("\n❌ Usage: node apps/api/scripts/ux-audit-cleanup.js <ux-audit-manifest-*.json>\n");
+    console.error(
+      "\n❌ Usage: node apps/api/scripts/ux-audit-cleanup.js <ux-audit-manifest-*.json>\n",
+    );
     process.exit(1);
   }
 
@@ -88,10 +100,13 @@ async function main() {
 
   const yes = await confirm(
     "⚠  This will permanently delete all records listed in the manifest.\n" +
-    "   Only ux-audit data is affected. Pre-existing data is untouched.\n" +
-    "   Proceed?"
+      "   Only ux-audit data is affected. Pre-existing data is untouched.\n" +
+      "   Proceed?",
   );
-  if (!yes) { console.log("\nAborted."); process.exit(0); }
+  if (!yes) {
+    console.log("\nAborted.");
+    process.exit(0);
+  }
 
   const pg = new Client({ connectionString: DB_URL });
   await pg.connect();
@@ -101,27 +116,45 @@ async function main() {
 
   try {
     // ── helpers to extract UUIDs from manifest arrays ────────────────────────
-    const returnIds  = (m.returns  ?? []).map((x) => (typeof x === "string" ? x : x.returnId  ?? x.id)).filter(Boolean);
-    const invoiceIds = (m.invoices ?? []).map((x) => (typeof x === "string" ? x : x.id)).filter(Boolean);
-    const tmplIds    = (m.templates ?? []).map((x) => (typeof x === "string" ? x : x.id)).filter(Boolean);
-    const runIds     = (m.routeRuns ?? []).map((x) => (typeof x === "string" ? x : x.id)).filter(Boolean);
-    const routeIds   = (m.routes   ?? []).map((x) => (typeof x === "string" ? x : x.id)).filter(Boolean);
-    const orderIds   = (m.orders   ?? []).map((x) => (typeof x === "string" ? x : x.id)).filter(Boolean);
-    const buyerIds   = (m.buyerUsers ?? []).map((b) => b.buyerUserId).filter(Boolean);
-    const custIds    = (m.customers  ?? []).map((c) => c.customerId).filter(Boolean);
-    const custUids   = (m.customers  ?? []).map((c) => c.userId).filter(Boolean);
-    const driverIds  = (m.drivers    ?? []).map((d) => d.driverId).filter(Boolean);
-    const driverUids = (m.drivers    ?? []).map((d) => d.userId).filter(Boolean);
-    const prodIds    = (m.products   ?? []).map((x) => (typeof x === "string" ? x : x.id)).filter(Boolean);
-    const suppIds    = (m.suppliers  ?? []).map((x) => (typeof x === "string" ? x : x.id)).filter(Boolean);
-    const opUids     = [m.adminUserId, m.ownerUserId].filter(Boolean);
+    const returnIds = (m.returns ?? [])
+      .map((x) => (typeof x === "string" ? x : (x.returnId ?? x.id)))
+      .filter(Boolean);
+    const invoiceIds = (m.invoices ?? [])
+      .map((x) => (typeof x === "string" ? x : x.id))
+      .filter(Boolean);
+    const tmplIds = (m.templates ?? [])
+      .map((x) => (typeof x === "string" ? x : x.id))
+      .filter(Boolean);
+    const runIds = (m.routeRuns ?? [])
+      .map((x) => (typeof x === "string" ? x : x.id))
+      .filter(Boolean);
+    const routeIds = (m.routes ?? [])
+      .map((x) => (typeof x === "string" ? x : x.id))
+      .filter(Boolean);
+    const orderIds = (m.orders ?? [])
+      .map((x) => (typeof x === "string" ? x : x.id))
+      .filter(Boolean);
+    const buyerIds = (m.buyerUsers ?? []).map((b) => b.buyerUserId).filter(Boolean);
+    const custIds = (m.customers ?? []).map((c) => c.customerId).filter(Boolean);
+    const custUids = (m.customers ?? []).map((c) => c.userId).filter(Boolean);
+    const driverIds = (m.drivers ?? []).map((d) => d.driverId).filter(Boolean);
+    const driverUids = (m.drivers ?? []).map((d) => d.userId).filter(Boolean);
+    const prodIds = (m.products ?? [])
+      .map((x) => (typeof x === "string" ? x : x.id))
+      .filter(Boolean);
+    const suppIds = (m.suppliers ?? [])
+      .map((x) => (typeof x === "string" ? x : x.id))
+      .filter(Boolean);
+    const opUids = [m.adminUserId, m.ownerUserId].filter(Boolean);
 
     // 1. Returns
     step("1. Returns");
     if (returnIds.length) {
       await softDel(pg, "ReturnItem", "returnId", returnIds, "return items");
       total += await del(pg, "Return", "id", returnIds, "returns");
-    } else { ok("No returns"); }
+    } else {
+      ok("No returns");
+    }
 
     // 2. Invoice payments
     step("2. Invoice payments");
@@ -136,21 +169,27 @@ async function main() {
     if (invoiceIds.length) {
       await del(pg, "InvoiceItem", "invoiceId", invoiceIds, "invoice items");
       total += await del(pg, "Invoice", "id", invoiceIds, "invoices");
-    } else { ok("No invoices"); }
+    } else {
+      ok("No invoices");
+    }
 
     // 5. Order template items + templates
     step("5. Standing order templates");
     if (tmplIds.length) {
       await del(pg, "OrderTemplateItem", "templateId", tmplIds, "template items");
       total += await del(pg, "OrderTemplate", "id", tmplIds, "templates");
-    } else { ok("No templates"); }
+    } else {
+      ok("No templates");
+    }
 
     // 6. Route run stops + route runs
     step("6. Route runs");
     if (runIds.length) {
       total += await del(pg, "RouteRunStop", "runId", runIds, "run stops");
       total += await del(pg, "RouteRun", "id", runIds, "route runs");
-    } else { ok("No route runs"); }
+    } else {
+      ok("No route runs");
+    }
 
     // 7. Route stops + route customers + routes
     step("7. Routes");
@@ -158,14 +197,18 @@ async function main() {
       await del(pg, "RouteCustomer", "routeId", routeIds, "route customers");
       await del(pg, "RouteStop", "routeId", routeIds, "route stops");
       total += await del(pg, "Route", "id", routeIds, "routes");
-    } else { ok("No routes"); }
+    } else {
+      ok("No routes");
+    }
 
     // 8. Order items + orders
     step("8. Orders");
     if (orderIds.length) {
       await del(pg, "OrderItem", "orderId", orderIds, "order items");
       total += await del(pg, "Order", "id", orderIds, "orders");
-    } else { ok("No orders"); }
+    } else {
+      ok("No orders");
+    }
 
     // 9. Buyer portal: CustomerLink + BuyerRefreshToken + BuyerAccount
     step("9. Buyer portal accounts");
@@ -173,7 +216,9 @@ async function main() {
       await softDel(pg, "CustomerLink", "buyerAccountId", buyerIds, "customer links (accepted)");
       await softDel(pg, "BuyerRefreshToken", "buyerAccountId", buyerIds, "buyer refresh tokens");
       total += await del(pg, "BuyerAccount", "id", buyerIds, "buyer accounts");
-    } else { ok("No buyer accounts"); }
+    } else {
+      ok("No buyer accounts");
+    }
     // Also clear any pending (unaccepted) invites for our customers
     if (custIds.length) {
       await softDel(pg, "CustomerLink", "customerId", custIds, "pending customer links");
@@ -205,7 +250,9 @@ async function main() {
       await del(pg, "StockMovement", "productId", prodIds, "stock movements");
       await softDel(pg, "StockLot", "productId", prodIds, "stock lots");
       total += await del(pg, "Product", "id", prodIds, "products");
-    } else { ok("No products"); }
+    } else {
+      ok("No products");
+    }
 
     // 13. Suppliers
     step("13. Suppliers");
@@ -217,29 +264,47 @@ async function main() {
       await softDel(pg, "RefreshToken", "userId", opUids, "refresh tokens");
       await softDel(pg, "UserPreference", "userId", opUids, "user preferences");
       total += await del(pg, "User", "id", opUids, "operator users");
-    } else { ok("No operator accounts"); }
+    } else {
+      ok("No operator accounts");
+    }
 
     // 15. Tenant + config tables
     step("15. Tenant");
     if (m.tenantId) {
-      await pg.query(`DELETE FROM "TenantAddon"       WHERE "tenantId" = $1`, [m.tenantId]).catch(() => {});
-      await pg.query(`DELETE FROM "TenantSubscription" WHERE "tenantId" = $1`, [m.tenantId]).catch(() => {});
-      await pg.query(`DELETE FROM "TenantGoogleOAuth"  WHERE "tenantId" = $1`, [m.tenantId]).catch(() => {});
-      await pg.query(`DELETE FROM "TenantConfig"       WHERE "tenantId" = $1`, [m.tenantId]).catch(() => {});
-      await pg.query(`DELETE FROM "AuditLog"           WHERE "tenantId" = $1`, [m.tenantId]).catch(() => {});
+      await pg
+        .query(`DELETE FROM "TenantAddon"       WHERE "tenantId" = $1`, [m.tenantId])
+        .catch(() => {});
+      await pg
+        .query(`DELETE FROM "TenantSubscription" WHERE "tenantId" = $1`, [m.tenantId])
+        .catch(() => {});
+      await pg
+        .query(`DELETE FROM "TenantGoogleOAuth"  WHERE "tenantId" = $1`, [m.tenantId])
+        .catch(() => {});
+      await pg
+        .query(`DELETE FROM "TenantConfig"       WHERE "tenantId" = $1`, [m.tenantId])
+        .catch(() => {});
+      await pg
+        .query(`DELETE FROM "AuditLog"           WHERE "tenantId" = $1`, [m.tenantId])
+        .catch(() => {});
       const t = await pg.query(`DELETE FROM "Tenant" WHERE id = $1 RETURNING id`, [m.tenantId]);
       total += t.rowCount;
       ok(`Deleted tenant ${m.tenantSlug} (${t.rowCount} row)`);
-    } else { ok("No tenant ID"); }
+    } else {
+      ok("No tenant ID");
+    }
 
     // 16. SUPER_ADMIN user
     step("16. SUPER_ADMIN user");
     if (m.saUserId) {
-      await pg.query(`DELETE FROM "RefreshToken" WHERE "userId" = $1`, [m.saUserId]).catch(() => {});
+      await pg
+        .query(`DELETE FROM "RefreshToken" WHERE "userId" = $1`, [m.saUserId])
+        .catch(() => {});
       const u = await pg.query(`DELETE FROM "User" WHERE id = $1 RETURNING id`, [m.saUserId]);
       total += u.rowCount;
       ok(`Deleted SUPER_ADMIN user (${u.rowCount} row)`);
-    } else { ok("No SA user ID"); }
+    } else {
+      ok("No SA user ID");
+    }
 
     // ── Verification ──────────────────────────────────────────────────────────
     step("Verification");
@@ -248,7 +313,9 @@ async function main() {
     if (tCount === 0) {
       ok(`Tenant "${m.tenantSlug}" fully removed`);
     } else {
-      warn(`${tCount} Tenant row(s) with slug "${m.tenantSlug}" still exist — manual cleanup needed`);
+      warn(
+        `${tCount} Tenant row(s) with slug "${m.tenantSlug}" still exist — manual cleanup needed`,
+      );
     }
 
     if (m.saUserId) {
@@ -261,7 +328,6 @@ async function main() {
     console.log(`\n${"═".repeat(65)}`);
     console.log(`  ✅ Cleanup complete — ${total} primary records deleted`);
     console.log(`${"═".repeat(65)}\n`);
-
   } finally {
     await pg.end();
   }

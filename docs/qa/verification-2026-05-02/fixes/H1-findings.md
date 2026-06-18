@@ -18,10 +18,10 @@ Both hooks called `localStorage.getItem(...)` inside the async `connect()` callb
 
 ## Files changed
 
-| File | Change |
-|------|--------|
-| `apps/mobile/hooks/useSocket.ts` | Added `[socket]` debug logging; added `globalThis.window/localStorage` SSR guard; changed transport order to `["polling", "websocket"]` |
-| `apps/mobile/hooks/useBuyerSocket.ts` | Same as above for buyer surface |
+| File                                          | Change                                                                                                                                        |
+| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/mobile/hooks/useSocket.ts`              | Added `[socket]` debug logging; added `globalThis.window/localStorage` SSR guard; changed transport order to `["polling", "websocket"]`       |
+| `apps/mobile/hooks/useBuyerSocket.ts`         | Same as above for buyer surface                                                                                                               |
 | `apps/mobile/__tests__/socket-wiring.test.ts` | Added 8 new test cases: SSR-guard (no window / no localStorage), transport-order assertion, user hydration null→set, buyer hydration null→set |
 
 No layout files needed changes — `useSocket()` and `useBuyerSocket()` are already correctly mounted at `(operator)/_layout.tsx`, `(driver)/_layout.tsx`, `(customer)/_layout.tsx`.
@@ -53,6 +53,7 @@ After deploying and logging in as operator / driver / buyer, open Chrome DevTool
 ```
 
 For driver role:
+
 ```
 [socket] hook mount, role= DRIVER user= <id>
 [socket] storage read key=rf:driver:accessToken token=[present]
@@ -61,6 +62,7 @@ For driver role:
 ```
 
 For buyer role:
+
 ```
 [socket:buyer] hook mount, buyer= <id>
 [socket:buyer] storage read key=rf:buyer:accessToken token=[present]

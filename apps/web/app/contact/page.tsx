@@ -31,16 +31,16 @@ export default function ContactPage() {
       <div className="mx-auto max-w-2xl px-6 py-24">
         <Link
           href="/"
-          className="mb-10 inline-flex items-center gap-2 text-sm text-navy/50 hover:text-navy transition-colors"
+          className="mb-10 inline-flex items-center gap-2 text-sm text-navy/70 hover:text-navy transition-colors"
         >
           <ArrowLeft className="h-4 w-4" />
           Back to home
         </Link>
 
         <h1 className="text-4xl font-extrabold text-navy mb-4">Book a Demo</h1>
-        <p className="text-navy/60 text-lg leading-relaxed mb-10">
-          See RouteFlow in action with a personalised walkthrough. We will show you how it fits
-          your operation and answer any questions you have.
+        <p className="text-navy/70 text-lg leading-relaxed mb-10">
+          See RouteFlow in action with a personalised walkthrough. We will show you how it fits your
+          operation and answer any questions you have.
         </p>
 
         <form className="space-y-6">
@@ -113,7 +113,7 @@ export default function ContactPage() {
           </button>
         </form>
 
-        <div className="mt-12 flex flex-col gap-4 sm:flex-row sm:gap-8 text-sm text-navy/50">
+        <div className="mt-12 flex flex-col gap-4 sm:flex-row sm:gap-8 text-sm text-navy/70">
           <div className="flex items-center gap-2">
             <Mail className="h-4 w-4" />
             <span>hello@routeflow.app</span>

@@ -72,7 +72,9 @@ function ProductSearchInput({
         inputRef={inputRef}
         onScan={async (code) => {
           try {
-            const product = await apiClient.get(`/products/barcode/${encodeURIComponent(code)}`).then((r) => r.data);
+            const product = await apiClient
+              .get(`/products/barcode/${encodeURIComponent(code)}`)
+              .then((r) => r.data);
             if (product) {
               setQuery(product.name);
               onChange(product.name, product.id, product.pricePerUnit);
@@ -89,7 +91,7 @@ function ProductSearchInput({
         <div className="absolute z-10 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg">
           <ul className="max-h-36 overflow-y-auto">
             {products.length === 0 && (
-              <li className="px-3 py-2 text-sm text-navy/50">No products found.</li>
+              <li className="px-3 py-2 text-sm text-navy/70">No products found.</li>
             )}
             {products.map((p: { id: string; name: string; pricePerUnit: number; sku?: string }) => (
               <li key={p.id}>
@@ -103,9 +105,9 @@ function ProductSearchInput({
                 >
                   <div>
                     <span className="text-sm font-medium text-navy">{p.name}</span>
-                    {p.sku && <span className="ml-2 text-xs text-navy/40">{p.sku}</span>}
+                    {p.sku && <span className="ml-2 text-xs text-navy/70">{p.sku}</span>}
                   </div>
-                  <span className="text-xs text-navy/60">{fmt.format(Number(p.pricePerUnit))}</span>
+                  <span className="text-xs text-navy/70">{fmt.format(Number(p.pricePerUnit))}</span>
                 </button>
               </li>
             ))}
@@ -184,7 +186,9 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
   React.useEffect(() => {
     if (invoice && !initialized) {
       setTitle(`Edit ${invoice.invoiceNumber}`);
-      setIssueDate(invoice.issueDate ? invoice.issueDate.slice(0, 10) : new Date().toISOString().slice(0, 10));
+      setIssueDate(
+        invoice.issueDate ? invoice.issueDate.slice(0, 10) : new Date().toISOString().slice(0, 10),
+      );
       setDueDate(invoice.dueDate ? invoice.dueDate.slice(0, 10) : "");
       setDiscount(String(Number(invoice.discount ?? 0)));
       setShippingFee(String(Number(invoice.shippingFee ?? 0)));
@@ -211,7 +215,10 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
 
   // ── Calculations ─────────────────────────────────────────────────────────────
 
-  const subtotal = items.reduce((s, it) => s + Number(it.qty) * Number(it.unitPrice) - Number(it.discount), 0);
+  const subtotal = items.reduce(
+    (s, it) => s + Number(it.qty) * Number(it.unitPrice) - Number(it.discount),
+    0,
+  );
   const taxTotal = items.reduce((s, it) => {
     const lineSub = Number(it.qty) * Number(it.unitPrice) - Number(it.discount);
     return s + lineSub * Number(it.taxRate);
@@ -241,8 +248,14 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
     if (!issueDate) errs.issueDate = "Issue date is required.";
     if (items.length === 0) errs.items = "Add at least one line item.";
     for (const it of items) {
-      if (!it.description.trim()) { errs.items = "All line items must have a description."; break; }
-      if (Number(it.qty) <= 0) { errs.items = "All quantities must be greater than 0."; break; }
+      if (!it.description.trim()) {
+        errs.items = "All line items must have a description.";
+        break;
+      }
+      if (Number(it.qty) <= 0) {
+        errs.items = "All quantities must be greater than 0.";
+        break;
+      }
     }
     setErrors(errs);
     return Object.keys(errs).length === 0;
@@ -263,23 +276,34 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
       terms: terms.trim() || undefined,
       referenceNumber: referenceNumber.trim() || undefined,
       subject: subject.trim() || undefined,
-      items: items.map((it): CreateInvoiceItem => ({
-        productId: it.productId,
-        description: it.description,
-        qty: Number(it.qty),
-        unitPrice: Number(it.unitPrice),
-        taxRate: it.taxRate != null ? Number(it.taxRate) : undefined,
-        discount: it.discount != null && Number(it.discount) !== 0 ? Number(it.discount) : undefined,
-      })),
+      items: items.map(
+        (it): CreateInvoiceItem => ({
+          productId: it.productId,
+          description: it.description,
+          qty: Number(it.qty),
+          unitPrice: Number(it.unitPrice),
+          taxRate: it.taxRate != null ? Number(it.taxRate) : undefined,
+          discount:
+            it.discount != null && Number(it.discount) !== 0 ? Number(it.discount) : undefined,
+        }),
+      ),
     };
 
     updateInvoice.mutate(dto, {
       onSuccess: () => {
-        toast({ title: "Invoice updated", description: "Draft invoice has been saved.", variant: "success" });
+        toast({
+          title: "Invoice updated",
+          description: "Draft invoice has been saved.",
+          variant: "success",
+        });
         router.push(`/invoices/${params.id}`);
       },
       onError: (err: any) => {
-        toast({ title: "Failed to update invoice", description: err?.response?.data?.message ?? "Please try again.", variant: "error" });
+        toast({
+          title: "Failed to update invoice",
+          description: err?.response?.data?.message ?? "Please try again.",
+          variant: "error",
+        });
       },
     });
   }
@@ -289,7 +313,7 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
   if (isLoading) {
     return (
       <div className="flex items-center justify-center p-12">
-        <Loader2 className="h-8 w-8 animate-spin text-navy/40" />
+        <Loader2 className="h-8 w-8 animate-spin text-navy/70" />
       </div>
     );
   }
@@ -298,7 +322,9 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
     return (
       <div className="flex flex-col items-center gap-4 p-12 text-center">
         <p className="text-base font-medium text-navy">Invoice not found.</p>
-        <Button variant="secondary" href="/invoices">Back to Invoices</Button>
+        <Button variant="secondary" href="/invoices">
+          Back to Invoices
+        </Button>
       </div>
     );
   }
@@ -307,14 +333,19 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
     return (
       <div className="flex flex-col items-center gap-4 p-12 text-center">
         <p className="text-base font-medium text-navy">Only DRAFT invoices can be edited.</p>
-        <Button variant="secondary" href={`/invoices/${params.id}`}>Back to Invoice</Button>
+        <Button variant="secondary" href={`/invoices/${params.id}`}>
+          Back to Invoice
+        </Button>
       </div>
     );
   }
 
   return (
     <div className="space-y-5 p-6">
-      <Link href={`/invoices/${params.id}`} className="flex items-center gap-1.5 text-sm text-navy/60 hover:text-navy transition-colors">
+      <Link
+        href={`/invoices/${params.id}`}
+        className="flex items-center gap-1.5 text-sm text-navy/70 hover:text-navy transition-colors"
+      >
         <ArrowLeft className="h-4 w-4" />
         {invoice.invoiceNumber}
       </Link>
@@ -324,7 +355,6 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-5">
         {/* ── Left column (3/5) ── */}
         <div className="space-y-5 lg:col-span-3">
-
           {/* Dates */}
           <Card title="Invoice Dates">
             <div className="grid grid-cols-2 gap-4">
@@ -360,16 +390,19 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
               {errors.items && <p className="text-xs text-danger">{errors.items}</p>}
               {/* Table header */}
               <div className="grid grid-cols-[1fr_70px_90px_70px_70px_32px] gap-2 px-1">
-                <span className="text-xs font-medium text-navy/50">Description</span>
-                <span className="text-xs font-medium text-navy/50 text-right">Qty</span>
-                <span className="text-xs font-medium text-navy/50 text-right">Unit Price</span>
-                <span className="text-xs font-medium text-navy/50 text-right">Disc. $</span>
-                <span className="text-xs font-medium text-navy/50 text-right">Tax %</span>
+                <span className="text-xs font-medium text-navy/70">Description</span>
+                <span className="text-xs font-medium text-navy/70 text-right">Qty</span>
+                <span className="text-xs font-medium text-navy/70 text-right">Unit Price</span>
+                <span className="text-xs font-medium text-navy/70 text-right">Disc. $</span>
+                <span className="text-xs font-medium text-navy/70 text-right">Tax %</span>
                 <span />
               </div>
 
               {items.map((item) => (
-                <div key={item.key} className="grid grid-cols-[1fr_70px_90px_70px_70px_32px] items-center gap-2">
+                <div
+                  key={item.key}
+                  className="grid grid-cols-[1fr_70px_90px_70px_70px_32px] items-center gap-2"
+                >
                   <ProductSearchInput
                     value={item.description}
                     onCreateProduct={(searchTerm) => {
@@ -396,24 +429,43 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
                     }}
                   />
                   <input
-                    type="number" min={0.01} step={0.01} value={item.qty}
+                    type="number"
+                    min={0.01}
+                    step={0.01}
+                    value={item.qty}
                     onChange={(e) => updateItem(item.key, { qty: parseFloat(e.target.value) || 0 })}
                     className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
                   />
                   <input
-                    type="number" min={0} step={0.01} value={item.unitPrice}
-                    onChange={(e) => updateItem(item.key, { unitPrice: parseFloat(e.target.value) || 0 })}
+                    type="number"
+                    min={0}
+                    step={0.01}
+                    value={item.unitPrice}
+                    onChange={(e) =>
+                      updateItem(item.key, { unitPrice: parseFloat(e.target.value) || 0 })
+                    }
                     className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
                   />
                   <input
-                    type="number" min={0} step={0.01} value={item.discount}
-                    onChange={(e) => updateItem(item.key, { discount: parseFloat(e.target.value) || 0 })}
+                    type="number"
+                    min={0}
+                    step={0.01}
+                    value={item.discount}
+                    onChange={(e) =>
+                      updateItem(item.key, { discount: parseFloat(e.target.value) || 0 })
+                    }
                     className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
                   />
                   <input
-                    type="number" min={0} max={1} step={0.01} value={item.taxRate}
+                    type="number"
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    value={item.taxRate}
                     placeholder="0.10"
-                    onChange={(e) => updateItem(item.key, { taxRate: parseFloat(e.target.value) || 0 })}
+                    onChange={(e) =>
+                      updateItem(item.key, { taxRate: parseFloat(e.target.value) || 0 })
+                    }
                     className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
                   />
                   <button
@@ -442,7 +494,8 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="mb-1.5 block text-sm font-medium text-navy/80">
-                    Reference / PO Number <span className="text-navy/40 font-normal">(optional)</span>
+                    Reference / PO Number{" "}
+                    <span className="text-navy/70 font-normal">(optional)</span>
                   </label>
                   <input
                     type="text"
@@ -454,7 +507,7 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
                 </div>
                 <div>
                   <label className="mb-1.5 block text-sm font-medium text-navy/80">
-                    Subject <span className="text-navy/40 font-normal">(optional)</span>
+                    Subject <span className="text-navy/70 font-normal">(optional)</span>
                   </label>
                   <input
                     type="text"
@@ -476,7 +529,9 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
                 />
               </div>
               <div>
-                <label className="mb-1.5 block text-sm font-medium text-navy/80">Payment Terms</label>
+                <label className="mb-1.5 block text-sm font-medium text-navy/80">
+                  Payment Terms
+                </label>
                 <textarea
                   rows={2}
                   placeholder="e.g. Net 30, payment due within 30 days…"
@@ -495,17 +550,27 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
           <Card title="Adjustments">
             <div className="space-y-3">
               <div>
-                <label className="mb-1.5 block text-sm font-medium text-navy/80">Invoice Discount ($)</label>
+                <label className="mb-1.5 block text-sm font-medium text-navy/80">
+                  Invoice Discount ($)
+                </label>
                 <input
-                  type="number" min={0} step={0.01} value={discount}
+                  type="number"
+                  min={0}
+                  step={0.01}
+                  value={discount}
                   onChange={(e) => setDiscount(e.target.value)}
                   className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
                 />
               </div>
               <div>
-                <label className="mb-1.5 block text-sm font-medium text-navy/80">Shipping Fee ($)</label>
+                <label className="mb-1.5 block text-sm font-medium text-navy/80">
+                  Shipping Fee ($)
+                </label>
                 <input
-                  type="number" min={0} step={0.01} value={shippingFee}
+                  type="number"
+                  min={0}
+                  step={0.01}
+                  value={shippingFee}
                   onChange={(e) => setShippingFee(e.target.value)}
                   className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
                 />
@@ -517,7 +582,7 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
           <Card title="Invoice Summary">
             <dl className="space-y-2 text-sm">
               <div className="flex justify-between">
-                <dt className="text-navy/60">Subtotal</dt>
+                <dt className="text-navy/70">Subtotal</dt>
                 <dd className="font-medium text-navy">{fmt.format(subtotal)}</dd>
               </div>
               {invDiscount > 0 && (
@@ -527,13 +592,13 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
                 </div>
               )}
               {taxTotal > 0 && (
-                <div className="flex justify-between text-navy/60">
+                <div className="flex justify-between text-navy/70">
                   <dt>Tax</dt>
                   <dd className="font-medium text-navy">{fmt.format(taxTotal)}</dd>
                 </div>
               )}
               {shipping > 0 && (
-                <div className="flex justify-between text-navy/60">
+                <div className="flex justify-between text-navy/70">
                   <dt>Shipping</dt>
                   <dd className="font-medium text-navy">{fmt.format(shipping)}</dd>
                 </div>
@@ -568,7 +633,10 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
 
       <InlineCreateProductModal
         isOpen={createProductOpen}
-        onClose={() => { setCreateProductOpen(false); setCreateProductTargetIdx(null); }}
+        onClose={() => {
+          setCreateProductOpen(false);
+          setCreateProductTargetIdx(null);
+        }}
         onCreated={(product) => {
           if (createProductTargetIdx !== null) {
             setItems((prev) =>
@@ -580,8 +648,8 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
                       productId: product.id,
                       unitPrice: parseFloat(product.pricePerUnit) || 0,
                     }
-                  : item
-              )
+                  : item,
+              ),
             );
           }
           setCreateProductOpen(false);

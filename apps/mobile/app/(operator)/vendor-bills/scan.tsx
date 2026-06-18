@@ -42,9 +42,10 @@ export default function ScanInvoiceScreen() {
   const { data: suppliers } = useSuppliers();
 
   const pickImage = async (useCamera: boolean) => {
-    const result = (useCamera && Platform.OS !== "web")
-      ? await ImagePicker.launchCameraAsync({ mediaTypes: ["images"], quality: 0.8 })
-      : await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], quality: 0.8 });
+    const result =
+      useCamera && Platform.OS !== "web"
+        ? await ImagePicker.launchCameraAsync({ mediaTypes: ["images"], quality: 0.8 })
+        : await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], quality: 0.8 });
 
     if (result.canceled || !result.assets[0]) return;
     const asset = result.assets[0];
@@ -66,7 +67,11 @@ export default function ScanInvoiceScreen() {
       },
       onError: (e: any) => {
         setStep("upload");
-        showToast(e?.response?.data?.message ?? e?.message ?? "Could not read invoice. Try a clearer photo.");
+        showToast(
+          e?.response?.data?.message ??
+            e?.message ??
+            "Could not read invoice. Try a clearer photo.",
+        );
       },
     });
   };
@@ -93,9 +98,7 @@ export default function ScanInvoiceScreen() {
     const dto: any = {
       supplierId: editedResult.supplierId ?? matchedSupplier?.id,
       billDate: editedResult.billDate,
-      notes: editedResult.supplierName
-        ? `AI scanned from ${editedResult.supplierName}`
-        : undefined,
+      notes: editedResult.supplierName ? `AI scanned from ${editedResult.supplierName}` : undefined,
       items: editedResult.items
         .filter((i) => (i.qty ?? 0) > 0 || (i.unitCost ?? 0) > 0)
         .map((i) => ({
@@ -111,8 +114,7 @@ export default function ScanInvoiceScreen() {
         showToast("Vendor bill created");
         router.replace(`/(operator)/vendor-bills/${bill.id}`);
       },
-      onError: (e: any) =>
-        showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+      onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
     });
   };
 
@@ -120,11 +122,7 @@ export default function ScanInvoiceScreen() {
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <NavBar
         inlineTitle={
-          step === "upload"
-            ? "Scan Invoice"
-            : step === "scanning"
-              ? "Scanning…"
-              : "Review"
+          step === "upload" ? "Scan Invoice" : step === "scanning" ? "Scanning…" : "Review"
         }
         leading={
           <NavBackButton
@@ -187,8 +185,8 @@ function UploadStep({ onPickImage }: { onPickImage: (camera: boolean) => void })
       </View>
       <Text style={styles.uploadTitle}>Scan a vendor invoice</Text>
       <Text style={styles.uploadSub}>
-        Add a receipt — take a photo or pick from your library. Our AI will
-        extract the supplier, items, and totals automatically.
+        Add a receipt — take a photo or pick from your library. Our AI will extract the supplier,
+        items, and totals automatically.
       </Text>
       <Pressable
         style={[styles.uploadBtn, { backgroundColor: ios.brand }]}
@@ -223,9 +221,7 @@ function ConfidenceDot({ confidence }: { confidence: ScannedItem["confidence"] }
       : confidence === "medium"
         ? ios.system.orangeInk
         : ios.system.redInk;
-  return (
-    <View style={[styles.confidenceDot, { backgroundColor: color }]} />
-  );
+  return <View style={[styles.confidenceDot, { backgroundColor: color }]} />;
 }
 
 function ReviewStep({
@@ -253,11 +249,7 @@ function ReviewStep({
           <DetailRow label="Invoice #" value={result.invoiceNumber ?? "—"} />
           <DetailRow
             label="Date"
-            value={
-              result.billDate
-                ? new Date(result.billDate).toLocaleDateString()
-                : "—"
-            }
+            value={result.billDate ? new Date(result.billDate).toLocaleDateString() : "—"}
           />
           <DetailRow
             label="Total"
@@ -268,9 +260,7 @@ function ReviewStep({
 
       {result.items.length > 0 ? (
         <View style={styles.reviewSection}>
-          <Text style={styles.reviewSectionTitle}>
-            Line items ({result.items.length})
-          </Text>
+          <Text style={styles.reviewSectionTitle}>Line items ({result.items.length})</Text>
           <View style={styles.itemsCard}>
             {result.items.map((item, i) => (
               <View
@@ -294,9 +284,7 @@ function ReviewStep({
                   </Text>
                 </View>
                 {item.lineTotal != null ? (
-                  <Text style={styles.reviewItemTotal}>
-                    ${item.lineTotal.toFixed(2)}
-                  </Text>
+                  <Text style={styles.reviewItemTotal}>${item.lineTotal.toFixed(2)}</Text>
                 ) : null}
               </View>
             ))}
@@ -313,15 +301,9 @@ function ReviewStep({
       ) : null}
 
       <View style={{ paddingHorizontal: 16, paddingBottom: 32 }}>
-        <Pressable
-          style={styles.saveBtn}
-          onPress={onSave}
-          disabled={saving}
-        >
+        <Pressable style={styles.saveBtn} onPress={onSave} disabled={saving}>
           <Ionicons name="checkmark" size={16} color="#fff" />
-          <Text style={styles.saveBtnText}>
-            {saving ? "Creating bill…" : "Create vendor bill"}
-          </Text>
+          <Text style={styles.saveBtnText}>{saving ? "Creating bill…" : "Create vendor bill"}</Text>
         </Pressable>
       </View>
     </ScrollView>
@@ -332,7 +314,9 @@ function DetailRow({ label, value }: { label: string; value: string }) {
   return (
     <View style={styles.detailRow}>
       <Text style={styles.detailLabel}>{label}</Text>
-      <Text style={styles.detailValue} numberOfLines={1}>{value}</Text>
+      <Text style={styles.detailValue} numberOfLines={1}>
+        {value}
+      </Text>
     </View>
   );
 }
@@ -390,7 +374,13 @@ const styles = StyleSheet.create({
   scanningSub: { fontSize: 14, fontFamily: "Inter_400Regular", color: "rgba(255,255,255,0.8)" },
   reviewImg: { width: "100%", height: 180 },
   reviewSection: { padding: 16, gap: 8 },
-  reviewSectionTitle: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: ios.label2, letterSpacing: 0.4, textTransform: "uppercase" },
+  reviewSectionTitle: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label2,
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
+  },
   detailCard: { backgroundColor: ios.bgElev, borderRadius: 12, overflow: "hidden" },
   detailRow: {
     flexDirection: "row",
@@ -402,7 +392,13 @@ const styles = StyleSheet.create({
     borderBottomColor: ios.separator,
   },
   detailLabel: { fontSize: 14, fontFamily: "Inter_500Medium", color: ios.label2 },
-  detailValue: { fontSize: 14, fontFamily: "Inter_500Medium", color: ios.label, flex: 1, textAlign: "right" },
+  detailValue: {
+    fontSize: 14,
+    fontFamily: "Inter_500Medium",
+    color: ios.label,
+    flex: 1,
+    textAlign: "right",
+  },
   itemsCard: { backgroundColor: ios.bgElev, borderRadius: 12, overflow: "hidden" },
   reviewItemRow: {
     flexDirection: "row",
@@ -414,7 +410,12 @@ const styles = StyleSheet.create({
   confidenceDot: { width: 8, height: 8, borderRadius: 4, flexShrink: 0 },
   reviewItemName: { fontSize: 14, fontFamily: "Inter_500Medium", color: ios.label },
   reviewItemMeta: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
-  reviewItemTotal: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: ios.label, fontVariant: ["tabular-nums"] },
+  reviewItemTotal: {
+    fontSize: 14,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label,
+    fontVariant: ["tabular-nums"],
+  },
   confidenceLegend: {
     flexDirection: "row",
     alignItems: "center",

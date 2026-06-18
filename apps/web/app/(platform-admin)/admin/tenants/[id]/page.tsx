@@ -9,13 +9,7 @@ import { AdminTabs } from "../../../_components/AdminTabs";
 import { AdminBadge } from "../../../_components/AdminBadge";
 import { AdminCard } from "../../../_components/AdminCard";
 import { AdminModal } from "../../../_components/AdminModal";
-import {
-  LayoutDashboard,
-  CreditCard,
-  Puzzle,
-  Settings,
-  ScrollText,
-} from "lucide-react";
+import { LayoutDashboard, CreditCard, Puzzle, Settings, ScrollText } from "lucide-react";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -78,12 +72,36 @@ interface Addon {
 const PLANS = ["STARTER", "PROFESSIONAL", "ENTERPRISE"] as const;
 
 const AVAILABLE_ADDONS = [
-  { key: "ai_scanning", name: "AI Receipt Scanning", description: "Automatically extract data from receipt images using AI" },
-  { key: "advanced_routes", name: "Advanced Route Optimization", description: "AI-powered route optimization and real-time rerouting" },
-  { key: "api_access", name: "API Access", description: "Full REST API access for third-party integrations" },
-  { key: "custom_branding", name: "Custom Branding", description: "White-label branding with custom logo, colors, and domain" },
-  { key: "priority_support", name: "Priority Support", description: "Dedicated support channel with 4-hour SLA" },
-  { key: "advanced_reporting", name: "Advanced Reporting", description: "Custom report builder with export and scheduling" },
+  {
+    key: "ai_scanning",
+    name: "AI Receipt Scanning",
+    description: "Automatically extract data from receipt images using AI",
+  },
+  {
+    key: "advanced_routes",
+    name: "Advanced Route Optimization",
+    description: "AI-powered route optimization and real-time rerouting",
+  },
+  {
+    key: "api_access",
+    name: "API Access",
+    description: "Full REST API access for third-party integrations",
+  },
+  {
+    key: "custom_branding",
+    name: "Custom Branding",
+    description: "White-label branding with custom logo, colors, and domain",
+  },
+  {
+    key: "priority_support",
+    name: "Priority Support",
+    description: "Dedicated support channel with 4-hour SLA",
+  },
+  {
+    key: "advanced_reporting",
+    name: "Advanced Reporting",
+    description: "Custom report builder with export and scheduling",
+  },
 ];
 
 const TABS = [
@@ -99,10 +117,12 @@ const TABS = [
 function TrialEndsBadge({ trialEndsAt }: { trialEndsAt: string }) {
   const end = new Date(trialEndsAt);
   const diffDays = Math.ceil((end.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
-  const color = diffDays > 7 ? "text-green-400" : diffDays >= 1 ? "text-yellow-400" : "text-red-400";
+  const color =
+    diffDays > 7 ? "text-green-400" : diffDays >= 1 ? "text-yellow-400" : "text-red-400";
   return (
     <span className={color}>
-      {end.toLocaleDateString()} <span className="text-xs">({diffDays > 0 ? `${diffDays}d left` : "expired"})</span>
+      {end.toLocaleDateString()}{" "}
+      <span className="text-xs">({diffDays > 0 ? `${diffDays}d left` : "expired"})</span>
     </span>
   );
 }
@@ -118,12 +138,21 @@ interface TenantAdminUser {
   forcePasswordChange: boolean;
 }
 
-function TenantAdminSection({ tenantId, onRefreshTenant }: { tenantId: string; onRefreshTenant: () => void }) {
+function TenantAdminSection({
+  tenantId,
+  onRefreshTenant,
+}: {
+  tenantId: string;
+  onRefreshTenant: () => void;
+}) {
   const [admin, setAdmin] = React.useState<TenantAdminUser | null | undefined>(undefined); // undefined = loading
   const [showCreateForm, setShowCreateForm] = React.useState(false);
   const [createForm, setCreateForm] = React.useState({ username: "", email: "" });
   const [creating, setCreating] = React.useState(false);
-  const [createResult, setCreateResult] = React.useState<{ tempPassword?: string; username?: string } | null>(null);
+  const [createResult, setCreateResult] = React.useState<{
+    tempPassword?: string;
+    username?: string;
+  } | null>(null);
   const [msg, setMsg] = React.useState<{ type: "success" | "error"; text: string } | null>(null);
 
   const fetchAdmin = React.useCallback(() => {
@@ -133,21 +162,31 @@ function TenantAdminSection({ tenantId, onRefreshTenant }: { tenantId: string; o
       .catch(() => setAdmin(null));
   }, [tenantId]);
 
-  React.useEffect(() => { fetchAdmin(); }, [fetchAdmin]);
+  React.useEffect(() => {
+    fetchAdmin();
+  }, [fetchAdmin]);
 
   async function handleCreateAdmin(e: React.FormEvent) {
     e.preventDefault();
     setCreating(true);
     setMsg(null);
     try {
-      const res = await superAdminClient.post(`/platform-admin/tenants/${tenantId}/admin`, createForm);
+      const res = await superAdminClient.post(
+        `/platform-admin/tenants/${tenantId}/admin`,
+        createForm,
+      );
       setCreateResult(res.data);
       setAdmin(res.data);
       setShowCreateForm(false);
       setCreateForm({ username: "", email: "" });
       onRefreshTenant();
     } catch (err: unknown) {
-      setMsg({ type: "error", text: (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Failed to create admin" });
+      setMsg({
+        type: "error",
+        text:
+          (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+          "Failed to create admin",
+      });
     } finally {
       setCreating(false);
     }
@@ -158,7 +197,9 @@ function TenantAdminSection({ tenantId, onRefreshTenant }: { tenantId: string; o
   return (
     <AdminCard title="Admin Account">
       {msg && (
-        <div className={`mb-3 rounded-lg px-3 py-2 text-sm ${msg.type === "success" ? "bg-green-900/30 text-green-400" : "bg-red-900/30 text-red-400"}`}>
+        <div
+          className={`mb-3 rounded-lg px-3 py-2 text-sm ${msg.type === "success" ? "bg-green-900/30 text-green-400" : "bg-red-900/30 text-red-400"}`}
+        >
           {msg.text}
         </div>
       )}
@@ -166,21 +207,57 @@ function TenantAdminSection({ tenantId, onRefreshTenant }: { tenantId: string; o
       {createResult?.tempPassword && (
         <div className="mb-4 rounded-lg bg-slate-700/60 p-4 ring-1 ring-slate-600">
           <p className="mb-2 text-sm text-slate-300">
-            Admin <span className="font-mono text-white">{createResult.username}</span> created. Temporary password:
+            Admin <span className="font-mono text-white">{createResult.username}</span> created.
+            Temporary password:
           </p>
-          <code className="block rounded bg-slate-900 px-3 py-2 font-mono text-sm text-green-400">{createResult.tempPassword}</code>
-          <p className="mt-2 text-xs text-yellow-500">Share this securely. The user will be forced to change it on next login.</p>
+          <code className="block rounded bg-slate-900 px-3 py-2 font-mono text-sm text-green-400">
+            {createResult.tempPassword}
+          </code>
+          <p className="mt-2 text-xs text-yellow-500">
+            Share this securely. The user will be forced to change it on next login.
+          </p>
         </div>
       )}
 
       {admin ? (
         <dl className="flex flex-col gap-2.5 text-sm">
           {[
-            ["Username", <span key="u" className="font-mono text-slate-300">{admin.username}</span>],
-            ["Email", <span key="e" className="text-white">{admin.email ?? "—"}</span>],
-            ["Status", <span key="s" className={admin.status === "ACTIVE" ? "text-green-400" : "text-yellow-400"}>{admin.status}</span>],
-            ["Force Password Change", <span key="fp" className={admin.forcePasswordChange ? "text-yellow-400" : "text-slate-400"}>{admin.forcePasswordChange ? "Yes" : "No"}</span>],
-            ["Created", <span key="c" className="text-slate-400">{new Date(admin.createdAt).toLocaleDateString()}</span>],
+            [
+              "Username",
+              <span key="u" className="font-mono text-slate-300">
+                {admin.username}
+              </span>,
+            ],
+            [
+              "Email",
+              <span key="e" className="text-white">
+                {admin.email ?? "—"}
+              </span>,
+            ],
+            [
+              "Status",
+              <span
+                key="s"
+                className={admin.status === "ACTIVE" ? "text-green-400" : "text-yellow-400"}
+              >
+                {admin.status}
+              </span>,
+            ],
+            [
+              "Force Password Change",
+              <span
+                key="fp"
+                className={admin.forcePasswordChange ? "text-yellow-400" : "text-slate-400"}
+              >
+                {admin.forcePasswordChange ? "Yes" : "No"}
+              </span>,
+            ],
+            [
+              "Created",
+              <span key="c" className="text-slate-400">
+                {new Date(admin.createdAt).toLocaleDateString()}
+              </span>,
+            ],
           ].map(([label, value]) => (
             <div key={String(label)} className="flex justify-between items-center">
               <dt className="text-slate-500">{label}</dt>
@@ -191,7 +268,9 @@ function TenantAdminSection({ tenantId, onRefreshTenant }: { tenantId: string; o
       ) : (
         <div className="rounded-lg border border-dashed border-red-700/40 bg-red-900/10 p-4 text-center">
           <p className="text-sm font-semibold text-red-400">No admin account found</p>
-          <p className="mt-1 text-xs text-slate-500">This tenant cannot be impersonated until an admin account exists.</p>
+          <p className="mt-1 text-xs text-slate-500">
+            This tenant cannot be impersonated until an admin account exists.
+          </p>
           {!showCreateForm ? (
             <button
               onClick={() => setShowCreateForm(true)}
@@ -206,7 +285,7 @@ function TenantAdminSection({ tenantId, onRefreshTenant }: { tenantId: string; o
                 <input
                   required
                   value={createForm.username}
-                  onChange={(e) => setCreateForm(f => ({ ...f, username: e.target.value }))}
+                  onChange={(e) => setCreateForm((f) => ({ ...f, username: e.target.value }))}
                   placeholder="admin"
                   className="w-full rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 text-sm text-white placeholder-slate-500 focus:border-indigo-500 focus:outline-none"
                 />
@@ -217,12 +296,14 @@ function TenantAdminSection({ tenantId, onRefreshTenant }: { tenantId: string; o
                   required
                   type="email"
                   value={createForm.email}
-                  onChange={(e) => setCreateForm(f => ({ ...f, email: e.target.value }))}
+                  onChange={(e) => setCreateForm((f) => ({ ...f, email: e.target.value }))}
                   placeholder="admin@company.com"
                   className="w-full rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 text-sm text-white placeholder-slate-500 focus:border-indigo-500 focus:outline-none"
                 />
               </div>
-              <p className="text-xs text-slate-500">A temporary password will be auto-generated and emailed to the admin.</p>
+              <p className="text-xs text-slate-500">
+                A temporary password will be auto-generated and emailed to the admin.
+              </p>
               <div className="flex gap-2">
                 <button
                   type="submit"
@@ -231,7 +312,11 @@ function TenantAdminSection({ tenantId, onRefreshTenant }: { tenantId: string; o
                 >
                   {creating ? "Creating..." : "Create Admin"}
                 </button>
-                <button type="button" onClick={() => setShowCreateForm(false)} className="rounded-lg border border-slate-600 px-4 py-2 text-sm text-slate-400 hover:bg-slate-700">
+                <button
+                  type="button"
+                  onClick={() => setShowCreateForm(false)}
+                  className="rounded-lg border border-slate-600 px-4 py-2 text-sm text-slate-400 hover:bg-slate-700"
+                >
                   Cancel
                 </button>
               </div>
@@ -260,7 +345,10 @@ function OverviewTab({
 }) {
   const [showDeleteConfirm, setShowDeleteConfirm] = React.useState(false);
   const [showResetConfirm, setShowResetConfirm] = React.useState(false);
-  const [resetResult, setResetResult] = React.useState<{ username: string; tempPassword: string } | null>(null);
+  const [resetResult, setResetResult] = React.useState<{
+    username: string;
+    tempPassword: string;
+  } | null>(null);
   const [copied, setCopied] = React.useState(false);
   const [trialDays, setTrialDays] = React.useState(14);
   const [selectedPlan, setSelectedPlan] = React.useState(tenant.plan);
@@ -279,12 +367,37 @@ function OverviewTab({
       <AdminCard title="Tenant Info">
         <dl className="flex flex-col gap-2.5 text-sm">
           {[
-            ["ID", <span key="id" className="font-mono text-xs text-slate-300">{tenant.id}</span>],
-            ["Slug", <span key="slug" className="font-mono text-slate-300">{tenant.slug}</span>],
-            ["Business Name", <span key="bn" className="text-white">{tenant.businessName ?? "—"}</span>],
-            ["Plan", <AdminBadge key="plan" variant="plan">{tenant.plan}</AdminBadge>],
+            [
+              "ID",
+              <span key="id" className="font-mono text-xs text-slate-300">
+                {tenant.id}
+              </span>,
+            ],
+            [
+              "Slug",
+              <span key="slug" className="font-mono text-slate-300">
+                {tenant.slug}
+              </span>,
+            ],
+            [
+              "Business Name",
+              <span key="bn" className="text-white">
+                {tenant.businessName ?? "—"}
+              </span>,
+            ],
+            [
+              "Plan",
+              <AdminBadge key="plan" variant="plan">
+                {tenant.plan}
+              </AdminBadge>,
+            ],
             ["Status", <AdminBadge key="status">{tenant.status}</AdminBadge>],
-            ["Created", <span key="created" className="text-slate-300">{new Date(tenant.createdAt).toLocaleString()}</span>],
+            [
+              "Created",
+              <span key="created" className="text-slate-300">
+                {new Date(tenant.createdAt).toLocaleString()}
+              </span>,
+            ],
           ].map(([label, value]) => (
             <div key={String(label)} className="flex justify-between items-center">
               <dt className="text-slate-500">{label}</dt>
@@ -294,7 +407,9 @@ function OverviewTab({
           {tenant.trialEndsAt && (
             <div className="flex justify-between items-center">
               <dt className="text-slate-500">Trial Ends</dt>
-              <dd><TrialEndsBadge trialEndsAt={tenant.trialEndsAt} /></dd>
+              <dd>
+                <TrialEndsBadge trialEndsAt={tenant.trialEndsAt} />
+              </dd>
             </div>
           )}
         </dl>
@@ -353,7 +468,11 @@ function OverviewTab({
               onChange={(e) => setSelectedPlan(e.target.value)}
               className="h-9 rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
             >
-              {PLANS.map((p) => <option key={p} value={p}>{p}</option>)}
+              {PLANS.map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
             </select>
             <button
               disabled={actionLoading === "plan" || selectedPlan === tenant.plan}
@@ -384,19 +503,35 @@ function OverviewTab({
           ) : (
             <div className="ml-auto flex items-center gap-2 rounded-lg bg-red-900/40 px-4 py-2 ring-1 ring-red-700">
               <span className="text-sm text-red-300">Confirm delete?</span>
-              <button disabled={actionLoading === "delete"} onClick={() => onAction("delete")} className="rounded px-3 py-1 text-xs font-bold text-red-400 hover:bg-red-800">Yes, delete</button>
-              <button onClick={() => setShowDeleteConfirm(false)} className="rounded px-3 py-1 text-xs text-slate-400 hover:bg-slate-700">Cancel</button>
+              <button
+                disabled={actionLoading === "delete"}
+                onClick={() => onAction("delete")}
+                className="rounded px-3 py-1 text-xs font-bold text-red-400 hover:bg-red-800"
+              >
+                Yes, delete
+              </button>
+              <button
+                onClick={() => setShowDeleteConfirm(false)}
+                className="rounded px-3 py-1 text-xs text-slate-400 hover:bg-slate-700"
+              >
+                Cancel
+              </button>
             </div>
           )}
         </div>
 
         {/* Extend Trial */}
         <div className="mt-5 border-t border-slate-700 pt-4">
-          <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">Extend Trial</h3>
+          <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
+            Extend Trial
+          </h3>
           <div className="flex items-center gap-3">
             <label className="text-sm text-slate-400">Days</label>
             <input
-              type="number" min={1} max={365} value={trialDays}
+              type="number"
+              min={1}
+              max={365}
+              value={trialDays}
               onChange={(e) => setTrialDays(Number(e.target.value))}
               className="h-9 w-20 rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
             />
@@ -412,7 +547,9 @@ function OverviewTab({
 
         {/* Reset Admin Password */}
         <div className="mt-4 border-t border-slate-700 pt-4">
-          <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">Admin Password Reset</h3>
+          <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
+            Admin Password Reset
+          </h3>
           {!showResetConfirm ? (
             <button
               disabled={actionLoading === "reset-pwd"}
@@ -429,23 +566,35 @@ function OverviewTab({
                 onClick={async () => {
                   setShowResetConfirm(false);
                   try {
-                    const res = await superAdminClient.post(`/platform-admin/tenants/${tenant.id}/reset-admin-password`);
+                    const res = await superAdminClient.post(
+                      `/platform-admin/tenants/${tenant.id}/reset-admin-password`,
+                    );
                     setResetResult(res.data);
                     setCopied(false);
                   } catch {}
                 }}
                 className="rounded px-3 py-1 text-xs font-bold text-orange-400 hover:bg-orange-800"
-              >Yes, reset</button>
-              <button onClick={() => setShowResetConfirm(false)} className="rounded px-3 py-1 text-xs text-slate-400 hover:bg-slate-700">Cancel</button>
+              >
+                Yes, reset
+              </button>
+              <button
+                onClick={() => setShowResetConfirm(false)}
+                className="rounded px-3 py-1 text-xs text-slate-400 hover:bg-slate-700"
+              >
+                Cancel
+              </button>
             </div>
           )}
           {resetResult && (
             <div className="mt-3 rounded-lg bg-slate-700/60 p-4 ring-1 ring-slate-600">
               <p className="mb-2 text-sm text-slate-300">
-                Temporary password for <span className="font-mono text-white">{resetResult.username}</span>:
+                Temporary password for{" "}
+                <span className="font-mono text-white">{resetResult.username}</span>:
               </p>
               <div className="flex items-center gap-2">
-                <code className="flex-1 rounded bg-slate-900 px-3 py-2 font-mono text-sm text-green-400">{resetResult.tempPassword}</code>
+                <code className="flex-1 rounded bg-slate-900 px-3 py-2 font-mono text-sm text-green-400">
+                  {resetResult.tempPassword}
+                </code>
                 <button
                   onClick={() => {
                     navigator.clipboard.writeText(resetResult.tempPassword).then(() => {
@@ -458,7 +607,9 @@ function OverviewTab({
                   {copied ? "Copied!" : "Copy"}
                 </button>
               </div>
-              <p className="mt-2 text-xs text-yellow-500">Share this securely. The user will be forced to change it on next login.</p>
+              <p className="mt-2 text-xs text-yellow-500">
+                Share this securely. The user will be forced to change it on next login.
+              </p>
             </div>
           )}
         </div>
@@ -468,7 +619,14 @@ function OverviewTab({
       <AdminCard
         title="Recent Audit Logs"
         className="lg:col-span-2"
-        actions={<Link href={`/admin/audit-logs?tenantId=${tenant.id}`} className="text-xs text-indigo-400 hover:text-indigo-300">View all</Link>}
+        actions={
+          <Link
+            href={`/admin/audit-logs?tenantId=${tenant.id}`}
+            className="text-xs text-indigo-400 hover:text-indigo-300"
+          >
+            View all
+          </Link>
+        }
         noPadding
       >
         {recentLogs.length === 0 ? (
@@ -489,8 +647,12 @@ function OverviewTab({
                   <tr key={log.id} className="hover:bg-slate-700/20">
                     <td className="px-4 py-2 font-mono text-slate-300">{log.action}</td>
                     <td className="px-4 py-2 text-slate-400">{log.entityType}</td>
-                    <td className="px-4 py-2 font-mono text-slate-500">{log.userId?.slice(0, 8) ?? "—"}</td>
-                    <td className="px-4 py-2 text-slate-500">{new Date(log.createdAt).toLocaleString()}</td>
+                    <td className="px-4 py-2 font-mono text-slate-500">
+                      {log.userId?.slice(0, 8) ?? "—"}
+                    </td>
+                    <td className="px-4 py-2 text-slate-500">
+                      {new Date(log.createdAt).toLocaleString()}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -529,7 +691,9 @@ function BillingTab({
 }) {
   const [portalLoading, setPortalLoading] = React.useState(false);
   const [checkoutLoading, setCheckoutLoading] = React.useState(false);
-  const [msg, setMsg] = React.useState<{ type: "success" | "error" | "info"; text: string } | null>(null);
+  const [msg, setMsg] = React.useState<{ type: "success" | "error" | "info"; text: string } | null>(
+    null,
+  );
 
   // Manual activation form state
   const [activating, setActivating] = React.useState(false);
@@ -549,10 +713,17 @@ function BillingTab({
   const openBillingPortal = async () => {
     setPortalLoading(true);
     try {
-      const res = await superAdminClient.post(`/platform-admin/tenants/${tenant.id}/billing/portal`);
+      const res = await superAdminClient.post(
+        `/platform-admin/tenants/${tenant.id}/billing/portal`,
+      );
       window.open(res.data.url, "_blank");
     } catch (err: unknown) {
-      setMsg({ type: "error", text: (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Failed to open billing portal" });
+      setMsg({
+        type: "error",
+        text:
+          (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+          "Failed to open billing portal",
+      });
     } finally {
       setPortalLoading(false);
     }
@@ -561,10 +732,17 @@ function BillingTab({
   const createCheckout = async () => {
     setCheckoutLoading(true);
     try {
-      const res = await superAdminClient.post(`/platform-admin/tenants/${tenant.id}/billing/checkout`);
+      const res = await superAdminClient.post(
+        `/platform-admin/tenants/${tenant.id}/billing/checkout`,
+      );
       setMsg({ type: "info", text: `Checkout URL: ${res.data.checkoutUrl}` });
     } catch (err: unknown) {
-      setMsg({ type: "error", text: (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Failed to create checkout session" });
+      setMsg({
+        type: "error",
+        text:
+          (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+          "Failed to create checkout session",
+      });
     } finally {
       setCheckoutLoading(false);
     }
@@ -591,7 +769,12 @@ function BillingTab({
       });
       onRefreshTenant();
     } catch (err: unknown) {
-      setMsg({ type: "error", text: (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Activation failed" });
+      setMsg({
+        type: "error",
+        text:
+          (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+          "Activation failed",
+      });
     } finally {
       setActivating(false);
     }
@@ -606,7 +789,9 @@ function BillingTab({
           <AdminBadge>{tenant.status}</AdminBadge>
         </div>
         {daysLeft !== null && (
-          <p className={`text-sm ${daysLeft > 7 ? "text-green-400" : daysLeft > 0 ? "text-yellow-400" : "text-red-400"}`}>
+          <p
+            className={`text-sm ${daysLeft > 7 ? "text-green-400" : daysLeft > 0 ? "text-yellow-400" : "text-red-400"}`}
+          >
             {daysLeft > 0 ? `${daysLeft} days remaining on trial` : "Trial expired"}
           </p>
         )}
@@ -623,7 +808,8 @@ function BillingTab({
                 </span>
                 {sub.externalPaymentMethod && (
                   <span className="rounded bg-emerald-800/50 px-2 py-0.5 text-xs text-emerald-300">
-                    {EXTERNAL_PAYMENT_METHODS.find((m) => m.value === sub.externalPaymentMethod)?.label ?? sub.externalPaymentMethod}
+                    {EXTERNAL_PAYMENT_METHODS.find((m) => m.value === sub.externalPaymentMethod)
+                      ?.label ?? sub.externalPaymentMethod}
                   </span>
                 )}
               </div>
@@ -659,7 +845,9 @@ function BillingTab({
             {sub.externalPaymentNotes && (
               <div className="flex flex-col gap-1">
                 <dt className="text-slate-500">Notes</dt>
-                <dd className="rounded bg-slate-700/50 px-3 py-2 text-xs text-slate-300">{sub.externalPaymentNotes}</dd>
+                <dd className="rounded bg-slate-700/50 px-3 py-2 text-xs text-slate-300">
+                  {sub.externalPaymentNotes}
+                </dd>
               </div>
             )}
             {sub.stripeCustomerId && (
@@ -677,22 +865,28 @@ function BillingTab({
       {/* Manual Activation */}
       <AdminCard title="Manual Activation" className="lg:col-span-2">
         <p className="mb-4 text-sm text-slate-400">
-          Activate this tenant&apos;s subscription when payment was received outside Stripe — via Zelle, bank transfer, check, or any other platform.
+          Activate this tenant&apos;s subscription when payment was received outside Stripe — via
+          Zelle, bank transfer, check, or any other platform.
         </p>
 
         {msg && (
-          <div className={`mb-4 rounded-lg px-4 py-3 text-sm ring-1 break-all ${
-            msg.type === "success"
-              ? "bg-green-900/30 text-green-300 ring-green-700/50"
-              : msg.type === "error"
-                ? "bg-red-900/30 text-red-300 ring-red-700/50"
-                : "bg-indigo-900/30 text-indigo-300 ring-indigo-700/50"
-          }`}>
+          <div
+            className={`mb-4 rounded-lg px-4 py-3 text-sm ring-1 break-all ${
+              msg.type === "success"
+                ? "bg-green-900/30 text-green-300 ring-green-700/50"
+                : msg.type === "error"
+                  ? "bg-red-900/30 text-red-300 ring-red-700/50"
+                  : "bg-indigo-900/30 text-indigo-300 ring-indigo-700/50"
+            }`}
+          >
             {msg.text}
           </div>
         )}
 
-        <form onSubmit={handleManualActivation} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <form
+          onSubmit={handleManualActivation}
+          className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"
+        >
           {/* Plan */}
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-400">Plan</label>
@@ -701,7 +895,11 @@ function BillingTab({
               onChange={(e) => setManualForm((f) => ({ ...f, plan: e.target.value }))}
               className="h-9 w-full rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
             >
-              {PLANS.map((p) => <option key={p} value={p}>{p}</option>)}
+              {PLANS.map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
             </select>
           </div>
 
@@ -714,7 +912,9 @@ function BillingTab({
               className="h-9 w-full rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
             >
               {EXTERNAL_PAYMENT_METHODS.map((m) => (
-                <option key={m.value} value={m.value}>{m.label}</option>
+                <option key={m.value} value={m.value}>
+                  {m.label}
+                </option>
               ))}
             </select>
           </div>
@@ -724,11 +924,15 @@ function BillingTab({
             <label className="mb-1 block text-xs font-medium text-slate-400">Billing Period</label>
             <select
               value={manualForm.billingPeriodDays}
-              onChange={(e) => setManualForm((f) => ({ ...f, billingPeriodDays: Number(e.target.value) }))}
+              onChange={(e) =>
+                setManualForm((f) => ({ ...f, billingPeriodDays: Number(e.target.value) }))
+              }
               className="h-9 w-full rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
             >
               {BILLING_PERIODS.map((p) => (
-                <option key={p.value} value={p.value}>{p.label}</option>
+                <option key={p.value} value={p.value}>
+                  {p.label}
+                </option>
               ))}
             </select>
           </div>
@@ -736,7 +940,8 @@ function BillingTab({
           {/* Reference */}
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-400">
-              Transaction / Confirmation Reference <span className="text-slate-600">(optional)</span>
+              Transaction / Confirmation Reference{" "}
+              <span className="text-slate-600">(optional)</span>
             </label>
             <input
               type="text"
@@ -771,7 +976,8 @@ function BillingTab({
               {activating ? "Activating..." : "Activate Subscription"}
             </button>
             <p className="text-xs text-slate-500">
-              This will set the tenant status to <strong className="text-slate-300">ACTIVE</strong> and record the selected payment method.
+              This will set the tenant status to <strong className="text-slate-300">ACTIVE</strong>{" "}
+              and record the selected payment method.
             </p>
           </div>
         </form>
@@ -817,15 +1023,21 @@ function AddonsTab({ tenant }: { tenant: TenantDetail }) {
       .finally(() => setLoading(false));
   }, [tenant.id]);
 
-  React.useEffect(() => { fetchAddons(); }, [fetchAddons]);
+  React.useEffect(() => {
+    fetchAddons();
+  }, [fetchAddons]);
 
   const toggleAddon = async (key: string, currentlyActive: boolean) => {
     setToggling(key);
     try {
       if (currentlyActive) {
-        await superAdminClient.post(`/platform-admin/tenants/${tenant.id}/addons/disable`, { addonKey: key });
+        await superAdminClient.post(`/platform-admin/tenants/${tenant.id}/addons/disable`, {
+          addonKey: key,
+        });
       } else {
-        await superAdminClient.post(`/platform-admin/tenants/${tenant.id}/addons/enable`, { addonKey: key });
+        await superAdminClient.post(`/platform-admin/tenants/${tenant.id}/addons/enable`, {
+          addonKey: key,
+        });
       }
       fetchAddons();
     } catch {}
@@ -843,7 +1055,12 @@ function AddonsTab({ tenant }: { tenant: TenantDetail }) {
         title={`Enable ${AVAILABLE_ADDONS.find((a) => a.key === showEnableModal)?.name ?? showEnableModal}`}
         footer={
           <>
-            <button onClick={() => setShowEnableModal(null)} className="rounded-lg px-4 py-2 text-sm text-slate-400 hover:bg-slate-700">Cancel</button>
+            <button
+              onClick={() => setShowEnableModal(null)}
+              className="rounded-lg px-4 py-2 text-sm text-slate-400 hover:bg-slate-700"
+            >
+              Cancel
+            </button>
             <button
               disabled={toggling === showEnableModal}
               onClick={() => showEnableModal && toggleAddon(showEnableModal, false)}
@@ -855,9 +1072,13 @@ function AddonsTab({ tenant }: { tenant: TenantDetail }) {
         }
       >
         <p className="text-sm text-slate-300">
-          This will enable <strong>{AVAILABLE_ADDONS.find((a) => a.key === showEnableModal)?.name}</strong> for tenant <strong>{tenant.businessName ?? tenant.slug}</strong>.
+          This will enable{" "}
+          <strong>{AVAILABLE_ADDONS.find((a) => a.key === showEnableModal)?.name}</strong> for
+          tenant <strong>{tenant.businessName ?? tenant.slug}</strong>.
         </p>
-        <p className="mt-2 text-xs text-slate-500">If Stripe is configured, a subscription item will be created for billing.</p>
+        <p className="mt-2 text-xs text-slate-500">
+          If Stripe is configured, a subscription item will be created for billing.
+        </p>
       </AdminModal>
 
       {loading ? (
@@ -870,9 +1091,7 @@ function AddonsTab({ tenant }: { tenant: TenantDetail }) {
               <div
                 key={addon.key}
                 className={`rounded-xl p-4 ring-1 transition-colors ${
-                  isActive
-                    ? "bg-indigo-900/20 ring-indigo-600/30"
-                    : "bg-slate-800 ring-white/5"
+                  isActive ? "bg-indigo-900/20 ring-indigo-600/30" : "bg-slate-800 ring-white/5"
                 }`}
               >
                 <div className="flex items-start justify-between mb-2">
@@ -912,15 +1131,15 @@ function AddonsTab({ tenant }: { tenant: TenantDetail }) {
 function ConfigTab({ tenant }: { tenant: TenantDetail }) {
   const [form, setForm] = React.useState({
     addressLine1: tenant.addressLine1 ?? "",
-    city:         tenant.city         ?? "",
-    state:        tenant.state        ?? "",
-    zip:          tenant.zip          ?? "",
-    country:      tenant.country      ?? "",
-    phone:        tenant.phone        ?? "",
+    city: tenant.city ?? "",
+    state: tenant.state ?? "",
+    zip: tenant.zip ?? "",
+    country: tenant.country ?? "",
+    phone: tenant.phone ?? "",
   });
   const [saving, setSaving] = React.useState(false);
-  const [saved,  setSaved]  = React.useState(false);
-  const [error,  setError]  = React.useState<string | null>(null);
+  const [saved, setSaved] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
@@ -940,16 +1159,16 @@ function ConfigTab({ tenant }: { tenant: TenantDetail }) {
   const readOnlyFields: [string, string | null][] = [
     ["Business Name", tenant.businessName],
     ["Primary Color", tenant.primaryColor],
-    ["Logo Key",      tenant.logoKey],
+    ["Logo Key", tenant.logoKey],
   ];
 
   const addressFields = [
     { key: "addressLine1", label: "Street" },
-    { key: "city",         label: "City" },
-    { key: "state",        label: "State / Province" },
-    { key: "zip",          label: "ZIP / Postcode" },
-    { key: "country",      label: "Country" },
-    { key: "phone",        label: "Phone" },
+    { key: "city", label: "City" },
+    { key: "state", label: "State / Province" },
+    { key: "zip", label: "ZIP / Postcode" },
+    { key: "country", label: "Country" },
+    { key: "phone", label: "Phone" },
   ] as const;
 
   return (
@@ -962,11 +1181,14 @@ function ConfigTab({ tenant }: { tenant: TenantDetail }) {
             <dd className="text-white">
               {label === "Primary Color" && value ? (
                 <span className="flex items-center gap-2">
-                  <span className="inline-block h-4 w-4 rounded-full ring-1 ring-white/20" style={{ backgroundColor: value }} />
+                  <span
+                    className="inline-block h-4 w-4 rounded-full ring-1 ring-white/20"
+                    style={{ backgroundColor: value }}
+                  />
                   {value}
                 </span>
               ) : (
-                value ?? <span className="text-slate-600">Not set</span>
+                (value ?? <span className="text-slate-600">Not set</span>)
               )}
             </dd>
           </div>
@@ -1043,14 +1265,24 @@ function AuditLogTab({ tenantId }: { tenantId: string }) {
                 <tr key={log.id} className="hover:bg-slate-700/20">
                   <td className="px-4 py-2 font-mono text-slate-300">{log.action}</td>
                   <td className="px-4 py-2 text-slate-400">{log.entityType}</td>
-                  <td className="px-4 py-2 font-mono text-slate-500">{log.entityId?.slice(0, 8) ?? "—"}</td>
-                  <td className="px-4 py-2 font-mono text-slate-500">{log.userId?.slice(0, 8) ?? "—"}</td>
-                  <td className="px-4 py-2 text-slate-500">{new Date(log.createdAt).toLocaleString()}</td>
+                  <td className="px-4 py-2 font-mono text-slate-500">
+                    {log.entityId?.slice(0, 8) ?? "—"}
+                  </td>
+                  <td className="px-4 py-2 font-mono text-slate-500">
+                    {log.userId?.slice(0, 8) ?? "—"}
+                  </td>
+                  <td className="px-4 py-2 text-slate-500">
+                    {new Date(log.createdAt).toLocaleString()}
+                  </td>
                   <td className="px-4 py-2 text-slate-500">{log.ip ?? "—"}</td>
                 </tr>
               ))}
               {logs.length === 0 && (
-                <tr><td colSpan={6} className="px-4 py-10 text-center text-slate-500">No audit log entries.</td></tr>
+                <tr>
+                  <td colSpan={6} className="px-4 py-10 text-center text-slate-500">
+                    No audit log entries.
+                  </td>
+                </tr>
               )}
             </tbody>
           </table>
@@ -1058,9 +1290,23 @@ function AuditLogTab({ tenantId }: { tenantId: string }) {
       </div>
       {meta.pages > 1 && (
         <div className="mt-4 flex items-center justify-center gap-2">
-          <button disabled={page <= 1} onClick={() => setPage((p) => p - 1)} className="rounded-lg px-3 py-1.5 text-sm text-slate-400 hover:bg-slate-800 disabled:opacity-40">Prev</button>
-          <span className="text-sm text-slate-500">Page {page} of {meta.pages}</span>
-          <button disabled={page >= meta.pages} onClick={() => setPage((p) => p + 1)} className="rounded-lg px-3 py-1.5 text-sm text-slate-400 hover:bg-slate-800 disabled:opacity-40">Next</button>
+          <button
+            disabled={page <= 1}
+            onClick={() => setPage((p) => p - 1)}
+            className="rounded-lg px-3 py-1.5 text-sm text-slate-400 hover:bg-slate-800 disabled:opacity-40"
+          >
+            Prev
+          </button>
+          <span className="text-sm text-slate-500">
+            Page {page} of {meta.pages}
+          </span>
+          <button
+            disabled={page >= meta.pages}
+            onClick={() => setPage((p) => p + 1)}
+            className="rounded-lg px-3 py-1.5 text-sm text-slate-400 hover:bg-slate-800 disabled:opacity-40"
+          >
+            Next
+          </button>
         </div>
       )}
     </div>
@@ -1088,7 +1334,9 @@ export default function AdminTenantDetailPage() {
       .finally(() => setLoading(false));
   }, [id]);
 
-  React.useEffect(() => { fetchTenant(); }, [fetchTenant]);
+  React.useEffect(() => {
+    fetchTenant();
+  }, [fetchTenant]);
 
   const handleAction = async (action: string, payload?: unknown) => {
     if (!tenant) return;
@@ -1098,7 +1346,9 @@ export default function AdminTenantDetailPage() {
       switch (action) {
         case "toggle-status": {
           const newStatus = tenant.status === "SUSPENDED" ? "ACTIVE" : "SUSPENDED";
-          await superAdminClient.patch(`/platform-admin/tenants/${id}/status`, { status: newStatus });
+          await superAdminClient.patch(`/platform-admin/tenants/${id}/status`, {
+            status: newStatus,
+          });
           setStatusMsg(`Status changed to ${newStatus}`);
           break;
         }
@@ -1118,9 +1368,13 @@ export default function AdminTenantDetailPage() {
             setTenantCookie(tenant.slug);
             window.location.href = "/dashboard";
           } catch (impErr: unknown) {
-            const msg = (impErr as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "";
+            const msg =
+              (impErr as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+              "";
             if (msg.toLowerCase().includes("tenant_admin")) {
-              setStatusMsg("⚠️ No admin account found for this tenant. Please create one using the Admin Account section below, then try again.");
+              setStatusMsg(
+                "⚠️ No admin account found for this tenant. Please create one using the Admin Account section below, then try again.",
+              );
             } else {
               setStatusMsg(msg || "Impersonation failed");
             }
@@ -1129,8 +1383,12 @@ export default function AdminTenantDetailPage() {
         }
         case "extend-trial": {
           const { days } = payload as { days: number };
-          const res = await superAdminClient.post(`/platform-admin/tenants/${id}/extend-trial`, { days });
-          setStatusMsg(`Trial extended — new end: ${new Date(res.data.trialEndsAt).toLocaleString()}`);
+          const res = await superAdminClient.post(`/platform-admin/tenants/${id}/extend-trial`, {
+            days,
+          });
+          setStatusMsg(
+            `Trial extended — new end: ${new Date(res.data.trialEndsAt).toLocaleString()}`,
+          );
           break;
         }
         case "delete": {
@@ -1141,7 +1399,10 @@ export default function AdminTenantDetailPage() {
       }
       fetchTenant();
     } catch (err: unknown) {
-      setStatusMsg((err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Action failed");
+      setStatusMsg(
+        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+          "Action failed",
+      );
     } finally {
       setActionLoading(null);
     }
@@ -1152,8 +1413,15 @@ export default function AdminTenantDetailPage() {
   if (error || !tenant) {
     return (
       <div className="p-6">
-        <div className="rounded-lg bg-red-900/40 px-4 py-3 text-sm text-red-400 ring-1 ring-red-700">{error ?? "Tenant not found"}</div>
-        <Link href="/admin/tenants" className="mt-4 inline-block text-sm text-indigo-400 hover:underline">Back to Tenants</Link>
+        <div className="rounded-lg bg-red-900/40 px-4 py-3 text-sm text-red-400 ring-1 ring-red-700">
+          {error ?? "Tenant not found"}
+        </div>
+        <Link
+          href="/admin/tenants"
+          className="mt-4 inline-block text-sm text-indigo-400 hover:underline"
+        >
+          Back to Tenants
+        </Link>
       </div>
     );
   }
@@ -1162,7 +1430,9 @@ export default function AdminTenantDetailPage() {
     <div className="p-6">
       {/* Header */}
       <div className="mb-4 flex items-center gap-4">
-        <Link href="/admin/tenants" className="text-sm text-slate-400 hover:text-slate-300">Tenants</Link>
+        <Link href="/admin/tenants" className="text-sm text-slate-400 hover:text-slate-300">
+          Tenants
+        </Link>
         <span className="text-slate-600">/</span>
         <h1 className="text-xl font-bold text-white">{tenant.businessName ?? tenant.name}</h1>
         <AdminBadge>{tenant.status}</AdminBadge>
@@ -1174,7 +1444,13 @@ export default function AdminTenantDetailPage() {
 
       {/* Tab Content */}
       {activeTab === "overview" && (
-        <OverviewTab tenant={tenant} onAction={handleAction} actionLoading={actionLoading} statusMsg={statusMsg} onRefreshTenant={fetchTenant} />
+        <OverviewTab
+          tenant={tenant}
+          onAction={handleAction}
+          actionLoading={actionLoading}
+          statusMsg={statusMsg}
+          onRefreshTenant={fetchTenant}
+        />
       )}
       {activeTab === "billing" && <BillingTab tenant={tenant} onRefreshTenant={fetchTenant} />}
       {activeTab === "addons" && <AddonsTab tenant={tenant} />}

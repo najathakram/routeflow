@@ -3,11 +3,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
-import {
-  IosEmptyState,
-  NavBackButton,
-  NavBar,
-} from "@routeflow/ui/mobile/ios";
+import { IosEmptyState, NavBackButton, NavBar } from "@routeflow/ui/mobile/ios";
 
 // Pick & load verification is not wired to a backend yet — no /routes/:id/picks
 // endpoint exists and the barcode-scan flow hasn't been implemented. Show an

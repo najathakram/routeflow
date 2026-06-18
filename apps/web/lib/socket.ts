@@ -1,10 +1,9 @@
-import { io, Socket } from 'socket.io-client';
+import { io, Socket } from "socket.io-client";
 
-const API_URL =
-  process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3000/api/v1';
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000/api/v1";
 
 // Strip /api/v1 suffix — socket.io connects to the root server
-const SOCKET_URL = API_URL.replace(/\/api\/v1\/?$/, '');
+const SOCKET_URL = API_URL.replace(/\/api\/v1\/?$/, "");
 
 let socket: Socket | null = null;
 
@@ -20,7 +19,7 @@ export function connectSocket(token: string): Socket {
 
   socket = io(SOCKET_URL, {
     auth: { token },
-    transports: ['websocket', 'polling'],
+    transports: ["websocket", "polling"],
     reconnection: true,
     reconnectionDelay: 1000,
     reconnectionAttempts: 5,

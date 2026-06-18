@@ -1,12 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import {
-  Animated,
-  Dimensions,
-  PanResponder,
-  Pressable,
-  StyleSheet,
-  View,
-} from "react-native";
+import { Animated, Dimensions, PanResponder, Pressable, StyleSheet, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { ios } from "@routeflow/ui/tokens";
 import { BarcodeScanner } from "./BarcodeScanner";
@@ -102,10 +95,7 @@ export function BarcodeFab({ onScanned, hidden = false }: Props) {
         if (Math.abs(g.dx) > DRAG_THRESHOLD || Math.abs(g.dy) > DRAG_THRESHOLD) {
           wasDragged.current = true;
         }
-        Animated.event([null, { dx: pan.x, dy: pan.y }], { useNativeDriver: false })(
-          _,
-          g,
-        );
+        Animated.event([null, { dx: pan.x, dy: pan.y }], { useNativeDriver: false })(_, g);
       },
       onPanResponderRelease: () => {
         pan.flattenOffset();
@@ -115,10 +105,7 @@ export function BarcodeFab({ onScanned, hidden = false }: Props) {
         // Snap to the nearer vertical edge so the FAB always rests on a side.
         const snapToLeft = currentX + FAB_SIZE / 2 < w / 2;
         const targetX = snapToLeft ? EDGE_MARGIN : w - FAB_SIZE - EDGE_MARGIN;
-        const targetY = Math.min(
-          Math.max(TOP_RESERVED, currentY),
-          h - FAB_SIZE - BOTTOM_RESERVED,
-        );
+        const targetY = Math.min(Math.max(TOP_RESERVED, currentY), h - FAB_SIZE - BOTTOM_RESERVED);
         Animated.spring(pan, {
           toValue: { x: targetX, y: targetY },
           useNativeDriver: false,

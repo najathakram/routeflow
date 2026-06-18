@@ -14,7 +14,8 @@ test.describe("Operator — Tenant Dashboard", () => {
   // so each test context starts already authenticated. We set the tenant header for
   // correct middleware routing, then navigate to the dashboard.
   test.beforeEach(async ({ page, context }) => {
-    const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "https://routeflowweb-production.up.railway.app";
+    const baseURL =
+      process.env.PLAYWRIGHT_BASE_URL ?? "https://routeflowweb-production.up.railway.app";
     await setTenantCookie(context, baseURL);
     await page.goto("/dashboard");
   });
@@ -30,7 +31,8 @@ test.describe("Operator — Tenant Dashboard", () => {
     context,
   }) => {
     await logout(page);
-    const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "https://routeflowweb-production.up.railway.app";
+    const baseURL =
+      process.env.PLAYWRIGHT_BASE_URL ?? "https://routeflowweb-production.up.railway.app";
     await setTenantCookie(context, baseURL, TENANT_SLUG);
     await page.goto("/login");
     // Page should show branded name or RouteFlow (not an error)
@@ -39,7 +41,8 @@ test.describe("Operator — Tenant Dashboard", () => {
 
   test("OP-02 wrong password → inline error shown", async ({ page, context }) => {
     await logout(page);
-    const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "https://routeflowweb-production.up.railway.app";
+    const baseURL =
+      process.env.PLAYWRIGHT_BASE_URL ?? "https://routeflowweb-production.up.railway.app";
     await setTenantCookie(context, baseURL, TENANT_SLUG);
     await page.goto("/login");
     await page.getByPlaceholder("Enter your username").fill("admin");
@@ -68,7 +71,10 @@ test.describe("Operator — Tenant Dashboard", () => {
     const content = page.locator("table, [class*='empty']").first();
     await expect(content).toBeVisible({ timeout: 15_000 });
     // Search input
-    const search = page.getByPlaceholder(/search/i).or(page.getByRole("searchbox")).first();
+    const search = page
+      .getByPlaceholder(/search/i)
+      .or(page.getByRole("searchbox"))
+      .first();
     await expect(search).toBeVisible();
     await search.fill("test");
     await page.waitForTimeout(600);
@@ -102,7 +108,10 @@ test.describe("Operator — Tenant Dashboard", () => {
 
   test("OP-07 customers search filters list", async ({ page }) => {
     await page.goto("/customers");
-    const search = page.getByPlaceholder(/search/i).or(page.getByRole("searchbox")).first();
+    const search = page
+      .getByPlaceholder(/search/i)
+      .or(page.getByRole("searchbox"))
+      .first();
     await expect(search).toBeVisible({ timeout: 10_000 });
     await search.fill("harbor");
     await page.waitForTimeout(600);
@@ -144,7 +153,9 @@ test.describe("Operator — Tenant Dashboard", () => {
     await expect(content).toBeVisible({ timeout: 15_000 });
     // Try clicking the first status tab/chip (OVERDUE, SENT, PAID, etc.)
     // Use first() to avoid strict-mode violations when multiple elements match
-    const filterBtn = page.locator("button[class*='tab'], button[class*='filter'], button[class*='chip']").first();
+    const filterBtn = page
+      .locator("button[class*='tab'], button[class*='filter'], button[class*='chip']")
+      .first();
     const isFilterVisible = await filterBtn.isVisible().catch(() => false);
     if (isFilterVisible) {
       await filterBtn.click();
@@ -165,9 +176,7 @@ test.describe("Operator — Tenant Dashboard", () => {
   test("OP-13 analytics page renders — chart container visible", async ({ page }) => {
     await page.goto("/analytics");
     await expect(page).not.toHaveURL(/error/);
-    const content = page
-      .locator("canvas, [class*='chart'], [class*='analytics'], h1, h2")
-      .first();
+    const content = page.locator("canvas, [class*='chart'], [class*='analytics'], h1, h2").first();
     await expect(content).toBeVisible({ timeout: 15_000 });
   });
 
@@ -209,7 +218,9 @@ test.describe("Operator — Tenant Dashboard", () => {
 
   test("OP-18 suppliers list loads", async ({ page }) => {
     await page.goto("/suppliers");
-    const content = page.locator("[class*='card'], [class*='grid'], table, [class*='empty']").first();
+    const content = page
+      .locator("[class*='card'], [class*='grid'], table, [class*='empty']")
+      .first();
     await expect(content).toBeVisible({ timeout: 15_000 });
   });
 
@@ -246,7 +257,8 @@ test.describe("Operator — Tenant Dashboard", () => {
     context,
   }) => {
     await logout(page);
-    const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "https://routeflowweb-production.up.railway.app";
+    const baseURL =
+      process.env.PLAYWRIGHT_BASE_URL ?? "https://routeflowweb-production.up.railway.app";
     await setTenantCookie(context, baseURL, TENANT_SLUG);
     await page.goto("/login");
     const googleBtn = page

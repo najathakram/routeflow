@@ -1,12 +1,5 @@
 import { useState } from "react";
-import {
-  Platform,
-  Pressable,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
@@ -78,8 +71,7 @@ export default function NewVendorBillScreen() {
 
     createMut.mutate(dto, {
       onSuccess: (bill) => router.replace(`/(operator)/vendor-bills/${bill.id}`),
-      onError: (e: any) =>
-        showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+      onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
     });
   };
 
@@ -115,13 +107,30 @@ export default function NewVendorBillScreen() {
 
       <FormSection title="Details">
         <FormField label="Bill date" hint="YYYY-MM-DD">
-          <FormTextInput value={billDate} onChangeText={setBillDate} placeholder="2025-06-01" keyboardType="numbers-and-punctuation" />
+          <FormTextInput
+            value={billDate}
+            onChangeText={setBillDate}
+            placeholder="2025-06-01"
+            keyboardType="numbers-and-punctuation"
+          />
         </FormField>
         <FormField label="Due date" hint="YYYY-MM-DD">
-          <FormTextInput value={dueDate} onChangeText={setDueDate} placeholder="2025-06-30" keyboardType="numbers-and-punctuation" />
+          <FormTextInput
+            value={dueDate}
+            onChangeText={setDueDate}
+            placeholder="2025-06-30"
+            keyboardType="numbers-and-punctuation"
+          />
         </FormField>
         <FormField label="Notes (optional)">
-          <FormTextInput value={notes} onChangeText={setNotes} placeholder="Invoice reference…" multiline numberOfLines={2} style={{ minHeight: 56, textAlignVertical: "top" }} />
+          <FormTextInput
+            value={notes}
+            onChangeText={setNotes}
+            placeholder="Invoice reference…"
+            multiline
+            numberOfLines={2}
+            style={{ minHeight: 56, textAlignVertical: "top" }}
+          />
         </FormField>
       </FormSection>
 
@@ -149,7 +158,11 @@ export default function NewVendorBillScreen() {
         nullable
         nullLabel="None"
         onClose={() => setSupplierPickerOpen(false)}
-        onSelect={(opt) => { setSupplierId(opt.id); setSupplierName(opt.id ? opt.label : ""); setSupplierPickerOpen(false); }}
+        onSelect={(opt) => {
+          setSupplierId(opt.id);
+          setSupplierName(opt.id ? opt.label : "");
+          setSupplierPickerOpen(false);
+        }}
       />
     </FormSheet>
   );
@@ -188,7 +201,7 @@ function LineItemRow({
     setShowSugs(v.trim().length >= 2);
   };
 
-  const pickSuggestion = (p: typeof suggestions[number]) => {
+  const pickSuggestion = (p: (typeof suggestions)[number]) => {
     setSearch(p.name);
     onUpdate(index, "description", p.name);
     if (p.pricePerUnit) {
@@ -247,7 +260,14 @@ function LineItemRow({
 
       {/* Description with autocomplete + scan icon */}
       <View style={{ marginBottom: 8 }}>
-        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+        <View
+          style={{
+            flexDirection: "row",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginBottom: 4,
+          }}
+        >
           <Text style={styles.fieldLabel}>Description</Text>
           <Pressable onPress={handleScanProduct} hitSlop={8} style={styles.scanIcon}>
             <Ionicons name="barcode-outline" size={16} color={ios.brand} />
@@ -266,7 +286,9 @@ function LineItemRow({
           <View style={styles.sugBox}>
             {suggestions.map((p) => (
               <Pressable key={p.id} style={styles.sugRow} onPress={() => pickSuggestion(p)}>
-                <Text style={styles.sugName} numberOfLines={1}>{p.name}</Text>
+                <Text style={styles.sugName} numberOfLines={1}>
+                  {p.name}
+                </Text>
                 {p.sku ? <Text style={styles.sugSub}>SKU {p.sku}</Text> : null}
               </Pressable>
             ))}
@@ -316,14 +338,44 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   scanTitle: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: ios.brand },
-  scanSub: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.brand, opacity: 0.8, marginTop: 1 },
-  picker: { backgroundColor: ios.fill3, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 11, minHeight: 44, justifyContent: "center" },
+  scanSub: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    color: ios.brand,
+    opacity: 0.8,
+    marginTop: 1,
+  },
+  picker: {
+    backgroundColor: ios.fill3,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    minHeight: 44,
+    justifyContent: "center",
+  },
   pickerText: { fontSize: 15, fontFamily: "Inter_400Regular", color: ios.label },
   placeholder: { color: ios.label3 },
-  itemBlock: { gap: 10, paddingBottom: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: ios.separator },
+  itemBlock: {
+    gap: 10,
+    paddingBottom: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: ios.separator,
+  },
   itemHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  itemLabel: { fontSize: 12, fontFamily: "Inter_600SemiBold", color: ios.label2, letterSpacing: 0.3, textTransform: "uppercase" },
-  fieldLabel: { fontSize: 12, fontFamily: "Inter_600SemiBold", color: ios.label2, marginBottom: 5, letterSpacing: 0.2 },
+  itemLabel: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label2,
+    letterSpacing: 0.3,
+    textTransform: "uppercase",
+  },
+  fieldLabel: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label2,
+    marginBottom: 5,
+    letterSpacing: 0.2,
+  },
   textInput: {
     backgroundColor: ios.fill3,
     borderRadius: 10,
@@ -359,6 +411,15 @@ const styles = StyleSheet.create({
   scanIconText: { fontSize: 12, fontFamily: "Inter_600SemiBold", color: ios.brand },
   removeText: { fontSize: 13, fontFamily: "Inter_500Medium", color: ios.system.redInk },
   row2: { flexDirection: "row", gap: 10 },
-  addItemBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingVertical: 12, borderRadius: 10, backgroundColor: ios.fill3, marginTop: 4 },
+  addItemBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 12,
+    borderRadius: 10,
+    backgroundColor: ios.fill3,
+    marginTop: 4,
+  },
   addItemText: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: ios.brand },
 });

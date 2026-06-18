@@ -49,8 +49,7 @@ export function IndustriesMarquee() {
               whiteSpace: "nowrap",
             }}
           >
-            {n}{" "}
-            <span style={{ color: "var(--rf-teal)", margin: "0 16px" }}>✦</span>
+            {n} <span style={{ color: "var(--rf-teal)", margin: "0 16px" }}>✦</span>
           </div>
         ))}
       </div>

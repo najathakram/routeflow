@@ -1,5 +1,5 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiClient } from '../api-client';
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { apiClient } from "../api-client";
 
 export interface PaginationMeta {
   total: number;
@@ -56,26 +56,28 @@ async function fetchDashboardStats(): Promise<AdminDashboardStats> {
     routesResp,
     bookkeeping,
   ] = await Promise.all([
-    safeTotal('/orders', { status: 'PENDING' }),
-    safeTotal('/drivers', { status: 'ACTIVE' }),
-    safeTotal('/customers'),
+    safeTotal("/orders", { status: "PENDING" }),
+    safeTotal("/drivers", { status: "ACTIVE" }),
+    safeTotal("/customers"),
     // Use bookkeeping summary's overdueCount: SENT/VIEWED/PARTIAL with dueDate < now
-    safeGet<{ overdueCount?: number }>('/bookkeeping/summary').then((r) => Number(r?.overdueCount ?? 0)),
+    safeGet<{ overdueCount?: number }>("/bookkeeping/summary").then((r) =>
+      Number(r?.overdueCount ?? 0),
+    ),
     // Server's LOW filter matches `currentStock <= 5` which includes zeros /
     // negatives (out-of-stock). Subtract OUT_OF_STOCK to get items that are
     // actually low but still available to sell (1–5 units).
-    safeTotal('/products', { stockStatus: 'LOW' }),
-    safeTotal('/products', { stockStatus: 'OUT_OF_STOCK' }),
-    safeTotal('/returns', { status: 'PENDING' }),
+    safeTotal("/products", { stockStatus: "LOW" }),
+    safeTotal("/products", { stockStatus: "OUT_OF_STOCK" }),
+    safeTotal("/returns", { status: "PENDING" }),
     apiClient
-      .get('/routes', { params: { limit: 100 } })
+      .get("/routes", { params: { limit: 100 } })
       .then((r) => r.data as { data: Array<{ runs?: Array<{ status?: string }> }> })
       .catch(() => ({ data: [] as Array<{ runs?: Array<{ status?: string }> }> })),
-    safeGet<{ revenue?: number }>('/bookkeeping/summary'),
+    safeGet<{ revenue?: number }>("/bookkeeping/summary"),
   ]);
 
   const activeRoutes = (routesResp.data ?? []).filter(
-    (r) => r.runs?.[0]?.status === 'IN_PROGRESS' || r.runs?.[0]?.status === 'COMPLETED',
+    (r) => r.runs?.[0]?.status === "IN_PROGRESS" || r.runs?.[0]?.status === "COMPLETED",
   ).length;
 
   return {
@@ -92,7 +94,7 @@ async function fetchDashboardStats(): Promise<AdminDashboardStats> {
 
 export function useAdminDashboard() {
   return useQuery<AdminDashboardStats>({
-    queryKey: ['admin', 'dashboard'],
+    queryKey: ["admin", "dashboard"],
     queryFn: fetchDashboardStats,
     staleTime: 60_000,
     refetchInterval: 120_000,
@@ -160,8 +162,8 @@ export function useAdminOrders(params?: {
   customerId?: string;
 }) {
   return useQuery<{ data: AdminOrder[]; meta: PaginationMeta }>({
-    queryKey: ['admin', 'orders', params],
-    queryFn: () => apiClient.get('/orders', { params }).then((r) => r.data),
+    queryKey: ["admin", "orders", params],
+    queryFn: () => apiClient.get("/orders", { params }).then((r) => r.data),
     staleTime: 30_000,
     refetchOnWindowFocus: true,
   });
@@ -169,7 +171,7 @@ export function useAdminOrders(params?: {
 
 export function useAdminOrder(id: string) {
   return useQuery<AdminOrder>({
-    queryKey: ['admin', 'orders', id],
+    queryKey: ["admin", "orders", id],
     queryFn: () => apiClient.get(`/orders/${id}`).then((r) => r.data),
     enabled: !!id,
   });
@@ -179,12 +181,10 @@ export function useConfirmAdminOrder() {
   const qc = useQueryClient();
   return useMutation<AdminOrder, Error, string>({
     mutationFn: (id) =>
-      apiClient
-        .patch(`/orders/${id}/status`, { status: 'CONFIRMED' })
-        .then((r) => r.data),
+      apiClient.patch(`/orders/${id}/status`, { status: "CONFIRMED" }).then((r) => r.data),
     onSuccess: (_, id) => {
-      qc.invalidateQueries({ queryKey: ['admin', 'orders'] });
-      qc.invalidateQueries({ queryKey: ['admin', 'orders', id] });
+      qc.invalidateQueries({ queryKey: ["admin", "orders"] });
+      qc.invalidateQueries({ queryKey: ["admin", "orders", id] });
     },
   });
 }
@@ -193,12 +193,10 @@ export function useCancelAdminOrder() {
   const qc = useQueryClient();
   return useMutation<AdminOrder, Error, string>({
     mutationFn: (id) =>
-      apiClient
-        .patch(`/orders/${id}/status`, { status: 'CANCELLED' })
-        .then((r) => r.data),
+      apiClient.patch(`/orders/${id}/status`, { status: "CANCELLED" }).then((r) => r.data),
     onSuccess: (_, id) => {
-      qc.invalidateQueries({ queryKey: ['admin', 'orders'] });
-      qc.invalidateQueries({ queryKey: ['admin', 'orders', id] });
+      qc.invalidateQueries({ queryKey: ["admin", "orders"] });
+      qc.invalidateQueries({ queryKey: ["admin", "orders", id] });
     },
   });
 }
@@ -224,8 +222,8 @@ export function useAdminCustomers(params?: {
   limit?: number;
 }) {
   return useQuery<{ data: AdminCustomer[]; meta: PaginationMeta }>({
-    queryKey: ['admin', 'customers', params],
-    queryFn: () => apiClient.get('/customers', { params }).then((r) => r.data),
+    queryKey: ["admin", "customers", params],
+    queryFn: () => apiClient.get("/customers", { params }).then((r) => r.data),
     staleTime: 60_000,
     refetchOnWindowFocus: true,
   });
@@ -233,7 +231,7 @@ export function useAdminCustomers(params?: {
 
 export function useAdminCustomer(id: string) {
   return useQuery<AdminCustomer>({
-    queryKey: ['admin', 'customers', id],
+    queryKey: ["admin", "customers", id],
     queryFn: () => apiClient.get(`/customers/${id}`).then((r) => r.data),
     enabled: !!id,
   });
@@ -286,8 +284,8 @@ export function useAdminInvoices(params?: {
   isOverdue?: boolean;
 }) {
   return useQuery<{ data: AdminInvoice[]; meta: PaginationMeta }>({
-    queryKey: ['admin', 'invoices', params],
-    queryFn: () => apiClient.get('/invoices', { params }).then((r) => r.data),
+    queryKey: ["admin", "invoices", params],
+    queryFn: () => apiClient.get("/invoices", { params }).then((r) => r.data),
     staleTime: 30_000,
     refetchOnWindowFocus: true,
   });
@@ -295,7 +293,7 @@ export function useAdminInvoices(params?: {
 
 export function useAdminInvoice(id: string) {
   return useQuery<AdminInvoice>({
-    queryKey: ['admin', 'invoices', id],
+    queryKey: ["admin", "invoices", id],
     queryFn: () => apiClient.get(`/invoices/${id}`).then((r) => r.data),
     enabled: !!id,
   });
@@ -304,11 +302,10 @@ export function useAdminInvoice(id: string) {
 export function useVoidAdminInvoice() {
   const qc = useQueryClient();
   return useMutation<AdminInvoice, Error, string>({
-    mutationFn: (id) =>
-      apiClient.post(`/invoices/${id}/void`).then((r) => r.data),
+    mutationFn: (id) => apiClient.post(`/invoices/${id}/void`).then((r) => r.data),
     onSuccess: (_, id) => {
-      qc.invalidateQueries({ queryKey: ['admin', 'invoices'] });
-      qc.invalidateQueries({ queryKey: ['admin', 'invoices', id] });
+      qc.invalidateQueries({ queryKey: ["admin", "invoices"] });
+      qc.invalidateQueries({ queryKey: ["admin", "invoices", id] });
     },
   });
 }
@@ -323,8 +320,8 @@ export function useRecordAdminPayment() {
     mutationFn: ({ id, ...dto }) =>
       apiClient.post(`/invoices/${id}/payments`, dto).then((r) => r.data),
     onSuccess: (_, { id }) => {
-      qc.invalidateQueries({ queryKey: ['admin', 'invoices'] });
-      qc.invalidateQueries({ queryKey: ['admin', 'invoices', id] });
+      qc.invalidateQueries({ queryKey: ["admin", "invoices"] });
+      qc.invalidateQueries({ queryKey: ["admin", "invoices", id] });
     },
   });
 }
@@ -366,8 +363,8 @@ export function useAdminProducts(params?: {
   isActive?: boolean;
 }) {
   return useQuery<{ data: AdminProduct[]; meta: PaginationMeta }>({
-    queryKey: ['admin', 'products', params],
-    queryFn: () => apiClient.get('/products', { params }).then((r) => r.data),
+    queryKey: ["admin", "products", params],
+    queryFn: () => apiClient.get("/products", { params }).then((r) => r.data),
     staleTime: 60_000,
   });
 }
@@ -423,15 +420,15 @@ export function useAdminRoutes(params?: {
   limit?: number;
 }) {
   return useQuery<{ data: AdminRoute[]; meta: PaginationMeta }>({
-    queryKey: ['admin', 'routes', params],
-    queryFn: () => apiClient.get('/routes', { params }).then((r) => r.data),
+    queryKey: ["admin", "routes", params],
+    queryFn: () => apiClient.get("/routes", { params }).then((r) => r.data),
     staleTime: 30_000,
   });
 }
 
 export function useAdminRoute(id: string | null | undefined) {
   return useQuery<AdminRouteDetail>({
-    queryKey: ['admin', 'routes', id],
+    queryKey: ["admin", "routes", id],
     queryFn: () => apiClient.get(`/routes/${id}`).then((r) => r.data),
     enabled: !!id,
     staleTime: 30_000,
@@ -452,14 +449,10 @@ export interface AdminDriver {
   };
 }
 
-export function useAdminDrivers(params?: {
-  status?: string;
-  page?: number;
-  limit?: number;
-}) {
+export function useAdminDrivers(params?: { status?: string; page?: number; limit?: number }) {
   return useQuery<{ data: AdminDriver[]; meta: PaginationMeta }>({
-    queryKey: ['admin', 'drivers', params],
-    queryFn: () => apiClient.get('/drivers', { params }).then((r) => r.data),
+    queryKey: ["admin", "drivers", params],
+    queryFn: () => apiClient.get("/drivers", { params }).then((r) => r.data),
     staleTime: 60_000,
   });
 }
@@ -483,14 +476,10 @@ export interface AdminReturn {
   }>;
 }
 
-export function useAdminReturns(params?: {
-  status?: string;
-  page?: number;
-  limit?: number;
-}) {
+export function useAdminReturns(params?: { status?: string; page?: number; limit?: number }) {
   return useQuery<{ data: AdminReturn[]; meta: PaginationMeta }>({
-    queryKey: ['admin', 'returns', params],
-    queryFn: () => apiClient.get('/returns', { params }).then((r) => r.data),
+    queryKey: ["admin", "returns", params],
+    queryFn: () => apiClient.get("/returns", { params }).then((r) => r.data),
     staleTime: 30_000,
   });
 }
@@ -508,10 +497,10 @@ export interface FinanceDashboard {
 
 export function useAdminFinanceDashboard() {
   return useQuery<FinanceDashboard>({
-    queryKey: ['admin', 'finance', 'dashboard'],
+    queryKey: ["admin", "finance", "dashboard"],
     queryFn: () =>
       apiClient
-        .get('/bookkeeping/dashboard')
+        .get("/bookkeeping/dashboard")
         .then((r) => r.data)
         .catch(() => ({
           revenue: 0,
@@ -527,142 +516,295 @@ export function useAdminFinanceDashboard() {
 
 // ─── Analytics ────────────────────────────────────────────────────────────────
 
-export interface RevenuePeriod { period: string; revenue: number; }
-export interface TopProduct { id: string; name: string; totalRevenue: number; unitsSold: number; }
-export interface TopCustomer { id: string; name: string; totalRevenue: number; orderCount: number; }
-export interface RoutePerformance { id: string; name: string; totalRuns: number; completedRuns: number; completionRate: number; }
-export interface DriverPerformance { id: string; name: string; totalDeliveries: number; completedDeliveries: number; completionRate: number; }
-export interface InventoryTurnover { id: string; name: string; unitsSold: number; currentStock: number; turnoverRate: number; }
-export interface DeadStock { id: string; name: string; currentStock: number; daysInactive: number; }
-export interface GrossMargin { revenue: number; cogs: number; grossProfit: number; grossMarginPct: number; }
-export interface SalesByCategory { category: string; revenue: number; }
+export interface RevenuePeriod {
+  period: string;
+  revenue: number;
+}
+export interface TopProduct {
+  id: string;
+  name: string;
+  totalRevenue: number;
+  unitsSold: number;
+}
+export interface TopCustomer {
+  id: string;
+  name: string;
+  totalRevenue: number;
+  orderCount: number;
+}
+export interface RoutePerformance {
+  id: string;
+  name: string;
+  totalRuns: number;
+  completedRuns: number;
+  completionRate: number;
+}
+export interface DriverPerformance {
+  id: string;
+  name: string;
+  totalDeliveries: number;
+  completedDeliveries: number;
+  completionRate: number;
+}
+export interface InventoryTurnover {
+  id: string;
+  name: string;
+  unitsSold: number;
+  currentStock: number;
+  turnoverRate: number;
+}
+export interface DeadStock {
+  id: string;
+  name: string;
+  currentStock: number;
+  daysInactive: number;
+}
+export interface GrossMargin {
+  revenue: number;
+  cogs: number;
+  grossProfit: number;
+  grossMarginPct: number;
+}
+export interface SalesByCategory {
+  category: string;
+  revenue: number;
+}
 
 export function useAnalyticsRevenue(from?: string, to?: string) {
   return useQuery<RevenuePeriod[]>({
-    queryKey: ['analytics', 'revenue', from, to],
-    queryFn: () => apiClient.get('/analytics/revenue', { params: { from, to } }).then(r => r.data).catch(() => []),
+    queryKey: ["analytics", "revenue", from, to],
+    queryFn: () =>
+      apiClient
+        .get("/analytics/revenue", { params: { from, to } })
+        .then((r) => r.data)
+        .catch(() => []),
     staleTime: 120_000,
   });
 }
-export function useAnalyticsTopProducts(metric = 'revenue') {
+export function useAnalyticsTopProducts(metric = "revenue") {
   return useQuery<TopProduct[]>({
-    queryKey: ['analytics', 'products', 'top', metric],
-    queryFn: () => apiClient.get('/analytics/products/top', { params: { metric } }).then(r => r.data).catch(() => []),
+    queryKey: ["analytics", "products", "top", metric],
+    queryFn: () =>
+      apiClient
+        .get("/analytics/products/top", { params: { metric } })
+        .then((r) => r.data)
+        .catch(() => []),
     staleTime: 120_000,
   });
 }
 export function useAnalyticsTopCustomers() {
   return useQuery<TopCustomer[]>({
-    queryKey: ['analytics', 'customers', 'top'],
-    queryFn: () => apiClient.get('/analytics/customers/top').then(r => r.data).catch(() => []),
+    queryKey: ["analytics", "customers", "top"],
+    queryFn: () =>
+      apiClient
+        .get("/analytics/customers/top")
+        .then((r) => r.data)
+        .catch(() => []),
     staleTime: 120_000,
   });
 }
 export function useAnalyticsRoutePerformance() {
   return useQuery<RoutePerformance[]>({
-    queryKey: ['analytics', 'routes', 'performance'],
-    queryFn: () => apiClient.get('/analytics/routes/performance').then(r => r.data).catch(() => []),
+    queryKey: ["analytics", "routes", "performance"],
+    queryFn: () =>
+      apiClient
+        .get("/analytics/routes/performance")
+        .then((r) => r.data)
+        .catch(() => []),
     staleTime: 120_000,
   });
 }
 export function useAnalyticsDriverPerformance() {
   return useQuery<DriverPerformance[]>({
-    queryKey: ['analytics', 'drivers', 'performance'],
-    queryFn: () => apiClient.get('/analytics/drivers/performance').then(r => r.data).catch(() => []),
+    queryKey: ["analytics", "drivers", "performance"],
+    queryFn: () =>
+      apiClient
+        .get("/analytics/drivers/performance")
+        .then((r) => r.data)
+        .catch(() => []),
     staleTime: 120_000,
   });
 }
 export function useAnalyticsGrossMargin(from?: string, to?: string) {
   return useQuery<GrossMargin>({
-    queryKey: ['analytics', 'gross-margin', from, to],
-    queryFn: () => apiClient.get('/analytics/gross-margin', { params: { from, to } }).then(r => r.data).catch(() => ({ revenue: 0, cogs: 0, grossProfit: 0, grossMarginPct: 0 })),
+    queryKey: ["analytics", "gross-margin", from, to],
+    queryFn: () =>
+      apiClient
+        .get("/analytics/gross-margin", { params: { from, to } })
+        .then((r) => r.data)
+        .catch(() => ({ revenue: 0, cogs: 0, grossProfit: 0, grossMarginPct: 0 })),
     staleTime: 120_000,
   });
 }
 export function useAnalyticsSalesByCategory(from?: string, to?: string) {
   return useQuery<SalesByCategory[]>({
-    queryKey: ['analytics', 'sales-by-category', from, to],
-    queryFn: () => apiClient.get('/analytics/sales-by-category', { params: { from, to } }).then(r => r.data).catch(() => []),
+    queryKey: ["analytics", "sales-by-category", from, to],
+    queryFn: () =>
+      apiClient
+        .get("/analytics/sales-by-category", { params: { from, to } })
+        .then((r) => r.data)
+        .catch(() => []),
     staleTime: 120_000,
   });
 }
 export function useAnalyticsInventoryTurnover() {
   return useQuery<InventoryTurnover[]>({
-    queryKey: ['analytics', 'inventory', 'turnover'],
-    queryFn: () => apiClient.get('/analytics/inventory/turnover').then(r => r.data).catch(() => []),
+    queryKey: ["analytics", "inventory", "turnover"],
+    queryFn: () =>
+      apiClient
+        .get("/analytics/inventory/turnover")
+        .then((r) => r.data)
+        .catch(() => []),
     staleTime: 120_000,
   });
 }
 export function useAnalyticsDeadStock() {
   return useQuery<DeadStock[]>({
-    queryKey: ['analytics', 'inventory', 'dead-stock'],
-    queryFn: () => apiClient.get('/analytics/inventory/dead-stock').then(r => r.data).catch(() => []),
+    queryKey: ["analytics", "inventory", "dead-stock"],
+    queryFn: () =>
+      apiClient
+        .get("/analytics/inventory/dead-stock")
+        .then((r) => r.data)
+        .catch(() => []),
     staleTime: 120_000,
   });
 }
 export function useAnalyticsDso() {
   return useQuery<{ dso: number; count: number }>({
-    queryKey: ['analytics', 'dso'],
-    queryFn: () => apiClient.get('/analytics/dso').then(r => r.data).catch(() => ({ dso: 0, count: 0 })),
+    queryKey: ["analytics", "dso"],
+    queryFn: () =>
+      apiClient
+        .get("/analytics/dso")
+        .then((r) => r.data)
+        .catch(() => ({ dso: 0, count: 0 })),
     staleTime: 120_000,
   });
 }
 export function useAnalyticsAov(from?: string, to?: string) {
   return useQuery<{ aov: number }>({
-    queryKey: ['analytics', 'aov', from, to],
-    queryFn: () => apiClient.get('/analytics/aov', { params: { from, to } }).then(r => r.data).catch(() => ({ aov: 0 })),
+    queryKey: ["analytics", "aov", from, to],
+    queryFn: () =>
+      apiClient
+        .get("/analytics/aov", { params: { from, to } })
+        .then((r) => r.data)
+        .catch(() => ({ aov: 0 })),
     staleTime: 120_000,
   });
 }
 
 // ─── Reports ─────────────────────────────────────────────────────────────────
 
-export interface ArAgingRow { bucket: string; count: number; total: number; }
-export interface SalesByCustomerRow { customerId: string; customerName: string; totalRevenue: number; orderCount: number; }
-export interface SalesByItemRow { productId: string; productName: string; totalRevenue: number; unitsSold: number; }
-export interface PaymentReceivedRow { id: string; invoiceNumber: string; customerName: string; amount: number; method: string; paidAt: string; }
-export interface ProfitLoss { revenue: number; cogs: number; grossProfit: number; expenses: number; netIncome: number; grossMarginPct: number; }
-export interface CustomerBalanceRow { customerId: string; customerName: string; totalInvoiced: number; totalPaid: number; balance: number; }
+export interface ArAgingRow {
+  bucket: string;
+  count: number;
+  total: number;
+}
+export interface SalesByCustomerRow {
+  customerId: string;
+  customerName: string;
+  totalRevenue: number;
+  orderCount: number;
+}
+export interface SalesByItemRow {
+  productId: string;
+  productName: string;
+  totalRevenue: number;
+  unitsSold: number;
+}
+export interface PaymentReceivedRow {
+  id: string;
+  invoiceNumber: string;
+  customerName: string;
+  amount: number;
+  method: string;
+  paidAt: string;
+}
+export interface ProfitLoss {
+  revenue: number;
+  cogs: number;
+  grossProfit: number;
+  expenses: number;
+  netIncome: number;
+  grossMarginPct: number;
+}
+export interface CustomerBalanceRow {
+  customerId: string;
+  customerName: string;
+  totalInvoiced: number;
+  totalPaid: number;
+  balance: number;
+}
 
 export function useReportArAging() {
   return useQuery<ArAgingRow[]>({
-    queryKey: ['reports', 'ar-aging'],
-    queryFn: () => apiClient.get('/bookkeeping/reports/aging').then(r => r.data).catch(() => []),
+    queryKey: ["reports", "ar-aging"],
+    queryFn: () =>
+      apiClient
+        .get("/bookkeeping/reports/aging")
+        .then((r) => r.data)
+        .catch(() => []),
     staleTime: 120_000,
   });
 }
 export function useReportSalesByCustomer(from?: string, to?: string) {
   return useQuery<SalesByCustomerRow[]>({
-    queryKey: ['reports', 'sales-by-customer', from, to],
-    queryFn: () => apiClient.get('/bookkeeping/reports/sales-by-customer', { params: { from, to } }).then(r => r.data).catch(() => []),
+    queryKey: ["reports", "sales-by-customer", from, to],
+    queryFn: () =>
+      apiClient
+        .get("/bookkeeping/reports/sales-by-customer", { params: { from, to } })
+        .then((r) => r.data)
+        .catch(() => []),
     staleTime: 120_000,
   });
 }
 export function useReportSalesByItem(from?: string, to?: string) {
   return useQuery<SalesByItemRow[]>({
-    queryKey: ['reports', 'sales-by-item', from, to],
-    queryFn: () => apiClient.get('/bookkeeping/reports/sales-by-item', { params: { from, to } }).then(r => r.data).catch(() => []),
+    queryKey: ["reports", "sales-by-item", from, to],
+    queryFn: () =>
+      apiClient
+        .get("/bookkeeping/reports/sales-by-item", { params: { from, to } })
+        .then((r) => r.data)
+        .catch(() => []),
     staleTime: 120_000,
   });
 }
 export function useReportPaymentsReceived(from?: string, to?: string) {
   return useQuery<PaymentReceivedRow[]>({
-    queryKey: ['reports', 'payments-received', from, to],
-    queryFn: () => apiClient.get('/bookkeeping/reports/payments-received', { params: { from, to } }).then(r => r.data).catch(() => []),
+    queryKey: ["reports", "payments-received", from, to],
+    queryFn: () =>
+      apiClient
+        .get("/bookkeeping/reports/payments-received", { params: { from, to } })
+        .then((r) => r.data)
+        .catch(() => []),
     staleTime: 120_000,
   });
 }
 export function useReportProfitLoss(from?: string, to?: string) {
   return useQuery<ProfitLoss>({
-    queryKey: ['reports', 'pl', from, to],
-    queryFn: () => apiClient.get('/bookkeeping/reports/pl', { params: { from, to } }).then(r => r.data).catch(() => ({ revenue: 0, cogs: 0, grossProfit: 0, expenses: 0, netIncome: 0, grossMarginPct: 0 })),
+    queryKey: ["reports", "pl", from, to],
+    queryFn: () =>
+      apiClient
+        .get("/bookkeeping/reports/pl", { params: { from, to } })
+        .then((r) => r.data)
+        .catch(() => ({
+          revenue: 0,
+          cogs: 0,
+          grossProfit: 0,
+          expenses: 0,
+          netIncome: 0,
+          grossMarginPct: 0,
+        })),
     staleTime: 120_000,
   });
 }
 export function useReportCustomerBalance() {
   return useQuery<CustomerBalanceRow[]>({
-    queryKey: ['reports', 'customer-balance'],
-    queryFn: () => apiClient.get('/bookkeeping/reports/customer-balance').then(r => r.data).catch(() => []),
+    queryKey: ["reports", "customer-balance"],
+    queryFn: () =>
+      apiClient
+        .get("/bookkeeping/reports/customer-balance")
+        .then((r) => r.data)
+        .catch(() => []),
     staleTime: 120_000,
   });
 }
@@ -693,8 +835,12 @@ export interface AppUser {
 
 export function useBusinessSettings() {
   return useQuery<BusinessSettings>({
-    queryKey: ['settings'],
-    queryFn: () => apiClient.get('/settings').then(r => r.data).catch(() => ({})),
+    queryKey: ["settings"],
+    queryFn: () =>
+      apiClient
+        .get("/settings")
+        .then((r) => r.data)
+        .catch(() => ({})),
     staleTime: 300_000,
   });
 }
@@ -702,45 +848,71 @@ export function useBusinessSettings() {
 export function useUpdateBusinessSettings() {
   const qc = useQueryClient();
   return useMutation<BusinessSettings, Error, BusinessSettings>({
-    mutationFn: (data) => apiClient.patch('/settings', data).then(r => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
+    mutationFn: (data) => apiClient.patch("/settings", data).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["settings"] }),
   });
 }
 
-export function useAdminUsers(params?: { search?: string; status?: string; page?: number; limit?: number }) {
+export function useAdminUsers(params?: {
+  search?: string;
+  status?: string;
+  page?: number;
+  limit?: number;
+}) {
   return useQuery<{ data: AppUser[]; meta: PaginationMeta }>({
-    queryKey: ['admin', 'users', params],
+    queryKey: ["admin", "users", params],
     queryFn: () =>
       apiClient
-        .get('/users', { params: { limit: 100, ...params } })
-        .then(r => {
+        .get("/users", { params: { limit: 100, ...params } })
+        .then((r) => {
           // NEW-vop-5: API returns status: "ACTIVE" | "INACTIVE" | "SUSPENDED" but
           // the UI + toggle mutation expect a derived isActive boolean. Map here so
           // every consumer of useAdminUsers gets the boolean shape.
-          const raw = r.data as { data?: Array<AppUser & { status?: string }>; meta?: PaginationMeta };
+          const raw = r.data as {
+            data?: Array<AppUser & { status?: string }>;
+            meta?: PaginationMeta;
+          };
           const list = (raw.data ?? []).map((u) => ({
             ...u,
-            isActive: u.isActive ?? u.status === 'ACTIVE',
+            isActive: u.isActive ?? u.status === "ACTIVE",
           }));
-          return { data: list, meta: raw.meta ?? { total: list.length, page: 1, limit: 100, totalPages: 1 } };
+          return {
+            data: list,
+            meta: raw.meta ?? { total: list.length, page: 1, limit: 100, totalPages: 1 },
+          };
         })
-        .catch(() => ({ data: [] as AppUser[], meta: { total: 0, page: 1, limit: 100, totalPages: 0 } })),
+        .catch(() => ({
+          data: [] as AppUser[],
+          meta: { total: 0, page: 1, limit: 100, totalPages: 0 },
+        })),
     staleTime: 60_000,
   });
 }
 
 export function useCreateAdminUser() {
   const qc = useQueryClient();
-  return useMutation<AppUser, Error, { firstName: string; lastName: string; username: string; email?: string; role: string; password: string }>({
-    mutationFn: (data) => apiClient.post('/users/operator', data).then(r => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'users'] }),
+  return useMutation<
+    AppUser,
+    Error,
+    {
+      firstName: string;
+      lastName: string;
+      username: string;
+      email?: string;
+      role: string;
+      password: string;
+    }
+  >({
+    mutationFn: (data) => apiClient.post("/users/operator", data).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin", "users"] }),
   });
 }
 
 export function useToggleUserStatus() {
   const qc = useQueryClient();
   return useMutation<AppUser, Error, { id: string; isActive: boolean }>({
-    mutationFn: ({ id, isActive }) => apiClient.patch(`/users/${id}/status`, { isActive }).then(r => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'users'] }),
+    mutationFn: ({ id, isActive }) =>
+      apiClient.patch(`/users/${id}/status`, { isActive }).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin", "users"] }),
   });
 }

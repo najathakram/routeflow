@@ -31,35 +31,25 @@ export default function SignInScreen() {
 
         <View style={styles.cards}>
           {/* Staff / Driver */}
-          <Pressable
-            style={styles.card}
-            onPress={() => router.push("/(auth)/company-code")}
-          >
+          <Pressable style={styles.card} onPress={() => router.push("/(auth)/company-code")}>
             <View style={[styles.cardIcon, { backgroundColor: ios.brandWash }]}>
               <Ionicons name="business-outline" size={22} color={ios.brand} />
             </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.cardTitle}>Staff & Drivers</Text>
-              <Text style={styles.cardBody}>
-                Sign in with your company code and username.
-              </Text>
+              <Text style={styles.cardBody}>Sign in with your company code and username.</Text>
             </View>
             <Ionicons name="chevron-forward" size={18} color={ios.gray[3]} />
           </Pressable>
 
           {/* Customer Portal */}
-          <Pressable
-            style={styles.card}
-            onPress={() => router.push("/(auth)/customer-login")}
-          >
+          <Pressable style={styles.card} onPress={() => router.push("/(auth)/customer-login")}>
             <View style={[styles.cardIcon, { backgroundColor: ios.system.purpleWash }]}>
               <Ionicons name="storefront-outline" size={22} color={ios.system.purpleInk} />
             </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.cardTitle}>Customer Portal</Text>
-              <Text style={styles.cardBody}>
-                Sign in with your buyer account email.
-              </Text>
+              <Text style={styles.cardBody}>Sign in with your buyer account email.</Text>
             </View>
             <Ionicons name="chevron-forward" size={18} color={ios.gray[3]} />
           </Pressable>

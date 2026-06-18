@@ -38,7 +38,9 @@ export function OptionPickerSheet({
           {nullable ? (
             <Pressable
               style={[styles.row, !selectedId && styles.rowActive]}
-              onPress={() => { onSelect({ id: "", label: nullLabel }); }}
+              onPress={() => {
+                onSelect({ id: "", label: nullLabel });
+              }}
             >
               <Text style={[styles.rowText, !selectedId && styles.rowTextActive]}>{nullLabel}</Text>
               {!selectedId ? <Ionicons name="checkmark" size={16} color={ios.brand} /> : null}

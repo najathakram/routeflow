@@ -5,17 +5,15 @@ import Link from "next/link";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import {
-  ArrowLeft,
-  Download,
-  Plus,
-  CheckCircle2,
-  CreditCard,
-  Loader2,
-} from "lucide-react";
+import { ArrowLeft, Download, Plus, CheckCircle2, CreditCard, Loader2 } from "lucide-react";
 import { Badge, Button, Card, Modal, Input, Select, cn, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
-import { useTransaction, useRecordPayment, useDownloadInvoice, type Payment } from "@/lib/api/bookkeeping";
+import {
+  useTransaction,
+  useRecordPayment,
+  useDownloadInvoice,
+  type Payment,
+} from "@/lib/api/bookkeeping";
 import { apiClient } from "@/lib/api-client";
 import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";
 
@@ -65,7 +63,8 @@ function RecordPaymentModal({
   });
 
   React.useEffect(() => {
-    if (isOpen) reset({ method: "ACH", amount: remaining > 0 ? parseFloat(remaining.toFixed(2)) : 0 });
+    if (isOpen)
+      reset({ method: "ACH", amount: remaining > 0 ? parseFloat(remaining.toFixed(2)) : 0 });
   }, [isOpen, remaining, reset]);
 
   const onSubmit = (data: PaymentFormValues) => {
@@ -80,7 +79,9 @@ function RecordPaymentModal({
       description="Log a payment received for this invoice."
       footer={
         <>
-          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
           <Button type="submit" form="payment-form" loading={isPending}>
             Record Payment
           </Button>
@@ -181,7 +182,7 @@ export default function TransactionDetailPage({ params }: { params: { transactio
   if (isLoading) {
     return (
       <div className="flex items-center justify-center p-12">
-        <Loader2 className="h-8 w-8 animate-spin text-navy/40" />
+        <Loader2 className="h-8 w-8 animate-spin text-navy/70" />
       </div>
     );
   }
@@ -190,7 +191,9 @@ export default function TransactionDetailPage({ params }: { params: { transactio
     return (
       <div className="flex flex-col items-center gap-4 p-12 text-center">
         <p className="text-base font-medium text-navy">Invoice not found.</p>
-        <Button variant="secondary" href="/bookkeeping">Back to Bookkeeping</Button>
+        <Button variant="secondary" href="/bookkeeping">
+          Back to Bookkeeping
+        </Button>
       </div>
     );
   }
@@ -214,7 +217,7 @@ export default function TransactionDetailPage({ params }: { params: { transactio
       {/* Back */}
       <Link
         href="/bookkeeping"
-        className="flex items-center gap-1.5 text-sm text-navy/60 hover:text-navy transition-colors"
+        className="flex items-center gap-1.5 text-sm text-navy/70 hover:text-navy transition-colors"
       >
         <ArrowLeft className="h-4 w-4" />
         Bookkeeping
@@ -255,7 +258,6 @@ export default function TransactionDetailPage({ params }: { params: { transactio
       </div>
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
-
         {/* ── Invoice card (2/3 width) ── */}
         <div className="space-y-5 lg:col-span-2">
           <Card>
@@ -266,33 +268,49 @@ export default function TransactionDetailPage({ params }: { params: { transactio
                   <img src="/logo.svg" alt="RouteFlow" className="h-8 w-8 object-contain" />
                   <span className="text-lg font-bold text-navy">RouteFlow</span>
                 </div>
-                <p className="mt-1 text-xs text-navy/50">Austin, TX · routeflow.io</p>
+                <p className="mt-1 text-xs text-navy/70">Austin, TX · routeflow.io</p>
               </div>
               <div className="text-right">
                 <p className="text-xl font-bold text-navy">INVOICE</p>
-                <p className="mt-1 font-mono text-sm text-navy/60">{txn.order?.orderNumber ?? txn.id}</p>
+                <p className="mt-1 font-mono text-sm text-navy/70">
+                  {txn.order?.orderNumber ?? txn.id}
+                </p>
               </div>
             </div>
 
             {/* Billing info */}
             <div className="mb-6 grid grid-cols-2 gap-6 border-t border-surface-border pt-4">
               <div>
-                <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/40">Bill To</p>
-                <p className="text-sm font-semibold text-navy">{txn.customer?.businessName ?? "—"}</p>
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/70">
+                  Bill To
+                </p>
+                <p className="text-sm font-semibold text-navy">
+                  {txn.customer?.businessName ?? "—"}
+                </p>
                 {txn.customer?.contactName && (
-                  <p className="text-sm text-navy/60">{txn.customer.contactName}</p>
+                  <p className="text-sm text-navy/70">{txn.customer.contactName}</p>
                 )}
               </div>
               <div className="text-right">
-                <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/40">Invoice Details</p>
-                <p className="text-sm text-navy/60">
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/70">
+                  Invoice Details
+                </p>
+                <p className="text-sm text-navy/70">
                   <span className="font-medium text-navy">Date:</span>{" "}
-                  {new Date(txn.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                  {new Date(txn.createdAt).toLocaleDateString("en-US", {
+                    month: "short",
+                    day: "numeric",
+                    year: "numeric",
+                  })}
                 </p>
                 {txn.dueDate && (
-                  <p className="text-sm text-navy/60">
+                  <p className="text-sm text-navy/70">
                     <span className="font-medium text-navy">Due:</span>{" "}
-                    {new Date(txn.dueDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                    {new Date(txn.dueDate).toLocaleDateString("en-US", {
+                      month: "short",
+                      day: "numeric",
+                      year: "numeric",
+                    })}
                   </p>
                 )}
               </div>
@@ -309,10 +327,12 @@ export default function TransactionDetailPage({ params }: { params: { transactio
                   <span className="font-medium">Amount Paid</span>
                   <span className="font-bold">-${paid.toFixed(2)}</span>
                 </div>
-                <div className={cn(
-                  "flex justify-between border-t border-surface-border pt-2 text-base font-bold",
-                  bal > 0 ? "text-danger" : "text-success",
-                )}>
+                <div
+                  className={cn(
+                    "flex justify-between border-t border-surface-border pt-2 text-base font-bold",
+                    bal > 0 ? "text-danger" : "text-success",
+                  )}
+                >
                   <span>Balance Due</span>
                   <span>${bal.toFixed(2)}</span>
                 </div>
@@ -325,7 +345,7 @@ export default function TransactionDetailPage({ params }: { params: { transactio
         <div className="space-y-4">
           <Card title="Payment History">
             {payments.length === 0 ? (
-              <p className="text-sm text-navy/40">No payments recorded.</p>
+              <p className="text-sm text-navy/70">No payments recorded.</p>
             ) : (
               <ul className="-mx-6 -mb-6 divide-y divide-surface-border">
                 {payments.map((pmt) => (
@@ -338,11 +358,15 @@ export default function TransactionDetailPage({ params }: { params: { transactio
                         <span className="text-sm font-semibold text-navy">
                           ${Number(pmt.amount).toFixed(2)}
                         </span>
-                        <span className="text-xs text-navy/50">
-                          {new Date(pmt.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                        <span className="text-xs text-navy/70">
+                          {new Date(pmt.createdAt).toLocaleDateString("en-US", {
+                            month: "short",
+                            day: "numeric",
+                            year: "numeric",
+                          })}
                         </span>
                       </div>
-                      <p className="mt-0.5 text-xs text-navy/60">
+                      <p className="mt-0.5 text-xs text-navy/70">
                         {pmt.method}
                         {pmt.reference && ` · ${pmt.reference}`}
                       </p>
@@ -370,17 +394,19 @@ export default function TransactionDetailPage({ params }: { params: { transactio
           <Card>
             <dl className="space-y-2 text-sm">
               <div className="flex justify-between">
-                <dt className="text-navy/60">Invoice total</dt>
+                <dt className="text-navy/70">Invoice total</dt>
                 <dd className="font-medium text-navy">${total.toFixed(2)}</dd>
               </div>
               <div className="flex justify-between">
-                <dt className="text-navy/60">Paid</dt>
+                <dt className="text-navy/70">Paid</dt>
                 <dd className="font-medium text-success">${paid.toFixed(2)}</dd>
               </div>
-              <div className={cn(
-                "flex justify-between border-t border-surface-border pt-2 font-bold",
-                bal > 0 ? "text-danger" : "text-success",
-              )}>
+              <div
+                className={cn(
+                  "flex justify-between border-t border-surface-border pt-2 font-bold",
+                  bal > 0 ? "text-danger" : "text-success",
+                )}
+              >
                 <dt>Balance due</dt>
                 <dd>${bal.toFixed(2)}</dd>
               </div>

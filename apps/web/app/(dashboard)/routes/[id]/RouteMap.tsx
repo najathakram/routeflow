@@ -1,6 +1,6 @@
-'use client';
+"use client";
 
-import * as React from 'react';
+import * as React from "react";
 import {
   APIProvider,
   Map,
@@ -8,42 +8,44 @@ import {
   InfoWindow,
   useMap,
   useMapsLibrary,
-} from '@vis.gl/react-google-maps';
-import { MapPin } from 'lucide-react';
-import type { RouteRunStop } from '@/lib/api/routes';
-import { useGoogleMapsKey } from '@/hooks/useGoogleMapsKey';
+} from "@vis.gl/react-google-maps";
+import { MapPin } from "lucide-react";
+import type { RouteRunStop } from "@/lib/api/routes";
+import { useGoogleMapsKey } from "@/hooks/useGoogleMapsKey";
 
 // ─── Marker colour by stop status ────────────────────────────────────────────
 
-function markerColor(status: RouteRunStop['status']): string {
-  if (status === 'COMPLETED') return '#22c55e';
-  if (status === 'IN_PROGRESS') return '#3b82f6';
-  return '#94a3b8';
+function markerColor(status: RouteRunStop["status"]): string {
+  if (status === "COMPLETED") return "#22c55e";
+  if (status === "IN_PROGRESS") return "#3b82f6";
+  return "#94a3b8";
 }
 
 // ─── Numbered stop bubble ─────────────────────────────────────────────────────
 
-function MarkerBubble({
-  stop,
-  selected,
-}: {
-  stop: RouteRunStop;
-  selected: boolean;
-}) {
+function MarkerBubble({ stop, selected }: { stop: RouteRunStop; selected: boolean }) {
   const bg = markerColor(stop.status);
-  const isActive = stop.status === 'IN_PROGRESS';
+  const isActive = stop.status === "IN_PROGRESS";
 
   return (
-    <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+    <div
+      style={{
+        position: "relative",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        cursor: "pointer",
+      }}
+    >
       {isActive && (
         <span
           style={{
-            position: 'absolute',
+            position: "absolute",
             inset: -6,
-            borderRadius: '50%',
+            borderRadius: "50%",
             backgroundColor: bg,
             opacity: 0.3,
-            animation: 'routemap-ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite',
+            animation: "routemap-ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite",
           }}
         />
       )}
@@ -51,18 +53,18 @@ function MarkerBubble({
         style={{
           width: 36,
           height: 36,
-          borderRadius: '50%',
+          borderRadius: "50%",
           backgroundColor: bg,
-          border: selected ? '3px solid #fff' : '2px solid rgba(255,255,255,0.7)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
-          transform: selected ? 'scale(1.15)' : 'scale(1)',
-          transition: 'transform 0.1s',
+          border: selected ? "3px solid #fff" : "2px solid rgba(255,255,255,0.7)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          boxShadow: "0 2px 8px rgba(0,0,0,0.25)",
+          transform: selected ? "scale(1.15)" : "scale(1)",
+          transition: "transform 0.1s",
         }}
       >
-        <span style={{ fontSize: 14, fontWeight: 700, color: '#fff', lineHeight: 1 }}>
+        <span style={{ fontSize: 14, fontWeight: 700, color: "#fff", lineHeight: 1 }}>
           {stop.stopNumber}
         </span>
       </div>
@@ -74,7 +76,7 @@ function MarkerBubble({
 
 function PolylineLayer({ stops }: { stops: RouteRunStop[] }) {
   const map = useMap();
-  const mapsLib = useMapsLibrary('maps');
+  const mapsLib = useMapsLibrary("maps");
 
   React.useEffect(() => {
     if (!map || !mapsLib) return;
@@ -89,7 +91,7 @@ function PolylineLayer({ stops }: { stops: RouteRunStop[] }) {
     const polyline = new mapsLib.Polyline({
       path,
       geodesic: true,
-      strokeColor: '#3b82f6',
+      strokeColor: "#3b82f6",
       strokeOpacity: 0.7,
       strokeWeight: 3,
       map,
@@ -105,7 +107,7 @@ function PolylineLayer({ stops }: { stops: RouteRunStop[] }) {
 
 function FitBoundsLayer({ stops }: { stops: RouteRunStop[] }) {
   const map = useMap();
-  const mapsLib = useMapsLibrary('maps');
+  const mapsLib = useMapsLibrary("maps");
 
   React.useEffect(() => {
     if (!map || !mapsLib) return;
@@ -127,13 +129,7 @@ function FitBoundsLayer({ stops }: { stops: RouteRunStop[] }) {
 
 // ─── InfoWindow content ───────────────────────────────────────────────────────
 
-function StopInfoWindow({
-  stop,
-  onClose,
-}: {
-  stop: RouteRunStop;
-  onClose: () => void;
-}) {
+function StopInfoWindow({ stop, onClose }: { stop: RouteRunStop; onClose: () => void }) {
   return (
     <InfoWindow
       position={{
@@ -142,24 +138,41 @@ function StopInfoWindow({
       }}
       onCloseClick={onClose}
     >
-      <div style={{ maxWidth: 220, padding: '4px 0' }}>
-        <p style={{ fontWeight: 700, fontSize: 14, margin: '0 0 4px', color: '#0f172a' }}>
-          {stop.customer?.businessName ?? 'Customer'}
+      <div style={{ maxWidth: 220, padding: "4px 0" }}>
+        <p style={{ fontWeight: 700, fontSize: 14, margin: "0 0 4px", color: "#0f172a" }}>
+          {stop.customer?.businessName ?? "Customer"}
         </p>
         {stop.customerAddress && (
-          <p style={{ fontSize: 12, color: '#64748b', margin: '0 0 8px' }}>
+          <p style={{ fontSize: 12, color: "#64748b", margin: "0 0 8px" }}>
             {stop.customerAddress.line1}, {stop.customerAddress.city}
           </p>
         )}
         {stop.orders && stop.orders.length > 0 && (
           <div>
-            <p style={{ fontSize: 11, fontWeight: 600, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 4px' }}>
+            <p
+              style={{
+                fontSize: 11,
+                fontWeight: 600,
+                color: "#94a3b8",
+                textTransform: "uppercase",
+                letterSpacing: "0.05em",
+                margin: "0 0 4px",
+              }}
+            >
               Orders
             </p>
             {stop.orders.map((o) => (
-              <div key={o.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 2 }}>
-                <span style={{ color: '#0f172a' }}>#{o.orderNumber}</span>
-                <span style={{ color: '#94a3b8' }}>{o.status}</span>
+              <div
+                key={o.id}
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  fontSize: 12,
+                  marginBottom: 2,
+                }}
+              >
+                <span style={{ color: "#0f172a" }}>#{o.orderNumber}</span>
+                <span style={{ color: "#94a3b8" }}>{o.status}</span>
               </div>
             ))}
           </div>
@@ -171,10 +184,16 @@ function StopInfoWindow({
 
 // ─── Placeholder when map cannot render ──────────────────────────────────────
 
-function MapPlaceholder({ stops, reason }: { stops: RouteRunStop[]; reason: 'no-key' | 'no-geocoded' }) {
-  const done = stops.filter((s) => s.status === 'COMPLETED' || s.status === 'SKIPPED').length;
-  const active = stops.filter((s) => s.status === 'IN_PROGRESS').length;
-  const pending = stops.filter((s) => s.status === 'PENDING').length;
+function MapPlaceholder({
+  stops,
+  reason,
+}: {
+  stops: RouteRunStop[];
+  reason: "no-key" | "no-geocoded";
+}) {
+  const done = stops.filter((s) => s.status === "COMPLETED" || s.status === "SKIPPED").length;
+  const active = stops.filter((s) => s.status === "IN_PROGRESS").length;
+  const pending = stops.filter((s) => s.status === "PENDING").length;
 
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-4 bg-surface-raised">
@@ -182,12 +201,12 @@ function MapPlaceholder({ stops, reason }: { stops: RouteRunStop[]; reason: 'no-
         <MapPin className="h-10 w-10 text-navy/20" />
         <div>
           <p className="font-semibold text-navy">
-            {reason === 'no-key' ? 'Map view unavailable' : 'No geocoded stops'}
+            {reason === "no-key" ? "Map view unavailable" : "No geocoded stops"}
           </p>
-          <p className="mt-1 text-sm text-navy/50">
-            {reason === 'no-key'
-              ? 'Google Maps API key not configured. Contact your administrator.'
-              : 'None of the stops on this route have geocoded addresses yet.'}
+          <p className="mt-1 text-sm text-navy/70">
+            {reason === "no-key"
+              ? "Google Maps API key not configured. Contact your administrator."
+              : "None of the stops on this route have geocoded addresses yet."}
           </p>
         </div>
         <div className="flex flex-wrap justify-center gap-2">
@@ -199,7 +218,7 @@ function MapPlaceholder({ stops, reason }: { stops: RouteRunStop[]; reason: 'no-
               {active} in progress
             </span>
           )}
-          <span className="rounded-full border border-surface-border bg-surface-raised px-3 py-1 text-xs font-medium text-navy/60">
+          <span className="rounded-full border border-surface-border bg-surface-raised px-3 py-1 text-xs font-medium text-navy/70">
             {pending} upcoming
           </span>
         </div>
@@ -223,7 +242,7 @@ export function RouteMap({ stops }: { stops: RouteRunStop[] }) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-3 bg-surface-raised">
         <MapPin className="h-10 w-10 animate-pulse text-navy/20" />
-        <p className="text-sm text-navy/50">Loading map…</p>
+        <p className="text-sm text-navy/70">Loading map…</p>
       </div>
     );
   }
@@ -243,7 +262,7 @@ export function RouteMap({ stops }: { stops: RouteRunStop[] }) {
           defaultZoom={12}
           gestureHandling="greedy"
           disableDefaultUI={false}
-          style={{ width: '100%', height: '100%' }}
+          style={{ width: "100%", height: "100%" }}
           onClick={() => setSelectedId(null)}
         >
           <PolylineLayer stops={stopsWithCoords} />

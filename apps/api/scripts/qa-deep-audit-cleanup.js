@@ -22,9 +22,15 @@ const QA_PATTERN = "QA-%";
 
 const EXECUTE = process.argv.includes("--execute");
 
-function ok(msg)   { console.log(`   ✓ ${msg}`); }
-function warn(msg) { console.log(`   ⚠  ${msg}`); }
-function step(msg) { console.log(`\n${"─".repeat(60)}\n  ${msg}`); }
+function ok(msg) {
+  console.log(`   ✓ ${msg}`);
+}
+function warn(msg) {
+  console.log(`   ⚠  ${msg}`);
+}
+function step(msg) {
+  console.log(`\n${"─".repeat(60)}\n  ${msg}`);
+}
 
 async function findIds(pg, sql, params) {
   const r = await pg.query(sql, params);
@@ -32,15 +38,17 @@ async function findIds(pg, sql, params) {
 }
 
 async function execDel(pg, table, col, ids, label) {
-  if (!ids?.length) { ok(`No ${label}`); return 0; }
+  if (!ids?.length) {
+    ok(`No ${label}`);
+    return 0;
+  }
   if (!EXECUTE) {
     ok(`[DRY] would delete ${ids.length} ${label}`);
     return ids.length;
   }
-  const r = await pg.query(
-    `DELETE FROM "${table}" WHERE "${col}" = ANY($1::text[]) RETURNING id`,
-    [ids]
-  );
+  const r = await pg.query(`DELETE FROM "${table}" WHERE "${col}" = ANY($1::text[]) RETURNING id`, [
+    ids,
+  ]);
   ok(`Deleted ${r.rowCount} ${label}`);
   return r.rowCount;
 }
@@ -54,11 +62,13 @@ async function softDel(pg, table, col, ids, label) {
   try {
     const r = await pg.query(
       `DELETE FROM "${table}" WHERE "${col}" = ANY($1::text[]) RETURNING id`,
-      [ids]
+      [ids],
     );
     if (r.rowCount > 0) ok(`Deleted ${r.rowCount} ${label}`);
     return r.rowCount;
-  } catch { return 0; }
+  } catch {
+    return 0;
+  }
 }
 
 async function main() {
@@ -74,29 +84,38 @@ async function main() {
   try {
     // Tenant scope
     const t = await pg.query(`SELECT id FROM "Tenant" WHERE slug = $1`, [TENANT_SLUG]);
-    if (!t.rows[0]) { console.error(`Tenant ${TENANT_SLUG} not found`); process.exit(1); }
+    if (!t.rows[0]) {
+      console.error(`Tenant ${TENANT_SLUG} not found`);
+      process.exit(1);
+    }
     const tenantId = t.rows[0].id;
     ok(`Tenant ${TENANT_SLUG} → ${tenantId}`);
 
     // 1. Find QA-tagged customers (by businessName)
     step("1. QA-tagged customers");
-    const custIds = await findIds(pg,
+    const custIds = await findIds(
+      pg,
       `SELECT id FROM "Customer" WHERE "tenantId"=$1 AND "businessName" LIKE $2`,
-      [tenantId, QA_PATTERN]);
+      [tenantId, QA_PATTERN],
+    );
     ok(`Found ${custIds.length} QA customers`);
 
     // 2. Find QA-tagged routes
     step("2. QA-tagged routes");
-    const routeIds = await findIds(pg,
+    const routeIds = await findIds(
+      pg,
       `SELECT id FROM "Route" WHERE "tenantId"=$1 AND name LIKE $2`,
-      [tenantId, QA_PATTERN]);
+      [tenantId, QA_PATTERN],
+    );
     ok(`Found ${routeIds.length} QA routes`);
 
     // 3. Find QA-tagged products (worker may have created)
     step("3. QA-tagged products");
-    const prodIds = await findIds(pg,
+    const prodIds = await findIds(
+      pg,
       `SELECT id FROM "Product" WHERE "tenantId"=$1 AND name LIKE $2`,
-      [tenantId, QA_PATTERN]);
+      [tenantId, QA_PATTERN],
+    );
     ok(`Found ${prodIds.length} QA products`);
 
     // Get RouteRun IDs for QA routes first (used by orders + run cleanup)
@@ -104,7 +123,8 @@ async function main() {
     if (routeIds.length) {
       const r = await pg.query(
         `SELECT id FROM "RouteRun" WHERE "tenantId"=$1 AND "routeId" = ANY($2::text[])`,
-        [tenantId, routeIds]);
+        [tenantId, routeIds],
+      );
       runIds = r.rows.map((x) => x.id);
     }
 
@@ -116,7 +136,8 @@ async function main() {
         `SELECT id FROM "Order"
          WHERE "tenantId"=$1
          AND ("customerId" = ANY($2::text[]) OR "routeRunId" = ANY($3::text[]))`,
-        [tenantId, custIds, runIds]);
+        [tenantId, custIds, runIds],
+      );
       orderIds = r.rows.map((x) => x.id);
     }
     ok(`Found ${orderIds.length} QA-linked orders`);
@@ -128,7 +149,8 @@ async function main() {
       const r = await pg.query(
         `SELECT id FROM "Invoice"
          WHERE "tenantId"=$1 AND "customerId" = ANY($2::text[])`,
-        [tenantId, custIds]);
+        [tenantId, custIds],
+      );
       invoiceIds = r.rows.map((x) => x.id);
     }
     ok(`Found ${invoiceIds.length} QA invoices`);
@@ -143,7 +165,8 @@ async function main() {
     if (orderIds.length) {
       const r = await pg.query(
         `SELECT id FROM "Return" WHERE "tenantId"=$1 AND "orderId" = ANY($2::text[])`,
-        [tenantId, orderIds]);
+        [tenantId, orderIds],
+      );
       returnIds = r.rows.map((x) => x.id);
     }
     ok(`Found ${returnIds.length} QA returns`);
@@ -221,7 +244,6 @@ async function main() {
     console.log(`\n${"═".repeat(65)}`);
     console.log(`  ✅ Cleanup complete — ${total} primary records deleted`);
     console.log(`${"═".repeat(65)}\n`);
-
   } finally {
     await pg.end();
   }

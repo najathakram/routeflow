@@ -1,12 +1,5 @@
 import { useState } from "react";
-import {
-  Modal,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { ios } from "@routeflow/ui/tokens";
@@ -88,8 +81,7 @@ export default function NewExpenseScreen() {
 
     createMut.mutate(dto, {
       onSuccess: (expense) => router.replace(`/(operator)/expenses/${expense.id}`),
-      onError: (e: any) =>
-        showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+      onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
     });
   };
 
@@ -275,9 +267,7 @@ function CategorySheet({
                     >
                       {c.name}
                     </Text>
-                    {active ? (
-                      <Ionicons name="checkmark" size={16} color={ios.brand} />
-                    ) : null}
+                    {active ? <Ionicons name="checkmark" size={16} color={ios.brand} /> : null}
                   </Pressable>
                 );
               })}
@@ -324,15 +314,8 @@ function PaymentMethodSheet({
                 onPress={() => onSelect(m)}
                 accessibilityLabel={`Payment ${label}`}
               >
-                <Ionicons
-                  name={iconFor[m]}
-                  size={22}
-                  color={active ? ios.brand : ios.label}
-                />
-                <Text
-                  style={[styles.tileText, active && styles.tileTextActive]}
-                  numberOfLines={2}
-                >
+                <Ionicons name={iconFor[m]} size={22} color={active ? ios.brand : ios.label} />
+                <Text style={[styles.tileText, active && styles.tileTextActive]} numberOfLines={2}>
                   {label}
                 </Text>
               </Pressable>
@@ -355,7 +338,13 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   scanTitle: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: ios.brand },
-  scanSub: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.brand, marginTop: 1, opacity: 0.8 },
+  scanSub: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    color: ios.brand,
+    marginTop: 1,
+    opacity: 0.8,
+  },
   picker: {
     backgroundColor: ios.fill3,
     borderRadius: 10,

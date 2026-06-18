@@ -40,7 +40,7 @@ function getLinkStatusColor(status: string): string {
     case "DISCONNECTED":
       return "bg-danger-bg text-danger";
     default:
-      return "bg-surface-raised text-navy/60";
+      return "bg-surface-raised text-navy/70";
   }
 }
 
@@ -69,7 +69,9 @@ function SellerItem({
         {seller.tenant.name.slice(0, 2).toUpperCase()}
       </div>
       <div className="min-w-0 flex-1">
-        <p className={`text-sm font-medium truncate ${isActive ? "text-buyer-100" : "text-white/80"}`}>
+        <p
+          className={`text-sm font-medium truncate ${isActive ? "text-buyer-100" : "text-white/80"}`}
+        >
           {seller.tenant.name}
         </p>
         <p className="text-xs text-buyer-300/70 truncate">{seller.customer.businessName}</p>
@@ -98,9 +100,7 @@ function NavLink({
       type="button"
       onClick={() => router.push(href)}
       className={`w-full flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
-        isActive
-          ? "bg-white text-buyer-800"
-          : "text-white/70 hover:bg-white/10 hover:text-white"
+        isActive ? "bg-white text-buyer-800" : "text-white/70 hover:bg-white/10 hover:text-white"
       }`}
     >
       <Icon className="h-4 w-4 flex-shrink-0" />
@@ -235,21 +235,32 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
                   <div className="flex items-center justify-between border-b border-surface-border px-3 py-2">
                     <p className="text-xs font-semibold text-navy">Notifications</p>
                     {notifications.length > 0 && (
-                      <button onClick={clearAll} className="text-[10px] text-navy/40 hover:text-danger">
+                      <button
+                        onClick={clearAll}
+                        className="text-[10px] text-navy/70 hover:text-danger"
+                      >
                         Clear all
                       </button>
                     )}
                   </div>
                   <div className="max-h-64 overflow-y-auto">
                     {notifications.length === 0 ? (
-                      <p className="px-3 py-6 text-center text-xs text-buyer-600">No notifications</p>
+                      <p className="px-3 py-6 text-center text-xs text-buyer-600">
+                        No notifications
+                      </p>
                     ) : (
                       notifications.slice(0, 20).map((n) => (
-                        <div key={n.id} className="border-b border-surface-border px-3 py-2 last:border-b-0 hover:bg-surface-raised/50">
+                        <div
+                          key={n.id}
+                          className="border-b border-surface-border px-3 py-2 last:border-b-0 hover:bg-surface-raised/50"
+                        >
                           <p className="text-xs font-medium text-navy">{n.title}</p>
-                          <p className="text-[11px] text-navy/50 mt-0.5">{n.description}</p>
+                          <p className="text-[11px] text-navy/70 mt-0.5">{n.description}</p>
                           <p className="text-[9px] text-navy/30 mt-0.5">
-                            {new Date(n.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                            {new Date(n.timestamp).toLocaleTimeString([], {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
                           </p>
                         </div>
                       ))

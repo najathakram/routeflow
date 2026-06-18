@@ -1,12 +1,5 @@
 import { useState } from "react";
-import {
-  ActivityIndicator,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -36,8 +29,7 @@ export default function AddStopScreen() {
           showToast("Stop added");
           router.back();
         },
-        onError: (e: any) =>
-          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
       },
     );
   };
@@ -48,11 +40,7 @@ export default function AddStopScreen() {
         inlineTitle="Add stop"
         leading={<NavBackButton label="Cancel" onPress={() => router.back()} />}
       />
-      <SearchBar
-        placeholder="Search customers…"
-        value={search}
-        onChangeText={setSearch}
-      />
+      <SearchBar placeholder="Search customers…" value={search} onChangeText={setSearch} />
       <ScrollView showsVerticalScrollIndicator={false}>
         {isLoading ? (
           <View style={styles.center}>

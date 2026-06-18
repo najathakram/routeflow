@@ -48,15 +48,35 @@
     "tailwind-merge": ">=2.0.0"
   },
   "peerDependenciesMeta": {
-    "@radix-ui/react-dialog": { "optional": true },
-    "@radix-ui/react-toast": { "optional": true },
-    "@tanstack/react-table": { "optional": true },
-    "class-variance-authority": { "optional": true },
-    "clsx": { "optional": true },
-    "lucide-react": { "optional": true },
-    "react-dom": { "optional": true },
-    "react-hook-form": { "optional": true },
-    "react-native": { "optional": true },
-    "tailwind-merge": { "optional": true }
+    "@radix-ui/react-dialog": {
+      "optional": true
+    },
+    "@radix-ui/react-toast": {
+      "optional": true
+    },
+    "@tanstack/react-table": {
+      "optional": true
+    },
+    "class-variance-authority": {
+      "optional": true
+    },
+    "clsx": {
+      "optional": true
+    },
+    "lucide-react": {
+      "optional": true
+    },
+    "react-dom": {
+      "optional": true
+    },
+    "react-hook-form": {
+      "optional": true
+    },
+    "react-native": {
+      "optional": true
+    },
+    "tailwind-merge": {
+      "optional": true
+    }
   }
 }

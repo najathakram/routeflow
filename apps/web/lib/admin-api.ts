@@ -68,9 +68,7 @@ superAdminClient.interceptors.response.use(
 
     try {
       const refreshToken =
-        typeof window !== "undefined"
-          ? localStorage.getItem("superAdminRefreshToken")
-          : null;
+        typeof window !== "undefined" ? localStorage.getItem("superAdminRefreshToken") : null;
 
       if (!refreshToken) throw new Error("No refresh token");
 

@@ -1,20 +1,20 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiClient } from '../api-client';
-import { fetchPdfBlob } from '../fetch-pdf-blob';
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { apiClient } from "../api-client";
+import { fetchPdfBlob } from "../fetch-pdf-blob";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export type InvoiceStatus =
-  | 'DRAFT'
-  | 'SENT'
-  | 'VIEWED'
-  | 'PARTIAL'
-  | 'PAID'
-  | 'VOID'
-  | 'OVERDUE'
-  | 'WRITTEN_OFF';
+  | "DRAFT"
+  | "SENT"
+  | "VIEWED"
+  | "PARTIAL"
+  | "PAID"
+  | "VOID"
+  | "OVERDUE"
+  | "WRITTEN_OFF";
 
-export type PriceType = 'STANDARD' | 'SPECIAL' | 'DISCOUNTED';
+export type PriceType = "STANDARD" | "SPECIAL" | "DISCOUNTED";
 
 export interface InvoiceItem {
   id: string;
@@ -35,7 +35,7 @@ export interface InvoiceItem {
 export interface InvoicePayment {
   id: string;
   amount: number;
-  method: 'CASH' | 'CHECK' | 'ACH' | 'OTHER' | 'CREDIT_NOTE' | 'ADVANCE';
+  method: "CASH" | "CHECK" | "ACH" | "OTHER" | "CREDIT_NOTE" | "ADVANCE";
   reference?: string;
   notes?: string;
   paidAt?: string;
@@ -46,7 +46,15 @@ export interface Invoice {
   id: string;
   invoiceNumber: string;
   customerId: string;
-  customer?: { id: string; businessName: string; contactName?: string; phone?: string; mobile?: string; email?: string; address?: string };
+  customer?: {
+    id: string;
+    businessName: string;
+    contactName?: string;
+    phone?: string;
+    mobile?: string;
+    email?: string;
+    address?: string;
+  };
   status: InvoiceStatus;
   dueDate?: string;
   issueDate?: string;
@@ -108,15 +116,15 @@ export function useInvoices(
   options?: { refetchInterval?: number },
 ) {
   return useQuery<PaginatedResponse<Invoice>>({
-    queryKey: ['invoices', params],
-    queryFn: () => apiClient.get('/invoices', { params }).then((r) => r.data),
+    queryKey: ["invoices", params],
+    queryFn: () => apiClient.get("/invoices", { params }).then((r) => r.data),
     ...options,
   });
 }
 
 export function useInvoice(id: string) {
   return useQuery<Invoice>({
-    queryKey: ['invoices', id],
+    queryKey: ["invoices", id],
     queryFn: () => apiClient.get(`/invoices/${id}`).then((r) => r.data),
     enabled: !!id,
   });
@@ -125,12 +133,12 @@ export function useInvoice(id: string) {
 export interface AllPayment {
   id: string;
   amount: number;
-  method: 'CASH' | 'CHECK' | 'ACH' | 'OTHER' | 'CREDIT_NOTE' | 'ADVANCE' | 'CREDIT_CARD';
+  method: "CASH" | "CHECK" | "ACH" | "OTHER" | "CREDIT_NOTE" | "ADVANCE" | "CREDIT_CARD";
   reference?: string;
   notes?: string;
   bankCharges?: number;
   paymentNumber?: string;
-  status?: 'DRAFT' | 'PAID' | 'VOID';
+  status?: "DRAFT" | "PAID" | "VOID";
   paymentGroupId?: string;
   paidAt?: string;
   createdAt: string;
@@ -163,8 +171,8 @@ export interface PaymentListResponse {
 
 export function useInvoicePayments(params?: PaymentListParams) {
   return useQuery<PaymentListResponse>({
-    queryKey: ['invoices', 'payments', params],
-    queryFn: () => apiClient.get('/invoices/payments', { params }).then((r) => r.data),
+    queryKey: ["invoices", "payments", params],
+    queryFn: () => apiClient.get("/invoices/payments", { params }).then((r) => r.data),
   });
 }
 
@@ -199,8 +207,8 @@ export interface CreateInvoiceDto {
 export function useCreateInvoice() {
   const qc = useQueryClient();
   return useMutation<Invoice, Error, CreateInvoiceDto>({
-    mutationFn: (dto) => apiClient.post('/invoices', dto).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['invoices'] }),
+    mutationFn: (dto) => apiClient.post("/invoices", dto).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["invoices"] }),
   });
 }
 
@@ -209,8 +217,8 @@ export function useUpdateInvoice() {
   return useMutation<Invoice, Error, { id: string } & Partial<CreateInvoiceDto>>({
     mutationFn: ({ id, ...dto }) => apiClient.patch(`/invoices/${id}`, dto).then((r) => r.data),
     onSuccess: (_, { id }) => {
-      qc.invalidateQueries({ queryKey: ['invoices'] });
-      qc.invalidateQueries({ queryKey: ['invoices', id] });
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["invoices", id] });
     },
   });
 }
@@ -220,8 +228,8 @@ export function useSendInvoice() {
   return useMutation<Invoice, Error, string>({
     mutationFn: (id) => apiClient.post(`/invoices/${id}/send`).then((r) => r.data),
     onSuccess: (_, id) => {
-      qc.invalidateQueries({ queryKey: ['invoices'] });
-      qc.invalidateQueries({ queryKey: ['invoices', id] });
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["invoices", id] });
     },
   });
 }
@@ -229,10 +237,11 @@ export function useSendInvoice() {
 export function useSendInvoiceEmail() {
   const qc = useQueryClient();
   return useMutation<{ success: boolean; sentTo: string }, Error, { id: string; email?: string }>({
-    mutationFn: ({ id, email }) => apiClient.post(`/invoices/${id}/send-email`, { email }).then((r) => r.data),
+    mutationFn: ({ id, email }) =>
+      apiClient.post(`/invoices/${id}/send-email`, { email }).then((r) => r.data),
     onSuccess: (_, { id }) => {
-      qc.invalidateQueries({ queryKey: ['invoices'] });
-      qc.invalidateQueries({ queryKey: ['invoices', id] });
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["invoices", id] });
     },
   });
 }
@@ -240,7 +249,8 @@ export function useSendInvoiceEmail() {
 export function useSendInvoiceReminder() {
   const qc = useQueryClient();
   return useMutation<{ success: boolean; sentTo: string }, Error, { id: string; email?: string }>({
-    mutationFn: ({ id, email }) => apiClient.post(`/invoices/${id}/send-reminder`, { email }).then((r) => r.data),
+    mutationFn: ({ id, email }) =>
+      apiClient.post(`/invoices/${id}/send-reminder`, { email }).then((r) => r.data),
   });
 }
 
@@ -249,11 +259,11 @@ export function useVoidInvoice() {
   return useMutation<Invoice, Error, string>({
     mutationFn: (id) => apiClient.post(`/invoices/${id}/void`).then((r) => r.data),
     onSuccess: (_, id) => {
-      qc.invalidateQueries({ queryKey: ['invoices'] });
-      qc.invalidateQueries({ queryKey: ['invoices', id] });
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["invoices", id] });
       // Voiding releases OrderItem.invoicedQty, so the source order's
       // "Split into invoice…" button should reappear immediately.
-      qc.invalidateQueries({ queryKey: ['orders'] });
+      qc.invalidateQueries({ queryKey: ["orders"] });
     },
   });
 }
@@ -263,8 +273,8 @@ export function useReopenInvoice() {
   return useMutation<Invoice, Error, string>({
     mutationFn: (id) => apiClient.post(`/invoices/${id}/reopen`).then((r) => r.data),
     onSuccess: (_, id) => {
-      qc.invalidateQueries({ queryKey: ['invoices'] });
-      qc.invalidateQueries({ queryKey: ['invoices', id] });
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["invoices", id] });
     },
   });
 }
@@ -272,23 +282,31 @@ export function useReopenInvoice() {
 export function useApplyCreditNote() {
   const qc = useQueryClient();
   return useMutation<Invoice, Error, { creditNoteId: string; invoiceId: string; amount?: number }>({
-    mutationFn: ({ creditNoteId, ...data }) => apiClient.post(`/credit-notes/${creditNoteId}/apply`, data).then((r) => r.data),
+    mutationFn: ({ creditNoteId, ...data }) =>
+      apiClient.post(`/credit-notes/${creditNoteId}/apply`, data).then((r) => r.data),
     onSuccess: (updated) => {
-      qc.invalidateQueries({ queryKey: ['invoices'] });
-      qc.invalidateQueries({ queryKey: ['invoices', updated.id] });
-      qc.invalidateQueries({ queryKey: ['credit-notes'] });
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["invoices", updated.id] });
+      qc.invalidateQueries({ queryKey: ["credit-notes"] });
     },
   });
 }
 
 export function useApplyAdvanceToInvoice() {
   const qc = useQueryClient();
-  return useMutation<Invoice, Error, { customerId: string; advancePaymentId: string; invoiceId: string; amount?: number }>({
-    mutationFn: ({ customerId, advancePaymentId, ...data }) => apiClient.post(`/customers/${customerId}/advance-payments/${advancePaymentId}/apply`, data).then((r) => r.data),
+  return useMutation<
+    Invoice,
+    Error,
+    { customerId: string; advancePaymentId: string; invoiceId: string; amount?: number }
+  >({
+    mutationFn: ({ customerId, advancePaymentId, ...data }) =>
+      apiClient
+        .post(`/customers/${customerId}/advance-payments/${advancePaymentId}/apply`, data)
+        .then((r) => r.data),
     onSuccess: (updated, { customerId }) => {
-      qc.invalidateQueries({ queryKey: ['invoices'] });
-      qc.invalidateQueries({ queryKey: ['invoices', updated.id] });
-      qc.invalidateQueries({ queryKey: ['customers', customerId, 'advance-payments'] });
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["invoices", updated.id] });
+      qc.invalidateQueries({ queryKey: ["customers", customerId, "advance-payments"] });
     },
   });
 }
@@ -298,10 +316,10 @@ export function useDeleteInvoice() {
   return useMutation<{ id: string; message: string }, Error, string>({
     mutationFn: (id) => apiClient.delete(`/invoices/${id}`).then((r) => r.data),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['invoices'] });
+      qc.invalidateQueries({ queryKey: ["invoices"] });
       // Same reason as void: releases OrderItem.invoicedQty so the order can
       // be re-split.
-      qc.invalidateQueries({ queryKey: ['orders'] });
+      qc.invalidateQueries({ queryKey: ["orders"] });
     },
   });
 }
@@ -309,10 +327,11 @@ export function useDeleteInvoice() {
 export function useWriteOffInvoice() {
   const qc = useQueryClient();
   return useMutation<Invoice, Error, { id: string; reason: string }>({
-    mutationFn: ({ id, reason }) => apiClient.post(`/invoices/${id}/write-off`, { reason }).then((r) => r.data),
+    mutationFn: ({ id, reason }) =>
+      apiClient.post(`/invoices/${id}/write-off`, { reason }).then((r) => r.data),
     onSuccess: (_, { id }) => {
-      qc.invalidateQueries({ queryKey: ['invoices'] });
-      qc.invalidateQueries({ queryKey: ['invoices', id] });
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["invoices", id] });
     },
   });
 }
@@ -336,11 +355,11 @@ export function useDownloadInvoicePdf() {
 
 export interface RecordInvoicePaymentDto {
   id: string;
-  method: 'CASH' | 'CHECK' | 'ACH' | 'OTHER' | 'CREDIT_CARD';
+  method: "CASH" | "CHECK" | "ACH" | "OTHER" | "CREDIT_CARD";
   amount: number;
   paidAt?: string;
   bankCharges?: number;
-  status?: 'DRAFT' | 'PAID';
+  status?: "DRAFT" | "PAID";
   reference?: string;
   notes?: string;
 }
@@ -351,8 +370,8 @@ export function useRecordInvoicePayment() {
     mutationFn: ({ id, ...data }) =>
       apiClient.post(`/invoices/${id}/payments`, data).then((r) => r.data),
     onSuccess: (_, { id }) => {
-      qc.invalidateQueries({ queryKey: ['invoices'] });
-      qc.invalidateQueries({ queryKey: ['invoices', id] });
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["invoices", id] });
     },
   });
 }
@@ -360,11 +379,11 @@ export function useRecordInvoicePayment() {
 export interface UpdateInvoicePaymentDto {
   invoiceId: string;
   paymentId: string;
-  method: 'CASH' | 'CHECK' | 'ACH' | 'OTHER' | 'CREDIT_CARD';
+  method: "CASH" | "CHECK" | "ACH" | "OTHER" | "CREDIT_CARD";
   amount: number;
   paidAt?: string;
   bankCharges?: number;
-  status?: 'DRAFT' | 'PAID' | 'VOID';
+  status?: "DRAFT" | "PAID" | "VOID";
   reference?: string;
   notes?: string;
 }
@@ -375,8 +394,8 @@ export function useUpdateInvoicePayment() {
     mutationFn: ({ invoiceId, paymentId, ...data }) =>
       apiClient.patch(`/invoices/${invoiceId}/payments/${paymentId}`, data).then((r) => r.data),
     onSuccess: (updated) => {
-      qc.invalidateQueries({ queryKey: ['invoices'] });
-      qc.invalidateQueries({ queryKey: ['invoices', updated.id] });
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["invoices", updated.id] });
     },
   });
 }
@@ -387,8 +406,8 @@ export function useDeleteInvoicePayment() {
     mutationFn: ({ invoiceId, paymentId }) =>
       apiClient.delete(`/invoices/${invoiceId}/payments/${paymentId}`).then((r) => r.data),
     onSuccess: (updated) => {
-      qc.invalidateQueries({ queryKey: ['invoices'] });
-      qc.invalidateQueries({ queryKey: ['invoices', updated.id] });
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["invoices", updated.id] });
     },
   });
 }
@@ -396,22 +415,26 @@ export function useDeleteInvoicePayment() {
 export interface StandalonePaymentDto {
   customerId: string;
   totalAmount: number;
-  method: 'CASH' | 'CHECK' | 'ACH' | 'OTHER' | 'CREDIT_CARD';
+  method: "CASH" | "CHECK" | "ACH" | "OTHER" | "CREDIT_CARD";
   paidAt?: string;
   bankCharges?: number;
   reference?: string;
   notes?: string;
-  status?: 'DRAFT' | 'PAID';
+  status?: "DRAFT" | "PAID";
   allocations: { invoiceId: string; amount: number }[];
 }
 
 export function useRecordPaymentStandalone() {
   const qc = useQueryClient();
-  return useMutation<{ payments: AllPayment[]; paymentGroupId: string; excess: number }, Error, StandalonePaymentDto>({
-    mutationFn: (dto) => apiClient.post('/invoices/payments/record', dto).then((r) => r.data),
+  return useMutation<
+    { payments: AllPayment[]; paymentGroupId: string; excess: number },
+    Error,
+    StandalonePaymentDto
+  >({
+    mutationFn: (dto) => apiClient.post("/invoices/payments/record", dto).then((r) => r.data),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['invoices'] });
-      qc.invalidateQueries({ queryKey: ['invoices', 'payments'] });
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["invoices", "payments"] });
     },
   });
 }
@@ -422,8 +445,8 @@ export function useVoidPayment() {
     mutationFn: ({ invoiceId, paymentId }) =>
       apiClient.patch(`/invoices/${invoiceId}/payments/${paymentId}/void`).then((r) => r.data),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['invoices'] });
-      qc.invalidateQueries({ queryKey: ['invoices', 'payments'] });
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["invoices", "payments"] });
     },
   });
 }
@@ -431,14 +454,14 @@ export function useVoidPayment() {
 export function useExportPayments() {
   return useMutation<void, Error, PaymentListParams>({
     mutationFn: async (params) => {
-      const response = await apiClient.get('/invoices/payments/export', {
+      const response = await apiClient.get("/invoices/payments/export", {
         params,
-        responseType: 'blob',
+        responseType: "blob",
       });
       const url = window.URL.createObjectURL(new Blob([response.data]));
-      const link = document.createElement('a');
+      const link = document.createElement("a");
       link.href = url;
-      link.setAttribute('download', `payments-${new Date().toISOString().split('T')[0]}.csv`);
+      link.setAttribute("download", `payments-${new Date().toISOString().split("T")[0]}.csv`);
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -449,7 +472,7 @@ export function useExportPayments() {
 
 export function usePaymentDetail(id: string) {
   return useQuery<AllPayment>({
-    queryKey: ['invoices', 'payments', id],
+    queryKey: ["invoices", "payments", id],
     queryFn: () => apiClient.get(`/invoices/payments/${id}`).then((r) => r.data),
     enabled: !!id,
   });
@@ -470,7 +493,7 @@ export interface RecurringInvoice {
   id: string;
   customerId: string;
   customer?: { id: string; businessName: string };
-  frequency: 'WEEKLY' | 'BIWEEKLY' | 'MONTHLY';
+  frequency: "WEEKLY" | "BIWEEKLY" | "MONTHLY";
   dayOfWeek?: number;
   dayOfMonth?: number;
   isActive: boolean;
@@ -487,7 +510,7 @@ export interface RecurringInvoice {
 
 export interface CreateRecurringInvoiceDto {
   customerId: string;
-  frequency: 'WEEKLY' | 'BIWEEKLY' | 'MONTHLY';
+  frequency: "WEEKLY" | "BIWEEKLY" | "MONTHLY";
   dayOfWeek?: number;
   dayOfMonth?: number;
   autoSend?: boolean;
@@ -501,14 +524,17 @@ export interface CreateRecurringInvoiceDto {
 
 export function useRecurringInvoices(customerId?: string) {
   return useQuery<RecurringInvoice[]>({
-    queryKey: ['recurring-invoices', customerId],
-    queryFn: () => apiClient.get('/recurring-invoices', { params: customerId ? { customerId } : {} }).then((r) => r.data),
+    queryKey: ["recurring-invoices", customerId],
+    queryFn: () =>
+      apiClient
+        .get("/recurring-invoices", { params: customerId ? { customerId } : {} })
+        .then((r) => r.data),
   });
 }
 
 export function useRecurringInvoice(id: string) {
   return useQuery<RecurringInvoice>({
-    queryKey: ['recurring-invoices', id],
+    queryKey: ["recurring-invoices", id],
     queryFn: () => apiClient.get(`/recurring-invoices/${id}`).then((r) => r.data),
     enabled: !!id,
   });
@@ -517,18 +543,19 @@ export function useRecurringInvoice(id: string) {
 export function useCreateRecurringInvoice() {
   const qc = useQueryClient();
   return useMutation<RecurringInvoice, Error, CreateRecurringInvoiceDto>({
-    mutationFn: (dto) => apiClient.post('/recurring-invoices', dto).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['recurring-invoices'] }),
+    mutationFn: (dto) => apiClient.post("/recurring-invoices", dto).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["recurring-invoices"] }),
   });
 }
 
 export function useUpdateRecurringInvoice() {
   const qc = useQueryClient();
   return useMutation<RecurringInvoice, Error, { id: string } & Partial<CreateRecurringInvoiceDto>>({
-    mutationFn: ({ id, ...dto }) => apiClient.patch(`/recurring-invoices/${id}`, dto).then((r) => r.data),
+    mutationFn: ({ id, ...dto }) =>
+      apiClient.patch(`/recurring-invoices/${id}`, dto).then((r) => r.data),
     onSuccess: (_, { id }) => {
-      qc.invalidateQueries({ queryKey: ['recurring-invoices'] });
-      qc.invalidateQueries({ queryKey: ['recurring-invoices', id] });
+      qc.invalidateQueries({ queryKey: ["recurring-invoices"] });
+      qc.invalidateQueries({ queryKey: ["recurring-invoices", id] });
     },
   });
 }
@@ -537,7 +564,7 @@ export function useDeactivateRecurringInvoice() {
   const qc = useQueryClient();
   return useMutation<RecurringInvoice, Error, string>({
     mutationFn: (id) => apiClient.delete(`/recurring-invoices/${id}`).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['recurring-invoices'] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["recurring-invoices"] }),
   });
 }
 
@@ -546,8 +573,8 @@ export function useRunRecurringInvoice() {
   return useMutation<Invoice, Error, string>({
     mutationFn: (id) => apiClient.post(`/recurring-invoices/${id}/run`).then((r) => r.data),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['invoices'] });
-      qc.invalidateQueries({ queryKey: ['recurring-invoices'] });
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["recurring-invoices"] });
     },
   });
 }
@@ -581,8 +608,8 @@ export function useCreateInvoiceFromOrder() {
   return useMutation<Invoice, Error, string>({
     mutationFn: (orderId) => apiClient.post(`/invoices/from-order/${orderId}`).then((r) => r.data),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['invoices'] });
-      qc.invalidateQueries({ queryKey: ['orders'] });
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["orders"] });
     },
   });
 }
@@ -614,9 +641,9 @@ export function useCreatePartialInvoiceFromOrder() {
     mutationFn: ({ orderId, ...dto }) =>
       apiClient.post(`/invoices/from-order/${orderId}/partial`, dto).then((r) => r.data),
     onSuccess: (_, { orderId }) => {
-      qc.invalidateQueries({ queryKey: ['invoices'] });
-      qc.invalidateQueries({ queryKey: ['orders'] });
-      qc.invalidateQueries({ queryKey: ['orders', orderId] });
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["orders"] });
+      qc.invalidateQueries({ queryKey: ["orders", orderId] });
     },
   });
 }
@@ -630,7 +657,7 @@ export interface PriceAdjustmentItem {
 
 export interface PriceAdjustmentDto {
   items: PriceAdjustmentItem[];
-  scope: 'SINGLE' | 'ALL_CUSTOMER_SINCE';
+  scope: "SINGLE" | "ALL_CUSTOMER_SINCE";
   sinceDate?: string;
 }
 
@@ -642,16 +669,16 @@ export interface InvoiceSettings {
 
 export function useInvoiceSettings() {
   return useQuery<InvoiceSettings>({
-    queryKey: ['invoice-settings'],
-    queryFn: () => apiClient.get('/settings/invoice').then((r) => r.data),
+    queryKey: ["invoice-settings"],
+    queryFn: () => apiClient.get("/settings/invoice").then((r) => r.data),
   });
 }
 
 export function useUpdateInvoiceSettings() {
   const qc = useQueryClient();
   return useMutation<InvoiceSettings, Error, Partial<InvoiceSettings>>({
-    mutationFn: (dto) => apiClient.patch('/settings/invoice', dto).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['invoice-settings'] }),
+    mutationFn: (dto) => apiClient.patch("/settings/invoice", dto).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["invoice-settings"] }),
   });
 }
 
@@ -661,8 +688,8 @@ export function useAdjustInvoicePrices() {
     mutationFn: ({ id, ...dto }) =>
       apiClient.post(`/invoices/${id}/price-adjustment`, dto).then((r) => r.data),
     onSuccess: (updated) => {
-      qc.invalidateQueries({ queryKey: ['invoices'] });
-      qc.invalidateQueries({ queryKey: ['invoices', updated.id] });
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["invoices", updated.id] });
     },
   });
 }

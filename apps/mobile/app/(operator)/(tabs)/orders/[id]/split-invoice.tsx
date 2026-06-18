@@ -14,7 +14,10 @@ export default function OperatorSplitInvoice() {
   if (isLoading) {
     return (
       <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
-        <NavBar inlineTitle="Split invoice" leading={<NavBackButton onPress={() => router.back()} />} />
+        <NavBar
+          inlineTitle="Split invoice"
+          leading={<NavBackButton onPress={() => router.back()} />}
+        />
         <View style={styles.center}>
           <ActivityIndicator color={ios.brand} />
         </View>
@@ -24,7 +27,10 @@ export default function OperatorSplitInvoice() {
   if (isError || !order) {
     return (
       <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
-        <NavBar inlineTitle="Split invoice" leading={<NavBackButton onPress={() => router.back()} />} />
+        <NavBar
+          inlineTitle="Split invoice"
+          leading={<NavBackButton onPress={() => router.back()} />}
+        />
         <View style={styles.center}>
           <Text style={{ color: ios.label2 }}>Order not found.</Text>
         </View>

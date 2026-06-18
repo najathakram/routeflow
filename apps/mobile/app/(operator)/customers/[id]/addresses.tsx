@@ -1,22 +1,11 @@
 import { useState } from "react";
-import {
-  ActivityIndicator,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar } from "@routeflow/ui/mobile/ios";
-import {
-  FormField,
-  FormSection,
-  FormTextInput,
-} from "../../../../components/FormSheet";
+import { FormField, FormSection, FormTextInput } from "../../../../components/FormSheet";
 import {
   useAddCustomerAddress,
   useCustomer,
@@ -52,8 +41,7 @@ export default function ManageAddressesScreen() {
           showToast("Default updated");
           refetch();
         },
-        onError: (e: any) =>
-          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
       },
     );
   };
@@ -127,7 +115,16 @@ function AddAddressForm({
   onCancel,
   submitting,
 }: {
-  onSubmit: (v: { line1: string; line2?: string; city: string; state: string; zip: string; lat?: number; lng?: number; isDefault?: boolean }) => void;
+  onSubmit: (v: {
+    line1: string;
+    line2?: string;
+    city: string;
+    state: string;
+    zip: string;
+    lat?: number;
+    lng?: number;
+    isDefault?: boolean;
+  }) => void;
   onCancel: () => void;
   submitting?: boolean;
 }) {
@@ -193,12 +190,22 @@ function AddAddressForm({
         <View style={{ flexDirection: "row", gap: 10 }}>
           <View style={{ flex: 1 }}>
             <FormField label="Latitude">
-              <FormTextInput value={lat} onChangeText={setLat} keyboardType="numbers-and-punctuation" placeholder="37.7749" />
+              <FormTextInput
+                value={lat}
+                onChangeText={setLat}
+                keyboardType="numbers-and-punctuation"
+                placeholder="37.7749"
+              />
             </FormField>
           </View>
           <View style={{ flex: 1 }}>
             <FormField label="Longitude">
-              <FormTextInput value={lng} onChangeText={setLng} keyboardType="numbers-and-punctuation" placeholder="-122.4194" />
+              <FormTextInput
+                value={lng}
+                onChangeText={setLng}
+                keyboardType="numbers-and-punctuation"
+                placeholder="-122.4194"
+              />
             </FormField>
           </View>
         </View>
@@ -231,7 +238,13 @@ function AddAddressForm({
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: ios.bg },
   center: { padding: 40, alignItems: "center" },
-  empty: { fontSize: 14, fontFamily: "Inter_400Regular", color: ios.label2, padding: 20, textAlign: "center" },
+  empty: {
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    color: ios.label2,
+    padding: 20,
+    textAlign: "center",
+  },
   addressCard: {
     backgroundColor: ios.bgElev,
     borderRadius: 12,

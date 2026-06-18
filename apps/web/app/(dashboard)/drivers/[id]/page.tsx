@@ -19,7 +19,13 @@ import {
 import { Badge, Button, Card, StatCard, Table, cn } from "@routeflow/ui/web";
 import { useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
-import { useDriver, useDriverHistory, useDriverMetrics, useUpdateDriver, useDeleteDriver } from "@/lib/api/drivers";
+import {
+  useDriver,
+  useDriverHistory,
+  useDriverMetrics,
+  useUpdateDriver,
+  useDeleteDriver,
+} from "@/lib/api/drivers";
 import { EditDriverModal } from "../_components/EditDriverModal";
 
 // ─── Route run table columns ──────────────────────────────────────────────────
@@ -37,34 +43,26 @@ const runColumns: ColumnDef<RouteRunRow, unknown>[] = [
     accessorKey: "createdAt",
     header: "Date",
     cell: ({ row }) => (
-      <span className="text-navy/70">
-        {new Date(row.original.createdAt).toLocaleDateString()}
-      </span>
+      <span className="text-navy/70">{new Date(row.original.createdAt).toLocaleDateString()}</span>
     ),
   },
   {
     id: "routeName",
     header: "Route",
     cell: ({ row }) => (
-      <span className="font-medium text-navy">
-        {row.original.route?.name ?? "—"}
-      </span>
+      <span className="font-medium text-navy">{row.original.route?.name ?? "—"}</span>
     ),
   },
   {
     id: "stops",
     header: "Stops",
     enableSorting: false,
-    cell: ({ row }) => (
-      <span className="text-navy/70">{row.original._count.stops}</span>
-    ),
+    cell: ({ row }) => <span className="text-navy/70">{row.original._count.stops}</span>,
   },
   {
     accessorKey: "status",
     header: "Status",
-    cell: ({ row }) => (
-      <span className="text-navy/70">{row.original.status}</span>
-    ),
+    cell: ({ row }) => <span className="text-navy/70">{row.original.status}</span>,
   },
 ];
 
@@ -76,7 +74,7 @@ function TabTrigger({ value, children }: { value: string; children: React.ReactN
       value={value}
       className={cn(
         "-mb-px border-b-2 px-4 py-3 text-sm font-medium transition-colors",
-        "border-transparent text-navy/60 hover:text-navy",
+        "border-transparent text-navy/70 hover:text-navy",
         "data-[state=active]:border-brand-500 data-[state=active]:text-navy",
       )}
     >
@@ -87,12 +85,20 @@ function TabTrigger({ value, children }: { value: string; children: React.ReactN
 
 // ─── Info row ─────────────────────────────────────────────────────────────────
 
-function InfoRow({ icon: Icon, label, value }: { icon: React.ElementType; label: string; value: string }) {
+function InfoRow({
+  icon: Icon,
+  label,
+  value,
+}: {
+  icon: React.ElementType;
+  label: string;
+  value: string;
+}) {
   return (
     <div className="flex items-start gap-3">
-      <Icon className="mt-0.5 h-4 w-4 shrink-0 text-navy/40" />
+      <Icon className="mt-0.5 h-4 w-4 shrink-0 text-navy/70" />
       <div>
-        <p className="text-xs text-navy/50">{label}</p>
+        <p className="text-xs text-navy/70">{label}</p>
         <p className="mt-0.5 text-sm font-medium text-navy">{value}</p>
       </div>
     </div>
@@ -135,19 +141,17 @@ export default function DriverDetailPage({ params }: { params: { id: string } })
     return (
       <div className="flex flex-col items-center gap-4 p-12 text-center">
         <p className="text-base font-medium text-navy">Driver not found.</p>
-        <Button variant="secondary" href="/drivers">Back to Drivers</Button>
+        <Button variant="secondary" href="/drivers">
+          Back to Drivers
+        </Button>
       </div>
     );
   }
 
-  const vehicleLabel = [
-    driver.vehicleMake,
-    driver.vehicleModel,
-    driver.vehicleColour,
-    driver.vehiclePlate,
-  ]
-    .filter(Boolean)
-    .join(" · ") || "—";
+  const vehicleLabel =
+    [driver.vehicleMake, driver.vehicleModel, driver.vehicleColour, driver.vehiclePlate]
+      .filter(Boolean)
+      .join(" · ") || "—";
 
   const statusBadge = () => {
     return <Badge status={driver.status === "ACTIVE" ? "ACTIVE" : "INACTIVE"} />;
@@ -166,7 +170,8 @@ export default function DriverDetailPage({ params }: { params: { id: string } })
       toast({ title: "Driver deleted", variant: "success" });
       router.push("/drivers");
     } catch (err: unknown) {
-      const apiMsg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
+      const apiMsg = (err as { response?: { data?: { message?: string } } })?.response?.data
+        ?.message;
       toast({ title: apiMsg || "Failed to delete driver", variant: "error" });
       setShowDeleteConfirm(false);
     }
@@ -177,7 +182,7 @@ export default function DriverDetailPage({ params }: { params: { id: string } })
       {/* Back */}
       <Link
         href="/drivers"
-        className="flex items-center gap-1.5 text-sm text-navy/60 hover:text-navy transition-colors"
+        className="flex items-center gap-1.5 text-sm text-navy/70 hover:text-navy transition-colors"
       >
         <ArrowLeft className="h-4 w-4" />
         Drivers
@@ -187,7 +192,7 @@ export default function DriverDetailPage({ params }: { params: { id: string } })
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-navy">{driver.contactName}</h1>
-          <p className="mt-1 text-sm text-navy/60">@{driver.user.username}</p>
+          <p className="mt-1 text-sm text-navy/70">@{driver.user.username}</p>
         </div>
         <div className="flex items-center gap-2">
           {statusBadge()}
@@ -238,15 +243,15 @@ export default function DriverDetailPage({ params }: { params: { id: string } })
             <Card title="Account Status">
               <div className="flex flex-col gap-3">
                 <div className="flex items-center justify-between">
-                  <p className="text-sm text-navy/60">Status</p>
+                  <p className="text-sm text-navy/70">Status</p>
                   {statusBadge()}
                 </div>
                 <div className="flex items-center justify-between">
-                  <p className="text-sm text-navy/60">Email</p>
+                  <p className="text-sm text-navy/70">Email</p>
                   <p className="text-sm font-medium text-navy">{driver.user.email}</p>
                 </div>
                 <div className="flex items-center justify-between">
-                  <p className="text-sm text-navy/60">Account</p>
+                  <p className="text-sm text-navy/70">Account</p>
                   <p className="text-sm font-medium text-navy">{driver.user.status}</p>
                 </div>
               </div>
@@ -258,11 +263,7 @@ export default function DriverDetailPage({ params }: { params: { id: string } })
         <Tabs.Content value="history" className="mt-5 focus:outline-none">
           <Card title="Route Run History">
             <div className="-mx-6 -mb-6">
-              <Table
-                data={runs}
-                columns={runColumns}
-                emptyState="No route runs recorded yet."
-              />
+              <Table data={runs} columns={runColumns} emptyState="No route runs recorded yet." />
             </div>
           </Card>
         </Tabs.Content>
@@ -275,15 +276,22 @@ export default function DriverDetailPage({ params }: { params: { id: string } })
               value={completedRuns}
               icon={<CheckCircle2 className="h-5 w-5" />}
             />
-            <StatCard
-              label="Total Runs"
-              value={totalRuns}
-              icon={<MapPin className="h-5 w-5" />}
-            />
+            <StatCard label="Total Runs" value={totalRuns} icon={<MapPin className="h-5 w-5" />} />
             <StatCard
               label="Completion Rate"
               value={`${completionRate}%`}
-              icon={<AlertTriangle className={cn("h-5 w-5", completionRate >= 95 ? "text-success" : completionRate >= 85 ? "text-warning" : "text-danger")} />}
+              icon={
+                <AlertTriangle
+                  className={cn(
+                    "h-5 w-5",
+                    completionRate >= 95
+                      ? "text-success"
+                      : completionRate >= 85
+                        ? "text-warning"
+                        : "text-danger",
+                  )}
+                />
+              }
             />
           </div>
         </Tabs.Content>

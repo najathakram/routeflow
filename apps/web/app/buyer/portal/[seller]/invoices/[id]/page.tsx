@@ -25,7 +25,11 @@ function fmt(n: number) {
 
 function formatDate(d: string | null) {
   if (!d) return "N/A";
-  return new Date(d).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+  return new Date(d).toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
 }
 
 function getStatusVariant(s: string): "success" | "warning" | "danger" | "neutral" {
@@ -82,9 +86,7 @@ export default function BuyerInvoiceDetailPage() {
       toast({
         title: "Couldn't download PDF",
         description:
-          status === 401
-            ? "Please refresh the page and try again."
-            : "Try again in a moment.",
+          status === 401 ? "Please refresh the page and try again." : "Try again in a moment.",
         variant: "error",
       });
     } finally {
@@ -117,7 +119,7 @@ export default function BuyerInvoiceDetailPage() {
     <div className="p-6 max-w-4xl">
       <button
         onClick={() => router.push(`/buyer/portal/${sellerSlug}/invoices`)}
-        className="mb-4 flex items-center gap-1.5 text-sm text-navy/60 hover:text-navy transition-colors"
+        className="mb-4 flex items-center gap-1.5 text-sm text-navy/70 hover:text-navy transition-colors"
       >
         <ArrowLeft className="h-4 w-4" /> Back to Invoices
       </button>
@@ -126,7 +128,7 @@ export default function BuyerInvoiceDetailPage() {
       <div className="flex items-start justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-navy">{invoice.invoiceNumber}</h1>
-          <p className="text-sm text-navy/60 mt-1">
+          <p className="text-sm text-navy/70 mt-1">
             Issued {formatDate(invoice.issueDate)} · Due {formatDate(invoice.dueDate)}
           </p>
         </div>
@@ -165,7 +167,7 @@ export default function BuyerInvoiceDetailPage() {
           },
         ].map((card) => (
           <div key={card.label} className="rounded-xl border border-surface-border bg-white p-4">
-            <div className="flex items-center gap-2 text-xs text-navy/50 mb-1">
+            <div className="flex items-center gap-2 text-xs text-navy/70 mb-1">
               <card.icon className="h-3.5 w-3.5" />
               {card.label}
             </div>
@@ -177,13 +179,11 @@ export default function BuyerInvoiceDetailPage() {
       {/* Line items */}
       <div className="rounded-xl border border-surface-border bg-white overflow-hidden mb-6">
         <div className="border-b border-surface-border bg-surface-raised px-4 py-3">
-          <h2 className="text-sm font-semibold text-navy">
-            Items ({invoice.items?.length ?? 0})
-          </h2>
+          <h2 className="text-sm font-semibold text-navy">Items ({invoice.items?.length ?? 0})</h2>
         </div>
         <table className="w-full">
           <thead>
-            <tr className="border-b border-surface-border text-xs text-navy/50 uppercase tracking-wider">
+            <tr className="border-b border-surface-border text-xs text-navy/70 uppercase tracking-wider">
               <th className="px-4 py-2.5 text-left">Description</th>
               <th className="px-4 py-2.5 text-right w-20">Qty</th>
               <th className="px-4 py-2.5 text-right w-28">Unit Price</th>
@@ -195,8 +195,12 @@ export default function BuyerInvoiceDetailPage() {
               <tr key={item.id} className="hover:bg-surface-raised/50">
                 <td className="px-4 py-3 text-sm font-medium text-navy">{item.description}</td>
                 <td className="px-4 py-3 text-right text-sm text-navy">{Number(item.qty)}</td>
-                <td className="px-4 py-3 text-right text-sm text-navy/70">{fmt(Number(item.unitPrice))}</td>
-                <td className="px-4 py-3 text-right text-sm font-medium text-navy">{fmt(Number(item.subtotal))}</td>
+                <td className="px-4 py-3 text-right text-sm text-navy/70">
+                  {fmt(Number(item.unitPrice))}
+                </td>
+                <td className="px-4 py-3 text-right text-sm font-medium text-navy">
+                  {fmt(Number(item.subtotal))}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -213,7 +217,7 @@ export default function BuyerInvoiceDetailPage() {
           </div>
           <table className="w-full">
             <thead>
-              <tr className="border-b border-surface-border text-xs text-navy/50 uppercase tracking-wider">
+              <tr className="border-b border-surface-border text-xs text-navy/70 uppercase tracking-wider">
                 <th className="px-4 py-2.5 text-left">Date</th>
                 <th className="px-4 py-2.5 text-left">Method</th>
                 <th className="px-4 py-2.5 text-right">Amount</th>
@@ -224,7 +228,9 @@ export default function BuyerInvoiceDetailPage() {
                 <tr key={p.id} className="hover:bg-surface-raised/50">
                   <td className="px-4 py-3 text-sm text-navy">{formatDate(p.recordedAt)}</td>
                   <td className="px-4 py-3 text-sm text-navy/70">{p.method.replace(/_/g, " ")}</td>
-                  <td className="px-4 py-3 text-right text-sm font-medium text-success">{fmt(Number(p.amount))}</td>
+                  <td className="px-4 py-3 text-right text-sm font-medium text-success">
+                    {fmt(Number(p.amount))}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -235,7 +241,7 @@ export default function BuyerInvoiceDetailPage() {
       {/* Notes */}
       {invoice.notes && (
         <div className="rounded-xl border border-surface-border bg-white p-4 mb-6">
-          <p className="text-xs text-navy/50 mb-1">Notes</p>
+          <p className="text-xs text-navy/70 mb-1">Notes</p>
           <p className="text-sm text-navy">{invoice.notes}</p>
         </div>
       )}
@@ -243,7 +249,7 @@ export default function BuyerInvoiceDetailPage() {
       {/* Terms */}
       {invoice.terms && (
         <div className="rounded-xl border border-surface-border bg-white p-4">
-          <p className="text-xs text-navy/50 mb-1">Terms &amp; Conditions</p>
+          <p className="text-xs text-navy/70 mb-1">Terms &amp; Conditions</p>
           <p className="text-sm text-navy">{invoice.terms}</p>
         </div>
       )}

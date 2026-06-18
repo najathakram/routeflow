@@ -21,11 +21,7 @@ const customerSchema = z
     firstName: z.string().optional().or(z.literal("")),
     lastName: z.string().optional().or(z.literal("")),
     // Shared contact
-    phone: z
-      .string()
-      .min(7, "Enter a valid phone number")
-      .optional()
-      .or(z.literal("")),
+    phone: z.string().min(7, "Enter a valid phone number").optional().or(z.literal("")),
     mobile: z.string().optional().or(z.literal("")),
     email: z.string().email("Enter a valid email"),
     // Account
@@ -101,13 +97,21 @@ export interface CustomerFormModalProps {
     currency?: string;
     user?: { email?: string };
     notes?: string;
-    addresses?: { line1?: string; street?: string; city?: string; zip?: string; addressType?: string }[];
+    addresses?: {
+      line1?: string;
+      street?: string;
+      city?: string;
+      zip?: string;
+      addressType?: string;
+    }[];
   };
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function buildDefaultValues(initialData?: CustomerFormModalProps["initialData"]): CustomerFormValues {
+function buildDefaultValues(
+  initialData?: CustomerFormModalProps["initialData"],
+): CustomerFormValues {
   if (!initialData) {
     return {
       customerType: "BUSINESS",
@@ -156,12 +160,7 @@ function buildDefaultValues(initialData?: CustomerFormModalProps["initialData"])
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export function CustomerFormModal({
-  isOpen,
-  onClose,
-  mode,
-  initialData,
-}: CustomerFormModalProps) {
+export function CustomerFormModal({ isOpen, onClose, mode, initialData }: CustomerFormModalProps) {
   const { toast } = useToast();
   const createCustomer = useCreateCustomer();
   const updateCustomer = useUpdateCustomer();
@@ -210,15 +209,22 @@ export function CustomerFormModal({
 
     if (mode === "add") {
       let hasAddressError = false;
-      if (!data.street?.trim()) { setStreetError("Required"); hasAddressError = true; } else setStreetError("");
-      if (!data.city?.trim())   { setCityError("Required");   hasAddressError = true; } else setCityError("");
-      if (!data.zip?.trim())    { setZipError("Required");    hasAddressError = true; } else setZipError("");
+      if (!data.street?.trim()) {
+        setStreetError("Required");
+        hasAddressError = true;
+      } else setStreetError("");
+      if (!data.city?.trim()) {
+        setCityError("Required");
+        hasAddressError = true;
+      } else setCityError("");
+      if (!data.zip?.trim()) {
+        setZipError("Required");
+        hasAddressError = true;
+      } else setZipError("");
       if (hasAddressError) return;
 
       const username =
-        data.email.split("@")[0].replace(/[^a-z0-9]/gi, "") +
-        "_" +
-        Date.now().toString(36);
+        data.email.split("@")[0].replace(/[^a-z0-9]/gi, "") + "_" + Date.now().toString(36);
 
       createCustomer.mutate(
         {
@@ -327,7 +333,7 @@ export function CustomerFormModal({
 
           {/* ── Customer Type Toggle ─────────────────────────────────────────── */}
           <section className="space-y-3">
-            <p className="text-xs font-semibold uppercase tracking-wider text-navy/40">
+            <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">
               Customer Type
             </p>
             <div className="flex gap-2">
@@ -340,7 +346,7 @@ export function CustomerFormModal({
                     "flex-1 rounded-lg border px-4 py-2.5 text-sm font-medium transition-colors",
                     customerType === t
                       ? "border-brand-500 bg-brand-50 text-brand-600"
-                      : "border-surface-border bg-white text-navy/60 hover:border-brand-300",
+                      : "border-surface-border bg-white text-navy/70 hover:border-brand-300",
                   )}
                 >
                   {t === "BUSINESS" ? "🏢 Business" : "👤 Individual"}
@@ -351,7 +357,7 @@ export function CustomerFormModal({
 
           {/* ── Name Fields (type-specific) ──────────────────────────────────── */}
           <section className="space-y-3">
-            <p className="text-xs font-semibold uppercase tracking-wider text-navy/40">
+            <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">
               {isBusiness ? "Business Info" : "Personal Info"}
             </p>
 
@@ -409,7 +415,7 @@ export function CustomerFormModal({
 
           {/* ── Contact Details (shared) ─────────────────────────────────────── */}
           <section className="space-y-3">
-            <p className="text-xs font-semibold uppercase tracking-wider text-navy/40">
+            <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">
               Contact Details
             </p>
             <div className="grid grid-cols-2 gap-3">
@@ -438,9 +444,7 @@ export function CustomerFormModal({
 
           {/* ── Account ─────────────────────────────────────────────────────── */}
           <section className="space-y-3">
-            <p className="text-xs font-semibold uppercase tracking-wider text-navy/40">
-              Account
-            </p>
+            <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">Account</p>
             <div className="grid grid-cols-2 gap-3">
               <Select
                 label="Currency"
@@ -480,7 +484,7 @@ export function CustomerFormModal({
 
           {/* ── Primary Delivery Address ─────────────────────────────────────── */}
           <section className="space-y-3">
-            <p className="text-xs font-semibold uppercase tracking-wider text-navy/40">
+            <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">
               Primary Delivery Address
               {mode === "edit" && (
                 <span className="ml-1 font-normal normal-case text-navy/30">(optional)</span>
@@ -496,7 +500,7 @@ export function CustomerFormModal({
                     "rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors",
                     watch("addressType") === t
                       ? "border-brand-500 bg-brand-50 text-brand-600"
-                      : "border-surface-border bg-white text-navy/60 hover:border-brand-300",
+                      : "border-surface-border bg-white text-navy/70 hover:border-brand-300",
                   )}
                 >
                   {t === "BILLING" ? "Billing" : "Shipping"}

@@ -1,8 +1,5 @@
 import { useRouter } from "expo-router";
-import {
-  CustomerForm,
-  emptyCustomerForm,
-} from "../../../components/CustomerForm";
+import { CustomerForm, emptyCustomerForm } from "../../../components/CustomerForm";
 import { useCreateCustomer } from "../../../lib/api/customers";
 import { showToast } from "../../../lib/toast";
 
@@ -21,8 +18,7 @@ export default function NewCustomerScreen() {
             showToast("Customer created");
             router.replace(`/(operator)/customers/${res.id}`);
           },
-          onError: (e: any) =>
-            showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+          onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
         })
       }
     />

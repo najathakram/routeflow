@@ -16,18 +16,8 @@ import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
-import {
-  ListGroup,
-  NavAction,
-  NavBackButton,
-  NavBar,
-  Pill,
-} from "@routeflow/ui/mobile/ios";
-import {
-  useActiveRouteRun,
-  useRouteRun,
-  type RouteRunStop,
-} from "../../../../../lib/api/routes";
+import { ListGroup, NavAction, NavBackButton, NavBar, Pill } from "@routeflow/ui/mobile/ios";
+import { useActiveRouteRun, useRouteRun, type RouteRunStop } from "../../../../../lib/api/routes";
 import { usePodStore } from "../../../../../store/podStore";
 import { openInMaps } from "../../../../../components/openInMaps";
 
@@ -56,9 +46,7 @@ function itemsFromStop(stop: RouteRunStop): Array<{
       lines.push({
         id: li.id,
         name: li.product?.name ?? "Item",
-        sku: li.product
-          ? `${li.product.unit ?? ""}${li.product.name ? "" : ""}`
-          : "",
+        sku: li.product ? `${li.product.unit ?? ""}${li.product.name ? "" : ""}` : "",
         qty: Number(li.qty ?? 0),
         delivered: li.status === "DELIVERED",
         short: li.status === "PARTIAL" || li.status === "REFUSED",
@@ -79,10 +67,7 @@ export default function StopDetailScreen() {
   const runId = params.runId ?? runIdFromActive;
   const { data: run, isLoading: runLoading } = useRouteRun(runId ?? "");
 
-  const stop = useMemo(
-    () => run?.stops?.find((s) => s.id === stopId),
-    [run, stopId],
-  );
+  const stop = useMemo(() => run?.stops?.find((s) => s.id === stopId), [run, stopId]);
   const pod = usePodStore((s) => s.pods[stopId ?? ""] ?? undefined);
 
   if (activeLoading || runLoading) {
@@ -90,7 +75,9 @@ export default function StopDetailScreen() {
       <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
         <NavBar
           inlineTitle="Stop"
-          leading={<NavBackButton label="Route" onPress={() => router.replace("/(driver)/route" as any)} />}
+          leading={
+            <NavBackButton label="Route" onPress={() => router.replace("/(driver)/route" as any)} />
+          }
         />
         <View style={styles.center}>
           <ActivityIndicator color={ios.brand} />
@@ -104,7 +91,9 @@ export default function StopDetailScreen() {
       <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
         <NavBar
           inlineTitle="Stop"
-          leading={<NavBackButton label="Route" onPress={() => router.replace("/(driver)/route" as any)} />}
+          leading={
+            <NavBackButton label="Route" onPress={() => router.replace("/(driver)/route" as any)} />
+          }
         />
         <View style={styles.center}>
           <Ionicons name="alert-circle-outline" size={36} color={ios.label3} />
@@ -170,10 +159,7 @@ export default function StopDetailScreen() {
   const dollarTotal = (stop.orders ?? []).reduce(
     (sum, o) =>
       sum +
-      (o.lineItems ?? []).reduce(
-        (s, li) => s + Number(li.qty ?? 0) * Number(li.unitPrice ?? 0),
-        0,
-      ),
+      (o.lineItems ?? []).reduce((s, li) => s + Number(li.qty ?? 0) * Number(li.unitPrice ?? 0), 0),
     0,
   );
 
@@ -181,7 +167,9 @@ export default function StopDetailScreen() {
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <NavBar
         inlineTitle={`Stop ${stop.stopNumber} / ${totalStops}`}
-        leading={<NavBackButton label="Route" onPress={() => router.replace("/(driver)/route" as any)} />}
+        leading={
+          <NavBackButton label="Route" onPress={() => router.replace("/(driver)/route" as any)} />
+        }
         trailing={<NavAction label="Call" onPress={openTel} />}
       />
 
@@ -228,14 +216,10 @@ export default function StopDetailScreen() {
                 <View
                   style={[
                     styles.check,
-                    i.delivered
-                      ? { backgroundColor: ios.system.green, borderWidth: 0 }
-                      : null,
+                    i.delivered ? { backgroundColor: ios.system.green, borderWidth: 0 } : null,
                   ]}
                 >
-                  {i.delivered ? (
-                    <Ionicons name="checkmark" size={13} color="#fff" />
-                  ) : null}
+                  {i.delivered ? <Ionicons name="checkmark" size={13} color="#fff" /> : null}
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.itemName}>{i.name}</Text>
@@ -344,10 +328,7 @@ function PodTile({
   captured?: boolean;
 }) {
   return (
-    <Pressable
-      style={[styles.podTile, captured && styles.podTileCaptured]}
-      onPress={onPress}
-    >
+    <Pressable style={[styles.podTile, captured && styles.podTileCaptured]} onPress={onPress}>
       <Ionicons name={icon} size={22} color={captured ? ios.brand : ios.label2} />
       <Text style={[styles.podTileLabel, captured && { color: ios.brand }]}>{label}</Text>
     </Pressable>
@@ -362,13 +343,7 @@ function SectionRow({ title }: { title: string }) {
   );
 }
 
-function SecondaryBtn({
-  label,
-  onPress,
-}: {
-  label: string;
-  onPress?: () => void;
-}) {
+function SecondaryBtn({ label, onPress }: { label: string; onPress?: () => void }) {
   return (
     <Pressable onPress={onPress} style={styles.secondaryBtn}>
       <Text style={styles.secondaryBtnText}>{label}</Text>

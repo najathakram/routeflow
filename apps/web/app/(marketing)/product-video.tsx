@@ -176,9 +176,7 @@ function MobileVideo() {
           </div>
         </div>
 
-        <p className="mt-4 text-xs text-blue-300/50">
-          Rotate to landscape for a fuller view
-        </p>
+        <p className="mt-4 text-xs text-blue-300/50">Rotate to landscape for a fuller view</p>
       </div>
     </section>
   );

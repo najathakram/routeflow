@@ -18,9 +18,7 @@ const { PrismaPg } = require("../../../node_modules/@prisma/adapter-pg");
 const { Pool } = require("../../../node_modules/pg");
 const bcrypt = require("../../../node_modules/bcrypt");
 
-const dbUrl =
-  process.env.DATABASE_URL ??
-  "postgresql://user:pass@localhost:5432/routeflow_dev";
+const dbUrl = process.env.DATABASE_URL ?? "postgresql://user:pass@localhost:5432/routeflow_dev";
 
 const pool = new Pool({ connectionString: dbUrl });
 const adapter = new PrismaPg(pool);

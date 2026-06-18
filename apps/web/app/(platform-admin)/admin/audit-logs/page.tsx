@@ -83,7 +83,8 @@ export default function AuditLogsPage() {
     fetchLogs(page, debouncedFilters);
   }, [page, debouncedFilters, fetchLogs]);
 
-  const hasFilters = tenantIdFilter || actionFilter || entityTypeFilter || userIdFilter || fromDate || toDate;
+  const hasFilters =
+    tenantIdFilter || actionFilter || entityTypeFilter || userIdFilter || fromDate || toDate;
 
   const clearFilters = () => {
     setTenantIdFilter("");
@@ -159,15 +160,15 @@ export default function AuditLogsPage() {
             />
           </div>
         </div>
-        {data && (
-          <p className="mt-2 text-xs text-slate-500">{data.meta.total} total entries</p>
-        )}
+        {data && <p className="mt-2 text-xs text-slate-500">{data.meta.total} total entries</p>}
       </div>
 
       {loading && <div className="py-12 text-center text-slate-500">Loading audit logs...</div>}
 
       {error && (
-        <div className="mb-4 rounded-lg bg-red-900/40 px-4 py-3 text-sm text-red-400 ring-1 ring-red-700">{error}</div>
+        <div className="mb-4 rounded-lg bg-red-900/40 px-4 py-3 text-sm text-red-400 ring-1 ring-red-700">
+          {error}
+        </div>
       )}
 
       {data && !loading && (
@@ -189,17 +190,29 @@ export default function AuditLogsPage() {
                 <tbody className="divide-y divide-slate-700/50">
                   {data.data.map((log) => (
                     <tr key={log.id} className="hover:bg-slate-700/20">
-                      <td className="px-3 py-2 font-mono text-slate-400">{log.tenantId ? log.tenantId.slice(0, 8) + "..." : "—"}</td>
-                      <td className="px-3 py-2 font-mono text-slate-400">{log.userId ? log.userId.slice(0, 8) + "..." : "—"}</td>
+                      <td className="px-3 py-2 font-mono text-slate-400">
+                        {log.tenantId ? log.tenantId.slice(0, 8) + "..." : "—"}
+                      </td>
+                      <td className="px-3 py-2 font-mono text-slate-400">
+                        {log.userId ? log.userId.slice(0, 8) + "..." : "—"}
+                      </td>
                       <td className="px-3 py-2 font-mono text-slate-300">{log.action}</td>
                       <td className="px-3 py-2 text-slate-400">{log.entityType}</td>
-                      <td className="px-3 py-2 font-mono text-slate-500">{log.entityId ? log.entityId.slice(0, 8) + "..." : "—"}</td>
-                      <td className="px-3 py-2 text-slate-500">{new Date(log.createdAt).toLocaleString()}</td>
+                      <td className="px-3 py-2 font-mono text-slate-500">
+                        {log.entityId ? log.entityId.slice(0, 8) + "..." : "—"}
+                      </td>
+                      <td className="px-3 py-2 text-slate-500">
+                        {new Date(log.createdAt).toLocaleString()}
+                      </td>
                       <td className="px-3 py-2 text-slate-500">{log.ip ?? "—"}</td>
                     </tr>
                   ))}
                   {data.data.length === 0 && (
-                    <tr><td colSpan={7} className="px-4 py-10 text-center text-slate-500">No audit log entries found.</td></tr>
+                    <tr>
+                      <td colSpan={7} className="px-4 py-10 text-center text-slate-500">
+                        No audit log entries found.
+                      </td>
+                    </tr>
                   )}
                 </tbody>
               </table>
@@ -208,9 +221,23 @@ export default function AuditLogsPage() {
 
           {data.meta.pages > 1 && (
             <div className="mt-4 flex items-center justify-center gap-2">
-              <button disabled={page <= 1} onClick={() => setPage((p) => p - 1)} className="rounded-lg px-3 py-1.5 text-sm text-slate-400 hover:bg-slate-800 disabled:opacity-40">Prev</button>
-              <span className="text-sm text-slate-500">Page {data.meta.page} of {data.meta.pages}</span>
-              <button disabled={page >= data.meta.pages} onClick={() => setPage((p) => p + 1)} className="rounded-lg px-3 py-1.5 text-sm text-slate-400 hover:bg-slate-800 disabled:opacity-40">Next</button>
+              <button
+                disabled={page <= 1}
+                onClick={() => setPage((p) => p - 1)}
+                className="rounded-lg px-3 py-1.5 text-sm text-slate-400 hover:bg-slate-800 disabled:opacity-40"
+              >
+                Prev
+              </button>
+              <span className="text-sm text-slate-500">
+                Page {data.meta.page} of {data.meta.pages}
+              </span>
+              <button
+                disabled={page >= data.meta.pages}
+                onClick={() => setPage((p) => p + 1)}
+                className="rounded-lg px-3 py-1.5 text-sm text-slate-400 hover:bg-slate-800 disabled:opacity-40"
+              >
+                Next
+              </button>
             </div>
           )}
         </>

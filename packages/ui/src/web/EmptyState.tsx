@@ -28,15 +28,15 @@ const ILLUSTRATION_MAP: Record<
   Exclude<EmptyStateVariant, "custom">,
   React.ComponentType<{ size?: number; className?: string }>
 > = {
-  orders:    IllustrationNoOrders,
-  routes:    IllustrationNoRoutes,
+  orders: IllustrationNoOrders,
+  routes: IllustrationNoRoutes,
   customers: IllustrationNoCustomers,
-  products:  IllustrationNoProducts,
-  invoices:  IllustrationNoInvoices,
-  drivers:   IllustrationNoDrivers,
-  returns:   IllustrationNoReturns,
-  inbox:     IllustrationInboxZero,
-  data:      IllustrationNoData,
+  products: IllustrationNoProducts,
+  invoices: IllustrationNoInvoices,
+  drivers: IllustrationNoDrivers,
+  returns: IllustrationNoReturns,
+  inbox: IllustrationInboxZero,
+  data: IllustrationNoData,
 };
 
 export interface EmptyStateProps {
@@ -64,8 +64,7 @@ export function EmptyState({
   className,
   size = 80,
 }: EmptyStateProps) {
-  const IllustrationComp =
-    variant !== "custom" ? ILLUSTRATION_MAP[variant] : null;
+  const IllustrationComp = variant !== "custom" ? ILLUSTRATION_MAP[variant] : null;
 
   return (
     <div
@@ -82,9 +81,7 @@ export function EmptyState({
 
       <div className="space-y-1.5 max-w-sm">
         <p className="text-base font-semibold text-navy">{title}</p>
-        {description && (
-          <p className="text-sm text-navy/50 leading-relaxed">{description}</p>
-        )}
+        {description && <p className="text-sm text-navy/70 leading-relaxed">{description}</p>}
       </div>
 
       {action && <div className="mt-2">{action}</div>}

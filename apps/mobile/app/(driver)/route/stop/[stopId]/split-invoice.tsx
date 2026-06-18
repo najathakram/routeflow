@@ -18,7 +18,11 @@ import { SplitInvoiceScreen } from "../../../../../components/SplitInvoiceScreen
  */
 export default function DriverSplitInvoice() {
   const router = useRouter();
-  const { stopId, orderId, runId: runIdParam } = useLocalSearchParams<{
+  const {
+    stopId,
+    orderId,
+    runId: runIdParam,
+  } = useLocalSearchParams<{
     stopId: string;
     orderId?: string;
     runId?: string;
@@ -37,7 +41,10 @@ export default function DriverSplitInvoice() {
   if (runLoading) {
     return (
       <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
-        <NavBar inlineTitle="Split invoice" leading={<NavBackButton onPress={() => router.back()} />} />
+        <NavBar
+          inlineTitle="Split invoice"
+          leading={<NavBackButton onPress={() => router.back()} />}
+        />
         <View style={styles.center}>
           <ActivityIndicator color={ios.brand} />
         </View>
@@ -50,11 +57,12 @@ export default function DriverSplitInvoice() {
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
-      <NavBar inlineTitle="Split invoice" leading={<NavBackButton onPress={() => router.back()} />} />
+      <NavBar
+        inlineTitle="Split invoice"
+        leading={<NavBackButton onPress={() => router.back()} />}
+      />
       <ScrollView contentContainerStyle={{ padding: 16, gap: 14 }}>
-        <Text style={styles.helper}>
-          Pick the order you want to split into multiple invoices.
-        </Text>
+        <Text style={styles.helper}>Pick the order you want to split into multiple invoices.</Text>
         {orders.length === 0 ? (
           <Text style={styles.empty}>No orders at this stop.</Text>
         ) : (
@@ -75,7 +83,8 @@ export default function DriverSplitInvoice() {
                 <View style={{ flex: 1 }}>
                   <Text style={styles.orderNumber}>{o.orderNumber ?? o.id.slice(0, 8)}</Text>
                   <Text style={styles.orderSub}>
-                    {(o.lineItems?.length ?? 0)} line{(o.lineItems?.length ?? 0) === 1 ? "" : "s"} · {remaining} item{remaining === 1 ? "" : "s"} left to invoice
+                    {o.lineItems?.length ?? 0} line{(o.lineItems?.length ?? 0) === 1 ? "" : "s"} ·{" "}
+                    {remaining} item{remaining === 1 ? "" : "s"} left to invoice
                   </Text>
                 </View>
                 <Text style={styles.chevron}>›</Text>

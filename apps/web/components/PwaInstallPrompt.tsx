@@ -79,12 +79,12 @@ export function PwaInstallPrompt({
           <img src={logoSrc} alt="" className="h-9 w-9 shrink-0 rounded-lg" />
           <div className="flex-1 min-w-0">
             <p className="text-sm font-semibold text-navy">Install {appName}</p>
-            <p className="text-xs text-navy/50">Add to your home screen for quick access</p>
+            <p className="text-xs text-navy/70">Add to your home screen for quick access</p>
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <button
               onClick={dismiss}
-              className="rounded p-1.5 text-navy/40 hover:bg-surface-raised hover:text-navy transition-colors"
+              className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
               aria-label="Dismiss"
             >
               <X className="h-4 w-4" />
@@ -110,13 +110,13 @@ export function PwaInstallPrompt({
           <img src={logoSrc} alt="" className="h-9 w-9 shrink-0 rounded-lg" />
           <div className="flex-1 min-w-0">
             <p className="text-sm font-semibold text-navy">Install {appName}</p>
-            <p className="text-xs text-navy/50">
+            <p className="text-xs text-navy/70">
               Tap the <strong>Share</strong> button then <strong>Add to Home Screen</strong>
             </p>
           </div>
           <button
             onClick={dismiss}
-            className="rounded p-1.5 text-navy/40 hover:bg-surface-raised hover:text-navy transition-colors shrink-0"
+            className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors shrink-0"
             aria-label="Dismiss"
           >
             <X className="h-4 w-4" />

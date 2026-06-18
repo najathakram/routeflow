@@ -110,10 +110,17 @@ export default function AdminSettingsPage() {
   };
 
   const handleClearKey = async () => {
-    if (!confirm("Remove the stored API key? The system will fall back to the ANTHROPIC_API_KEY environment variable.")) return;
+    if (
+      !confirm(
+        "Remove the stored API key? The system will fall back to the ANTHROPIC_API_KEY environment variable.",
+      )
+    )
+      return;
     setSaving(true);
     try {
-      const { data } = await superAdminClient.patch<AiConfig>("/platform-admin/ai-config", { apiKey: "" });
+      const { data } = await superAdminClient.patch<AiConfig>("/platform-admin/ai-config", {
+        apiKey: "",
+      });
       setConfig(data);
       setApiKey("");
     } catch (err: any) {
@@ -126,7 +133,6 @@ export default function AdminSettingsPage() {
   return (
     <div className="min-h-full bg-slate-950 px-6 py-8">
       <div className="mx-auto max-w-2xl">
-
         {/* Header */}
         <div className="mb-8 flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-600/20 ring-1 ring-indigo-500/30">
@@ -146,7 +152,6 @@ export default function AdminSettingsPage() {
           </div>
         ) : (
           <form onSubmit={handleSave} className="flex flex-col gap-6">
-
             {/* Status card */}
             <div className="rounded-xl border border-slate-700/50 bg-slate-900 p-5">
               <div className="flex items-center justify-between">
@@ -156,12 +161,15 @@ export default function AdminSettingsPage() {
                     <p className="mt-0.5 font-mono text-xs text-slate-500">{config.keyPreview}</p>
                   )}
                 </div>
-                <StatusBadge configured={config?.configured ?? false} source={config?.source ?? "none"} />
+                <StatusBadge
+                  configured={config?.configured ?? false}
+                  source={config?.source ?? "none"}
+                />
               </div>
               {config?.source === "environment" && (
                 <p className="mt-3 rounded-lg bg-amber-950/30 px-3 py-2 text-xs text-amber-400">
-                  Key is sourced from the <code className="font-mono">ANTHROPIC_API_KEY</code> environment variable.
-                  Enter a key below to override it in the database instead.
+                  Key is sourced from the <code className="font-mono">ANTHROPIC_API_KEY</code>{" "}
+                  environment variable. Enter a key below to override it in the database instead.
                 </p>
               )}
             </div>
@@ -178,7 +186,9 @@ export default function AdminSettingsPage() {
                   type={showKey ? "text" : "password"}
                   value={apiKey}
                   onChange={(e) => setApiKey(e.target.value)}
-                  placeholder={config?.configured ? "Enter new key to replace current" : "sk-ant-api03-..."}
+                  placeholder={
+                    config?.configured ? "Enter new key to replace current" : "sk-ant-api03-..."
+                  }
                   autoComplete="off"
                   spellCheck={false}
                   className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2.5 pr-10 font-mono text-sm text-slate-200 placeholder:text-slate-600 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
@@ -192,7 +202,8 @@ export default function AdminSettingsPage() {
                 </button>
               </div>
               <p className="mt-2 text-xs text-slate-500">
-                Leave blank to keep the current key. The key is stored securely and only a preview is shown.
+                Leave blank to keep the current key. The key is stored securely and only a preview
+                is shown.
               </p>
               {config?.source === "database" && (
                 <button
@@ -215,12 +226,18 @@ export default function AdminSettingsPage() {
                   const isOpus = m.includes("opus");
                   const isSonnet = m.includes("sonnet");
                   const isHaiku = m.includes("haiku");
-                  const tier = isOpus ? "Most capable" : isSonnet ? "Balanced" : isHaiku ? "Fastest" : "";
+                  const tier = isOpus
+                    ? "Most capable"
+                    : isSonnet
+                      ? "Balanced"
+                      : isHaiku
+                        ? "Fastest"
+                        : "";
                   const tierColor = isOpus
                     ? "text-purple-400"
                     : isSonnet
-                    ? "text-indigo-400"
-                    : "text-emerald-400";
+                      ? "text-indigo-400"
+                      : "text-emerald-400";
 
                   return (
                     <label
@@ -242,9 +259,7 @@ export default function AdminSettingsPage() {
                         />
                         <span className="font-mono text-sm text-slate-200">{m}</span>
                       </div>
-                      {tier && (
-                        <span className={`text-xs font-medium ${tierColor}`}>{tier}</span>
-                      )}
+                      {tier && <span className={`text-xs font-medium ${tierColor}`}>{tier}</span>}
                     </label>
                   );
                 })}
@@ -270,7 +285,8 @@ export default function AdminSettingsPage() {
                 <span className="text-sm text-slate-500">tokens (256 – 32,768)</span>
               </div>
               <p className="mt-2 text-xs text-slate-500">
-                Maximum number of tokens Claude will generate per response. 4,096 is a sensible default.
+                Maximum number of tokens Claude will generate per response. 4,096 is a sensible
+                default.
               </p>
             </div>
 

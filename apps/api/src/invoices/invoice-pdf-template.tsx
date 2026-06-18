@@ -325,187 +325,190 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
           how short the invoice body is.
         */}
         <View style={{ flexGrow: 1 }}>
-        {/* Header */}
-        <View style={styles.header}>
-          <View>
-            {hasTenant ? (
-              <>
-                <View style={styles.logoBox}>
-                  {tenant.logoDataUri ? (
-                    <Image src={tenant.logoDataUri} style={styles.logoImage} />
+          {/* Header */}
+          <View style={styles.header}>
+            <View>
+              {hasTenant ? (
+                <>
+                  <View style={styles.logoBox}>
+                    {tenant.logoDataUri ? (
+                      <Image src={tenant.logoDataUri} style={styles.logoImage} />
+                    ) : null}
+                    <Text style={styles.logoText}>{tenant.businessName}</Text>
+                  </View>
+                  {tenant.addressLine1 ? (
+                    <Text style={styles.logoSub}>{tenant.addressLine1}</Text>
                   ) : null}
-                  <Text style={styles.logoText}>{tenant.businessName}</Text>
+                  {tenant.addressLine2 ? (
+                    <Text style={styles.logoSub}>{tenant.addressLine2}</Text>
+                  ) : null}
+                  {tenantAddrLine ? <Text style={styles.logoSub}>{tenantAddrLine}</Text> : null}
+                  {tenant.phone ? <Text style={styles.logoSub}>{tenant.phone}</Text> : null}
+                  {tenant.customerEmail ? (
+                    <Text style={styles.logoSub}>{tenant.customerEmail}</Text>
+                  ) : null}
+                  {tenant.website ? <Text style={styles.logoSub}>{tenant.website}</Text> : null}
+                </>
+              ) : (
+                <View style={styles.logoBox}>
+                  <View style={styles.logoSquare}>
+                    <Text style={{ fontSize: 9, fontFamily: "Helvetica-Bold", color: "#fff" }}>
+                      RF
+                    </Text>
+                  </View>
+                  <Text style={styles.logoText}>RouteFlow</Text>
                 </View>
-                {tenant.addressLine1 ? (
-                  <Text style={styles.logoSub}>{tenant.addressLine1}</Text>
-                ) : null}
-                {tenant.addressLine2 ? (
-                  <Text style={styles.logoSub}>{tenant.addressLine2}</Text>
-                ) : null}
-                {tenantAddrLine ? <Text style={styles.logoSub}>{tenantAddrLine}</Text> : null}
-                {tenant.phone ? <Text style={styles.logoSub}>{tenant.phone}</Text> : null}
-                {tenant.customerEmail ? (
-                  <Text style={styles.logoSub}>{tenant.customerEmail}</Text>
-                ) : null}
-                {tenant.website ? <Text style={styles.logoSub}>{tenant.website}</Text> : null}
-              </>
-            ) : (
-              <View style={styles.logoBox}>
-                <View style={styles.logoSquare}>
-                  <Text style={{ fontSize: 9, fontFamily: "Helvetica-Bold", color: "#fff" }}>
-                    RF
-                  </Text>
-                </View>
-                <Text style={styles.logoText}>RouteFlow</Text>
-              </View>
-            )}
+              )}
+            </View>
+            <View style={{ alignItems: "flex-end" }}>
+              <Text style={styles.invoiceTitle}>INVOICE</Text>
+              <Text style={styles.invoiceNumber}>{invoice.invoiceNumber}</Text>
+              <StatusBadge status={invoice.status} styles={styles} />
+            </View>
           </View>
-          <View style={{ alignItems: "flex-end" }}>
-            <Text style={styles.invoiceTitle}>INVOICE</Text>
-            <Text style={styles.invoiceNumber}>{invoice.invoiceNumber}</Text>
-            <StatusBadge status={invoice.status} styles={styles} />
-          </View>
-        </View>
 
-        {/* Billing info */}
-        <View style={styles.billGrid}>
-          <View style={styles.billSection}>
-            <Text style={styles.billLabel}>Bill To</Text>
-            <Text style={styles.billValue}>{invoice.customer.businessName}</Text>
-            {invoice.customer.contactName ? (
-              <Text style={styles.billSub}>{invoice.customer.contactName}</Text>
-            ) : null}
-            {invoice.customer.phone ? (
-              <Text style={styles.billSub}>{invoice.customer.phone}</Text>
-            ) : null}
-            {addr ? (
-              <Text style={styles.billSub}>
-                {addr.line1}, {addr.city}, {addr.state} {addr.zip}
-              </Text>
-            ) : null}
-          </View>
-          <View style={{ flex: 1, alignItems: "flex-end" }}>
-            <Text style={styles.billLabel}>Invoice Details</Text>
-            <Text style={styles.billSub}>Invoice Date: {fmtDate(invoice.issueDate)}</Text>
-            {invoice.dueDate ? (
-              <Text style={styles.billSub}>Due Date: {fmtDate(invoice.dueDate)}</Text>
-            ) : null}
-            {invoice.paidAt ? (
-              <Text style={[styles.billSub, { color: SUCCESS }]}>
-                Paid: {fmtDate(invoice.paidAt)}
-              </Text>
-            ) : null}
-          </View>
-        </View>
-
-        {/* Line items */}
-        <View style={styles.tableHeader}>
-          <Text style={[styles.tableHeaderText, styles.colDescription]}>Description</Text>
-          <Text style={[styles.tableHeaderText, styles.colQty]}>Qty</Text>
-          <Text style={[styles.tableHeaderText, styles.colUnit]}>Unit Price</Text>
-          <Text style={[styles.tableHeaderText, styles.colSubtotal]}>Subtotal</Text>
-        </View>
-        {invoice.items.map((item, idx) => (
-          <View key={item.id} style={[styles.tableRow, idx % 2 === 1 ? styles.tableRowAlt : {}]}>
-            <View style={styles.colDescription}>
-              <Text style={styles.cellText}>{item.description}</Text>
-              {item.barcodeDataUri ? (
-                <View style={{ marginTop: 3 }}>
-                  <Image
-                    src={item.barcodeDataUri}
-                    style={{ height: 18, width: 80, objectFit: "contain" }}
-                  />
-                  <Text style={{ fontSize: 6, color: "#64748b", marginTop: 1 }}>
-                    {item.barcodeText}
-                  </Text>
-                </View>
+          {/* Billing info */}
+          <View style={styles.billGrid}>
+            <View style={styles.billSection}>
+              <Text style={styles.billLabel}>Bill To</Text>
+              <Text style={styles.billValue}>{invoice.customer.businessName}</Text>
+              {invoice.customer.contactName ? (
+                <Text style={styles.billSub}>{invoice.customer.contactName}</Text>
+              ) : null}
+              {invoice.customer.phone ? (
+                <Text style={styles.billSub}>{invoice.customer.phone}</Text>
+              ) : null}
+              {addr ? (
+                <Text style={styles.billSub}>
+                  {addr.line1}, {addr.city}, {addr.state} {addr.zip}
+                </Text>
               ) : null}
             </View>
-            <Text style={[styles.cellTextRight, styles.colQty]}>{toNum(item.qty).toFixed(2)}</Text>
-            <Text style={[styles.cellTextRight, styles.colUnit]}>{fmt(item.unitPrice)}</Text>
-            <Text style={[styles.cellTextRight, styles.colSubtotal]}>{fmt(item.subtotal)}</Text>
+            <View style={{ flex: 1, alignItems: "flex-end" }}>
+              <Text style={styles.billLabel}>Invoice Details</Text>
+              <Text style={styles.billSub}>Invoice Date: {fmtDate(invoice.issueDate)}</Text>
+              {invoice.dueDate ? (
+                <Text style={styles.billSub}>Due Date: {fmtDate(invoice.dueDate)}</Text>
+              ) : null}
+              {invoice.paidAt ? (
+                <Text style={[styles.billSub, { color: SUCCESS }]}>
+                  Paid: {fmtDate(invoice.paidAt)}
+                </Text>
+              ) : null}
+            </View>
           </View>
-        ))}
 
-        {/* Totals */}
-        <View style={styles.totalsWrapper}>
-          <View style={styles.totalsBox}>
-            <View style={styles.totalRow}>
-              <Text style={styles.totalLabel}>Subtotal</Text>
-              <Text style={styles.totalValue}>{fmt(subtotal)}</Text>
-            </View>
-            {taxAmount > 0 ? (
-              <View style={styles.totalRow}>
-                <Text style={styles.totalLabel}>Tax</Text>
-                <Text style={styles.totalValue}>{fmt(taxAmount)}</Text>
+          {/* Line items */}
+          <View style={styles.tableHeader}>
+            <Text style={[styles.tableHeaderText, styles.colDescription]}>Description</Text>
+            <Text style={[styles.tableHeaderText, styles.colQty]}>Qty</Text>
+            <Text style={[styles.tableHeaderText, styles.colUnit]}>Unit Price</Text>
+            <Text style={[styles.tableHeaderText, styles.colSubtotal]}>Subtotal</Text>
+          </View>
+          {invoice.items.map((item, idx) => (
+            <View key={item.id} style={[styles.tableRow, idx % 2 === 1 ? styles.tableRowAlt : {}]}>
+              <View style={styles.colDescription}>
+                <Text style={styles.cellText}>{item.description}</Text>
+                {item.barcodeDataUri ? (
+                  <View style={{ marginTop: 3 }}>
+                    <Image
+                      src={item.barcodeDataUri}
+                      style={{ height: 18, width: 80, objectFit: "contain" }}
+                    />
+                    <Text style={{ fontSize: 6, color: "#64748b", marginTop: 1 }}>
+                      {item.barcodeText}
+                    </Text>
+                  </View>
+                ) : null}
               </View>
-            ) : null}
-            {discount > 0 ? (
-              <View style={styles.totalRow}>
-                <Text style={[styles.totalLabel, { color: SUCCESS }]}>Discount</Text>
-                <Text style={[styles.totalValue, { color: SUCCESS }]}>-{fmt(discount)}</Text>
-              </View>
-            ) : null}
-            {shippingFee > 0 ? (
-              <View style={styles.totalRow}>
-                <Text style={styles.totalLabel}>Shipping</Text>
-                <Text style={styles.totalValue}>{fmt(shippingFee)}</Text>
-              </View>
-            ) : null}
-            <View style={styles.totalDivider} />
-            <View style={styles.totalBigRow}>
-              <Text style={styles.totalBigLabel}>Total</Text>
-              <Text style={styles.totalBigValue}>{fmt(total)}</Text>
-            </View>
-            {totalPaid > 0 ? (
-              <View style={styles.totalRow}>
-                <Text style={[styles.totalLabel, { color: SUCCESS }]}>Amount Paid</Text>
-                <Text style={[styles.totalValue, { color: SUCCESS }]}>-{fmt(totalPaid)}</Text>
-              </View>
-            ) : null}
-            <View style={styles.totalDivider} />
-            <View style={styles.totalBigRow}>
-              <Text style={[styles.totalBigLabel, { color: balance > 0 ? DANGER : SUCCESS }]}>
-                Balance Due
+              <Text style={[styles.cellTextRight, styles.colQty]}>
+                {toNum(item.qty).toFixed(2)}
               </Text>
-              <Text style={[styles.totalBigValue, { color: balance > 0 ? DANGER : SUCCESS }]}>
-                {fmt(balance > 0 ? balance : 0)}
-              </Text>
+              <Text style={[styles.cellTextRight, styles.colUnit]}>{fmt(item.unitPrice)}</Text>
+              <Text style={[styles.cellTextRight, styles.colSubtotal]}>{fmt(item.subtotal)}</Text>
+            </View>
+          ))}
+
+          {/* Totals */}
+          <View style={styles.totalsWrapper}>
+            <View style={styles.totalsBox}>
+              <View style={styles.totalRow}>
+                <Text style={styles.totalLabel}>Subtotal</Text>
+                <Text style={styles.totalValue}>{fmt(subtotal)}</Text>
+              </View>
+              {taxAmount > 0 ? (
+                <View style={styles.totalRow}>
+                  <Text style={styles.totalLabel}>Tax</Text>
+                  <Text style={styles.totalValue}>{fmt(taxAmount)}</Text>
+                </View>
+              ) : null}
+              {discount > 0 ? (
+                <View style={styles.totalRow}>
+                  <Text style={[styles.totalLabel, { color: SUCCESS }]}>Discount</Text>
+                  <Text style={[styles.totalValue, { color: SUCCESS }]}>-{fmt(discount)}</Text>
+                </View>
+              ) : null}
+              {shippingFee > 0 ? (
+                <View style={styles.totalRow}>
+                  <Text style={styles.totalLabel}>Shipping</Text>
+                  <Text style={styles.totalValue}>{fmt(shippingFee)}</Text>
+                </View>
+              ) : null}
+              <View style={styles.totalDivider} />
+              <View style={styles.totalBigRow}>
+                <Text style={styles.totalBigLabel}>Total</Text>
+                <Text style={styles.totalBigValue}>{fmt(total)}</Text>
+              </View>
+              {totalPaid > 0 ? (
+                <View style={styles.totalRow}>
+                  <Text style={[styles.totalLabel, { color: SUCCESS }]}>Amount Paid</Text>
+                  <Text style={[styles.totalValue, { color: SUCCESS }]}>-{fmt(totalPaid)}</Text>
+                </View>
+              ) : null}
+              <View style={styles.totalDivider} />
+              <View style={styles.totalBigRow}>
+                <Text style={[styles.totalBigLabel, { color: balance > 0 ? DANGER : SUCCESS }]}>
+                  Balance Due
+                </Text>
+                <Text style={[styles.totalBigValue, { color: balance > 0 ? DANGER : SUCCESS }]}>
+                  {fmt(balance > 0 ? balance : 0)}
+                </Text>
+              </View>
             </View>
           </View>
+
+          {/* Payment history */}
+          {invoice.payments.length > 0 ? (
+            <View>
+              <Text style={styles.sectionTitle}>Payment History</Text>
+              {invoice.payments.map((pmt) => (
+                <View key={pmt.id} style={styles.paymentRow}>
+                  <View>
+                    <Text style={{ fontSize: 9, color: navy }}>{pmt.method}</Text>
+                    {pmt.reference ? (
+                      <Text style={{ fontSize: 8, color: GRAY }}>Ref: {pmt.reference}</Text>
+                    ) : null}
+                  </View>
+                  <View style={{ alignItems: "flex-end" }}>
+                    <Text style={{ fontSize: 9, fontFamily: "Helvetica-Bold", color: SUCCESS }}>
+                      {fmt(pmt.amount)}
+                    </Text>
+                    <Text style={{ fontSize: 8, color: GRAY }}>{fmtDate(pmt.paidAt)}</Text>
+                  </View>
+                </View>
+              ))}
+            </View>
+          ) : null}
+
+          {/* Notes */}
+          {invoice.notes ? (
+            <View style={{ marginTop: 16 }}>
+              <Text style={styles.sectionTitle}>Notes</Text>
+              <Text style={{ fontSize: 9, color: GRAY }}>{invoice.notes}</Text>
+            </View>
+          ) : null}
         </View>
-
-        {/* Payment history */}
-        {invoice.payments.length > 0 ? (
-          <View>
-            <Text style={styles.sectionTitle}>Payment History</Text>
-            {invoice.payments.map((pmt) => (
-              <View key={pmt.id} style={styles.paymentRow}>
-                <View>
-                  <Text style={{ fontSize: 9, color: navy }}>{pmt.method}</Text>
-                  {pmt.reference ? (
-                    <Text style={{ fontSize: 8, color: GRAY }}>Ref: {pmt.reference}</Text>
-                  ) : null}
-                </View>
-                <View style={{ alignItems: "flex-end" }}>
-                  <Text style={{ fontSize: 9, fontFamily: "Helvetica-Bold", color: SUCCESS }}>
-                    {fmt(pmt.amount)}
-                  </Text>
-                  <Text style={{ fontSize: 8, color: GRAY }}>{fmtDate(pmt.paidAt)}</Text>
-                </View>
-              </View>
-            ))}
-          </View>
-        ) : null}
-
-        {/* Notes */}
-        {invoice.notes ? (
-          <View style={{ marginTop: 16 }}>
-            <Text style={styles.sectionTitle}>Notes</Text>
-            <Text style={{ fontSize: 9, color: GRAY }}>{invoice.notes}</Text>
-          </View>
-        ) : null}
-        </View>{/* /flexGrow:1 wrapper */}
+        {/* /flexGrow:1 wrapper */}
 
         {/*
           Terms & Conditions — sits OUTSIDE the flexGrow:1 wrapper above

@@ -17,6 +17,7 @@ This audit compared mobile and driver app API calls against the NestJS backend. 
 ## Issues Found
 
 ### W2-001 — Payment Method Enum (P2)
+
 - **Mobile**: `apps/mobile/lib/api/invoices.ts:17`
 - **API**: `apps/api/src/invoices/dto/create-invoice.dto.ts:49`
 - **Issue**: PaymentMethod type mismatch (TypeScript literals vs Prisma enum)
@@ -24,6 +25,7 @@ This audit compared mobile and driver app API calls against the NestJS backend. 
 - **Status**: OK
 
 ### W2-002 — Order Creation DTO Subset (P2)
+
 - **Mobile**: `apps/mobile/lib/api/orders.ts:40-44`
 - **API**: `apps/api/src/orders/dto/create-order.dto.ts:28-46`
 - **Issue**: Mobile sends subset of optional fields (customerId, routeRunId, etc. not used)
@@ -31,6 +33,7 @@ This audit compared mobile and driver app API calls against the NestJS backend. 
 - **Status**: OK
 
 ### W2-003 — Complete Stop Endpoint (P3)
+
 - **Mobile**: `apps/mobile/lib/api/routes.ts:204`
 - **API**: `apps/api/src/routes/routes.controller.ts:158-161`
 - **Endpoint**: `POST /route-runs/{runId}/stops/{stopId}/complete`
@@ -67,6 +70,7 @@ This audit compared mobile and driver app API calls against the NestJS backend. 
 ## Pagination & Response Shape
 
 All paginated endpoints use consistent structure:
+
 - Response: `{ data: T[], meta: { total, page, limit, totalPages } }`
 - Mobile queries use: `page`, `limit` parameters
 - All matches verified

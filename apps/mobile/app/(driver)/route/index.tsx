@@ -1,5 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import {
+  ActivityIndicator,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -8,13 +16,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import * as Location from "expo-location";
 import { ios } from "@routeflow/ui/tokens";
-import {
-  InlineStats,
-  NavBar,
-  Pill,
-  ProgressTrack,
-  StopCard,
-} from "@routeflow/ui/mobile/ios";
+import { InlineStats, NavBar, Pill, ProgressTrack, StopCard } from "@routeflow/ui/mobile/ios";
 import {
   useActiveRouteRun,
   useOptimizeRouteRun,
@@ -25,10 +27,7 @@ import {
 } from "../../../lib/api/routes";
 import { openRouteInMaps } from "../../../components/openInMaps";
 import { useAuthStore } from "../../../lib/auth-store";
-import {
-  startLocationTracking,
-  stopLocationTracking,
-} from "../../../lib/location-tracker";
+import { startLocationTracking, stopLocationTracking } from "../../../lib/location-tracker";
 
 /**
  * Best-effort foreground GPS read. Returns null if perms denied / unavailable —
@@ -60,7 +59,6 @@ async function openRouteFromHere(stops: RouteRunStop[]): Promise<void> {
   openRouteInMaps(stops, loc ? { originLat: loc.lat, originLng: loc.lng } : {});
 }
 
-
 export default function DriverRouteScreen() {
   const router = useRouter();
   const { data: activeData, isLoading: activeLoading } = useActiveRouteRun();
@@ -91,7 +89,9 @@ export default function DriverRouteScreen() {
   }
 
   if (active) {
-    return <TodaysRoute run={active} onOpenStop={(id) => router.push(`/(driver)/route/stop/${id}`)} />;
+    return (
+      <TodaysRoute run={active} onOpenStop={(id) => router.push(`/(driver)/route/stop/${id}`)} />
+    );
   }
   if (upcoming) {
     return <StartOfDay run={upcoming} />;
@@ -120,14 +120,14 @@ function StartOfDay({ run }: { run: RouteRun }) {
   // midnight UTC as the previous evening in negative-offset timezones, making
   // the label show yesterday. Fix: extract the YYYY-MM-DD part and parse it as
   // a local date by replacing hyphens with slashes (unambiguous local parse).
-  const scheduledLocalDate = new Date(
-    (run.scheduledDate ?? "").slice(0, 10).replace(/-/g, "/"),
-  );
-  const dateLabel = scheduledLocalDate.toLocaleDateString(undefined, {
-    weekday: "long",
-    month: "short",
-    day: "numeric",
-  }).toUpperCase();
+  const scheduledLocalDate = new Date((run.scheduledDate ?? "").slice(0, 10).replace(/-/g, "/"));
+  const dateLabel = scheduledLocalDate
+    .toLocaleDateString(undefined, {
+      weekday: "long",
+      month: "short",
+      day: "numeric",
+    })
+    .toUpperCase();
 
   const startRun = () =>
     updateStatus.mutate(
@@ -150,8 +150,7 @@ function StartOfDay({ run }: { run: RouteRun }) {
     startRun();
   };
 
-  const initials =
-    greetingName.slice(0, 2).toUpperCase() || "ME";
+  const initials = greetingName.slice(0, 2).toUpperCase() || "ME";
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
@@ -173,26 +172,19 @@ function StartOfDay({ run }: { run: RouteRun }) {
             end={{ x: 1, y: 1 }}
             style={styles.heroCard}
           >
-            <Text style={styles.heroEyebrow}>
-              {(run.route?.name ?? "ROUTE").toUpperCase()}
-            </Text>
+            <Text style={styles.heroEyebrow}>{(run.route?.name ?? "ROUTE").toUpperCase()}</Text>
             <Text style={styles.heroTitle}>
               {stopCount} stop{stopCount === 1 ? "" : "s"} · ${totalValue.toFixed(0)}
             </Text>
             <Text style={styles.heroSub}>Scheduled · ready to depart</Text>
 
-            <Pressable
-              style={styles.optimizeToggle}
-              onPress={() => setOptimizeFromHere((v) => !v)}
-            >
+            <Pressable style={styles.optimizeToggle} onPress={() => setOptimizeFromHere((v) => !v)}>
               <Ionicons
                 name={optimizeFromHere ? "checkbox" : "square-outline"}
                 size={18}
                 color="#fff"
               />
-              <Text style={styles.optimizeToggleText}>
-                Optimize from my current location
-              </Text>
+              <Text style={styles.optimizeToggleText}>Optimize from my current location</Text>
             </Pressable>
 
             <View style={styles.heroActions}>
@@ -206,8 +198,8 @@ function StartOfDay({ run }: { run: RouteRun }) {
                   {optimize.isPending
                     ? "Optimizing…"
                     : updateStatus.isPending
-                    ? "Starting…"
-                    : "Start day"}
+                      ? "Starting…"
+                      : "Start day"}
                 </Text>
               </Pressable>
               {(run.stops?.length ?? 0) > 0 ? (
@@ -228,13 +220,7 @@ function StartOfDay({ run }: { run: RouteRun }) {
   );
 }
 
-function TodaysRoute({
-  run,
-  onOpenStop,
-}: {
-  run: RouteRun;
-  onOpenStop: (id: string) => void;
-}) {
+function TodaysRoute({ run, onOpenStop }: { run: RouteRun; onOpenStop: (id: string) => void }) {
   const stops = run.stops ?? [];
   const optimize = useOptimizeRouteRun();
   const updateStatus = useUpdateRunStatus();
@@ -248,16 +234,13 @@ function TodaysRoute({
     optimize.mutate(
       { id: run.id, originLat: loc.lat, originLng: loc.lng },
       {
-        onError: (err) =>
-          showToast(err.message ?? "Optimization failed. Please try again."),
+        onError: (err) => showToast(err.message ?? "Optimization failed. Please try again."),
       },
     );
   };
   const { done, pending, nextStop, totalStops } = useMemo(() => {
     const completed = stops.filter((s) => s.status === "COMPLETED" || s.status === "SKIPPED");
-    const remaining = stops.filter(
-      (s) => s.status === "PENDING" || s.status === "IN_PROGRESS",
-    );
+    const remaining = stops.filter((s) => s.status === "PENDING" || s.status === "IN_PROGRESS");
     const sortedRemaining = remaining.sort((a, b) => a.stopNumber - b.stopNumber);
     return {
       done: completed.length,
@@ -304,12 +287,19 @@ function TodaysRoute({
         {!nextStop ? (
           <View style={{ padding: 16, paddingTop: 14 }}>
             <View style={[styles.heroCard, { backgroundColor: ios.system.greenInk }]}>
-              <Ionicons name="checkmark-circle" size={32} color="#fff" style={{ marginBottom: 8 }} />
+              <Ionicons
+                name="checkmark-circle"
+                size={32}
+                color="#fff"
+                style={{ marginBottom: 8 }}
+              />
               <Text style={styles.heroTitleLg}>
                 {totalStops === 0 ? "No stops on this route" : "All stops done!"}
               </Text>
               <Text style={[styles.heroSub, { marginBottom: 16 }]}>
-                {totalStops === 0 ? "Mark complete to finish the run." : `${done} of ${totalStops} delivered`}
+                {totalStops === 0
+                  ? "Mark complete to finish the run."
+                  : `${done} of ${totalStops} delivered`}
               </Text>
               <Pressable
                 style={[styles.heroBtnGhost, { alignSelf: "stretch", justifyContent: "center" }]}
@@ -321,7 +311,10 @@ function TodaysRoute({
                     () =>
                       updateStatus.mutate(
                         { id: run.id, status: "COMPLETED" },
-                        { onError: (e: any) => showToast(e?.response?.data?.message ?? e.message ?? "Try again.") },
+                        {
+                          onError: (e: any) =>
+                            showToast(e?.response?.data?.message ?? e.message ?? "Try again."),
+                        },
                       ),
                     { confirmText: "Complete" },
                   )
@@ -347,9 +340,7 @@ function TodaysRoute({
                 </View>
                 <Text style={styles.heroEyebrowLow}>UP NEXT</Text>
               </View>
-              <Text style={styles.heroTitleLg}>
-                {nextStop.customer?.businessName ?? "Stop"}
-              </Text>
+              <Text style={styles.heroTitleLg}>{nextStop.customer?.businessName ?? "Stop"}</Text>
               <Text style={styles.heroSub}>{formatStopSub(nextStop)}</Text>
               <View style={styles.heroActions}>
                 <Pressable
@@ -373,7 +364,16 @@ function TodaysRoute({
               </View>
               <View style={[styles.heroActions, { marginTop: 8 }]}>
                 <Pressable
-                  style={[styles.heroBtnGhost, { flex: 1, alignItems: "center", flexDirection: "row", justifyContent: "center", gap: 6 }]}
+                  style={[
+                    styles.heroBtnGhost,
+                    {
+                      flex: 1,
+                      alignItems: "center",
+                      flexDirection: "row",
+                      justifyContent: "center",
+                      gap: 6,
+                    },
+                  ]}
                   onPress={onOptimizeFromHere}
                   disabled={optimize.isPending}
                 >
@@ -412,10 +412,7 @@ function TodaysRoute({
 function formatStopSub(stop: RouteRunStop): string {
   const parts: string[] = [];
   if (stop.customerAddress?.line1) parts.push(stop.customerAddress.line1);
-  const itemCount = (stop.orders ?? []).reduce(
-    (t, o) => t + (o.lineItems?.length ?? 0),
-    0,
-  );
+  const itemCount = (stop.orders ?? []).reduce((t, o) => t + (o.lineItems?.length ?? 0), 0);
   if (itemCount) parts.push(`${itemCount} item${itemCount === 1 ? "" : "s"}`);
   return parts.join(" · ");
 }
@@ -442,8 +439,8 @@ function NoRoute() {
         <Ionicons name="map-outline" size={48} color={ios.label3} />
         <Text style={styles.emptyTitle}>No route assigned</Text>
         <Text style={styles.emptySub}>
-          Check back with dispatch for today's manifest, or start an ad-hoc
-          order for a walk-in customer.
+          Check back with dispatch for today's manifest, or start an ad-hoc order for a walk-in
+          customer.
         </Text>
         <Pressable
           style={styles.adHocBtn}
@@ -459,7 +456,13 @@ function NoRoute() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: ios.bg },
-  center: { flex: 1, alignItems: "center", justifyContent: "center", gap: 10, paddingHorizontal: 40 },
+  center: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    paddingHorizontal: 40,
+  },
   adHocBtn: {
     marginTop: 14,
     backgroundColor: ios.brand,
@@ -472,7 +475,12 @@ const styles = StyleSheet.create({
   },
   adHocBtnText: { color: "#fff", fontSize: 15, fontFamily: "Inter_600SemiBold" },
   emptyTitle: { fontSize: 18, fontFamily: "Inter_600SemiBold", color: ios.label, marginTop: 6 },
-  emptySub: { fontSize: 14, fontFamily: "Inter_400Regular", color: ios.label2, textAlign: "center" },
+  emptySub: {
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    color: ios.label2,
+    textAlign: "center",
+  },
   avatar: {
     width: 34,
     height: 34,

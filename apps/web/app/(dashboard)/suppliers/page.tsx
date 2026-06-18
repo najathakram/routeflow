@@ -3,16 +3,33 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import {
-  Plus, Search, Building2, Phone, Mail, Clock, Pencil, X, CheckSquare,
-  Trash2, MapPin, Globe, LayoutGrid, LayoutList, DollarSign,
+  Plus,
+  Search,
+  Building2,
+  Phone,
+  Mail,
+  Clock,
+  Pencil,
+  X,
+  CheckSquare,
+  Trash2,
+  MapPin,
+  Globe,
+  LayoutGrid,
+  LayoutList,
+  DollarSign,
 } from "lucide-react";
 import { PageHeader, Badge, Button, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useToast } from "@routeflow/ui/web";
 import { useDebounce } from "@/lib/hooks/useDebounce";
 import {
-  useSuppliers, useCreateSupplier, useUpdateSupplier,
-  useDeleteSupplier, useDeactivateSupplier, type Supplier,
+  useSuppliers,
+  useCreateSupplier,
+  useUpdateSupplier,
+  useDeleteSupplier,
+  useDeactivateSupplier,
+  type Supplier,
 } from "@/lib/api/suppliers";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -75,7 +92,8 @@ function SupplierModal({
     });
   };
 
-  const inputCls = "w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500";
+  const inputCls =
+    "w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500";
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
@@ -84,7 +102,7 @@ function SupplierModal({
           <h2 className="text-base font-semibold text-navy">
             {isEdit ? "Edit Supplier" : "New Supplier"}
           </h2>
-          <button onClick={onClose} className="text-navy/40 hover:text-navy transition-colors">
+          <button onClick={onClose} className="text-navy/70 hover:text-navy transition-colors">
             <X className="h-4 w-4" />
           </button>
         </div>
@@ -93,53 +111,138 @@ function SupplierModal({
             {/* Company info */}
             <div className="grid grid-cols-2 gap-3">
               <div className="col-span-2">
-                <label className="mb-1 block text-xs font-medium text-navy/60 uppercase tracking-wide">Company name *</label>
-                <input required value={form.name} onChange={(e) => set("name", e.target.value)} className={inputCls} />
+                <label className="mb-1 block text-xs font-medium text-navy/70 uppercase tracking-wide">
+                  Company name *
+                </label>
+                <input
+                  required
+                  value={form.name}
+                  onChange={(e) => set("name", e.target.value)}
+                  className={inputCls}
+                />
               </div>
               <div>
-                <label className="mb-1 block text-xs font-medium text-navy/60 uppercase tracking-wide">Contact person</label>
-                <input value={form.contactName} onChange={(e) => set("contactName", e.target.value)} className={inputCls} />
+                <label className="mb-1 block text-xs font-medium text-navy/70 uppercase tracking-wide">
+                  Contact person
+                </label>
+                <input
+                  value={form.contactName}
+                  onChange={(e) => set("contactName", e.target.value)}
+                  className={inputCls}
+                />
               </div>
               <div>
-                <label className="mb-1 block text-xs font-medium text-navy/60 uppercase tracking-wide">Lead time (days)</label>
-                <input type="number" min="0" value={form.leadTimeDays} onChange={(e) => set("leadTimeDays", e.target.value)} placeholder="e.g. 3" className={inputCls} />
+                <label className="mb-1 block text-xs font-medium text-navy/70 uppercase tracking-wide">
+                  Lead time (days)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  value={form.leadTimeDays}
+                  onChange={(e) => set("leadTimeDays", e.target.value)}
+                  placeholder="e.g. 3"
+                  className={inputCls}
+                />
               </div>
               <div>
-                <label className="mb-1 block text-xs font-medium text-navy/60 uppercase tracking-wide">Phone</label>
-                <input type="tel" value={form.phone} onChange={(e) => set("phone", e.target.value)} className={inputCls} />
+                <label className="mb-1 block text-xs font-medium text-navy/70 uppercase tracking-wide">
+                  Phone
+                </label>
+                <input
+                  type="tel"
+                  value={form.phone}
+                  onChange={(e) => set("phone", e.target.value)}
+                  className={inputCls}
+                />
               </div>
               <div>
-                <label className="mb-1 block text-xs font-medium text-navy/60 uppercase tracking-wide">Mobile</label>
-                <input type="tel" value={form.mobile} onChange={(e) => set("mobile", e.target.value)} className={inputCls} />
+                <label className="mb-1 block text-xs font-medium text-navy/70 uppercase tracking-wide">
+                  Mobile
+                </label>
+                <input
+                  type="tel"
+                  value={form.mobile}
+                  onChange={(e) => set("mobile", e.target.value)}
+                  className={inputCls}
+                />
               </div>
               <div className="col-span-2">
-                <label className="mb-1 block text-xs font-medium text-navy/60 uppercase tracking-wide">Email</label>
-                <input type="email" value={form.email} onChange={(e) => set("email", e.target.value)} className={inputCls} />
+                <label className="mb-1 block text-xs font-medium text-navy/70 uppercase tracking-wide">
+                  Email
+                </label>
+                <input
+                  type="email"
+                  value={form.email}
+                  onChange={(e) => set("email", e.target.value)}
+                  className={inputCls}
+                />
               </div>
               <div className="col-span-2">
-                <label className="mb-1 block text-xs font-medium text-navy/60 uppercase tracking-wide">Website</label>
-                <input type="url" value={form.website} onChange={(e) => set("website", e.target.value)} placeholder="https://" className={inputCls} />
+                <label className="mb-1 block text-xs font-medium text-navy/70 uppercase tracking-wide">
+                  Website
+                </label>
+                <input
+                  type="url"
+                  value={form.website}
+                  onChange={(e) => set("website", e.target.value)}
+                  placeholder="https://"
+                  className={inputCls}
+                />
               </div>
             </div>
 
             {/* Address */}
             <div>
-              <p className="mb-2 text-xs font-medium text-navy/60 uppercase tracking-wide">Address</p>
+              <p className="mb-2 text-xs font-medium text-navy/70 uppercase tracking-wide">
+                Address
+              </p>
               <div className="space-y-2">
-                <input placeholder="Street address" value={form.addressLine1} onChange={(e) => set("addressLine1", e.target.value)} className={inputCls} />
-                <input placeholder="Address line 2" value={form.addressLine2} onChange={(e) => set("addressLine2", e.target.value)} className={inputCls} />
+                <input
+                  placeholder="Street address"
+                  value={form.addressLine1}
+                  onChange={(e) => set("addressLine1", e.target.value)}
+                  className={inputCls}
+                />
+                <input
+                  placeholder="Address line 2"
+                  value={form.addressLine2}
+                  onChange={(e) => set("addressLine2", e.target.value)}
+                  className={inputCls}
+                />
                 <div className="grid grid-cols-3 gap-2">
-                  <input placeholder="City" value={form.city} onChange={(e) => set("city", e.target.value)} className={inputCls} />
-                  <input placeholder="State" value={form.state} onChange={(e) => set("state", e.target.value)} className={inputCls} />
-                  <input placeholder="ZIP" value={form.zip} onChange={(e) => set("zip", e.target.value)} className={inputCls} />
+                  <input
+                    placeholder="City"
+                    value={form.city}
+                    onChange={(e) => set("city", e.target.value)}
+                    className={inputCls}
+                  />
+                  <input
+                    placeholder="State"
+                    value={form.state}
+                    onChange={(e) => set("state", e.target.value)}
+                    className={inputCls}
+                  />
+                  <input
+                    placeholder="ZIP"
+                    value={form.zip}
+                    onChange={(e) => set("zip", e.target.value)}
+                    className={inputCls}
+                  />
                 </div>
-                <input placeholder="Country" value={form.country} onChange={(e) => set("country", e.target.value)} className={inputCls} />
+                <input
+                  placeholder="Country"
+                  value={form.country}
+                  onChange={(e) => set("country", e.target.value)}
+                  className={inputCls}
+                />
               </div>
             </div>
 
             {/* Notes */}
             <div>
-              <label className="mb-1 block text-xs font-medium text-navy/60 uppercase tracking-wide">Notes</label>
+              <label className="mb-1 block text-xs font-medium text-navy/70 uppercase tracking-wide">
+                Notes
+              </label>
               <textarea
                 rows={3}
                 value={form.notes}
@@ -151,8 +254,12 @@ function SupplierModal({
           </div>
 
           <div className="mt-6 flex justify-end gap-2 border-t border-surface-border pt-4">
-            <Button type="button" variant="secondary" onClick={onClose} disabled={isSaving}>Cancel</Button>
-            <Button type="submit" loading={isSaving}>{isEdit ? "Save changes" : "Add Supplier"}</Button>
+            <Button type="button" variant="secondary" onClick={onClose} disabled={isSaving}>
+              Cancel
+            </Button>
+            <Button type="submit" loading={isSaving}>
+              {isEdit ? "Save changes" : "Add Supplier"}
+            </Button>
           </div>
         </form>
       </div>
@@ -163,8 +270,16 @@ function SupplierModal({
 // ─── Supplier card (grid view) ─────────────────────────────────────────────────
 
 function SupplierCard({
-  supplier, onEdit, onView, onDeactivate, onReactivate, onDelete,
-  isUpdating, selectMode, selected, onSelect,
+  supplier,
+  onEdit,
+  onView,
+  onDeactivate,
+  onReactivate,
+  onDelete,
+  isUpdating,
+  selectMode,
+  selected,
+  onSelect,
 }: {
   supplier: Supplier;
   onEdit: () => void;
@@ -193,7 +308,13 @@ function SupplierCard({
     >
       {/* Checkbox — only in selection mode */}
       {selectMode && (
-        <div className="absolute left-3 top-3 z-10" onClick={(e) => { e.stopPropagation(); onSelect?.(); }}>
+        <div
+          className="absolute left-3 top-3 z-10"
+          onClick={(e) => {
+            e.stopPropagation();
+            onSelect?.();
+          }}
+        >
           <input
             type="checkbox"
             checked={selected ?? false}
@@ -211,9 +332,7 @@ function SupplierCard({
           </div>
           <div className="min-w-0">
             <p className="font-semibold text-navy leading-snug">{supplier.name}</p>
-            {supplier.contactName && (
-              <p className="text-xs text-navy/50">{supplier.contactName}</p>
-            )}
+            {supplier.contactName && <p className="text-xs text-navy/70">{supplier.contactName}</p>}
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1">
@@ -240,7 +359,7 @@ function SupplierCard({
               {fmt(outstanding)} outstanding
             </span>
             {(supplier.billCount ?? 0) > 0 && (
-              <span className="ml-1 text-xs text-navy/40">
+              <span className="ml-1 text-xs text-navy/70">
                 across {supplier.billCount} bill{supplier.billCount !== 1 ? "s" : ""}
               </span>
             )}
@@ -272,7 +391,9 @@ function SupplierCard({
           <div className="flex items-start gap-1.5 text-xs text-navy/70">
             <MapPin className="h-3.5 w-3.5 shrink-0 text-navy/30 mt-0.5" />
             <span className="line-clamp-2">
-              {[supplier.addressLine1, supplier.city, supplier.state, supplier.zip].filter(Boolean).join(", ")}
+              {[supplier.addressLine1, supplier.city, supplier.state, supplier.zip]
+                .filter(Boolean)
+                .join(", ")}
             </span>
           </div>
         )}
@@ -283,7 +404,7 @@ function SupplierCard({
           </div>
         )}
         {supplier.notes && (
-          <p className="mt-1 text-xs text-navy/50 line-clamp-2">{supplier.notes}</p>
+          <p className="mt-1 text-xs text-navy/70 line-clamp-2">{supplier.notes}</p>
         )}
       </div>
 
@@ -292,23 +413,69 @@ function SupplierCard({
         {confirmDelete ? (
           <div className="flex items-center gap-2">
             <span className="text-xs text-danger">Permanently delete?</span>
-            <button onClick={() => { setConfirmDelete(false); onDelete(); }} disabled={isUpdating} className="text-xs font-medium text-danger hover:underline disabled:opacity-40">Delete</button>
-            <button onClick={() => setConfirmDelete(false)} className="text-xs text-navy/40 hover:text-navy transition-colors">Cancel</button>
+            <button
+              onClick={() => {
+                setConfirmDelete(false);
+                onDelete();
+              }}
+              disabled={isUpdating}
+              className="text-xs font-medium text-danger hover:underline disabled:opacity-40"
+            >
+              Delete
+            </button>
+            <button
+              onClick={() => setConfirmDelete(false)}
+              className="text-xs text-navy/70 hover:text-navy transition-colors"
+            >
+              Cancel
+            </button>
           </div>
         ) : confirmDeactivate ? (
           <div className="flex items-center gap-2">
             <span className="text-xs text-warning">Deactivate supplier?</span>
-            <button onClick={() => { setConfirmDeactivate(false); onDeactivate(); }} disabled={isUpdating} className="text-xs font-medium text-warning hover:underline disabled:opacity-40">Yes</button>
-            <button onClick={() => setConfirmDeactivate(false)} className="text-xs text-navy/40 hover:text-navy transition-colors">Cancel</button>
+            <button
+              onClick={() => {
+                setConfirmDeactivate(false);
+                onDeactivate();
+              }}
+              disabled={isUpdating}
+              className="text-xs font-medium text-warning hover:underline disabled:opacity-40"
+            >
+              Yes
+            </button>
+            <button
+              onClick={() => setConfirmDeactivate(false)}
+              className="text-xs text-navy/70 hover:text-navy transition-colors"
+            >
+              Cancel
+            </button>
           </div>
         ) : (
           <div className="flex items-center justify-between">
             {supplier.isActive ? (
-              <button onClick={() => setConfirmDeactivate(true)} disabled={isUpdating} className="text-xs text-navy/40 hover:text-warning transition-colors disabled:opacity-40">Deactivate</button>
+              <button
+                onClick={() => setConfirmDeactivate(true)}
+                disabled={isUpdating}
+                className="text-xs text-navy/70 hover:text-warning transition-colors disabled:opacity-40"
+              >
+                Deactivate
+              </button>
             ) : (
-              <button onClick={onReactivate} disabled={isUpdating} className="text-xs font-medium text-brand-500 hover:text-brand-600 transition-colors disabled:opacity-40">Reactivate</button>
+              <button
+                onClick={onReactivate}
+                disabled={isUpdating}
+                className="text-xs font-medium text-brand-500 hover:text-brand-600 transition-colors disabled:opacity-40"
+              >
+                Reactivate
+              </button>
             )}
-            <button onClick={() => setConfirmDelete(true)} disabled={isUpdating} className="text-xs text-danger/50 hover:text-danger transition-colors disabled:opacity-40">Delete</button>
+            <button
+              onClick={() => setConfirmDelete(true)}
+              disabled={isUpdating}
+              className="text-xs text-danger/50 hover:text-danger transition-colors disabled:opacity-40"
+            >
+              Delete
+            </button>
           </div>
         )}
       </div>
@@ -319,8 +486,16 @@ function SupplierCard({
 // ─── Supplier row (list view) ──────────────────────────────────────────────────
 
 function SupplierRow({
-  supplier, onEdit, onView, onDeactivate, onReactivate, onDelete,
-  isUpdating, selectMode, selected, onSelect,
+  supplier,
+  onEdit,
+  onView,
+  onDeactivate,
+  onReactivate,
+  onDelete,
+  isUpdating,
+  selectMode,
+  selected,
+  onSelect,
 }: {
   supplier: Supplier;
   onEdit: () => void;
@@ -344,8 +519,11 @@ function SupplierRow({
         selected && "bg-brand-50/40",
       )}
       onClick={(e) => {
-        if ((e.target as HTMLElement).closest('button,input,a')) return;
-        if (selectMode) { onSelect?.(); return; }
+        if ((e.target as HTMLElement).closest("button,input,a")) return;
+        if (selectMode) {
+          onSelect?.();
+          return;
+        }
         onView();
       }}
     >
@@ -370,9 +548,7 @@ function SupplierRow({
           </div>
           <div>
             <p className="font-medium text-navy text-sm">{supplier.name}</p>
-            {supplier.contactName && (
-              <p className="text-xs text-navy/50">{supplier.contactName}</p>
-            )}
+            {supplier.contactName && <p className="text-xs text-navy/70">{supplier.contactName}</p>}
           </div>
         </div>
       </td>
@@ -399,16 +575,21 @@ function SupplierRow({
       </td>
 
       {/* City / state */}
-      <td className="px-4 py-3 text-xs text-navy/60">
-        {supplier.city || supplier.state
-          ? [supplier.city, supplier.state].filter(Boolean).join(", ")
-          : <span className="text-navy/30">—</span>
-        }
+      <td className="px-4 py-3 text-xs text-navy/70">
+        {supplier.city || supplier.state ? (
+          [supplier.city, supplier.state].filter(Boolean).join(", ")
+        ) : (
+          <span className="text-navy/30">—</span>
+        )}
       </td>
 
       {/* Lead time */}
       <td className="px-4 py-3 text-center text-xs text-navy/70">
-        {supplier.leadTimeDays != null ? `${supplier.leadTimeDays}d` : <span className="text-navy/30">—</span>}
+        {supplier.leadTimeDays != null ? (
+          `${supplier.leadTimeDays}d`
+        ) : (
+          <span className="text-navy/30">—</span>
+        )}
       </td>
 
       {/* Outstanding balance */}
@@ -417,7 +598,7 @@ function SupplierRow({
           <div>
             <span className="text-sm font-semibold text-warning">{fmt(outstanding)}</span>
             {(supplier.billCount ?? 0) > 0 && (
-              <p className="text-[10px] text-navy/40 leading-tight">
+              <p className="text-[10px] text-navy/70 leading-tight">
                 {supplier.billCount} bill{supplier.billCount !== 1 ? "s" : ""}
               </p>
             )}
@@ -440,15 +621,28 @@ function SupplierRow({
         <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
           <button
             onClick={onEdit}
-            className="rounded p-1 text-navy/40 hover:bg-surface-raised hover:text-navy transition-colors"
+            className="rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
             title="Edit"
           >
             <Pencil className="h-3.5 w-3.5" />
           </button>
           {confirmDelete ? (
             <div className="flex items-center gap-1">
-              <button onClick={() => { setConfirmDelete(false); onDelete(); }} className="text-xs text-danger hover:underline">Delete</button>
-              <button onClick={() => setConfirmDelete(false)} className="text-xs text-navy/40 hover:text-navy">✕</button>
+              <button
+                onClick={() => {
+                  setConfirmDelete(false);
+                  onDelete();
+                }}
+                className="text-xs text-danger hover:underline"
+              >
+                Delete
+              </button>
+              <button
+                onClick={() => setConfirmDelete(false)}
+                className="text-xs text-navy/70 hover:text-navy"
+              >
+                ✕
+              </button>
             </div>
           ) : (
             <button
@@ -471,7 +665,9 @@ export default function SuppliersPage() {
   const router = useRouter();
   const { setTitle } = usePageTitle();
   const { toast } = useToast();
-  React.useEffect(() => { setTitle("Suppliers"); }, [setTitle]);
+  React.useEffect(() => {
+    setTitle("Suppliers");
+  }, [setTitle]);
 
   const [search, setSearch] = React.useState("");
   const debouncedSearch = useDebounce(search, 300);
@@ -489,16 +685,26 @@ export default function SuppliersPage() {
   const deleteSupplier = useDeleteSupplier();
 
   const toggleSelect = (id: string) =>
-    setSelected((prev) => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
 
-  const exitSelectMode = () => { setSelectMode(false); setSelected(new Set()); };
+  const exitSelectMode = () => {
+    setSelectMode(false);
+    setSelected(new Set());
+  };
 
   const handleBulkDelete = async () => {
     if (isDeleting) return;
     setIsDeleting(true);
     try {
       await Promise.all(Array.from(selected).map((id) => deleteSupplier.mutateAsync(id)));
-      toast({ title: `${selected.size} supplier${selected.size !== 1 ? "s" : ""} deleted`, variant: "success" });
+      toast({
+        title: `${selected.size} supplier${selected.size !== 1 ? "s" : ""} deleted`,
+        variant: "success",
+      });
       exitSelectMode();
     } catch {
       toast({ title: "Failed to delete some suppliers", variant: "error" });
@@ -507,7 +713,11 @@ export default function SuppliersPage() {
     }
   };
 
-  const { data: result, isLoading, isError } = useSuppliers({
+  const {
+    data: result,
+    isLoading,
+    isError,
+  } = useSuppliers({
     search: debouncedSearch || undefined,
     isActive: activeFilter === "all" ? undefined : activeFilter === "active",
     limit: 0,
@@ -564,12 +774,26 @@ export default function SuppliersPage() {
 
   const sharedRowProps = (s: Supplier) => ({
     supplier: s,
-    onEdit: () => { if (!selectMode) { setEditTarget(s); setShowModal(true); } },
-    onView: () => { if (!selectMode) router.push(`/suppliers/${s.id}`); },
-    onDeactivate: () => { if (!selectMode) handleDeactivate(s); },
-    onReactivate: () => { if (!selectMode) handleReactivate(s); },
-    onDelete: () => { if (!selectMode) handleDelete(s); },
-    isUpdating: updateSupplier.isPending || deactivateSupplier.isPending || deleteSupplier.isPending,
+    onEdit: () => {
+      if (!selectMode) {
+        setEditTarget(s);
+        setShowModal(true);
+      }
+    },
+    onView: () => {
+      if (!selectMode) router.push(`/suppliers/${s.id}`);
+    },
+    onDeactivate: () => {
+      if (!selectMode) handleDeactivate(s);
+    },
+    onReactivate: () => {
+      if (!selectMode) handleReactivate(s);
+    },
+    onDelete: () => {
+      if (!selectMode) handleDelete(s);
+    },
+    isUpdating:
+      updateSupplier.isPending || deactivateSupplier.isPending || deleteSupplier.isPending,
     selectMode,
     selected: selected.has(s.id),
     onSelect: () => toggleSelect(s.id),
@@ -587,14 +811,19 @@ export default function SuppliersPage() {
           <div className="flex items-center gap-2">
             <Button
               variant="secondary"
-              leftIcon={selectMode ? <X className="h-4 w-4" /> : <CheckSquare className="h-4 w-4" />}
+              leftIcon={
+                selectMode ? <X className="h-4 w-4" /> : <CheckSquare className="h-4 w-4" />
+              }
               onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
             >
               {selectMode ? "Cancel" : "Select"}
             </Button>
             <Button
               leftIcon={<Plus className="h-4 w-4" />}
-              onClick={() => { setEditTarget(undefined); setShowModal(true); }}
+              onClick={() => {
+                setEditTarget(undefined);
+                setShowModal(true);
+              }}
             >
               Add Supplier
             </Button>
@@ -605,7 +834,10 @@ export default function SuppliersPage() {
       {showModal && (
         <SupplierModal
           initial={editTarget}
-          onClose={() => { setShowModal(false); setEditTarget(undefined); }}
+          onClose={() => {
+            setShowModal(false);
+            setEditTarget(undefined);
+          }}
           onSave={handleSave}
           isSaving={createSupplier.isPending || updateSupplier.isPending}
         />
@@ -618,10 +850,18 @@ export default function SuppliersPage() {
             {selected.size} supplier{selected.size !== 1 ? "s" : ""} selected
           </span>
           <div className="flex items-center gap-2">
-            <button onClick={() => setSelected(new Set())} className="text-sm text-navy/50 hover:text-navy transition-colors">
+            <button
+              onClick={() => setSelected(new Set())}
+              className="text-sm text-navy/70 hover:text-navy transition-colors"
+            >
               Deselect all
             </button>
-            <Button variant="danger" leftIcon={<Trash2 className="h-4 w-4" />} loading={isDeleting} onClick={handleBulkDelete}>
+            <Button
+              variant="danger"
+              leftIcon={<Trash2 className="h-4 w-4" />}
+              loading={isDeleting}
+              onClick={handleBulkDelete}
+            >
               Delete {selected.size}
             </Button>
           </div>
@@ -636,14 +876,16 @@ export default function SuppliersPage() {
             <input
               type="checkbox"
               checked={allSelected}
-              ref={(el) => { if (el) el.indeterminate = someSelected; }}
+              ref={(el) => {
+                if (el) el.indeterminate = someSelected;
+              }}
               onChange={() => {
                 if (allSelected) setSelected(new Set());
                 else setSelected(new Set(suppliers.map((s) => s.id)));
               }}
               className="h-4 w-4 cursor-pointer rounded border-navy/30 accent-brand-500"
             />
-            <span className="text-sm text-navy/60">Select all</span>
+            <span className="text-sm text-navy/70">Select all</span>
           </label>
         )}
 
@@ -655,7 +897,7 @@ export default function SuppliersPage() {
             placeholder="Search suppliers…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="h-10 w-64 rounded border border-surface-border bg-white pl-9 pr-3 text-sm text-navy placeholder:text-navy/40 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+            className="h-10 w-64 rounded border border-surface-border bg-white pl-9 pr-3 text-sm text-navy placeholder:text-navy/70 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
           />
         </div>
 
@@ -667,7 +909,7 @@ export default function SuppliersPage() {
               onClick={() => setActiveFilter(f)}
               className={cn(
                 "rounded px-3 py-1.5 text-xs font-medium capitalize transition-colors",
-                activeFilter === f ? "bg-navy text-white" : "text-navy/50 hover:text-navy",
+                activeFilter === f ? "bg-navy text-white" : "text-navy/70 hover:text-navy",
               )}
             >
               {f}
@@ -679,14 +921,20 @@ export default function SuppliersPage() {
         <div className="ml-auto flex rounded-lg border border-surface-border bg-white p-1">
           <button
             onClick={() => setViewMode("list")}
-            className={cn("rounded p-1.5 transition-colors", viewMode === "list" ? "bg-navy text-white" : "text-navy/40 hover:text-navy")}
+            className={cn(
+              "rounded p-1.5 transition-colors",
+              viewMode === "list" ? "bg-navy text-white" : "text-navy/70 hover:text-navy",
+            )}
             title="List view"
           >
             <LayoutList className="h-4 w-4" />
           </button>
           <button
             onClick={() => setViewMode("grid")}
-            className={cn("rounded p-1.5 transition-colors", viewMode === "grid" ? "bg-navy text-white" : "text-navy/40 hover:text-navy")}
+            className={cn(
+              "rounded p-1.5 transition-colors",
+              viewMode === "grid" ? "bg-navy text-white" : "text-navy/70 hover:text-navy",
+            )}
             title="Grid view"
           >
             <LayoutGrid className="h-4 w-4" />
@@ -699,7 +947,10 @@ export default function SuppliersPage() {
         viewMode === "list" ? (
           <div className="overflow-hidden rounded-xl border border-surface-border bg-white">
             {Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} className="flex items-center gap-4 border-b border-surface-border px-4 py-3">
+              <div
+                key={i}
+                className="flex items-center gap-4 border-b border-surface-border px-4 py-3"
+              >
                 <div className="h-7 w-7 animate-pulse rounded-md bg-surface-raised" />
                 <div className="flex-1 space-y-1.5">
                   <div className="h-3.5 w-40 animate-pulse rounded bg-surface-raised" />
@@ -713,7 +964,10 @@ export default function SuppliersPage() {
         ) : (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {Array.from({ length: 8 }).map((_, i) => (
-              <div key={i} className="h-48 animate-pulse rounded-xl border border-surface-border bg-surface-raised" />
+              <div
+                key={i}
+                className="h-48 animate-pulse rounded-xl border border-surface-border bg-surface-raised"
+              />
             ))}
           </div>
         )
@@ -724,15 +978,26 @@ export default function SuppliersPage() {
       ) : suppliers.length === 0 ? (
         <div className="rounded-xl border border-surface-border bg-white py-16 text-center">
           <Building2 className="mx-auto mb-3 h-10 w-10 text-navy/15" />
-          <p className="text-sm font-medium text-navy/50">
-            {(search || activeFilter !== "all") ? "No suppliers match your filters." : "No suppliers yet. Add your first supplier to get started."}
+          <p className="text-sm font-medium text-navy/70">
+            {search || activeFilter !== "all"
+              ? "No suppliers match your filters."
+              : "No suppliers yet. Add your first supplier to get started."}
           </p>
-          {(search || activeFilter !== "all") ? (
-            <button onClick={() => { setSearch(""); setActiveFilter("all"); }} className="mt-2 text-sm text-brand-500 hover:underline">
+          {search || activeFilter !== "all" ? (
+            <button
+              onClick={() => {
+                setSearch("");
+                setActiveFilter("all");
+              }}
+              className="mt-2 text-sm text-brand-500 hover:underline"
+            >
               Clear filters
             </button>
           ) : (
-            <button onClick={() => setShowModal(true)} className="mt-2 text-sm text-brand-500 hover:underline">
+            <button
+              onClick={() => setShowModal(true)}
+              className="mt-2 text-sm text-brand-500 hover:underline"
+            >
               Add your first supplier →
             </button>
           )}
@@ -744,12 +1009,24 @@ export default function SuppliersPage() {
             <thead>
               <tr className="border-b border-surface-border bg-surface-raised/60">
                 {selectMode && <th className="w-10 px-4 py-2.5" />}
-                <th className="px-4 py-2.5 text-left text-xs font-semibold text-navy/50 uppercase tracking-wide">Supplier</th>
-                <th className="px-4 py-2.5 text-left text-xs font-semibold text-navy/50 uppercase tracking-wide">Contact</th>
-                <th className="px-4 py-2.5 text-left text-xs font-semibold text-navy/50 uppercase tracking-wide">Location</th>
-                <th className="px-4 py-2.5 text-center text-xs font-semibold text-navy/50 uppercase tracking-wide">Lead</th>
-                <th className="px-4 py-2.5 text-right text-xs font-semibold text-navy/50 uppercase tracking-wide">Outstanding</th>
-                <th className="px-4 py-2.5 text-left text-xs font-semibold text-navy/50 uppercase tracking-wide">Status</th>
+                <th className="px-4 py-2.5 text-left text-xs font-semibold text-navy/70 uppercase tracking-wide">
+                  Supplier
+                </th>
+                <th className="px-4 py-2.5 text-left text-xs font-semibold text-navy/70 uppercase tracking-wide">
+                  Contact
+                </th>
+                <th className="px-4 py-2.5 text-left text-xs font-semibold text-navy/70 uppercase tracking-wide">
+                  Location
+                </th>
+                <th className="px-4 py-2.5 text-center text-xs font-semibold text-navy/70 uppercase tracking-wide">
+                  Lead
+                </th>
+                <th className="px-4 py-2.5 text-right text-xs font-semibold text-navy/70 uppercase tracking-wide">
+                  Outstanding
+                </th>
+                <th className="px-4 py-2.5 text-left text-xs font-semibold text-navy/70 uppercase tracking-wide">
+                  Status
+                </th>
                 <th className="w-20 px-4 py-2.5" />
               </tr>
             </thead>
@@ -763,7 +1040,7 @@ export default function SuppliersPage() {
           {/* Total outstanding footer */}
           {totalOutstanding > 0 && (
             <div className="flex items-center justify-between border-t border-surface-border bg-surface-raised/40 px-4 py-2.5">
-              <span className="text-xs text-navy/50">Total outstanding across all suppliers</span>
+              <span className="text-xs text-navy/70">Total outstanding across all suppliers</span>
               <span className="text-sm font-semibold text-warning">{fmt(totalOutstanding)}</span>
             </div>
           )}

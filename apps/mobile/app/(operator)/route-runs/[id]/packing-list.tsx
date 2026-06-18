@@ -10,7 +10,7 @@ export default function PackingListScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data, isLoading } = usePackingList(id);
 
-  const items = Array.isArray(data) ? data : (data as any)?.packingList ?? [];
+  const items = Array.isArray(data) ? data : ((data as any)?.packingList ?? []);
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>

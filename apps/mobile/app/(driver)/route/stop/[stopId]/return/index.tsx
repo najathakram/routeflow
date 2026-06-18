@@ -1,23 +1,11 @@
 import { useMemo, useState } from "react";
-import {
-  ActivityIndicator,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
-import {
-  ListGroup,
-  NavAction,
-  NavBackButton,
-  NavBar,
-} from "@routeflow/ui/mobile/ios";
+import { ListGroup, NavAction, NavBackButton, NavBar } from "@routeflow/ui/mobile/ios";
 import {
   useActiveRouteRun,
   useRouteRun,
@@ -40,14 +28,7 @@ function reasonForApi(label: string): ReturnReason {
   return m[label] ?? "DAMAGED";
 }
 
-const REASONS = [
-  "Damaged",
-  "Expired",
-  "Wrong SKU",
-  "Short-dated",
-  "Customer refused",
-  "Quality",
-];
+const REASONS = ["Damaged", "Expired", "Wrong SKU", "Short-dated", "Customer refused", "Quality"];
 
 function returnRowsFromStop(stop: RouteRunStop): Array<{
   id: string;
@@ -91,10 +72,7 @@ export default function ReturnScreen() {
   const { data: activeData } = useActiveRouteRun();
   const runId = params.runId ?? activeData?.data?.[0]?.id;
   const { data: run, isLoading } = useRouteRun(runId ?? "");
-  const stop = useMemo(
-    () => run?.stops?.find((s) => s.id === stopId),
-    [run, stopId],
-  );
+  const stop = useMemo(() => run?.stops?.find((s) => s.id === stopId), [run, stopId]);
 
   const rows = stop ? returnRowsFromStop(stop) : [];
   const createReturn = useCreateReturn();
@@ -130,8 +108,7 @@ export default function ReturnScreen() {
           showToast("Return submitted");
           backToStop();
         },
-        onError: (e: any) =>
-          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
       },
     );
   };
@@ -140,10 +117,7 @@ export default function ReturnScreen() {
   const originalTotal = (stop?.orders ?? []).reduce(
     (sum, o) =>
       sum +
-      (o.lineItems ?? []).reduce(
-        (s, li) => s + Number(li.qty ?? 0) * Number(li.unitPrice ?? 0),
-        0,
-      ),
+      (o.lineItems ?? []).reduce((s, li) => s + Number(li.qty ?? 0) * Number(li.unitPrice ?? 0), 0),
     0,
   );
   const creditTotal = rows.reduce((sum, r) => sum + r.amount, 0);
@@ -227,9 +201,7 @@ export default function ReturnScreen() {
                 onPress={() => setActiveReason(r)}
                 style={[styles.reasonChip, active && styles.reasonChipActive]}
               >
-                <Text style={[styles.reasonText, active && styles.reasonTextActive]}>
-                  {r}
-                </Text>
+                <Text style={[styles.reasonText, active && styles.reasonTextActive]}>{r}</Text>
               </Pressable>
             );
           })}
@@ -245,9 +217,7 @@ export default function ReturnScreen() {
             >
               <Text style={styles.creditEyebrow}>CREDIT NOTE</Text>
               <Text style={styles.creditValue}>−${creditTotal.toFixed(2)}</Text>
-              <Text style={styles.creditSub}>
-                Will apply to next invoice · {customerName}
-              </Text>
+              <Text style={styles.creditSub}>Will apply to next invoice · {customerName}</Text>
             </LinearGradient>
           </View>
         ) : null}

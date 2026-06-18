@@ -24,9 +24,7 @@ export function PageTitleProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <PageTitleContext.Provider value={{ title, setTitle }}>
-      {children}
-    </PageTitleContext.Provider>
+    <PageTitleContext.Provider value={{ title, setTitle }}>{children}</PageTitleContext.Provider>
   );
 }
 

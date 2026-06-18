@@ -1,21 +1,10 @@
 import { useState } from "react";
-import {
-  ActivityIndicator,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
-import {
-  NavBackButton,
-  NavBar,
-  SearchBar,
-} from "@routeflow/ui/mobile/ios";
+import { NavBackButton, NavBar, SearchBar } from "@routeflow/ui/mobile/ios";
 import { useAdminProducts, type AdminProduct } from "../../../lib/api/admin";
 import { useProductPickerStore } from "../../../store/productPickerStore";
 
@@ -49,11 +38,7 @@ export default function PickProductScreen() {
         inlineTitle="Select product"
         leading={<NavBackButton label="Cancel" onPress={() => router.back()} />}
       />
-      <SearchBar
-        placeholder="Search products…"
-        value={search}
-        onChangeText={setSearch}
-      />
+      <SearchBar placeholder="Search products…" value={search} onChangeText={setSearch} />
       <ScrollView showsVerticalScrollIndicator={false}>
         {isLoading ? (
           <View style={styles.center}>
@@ -86,9 +71,7 @@ export default function PickProductScreen() {
                   <Text style={styles.sub} numberOfLines={1}>
                     {[
                       p.sku ? `SKU ${p.sku}` : null,
-                      p.standardCost != null
-                        ? `$${Number(p.standardCost).toFixed(2)}`
-                        : null,
+                      p.standardCost != null ? `$${Number(p.standardCost).toFixed(2)}` : null,
                       p.unit,
                     ]
                       .filter(Boolean)

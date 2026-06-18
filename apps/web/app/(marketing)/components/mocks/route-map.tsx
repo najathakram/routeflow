@@ -39,13 +39,7 @@ export function MockRouteMap() {
           fill="none"
           opacity="0.6"
         />
-        <path
-          d="M180 20 L 180 200"
-          stroke="#FFF"
-          strokeWidth="5"
-          fill="none"
-          opacity="0.5"
-        />
+        <path d="M180 20 L 180 200" stroke="#FFF" strokeWidth="5" fill="none" opacity="0.5" />
         {/* Optimised route */}
         <path
           d="M30 160 L 80 130 L 130 145 L 180 100 L 230 110 L 280 70"
@@ -66,14 +60,7 @@ export function MockRouteMap() {
         ).map(([x, y, n, c]) => (
           <g key={n}>
             <circle cx={x} cy={y} r="11" fill="white" stroke={c} strokeWidth="2" />
-            <text
-              x={x}
-              y={y + 3.5}
-              textAnchor="middle"
-              fontSize="10"
-              fontWeight="700"
-              fill={c}
-            >
+            <text x={x} y={y + 3.5} textAnchor="middle" fontSize="10" fontWeight="700" fill={c}>
               {n}
             </text>
           </g>

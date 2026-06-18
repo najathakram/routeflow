@@ -12,13 +12,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
-import {
-  FilterChipRow,
-  NavAction,
-  NavBar,
-  Pill,
-  SearchBar,
-} from "@routeflow/ui/mobile/ios";
+import { FilterChipRow, NavAction, NavBar, Pill, SearchBar } from "@routeflow/ui/mobile/ios";
 import { useAdminInvoices, type AdminInvoice } from "../../../../lib/api/admin";
 
 const FILTERS = [
@@ -32,7 +26,10 @@ const FILTERS = [
 
 type FilterId = (typeof FILTERS)[number]["id"];
 
-function statusPill(status: string): { variant: "brand" | "green" | "orange" | "red" | "gray"; label: string } {
+function statusPill(status: string): {
+  variant: "brand" | "green" | "orange" | "red" | "gray";
+  label: string;
+} {
   switch (status) {
     case "DRAFT":
       return { variant: "gray", label: "Draft" };
@@ -106,9 +103,7 @@ export default function InvoicesListScreen() {
           </View>
         ) : invoices.length === 0 ? (
           <View style={styles.center}>
-            <Text style={styles.empty}>
-              {search ? "No invoices match." : "No invoices yet."}
-            </Text>
+            <Text style={styles.empty}>{search ? "No invoices match." : "No invoices yet."}</Text>
           </View>
         ) : (
           <View style={{ paddingHorizontal: 16, gap: 8, paddingBottom: 24 }}>
@@ -172,6 +167,11 @@ const styles = StyleSheet.create({
     alignItems: "baseline",
     gap: 6,
   },
-  balance: { fontSize: 17, fontFamily: "Inter_700Bold", color: ios.label, fontVariant: ["tabular-nums"] },
+  balance: {
+    fontSize: 17,
+    fontFamily: "Inter_700Bold",
+    color: ios.label,
+    fontVariant: ["tabular-nums"],
+  },
   totalText: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2 },
 });

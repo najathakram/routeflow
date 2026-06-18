@@ -5,8 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useBuyerSessionStore } from "../lib/buyer-session-store";
 import { BUYER_KEYS } from "../lib/auth-keys";
 
-const SOCKET_URL =
-  (process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:3000").replace(/\/$/, "");
+const SOCKET_URL = (process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:3000").replace(/\/$/, "");
 
 // Diagnostic logging — gated so it can be disabled by setting
 // EXPO_PUBLIC_DEBUG_SOCKET=false in the Railway env.

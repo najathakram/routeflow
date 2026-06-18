@@ -11,9 +11,7 @@ export function NetworkError({ onRetry }: NetworkErrorProps) {
     <View style={styles.container}>
       <Ionicons name="cloud-offline-outline" size={56} color="#cbd5e1" />
       <Text style={styles.title}>Connection error</Text>
-      <Text style={styles.subtitle}>
-        Check your internet connection and try again.
-      </Text>
+      <Text style={styles.subtitle}>Check your internet connection and try again.</Text>
       {onRetry ? (
         <Pressable
           style={styles.retryBtn}
@@ -21,12 +19,7 @@ export function NetworkError({ onRetry }: NetworkErrorProps) {
           accessibilityRole="button"
           accessibilityLabel="Retry"
         >
-          <Ionicons
-            name="refresh-outline"
-            size={18}
-            color="#fff"
-            style={{ marginRight: 8 }}
-          />
+          <Ionicons name="refresh-outline" size={18} color="#fff" style={{ marginRight: 8 }} />
           <Text style={styles.retryText}>Retry</Text>
         </Pressable>
       ) : null}

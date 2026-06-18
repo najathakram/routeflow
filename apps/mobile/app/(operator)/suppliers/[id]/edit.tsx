@@ -32,7 +32,9 @@ export default function EditSupplierScreen() {
 
   if (isLoading || !supplier) {
     return (
-      <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: ios.bg }}>
+      <View
+        style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: ios.bg }}
+      >
         <ActivityIndicator color={ios.brand} />
       </View>
     );
@@ -57,8 +59,7 @@ export default function EditSupplierScreen() {
           showToast("Supplier updated");
           router.back();
         },
-        onError: (e: any) =>
-          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
       },
     );
   };

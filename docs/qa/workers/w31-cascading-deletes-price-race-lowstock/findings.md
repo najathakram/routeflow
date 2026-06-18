@@ -16,6 +16,7 @@
 **Delete attempt:** `DELETE /customers/d97b0b0a` → **200 `{"success": true}`**
 
 **Verification after delete:**
+
 - GET /customers/d97b0b0a → 404 (customer deleted)
 - GET /orders/fe0c7785 → 404 (order ALSO deleted)
 
@@ -50,11 +51,13 @@
 **Product:** Apple Juice 1L (`35137ede`), original price $4.49.
 
 **Sequential case (order first, then price change):**
+
 - Order placed at $4.49, then operator changed price to $99.99
 - Order line item still shows unitPrice: "4.49" — price locked at order time
 - RESULT: PASS for sequential case
 
 **True race (simultaneous PATCH product + POST buyer order via Promise.all):**
+
 - Both fired simultaneously
 - Result: orderStatus 201, lineItemUnitPrice: "99.99", orderTotal: "$115.49"
 - Buyer received NEW price ($99.99) with no warning or cart re-pricing notification
@@ -65,11 +68,13 @@
 ## 13.13 — Low-stock warning propagation
 
 **Finding:** Buyer order placement does NOT decrement stock.
+
 - Ordered 98 units of Apple Juice (stock=100) → stock remained at 100 after order placed
 - Stock fields (currentStock, reorderPoint) rejected by both POST and PATCH product DTOs ("should not exist")
 - Stock only adjustable via operator UI `/products/{id}/adjust-stock`
 
 **Dashboard tile bug:**
+
 - `GET /products?stockStatus=LOW&limit=1` → meta.total: 3, data: [1 item]
 - Home dashboard "Low Stock" tile shows **"1"** (reads `data.length`) instead of **"3"** (reads `meta.total`)
 - RESULT: FAIL — P2 — operator undercounts low-stock items by factor of (total/limit)
@@ -78,12 +83,12 @@
 
 ## New Issues Found
 
-| # | Severity | Description |
-|---|----------|-------------|
-| NI-1 | **P0** | DELETE /customers cascades to silently delete all linked orders — open PENDING orders destroyed with no warning |
-| NI-2 | P2 | Price-change-at-checkout race: simultaneous price edit + buyer checkout captures new price silently with no buyer warning |
-| NI-3 | P2 | Home "Low Stock" dashboard tile shows data.length (1) instead of meta.total (3) — understates low-stock count |
-| NI-4 | INFO | Buyer order placement does not decrement stock — stock only adjusts via manual operator adjustment |
+| #    | Severity | Description                                                                                                               |
+| ---- | -------- | ------------------------------------------------------------------------------------------------------------------------- |
+| NI-1 | **P0**   | DELETE /customers cascades to silently delete all linked orders — open PENDING orders destroyed with no warning           |
+| NI-2 | P2       | Price-change-at-checkout race: simultaneous price edit + buyer checkout captures new price silently with no buyer warning |
+| NI-3 | P2       | Home "Low Stock" dashboard tile shows data.length (1) instead of meta.total (3) — understates low-stock count             |
+| NI-4 | INFO     | Buyer order placement does not decrement stock — stock only adjusts via manual operator adjustment                        |
 
 ---
 

@@ -1,5 +1,5 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiClient } from '../api-client';
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { apiClient } from "../api-client";
 
 export interface CustomerSummary {
   id: string;
@@ -15,10 +15,10 @@ export function useCustomers(search?: string) {
     data: CustomerSummary[];
     meta: { total: number; page: number; limit: number; totalPages: number };
   }>({
-    queryKey: ['customers', 'list', search ?? ''],
+    queryKey: ["customers", "list", search ?? ""],
     queryFn: () =>
       apiClient
-        .get('/customers', { params: { search: search || undefined, limit: 100 } })
+        .get("/customers", { params: { search: search || undefined, limit: 100 } })
         .then((r) => r.data),
     staleTime: 60_000,
   });
@@ -72,7 +72,7 @@ export interface CustomerStatement {
 
 export function useCustomerStatement(id: string) {
   return useQuery<CustomerStatement>({
-    queryKey: ['customers', id, 'statement'],
+    queryKey: ["customers", id, "statement"],
     queryFn: () => apiClient.get(`/customers/${id}/statement`).then((r) => r.data),
     enabled: !!id,
     staleTime: 60_000,
@@ -100,7 +100,7 @@ export interface CustomerPrice {
 
 export function useCustomerPrices(id: string) {
   return useQuery<CustomerPrice[]>({
-    queryKey: ['customers', id, 'prices'],
+    queryKey: ["customers", id, "prices"],
     queryFn: () => apiClient.get(`/customers/${id}/prices`).then((r) => r.data),
     enabled: !!id,
     staleTime: 2 * 60_000,
@@ -117,7 +117,7 @@ export function useUpsertCustomerPrice() {
     mutationFn: ({ customerId, ...body }) =>
       apiClient.post(`/customers/${customerId}/prices`, body).then((r) => r.data),
     onSuccess: (_, { customerId }) => {
-      qc.invalidateQueries({ queryKey: ['customers', customerId, 'prices'] });
+      qc.invalidateQueries({ queryKey: ["customers", customerId, "prices"] });
     },
   });
 }
@@ -128,14 +128,14 @@ export function useDeleteCustomerPrice() {
     mutationFn: ({ customerId, priceId }) =>
       apiClient.delete(`/customers/${customerId}/prices/${priceId}`).then(() => undefined),
     onSuccess: (_, { customerId }) => {
-      qc.invalidateQueries({ queryKey: ['customers', customerId, 'prices'] });
+      qc.invalidateQueries({ queryKey: ["customers", customerId, "prices"] });
     },
   });
 }
 
 export function useCustomer(id: string) {
   return useQuery<CustomerDetail>({
-    queryKey: ['customers', id],
+    queryKey: ["customers", id],
     queryFn: () => apiClient.get(`/customers/${id}`).then((r) => r.data),
     enabled: !!id,
     staleTime: 2 * 60_000,
@@ -144,21 +144,21 @@ export function useCustomer(id: string) {
 
 // ─── My profile (CUSTOMER role) ───────────────────────────────────────────────
 
-export interface MyCustomerProfile extends Omit<CustomerDetail, 'user'> {
+export interface MyCustomerProfile extends Omit<CustomerDetail, "user"> {
   user?: { id?: string; email?: string };
 }
 
 export function useMyCustomerProfile() {
   return useQuery<MyCustomerProfile>({
-    queryKey: ['customers', 'me'],
-    queryFn: () => apiClient.get('/customers/me').then((r) => r.data),
+    queryKey: ["customers", "me"],
+    queryFn: () => apiClient.get("/customers/me").then((r) => r.data),
     staleTime: 2 * 60_000,
   });
 }
 
 // ─── Account statement (CUSTOMER role) ───────────────────────────────────────
 
-export type TransactionType = 'INVOICE' | 'PAYMENT' | 'CREDIT_NOTE' | 'ADJUSTMENT';
+export type TransactionType = "INVOICE" | "PAYMENT" | "CREDIT_NOTE" | "ADJUSTMENT";
 
 export interface AccountTransaction {
   id: string;
@@ -179,8 +179,8 @@ export interface AccountSummary {
 
 export function useMyAccountSummary() {
   return useQuery<AccountSummary>({
-    queryKey: ['customers', 'me', 'statement'],
-    queryFn: () => apiClient.get('/customers/me/statement').then((r) => r.data),
+    queryKey: ["customers", "me", "statement"],
+    queryFn: () => apiClient.get("/customers/me/statement").then((r) => r.data),
     staleTime: 60_000,
   });
 }
@@ -206,26 +206,22 @@ export interface CreateCustomerDto {
 export function useCreateCustomer() {
   const qc = useQueryClient();
   return useMutation<{ id: string }, Error, CreateCustomerDto>({
-    mutationFn: (dto) => apiClient.post('/customers', dto).then((r) => r.data),
+    mutationFn: (dto) => apiClient.post("/customers", dto).then((r) => r.data),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['customers'] });
-      qc.invalidateQueries({ queryKey: ['admin', 'customers'] });
+      qc.invalidateQueries({ queryKey: ["customers"] });
+      qc.invalidateQueries({ queryKey: ["admin", "customers"] });
     },
   });
 }
 
 export function useUpdateCustomer() {
   const qc = useQueryClient();
-  return useMutation<
-    { id: string },
-    Error,
-    { id: string } & Partial<CreateCustomerDto>
-  >({
+  return useMutation<{ id: string }, Error, { id: string } & Partial<CreateCustomerDto>>({
     mutationFn: ({ id, ...dto }) => apiClient.patch(`/customers/${id}`, dto).then((r) => r.data),
     onSuccess: (_, { id }) => {
-      qc.invalidateQueries({ queryKey: ['customers'] });
-      qc.invalidateQueries({ queryKey: ['customers', id] });
-      qc.invalidateQueries({ queryKey: ['admin', 'customers'] });
+      qc.invalidateQueries({ queryKey: ["customers"] });
+      qc.invalidateQueries({ queryKey: ["customers", id] });
+      qc.invalidateQueries({ queryKey: ["admin", "customers"] });
     },
   });
 }
@@ -235,8 +231,8 @@ export function useDeleteCustomer() {
   return useMutation<void, Error, string>({
     mutationFn: (id) => apiClient.delete(`/customers/${id}`).then(() => undefined),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['customers'] });
-      qc.invalidateQueries({ queryKey: ['admin', 'customers'] });
+      qc.invalidateQueries({ queryKey: ["customers"] });
+      qc.invalidateQueries({ queryKey: ["admin", "customers"] });
     },
   });
 }
@@ -256,15 +252,11 @@ export interface CustomerAddressDto {
 
 export function useAddCustomerAddress() {
   const qc = useQueryClient();
-  return useMutation<
-    { id: string },
-    Error,
-    { customerId: string } & CustomerAddressDto
-  >({
+  return useMutation<{ id: string }, Error, { customerId: string } & CustomerAddressDto>({
     mutationFn: ({ customerId, ...body }) =>
       apiClient.post(`/customers/${customerId}/addresses`, body).then((r) => r.data),
     onSuccess: (_, { customerId }) => {
-      qc.invalidateQueries({ queryKey: ['customers', customerId] });
+      qc.invalidateQueries({ queryKey: ["customers", customerId] });
     },
   });
 }
@@ -277,11 +269,9 @@ export function useUpdateCustomerAddress() {
     { customerId: string; addressId: string } & Partial<CustomerAddressDto>
   >({
     mutationFn: ({ customerId, addressId, ...body }) =>
-      apiClient
-        .patch(`/customers/${customerId}/addresses/${addressId}`, body)
-        .then((r) => r.data),
+      apiClient.patch(`/customers/${customerId}/addresses/${addressId}`, body).then((r) => r.data),
     onSuccess: (_, { customerId }) => {
-      qc.invalidateQueries({ queryKey: ['customers', customerId] });
+      qc.invalidateQueries({ queryKey: ["customers", customerId] });
     },
   });
 }

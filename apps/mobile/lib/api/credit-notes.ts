@@ -1,9 +1,9 @@
-import { useQuery } from '@tanstack/react-query';
-import { apiClient } from '../api-client';
+import { useQuery } from "@tanstack/react-query";
+import { apiClient } from "../api-client";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type CreditNoteStatus = 'ISSUED' | 'APPLIED' | 'VOID';
+export type CreditNoteStatus = "ISSUED" | "APPLIED" | "VOID";
 
 export interface CreditNoteItem {
   id: string;
@@ -37,16 +37,15 @@ interface PaginatedResponse<T> {
 
 export function useMyCreditNotes(params?: { status?: CreditNoteStatus; page?: number }) {
   return useQuery<PaginatedResponse<CreditNote>>({
-    queryKey: ['credit-notes', 'mine', params],
-    queryFn: () =>
-      apiClient.get('/credit-notes', { params }).then((r) => r.data),
+    queryKey: ["credit-notes", "mine", params],
+    queryFn: () => apiClient.get("/credit-notes", { params }).then((r) => r.data),
     staleTime: 60_000,
   });
 }
 
 export function useMyCreditNote(id: string) {
   return useQuery<CreditNote>({
-    queryKey: ['credit-notes', id],
+    queryKey: ["credit-notes", id],
     queryFn: () => apiClient.get(`/credit-notes/${id}`).then((r) => r.data),
     enabled: !!id,
   });

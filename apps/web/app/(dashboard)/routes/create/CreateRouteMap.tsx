@@ -37,13 +37,7 @@ interface GeoCustomer {
 
 // ─── Marker bubble ─────────────────────────────────────────────────────────────
 
-function MarkerBubble({
-  selected,
-  stopNumber,
-}: {
-  selected: boolean;
-  stopNumber?: number;
-}) {
+function MarkerBubble({ selected, stopNumber }: { selected: boolean; stopNumber?: number }) {
   const size = selected ? 36 : 32;
   const bg = selected ? "#3b82f6" : "#94a3b8";
 
@@ -188,10 +182,7 @@ function CustomerInfoWindow({
   const addr = (gc.customer.addresses ?? []).find((a) => a.isDefault) ?? gc.customer.addresses?.[0];
 
   return (
-    <InfoWindow
-      position={{ lat: gc.lat, lng: gc.lng }}
-      onCloseClick={onClose}
-    >
+    <InfoWindow position={{ lat: gc.lat, lng: gc.lng }} onCloseClick={onClose}>
       <div style={{ maxWidth: 240, padding: "4px 0" }}>
         <p style={{ fontWeight: 700, fontSize: 14, margin: "0 0 4px", color: "#0f172a" }}>
           {gc.customer.businessName}
@@ -258,13 +249,13 @@ function MapPlaceholder({
           <p className="font-semibold text-navy">
             {reason === "no-key" ? "Map unavailable" : "No addresses to map"}
           </p>
-          <p className="mt-1 text-sm text-navy/50">
+          <p className="mt-1 text-sm text-navy/70">
             {reason === "no-key"
               ? "Google Maps API key not configured. Contact your administrator."
               : "None of your customers have geocoded addresses yet. Add addresses with coordinates to see them on the map."}
           </p>
         </div>
-        <span className="rounded-full border border-surface-border bg-surface-raised px-3 py-1 text-xs font-medium text-navy/60">
+        <span className="rounded-full border border-surface-border bg-surface-raised px-3 py-1 text-xs font-medium text-navy/70">
           {customerCount} customer{customerCount !== 1 ? "s" : ""} available
         </span>
       </div>
@@ -290,8 +281,7 @@ export function CreateRouteMap({
   const [depotInfoOpen, setDepotInfoOpen] = React.useState(false);
   const [isGeocoding, setIsGeocoding] = React.useState(false);
 
-  const depot =
-    depotLat != null && depotLng != null ? { lat: depotLat, lng: depotLng } : null;
+  const depot = depotLat != null && depotLng != null ? { lat: depotLat, lng: depotLng } : null;
   const geocodeTriggeredRef = React.useRef(false);
 
   // Split customers: those with lat/lng and those with addresses but no coords
@@ -335,7 +325,7 @@ export function CreateRouteMap({
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-3 bg-surface-raised">
         <MapPin className="h-10 w-10 animate-pulse text-navy/20" />
-        <p className="text-sm text-navy/50">Loading map…</p>
+        <p className="text-sm text-navy/70">Loading map…</p>
       </div>
     );
   }
@@ -349,12 +339,13 @@ export function CreateRouteMap({
         <p className="text-sm font-medium text-navy/70">
           Geocoding {needsGeocodingCount} address{needsGeocodingCount !== 1 ? "es" : ""}…
         </p>
-        <p className="text-xs text-navy/40">Resolving locations from address text</p>
+        <p className="text-xs text-navy/70">Resolving locations from address text</p>
       </div>
     );
   }
 
-  if (geoCustomers.length === 0) return <MapPlaceholder customerCount={customers.length} reason="no-geocoded" />;
+  if (geoCustomers.length === 0)
+    return <MapPlaceholder customerCount={customers.length} reason="no-geocoded" />;
 
   return (
     <APIProvider apiKey={MAPS_KEY}>
@@ -384,10 +375,7 @@ export function CreateRouteMap({
           {/* Depot marker */}
           {depot && (
             <>
-              <AdvancedMarker
-                position={depot}
-                onClick={() => setDepotInfoOpen((v) => !v)}
-              >
+              <AdvancedMarker position={depot} onClick={() => setDepotInfoOpen((v) => !v)}>
                 <DepotMarkerBubble />
               </AdvancedMarker>
               {depotInfoOpen && (
@@ -397,9 +385,13 @@ export function CreateRouteMap({
                   pixelOffset={[0, -42]}
                 >
                   <div style={{ padding: "4px 0", minWidth: 140 }}>
-                    <p style={{ fontWeight: 700, fontSize: 13, margin: 0, color: "#0f172a" }}>Depot</p>
+                    <p style={{ fontWeight: 700, fontSize: 13, margin: 0, color: "#0f172a" }}>
+                      Depot
+                    </p>
                     {depotAddress && (
-                      <p style={{ fontSize: 11, color: "#64748b", margin: "2px 0 0" }}>{depotAddress}</p>
+                      <p style={{ fontSize: 11, color: "#64748b", margin: "2px 0 0" }}>
+                        {depotAddress}
+                      </p>
                     )}
                   </div>
                 </InfoWindow>

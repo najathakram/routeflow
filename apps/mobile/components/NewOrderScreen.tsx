@@ -520,7 +520,7 @@ function ProductPickView({
   const canSave = totalItems > 0 && !createOrder.isPending;
 
   /** Submit with a specific (or no) merge choice. */
-  const submitOrder = (mergeChoice?: 'merge' | 'separate') => {
+  const submitOrder = (mergeChoice?: "merge" | "separate") => {
     const itemPayload = Object.entries(items)
       .map(([productId, line]) => {
         const p = productById.get(productId);
@@ -549,19 +549,26 @@ function ProductPickView({
       },
       {
         onSuccess: (order) => {
-          if (mergeChoice === 'merge') {
+          if (mergeChoice === "merge") {
             showToast(`Merged into order ${order.orderNumber}`);
           }
           onSaved(order.orderNumber);
         },
         onError: (err: Error) => {
           const errAny = err as unknown as {
-            response?: { status?: number; data?: { message?: string; code?: string; activeOrder?: any } };
+            response?: {
+              status?: number;
+              data?: { message?: string; code?: string; activeOrder?: any };
+            };
           };
           // Belt-and-braces: if the API reports 409 MERGE_CHOICE_REQUIRED (e.g. the
           // pre-check missed a race), prompt the operator now from the error response.
           const body = errAny?.response?.data;
-          if (errAny?.response?.status === 409 && body?.code === 'MERGE_CHOICE_REQUIRED' && body?.activeOrder) {
+          if (
+            errAny?.response?.status === 409 &&
+            body?.code === "MERGE_CHOICE_REQUIRED" &&
+            body?.activeOrder
+          ) {
             promptMergeChoice(body.activeOrder);
             return;
           }
@@ -572,14 +579,18 @@ function ProductPickView({
     );
   };
 
-  const promptMergeChoice = (existing: { orderNumber: string | null; itemCount: number; total: number }) => {
+  const promptMergeChoice = (existing: {
+    orderNumber: string | null;
+    itemCount: number;
+    total: number;
+  }) => {
     chooseAction(
       "Open order exists",
       `This customer has an open order ${existing.orderNumber ?? ""} with ${existing.itemCount} item${existing.itemCount === 1 ? "" : "s"} ($${existing.total.toFixed(2)}). Merge into it or create a separate order?`,
       [
         { label: "Cancel", style: "cancel" },
-        { label: "Merge", onPress: () => submitOrder('merge') },
-        { label: "Create separate", onPress: () => submitOrder('separate') },
+        { label: "Merge", onPress: () => submitOrder("merge") },
+        { label: "Create separate", onPress: () => submitOrder("separate") },
       ],
     );
   };
@@ -747,15 +758,11 @@ function ProductPickView({
                         </View>
                       </View>
                       <View style={styles.boxedQtyControl}>
-                        <Text style={styles.boxedQtyLabel}>
-                          Loose {p.unit ?? "pcs"}
-                        </Text>
+                        <Text style={styles.boxedQtyLabel}>Loose {p.unit ?? "pcs"}</Text>
                         <View style={styles.miniStepper}>
                           <Pressable
                             style={styles.miniStepBtn}
-                            onPress={() =>
-                              setPieces(p.id, Math.max(0, (line?.pieces ?? 0) - 1))
-                            }
+                            onPress={() => setPieces(p.id, Math.max(0, (line?.pieces ?? 0) - 1))}
                           >
                             <Text style={styles.miniStepText}>−</Text>
                           </Pressable>
@@ -839,20 +846,14 @@ function ProductPickView({
       </View>
 
       {scanOpen ? (
-        <BarcodeScanner
-          onScanned={handleBarcodeScanned}
-          onClose={() => setScanOpen(false)}
-        />
+        <BarcodeScanner onScanned={handleBarcodeScanned} onClose={() => setScanOpen(false)} />
       ) : null}
 
       {/* Floating, draggable scan button — keeps the scanner one tap away even
           when the operator has scrolled deep into the product list. Hidden
           while the cart sheet or the in-list scanner is up so it doesn't
           stack on top of either. */}
-      <BarcodeFab
-        onScanned={handleBarcodeScanned}
-        hidden={cartOpen || scanOpen}
-      />
+      <BarcodeFab onScanned={handleBarcodeScanned} hidden={cartOpen || scanOpen} />
 
       <CartModal
         open={cartOpen}
@@ -930,12 +931,7 @@ function CartModal({
   }, [items, productById]);
 
   return (
-    <Modal
-      visible={open}
-      animationType="slide"
-      transparent
-      onRequestClose={onClose}
-    >
+    <Modal visible={open} animationType="slide" transparent onRequestClose={onClose}>
       <View style={styles.cartBackdrop}>
         <View style={styles.cartSheet}>
           {/* Header with close + title */}
@@ -983,11 +979,7 @@ function CartModal({
                 <Text style={styles.footerTotal}>${total.toFixed(2)}</Text>
               </View>
               <View style={{ flexDirection: "row", gap: 8 }}>
-                <Pressable
-                  style={styles.cartContinueBtn}
-                  onPress={onClose}
-                  hitSlop={6}
-                >
+                <Pressable style={styles.cartContinueBtn} onPress={onClose} hitSlop={6}>
                   <Text style={styles.cartContinueText}>Keep adding</Text>
                 </Pressable>
                 <Pressable
@@ -999,9 +991,7 @@ function CartModal({
                   onPress={onSave}
                   accessibilityState={{ disabled: totalItems === 0 || saving }}
                 >
-                  <Text style={styles.confirmBtnText}>
-                    {saving ? "Saving…" : "Save order"}
-                  </Text>
+                  <Text style={styles.confirmBtnText}>{saving ? "Saving…" : "Save order"}</Text>
                   <Ionicons name="checkmark" size={14} color="#fff" />
                 </Pressable>
               </View>
@@ -1064,11 +1054,7 @@ function CartRow({
 
       {isBoxed ? (
         <>
-          <CartStepperRow
-            label="Boxes"
-            value={line.boxes ?? 0}
-            onChange={onChangeBoxes}
-          />
+          <CartStepperRow label="Boxes" value={line.boxes ?? 0} onChange={onChangeBoxes} />
           <CartStepperRow
             label={`Loose ${product.unit ?? "pieces"}`}
             value={line.pieces ?? 0}

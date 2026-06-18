@@ -4,10 +4,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { NewOrderScreen } from "../../../../../components/NewOrderScreen";
-import {
-  useActiveRouteRun,
-  useRouteRun,
-} from "../../../../../lib/api/routes";
+import { useActiveRouteRun, useRouteRun } from "../../../../../lib/api/routes";
 
 // Stop-scoped new-order wrapper. Pulls the customer from the stop so the
 // order is auto-linked to the route run + stop on save.
@@ -18,10 +15,7 @@ export default function StopNewOrderScreen() {
   const { data: activeData, isLoading: activeLoading } = useActiveRouteRun();
   const runId = params.runId ?? activeData?.data?.[0]?.id;
   const { data: run, isLoading: runLoading } = useRouteRun(runId ?? "");
-  const stop = useMemo(
-    () => run?.stops?.find((s) => s.id === stopId),
-    [run, stopId],
-  );
+  const stop = useMemo(() => run?.stops?.find((s) => s.id === stopId), [run, stopId]);
 
   if (activeLoading || runLoading) {
     return (

@@ -13,7 +13,10 @@ const driverSchema = z.object({
   contactName: z.string().min(1, "Required"),
   email: z.string().email("Enter a valid email"),
   phone: z.string().min(7, "Enter a valid phone number").optional().or(z.literal("")),
-  username: z.string().min(3, "At least 3 characters").regex(/^[a-z0-9_]+$/, "Lowercase letters, numbers, underscores only"),
+  username: z
+    .string()
+    .min(3, "At least 3 characters")
+    .regex(/^[a-z0-9_]+$/, "Lowercase letters, numbers, underscores only"),
   vehicleMake: z.string().optional(),
   vehicleModel: z.string().optional(),
   vehicleColour: z.string().optional(),
@@ -52,10 +55,7 @@ export function AddDriverModal({ isOpen, onClose, onCreateDriver }: AddDriverMod
     if (touchedFields.username) return;
     const parts = nameValue.trim().split(/\s+/);
     if (parts.length >= 2 && parts[0] && parts[parts.length - 1]) {
-      setValue(
-        "username",
-        `${parts[0][0].toLowerCase()}${parts[parts.length - 1].toLowerCase()}`,
-      );
+      setValue("username", `${parts[0][0].toLowerCase()}${parts[parts.length - 1].toLowerCase()}`);
     }
   }, [nameValue, touchedFields.username, setValue]);
 
@@ -74,7 +74,8 @@ export function AddDriverModal({ isOpen, onClose, onCreateDriver }: AddDriverMod
       setTempPassword(password);
     } catch (err: unknown) {
       // Prefer the API's error message (Axios: err.response.data.message) over the generic one
-      const apiMsg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
+      const apiMsg = (err as { response?: { data?: { message?: string } } })?.response?.data
+        ?.message;
       const fallbackMsg = (err as { message?: string })?.message;
       setApiError(apiMsg || fallbackMsg || "Failed to create driver. Please try again.");
     }
@@ -130,26 +131,17 @@ export function AddDriverModal({ isOpen, onClose, onCreateDriver }: AddDriverMod
               </code>
               <button
                 onClick={copyPassword}
-                className="rounded p-2 text-navy/40 hover:bg-surface-raised hover:text-navy transition-colors"
+                className="rounded p-2 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
                 title="Copy to clipboard"
               >
-                {copied ? (
-                  <Check className="h-4 w-4 text-success" />
-                ) : (
-                  <Copy className="h-4 w-4" />
-                )}
+                {copied ? <Check className="h-4 w-4 text-success" /> : <Copy className="h-4 w-4" />}
               </button>
             </div>
           </div>
         </div>
       ) : (
         /* ── Form view ── */
-        <form
-          id="driver-form"
-          onSubmit={handleSubmit(onSubmit)}
-          noValidate
-          className="space-y-4"
-        >
+        <form id="driver-form" onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-4">
           {apiError && (
             <div className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-red-200">
               {apiError}

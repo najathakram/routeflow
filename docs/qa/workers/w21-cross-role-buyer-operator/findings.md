@@ -11,6 +11,7 @@ Buyer 1: ux_buyer1_1777265477001@ux-audit.test (UX Empty Cafe)
 ## Architecture Finding (applies to all scenarios)
 
 No real-time update mechanism exists. The app uses pure REST/HTTP exclusively:
+
 - No WebSocket connections detected
 - No Server-Sent Events (SSE) detected
 - No active polling intervals -- dashboard stats fetched once on page mount only
@@ -108,30 +109,38 @@ Scenario | Auto-Update Latency | Navigation Latency | Data Correct | Result
 ## Key Bug Signals (Prioritized)
 
 ### P1 - Critical UX: No real-time updates on operator dashboard
+
 Dashboard stats load once on mount and never refresh. Operators can miss buyer orders indefinitely.
 Fix: Implement polling (refetch every 30s) or WebSocket/SSE for dashboard stat tiles.
 
 ### P2 - High: Operator Pending orders count is misleading
+
 Tile showed 7 while GET /orders?status=PENDING returned 4. Tile appears to count PENDING+CONFIRMED+other. Label should match the actual query.
 
 ### P3 - High: Invoice PDF link is always null for manually-created invoices
+
 pdfUrl: null on all manually-created invoices. View PDF button leads nowhere. Buyer cannot download invoice.
 
 ### P4 - Medium: Buyer invoice list returns no line items
+
 GET /buyer/invoices returns lineItems: [] for all invoices. Only GET /buyer/invoices/{id} returns items.
 
 ### P5 - Medium: Invoice API endpoint inconsistencies
+
 - POST /invoices requires items[].qty (not lineItems[].quantity)
 - Invoice send: POST /invoices/{id}/send works; PATCH /invoices/{id}/status returns 404
 - Order cancel (buyer): POST /buyer/orders/{id}/cancel (not PATCH/DELETE)
 
 ### P6 - Medium: XSS payload visible in Operator orders list (W18 contamination)
+
 ORD-1777431385834 customer name is HTML tag displayed as literal text. Properly escaped in UI (not executed), but indicates no server-side sanitization of customer name field.
 
 ### P7 - Medium: Buyer portal has no push mechanism for any status changes
+
 All status changes require buyer page reload. No toast, badge, or notification mechanism observed.
 
 ### P8 - Low: Possible cross-tenant invoice data in operator Sent filter
+
 Invoices from Blue Dreamz (product: Bam Bam AAA Flower) appeared in ux-audit tenant Sent filter. Does not belong to this tenant. Possible cross-tenant leak or affa data contamination.
 
 ## Resources Created During Testing

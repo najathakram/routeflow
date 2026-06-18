@@ -5,6 +5,8 @@ import { ios } from "@routeflow/ui/tokens";
 
 export default function TenantWarehouseRelay() {
   const router = useRouter();
-  useEffect(() => { router.push("/(operator)/warehouse"); }, []);
+  useEffect(() => {
+    router.push("/(operator)/warehouse");
+  }, []);
   return <View style={{ flex: 1, backgroundColor: ios.bg }} />;
 }

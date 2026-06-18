@@ -88,7 +88,7 @@ let createdEstimateId = "";
 let createdRecurringId = "";
 let createdTemplateId = "";
 let existingCustomerId = ""; // test customer record id
-let existingDriverId = "";   // test driver record id
+let existingDriverId = ""; // test driver record id
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
@@ -106,13 +106,21 @@ async function main() {
   // ── Create test driver (API generates tempPassword, returned in response) ──
   testDriverUsername = `e2edrv${RUN}`;
   {
-    const { status, data } = await api("POST", "/drivers", {
-      contactName: `E2E Driver ${RUN}`,
-      email: `${testDriverUsername}@test.local`,
-      username: testDriverUsername,
-      phone: "5550001111",
-      vehicleMake: "Test", vehicleModel: "Van", vehicleColour: "White", vehiclePlate: `T${RUN.slice(-5)}`,
-    }, operatorToken);
+    const { status, data } = await api(
+      "POST",
+      "/drivers",
+      {
+        contactName: `E2E Driver ${RUN}`,
+        email: `${testDriverUsername}@test.local`,
+        username: testDriverUsername,
+        phone: "5550001111",
+        vehicleMake: "Test",
+        vehicleModel: "Van",
+        vehicleColour: "White",
+        vehiclePlate: `T${RUN.slice(-5)}`,
+      },
+      operatorToken,
+    );
     if (status === 201) {
       existingDriverId = data.driver?.id ?? data.id;
       testDriverPassword = data.tempPassword;
@@ -133,18 +141,34 @@ async function main() {
   // ── Create test customer ──────────────────────────────────────────────────
   testCustomerUsername = `e2ecst${RUN}`;
   {
-    const { status, data } = await api("POST", "/customers", {
-      businessName: `E2E Café ${RUN}`,
-      contactName: `E2E Contact ${RUN}`,
-      email: `${testCustomerUsername}@test.local`,
-      username: testCustomerUsername,
-      phone: "5550002222",
-      addresses: [{ label: "Main", line1: "123 Test St", city: "Austin", state: "TX", zip: "78701", isDefault: true }],
-    }, operatorToken);
+    const { status, data } = await api(
+      "POST",
+      "/customers",
+      {
+        businessName: `E2E Café ${RUN}`,
+        contactName: `E2E Contact ${RUN}`,
+        email: `${testCustomerUsername}@test.local`,
+        username: testCustomerUsername,
+        phone: "5550002222",
+        addresses: [
+          {
+            label: "Main",
+            line1: "123 Test St",
+            city: "Austin",
+            state: "TX",
+            zip: "78701",
+            isDefault: true,
+          },
+        ],
+      },
+      operatorToken,
+    );
     if (status === 201) {
       existingCustomerId = data.id;
       testCustomerPassword = data.tempPassword;
-      console.log(`  ✓ Test customer created (${testCustomerUsername}, pwd=${testCustomerPassword})`);
+      console.log(
+        `  ✓ Test customer created (${testCustomerUsername}, pwd=${testCustomerPassword})`,
+      );
     } else {
       console.error(`  ✗ FATAL: customer creation failed (${status}): ${JSON.stringify(data)}`);
       process.exit(1);
@@ -256,7 +280,16 @@ async function main() {
         businessName: `E2E Business ${RUN}`,
         contactName: "E2E Contact",
         phone: "0400000001",
-        addresses: [{ label: "Main", line1: "456 Test Ave", city: "Austin", state: "TX", zip: "78702", isDefault: true }],
+        addresses: [
+          {
+            label: "Main",
+            line1: "456 Test Ave",
+            city: "Austin",
+            state: "TX",
+            zip: "78702",
+            isDefault: true,
+          },
+        ],
       },
       operatorToken,
     );
@@ -535,7 +568,10 @@ async function main() {
       undefined,
       operatorToken,
     );
-    expect(status === 200 || status === 201, `Expected 200/201, got ${status}: ${JSON.stringify(data)}`);
+    expect(
+      status === 200 || status === 201,
+      `Expected 200/201, got ${status}: ${JSON.stringify(data)}`,
+    );
     expect(data.status === "SENT", `Expected SENT, got ${data.status}`);
   });
 
@@ -559,7 +595,10 @@ async function main() {
       undefined,
       operatorToken,
     );
-    expect(status === 200 || status === 201, `Expected 200/201, got ${status}: ${JSON.stringify(data)}`);
+    expect(
+      status === 200 || status === 201,
+      `Expected 200/201, got ${status}: ${JSON.stringify(data)}`,
+    );
     expect(data.status === "VOID", `Expected VOID, got ${data.status}`);
   });
 
@@ -617,7 +656,10 @@ async function main() {
       undefined,
       operatorToken,
     );
-    expect(status === 200 || status === 201, `Expected 200/201, got ${status}: ${JSON.stringify(data)}`);
+    expect(
+      status === 200 || status === 201,
+      `Expected 200/201, got ${status}: ${JSON.stringify(data)}`,
+    );
     expect(data.status === "DRAFT", `Expected DRAFT, got ${data.status}`);
   });
 
@@ -639,7 +681,10 @@ async function main() {
       { reason: "Bad debt — e2e test" },
       operatorToken,
     );
-    expect(status === 200 || status === 201, `Expected 200/201, got ${status}: ${JSON.stringify(data)}`);
+    expect(
+      status === 200 || status === 201,
+      `Expected 200/201, got ${status}: ${JSON.stringify(data)}`,
+    );
     expect(data.status === "WRITTEN_OFF", `Expected WRITTEN_OFF, got ${data.status}`);
   });
 
@@ -674,12 +719,7 @@ async function main() {
   });
 
   await check("GET /routes/customer-assignments (customer) → 403", async () => {
-    const { status } = await api(
-      "GET",
-      "/routes/customer-assignments",
-      undefined,
-      customerToken,
-    );
+    const { status } = await api("GET", "/routes/customer-assignments", undefined, customerToken);
     expect(status === 403, `Expected 403, got ${status}`);
   });
 
@@ -828,7 +868,9 @@ async function main() {
     // Capture stock before
     const { data: ov } = await api("GET", "/inventory/overview", undefined, operatorToken);
     const items: any[] = ov.data ?? ov ?? [];
-    const found = items.find((i: any) => i.productId === createdProductId || i.id === createdProductId);
+    const found = items.find(
+      (i: any) => i.productId === createdProductId || i.id === createdProductId,
+    );
     stockBeforePurchase = found ? Number(found.currentStock ?? found.qty ?? 0) : 0;
 
     const { status, data } = await api(
@@ -874,7 +916,12 @@ async function main() {
     if (sups.length > 0) {
       poSupplierId = sups[0].id;
     } else {
-      const { data: newSup } = await api("POST", "/suppliers", { name: `E2E PO Supplier ${RUN}` }, operatorToken);
+      const { data: newSup } = await api(
+        "POST",
+        "/suppliers",
+        { name: `E2E PO Supplier ${RUN}` },
+        operatorToken,
+      );
       poSupplierId = newSup.id ?? "";
     }
   }
@@ -907,7 +954,10 @@ async function main() {
       { items: [{ productId: createdProductId, receivedQty: 5 }] },
       operatorToken,
     );
-    expect(status === 200 || status === 201, `Expected 200/201, got ${status}: ${JSON.stringify(data)}`);
+    expect(
+      status === 200 || status === 201,
+      `Expected 200/201, got ${status}: ${JSON.stringify(data)}`,
+    );
   });
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -1002,7 +1052,10 @@ async function main() {
       undefined,
       operatorToken,
     );
-    expect(status === 200 || status === 201, `Expected 200/201, got ${status}: ${JSON.stringify(data)}`);
+    expect(
+      status === 200 || status === 201,
+      `Expected 200/201, got ${status}: ${JSON.stringify(data)}`,
+    );
   });
 
   await check("POST /vendor-bills/:id/payments → 201", async () => {
@@ -1013,7 +1066,10 @@ async function main() {
       { amount: 50, method: "CASH", notes: "e2e partial payment" },
       operatorToken,
     );
-    expect(status === 201 || status === 200, `Expected 201/200, got ${status}: ${JSON.stringify(data)}`);
+    expect(
+      status === 201 || status === 200,
+      `Expected 201/200, got ${status}: ${JSON.stringify(data)}`,
+    );
   });
 
   await check("POST /vendor-bills/:id/void → 200", async () => {
@@ -1033,7 +1089,10 @@ async function main() {
       undefined,
       operatorToken,
     );
-    expect(status === 200 || status === 201, `Expected 200/201, got ${status}: ${JSON.stringify(data)}`);
+    expect(
+      status === 200 || status === 201,
+      `Expected 200/201, got ${status}: ${JSON.stringify(data)}`,
+    );
   });
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -1047,7 +1106,12 @@ async function main() {
   });
 
   await check("GET /bookkeeping/transactions → 200", async () => {
-    const { status, data } = await api("GET", "/bookkeeping/transactions", undefined, operatorToken);
+    const { status, data } = await api(
+      "GET",
+      "/bookkeeping/transactions",
+      undefined,
+      operatorToken,
+    );
     expect(status === 200, `Expected 200, got ${status}`);
     expect(Array.isArray(data.data ?? data), "Expected array");
   });
@@ -1118,12 +1182,7 @@ async function main() {
   });
 
   await check("GET /bookkeeping/reports/bad-debts → 200", async () => {
-    const { status } = await api(
-      "GET",
-      "/bookkeeping/reports/bad-debts",
-      undefined,
-      operatorToken,
-    );
+    const { status } = await api("GET", "/bookkeeping/reports/bad-debts", undefined, operatorToken);
     expect(status === 200, `Expected 200, got ${status}`);
   });
 
@@ -1236,7 +1295,10 @@ async function main() {
       operatorToken,
     );
     // Could return 200 (already issued, idempotent) or 400 (already issued)
-    expect([200, 201, 400].includes(status), `Expected 200/201/400, got ${status}: ${JSON.stringify(data)}`);
+    expect(
+      [200, 201, 400].includes(status),
+      `Expected 200/201/400, got ${status}: ${JSON.stringify(data)}`,
+    );
   });
 
   await check("POST /credit-notes/:id/void → 200 VOID", async () => {
@@ -1254,7 +1316,10 @@ async function main() {
       undefined,
       operatorToken,
     );
-    expect(status === 200 || status === 201, `Expected 200/201, got ${status}: ${JSON.stringify(data)}`);
+    expect(
+      status === 200 || status === 201,
+      `Expected 200/201, got ${status}: ${JSON.stringify(data)}`,
+    );
     expect(data.status === "VOID", `Expected VOID, got ${data.status}`);
   });
 
@@ -1269,7 +1334,12 @@ async function main() {
   let deliveredOrderProductQty = 1;
   {
     // First look for an existing DELIVERED order
-    const { data } = await api("GET", "/orders?status=DELIVERED&limit=10", undefined, operatorToken);
+    const { data } = await api(
+      "GET",
+      "/orders?status=DELIVERED&limit=10",
+      undefined,
+      operatorToken,
+    );
     const list: any[] = data.data ?? data ?? [];
     if (list.length > 0) {
       deliveredOrderId = list[0].id;
@@ -1284,8 +1354,18 @@ async function main() {
     // If no DELIVERED order, create and deliver the order we made in Group 4
     if (!deliveredOrderId && createdOrderId && orderProductId) {
       // Advance: CONFIRMED → OUT_FOR_DELIVERY → DELIVERED
-      await api("PATCH", `/orders/${createdOrderId}/status`, { status: "OUT_FOR_DELIVERY" }, operatorToken);
-      const { data: delivered } = await api("PATCH", `/orders/${createdOrderId}/status`, { status: "DELIVERED" }, operatorToken);
+      await api(
+        "PATCH",
+        `/orders/${createdOrderId}/status`,
+        { status: "OUT_FOR_DELIVERY" },
+        operatorToken,
+      );
+      const { data: delivered } = await api(
+        "PATCH",
+        `/orders/${createdOrderId}/status`,
+        { status: "DELIVERED" },
+        operatorToken,
+      );
       if (delivered?.id) {
         deliveredOrderId = createdOrderId;
         deliveredOrderProductId = orderProductId;
@@ -1333,7 +1413,10 @@ async function main() {
       undefined,
       operatorToken,
     );
-    expect(status === 200 || status === 201, `Expected 200/201, got ${status}: ${JSON.stringify(data)}`);
+    expect(
+      status === 200 || status === 201,
+      `Expected 200/201, got ${status}: ${JSON.stringify(data)}`,
+    );
   });
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -1374,7 +1457,10 @@ async function main() {
       undefined,
       operatorToken,
     );
-    expect(status === 200 || status === 201, `Expected 200/201, got ${status}: ${JSON.stringify(data)}`);
+    expect(
+      status === 200 || status === 201,
+      `Expected 200/201, got ${status}: ${JSON.stringify(data)}`,
+    );
     expect(data.status === "SENT", `Expected SENT, got ${data.status}`);
   });
 
@@ -1386,7 +1472,10 @@ async function main() {
       undefined,
       operatorToken,
     );
-    expect(status === 200 || status === 201, `Expected 200/201, got ${status}: ${JSON.stringify(data)}`);
+    expect(
+      status === 200 || status === 201,
+      `Expected 200/201, got ${status}: ${JSON.stringify(data)}`,
+    );
     expect(data.status === "ACCEPTED", `Expected ACCEPTED, got ${data.status}`);
   });
 
@@ -1398,7 +1487,10 @@ async function main() {
       undefined,
       operatorToken,
     );
-    expect(status === 200 || status === 201, `Expected 200/201, got ${status}: ${JSON.stringify(data)}`);
+    expect(
+      status === 200 || status === 201,
+      `Expected 200/201, got ${status}: ${JSON.stringify(data)}`,
+    );
     expect(
       typeof data.id === "string" && (data.invoiceNumber != null || data.status != null),
       `Expected invoice, got: ${JSON.stringify(data)}`,
@@ -1447,11 +1539,11 @@ async function main() {
       undefined,
       operatorToken,
     );
-    expect(status === 200 || status === 201, `Expected 200/201, got ${status}: ${JSON.stringify(data)}`);
     expect(
-      typeof data.id === "string",
-      `Expected invoice object, got: ${JSON.stringify(data)}`,
+      status === 200 || status === 201,
+      `Expected 200/201, got ${status}: ${JSON.stringify(data)}`,
     );
+    expect(typeof data.id === "string", `Expected invoice object, got: ${JSON.stringify(data)}`);
   });
 
   await check("DELETE /recurring-invoices/:id → 200", async () => {
@@ -1520,7 +1612,10 @@ async function main() {
       undefined,
       operatorToken,
     );
-    expect(status === 200 || status === 201, `Expected 200/201, got ${status}: ${JSON.stringify(data)}`);
+    expect(
+      status === 200 || status === 201,
+      `Expected 200/201, got ${status}: ${JSON.stringify(data)}`,
+    );
     expect(typeof data.id === "string", "Expected order object with id");
   });
 
@@ -1606,12 +1701,7 @@ async function main() {
     expect(est.id, "No estimate id");
 
     // 2. Send it
-    const { data: sent } = await api(
-      "POST",
-      `/estimates/${est.id}/send`,
-      undefined,
-      operatorToken,
-    );
+    const { data: sent } = await api("POST", `/estimates/${est.id}/send`, undefined, operatorToken);
     expect(sent.status === "SENT", `Expected SENT, got ${sent.status}`);
 
     // 3. Accept it
@@ -1687,7 +1777,10 @@ async function main() {
     const { status: s1, data: po } = await api(
       "POST",
       "/inventory/purchase-orders",
-      { supplierId: createdSupplierId, items: [{ productId: createdProductId, qty: 8, unitCost: 3.5 }] },
+      {
+        supplierId: createdSupplierId,
+        items: [{ productId: createdProductId, qty: 8, unitCost: 3.5 }],
+      },
       operatorToken,
     );
     expect(s1 === 201, `PO creation failed: ${s1}: ${JSON.stringify(po)}`);
@@ -1708,7 +1801,10 @@ async function main() {
       (i: any) => i.productId === createdProductId || i.id === createdProductId,
     );
     const stockAfter = after ? Number(after.currentStock ?? after.qty ?? 0) : 0;
-    expect(stockAfter > stockBefore, `Stock did not increase: before=${stockBefore}, after=${stockAfter}`);
+    expect(
+      stockAfter > stockBefore,
+      `Stock did not increase: before=${stockBefore}, after=${stockAfter}`,
+    );
   });
 
   await check("JOURNEY: recurring template → run → invoice generated", async () => {
@@ -1749,9 +1845,7 @@ async function main() {
 
   // ── Final summary ──────────────────────────────────────────────────────────
   console.log("\n══════════════════════════════════════════════════════");
-  console.log(
-    `Results: ${passed} passed, ${failed} failed out of ${passed + failed} checks`,
-  );
+  console.log(`Results: ${passed} passed, ${failed} failed out of ${passed + failed} checks`);
   if (failures.length) {
     console.log("\nFAILURES:");
     failures.forEach((f) => console.log(`  ✗ ${f}`));

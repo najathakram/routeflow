@@ -28,9 +28,8 @@ async function run() {
     await client.query("BEGIN");
 
     // ── 1. Find or create the legacy tenant ───────────────────────────────────
-    let tenantRow = (await client.query(
-      `SELECT id FROM "Tenant" WHERE slug = 'legacy' LIMIT 1`
-    )).rows[0];
+    let tenantRow = (await client.query(`SELECT id FROM "Tenant" WHERE slug = 'legacy' LIMIT 1`))
+      .rows[0];
 
     if (!tenantRow) {
       if (DRY_RUN) {
@@ -42,12 +41,12 @@ async function run() {
         await client.query(
           `INSERT INTO "Tenant" (id, slug, name, status, plan, "trialEndsAt", "createdAt", "updatedAt")
            VALUES ($1, 'legacy', 'Legacy', 'ACTIVE', 'STARTER', $2, NOW(), NOW())`,
-          [id, trialEndsAt]
+          [id, trialEndsAt],
         );
         await client.query(
           `INSERT INTO "TenantConfig" (id, "tenantId", "businessName", "updatedAt")
            VALUES ($1, $2, 'RouteFlow', NOW())`,
-          [randomUUID(), id]
+          [randomUUID(), id],
         );
         tenantRow = { id };
         console.log(`✓ Created legacy tenant (id: ${id})`);
@@ -65,19 +64,19 @@ async function run() {
       `SELECT id, username, role FROM "User"
        WHERE "tenantId" IS NULL
          AND role IN ('OPERATOR', 'DRIVER', 'CUSTOMER', 'TENANT_ADMIN')
-       ORDER BY "createdAt"`
+       ORDER BY "createdAt"`,
     );
 
     console.log(`\nFound ${legacyUsers.length} legacy user(s) to migrate:`);
-    legacyUsers.forEach((u) =>
-      console.log(`  - ${u.username} (${u.role}, id: ${u.id})`)
-    );
+    legacyUsers.forEach((u) => console.log(`  - ${u.username} (${u.role}, id: ${u.id})`));
 
     // ── 3. Count SUPER_ADMIN (staying platform-level) ────────────────────────
     const { rows: superAdmins } = await client.query(
-      `SELECT id, username FROM "User" WHERE role = 'SUPER_ADMIN'`
+      `SELECT id, username FROM "User" WHERE role = 'SUPER_ADMIN'`,
     );
-    console.log(`\n${superAdmins.length} SUPER_ADMIN user(s) will remain platform-level (tenantId = NULL):`);
+    console.log(
+      `\n${superAdmins.length} SUPER_ADMIN user(s) will remain platform-level (tenantId = NULL):`,
+    );
     superAdmins.forEach((u) => console.log(`  - ${u.username}`));
 
     // ── 4. Migrate ─────────────────────────────────────────────────────────────
@@ -85,7 +84,7 @@ async function run() {
       console.log("\nNo legacy users to migrate. Nothing to do.");
     } else if (DRY_RUN) {
       console.log(
-        `\n[DRY RUN] Would set tenantId = '${tenantRow.id}' on ${legacyUsers.length} user(s).`
+        `\n[DRY RUN] Would set tenantId = '${tenantRow.id}' on ${legacyUsers.length} user(s).`,
       );
     } else {
       const ids = legacyUsers.map((u) => u.id);
@@ -93,7 +92,7 @@ async function run() {
       await client.query(
         `UPDATE "User" SET "tenantId" = $1::uuid, "updatedAt" = NOW()
          WHERE id::text = ANY($2::text[])`,
-        [tenantRow.id, ids]
+        [tenantRow.id, ids],
       );
       console.log(`\n✓ Migrated ${ids.length} user(s) to legacy tenant.`);
     }

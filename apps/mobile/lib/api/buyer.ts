@@ -176,9 +176,7 @@ export function useBuyerOrders(params?: { status?: string; page?: number; limit?
   return useQuery<{ data: BuyerOrder[]; meta: any }>({
     queryKey: ["buyer-orders", params],
     queryFn: () =>
-      buyerApiClient
-        .get("/buyer/orders", { params: { limit: 30, ...params } })
-        .then((r) => r.data),
+      buyerApiClient.get("/buyer/orders", { params: { limit: 30, ...params } }).then((r) => r.data),
     staleTime: 30_000,
   });
 }
@@ -211,15 +209,19 @@ export function useBuyerCreateOrder() {
 export function useBuyerCancelOrder() {
   const qc = useQueryClient();
   return useMutation<void, Error, string>({
-    mutationFn: (id) =>
-      buyerApiClient.post(`/buyer/orders/${id}/cancel`).then(() => undefined),
+    mutationFn: (id) => buyerApiClient.post(`/buyer/orders/${id}/cancel`).then(() => undefined),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["buyer-orders"] }),
   });
 }
 
 // ─── Invoices ─────────────────────────────────────────────────────────────────
 
-export function useBuyerInvoices(params?: { status?: string; statuses?: string[]; page?: number; limit?: number }) {
+export function useBuyerInvoices(params?: {
+  status?: string;
+  statuses?: string[];
+  page?: number;
+  limit?: number;
+}) {
   return useQuery<{ data: BuyerInvoice[]; meta: any }>({
     queryKey: ["buyer-invoices", params],
     queryFn: () =>

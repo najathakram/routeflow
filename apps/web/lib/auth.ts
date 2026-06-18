@@ -76,7 +76,8 @@ function parseJwtPayload(token: string): Record<string, unknown> | null {
 export function getStoredUser(): AuthUser | null {
   if (typeof window === "undefined") return null;
   // Prefer impersonation token when active, fall back to namespaced operator token
-  const token = localStorage.getItem("impersonationToken") ?? localStorage.getItem(OP_KEYS.accessToken);
+  const token =
+    localStorage.getItem("impersonationToken") ?? localStorage.getItem(OP_KEYS.accessToken);
   if (!token) return null;
   const payload = parseJwtPayload(token);
   if (!payload) return null;
@@ -92,7 +93,8 @@ export function getStoredUser(): AuthUser | null {
     forcePasswordChange: payload.forcePasswordChange as boolean,
     isAdmin: (payload.isAdmin as boolean) ?? false,
     canActAsDriver: (payload.canActAsDriver as boolean) ?? false,
-    tenantSlug: (payload.tenantSlug as string) ?? localStorage.getItem("impersonationTenantSlug") ?? null,
+    tenantSlug:
+      (payload.tenantSlug as string) ?? localStorage.getItem("impersonationTenantSlug") ?? null,
   };
 }
 
@@ -129,7 +131,8 @@ export async function logout(): Promise<void> {
 }
 
 export async function refreshTokens(): Promise<AuthResponse | null> {
-  const refreshToken = typeof window !== "undefined" ? localStorage.getItem(OP_KEYS.refreshToken) : null;
+  const refreshToken =
+    typeof window !== "undefined" ? localStorage.getItem(OP_KEYS.refreshToken) : null;
   if (!refreshToken) return null;
   try {
     const { data } = await apiClient.post<AuthResponse>("/auth/refresh", {
@@ -168,7 +171,11 @@ type ReauthCallback = () => void;
  */
 export function onCrossTabTokenChange(cb: ReauthCallback): () => void {
   function handleStorageEvent(event: StorageEvent) {
-    if (event.key === OP_KEYS.accessToken && event.storageArea === localStorage && !event.newValue) {
+    if (
+      event.key === OP_KEYS.accessToken &&
+      event.storageArea === localStorage &&
+      !event.newValue
+    ) {
       cb();
     }
   }

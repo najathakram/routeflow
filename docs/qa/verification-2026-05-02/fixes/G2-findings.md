@@ -14,9 +14,9 @@
 
 ## RFs addressed
 
-| RF | Sev | Status | Files | Commit | Test added | Migration? |
-|----|-----|--------|-------|--------|-----------|------------|
-| RF-002 | P0 | Fixed | `apps/mobile/hooks/useBuyerSocket.ts`, `apps/mobile/app/(auth)/google-callback.tsx` | fix(realtime): RF-002 — wire Socket.IO at Expo router root for all roles | Yes — `apps/mobile/__tests__/socket-wiring.test.ts` | No |
+| RF     | Sev | Status | Files                                                                               | Commit                                                                   | Test added                                          | Migration? |
+| ------ | --- | ------ | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | --------------------------------------------------- | ---------- |
+| RF-002 | P0  | Fixed  | `apps/mobile/hooks/useBuyerSocket.ts`, `apps/mobile/app/(auth)/google-callback.tsx` | fix(realtime): RF-002 — wire Socket.IO at Expo router root for all roles | Yes — `apps/mobile/__tests__/socket-wiring.test.ts` | No         |
 
 ## Notes / blockers
 

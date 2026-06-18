@@ -41,7 +41,9 @@ function formatDate(iso: string) {
 
 export default function MovementsPage() {
   const { setTitle } = usePageTitle();
-  React.useEffect(() => { setTitle("Stock Movements"); }, [setTitle]);
+  React.useEffect(() => {
+    setTitle("Stock Movements");
+  }, [setTitle]);
 
   const searchParams = useSearchParams();
   const initialProduct = searchParams.get("product") ?? "";
@@ -78,7 +80,7 @@ export default function MovementsPage() {
     <div className="space-y-5 p-6">
       <Link
         href="/inventory"
-        className="flex items-center gap-1.5 text-sm text-navy/60 hover:text-navy transition-colors"
+        className="flex items-center gap-1.5 text-sm text-navy/70 hover:text-navy transition-colors"
       >
         <ArrowLeft className="h-4 w-4" />
         Inventory
@@ -87,7 +89,9 @@ export default function MovementsPage() {
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-navy">Stock Movements</h1>
         {meta && (
-          <p className="text-sm text-navy/50">{meta.total} record{meta.total !== 1 ? "s" : ""}</p>
+          <p className="text-sm text-navy/70">
+            {meta.total} record{meta.total !== 1 ? "s" : ""}
+          </p>
         )}
       </div>
 
@@ -100,7 +104,9 @@ export default function MovementsPage() {
         >
           <option value="">All products</option>
           {products.map((p: any) => (
-            <option key={p.id} value={p.id}>{p.name}</option>
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
           ))}
         </select>
 
@@ -111,7 +117,9 @@ export default function MovementsPage() {
         >
           <option value="">All types</option>
           {Object.entries(MOVEMENT_TYPE_LABELS).map(([key, label]) => (
-            <option key={key} value={key}>{label}</option>
+            <option key={key} value={key}>
+              {label}
+            </option>
           ))}
         </select>
 
@@ -122,7 +130,7 @@ export default function MovementsPage() {
             onChange={(e) => handleFilterChange("from", e.target.value)}
             className="rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
           />
-          <span className="text-sm text-navy/40">to</span>
+          <span className="text-sm text-navy/70">to</span>
           <input
             type="date"
             value={filters.to}
@@ -147,14 +155,26 @@ export default function MovementsPage() {
 
       {/* Table */}
       {isLoading ? (
-        <div className="p-8 text-center text-navy/40">Loading…</div>
+        <div className="p-8 text-center text-navy/70">Loading…</div>
       ) : (
         <div className="overflow-x-auto rounded-xl border border-surface-border">
           <table className="w-full text-sm">
-            <thead className="border-b border-surface-border bg-surface-raised text-xs text-navy/50">
+            <thead className="border-b border-surface-border bg-surface-raised text-xs text-navy/70">
               <tr>
-                {["Date", "Product", "Type", "Quantity", "Unit Cost", "Supplier", "Reference", "Notes", "By"].map((h) => (
-                  <th key={h} className="px-4 py-3 text-left font-medium">{h}</th>
+                {[
+                  "Date",
+                  "Product",
+                  "Type",
+                  "Quantity",
+                  "Unit Cost",
+                  "Supplier",
+                  "Reference",
+                  "Notes",
+                  "By",
+                ].map((h) => (
+                  <th key={h} className="px-4 py-3 text-left font-medium">
+                    {h}
+                  </th>
                 ))}
               </tr>
             </thead>
@@ -164,10 +184,14 @@ export default function MovementsPage() {
                 const isNegative = qty < 0;
                 return (
                   <tr key={m.id} className="transition-colors hover:bg-surface-raised/50">
-                    <td className="px-4 py-3 text-navy/70 whitespace-nowrap">{formatDate(m.createdAt)}</td>
+                    <td className="px-4 py-3 text-navy/70 whitespace-nowrap">
+                      {formatDate(m.createdAt)}
+                    </td>
                     <td className="px-4 py-3">
                       <p className="font-medium text-navy">{m.product?.name}</p>
-                      {m.product?.sku && <p className="font-mono text-xs text-navy/40">{m.product.sku}</p>}
+                      {m.product?.sku && (
+                        <p className="font-mono text-xs text-navy/70">{m.product.sku}</p>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       <Badge
@@ -175,22 +199,28 @@ export default function MovementsPage() {
                         label={MOVEMENT_TYPE_LABELS[m.type] ?? m.type}
                       />
                     </td>
-                    <td className={cn("px-4 py-3 font-mono font-medium", isNegative ? "text-danger" : "text-success")}>
-                      {isNegative ? "" : "+"}{qty.toFixed(3)} {m.product?.unit}
+                    <td
+                      className={cn(
+                        "px-4 py-3 font-mono font-medium",
+                        isNegative ? "text-danger" : "text-success",
+                      )}
+                    >
+                      {isNegative ? "" : "+"}
+                      {qty.toFixed(3)} {m.product?.unit}
                     </td>
                     <td className="px-4 py-3 text-navy/70">
                       {m.unitCost != null ? `$${Number(m.unitCost).toFixed(4)}` : "—"}
                     </td>
                     <td className="px-4 py-3 text-navy/70">{m.supplier?.name ?? "—"}</td>
-                    <td className="px-4 py-3 font-mono text-navy/60">{m.reference ?? "—"}</td>
-                    <td className="px-4 py-3 text-navy/60">{m.notes ?? "—"}</td>
-                    <td className="px-4 py-3 text-navy/50">{m.performedBy?.username ?? "—"}</td>
+                    <td className="px-4 py-3 font-mono text-navy/70">{m.reference ?? "—"}</td>
+                    <td className="px-4 py-3 text-navy/70">{m.notes ?? "—"}</td>
+                    <td className="px-4 py-3 text-navy/70">{m.performedBy?.username ?? "—"}</td>
                   </tr>
                 );
               })}
               {movements.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="px-4 py-10 text-center text-navy/40">
+                  <td colSpan={9} className="px-4 py-10 text-center text-navy/70">
                     No movements found.
                   </td>
                 </tr>
@@ -203,7 +233,7 @@ export default function MovementsPage() {
       {/* Pagination */}
       {meta && meta.totalPages > 1 && (
         <div className="flex items-center justify-between">
-          <p className="text-sm text-navy/50">
+          <p className="text-sm text-navy/70">
             Page {meta.page} of {meta.totalPages}
           </p>
           <div className="flex gap-2">

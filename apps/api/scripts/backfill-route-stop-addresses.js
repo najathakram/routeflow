@@ -15,9 +15,7 @@ const { PrismaPg } = require("../../../node_modules/@prisma/adapter-pg");
 const { Pool } = require("../../../node_modules/pg");
 
 const apply = process.argv.includes("--apply");
-const DSN =
-  process.env.DATABASE_URL ||
-  "postgresql://user:pass@localhost:5432/routeflow_dev";
+const DSN = process.env.DATABASE_URL || "postgresql://user:pass@localhost:5432/routeflow_dev";
 
 const pool = new Pool({ connectionString: DSN });
 const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
@@ -62,9 +60,7 @@ async function main() {
     fixed++;
   }
 
-  console.log(
-    `Summary: scanned=${orphans.length} fixed=${fixed} skipped_no_address=${skipped}`,
-  );
+  console.log(`Summary: scanned=${orphans.length} fixed=${fixed} skipped_no_address=${skipped}`);
   if (!apply) console.log("Run with --apply to write changes.");
 }
 

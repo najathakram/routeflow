@@ -8,64 +8,64 @@
 
 ### 1.9 — Drivers
 
-| Bug | Severity | Description |
-|-----|----------|-------------|
-| W35-01 | P1 | /drivers immediately redirects to /routes — driver list page never renders |
-| W35-02 | P1 | /drivers/add → "Unmatched Route" 404 |
-| W35-03 | P1 | /drivers/:id → "Unmatched Route" 404 |
+| Bug    | Severity | Description                                                                |
+| ------ | -------- | -------------------------------------------------------------------------- |
+| W35-01 | P1       | /drivers immediately redirects to /routes — driver list page never renders |
+| W35-02 | P1       | /drivers/add → "Unmatched Route" 404                                       |
+| W35-03 | P1       | /drivers/:id → "Unmatched Route" 404                                       |
 
 `canActAsDriver` field absent from driver API response. Driver vehicle/plate/edit/delete all untestable due to routing failures.
 
 ### 1.10 — Returns
 
-| Bug | Severity | Description |
-|-----|----------|-------------|
-| W35-04 | P1 | /returns shows empty state despite confirmed APPROVED return (RET-2026-421539, DAMAGED) in API |
-| W35-05 | P1 | /returns/:id → "Unmatched Route" 404 — return detail inaccessible |
-| W35-06 | P2 | No "Create Return" button visible in operator UI |
+| Bug    | Severity | Description                                                                                    |
+| ------ | -------- | ---------------------------------------------------------------------------------------------- |
+| W35-04 | P1       | /returns shows empty state despite confirmed APPROVED return (RET-2026-421539, DAMAGED) in API |
+| W35-05 | P1       | /returns/:id → "Unmatched Route" 404 — return detail inaccessible                              |
+| W35-06 | P2       | No "Create Return" button visible in operator UI                                               |
 
 ### 1.11 — Finance / Analytics
 
-| Bug | Severity | Description |
-|-----|----------|-------------|
-| W35-07 | P2 | /finance/expenses → 404 (RF-209 confirmed) |
-| W35-08 | P2 | /bookkeeping → 404 (RF-209 confirmed) |
-| W35-09 | P2 | "Mark Received" button visible on already-RECEIVED vendor bill |
-| W35-10 | P3 | Vendor Bills missing Partial and Void filter tabs |
-| W35-11 | P2 | GET /analytics → 404; only /analytics/revenue works |
+| Bug    | Severity | Description                                                    |
+| ------ | -------- | -------------------------------------------------------------- |
+| W35-07 | P2       | /finance/expenses → 404 (RF-209 confirmed)                     |
+| W35-08 | P2       | /bookkeeping → 404 (RF-209 confirmed)                          |
+| W35-09 | P2       | "Mark Received" button visible on already-RECEIVED vendor bill |
+| W35-10 | P3       | Vendor Bills missing Partial and Void filter tabs              |
+| W35-11 | P2       | GET /analytics → 404; only /analytics/revenue works            |
 
 Finance page loads correctly at /finance: $270.50 owing, 2 unpaid bills. Analytics at /analytics: Revenue $32, Expenses $64, Net -$32.
 
 ### 1.12 — Settings
 
-| Bug | Severity | Description |
-|-----|----------|-------------|
-| W35-12 | P1 | No Users tab — cannot manage users, canActAsDriver, or reset passwords |
-| W35-13 | P1 | No Branding tab — no logo upload or brand color picker |
-| W35-14 | P1 | No Integrations tab — no Zoho connector |
-| W35-15 | P2 | No "Send Test" button for notifications |
-| W35-16 | P2 | ZIP field accepts 4-digit input — no validation |
-| W35-17 | P2 | Tax rate accepts -5 and 150 — no range validation |
-| W35-18 | P1 | GET /tenant/settings → 404 — settings save may not persist |
-| W35-19 | P1 | /settings/users → "Unmatched Route" 404 |
+| Bug    | Severity | Description                                                            |
+| ------ | -------- | ---------------------------------------------------------------------- |
+| W35-12 | P1       | No Users tab — cannot manage users, canActAsDriver, or reset passwords |
+| W35-13 | P1       | No Branding tab — no logo upload or brand color picker                 |
+| W35-14 | P1       | No Integrations tab — no Zoho connector                                |
+| W35-15 | P2       | No "Send Test" button for notifications                                |
+| W35-16 | P2       | ZIP field accepts 4-digit input — no validation                        |
+| W35-17 | P2       | Tax rate accepts -5 and 150 — no range validation                      |
+| W35-18 | P1       | GET /tenant/settings → 404 — settings save may not persist             |
+| W35-19 | P1       | /settings/users → "Unmatched Route" 404                                |
 
 ### Phase 2 — Buyer Portal (all 4 buyers)
 
-| Bug | Severity | Description |
-|-----|----------|-------------|
-| W35-20 | P1 | /invoices renders Orders list component ABOVE Invoices content — routing/layout bug |
-| W35-21 | P1 | /more renders Orders list ABOVE More menu — same layout bug |
-| W35-22 | P1 | POST /buyer/cart/items → 404 — add to cart completely broken |
-| W35-23 | P1 | GET /buyer/cart → 404 — cart unreadable |
-| W35-24 | P2 | No "Add to Cart" button on buyer product cards |
-| W35-25 | P2 | No favorite/bookmark button on buyer product cards |
-| W35-26 | P2 | /profile redirects to /orders in buyer portal |
-| W35-27 | P1 | GET /buyer/standing-orders → 404 (RF-180 confirmed) |
-| W35-28 | P1 | GET /buyer/me → 404 — buyer profile endpoint missing |
-| W35-29 | P1 | No buyer home/dashboard page — portal lands on /orders |
-| W35-30 | P2 | Buyer2 "Total Spend" shows $0 despite 3 DELIVERED orders |
-| W35-31 | P2 | Dual operator+buyer tokens in localStorage triggers company-code page on fresh navigation |
-| W35-32 | P3 | Vendor Bills filter tabs missing Partial and Void status filters |
+| Bug    | Severity | Description                                                                               |
+| ------ | -------- | ----------------------------------------------------------------------------------------- |
+| W35-20 | P1       | /invoices renders Orders list component ABOVE Invoices content — routing/layout bug       |
+| W35-21 | P1       | /more renders Orders list ABOVE More menu — same layout bug                               |
+| W35-22 | P1       | POST /buyer/cart/items → 404 — add to cart completely broken                              |
+| W35-23 | P1       | GET /buyer/cart → 404 — cart unreadable                                                   |
+| W35-24 | P2       | No "Add to Cart" button on buyer product cards                                            |
+| W35-25 | P2       | No favorite/bookmark button on buyer product cards                                        |
+| W35-26 | P2       | /profile redirects to /orders in buyer portal                                             |
+| W35-27 | P1       | GET /buyer/standing-orders → 404 (RF-180 confirmed)                                       |
+| W35-28 | P1       | GET /buyer/me → 404 — buyer profile endpoint missing                                      |
+| W35-29 | P1       | No buyer home/dashboard page — portal lands on /orders                                    |
+| W35-30 | P2       | Buyer2 "Total Spend" shows $0 despite 3 DELIVERED orders                                  |
+| W35-31 | P2       | Dual operator+buyer tokens in localStorage triggers company-code page on fresh navigation |
+| W35-32 | P3       | Vendor Bills filter tabs missing Partial and Void status filters                          |
 
 Confirmed working: Buyer2 PAID invoices show no Pay Now CTA. Buyer4 order statuses render correctly. Portal login at /customer-login works.
 
@@ -309,18 +309,18 @@ Confirmed working: Buyer2 PAID invoices show no Pay Now CTA. Buyer4 order status
 
 ## Phase 17 Summary Table
 
-| RF | Severity | Source | Title |
-|----|----------|--------|-------|
-| RF-211 | P1 | W35/1.9 | /drivers redirects to /routes; /drivers/add and /:id → 404 — driver management inaccessible |
-| RF-212 | P1 | W35/1.10 | /returns shows empty state despite APPROVED returns; /returns/:id → 404 |
-| RF-213 | P1 | W35/1.12 | Settings missing Users, Branding, Integrations tabs; GET /tenant/settings → 404 |
-| RF-214 | P2 | W35/1.12 | Settings ZIP and tax rate fields have no validation |
-| RF-215 | P1 | W35/Phase2 | POST /buyer/cart/items and GET /buyer/cart → 404 — buyer cart completely broken |
-| RF-216 | P1 | W35/Phase2 | Buyer /invoices and /more pages render Orders list above their own content |
-| RF-217 | P1 | W35/Phase2 | GET /buyer/me → 404 — buyer profile read endpoint missing |
-| RF-218 | P1 | W35/Phase2 | No buyer home/dashboard page — portal lands on /orders |
-| RF-219 | P2 | W35/Phase2 | Buyer "Total Spend" shows $0 despite delivered orders |
-| RF-220 | P2 | W35/Phase2 | Dual operator+buyer tokens trigger company-code page on fresh navigation |
-| RF-221 | P2 | W35/1.11 | Mark Received button active on already-RECEIVED vendor bills |
-| RF-222 | P2 | W35/1.11 | GET /analytics → 404 — analytics API root endpoint missing |
-| RF-223 | P3 | W35/1.11 | Vendor Bills missing Partial and Void filter tabs |
+| RF     | Severity | Source     | Title                                                                                       |
+| ------ | -------- | ---------- | ------------------------------------------------------------------------------------------- |
+| RF-211 | P1       | W35/1.9    | /drivers redirects to /routes; /drivers/add and /:id → 404 — driver management inaccessible |
+| RF-212 | P1       | W35/1.10   | /returns shows empty state despite APPROVED returns; /returns/:id → 404                     |
+| RF-213 | P1       | W35/1.12   | Settings missing Users, Branding, Integrations tabs; GET /tenant/settings → 404             |
+| RF-214 | P2       | W35/1.12   | Settings ZIP and tax rate fields have no validation                                         |
+| RF-215 | P1       | W35/Phase2 | POST /buyer/cart/items and GET /buyer/cart → 404 — buyer cart completely broken             |
+| RF-216 | P1       | W35/Phase2 | Buyer /invoices and /more pages render Orders list above their own content                  |
+| RF-217 | P1       | W35/Phase2 | GET /buyer/me → 404 — buyer profile read endpoint missing                                   |
+| RF-218 | P1       | W35/Phase2 | No buyer home/dashboard page — portal lands on /orders                                      |
+| RF-219 | P2       | W35/Phase2 | Buyer "Total Spend" shows $0 despite delivered orders                                       |
+| RF-220 | P2       | W35/Phase2 | Dual operator+buyer tokens trigger company-code page on fresh navigation                    |
+| RF-221 | P2       | W35/1.11   | Mark Received button active on already-RECEIVED vendor bills                                |
+| RF-222 | P2       | W35/1.11   | GET /analytics → 404 — analytics API root endpoint missing                                  |
+| RF-223 | P3       | W35/1.11   | Vendor Bills missing Partial and Void filter tabs                                           |

@@ -191,9 +191,7 @@ export function PricingTiers() {
                       <span
                         style={{
                           fontSize: 14,
-                          color: t.featured
-                            ? "rgba(250,246,238,0.5)"
-                            : "var(--rf-ink-4)",
+                          color: t.featured ? "rgba(250,246,238,0.5)" : "var(--rf-ink-4)",
                           fontFamily: "var(--rf-sans)",
                           fontWeight: 400,
                         }}
@@ -221,13 +219,13 @@ export function PricingTiers() {
                       background: t.featured
                         ? "var(--rf-cream)"
                         : t.ctaTone === "primary"
-                        ? "var(--rf-ink)"
-                        : "transparent",
+                          ? "var(--rf-ink)"
+                          : "transparent",
                       color: t.featured
                         ? "var(--rf-ink)"
                         : t.ctaTone === "primary"
-                        ? "var(--rf-cream)"
-                        : "var(--rf-ink)",
+                          ? "var(--rf-cream)"
+                          : "var(--rf-ink)",
                       border:
                         t.ctaTone === "ghost" && !t.featured
                           ? "1px solid var(--rf-line-2)"

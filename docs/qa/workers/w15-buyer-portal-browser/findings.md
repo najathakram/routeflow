@@ -17,6 +17,7 @@ The buyer portal and operator portal share the same `localStorage` domain. `buye
 ## Findings
 
 ### W15-001 — Buyer and Operator Tokens Share localStorage Namespace → Session Stomping (P0)
+
 - **Severity:** P0
 - **Screen:** Auth / All screens
 - **Issue:** The buyer portal uses `buyerAccessToken` and the operator portal uses `accessToken`, but both live in the same `localStorage` at the same origin. Any open operator tab continuously writes its own `accessToken`, causing the buyer session to be silently invalidated within seconds.
@@ -27,6 +28,7 @@ The buyer portal and operator portal share the same `localStorage` domain. `buye
 ---
 
 ### W15-002 — Buyer Token Expiry Redirects to Operator Login (`/login`) Instead of `/customer-login` (P1)
+
 - **Severity:** P1
 - **Screen:** Auth
 - **Issue:** On buyer token expiry/invalidation, app redirects to `/login` (operator "Staff & Drivers" page) instead of `/customer-login`.
@@ -35,6 +37,7 @@ The buyer portal and operator portal share the same `localStorage` domain. `buye
 ---
 
 ### W15-003 — `/customer-login` Hijacked by Operator Session → Redirects to `/home` (P1)
+
 - **Severity:** P1
 - **Screen:** Auth / Login
 - **Issue:** Navigating to `/customer-login` while an operator `accessToken` is in `localStorage` immediately redirects to the operator home (`/home`) — never shows buyer login form.
@@ -43,6 +46,7 @@ The buyer portal and operator portal share the same `localStorage` domain. `buye
 ---
 
 ### W15-004 — Invoice Detail Shows Infinite Spinner on 401 (P1)
+
 - **Severity:** P1
 - **Screen:** Invoices — Invoice Detail
 - **Issue:** `GET /api/v1/buyer/invoices/:id` returns 401 → UI shows infinite spinner with no error message, no retry, no escape. Confirmed via network monitoring.
@@ -51,6 +55,7 @@ The buyer portal and operator portal share the same `localStorage` domain. `buye
 ---
 
 ### W15-005 — "Place Order" Button Silently Fails When Buyer Token Is Missing (P1)
+
 - **Severity:** P1
 - **Screen:** Cart
 - **Issue:** When buyer token is invalidated, clicking "Place order" does nothing — no toast, no redirect, no disabled state. CORS preflight fires but POST is dropped.
@@ -60,6 +65,7 @@ The buyer portal and operator portal share the same `localStorage` domain. `buye
 ---
 
 ### W15-021 — `GET /api/v1/buyer/standing-orders` Returns 404 (P1)
+
 - **Severity:** P1
 - **Screen:** More — Standing Orders
 - **Issue:** Direct API call `GET /api/v1/buyer/standing-orders` (with valid auth token) returns 404. The UI shows standing orders via some other route, but the documented path doesn't exist.
@@ -68,6 +74,7 @@ The buyer portal and operator portal share the same `localStorage` domain. `buye
 ---
 
 ### W15-006 — Buyer-Portal Orders Have Timestamp-Based Order Numbers vs Sequential for Operator Orders (P2)
+
 - **Severity:** P2
 - **Screen:** Orders
 - **Issue:** Buyer-portal orders: `#ORD-1777431385833` (13-digit timestamp). Operator orders: `#ORD-00001` (sequential). Mixed formats on the same orders list.
@@ -76,6 +83,7 @@ The buyer portal and operator portal share the same `localStorage` domain. `buye
 ---
 
 ### W15-007 — No Delivery Timestamp on DELIVERED Order Detail (P2)
+
 - **Severity:** P2
 - **Screen:** Orders — Order Detail
 - **Issue:** DELIVERED order detail shows only order creation date. No `deliveredAt` timestamp.
@@ -84,6 +92,7 @@ The buyer portal and operator portal share the same `localStorage` domain. `buye
 ---
 
 ### W15-008 — No PDF Download Button on Invoice Detail (P2)
+
 - **Severity:** P2
 - **Screen:** Invoices — Invoice Detail
 - **Issue:** Invoice detail page has no "Download PDF" or "View PDF" action.
@@ -92,6 +101,7 @@ The buyer portal and operator portal share the same `localStorage` domain. `buye
 ---
 
 ### W15-009 — Dashboard Stats Missing Order Count and Unpaid Amount Values (P2)
+
 - **Severity:** P2
 - **Screen:** More — Profile / Stats
 - **Issue:** Stats row shows "Orders | $0 Total Spend | Unpaid" but numeric values for "Orders" count and "Unpaid" amount are blank — only Total Spend shows a value.
@@ -100,6 +110,7 @@ The buyer portal and operator portal share the same `localStorage` domain. `buye
 ---
 
 ### W15-010 — Category Filter Pills Go Blank During Search (P2)
+
 - **Severity:** P2
 - **Screen:** Catalog / Shop
 - **Issue:** When a search query is typed, category filter pill labels disappear — blank pill shapes visible while search results are correct.
@@ -108,6 +119,7 @@ The buyer portal and operator portal share the same `localStorage` domain. `buye
 ---
 
 ### W15-011 — Scrolling on Invoice Detail Triggers Back Navigation (P2)
+
 - **Severity:** P2
 - **Screen:** Invoices — Invoice Detail
 - **Issue:** Scrolling down on invoice detail navigates user back to Orders tab (reproduced once).
@@ -116,6 +128,7 @@ The buyer portal and operator portal share the same `localStorage` domain. `buye
 ---
 
 ### W15-012 — No Next Fire Date Shown on Standing Order Card (P2)
+
 - **Severity:** P2
 - **Screen:** More — Standing Orders
 - **Issue:** Standing order card shows schedule days (Mon · Wed · Fri) but not the computed next fire date.
@@ -124,6 +137,7 @@ The buyer portal and operator portal share the same `localStorage` domain. `buye
 ---
 
 ### W15-020 — Deep-Link Without Buyer Session Goes to Marketing Page, Not `/customer-login` (P2)
+
 - **Severity:** P2
 - **Screen:** Auth / Deep Links
 - **Issue:** Direct URL to buyer routes (e.g., `/invoices`) without `buyerActiveSeller` in localStorage redirects to marketing homepage (`/`) instead of `/customer-login`.
@@ -132,6 +146,7 @@ The buyer portal and operator portal share the same `localStorage` domain. `buye
 ---
 
 ### W15-013 — Products Not Listed on Standing Order Card (P3)
+
 - **Severity:** P3
 - **Screen:** More — Standing Orders
 - **Issue:** Card shows "2 items" but is non-tappable and doesn't list product names.
@@ -140,6 +155,7 @@ The buyer portal and operator portal share the same `localStorage` domain. `buye
 ---
 
 ### W15-014 — Delivery Date Field Shows Raw `YYYY-MM-DD` Format String as Placeholder (P3)
+
 - **Severity:** P3
 - **Screen:** Cart
 - **Issue:** Delivery date field placeholder shows `YYYY-MM-DD` engineering format string.
@@ -148,6 +164,7 @@ The buyer portal and operator portal share the same `localStorage` domain. `buye
 ---
 
 ### W15-015 — Sign-Out Behavior Unverifiable Due to Auth Isolation Issue (P3)
+
 - **Severity:** P3
 - **Screen:** More — Sign Out
 - **Issue:** Sign-out button present but behavior could not be fully verified due to W15-001 auth environment.
@@ -157,24 +174,24 @@ The buyer portal and operator portal share the same `localStorage` domain. `buye
 
 ## Summary Table
 
-| ID | Severity | Area | Title |
-|----|----------|------|-------|
-| W15-001 | **P0** | Auth | Buyer/operator tokens share localStorage — session stomping |
-| W15-002 | P1 | Auth | Token expiry redirects to operator login, not `/customer-login` |
-| W15-003 | P1 | Auth | `/customer-login` hijacked by operator session |
-| W15-004 | P1 | Invoices | Infinite spinner on 401 |
-| W15-005 | P1 | Cart | "Place order" silently fails when buyer token invalid |
-| W15-021 | P1 | Standing Orders | Buyer standing-orders API path 404 |
-| W15-006 | P2 | Orders | Timestamp order numbers (13-digit) vs sequential |
-| W15-007 | P2 | Orders | No delivery timestamp on DELIVERED orders |
-| W15-008 | P2 | Invoices | No PDF download on invoice detail |
-| W15-009 | P2 | More | Stats panel missing values |
-| W15-010 | P2 | Catalog | Category pills blank during search |
-| W15-011 | P2 | Invoices | Scroll triggers back navigation |
-| W15-012 | P2 | Standing Orders | No next fire date shown |
-| W15-020 | P2 | Auth | Deep-link without session goes to marketing page |
-| W15-013 | P3 | Standing Orders | Products not listed on card |
-| W15-014 | P3 | Cart | Raw `YYYY-MM-DD` placeholder |
-| W15-015 | P3 | Auth | Sign-out behavior unverifiable |
+| ID      | Severity | Area            | Title                                                           |
+| ------- | -------- | --------------- | --------------------------------------------------------------- |
+| W15-001 | **P0**   | Auth            | Buyer/operator tokens share localStorage — session stomping     |
+| W15-002 | P1       | Auth            | Token expiry redirects to operator login, not `/customer-login` |
+| W15-003 | P1       | Auth            | `/customer-login` hijacked by operator session                  |
+| W15-004 | P1       | Invoices        | Infinite spinner on 401                                         |
+| W15-005 | P1       | Cart            | "Place order" silently fails when buyer token invalid           |
+| W15-021 | P1       | Standing Orders | Buyer standing-orders API path 404                              |
+| W15-006 | P2       | Orders          | Timestamp order numbers (13-digit) vs sequential                |
+| W15-007 | P2       | Orders          | No delivery timestamp on DELIVERED orders                       |
+| W15-008 | P2       | Invoices        | No PDF download on invoice detail                               |
+| W15-009 | P2       | More            | Stats panel missing values                                      |
+| W15-010 | P2       | Catalog         | Category pills blank during search                              |
+| W15-011 | P2       | Invoices        | Scroll triggers back navigation                                 |
+| W15-012 | P2       | Standing Orders | No next fire date shown                                         |
+| W15-020 | P2       | Auth            | Deep-link without session goes to marketing page                |
+| W15-013 | P3       | Standing Orders | Products not listed on card                                     |
+| W15-014 | P3       | Cart            | Raw `YYYY-MM-DD` placeholder                                    |
+| W15-015 | P3       | Auth            | Sign-out behavior unverifiable                                  |
 
 **Total: 1 P0, 5 P1, 8 P2, 3 P3 = 17 findings**

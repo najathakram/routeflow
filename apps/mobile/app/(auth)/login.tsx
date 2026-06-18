@@ -2,14 +2,7 @@ import { useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import {
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from "react-native";
+import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
@@ -66,11 +59,15 @@ export default function LoginScreen() {
       // BUG-OPS1-5: NestJS's default ThrottlerException renders as "Too Many
       // Requests" with the class name leaked into err.message; map 429s to a
       // friendly message before showing the user.
-      const e = err as { response?: { status?: number; data?: { message?: string; retryAfter?: number } } };
+      const e = err as {
+        response?: { status?: number; data?: { message?: string; retryAfter?: number } };
+      };
       if (e?.response?.status === 429) {
         const retryAfter = e?.response?.data?.retryAfter;
         const minutes = retryAfter ? Math.max(1, Math.round(retryAfter / 60)) : 5;
-        setApiError(`Too many login attempts. Please try again in ${minutes} minute${minutes === 1 ? "" : "s"}.`);
+        setApiError(
+          `Too many login attempts. Please try again in ${minutes} minute${minutes === 1 ? "" : "s"}.`,
+        );
         return;
       }
       const msg = e?.response?.data?.message ?? "Invalid username or password.";
@@ -144,7 +141,9 @@ export default function LoginScreen() {
                 />
               )}
             />
-            {errors.username ? <Text style={styles.fieldError}>{errors.username.message}</Text> : null}
+            {errors.username ? (
+              <Text style={styles.fieldError}>{errors.username.message}</Text>
+            ) : null}
           </View>
 
           <View style={styles.fieldBlock}>
@@ -164,7 +163,9 @@ export default function LoginScreen() {
                 />
               )}
             />
-            {errors.password ? <Text style={styles.fieldError}>{errors.password.message}</Text> : null}
+            {errors.password ? (
+              <Text style={styles.fieldError}>{errors.password.message}</Text>
+            ) : null}
           </View>
 
           <View style={styles.optionsRow}>

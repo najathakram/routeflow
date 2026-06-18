@@ -12,17 +12,17 @@
 
 ## RFs Addressed
 
-| RF | Sev | Status | Files Changed | Commit | Test Added | Migration? |
-|---|---|---|---|---|---|---|
-| RF-203 | P0 | ✅ Fixed | `apps/web/app/(dashboard)/customers/create/page.tsx` (new), `products/create/page.tsx` (new), `invoices/create/page.tsx` (new) | fix(operator-ui): RF-203 add missing web create-form redirect pages | — | No |
-| RF-090 | P1 | ✅ Fixed | `apps/mobile/app/(operator)/settings/index.tsx` | fix(operator-ui): RF-090 add Users tab to Settings | — | No |
-| RF-213 | P1 | ✅ Fixed | `apps/mobile/app/(operator)/settings/index.tsx` | fix(operator-ui): RF-213 add Branding + Integrations tabs to Settings | — | No |
-| RF-188 | P1 | ⚠️ Already present | `apps/mobile/app/(operator)/(tabs)/invoices/[id].tsx` exists | — | — | No |
-| RF-211 | P1 | ✅ Fixed | `apps/mobile/app/(operator)/drivers/add.tsx` (new) | fix(operator-ui): RF-211 add /drivers/add redirect to /drivers/new | — | No |
-| RF-212 | P1 | ✅ Fixed | `apps/mobile/app/(operator)/returns/index.tsx` | fix(operator-ui): RF-212 fix returns empty state — default ALL filter, align chip IDs to API statuses | — | No |
-| RF-205 | P1 | ⚠️ Already present | `apps/mobile/app/(operator)/routes/[id].tsx` calls `POST /routes/:id/optimize` | — | — | No |
-| NEW-rweb-5 | P2 | ⚠️ Already present | `apps/mobile/app/(operator)/(tabs)/orders/[id].tsx` resolves via group-transparent URL | — | — | No |
-| NEW-rweb-7 | P2 | ✅ Fixed | `apps/mobile/app/(driver)/route/index.tsx`, `apps/mobile/app/(operator)/(tabs)/home.tsx`, `apps/mobile/utils/dateLocalParse.ts` (new) | fix(operator-ui): NEW-rweb-7 parse scheduledDate as local calendar date to avoid UTC-offset shift | — | No |
+| RF         | Sev | Status             | Files Changed                                                                                                                         | Commit                                                                                                | Test Added | Migration? |
+| ---------- | --- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ---------- | ---------- |
+| RF-203     | P0  | ✅ Fixed           | `apps/web/app/(dashboard)/customers/create/page.tsx` (new), `products/create/page.tsx` (new), `invoices/create/page.tsx` (new)        | fix(operator-ui): RF-203 add missing web create-form redirect pages                                   | —          | No         |
+| RF-090     | P1  | ✅ Fixed           | `apps/mobile/app/(operator)/settings/index.tsx`                                                                                       | fix(operator-ui): RF-090 add Users tab to Settings                                                    | —          | No         |
+| RF-213     | P1  | ✅ Fixed           | `apps/mobile/app/(operator)/settings/index.tsx`                                                                                       | fix(operator-ui): RF-213 add Branding + Integrations tabs to Settings                                 | —          | No         |
+| RF-188     | P1  | ⚠️ Already present | `apps/mobile/app/(operator)/(tabs)/invoices/[id].tsx` exists                                                                          | —                                                                                                     | —          | No         |
+| RF-211     | P1  | ✅ Fixed           | `apps/mobile/app/(operator)/drivers/add.tsx` (new)                                                                                    | fix(operator-ui): RF-211 add /drivers/add redirect to /drivers/new                                    | —          | No         |
+| RF-212     | P1  | ✅ Fixed           | `apps/mobile/app/(operator)/returns/index.tsx`                                                                                        | fix(operator-ui): RF-212 fix returns empty state — default ALL filter, align chip IDs to API statuses | —          | No         |
+| RF-205     | P1  | ⚠️ Already present | `apps/mobile/app/(operator)/routes/[id].tsx` calls `POST /routes/:id/optimize`                                                        | —                                                                                                     | —          | No         |
+| NEW-rweb-5 | P2  | ⚠️ Already present | `apps/mobile/app/(operator)/(tabs)/orders/[id].tsx` resolves via group-transparent URL                                                | —                                                                                                     | —          | No         |
+| NEW-rweb-7 | P2  | ✅ Fixed           | `apps/mobile/app/(driver)/route/index.tsx`, `apps/mobile/app/(operator)/(tabs)/home.tsx`, `apps/mobile/utils/dateLocalParse.ts` (new) | fix(operator-ui): NEW-rweb-7 parse scheduledDate as local calendar date to avoid UTC-offset shift     | —          | No         |
 
 ## Notes / Blockers
 
@@ -35,10 +35,10 @@
 
 ## User-Visible Proof of Fix
 
-| Fix | Before | After |
-|---|---|---|
-| RF-203 | `/customers/create`, `/products/create`, `/invoices/create` → 15s spinner → redirects to `/dashboard` | Instant redirect to `/customers?action=new`, `/products?action=new`, `/invoices/new` — modal opens immediately |
-| RF-090 + RF-213 | Settings has one tab (General only) | Settings has four tabs: General, Users (with role badges + activate/deactivate), Branding, Integrations |
-| RF-211 | `/drivers/add` → 404 | `/drivers/add` → instant redirect to `/drivers/new` form |
-| RF-212 | Returns list defaults to PENDING filter; APPROVED/IN_TRANSIT returns invisible | Returns list defaults to ALL; all statuses visible; filter chips match real API statuses |
-| NEW-rweb-7 | Active run card shows "THURSDAY, APR 29" (yesterday) for a Friday run in UTC-5 | Shows "FRIDAY, APR 30" — date extracted before timezone conversion |
+| Fix             | Before                                                                                                | After                                                                                                          |
+| --------------- | ----------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| RF-203          | `/customers/create`, `/products/create`, `/invoices/create` → 15s spinner → redirects to `/dashboard` | Instant redirect to `/customers?action=new`, `/products?action=new`, `/invoices/new` — modal opens immediately |
+| RF-090 + RF-213 | Settings has one tab (General only)                                                                   | Settings has four tabs: General, Users (with role badges + activate/deactivate), Branding, Integrations        |
+| RF-211          | `/drivers/add` → 404                                                                                  | `/drivers/add` → instant redirect to `/drivers/new` form                                                       |
+| RF-212          | Returns list defaults to PENDING filter; APPROVED/IN_TRANSIT returns invisible                        | Returns list defaults to ALL; all statuses visible; filter chips match real API statuses                       |
+| NEW-rweb-7      | Active run card shows "THURSDAY, APR 29" (yesterday) for a Friday run in UTC-5                        | Shows "FRIDAY, APR 30" — date extracted before timezone conversion                                             |

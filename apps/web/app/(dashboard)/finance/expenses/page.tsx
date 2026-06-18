@@ -22,7 +22,7 @@ import {
   PackageCheck,
   CheckCircle2,
 } from "lucide-react";
-import { PageHeader, Button, cn, Modal, useToast } from "@routeflow/ui/web";
+import { PageHeader, Button, cn, Modal, useToast, EmptyState } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import {
   useVendorBills,
@@ -87,7 +87,12 @@ const STATUS_COLORS: Record<VendorBillStatus, string> = {
 
 function VendorBillStatusBadge({ status }: { status: VendorBillStatus }) {
   return (
-    <span className={cn("inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold", STATUS_COLORS[status])}>
+    <span
+      className={cn(
+        "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold",
+        STATUS_COLORS[status],
+      )}
+    >
       {status.charAt(0) + status.slice(1).toLowerCase()}
     </span>
   );
@@ -95,15 +100,36 @@ function VendorBillStatusBadge({ status }: { status: VendorBillStatus }) {
 
 // ─── KPI chip ─────────────────────────────────────────────────────────────────
 
-function KpiChip({ label, value, sub, danger }: { label: string; value: string; sub?: string; danger?: boolean }) {
+function KpiChip({
+  label,
+  value,
+  sub,
+  danger,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  danger?: boolean;
+}) {
   return (
-    <div className={cn(
-      "flex flex-col rounded-lg border px-4 py-3 min-w-[160px]",
-      danger && Number(value.replace(/[^0-9.]/g, "")) > 0 ? "border-red-200 bg-red-50" : "border-surface-border bg-white",
-    )}>
-      <span className="text-xs font-medium text-navy/50 uppercase tracking-wider">{label}</span>
-      <span className={cn("mt-1 text-xl font-bold", danger && Number(value.replace(/[^0-9.]/g, "")) > 0 ? "text-red-700" : "text-navy")}>{value}</span>
-      {sub && <span className="text-xs text-navy/40 mt-0.5">{sub}</span>}
+    <div
+      className={cn(
+        "flex flex-col rounded-lg border px-4 py-3 min-w-[160px]",
+        danger && Number(value.replace(/[^0-9.]/g, "")) > 0
+          ? "border-red-200 bg-red-50"
+          : "border-surface-border bg-white",
+      )}
+    >
+      <span className="text-xs font-medium text-navy/70 uppercase tracking-wider">{label}</span>
+      <span
+        className={cn(
+          "mt-1 text-xl font-bold",
+          danger && Number(value.replace(/[^0-9.]/g, "")) > 0 ? "text-red-700" : "text-navy",
+        )}
+      >
+        {value}
+      </span>
+      {sub && <span className="text-xs text-navy/70 mt-0.5">{sub}</span>}
     </div>
   );
 }
@@ -129,7 +155,13 @@ interface LineItemRow {
   unitCost: string;
 }
 
-const emptyLineItem = (): LineItemRow => ({ productId: "", description: "", unit: "", qty: "1", unitCost: "" });
+const emptyLineItem = (): LineItemRow => ({
+  productId: "",
+  description: "",
+  unit: "",
+  qty: "1",
+  unitCost: "",
+});
 
 // ─── Product combobox ─────────────────────────────────────────────────────────
 
@@ -184,13 +216,24 @@ function ProductCombobox({
     // 1. Try barcode endpoint
     try {
       const res = await apiClient.get(`/products/barcode/${encodeURIComponent(code)}`);
-      if (res.data?.id) { handleSelect(res.data as ProductOption); return; }
-    } catch { /* not found */ }
+      if (res.data?.id) {
+        handleSelect(res.data as ProductOption);
+        return;
+      }
+    } catch {
+      /* not found */
+    }
     // 2. Try exact SKU match from current results
     const skuMatch = products.find((p) => p.sku === code);
-    if (skuMatch) { handleSelect(skuMatch); return; }
+    if (skuMatch) {
+      handleSelect(skuMatch);
+      return;
+    }
     // 3. Fall back to first search result
-    if (products.length === 1) { handleSelect(products[0]); return; }
+    if (products.length === 1) {
+      handleSelect(products[0]);
+      return;
+    }
     // 4. Open dropdown with code pre-filled
     setSearch(code);
     setOpen(true);
@@ -211,7 +254,11 @@ function ProductCombobox({
         onFocus={() => setOpen(true)}
         className="h-9 w-full rounded border border-surface-border bg-white px-2.5 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
       />
-      <BarcodeScannerButton inputRef={barcodeInputRef} onScan={handleBarcodeScanned} title="Scan product barcode" />
+      <BarcodeScannerButton
+        inputRef={barcodeInputRef}
+        onScan={handleBarcodeScanned}
+        title="Scan product barcode"
+      />
       {open && (
         <div className="absolute left-0 top-10 z-50 w-full rounded-lg border border-surface-border bg-white shadow-dropdown">
           {products.length > 0 ? (
@@ -225,20 +272,23 @@ function ProductCombobox({
                   >
                     <span>
                       <span className="font-medium text-navy">{p.name}</span>
-                      {p.sku && <span className="ml-2 text-xs text-navy/40">{p.sku}</span>}
+                      {p.sku && <span className="ml-2 text-xs text-navy/70">{p.sku}</span>}
                     </span>
-                    <span className="shrink-0 text-xs text-navy/40">{p.unit}</span>
+                    <span className="shrink-0 text-xs text-navy/70">{p.unit}</span>
                   </button>
                 </li>
               ))}
             </ul>
           ) : (
-            <div className="px-3 py-2 text-xs text-navy/50">No products found</div>
+            <div className="px-3 py-2 text-xs text-navy/70">No products found</div>
           )}
           <div className="border-t border-surface-border px-3 py-2">
             <button
               type="button"
-              onMouseDown={() => { setOpen(false); onCreateNew(search); }}
+              onMouseDown={() => {
+                setOpen(false);
+                onCreateNew(search);
+              }}
               className="flex w-full items-center gap-1.5 text-sm font-medium text-brand-500 hover:text-brand-600"
             >
               <Plus size={14} /> Create &quot;{search || "new product"}&quot;
@@ -273,50 +323,65 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
   const [scanInput, setScanInput] = React.useState("");
   const scanInputRef = React.useRef<HTMLInputElement>(null);
   const lineItemsRef = React.useRef(lineItems);
-  React.useEffect(() => { lineItemsRef.current = lineItems; }, [lineItems]);
+  React.useEffect(() => {
+    lineItemsRef.current = lineItems;
+  }, [lineItems]);
 
-  const handleBillScan = React.useCallback(async (code: string) => {
-    if (!code.trim()) return;
-    let product: ProductOption | null = null;
-    // 1. barcode endpoint
-    try {
-      const res = await apiClient.get(`/products/barcode/${encodeURIComponent(code.trim())}`);
-      if (res.data?.id) product = res.data as ProductOption;
-    } catch { /* not found */ }
-    // 2. search by SKU
-    if (!product) {
+  const handleBillScan = React.useCallback(
+    async (code: string) => {
+      if (!code.trim()) return;
+      let product: ProductOption | null = null;
+      // 1. barcode endpoint
       try {
-        const res = await apiClient.get("/products", { params: { search: code.trim(), limit: 5, isActive: true } });
-        const results: ProductOption[] = res.data?.data ?? [];
-        product = results.find((p) => p.sku === code.trim()) ?? results[0] ?? null;
-      } catch { /* ignore */ }
-    }
-    if (!product) {
-      toast({ title: `Item not found: ${code.trim()}`, variant: "error" });
+        const res = await apiClient.get(`/products/barcode/${encodeURIComponent(code.trim())}`);
+        if (res.data?.id) product = res.data as ProductOption;
+      } catch {
+        /* not found */
+      }
+      // 2. search by SKU
+      if (!product) {
+        try {
+          const res = await apiClient.get("/products", {
+            params: { search: code.trim(), limit: 5, isActive: true },
+          });
+          const results: ProductOption[] = res.data?.data ?? [];
+          product = results.find((p) => p.sku === code.trim()) ?? results[0] ?? null;
+        } catch {
+          /* ignore */
+        }
+      }
+      if (!product) {
+        toast({ title: `Item not found: ${code.trim()}`, variant: "error" });
+        setScanInput("");
+        setTimeout(() => scanInputRef.current?.focus(), 50);
+        return;
+      }
+      const existing = lineItemsRef.current.findIndex((li) => li.productId === product!.id);
+      if (existing >= 0) {
+        setLineItems((prev) =>
+          prev.map((li, i) =>
+            i === existing ? { ...li, qty: String(parseFloat(li.qty || "1") + 1) } : li,
+          ),
+        );
+      } else {
+        const newItem: LineItemRow = {
+          productId: product.id,
+          description: product.name,
+          unit: product.unit,
+          qty: "1",
+          unitCost: product.averageCost ? String(parseFloat(product.averageCost).toFixed(4)) : "",
+        };
+        setLineItems((prev) => {
+          // Replace a single empty item if present
+          if (prev.length === 1 && !prev[0].productId && !prev[0].description) return [newItem];
+          return [...prev, newItem];
+        });
+      }
       setScanInput("");
       setTimeout(() => scanInputRef.current?.focus(), 50);
-      return;
-    }
-    const existing = lineItemsRef.current.findIndex((li) => li.productId === product!.id);
-    if (existing >= 0) {
-      setLineItems((prev) => prev.map((li, i) => i === existing ? { ...li, qty: String(parseFloat(li.qty || "1") + 1) } : li));
-    } else {
-      const newItem: LineItemRow = {
-        productId: product.id,
-        description: product.name,
-        unit: product.unit,
-        qty: "1",
-        unitCost: product.averageCost ? String(parseFloat(product.averageCost).toFixed(4)) : "",
-      };
-      setLineItems((prev) => {
-        // Replace a single empty item if present
-        if (prev.length === 1 && !prev[0].productId && !prev[0].description) return [newItem];
-        return [...prev, newItem];
-      });
-    }
-    setScanInput("");
-    setTimeout(() => scanInputRef.current?.focus(), 50);
-  }, [toast]);
+    },
+    [toast],
+  );
 
   const { data: posData } = usePurchaseOrders(supplierId ? { supplierId } : undefined);
   const purchaseOrders: Array<{ id: string; poNumber: string }> = (posData as any)?.data ?? [];
@@ -324,21 +389,35 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
 
   React.useEffect(() => {
     if (isOpen) {
-      setSupplierId(""); setPurchaseOrderId(""); setBillDate(todayIso());
-      setDueDate(""); setNotes(""); setLineItems([emptyLineItem()]); setErrors({});
+      setSupplierId("");
+      setPurchaseOrderId("");
+      setBillDate(todayIso());
+      setDueDate("");
+      setNotes("");
+      setLineItems([emptyLineItem()]);
+      setErrors({});
       if (prefs?.["bill.lastSupplierId"]) setSupplierId(prefs["bill.lastSupplierId"]);
     }
   }, [isOpen]);
 
-  React.useEffect(() => { setPurchaseOrderId(""); }, [supplierId]);
+  React.useEffect(() => {
+    setPurchaseOrderId("");
+  }, [supplierId]);
 
   function updateLineItem(i: number, updates: Partial<LineItemRow>) {
     setLineItems((prev) => prev.map((row, idx) => (idx === i ? { ...row, ...updates } : row)));
   }
-  function addLineItem() { setLineItems((prev) => [...prev, emptyLineItem()]); }
-  function removeLineItem(i: number) { setLineItems((prev) => prev.filter((_, idx) => idx !== i)); }
+  function addLineItem() {
+    setLineItems((prev) => [...prev, emptyLineItem()]);
+  }
+  function removeLineItem(i: number) {
+    setLineItems((prev) => prev.filter((_, idx) => idx !== i));
+  }
 
-  const lineTotal = lineItems.reduce((sum, row) => sum + (parseFloat(row.qty) || 0) * (parseFloat(row.unitCost) || 0), 0);
+  const lineTotal = lineItems.reduce(
+    (sum, row) => sum + (parseFloat(row.qty) || 0) * (parseFloat(row.unitCost) || 0),
+    0,
+  );
 
   function validate() {
     const errs: Record<string, string> = {};
@@ -357,7 +436,10 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const errs = validate();
-    if (Object.keys(errs).length > 0) { setErrors(errs); return; }
+    if (Object.keys(errs).length > 0) {
+      setErrors(errs);
+      return;
+    }
     setErrors({});
     const items: CreateVendorBillItem[] = lineItems.map((row) => ({
       description: row.description.trim(),
@@ -366,14 +448,27 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
       productId: row.productId || undefined,
     }));
     createBill.mutate(
-      { supplierId, purchaseOrderId: purchaseOrderId || undefined, billDate, dueDate, items, notes: notes.trim() || undefined },
+      {
+        supplierId,
+        purchaseOrderId: purchaseOrderId || undefined,
+        billDate,
+        dueDate,
+        items,
+        notes: notes.trim() || undefined,
+      },
       {
         onSuccess: () => {
           savePrefs.mutate({ "bill.lastSupplierId": supplierId });
           toast({ title: "Vendor bill created", variant: "success" });
           onClose();
         },
-        onError: () => { toast({ title: "Failed to create vendor bill", description: "Please try again.", variant: "error" }); },
+        onError: () => {
+          toast({
+            title: "Failed to create vendor bill",
+            description: "Please try again.",
+            variant: "error",
+          });
+        },
       },
     );
   }
@@ -387,8 +482,12 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
         description="Record a supplier bill for inventory received."
         footer={
           <>
-            <Button variant="secondary" onClick={onClose} disabled={createBill.isPending}>Cancel</Button>
-            <Button type="submit" form="create-bill-form" loading={createBill.isPending}>Create Bill</Button>
+            <Button variant="secondary" onClick={onClose} disabled={createBill.isPending}>
+              Cancel
+            </Button>
+            <Button type="submit" form="create-bill-form" loading={createBill.isPending}>
+              Create Bill
+            </Button>
           </>
         }
       >
@@ -419,79 +518,137 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
               onChange={setSupplierId}
               suppliers={suppliers}
               placeholder="Select supplier…"
-              className={cn(
-                "h-10",
-                errors.supplierId ? "border-danger" : undefined,
-              )}
+              className={cn("h-10", errors.supplierId ? "border-danger" : undefined)}
             />
             {errors.supplierId && <p className="mt-1 text-xs text-danger">{errors.supplierId}</p>}
           </div>
           <div>
-            <label className="mb-1.5 block text-sm font-medium text-navy/80">PO # <span className="text-navy/40 font-normal">(optional)</span></label>
-            <select value={purchaseOrderId} onChange={(e) => setPurchaseOrderId(e.target.value)} disabled={!supplierId}
-              className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:opacity-50">
+            <label className="mb-1.5 block text-sm font-medium text-navy/80">
+              PO # <span className="text-navy/70 font-normal">(optional)</span>
+            </label>
+            <select
+              value={purchaseOrderId}
+              onChange={(e) => setPurchaseOrderId(e.target.value)}
+              disabled={!supplierId}
+              className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:opacity-50"
+            >
               <option value="">No linked PO</option>
-              {purchaseOrders.map((po) => <option key={po.id} value={po.id}>{po.poNumber}</option>)}
+              {purchaseOrders.map((po) => (
+                <option key={po.id} value={po.id}>
+                  {po.poNumber}
+                </option>
+              ))}
             </select>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="mb-1.5 block text-sm font-medium text-navy/80">Bill Date</label>
-              <input type="date" value={billDate} onChange={(e) => setBillDate(e.target.value)}
-                className={cn("h-10 w-full rounded-lg border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500", errors.billDate ? "border-danger" : "border-surface-border")} />
+              <input
+                type="date"
+                value={billDate}
+                onChange={(e) => setBillDate(e.target.value)}
+                className={cn(
+                  "h-10 w-full rounded-lg border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500",
+                  errors.billDate ? "border-danger" : "border-surface-border",
+                )}
+              />
               {errors.billDate && <p className="mt-1 text-xs text-danger">{errors.billDate}</p>}
             </div>
             <div>
               <label className="mb-1.5 block text-sm font-medium text-navy/80">Due Date</label>
-              <input type="date" value={dueDate} min={billDate || undefined} onChange={(e) => setDueDate(e.target.value)}
-                className={cn("h-10 w-full rounded-lg border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500", errors.dueDate ? "border-danger" : "border-surface-border")} />
+              <input
+                type="date"
+                value={dueDate}
+                min={billDate || undefined}
+                onChange={(e) => setDueDate(e.target.value)}
+                className={cn(
+                  "h-10 w-full rounded-lg border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500",
+                  errors.dueDate ? "border-danger" : "border-surface-border",
+                )}
+              />
               {errors.dueDate && <p className="mt-1 text-xs text-danger">{errors.dueDate}</p>}
             </div>
           </div>
           <div>
             <div className="mb-2 flex items-center justify-between">
               <label className="text-sm font-medium text-navy/80">Line Items</label>
-              <button type="button" onClick={addLineItem}
-                className="flex items-center gap-1 rounded px-2 py-1 text-xs font-medium text-brand-500 hover:bg-brand-50 transition-colors">
+              <button
+                type="button"
+                onClick={addLineItem}
+                className="flex items-center gap-1 rounded px-2 py-1 text-xs font-medium text-brand-500 hover:bg-brand-50 transition-colors"
+              >
                 <Plus className="h-3.5 w-3.5" /> Add Item
               </button>
             </div>
             {errors.items && <p className="mb-2 text-xs text-danger">{errors.items}</p>}
             <div className="space-y-3">
               {lineItems.map((row, i) => (
-                <div key={i} className="rounded-lg border border-surface-border bg-surface-raised p-3 space-y-2">
+                <div
+                  key={i}
+                  className="rounded-lg border border-surface-border bg-surface-raised p-3 space-y-2"
+                >
                   <div>
                     <div className="mb-1 flex items-center justify-between">
-                      <span className="text-xs font-medium text-navy/60">Product</span>
+                      <span className="text-xs font-medium text-navy/70">Product</span>
                       {row.productId && <span className="text-xs text-brand-500">{row.unit}</span>}
                     </div>
                     <ProductCombobox
                       value={row}
                       onChange={(updates) => updateLineItem(i, updates)}
-                      onCreateNew={(search) => { setCreateProductForIndex(i); setCreateProductSearch(search); setCreateProductOpen(true); }}
+                      onCreateNew={(search) => {
+                        setCreateProductForIndex(i);
+                        setCreateProductSearch(search);
+                        setCreateProductOpen(true);
+                      }}
                     />
-                    {errors[`desc_${i}`] && <p className="mt-1 text-xs text-danger">{errors[`desc_${i}`]}</p>}
+                    {errors[`desc_${i}`] && (
+                      <p className="mt-1 text-xs text-danger">{errors[`desc_${i}`]}</p>
+                    )}
                   </div>
                   <div className="grid grid-cols-[1fr_1fr_32px] gap-2 items-end">
                     <div>
-                      <label className="mb-1 block text-xs text-navy/50">Qty {row.unit ? `(${row.unit})` : ""}</label>
-                      <input type="number" placeholder="1" min="0.001" step="0.001" value={row.qty}
+                      <label className="mb-1 block text-xs text-navy/70">
+                        Qty {row.unit ? `(${row.unit})` : ""}
+                      </label>
+                      <input
+                        type="number"
+                        placeholder="1"
+                        min="0.001"
+                        step="0.001"
+                        value={row.qty}
                         onChange={(e) => updateLineItem(i, { qty: e.target.value })}
-                        className={cn("h-9 w-full rounded border bg-white px-2.5 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500", errors[`qty_${i}`] ? "border-danger" : "border-surface-border")} />
+                        className={cn(
+                          "h-9 w-full rounded border bg-white px-2.5 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500",
+                          errors[`qty_${i}`] ? "border-danger" : "border-surface-border",
+                        )}
+                      />
                     </div>
                     <div>
-                      <label className="mb-1 block text-xs text-navy/50">Unit Cost ($)</label>
-                      <input type="number" placeholder="0.00" min="0.0001" step="0.0001" value={row.unitCost}
+                      <label className="mb-1 block text-xs text-navy/70">Unit Cost ($)</label>
+                      <input
+                        type="number"
+                        placeholder="0.00"
+                        min="0.0001"
+                        step="0.0001"
+                        value={row.unitCost}
                         onChange={(e) => updateLineItem(i, { unitCost: e.target.value })}
-                        className={cn("h-9 w-full rounded border bg-white px-2.5 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500", errors[`cost_${i}`] ? "border-danger" : "border-surface-border")} />
+                        className={cn(
+                          "h-9 w-full rounded border bg-white px-2.5 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500",
+                          errors[`cost_${i}`] ? "border-danger" : "border-surface-border",
+                        )}
+                      />
                     </div>
-                    <button type="button" onClick={() => removeLineItem(i)} disabled={lineItems.length === 1}
-                      className="h-9 rounded p-1 text-navy/30 hover:text-danger transition-colors disabled:opacity-20">
+                    <button
+                      type="button"
+                      onClick={() => removeLineItem(i)}
+                      disabled={lineItems.length === 1}
+                      className="h-9 rounded p-1 text-navy/30 hover:text-danger transition-colors disabled:opacity-20"
+                    >
                       <Trash2 className="h-4 w-4" />
                     </button>
                   </div>
                   {parseFloat(row.qty) > 0 && parseFloat(row.unitCost) > 0 && (
-                    <div className="text-right text-xs text-navy/50">
+                    <div className="text-right text-xs text-navy/70">
                       Subtotal: {fmt((parseFloat(row.qty) || 0) * (parseFloat(row.unitCost) || 0))}
                     </div>
                   )}
@@ -505,9 +662,16 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
             )}
           </div>
           <div>
-            <label className="mb-1.5 block text-sm font-medium text-navy/80">Notes <span className="text-navy/40 font-normal">(optional)</span></label>
-            <textarea rows={3} placeholder="Internal notes about this purchase…" value={notes} onChange={(e) => setNotes(e.target.value)}
-              className="w-full resize-none rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500" />
+            <label className="mb-1.5 block text-sm font-medium text-navy/80">
+              Notes <span className="text-navy/70 font-normal">(optional)</span>
+            </label>
+            <textarea
+              rows={3}
+              placeholder="Internal notes about this purchase…"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              className="w-full resize-none rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+            />
           </div>
         </form>
       </Modal>
@@ -521,7 +685,9 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
               productId: product.id,
               description: product.name,
               unit: product.unit,
-              unitCost: product.averageCost ? String(parseFloat(product.averageCost).toFixed(4)) : "",
+              unitCost: product.averageCost
+                ? String(parseFloat(product.averageCost).toFixed(4))
+                : "",
             });
           }
           setCreateProductOpen(false);
@@ -551,17 +717,26 @@ function InventoryPurchasesTab() {
 
   const toggleSort = (col: string) => {
     if (sortCol === col) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    else { setSortCol(col); setSortDir("asc"); }
+    else {
+      setSortCol(col);
+      setSortDir("asc");
+    }
   };
   const SortIcon = ({ col }: { col: string }) => {
-    if (sortCol !== col) return <ChevronsUpDown className="h-3 w-3 ml-0.5 text-current/40 inline" />;
-    return sortDir === "asc" ? <ChevronUp className="h-3 w-3 ml-0.5 inline" /> : <ChevronDown className="h-3 w-3 ml-0.5 inline" />;
+    if (sortCol !== col)
+      return <ChevronsUpDown className="h-3 w-3 ml-0.5 text-current/40 inline" />;
+    return sortDir === "asc" ? (
+      <ChevronUp className="h-3 w-3 ml-0.5 inline" />
+    ) : (
+      <ChevronDown className="h-3 w-3 ml-0.5 inline" />
+    );
   };
 
   const toggleSelect = (id: string) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
   };
@@ -571,7 +746,12 @@ function InventoryPurchasesTab() {
   };
   const handleBulkDelete = async () => {
     if (selectedIds.size === 0) return;
-    if (!confirm(`Delete ${selectedIds.size} selected bill(s)? Only DRAFT and VOID bills can be deleted.`)) return;
+    if (
+      !confirm(
+        `Delete ${selectedIds.size} selected bill(s)? Only DRAFT and VOID bills can be deleted.`,
+      )
+    )
+      return;
     try {
       const result = await bulkDelete.mutateAsync(Array.from(selectedIds));
       toast({
@@ -616,24 +796,31 @@ function InventoryPurchasesTab() {
   const sortedBills = React.useMemo(() => {
     const dir = sortDir === "asc" ? 1 : -1;
     return [...bills].sort((a: any, b: any) => {
-      if (sortCol === "supplier") return dir * ((a.supplier?.name ?? "").localeCompare(b.supplier?.name ?? ""));
-      if (sortCol === "dueDate") return dir * ((a.dueDate ?? "").localeCompare(b.dueDate ?? ""));
-      if (sortCol === "total") return dir * (Number(a.totalOwed ?? a.total ?? 0) - Number(b.totalOwed ?? b.total ?? 0));
+      if (sortCol === "supplier")
+        return dir * (a.supplier?.name ?? "").localeCompare(b.supplier?.name ?? "");
+      if (sortCol === "dueDate") return dir * (a.dueDate ?? "").localeCompare(b.dueDate ?? "");
+      if (sortCol === "total")
+        return dir * (Number(a.totalOwed ?? a.total ?? 0) - Number(b.totalOwed ?? b.total ?? 0));
       if (sortCol === "status") return dir * (a.status ?? "").localeCompare(b.status ?? "");
-      return dir * ((a.billDate ?? a.createdAt ?? "").localeCompare(b.billDate ?? b.createdAt ?? ""));
+      return dir * (a.billDate ?? a.createdAt ?? "").localeCompare(b.billDate ?? b.createdAt ?? "");
     });
   }, [bills, sortCol, sortDir]);
 
   return (
     <div className="space-y-5">
       <div className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-700">
-        Inventory purchases are recorded as vendor bills. When a bill is <strong>received</strong>, stock is updated and product average costs are recalculated automatically.
+        Inventory purchases are recorded as vendor bills. When a bill is <strong>received</strong>,
+        stock is updated and product average costs are recalculated automatically.
       </div>
 
       {/* Actions row */}
       <div className="flex items-center justify-end gap-2">
         {selectedIds.size > 0 && (
-          <Button variant="danger" onClick={() => void handleBulkDelete()} disabled={bulkDelete.isPending}>
+          <Button
+            variant="danger"
+            onClick={() => void handleBulkDelete()}
+            disabled={bulkDelete.isPending}
+          >
             <Trash2 className="mr-1 h-4 w-4" /> Delete {selectedIds.size} selected
           </Button>
         )}
@@ -647,8 +834,17 @@ function InventoryPurchasesTab() {
 
       {/* KPI row */}
       <div className="flex flex-wrap items-start gap-3">
-        <KpiChip label="Total Outstanding" value={fmt(kpis.outstanding)} sub="unpaid balance" danger={kpis.outstanding > 0} />
-        <KpiChip label="Due This Week" value={String(kpis.dueThisWeekCount)} sub="bills due in 7 days" />
+        <KpiChip
+          label="Total Outstanding"
+          value={fmt(kpis.outstanding)}
+          sub="unpaid balance"
+          danger={kpis.outstanding > 0}
+        />
+        <KpiChip
+          label="Due This Week"
+          value={String(kpis.dueThisWeekCount)}
+          sub="bills due in 7 days"
+        />
       </div>
 
       {/* Filter bar */}
@@ -657,23 +853,60 @@ function InventoryPurchasesTab() {
           type="search"
           placeholder="Search by bill # or supplier…"
           value={search}
-          onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-          className="h-10 w-64 rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/40 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+          onChange={(e) => {
+            setSearch(e.target.value);
+            setPage(1);
+          }}
+          className="h-10 w-64 rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/70 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
         />
-        <select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
-          className="h-10 rounded border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500">
-          {STATUS_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        <select
+          value={statusFilter}
+          onChange={(e) => {
+            setStatusFilter(e.target.value);
+            setPage(1);
+          }}
+          className="h-10 rounded border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+        >
+          {STATUS_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
         </select>
         <div className="flex items-center gap-1.5">
-          <Calendar className="h-4 w-4 text-navy/40" />
-          <input type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setPage(1); }} title="Bill date from"
-            className="h-10 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500" />
-          <span className="text-navy/40">–</span>
-          <input type="date" value={dateTo} min={dateFrom || undefined} onChange={(e) => { setDateTo(e.target.value); setPage(1); }} title="Bill date to"
-            className="h-10 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500" />
+          <Calendar className="h-4 w-4 text-navy/70" />
+          <input
+            type="date"
+            value={dateFrom}
+            onChange={(e) => {
+              setDateFrom(e.target.value);
+              setPage(1);
+            }}
+            title="Bill date from"
+            className="h-10 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+          />
+          <span className="text-navy/70">–</span>
+          <input
+            type="date"
+            value={dateTo}
+            min={dateFrom || undefined}
+            onChange={(e) => {
+              setDateTo(e.target.value);
+              setPage(1);
+            }}
+            title="Bill date to"
+            className="h-10 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+          />
           {(dateFrom || dateTo) && (
-            <button onClick={() => { setDateFrom(""); setDateTo(""); setPage(1); }}
-              className="rounded p-1.5 text-navy/40 hover:text-danger transition-colors" title="Clear dates">
+            <button
+              onClick={() => {
+                setDateFrom("");
+                setDateTo("");
+                setPage(1);
+              }}
+              className="rounded p-1.5 text-navy/70 hover:text-danger transition-colors"
+              title="Clear dates"
+            >
               <X className="h-3.5 w-3.5" />
             </button>
           )}
@@ -686,70 +919,175 @@ function InventoryPurchasesTab() {
           <thead className="border-b border-surface-border bg-surface-raised">
             <tr>
               <th className="w-10 px-4 py-3">
-                <input type="checkbox"
+                <input
+                  type="checkbox"
                   checked={sortedBills.length > 0 && selectedIds.size === sortedBills.length}
                   onChange={toggleSelectAll}
-                  className="h-4 w-4 rounded border-surface-border text-brand-500 accent-brand-500" />
+                  className="h-4 w-4 rounded border-surface-border text-brand-500 accent-brand-500"
+                />
               </th>
               <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Bill #</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy" onClick={() => toggleSort("supplier")}>Supplier <SortIcon col="supplier" /></th>
+              <th
+                className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy"
+                onClick={() => toggleSort("supplier")}
+              >
+                Supplier <SortIcon col="supplier" />
+              </th>
               <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">PO #</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy" onClick={() => toggleSort("billDate")}>Bill Date <SortIcon col="billDate" /></th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy" onClick={() => toggleSort("dueDate")}>Due Date <SortIcon col="dueDate" /></th>
-              <th className="px-4 py-3 text-right text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy" onClick={() => toggleSort("total")}>Total <SortIcon col="total" /></th>
+              <th
+                className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy"
+                onClick={() => toggleSort("billDate")}
+              >
+                Bill Date <SortIcon col="billDate" />
+              </th>
+              <th
+                className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy"
+                onClick={() => toggleSort("dueDate")}
+              >
+                Due Date <SortIcon col="dueDate" />
+              </th>
+              <th
+                className="px-4 py-3 text-right text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy"
+                onClick={() => toggleSort("total")}
+              >
+                Total <SortIcon col="total" />
+              </th>
               <th className="px-4 py-3 text-right text-xs font-medium text-navy/70">Paid</th>
               <th className="px-4 py-3 text-right text-xs font-medium text-navy/70">Balance</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy" onClick={() => toggleSort("status")}>Status <SortIcon col="status" /></th>
+              <th
+                className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy"
+                onClick={() => toggleSort("status")}
+              >
+                Status <SortIcon col="status" />
+              </th>
               <th className="w-10 px-3 py-3" />
             </tr>
           </thead>
           <tbody className="divide-y divide-surface-border bg-white">
             {isLoading ? (
-              <tr><td colSpan={11} className="px-4 py-12 text-center"><Loader2 className="mx-auto h-6 w-6 animate-spin text-navy/40" /></td></tr>
-            ) : isError ? (
-              <tr><td colSpan={11} className="px-4 py-12 text-center text-sm text-danger">Failed to load. Please try again.</td></tr>
-            ) : bills.length === 0 ? (
               <tr>
                 <td colSpan={11} className="px-4 py-12 text-center">
-                  <div className="flex flex-col items-center gap-2">
-                    <FileText className="h-8 w-8 text-navy/20" />
-                    <p className="text-sm text-navy/40">No inventory purchases match your filters.</p>
-                    <button className="text-sm text-brand-500 hover:underline" onClick={() => { setSearch(""); setStatusFilter(""); setDateFrom(""); setDateTo(""); setPage(1); }}>
-                      Clear filters
-                    </button>
-                  </div>
+                  <Loader2 className="mx-auto h-6 w-6 animate-spin text-navy/70" />
+                </td>
+              </tr>
+            ) : isError ? (
+              <tr>
+                <td colSpan={11} className="px-4 py-12 text-center text-sm text-danger">
+                  Failed to load. Please try again.
+                </td>
+              </tr>
+            ) : bills.length === 0 ? (
+              <tr>
+                <td colSpan={11} className="p-0">
+                  {search || statusFilter || dateFrom || dateTo ? (
+                    <EmptyState
+                      variant="data"
+                      title="No matching purchases"
+                      description="No inventory purchases match your current search and filters."
+                      action={
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => {
+                            setSearch("");
+                            setStatusFilter("");
+                            setDateFrom("");
+                            setDateTo("");
+                            setPage(1);
+                          }}
+                        >
+                          Clear filters
+                        </Button>
+                      }
+                    />
+                  ) : (
+                    <EmptyState
+                      variant="data"
+                      title="No purchases yet"
+                      description="Record an inventory purchase to track supplier bills and expenses."
+                      action={
+                        <Button size="sm" onClick={() => setIsCreateOpen(true)}>
+                          New purchase
+                        </Button>
+                      }
+                    />
+                  )}
                 </td>
               </tr>
             ) : (
               sortedBills.map((bill: VendorBill) => {
                 const overdue = isOverdue(bill);
                 return (
-                  <tr key={bill.id} onClick={() => router.push(`/vendor-bills/${bill.id}`)}
-                    className={cn("cursor-pointer transition-colors hover:bg-surface-raised", overdue && "border-l-4 border-l-red-400", selectedIds.has(bill.id) && "bg-brand-50")}>
+                  <tr
+                    key={bill.id}
+                    onClick={() => router.push(`/vendor-bills/${bill.id}`)}
+                    className={cn(
+                      "cursor-pointer transition-colors hover:bg-surface-raised",
+                      overdue && "border-l-4 border-l-red-400",
+                      selectedIds.has(bill.id) && "bg-brand-50",
+                    )}
+                  >
                     <td className="w-10 px-4 py-3" onClick={(e) => e.stopPropagation()}>
-                      <input type="checkbox" checked={selectedIds.has(bill.id)} onChange={() => toggleSelect(bill.id)}
-                        className="h-4 w-4 rounded border-surface-border text-brand-500 accent-brand-500" />
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(bill.id)}
+                        onChange={() => toggleSelect(bill.id)}
+                        className="h-4 w-4 rounded border-surface-border text-brand-500 accent-brand-500"
+                      />
                     </td>
-                    <td className="px-4 py-3 font-mono text-xs font-semibold text-navy">{bill.billNumber}</td>
-                    <td className="px-4 py-3 font-medium text-navy">{bill.supplier?.name ?? "—"}</td>
-                    <td className="px-4 py-3 text-navy font-mono text-xs">{(bill as any).purchaseOrder?.poNumber ?? "—"}</td>
-                    <td className="px-4 py-3 text-navy">{fmtDate(bill.billDate ?? bill.createdAt)}</td>
-                    <td className={cn("px-4 py-3", overdue ? "text-red-600 font-medium" : "text-navy")}>
+                    <td className="px-4 py-3 font-mono text-xs font-semibold text-navy">
+                      {bill.billNumber}
+                    </td>
+                    <td className="px-4 py-3 font-medium text-navy">
+                      {bill.supplier?.name ?? "—"}
+                    </td>
+                    <td className="px-4 py-3 text-navy font-mono text-xs">
+                      {(bill as any).purchaseOrder?.poNumber ?? "—"}
+                    </td>
+                    <td className="px-4 py-3 text-navy">
+                      {fmtDate(bill.billDate ?? bill.createdAt)}
+                    </td>
+                    <td
+                      className={cn(
+                        "px-4 py-3",
+                        overdue ? "text-red-600 font-medium" : "text-navy",
+                      )}
+                    >
                       {fmtDate(bill.dueDate)}
-                      {overdue && <span className="ml-1.5 text-xs font-semibold text-red-500">Overdue</span>}
+                      {overdue && (
+                        <span className="ml-1.5 text-xs font-semibold text-red-500">Overdue</span>
+                      )}
                     </td>
-                    <td className="px-4 py-3 text-right font-medium text-navy">{fmt(Number(bill.totalOwed ?? 0))}</td>
-                    <td className="px-4 py-3 text-right text-navy">{fmt(Number(bill.totalPaid ?? 0))}</td>
+                    <td className="px-4 py-3 text-right font-medium text-navy">
+                      {fmt(Number(bill.totalOwed ?? 0))}
+                    </td>
+                    <td className="px-4 py-3 text-right text-navy">
+                      {fmt(Number(bill.totalPaid ?? 0))}
+                    </td>
                     <td className="px-4 py-3 text-right">
                       {(() => {
-                        const bal = Math.max(0, Number(bill.totalOwed ?? 0) - Number(bill.totalPaid ?? 0));
-                        return <span className={cn("font-medium", bal > 0 ? "text-danger" : "text-navy")}>{fmt(bal)}</span>;
+                        const bal = Math.max(
+                          0,
+                          Number(bill.totalOwed ?? 0) - Number(bill.totalPaid ?? 0),
+                        );
+                        return (
+                          <span
+                            className={cn("font-medium", bal > 0 ? "text-danger" : "text-navy")}
+                          >
+                            {fmt(bal)}
+                          </span>
+                        );
                       })()}
                     </td>
-                    <td className="px-4 py-3"><VendorBillStatusBadge status={bill.status} /></td>
+                    <td className="px-4 py-3">
+                      <VendorBillStatusBadge status={bill.status} />
+                    </td>
                     <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
-                      <button title="View bill" onClick={() => router.push(`/vendor-bills/${bill.id}`)}
-                        className="rounded p-1.5 text-navy/40 hover:bg-surface-raised hover:text-navy transition-colors">
+                      <button
+                        title="View bill"
+                        onClick={() => router.push(`/vendor-bills/${bill.id}`)}
+                        className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
+                      >
                         <Eye className="h-4 w-4" />
                       </button>
                     </td>
@@ -764,23 +1102,40 @@ function InventoryPurchasesTab() {
       {/* Pagination */}
       {meta && meta.totalPages > 1 && (
         <div className="flex items-center justify-between">
-          <p className="text-sm text-navy/50">Showing {(page - 1) * LIMIT + 1}–{Math.min(page * LIMIT, meta.total)} of {meta.total} bills</p>
+          <p className="text-sm text-navy/70">
+            Showing {(page - 1) * LIMIT + 1}–{Math.min(page * LIMIT, meta.total)} of {meta.total}{" "}
+            bills
+          </p>
           <div className="flex items-center gap-1">
-            <button disabled={page <= 1} onClick={() => setPage((p) => p - 1)}
-              className="rounded border border-surface-border bg-white px-3 py-1.5 text-sm font-medium text-navy hover:bg-surface-raised disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+            <button
+              disabled={page <= 1}
+              onClick={() => setPage((p) => p - 1)}
+              className="rounded border border-surface-border bg-white px-3 py-1.5 text-sm font-medium text-navy hover:bg-surface-raised disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
               Previous
             </button>
             {Array.from({ length: Math.min(totalPages, 7) }, (_, i) => {
               const p = i + 1;
               return (
-                <button key={p} onClick={() => setPage(p)}
-                  className={cn("rounded border px-3 py-1.5 text-sm font-medium transition-colors", p === page ? "border-brand-500 bg-brand-500 text-white" : "border-surface-border bg-white text-navy hover:bg-surface-raised")}>
+                <button
+                  key={p}
+                  onClick={() => setPage(p)}
+                  className={cn(
+                    "rounded border px-3 py-1.5 text-sm font-medium transition-colors",
+                    p === page
+                      ? "border-brand-500 bg-brand-500 text-white"
+                      : "border-surface-border bg-white text-navy hover:bg-surface-raised",
+                  )}
+                >
                   {p}
                 </button>
               );
             })}
-            <button disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}
-              className="rounded border border-surface-border bg-white px-3 py-1.5 text-sm font-medium text-navy hover:bg-surface-raised disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+            <button
+              disabled={page >= totalPages}
+              onClick={() => setPage((p) => p + 1)}
+              className="rounded border border-surface-border bg-white px-3 py-1.5 text-sm font-medium text-navy hover:bg-surface-raised disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
               Next
             </button>
           </div>
@@ -788,7 +1143,13 @@ function InventoryPurchasesTab() {
       )}
 
       <CreateBillModal isOpen={isCreateOpen} onClose={() => setIsCreateOpen(false)} />
-      <ScanInvoiceModal open={scanOpen} onClose={() => setScanOpen(false)} onCreated={() => { setScanOpen(false); }} />
+      <ScanInvoiceModal
+        open={scanOpen}
+        onClose={() => setScanOpen(false)}
+        onCreated={() => {
+          setScanOpen(false);
+        }}
+      />
     </div>
   );
 }
@@ -808,7 +1169,13 @@ function OtherExpensesTab() {
   const [detailExpense, setDetailExpense] = React.useState<Expense | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
-  const { data, isLoading } = useExpenses({ categoryId: categoryId || undefined, from: from || undefined, to: to || undefined, page, limit: 25 });
+  const { data, isLoading } = useExpenses({
+    categoryId: categoryId || undefined,
+    from: from || undefined,
+    to: to || undefined,
+    page,
+    limit: 25,
+  });
   const { data: categories } = useExpenseCategories();
   const deleteExpense = useDeleteExpense();
   const uploadReceipt = useUploadExpenseReceipt();
@@ -898,9 +1265,17 @@ function OtherExpensesTab() {
   const handleExtract = async (expenseId: string) => {
     try {
       await extractItems.mutateAsync(expenseId);
-      toast({ title: "Items extracted", description: "Line items have been populated from the receipt.", variant: "success" });
+      toast({
+        title: "Items extracted",
+        description: "Line items have been populated from the receipt.",
+        variant: "success",
+      });
     } catch (err: any) {
-      toast({ title: "Extraction failed", description: err?.response?.data?.message ?? "Please check the receipt quality.", variant: "error" });
+      toast({
+        title: "Extraction failed",
+        description: err?.response?.data?.message ?? "Please check the receipt quality.",
+        variant: "error",
+      });
     }
   };
 
@@ -924,7 +1299,10 @@ function OtherExpensesTab() {
           {selectMode ? <X className="h-4 w-4" /> : <CheckSquare className="h-4 w-4" />}
           {selectMode ? "Cancel" : "Select"}
         </button>
-        <Link href="/finance/expenses/new" className="flex items-center gap-2 rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 transition-colors">
+        <Link
+          href="/finance/expenses/new"
+          className="flex items-center gap-2 rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 transition-colors"
+        >
           <Plus className="h-4 w-4" /> New Expense
         </Link>
       </div>
@@ -936,7 +1314,10 @@ function OtherExpensesTab() {
             {selected.size} expense{selected.size !== 1 ? "s" : ""} selected
           </span>
           <div className="flex items-center gap-2">
-            <button onClick={() => setSelected(new Set())} className="text-sm text-navy/50 hover:text-navy transition-colors">
+            <button
+              onClick={() => setSelected(new Set())}
+              className="text-sm text-navy/70 hover:text-navy transition-colors"
+            >
               Deselect all
             </button>
             <Button
@@ -960,28 +1341,66 @@ function OtherExpensesTab() {
 
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-3 rounded-xl border border-surface-border bg-white p-4">
-        <Filter className="h-4 w-4 text-navy/40" />
-        <select value={categoryId} onChange={e => { setCategoryId(e.target.value); setPage(1); }}
-          className="rounded-lg border border-surface-border px-3 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500">
+        <Filter className="h-4 w-4 text-navy/70" />
+        <select
+          value={categoryId}
+          onChange={(e) => {
+            setCategoryId(e.target.value);
+            setPage(1);
+          }}
+          className="rounded-lg border border-surface-border px-3 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+        >
           <option value="">All Categories</option>
-          {categories?.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          {categories?.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
         </select>
-        <input type="date" value={from} onChange={e => { setFrom(e.target.value); setPage(1); }}
-          className="h-9 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500" />
-        <input type="date" value={to} onChange={e => { setTo(e.target.value); setPage(1); }}
-          className="h-9 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500" />
+        <input
+          type="date"
+          value={from}
+          onChange={(e) => {
+            setFrom(e.target.value);
+            setPage(1);
+          }}
+          className="h-9 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+        />
+        <input
+          type="date"
+          value={to}
+          onChange={(e) => {
+            setTo(e.target.value);
+            setPage(1);
+          }}
+          className="h-9 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+        />
         {(categoryId || from || to) && (
-          <button onClick={() => { setCategoryId(""); setFrom(""); setTo(""); setPage(1); }} className="text-xs text-navy/40 hover:text-danger transition-colors">
+          <button
+            onClick={() => {
+              setCategoryId("");
+              setFrom("");
+              setTo("");
+              setPage(1);
+            }}
+            className="text-xs text-navy/70 hover:text-danger transition-colors"
+          >
             Clear filters
           </button>
         )}
-        {!isLoading && meta && <span className="ml-auto text-sm text-navy/60">{meta.total} expenses · {fmt(total)} total</span>}
+        {!isLoading && meta && (
+          <span className="ml-auto text-sm text-navy/70">
+            {meta.total} expenses · {fmt(total)} total
+          </span>
+        )}
       </div>
 
       {/* Table */}
       <div className="rounded-xl border border-surface-border bg-white">
         {isLoading ? (
-          <div className="flex h-64 items-center justify-center"><div className="h-8 w-8 animate-spin rounded-full border-4 border-brand-500 border-t-transparent" /></div>
+          <div className="flex h-64 items-center justify-center">
+            <div className="h-8 w-8 animate-spin rounded-full border-4 border-brand-500 border-t-transparent" />
+          </div>
         ) : (
           <table className="w-full text-sm">
             <thead>
@@ -999,19 +1418,43 @@ function OtherExpensesTab() {
                     />
                   </th>
                 )}
-                <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-navy/40">Date</th>
-                <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-navy/40">Category</th>
-                <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-navy/40">Description</th>
-                <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-navy/40">Supplier</th>
-                <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-navy/40">Status</th>
-                <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-navy/40">Receipt</th>
-                <th className="px-5 py-3 text-right text-xs font-semibold uppercase tracking-wide text-navy/40">Amount</th>
+                <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-navy/70">
+                  Date
+                </th>
+                <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-navy/70">
+                  Category
+                </th>
+                <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-navy/70">
+                  Description
+                </th>
+                <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-navy/70">
+                  Supplier
+                </th>
+                <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-navy/70">
+                  Status
+                </th>
+                <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-navy/70">
+                  Receipt
+                </th>
+                <th className="px-5 py-3 text-right text-xs font-semibold uppercase tracking-wide text-navy/70">
+                  Amount
+                </th>
                 <th className="px-5 py-3 w-10" />
               </tr>
             </thead>
             <tbody className="divide-y divide-surface-border">
               {expenses.length === 0 && (
-                <tr><td colSpan={selectMode ? 9 : 8} className="px-5 py-10 text-center text-sm text-navy/40">No expenses found. <Link href="/finance/expenses/new" className="text-brand-500 hover:underline">Record your first expense.</Link></td></tr>
+                <tr>
+                  <td
+                    colSpan={selectMode ? 9 : 8}
+                    className="px-5 py-10 text-center text-sm text-navy/70"
+                  >
+                    No expenses found.{" "}
+                    <Link href="/finance/expenses/new" className="text-brand-500 hover:underline">
+                      Record your first expense.
+                    </Link>
+                  </td>
+                </tr>
               )}
               {expenses.map((e) => (
                 <tr
@@ -1039,10 +1482,16 @@ function OtherExpensesTab() {
                     </td>
                   )}
                   <td className="px-5 py-3 text-navy/70">{fmtDate(e.date)}</td>
-                  <td className="px-5 py-3 font-medium text-brand-600">{e.category?.name ?? "—"}</td>
-                  <td className="px-5 py-3 text-navy/70 max-w-xs truncate">{e.description ?? "—"}</td>
+                  <td className="px-5 py-3 font-medium text-brand-600">
+                    {e.category?.name ?? "—"}
+                  </td>
+                  <td className="px-5 py-3 text-navy/70 max-w-xs truncate">
+                    {e.description ?? "—"}
+                  </td>
                   <td className="px-5 py-3 text-navy/70">{e.supplier?.name ?? "—"}</td>
-                  <td className="px-5 py-3"><StatusBadge status={e.status ?? "PENDING"} /></td>
+                  <td className="px-5 py-3">
+                    <StatusBadge status={e.status ?? "PENDING"} />
+                  </td>
                   {/* Receipt column */}
                   <td className="px-5 py-3">
                     {!e.receiptKey ? (
@@ -1066,7 +1515,7 @@ function OtherExpensesTab() {
                         <button
                           onClick={() => triggerUpload(e.id)}
                           title="Replace receipt"
-                          className="rounded p-1 text-navy/50 hover:bg-surface-raised transition-colors"
+                          className="rounded p-1 text-navy/70 hover:bg-surface-raised transition-colors"
                         >
                           <Upload className="h-3.5 w-3.5" />
                         </button>
@@ -1099,16 +1548,31 @@ function OtherExpensesTab() {
                       </div>
                     )}
                   </td>
-                  <td className="px-5 py-3 text-right font-semibold text-navy">{fmt(Number(e.amount))}</td>
+                  <td className="px-5 py-3 text-right font-semibold text-navy">
+                    {fmt(Number(e.amount))}
+                  </td>
                   <td className="px-5 py-3">
                     {confirmDelete === e.id ? (
                       <div className="flex items-center gap-1">
-                        <button onClick={() => handleDelete(e.id)} className="text-xs text-danger hover:underline">Delete</button>
+                        <button
+                          onClick={() => handleDelete(e.id)}
+                          className="text-xs text-danger hover:underline"
+                        >
+                          Delete
+                        </button>
                         <span className="text-navy/30">|</span>
-                        <button onClick={() => setConfirmDelete(null)} className="text-xs text-navy/40 hover:underline">Cancel</button>
+                        <button
+                          onClick={() => setConfirmDelete(null)}
+                          className="text-xs text-navy/70 hover:underline"
+                        >
+                          Cancel
+                        </button>
                       </div>
                     ) : (
-                      <button onClick={() => setConfirmDelete(e.id)} className="opacity-0 group-hover:opacity-100 transition-opacity text-navy/30 hover:text-danger">
+                      <button
+                        onClick={() => setConfirmDelete(e.id)}
+                        className="opacity-0 group-hover:opacity-100 transition-opacity text-navy/30 hover:text-danger"
+                      >
                         <Trash2 className="h-4 w-4" />
                       </button>
                     )}
@@ -1122,10 +1586,24 @@ function OtherExpensesTab() {
 
       {meta && meta.totalPages > 1 && (
         <div className="flex items-center justify-between">
-          <p className="text-sm text-navy/60">Page {meta.page} of {meta.totalPages}</p>
+          <p className="text-sm text-navy/70">
+            Page {meta.page} of {meta.totalPages}
+          </p>
           <div className="flex gap-2">
-            <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} className="rounded-lg border border-surface-border px-3 py-1.5 text-sm disabled:opacity-40 hover:bg-surface-raised">Previous</button>
-            <button onClick={() => setPage(p => Math.min(meta.totalPages, p + 1))} disabled={page === meta.totalPages} className="rounded-lg border border-surface-border px-3 py-1.5 text-sm disabled:opacity-40 hover:bg-surface-raised">Next</button>
+            <button
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={page === 1}
+              className="rounded-lg border border-surface-border px-3 py-1.5 text-sm disabled:opacity-40 hover:bg-surface-raised"
+            >
+              Previous
+            </button>
+            <button
+              onClick={() => setPage((p) => Math.min(meta.totalPages, p + 1))}
+              disabled={page === meta.totalPages}
+              className="rounded-lg border border-surface-border px-3 py-1.5 text-sm disabled:opacity-40 hover:bg-surface-raised"
+            >
+              Next
+            </button>
           </div>
         </div>
       )}
@@ -1139,14 +1617,19 @@ function OtherExpensesTab() {
 
 function StatusBadge({ status }: { status: "PENDING" | "RECEIVED" | "PAID" | "VOID" }) {
   const styles: Record<string, string> = {
-    PENDING: "bg-navy/5 text-navy/60 border-navy/10",
+    PENDING: "bg-navy/5 text-navy/70 border-navy/10",
     RECEIVED: "bg-blue-50 text-blue-700 border-blue-200",
     PAID: "bg-emerald-50 text-emerald-700 border-emerald-200",
-    VOID: "bg-navy/5 text-navy/40 border-navy/10 line-through",
+    VOID: "bg-navy/5 text-navy/70 border-navy/10 line-through",
   };
   const label = status[0] + status.slice(1).toLowerCase();
   return (
-    <span className={cn("inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium", styles[status])}>
+    <span
+      className={cn(
+        "inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium",
+        styles[status],
+      )}
+    >
       {label}
     </span>
   );
@@ -1154,14 +1637,23 @@ function StatusBadge({ status }: { status: "PENDING" | "RECEIVED" | "PAID" | "VO
 
 // ─── Expense Detail Modal ────────────────────────────────────────────────────
 
-function ExpenseDetailModal({ expense, onClose }: { expense: Expense | null; onClose: () => void }) {
+function ExpenseDetailModal({
+  expense,
+  onClose,
+}: {
+  expense: Expense | null;
+  onClose: () => void;
+}) {
   const getReceiptUrl = useGetExpenseReceiptUrl();
   const [receiptUrl, setReceiptUrl] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     setReceiptUrl(null);
     if (expense?.id && expense.receiptKey) {
-      getReceiptUrl.mutateAsync(expense.id).then((r) => setReceiptUrl(r.url)).catch(() => {});
+      getReceiptUrl
+        .mutateAsync(expense.id)
+        .then((r) => setReceiptUrl(r.url))
+        .catch(() => {});
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expense?.id]);
@@ -1170,7 +1662,7 @@ function ExpenseDetailModal({ expense, onClose }: { expense: Expense | null; onC
   const Field = ({ label, value }: { label: string; value: React.ReactNode }) =>
     value == null || value === "" ? null : (
       <div>
-        <p className="text-xs uppercase tracking-wide text-navy/40">{label}</p>
+        <p className="text-xs uppercase tracking-wide text-navy/70">{label}</p>
         <p className="mt-0.5 text-sm text-navy">{value}</p>
       </div>
     );
@@ -1181,7 +1673,7 @@ function ExpenseDetailModal({ expense, onClose }: { expense: Expense | null; onC
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className="text-2xl font-semibold text-navy">{fmt(Number(expense.amount))}</p>
-            <p className="text-sm text-navy/60">{fmtDate(expense.date)}</p>
+            <p className="text-sm text-navy/70">{fmtDate(expense.date)}</p>
           </div>
           <StatusBadge status={expense.status ?? "PENDING"} />
         </div>
@@ -1195,26 +1687,47 @@ function ExpenseDetailModal({ expense, onClose }: { expense: Expense | null; onC
           <Field label="Employee" value={expense.employeeName} />
           {expense.isMileage && (
             <>
-              <Field label="Distance" value={expense.distance != null ? `${expense.distance} ${expense.mileageUnit ?? ""}` : null} />
-              <Field label="Mileage Rate" value={expense.mileageRateSnapshot != null ? `${expense.mileageRateSnapshot}` : null} />
+              <Field
+                label="Distance"
+                value={
+                  expense.distance != null
+                    ? `${expense.distance} ${expense.mileageUnit ?? ""}`
+                    : null
+                }
+              />
+              <Field
+                label="Mileage Rate"
+                value={
+                  expense.mileageRateSnapshot != null ? `${expense.mileageRateSnapshot}` : null
+                }
+              />
             </>
           )}
           <Field label="Billable" value={expense.isBillable ? "Yes" : null} />
-          <Field label="Received At" value={expense.receivedAt ? fmtDate(expense.receivedAt) : null} />
+          <Field
+            label="Received At"
+            value={expense.receivedAt ? fmtDate(expense.receivedAt) : null}
+          />
           <Field label="Paid At" value={expense.paidAt ? fmtDate(expense.paidAt) : null} />
           <Field label="Created At" value={expense.createdAt ? fmtDate(expense.createdAt) : null} />
         </div>
 
         {expense.description && (
-          <Field label="Description" value={<span className="whitespace-pre-wrap">{expense.description}</span>} />
+          <Field
+            label="Description"
+            value={<span className="whitespace-pre-wrap">{expense.description}</span>}
+          />
         )}
         {expense.notes && (
-          <Field label="Notes" value={<span className="whitespace-pre-wrap">{expense.notes}</span>} />
+          <Field
+            label="Notes"
+            value={<span className="whitespace-pre-wrap">{expense.notes}</span>}
+          />
         )}
 
         {expense.lineItems && expense.lineItems.length > 0 && (
           <div>
-            <p className="text-xs uppercase tracking-wide text-navy/40 mb-2">Line Items</p>
+            <p className="text-xs uppercase tracking-wide text-navy/70 mb-2">Line Items</p>
             <div className="rounded-lg border border-surface-border divide-y divide-surface-border">
               {expense.lineItems.map((li, i) => (
                 <div key={i} className="flex items-center justify-between px-3 py-2 text-sm">
@@ -1228,25 +1741,38 @@ function ExpenseDetailModal({ expense, onClose }: { expense: Expense | null; onC
 
         {expense.receiptKey && (
           <div>
-            <p className="text-xs uppercase tracking-wide text-navy/40 mb-2">Receipt</p>
+            <p className="text-xs uppercase tracking-wide text-navy/70 mb-2">Receipt</p>
             {receiptUrl ? (
               expense.receiptMimeType === "application/pdf" ? (
-                <a href={receiptUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 rounded-lg border border-surface-border px-3 py-2 text-sm text-brand-600 hover:bg-brand-50">
-                  <FileText className="h-4 w-4" /> Open PDF ({expense.receiptOriginalName ?? "receipt"})
+                <a
+                  href={receiptUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 rounded-lg border border-surface-border px-3 py-2 text-sm text-brand-600 hover:bg-brand-50"
+                >
+                  <FileText className="h-4 w-4" /> Open PDF (
+                  {expense.receiptOriginalName ?? "receipt"})
                 </a>
               ) : (
                 <a href={receiptUrl} target="_blank" rel="noopener noreferrer">
-                  <img src={receiptUrl} alt="receipt" className="max-h-64 rounded-lg border border-surface-border" />
+                  <img
+                    src={receiptUrl}
+                    alt="receipt"
+                    className="max-h-64 rounded-lg border border-surface-border"
+                  />
                 </a>
               )
             ) : (
-              <p className="text-sm text-navy/40">Loading receipt…</p>
+              <p className="text-sm text-navy/70">Loading receipt…</p>
             )}
           </div>
         )}
 
         {expense.vendorBillId && (
-          <Link href={`/finance/vendor-bills/${expense.vendorBillId}`} className="inline-flex items-center gap-2 text-sm text-brand-600 hover:underline">
+          <Link
+            href={`/finance/vendor-bills/${expense.vendorBillId}`}
+            className="inline-flex items-center gap-2 text-sm text-brand-600 hover:underline"
+          >
             <ExternalLink className="h-4 w-4" /> View linked vendor bill
           </Link>
         )}
@@ -1259,7 +1785,9 @@ function ExpenseDetailModal({ expense, onClose }: { expense: Expense | null; onC
 
 function ExpensesContent() {
   const { setTitle } = usePageTitle();
-  React.useEffect(() => { setTitle("Expenses"); }, [setTitle]);
+  React.useEffect(() => {
+    setTitle("Expenses");
+  }, [setTitle]);
 
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -1271,10 +1799,7 @@ function ExpensesContent() {
 
   return (
     <div className="space-y-6 p-6">
-      <PageHeader
-        title="Expenses"
-        subtitle="Inventory purchases and other business expenses"
-      />
+      <PageHeader title="Expenses" subtitle="Inventory purchases and other business expenses" />
 
       {/* Tab switcher */}
       <div className="flex gap-1 rounded-xl border border-surface-border bg-surface-raised p-1 w-fit">
@@ -1282,7 +1807,9 @@ function ExpensesContent() {
           onClick={() => setTab("inventory")}
           className={cn(
             "rounded-lg px-5 py-2 text-sm font-medium transition-colors",
-            activeTab === "inventory" ? "bg-white text-navy shadow-sm" : "text-navy/60 hover:text-navy",
+            activeTab === "inventory"
+              ? "bg-white text-navy shadow-sm"
+              : "text-navy/70 hover:text-navy",
           )}
         >
           Inventory Purchases
@@ -1291,7 +1818,7 @@ function ExpensesContent() {
           onClick={() => setTab("other")}
           className={cn(
             "rounded-lg px-5 py-2 text-sm font-medium transition-colors",
-            activeTab === "other" ? "bg-white text-navy shadow-sm" : "text-navy/60 hover:text-navy",
+            activeTab === "other" ? "bg-white text-navy shadow-sm" : "text-navy/70 hover:text-navy",
           )}
         >
           Other Expenses
@@ -1305,7 +1832,13 @@ function ExpensesContent() {
 
 export default function ExpensesPage() {
   return (
-    <React.Suspense fallback={<div className="flex h-64 items-center justify-center"><div className="h-8 w-8 animate-spin rounded-full border-4 border-brand-500 border-t-transparent" /></div>}>
+    <React.Suspense
+      fallback={
+        <div className="flex h-64 items-center justify-center">
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-brand-500 border-t-transparent" />
+        </div>
+      }
+    >
       <ExpensesContent />
     </React.Suspense>
   );

@@ -2,11 +2,11 @@
 
 ## Items addressed
 
-| NEW | Sev | Status | Files | Commit | Test added |
-|-----|-----|--------|-------|--------|------------|
-| NEW-vop-3 | P2 | Fixed | `apps/mobile/lib/api/admin.ts`, `apps/mobile/app/(operator)/settings/index.tsx` | fix: NEW-vop-2/3/4 | Yes — `apps/api/src/users/users.service.spec.ts` (6 tests) |
-| NEW-vop-2 | P2 | Script written (not run) | `apps/api/scripts/purge-xss-customer-names.js` | fix: NEW-vop-2/3/4 | n/a (one-shot script) |
-| NEW-vop-4 | P3 | Fixed | `apps/mobile/Dockerfile` | fix: NEW-vop-2/3/4 | n/a (infrastructure) |
+| NEW       | Sev | Status                   | Files                                                                           | Commit             | Test added                                                 |
+| --------- | --- | ------------------------ | ------------------------------------------------------------------------------- | ------------------ | ---------------------------------------------------------- |
+| NEW-vop-3 | P2  | Fixed                    | `apps/mobile/lib/api/admin.ts`, `apps/mobile/app/(operator)/settings/index.tsx` | fix: NEW-vop-2/3/4 | Yes — `apps/api/src/users/users.service.spec.ts` (6 tests) |
+| NEW-vop-2 | P2  | Script written (not run) | `apps/api/scripts/purge-xss-customer-names.js`                                  | fix: NEW-vop-2/3/4 | n/a (one-shot script)                                      |
+| NEW-vop-4 | P3  | Fixed                    | `apps/mobile/Dockerfile`                                                        | fix: NEW-vop-2/3/4 | n/a (infrastructure)                                       |
 
 ## Notes / blockers
 
@@ -15,11 +15,12 @@
 Root cause: `useAdminUsers()` in `apps/mobile/lib/api/admin.ts` declared its
 return type as `AppUser[]` and passed `r.data` straight through. The `/users`
 endpoint returns `{ data: AppUser[], meta: {...} }` (same paginated envelope as
-every other list endpoint). So `r.data` was the paginated *object*, not the
+every other list endpoint). So `r.data` was the paginated _object_, not the
 array. `Array.isArray(users)` in `UsersTab` returned `false` → `list` was empty
 every time.
 
 Fix:
+
 - Changed `useAdminUsers` return type to `{ data: AppUser[]; meta: PaginationMeta }`.
 - Added `limit: 100` default so all users are fetched in one page (matches the
   operator web portal behaviour for the settings user-list).

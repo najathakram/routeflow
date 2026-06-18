@@ -1,12 +1,5 @@
 import { useEffect } from "react";
-import {
-  ActivityIndicator,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -39,7 +32,10 @@ export default function ProductDetailScreen() {
   }, [isCreateAlias, router]);
 
   const { data: product, isLoading } = useProduct(isCreateAlias ? "" : (id ?? ""));
-  const { data: movements } = useInventoryMovements({ productId: isCreateAlias ? undefined : id, limit: 20 });
+  const { data: movements } = useInventoryMovements({
+    productId: isCreateAlias ? undefined : id,
+    limit: 20,
+  });
   const deleteMut = useDeleteProduct();
 
   if (isLoading || !product) {
@@ -60,15 +56,17 @@ export default function ProductDetailScreen() {
 
   const handleDelete = () => {
     if (!id) return;
-    confirm("Delete product?", `${product.name} will be removed permanently.`, () =>
-      deleteMut.mutate(id, {
-        onSuccess: () => {
-          showToast("Product deleted");
-          router.back();
-        },
-        onError: (e: any) =>
-          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
-      }),
+    confirm(
+      "Delete product?",
+      `${product.name} will be removed permanently.`,
+      () =>
+        deleteMut.mutate(id, {
+          onSuccess: () => {
+            showToast("Product deleted");
+            router.back();
+          },
+          onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        }),
       { confirmText: "Delete", destructive: true },
     );
   };
@@ -91,11 +89,13 @@ export default function ProductDetailScreen() {
         <View style={{ paddingHorizontal: 16, paddingTop: 12, gap: 14 }}>
           <View style={styles.card}>
             <Text style={styles.name}>{product.name}</Text>
-            {product.description ? (
-              <Text style={styles.desc}>{product.description}</Text>
-            ) : null}
+            {product.description ? <Text style={styles.desc}>{product.description}</Text> : null}
             <View style={{ flexDirection: "row", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
-              {out ? <Pill variant="red">Out of stock</Pill> : low ? <Pill variant="orange">Low stock</Pill> : null}
+              {out ? (
+                <Pill variant="red">Out of stock</Pill>
+              ) : low ? (
+                <Pill variant="orange">Low stock</Pill>
+              ) : null}
               {!product.isActive ? <Pill variant="gray">Inactive</Pill> : null}
               {product.category ? <Pill variant="brand">{product.category}</Pill> : null}
             </View>
@@ -109,7 +109,10 @@ export default function ProductDetailScreen() {
             <Row label="Price" value={`$${toNumber(product.pricePerUnit).toFixed(2)}`} />
             {(product.standardCost ?? product.costPerUnit) != null ? (
               <>
-                <Row label="Cost" value={`$${toNumber(product.standardCost ?? product.costPerUnit).toFixed(2)}`} />
+                <Row
+                  label="Cost"
+                  value={`$${toNumber(product.standardCost ?? product.costPerUnit).toFixed(2)}`}
+                />
                 {(() => {
                   const price = toNumber(product.pricePerUnit);
                   const cost = toNumber(product.standardCost ?? product.costPerUnit);
@@ -143,9 +146,7 @@ export default function ProductDetailScreen() {
           <View style={styles.card}>
             <View style={styles.cardHeader}>
               <Text style={styles.cardTitle}>Stock</Text>
-              <Pressable
-                onPress={() => router.push(`/(operator)/products/${id}/adjust-stock`)}
-              >
+              <Pressable onPress={() => router.push(`/(operator)/products/${id}/adjust-stock`)}>
                 <Text style={styles.linkText}>Adjust</Text>
               </Pressable>
             </View>

@@ -66,10 +66,7 @@ const { Pool } = require("pg");
     for (const loser of losers) {
       for (const li of loser.lineItems) {
         if (winnerProductIds.has(li.productId)) {
-          qtyAdditions.set(
-            li.productId,
-            (qtyAdditions.get(li.productId) ?? 0) + Number(li.qty),
-          );
+          qtyAdditions.set(li.productId, (qtyAdditions.get(li.productId) ?? 0) + Number(li.qty));
         } else {
           const existing = newItemsByProductId.get(li.productId);
           if (existing) {
@@ -79,8 +76,7 @@ const { Pool } = require("pg");
               qty: Number(li.qty),
               unitPrice: Number(li.unitPrice),
               priceType: li.priceType,
-              originalPrice:
-                li.originalPrice !== null ? Number(li.originalPrice) : null,
+              originalPrice: li.originalPrice !== null ? Number(li.originalPrice) : null,
               overrideReason: li.overrideReason,
               overriddenBy: li.overriddenBy,
               notes: li.notes,
@@ -147,9 +143,7 @@ const { Pool } = require("pg");
       });
     });
 
-    console.log(
-      `  customer ${customerId}: merged ${losers.length} → winner ${winner.id}`,
-    );
+    console.log(`  customer ${customerId}: merged ${losers.length} → winner ${winner.id}`);
     mergedOrders += losers.length;
     winners += 1;
   }

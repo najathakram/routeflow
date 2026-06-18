@@ -5,11 +5,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { Pill } from "@routeflow/ui/mobile/ios";
-import {
-  useAdminDrivers,
-  useAdminRoutes,
-  type AdminDriver,
-} from "../../lib/api/admin";
+import { useAdminDrivers, useAdminRoutes, type AdminDriver } from "../../lib/api/admin";
 import { useRoutesLive } from "../../lib/api/routes";
 import { AppMapView, type MapPin, type MapPolyline } from "../../components/MapView";
 
@@ -71,7 +67,8 @@ export default function FleetScreen() {
 
       // Stop pins for remaining stops
       const remainingStops = r.stops.filter(
-        (s) => s.lat != null && s.lng != null && (s.status === "PENDING" || s.status === "IN_PROGRESS"),
+        (s) =>
+          s.lat != null && s.lng != null && (s.status === "PENDING" || s.status === "IN_PROGRESS"),
       );
       for (const s of remainingStops) {
         pinList.push({
@@ -121,7 +118,11 @@ export default function FleetScreen() {
         )}
       </View>
 
-      <SafeAreaView style={styles.overlay} edges={["top", "left", "right"]} pointerEvents="box-none">
+      <SafeAreaView
+        style={styles.overlay}
+        edges={["top", "left", "right"]}
+        pointerEvents="box-none"
+      >
         <View style={styles.topRow}>
           <Pressable style={styles.backBtn} onPress={() => router.back()} hitSlop={8}>
             <Ionicons name="chevron-back" size={20} color={ios.label} />
@@ -157,7 +158,9 @@ export default function FleetScreen() {
               const name = r.driverName ?? driverDisplayName(driver);
               const initials = driverInitials(name);
               const stopCount = r.stops.length;
-              const remaining = r.stops.filter((s) => s.status === "PENDING" || s.status === "IN_PROGRESS").length;
+              const remaining = r.stops.filter(
+                (s) => s.status === "PENDING" || s.status === "IN_PROGRESS",
+              ).length;
               return (
                 <Pressable
                   key={r.runId}

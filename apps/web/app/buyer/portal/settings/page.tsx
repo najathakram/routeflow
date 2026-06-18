@@ -45,7 +45,7 @@ export default function BuyerSettingsPage() {
   return (
     <div className="mx-auto max-w-2xl p-6 md:p-8">
       <h1 className="mb-1 text-2xl font-bold text-navy">Account Settings</h1>
-      <p className="mb-8 text-sm text-navy/60">Manage your buyer portal preferences</p>
+      <p className="mb-8 text-sm text-navy/70">Manage your buyer portal preferences</p>
 
       {/* Merge Accounts Section */}
       <div className="rounded-xl border border-surface-border bg-white p-6 shadow-sm">
@@ -55,7 +55,7 @@ export default function BuyerSettingsPage() {
           </div>
           <div>
             <h2 className="text-base font-semibold text-navy">Merge Accounts</h2>
-            <p className="text-xs text-navy/50">Combine two accounts into one</p>
+            <p className="text-xs text-navy/70">Combine two accounts into one</p>
           </div>
         </div>
 
@@ -94,14 +94,14 @@ export default function BuyerSettingsPage() {
                 placeholder="other@example.com"
                 className="w-full rounded-lg border border-surface-border px-3 py-2 text-sm text-navy placeholder-navy/40 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100"
               />
-              <p className="mt-1 text-xs text-navy/50">
+              <p className="mt-1 text-xs text-navy/70">
                 We&apos;ll send a verification email to this address to confirm you own it.
               </p>
             </div>
 
             <div>
               <label className="mb-1.5 block text-sm font-medium text-navy">
-                Notes <span className="font-normal text-navy/40">(optional)</span>
+                Notes <span className="font-normal text-navy/70">(optional)</span>
               </label>
               <textarea
                 value={notes}

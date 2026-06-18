@@ -13,11 +13,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { NavAction, NavBackButton, NavBar, Pill } from "@routeflow/ui/mobile/ios";
-import {
-  useCustomer,
-  useCustomerStatement,
-  useDeleteCustomer,
-} from "../../../lib/api/customers";
+import { useCustomer, useCustomerStatement, useDeleteCustomer } from "../../../lib/api/customers";
 import { openInMaps } from "../../../components/openInMaps";
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
@@ -77,7 +73,13 @@ export default function CustomerDetailScreen() {
   };
 
   const addressLine = primaryAddress
-    ? [primaryAddress.line1, primaryAddress.line2, primaryAddress.city, primaryAddress.state, primaryAddress.zip]
+    ? [
+        primaryAddress.line1,
+        primaryAddress.line2,
+        primaryAddress.city,
+        primaryAddress.state,
+        primaryAddress.zip,
+      ]
         .filter(Boolean)
         .join(", ")
     : undefined;
@@ -203,7 +205,12 @@ export default function CustomerDetailScreen() {
                 <Text style={styles.statLabel}>Overdue</Text>
               </View>
               <View style={styles.statBox}>
-                <Text style={[styles.statValue, (statement?.pendingOrdersAmount ?? 0) > 0 && styles.amber]}>
+                <Text
+                  style={[
+                    styles.statValue,
+                    (statement?.pendingOrdersAmount ?? 0) > 0 && styles.amber,
+                  ]}
+                >
                   {fmt(statement?.pendingOrdersAmount)}
                 </Text>
                 <Text style={styles.statLabel}>Pending orders</Text>
@@ -245,9 +252,18 @@ export default function CustomerDetailScreen() {
           {/* Account details */}
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Account</Text>
-            {customer.email ? <Row label="Email" value={<Text style={styles.rowValue}>{customer.email}</Text>} /> : null}
-            {customer.phone ? <Row label="Phone" value={<Text style={styles.rowValue}>{customer.phone}</Text>} /> : null}
-            {customer.currency ? <Row label="Currency" value={<Text style={styles.rowValue}>{customer.currency}</Text>} /> : null}
+            {customer.email ? (
+              <Row label="Email" value={<Text style={styles.rowValue}>{customer.email}</Text>} />
+            ) : null}
+            {customer.phone ? (
+              <Row label="Phone" value={<Text style={styles.rowValue}>{customer.phone}</Text>} />
+            ) : null}
+            {customer.currency ? (
+              <Row
+                label="Currency"
+                value={<Text style={styles.rowValue}>{customer.currency}</Text>}
+              />
+            ) : null}
             {customer.deliveryWindowStart || customer.deliveryWindowEnd ? (
               <Row
                 label="Delivery window"
@@ -275,7 +291,12 @@ export default function CustomerDetailScreen() {
             >
               <Ionicons name="receipt-outline" size={16} color={ios.brand} />
               <Text style={styles.actionListText}>View orders</Text>
-              <Ionicons name="chevron-forward" size={14} color={ios.label3} style={{ marginLeft: "auto" }} />
+              <Ionicons
+                name="chevron-forward"
+                size={14}
+                color={ios.label3}
+                style={{ marginLeft: "auto" }}
+              />
             </Pressable>
             <Pressable
               style={styles.actionListRow}
@@ -283,7 +304,12 @@ export default function CustomerDetailScreen() {
             >
               <Ionicons name="document-text-outline" size={16} color={ios.brand} />
               <Text style={styles.actionListText}>View invoices</Text>
-              <Ionicons name="chevron-forward" size={14} color={ios.label3} style={{ marginLeft: "auto" }} />
+              <Ionicons
+                name="chevron-forward"
+                size={14}
+                color={ios.label3}
+                style={{ marginLeft: "auto" }}
+              />
             </Pressable>
           </View>
 
@@ -365,7 +391,12 @@ const styles = StyleSheet.create({
   red: { color: ios.system.redInk },
   green: { color: ios.system.greenInk },
   amber: { color: ios.system.orangeInk },
-  detailRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 6, alignItems: "center" },
+  detailRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingVertical: 6,
+    alignItems: "center",
+  },
   detailLabel: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2 },
   rowValue: { fontSize: 13, fontFamily: "Inter_500Medium", color: ios.label },
   linkRow: {

@@ -34,7 +34,9 @@ const prisma = new PrismaClient({ adapter });
 async function main() {
   console.log("🗑  RouteFlow Database Nuke");
   console.log(`   Database: ${dbUrl.replace(/:([^:@]+)@/, ":***@")}`);
-  console.log(`   Mode    : ${deleteAllUsers ? "FULL (including users)" : "Business data only (preserving operators)"}`);
+  console.log(
+    `   Mode    : ${deleteAllUsers ? "FULL (including users)" : "Business data only (preserving operators)"}`,
+  );
   console.log("");
 
   // Safety prompt — just print a warning and proceed

@@ -6,12 +6,12 @@ Step-by-step instructions for deploying RouteFlow to [Railway](https://railway.a
 
 ## Prerequisites
 
-| Requirement | Notes |
-|---|---|
-| Railway account | https://railway.app — free tier works for staging |
-| GitHub repo | RouteFlow monorepo pushed to GitHub |
-| Railway CLI | Installed in step 1 below |
-| OpenSSL (or similar) | For generating JWT secrets |
+| Requirement          | Notes                                             |
+| -------------------- | ------------------------------------------------- |
+| Railway account      | https://railway.app — free tier works for staging |
+| GitHub repo          | RouteFlow monorepo pushed to GitHub               |
+| Railway CLI          | Installed in step 1 below                         |
+| OpenSSL (or similar) | For generating JWT secrets                        |
 
 ---
 
@@ -239,9 +239,9 @@ For the CI/CD pipelines in `.github/workflows/` to deploy automatically:
 1. Go to your GitHub repo → **Settings** → **Secrets and variables** → **Actions**
 2. Add the following repository secrets:
 
-| Secret | Value | Used by |
-|---|---|---|
-| `RAILWAY_TOKEN` | Railway API token for staging | `deploy-staging.yml` |
+| Secret                     | Value                            | Used by                 |
+| -------------------------- | -------------------------------- | ----------------------- |
+| `RAILWAY_TOKEN`            | Railway API token for staging    | `deploy-staging.yml`    |
 | `RAILWAY_TOKEN_PRODUCTION` | Railway API token for production | `deploy-production.yml` |
 
 To generate a Railway token:
@@ -252,7 +252,6 @@ railway tokens create --name "github-actions-production"
 ```
 
 3. Create GitHub environments with protection rules:
-
    - Go to **Settings** → **Environments**
    - Create `staging` environment (no restrictions needed)
    - Create `production` environment → enable **Required reviewers** and add
@@ -262,10 +261,10 @@ railway tokens create --name "github-actions-production"
 
 ## Troubleshooting
 
-| Problem | Solution |
-|---|---|
-| Build fails with Prisma error | Ensure `prisma generate` runs in the Dockerfile builder stage |
-| `DATABASE_URL` not found | Check the variable uses `${{Postgres.DATABASE_URL}}` (Railway reference syntax) |
-| CORS errors in browser | Update `CORS_ORIGINS` on the API service to include the web service URL |
-| WebSocket connection fails | Railway supports WebSocket by default — check the web client connects to the correct URL |
-| Migration fails | Run `railway run --service routeflow-api -- npx prisma migrate status` to diagnose |
+| Problem                       | Solution                                                                                 |
+| ----------------------------- | ---------------------------------------------------------------------------------------- |
+| Build fails with Prisma error | Ensure `prisma generate` runs in the Dockerfile builder stage                            |
+| `DATABASE_URL` not found      | Check the variable uses `${{Postgres.DATABASE_URL}}` (Railway reference syntax)          |
+| CORS errors in browser        | Update `CORS_ORIGINS` on the API service to include the web service URL                  |
+| WebSocket connection fails    | Railway supports WebSocket by default — check the web client connects to the correct URL |
+| Migration fails               | Run `railway run --service routeflow-api -- npx prisma migrate status` to diagnose       |

@@ -44,7 +44,7 @@ function VerifyMergeContent() {
           <>
             <Loader2 className="mx-auto mb-4 h-12 w-12 animate-spin text-brand-500" />
             <h1 className="text-xl font-bold text-navy">Verifying...</h1>
-            <p className="mt-2 text-sm text-navy/60">Please wait while we confirm your account.</p>
+            <p className="mt-2 text-sm text-navy/70">Please wait while we confirm your account.</p>
           </>
         )}
 
@@ -58,7 +58,7 @@ function VerifyMergeContent() {
             <div className="mt-6 rounded-lg bg-surface-raised p-4">
               <div className="flex items-start gap-3 text-left">
                 <ShieldCheck className="mt-0.5 h-5 w-5 flex-shrink-0 text-brand-500" />
-                <p className="text-xs text-navy/60">
+                <p className="text-xs text-navy/70">
                   A platform admin will review the merge request and complete it shortly. Both
                   account owners will receive an email confirmation when it&apos;s done.
                 </p>
@@ -80,7 +80,7 @@ function VerifyMergeContent() {
             </div>
             <h1 className="text-xl font-bold text-navy">Verification Failed</h1>
             <p className="mt-2 text-sm text-navy/70">{message}</p>
-            <p className="mt-4 text-xs text-navy/50">
+            <p className="mt-4 text-xs text-navy/70">
               If your verification link expired, please log in and submit a new merge request from
               Account Settings.
             </p>

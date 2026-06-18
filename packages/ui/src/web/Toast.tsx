@@ -94,7 +94,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
                 )}
               </div>
               <RadixToast.Close
-                className="flex-shrink-0 rounded p-0.5 text-navy/40 hover:text-navy transition-colors"
+                className="flex-shrink-0 rounded p-0.5 text-navy/70 hover:text-navy transition-colors"
                 aria-label="Dismiss"
               >
                 <X className="h-4 w-4" />

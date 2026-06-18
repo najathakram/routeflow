@@ -1,8 +1,5 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
-import {
-  ProductForm,
-  emptyProductForm,
-} from "../../../components/ProductForm";
+import { ProductForm, emptyProductForm } from "../../../components/ProductForm";
 import { useCreateProduct, useUpdateReorderSettings } from "../../../lib/api/products";
 import { showToast } from "../../../lib/toast";
 
@@ -34,8 +31,7 @@ export default function NewProductScreen() {
             showToast("Product created");
             router.replace(`/(operator)/products/${res.id}`);
           },
-          onError: (e: any) =>
-            showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+          onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
         });
       }}
     />

@@ -16,11 +16,16 @@ import { confirm } from "../../../lib/confirm";
 
 function billPill(status: VendorBillStatus) {
   switch (status) {
-    case "DRAFT": return { variant: "gray" as const, label: "Draft" };
-    case "RECEIVED": return { variant: "orange" as const, label: "Received" };
-    case "PARTIAL": return { variant: "orange" as const, label: "Partial" };
-    case "FULL": return { variant: "green" as const, label: "Paid" };
-    case "VOID": return { variant: "gray" as const, label: "Void" };
+    case "DRAFT":
+      return { variant: "gray" as const, label: "Draft" };
+    case "RECEIVED":
+      return { variant: "orange" as const, label: "Received" };
+    case "PARTIAL":
+      return { variant: "orange" as const, label: "Partial" };
+    case "FULL":
+      return { variant: "green" as const, label: "Paid" };
+    case "VOID":
+      return { variant: "gray" as const, label: "Void" };
   }
 }
 
@@ -39,7 +44,10 @@ export default function VendorBillDetailScreen() {
   if (isLoading || !bill) {
     return (
       <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
-        <NavBar inlineTitle="Bill" leading={<NavBackButton label="Back" onPress={() => router.back()} />} />
+        <NavBar
+          inlineTitle="Bill"
+          leading={<NavBackButton label="Back" onPress={() => router.back()} />}
+        />
         <View style={styles.center}>
           <ActivityIndicator color={ios.brand} />
         </View>
@@ -52,17 +60,18 @@ export default function VendorBillDetailScreen() {
   const onReceive = () =>
     receiveMut.mutate(bill.id, {
       onSuccess: () => showToast("Bill marked as received"),
-      onError: (e: any) =>
-        showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+      onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
     });
 
   const onVoid = () =>
-    confirm("Void bill?", "This cannot be undone.", () =>
-      voidMut.mutate(bill.id, {
-        onSuccess: () => showToast("Bill voided"),
-        onError: (e: any) =>
-          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
-      }),
+    confirm(
+      "Void bill?",
+      "This cannot be undone.",
+      () =>
+        voidMut.mutate(bill.id, {
+          onSuccess: () => showToast("Bill voided"),
+          onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        }),
       { confirmText: "Void", destructive: true },
     );
 
@@ -78,18 +87,20 @@ export default function VendorBillDetailScreen() {
           <View style={styles.headerRow}>
             <View style={{ flex: 1 }}>
               <Text style={styles.supplierName}>{bill.supplier?.name ?? "Supplier"}</Text>
-              {bill.billNumber ? (
-                <Text style={styles.billNumber}>{bill.billNumber}</Text>
-              ) : null}
+              {bill.billNumber ? <Text style={styles.billNumber}>{bill.billNumber}</Text> : null}
             </View>
-            <Pill variant={p.variant} dot>{p.label}</Pill>
+            <Pill variant={p.variant} dot>
+              {p.label}
+            </Pill>
           </View>
           <View style={styles.metaRow}>
             {bill.billDate ? (
               <Text style={styles.meta}>
                 Bill date:{" "}
                 {new Date(bill.billDate).toLocaleDateString(undefined, {
-                  month: "short", day: "numeric", year: "numeric",
+                  month: "short",
+                  day: "numeric",
+                  year: "numeric",
                 })}
               </Text>
             ) : null}
@@ -97,7 +108,9 @@ export default function VendorBillDetailScreen() {
               <Text style={styles.meta}>
                 Due:{" "}
                 {new Date(bill.dueDate).toLocaleDateString(undefined, {
-                  month: "short", day: "numeric", year: "numeric",
+                  month: "short",
+                  day: "numeric",
+                  year: "numeric",
                 })}
               </Text>
             ) : null}
@@ -132,7 +145,9 @@ export default function VendorBillDetailScreen() {
                       {item.qty} × {formatCurrency(item.unitCost)}
                     </Text>
                   </View>
-                  <Text style={styles.itemTotal}>{formatCurrency(item.lineTotal ?? Number(item.qty) * Number(item.unitCost))}</Text>
+                  <Text style={styles.itemTotal}>
+                    {formatCurrency(item.lineTotal ?? Number(item.qty) * Number(item.unitCost))}
+                  </Text>
                 </View>
               ))}
             </View>
@@ -140,9 +155,9 @@ export default function VendorBillDetailScreen() {
         ) : null}
 
         {/* Actions */}
-        {(bill.status === "DRAFT" || bill.status === "RECEIVED" || bill.status === "PARTIAL") ? (
+        {bill.status === "DRAFT" || bill.status === "RECEIVED" || bill.status === "PARTIAL" ? (
           <View style={styles.actionsRow}>
-            {(bill.status === "DRAFT" || bill.status === "RECEIVED") ? (
+            {bill.status === "DRAFT" || bill.status === "RECEIVED" ? (
               <Pressable
                 style={styles.primaryBtn}
                 onPress={onReceive}
@@ -152,11 +167,7 @@ export default function VendorBillDetailScreen() {
                 <Text style={styles.primaryBtnText}>Mark received</Text>
               </Pressable>
             ) : null}
-            <Pressable
-              style={styles.ghostBtn}
-              onPress={onVoid}
-              disabled={voidMut.isPending}
-            >
+            <Pressable style={styles.ghostBtn} onPress={onVoid} disabled={voidMut.isPending}>
               <Text style={styles.ghostBtnText}>Void</Text>
             </Pressable>
           </View>
@@ -179,19 +190,51 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   headerRow: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
-  supplierName: { fontSize: 18, fontFamily: "Inter_700Bold", color: ios.label, letterSpacing: -0.3 },
+  supplierName: {
+    fontSize: 18,
+    fontFamily: "Inter_700Bold",
+    color: ios.label,
+    letterSpacing: -0.3,
+  },
   billNumber: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
   metaRow: { gap: 2 },
   meta: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2 },
-  totalAmount: { fontSize: 28, fontFamily: "Inter_700Bold", color: ios.label, letterSpacing: -0.6, marginTop: 4 },
+  totalAmount: {
+    fontSize: 28,
+    fontFamily: "Inter_700Bold",
+    color: ios.label,
+    letterSpacing: -0.6,
+    marginTop: 4,
+  },
   notes: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 4 },
   sectionRow: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 8 },
-  sectionTitle: { fontSize: 17, fontFamily: "Inter_700Bold", color: ios.label, letterSpacing: -0.3 },
-  itemsList: { marginHorizontal: 16, backgroundColor: ios.bgElev, borderRadius: 12, overflow: "hidden" },
-  itemRow: { paddingHorizontal: 16, paddingVertical: 12, flexDirection: "row", alignItems: "center", gap: 10 },
+  sectionTitle: {
+    fontSize: 17,
+    fontFamily: "Inter_700Bold",
+    color: ios.label,
+    letterSpacing: -0.3,
+  },
+  itemsList: {
+    marginHorizontal: 16,
+    backgroundColor: ios.bgElev,
+    borderRadius: 12,
+    overflow: "hidden",
+  },
+  itemRow: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
   itemName: { fontSize: 15, fontFamily: "Inter_500Medium", color: ios.label },
   itemMeta: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
-  itemTotal: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: ios.label, fontVariant: ["tabular-nums"] },
+  itemTotal: {
+    fontSize: 14,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label,
+    fontVariant: ["tabular-nums"],
+  },
   actionsRow: { flexDirection: "row", gap: 10, paddingHorizontal: 16, marginTop: 24 },
   primaryBtn: {
     flex: 1,

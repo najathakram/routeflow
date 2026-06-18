@@ -45,7 +45,11 @@ export default function RouteMapScreen() {
   }, [stops]);
 
   const depotPin: MapPin | null = useMemo(() => {
-    if (settings && typeof settings.depotLat === "number" && typeof settings.depotLng === "number") {
+    if (
+      settings &&
+      typeof settings.depotLat === "number" &&
+      typeof settings.depotLng === "number"
+    ) {
       return {
         id: "depot",
         lat: settings.depotLat,
@@ -84,7 +88,8 @@ export default function RouteMapScreen() {
             <View style={styles.banner}>
               <Ionicons name="alert-circle-outline" size={14} color={ios.system.orangeInk} />
               <Text style={styles.bannerText}>
-                {missingCount} stop{missingCount === 1 ? "" : "s"} not shown — missing geocoded address
+                {missingCount} stop{missingCount === 1 ? "" : "s"} not shown — missing geocoded
+                address
               </Text>
             </View>
           ) : null}

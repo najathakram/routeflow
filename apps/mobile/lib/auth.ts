@@ -13,11 +13,17 @@ const storage = {
     return SecureStore.getItemAsync(key);
   },
   async set(key: string, value: string): Promise<void> {
-    if (Platform.OS === "web") { localStorage.setItem(key, value); return; }
+    if (Platform.OS === "web") {
+      localStorage.setItem(key, value);
+      return;
+    }
     await SecureStore.setItemAsync(key, value);
   },
   async del(key: string): Promise<void> {
-    if (Platform.OS === "web") { localStorage.removeItem(key); return; }
+    if (Platform.OS === "web") {
+      localStorage.removeItem(key);
+      return;
+    }
     await SecureStore.deleteItemAsync(key);
   },
 };
@@ -172,10 +178,7 @@ async function deregisterPushToken(): Promise<void> {
   }
 }
 
-export async function login(
-  username: string,
-  password: string,
-): Promise<AuthResponse> {
+export async function login(username: string, password: string): Promise<AuthResponse> {
   const { data } = await apiClient.post<AuthResponse>("/auth/login", {
     username,
     password,
@@ -230,7 +233,7 @@ export async function loginWithGoogle(tenantSlug: string): Promise<AuthResponse>
   const user: AuthUser = {
     id: (payload?.sub as string) ?? "",
     username: (payload?.username as string) ?? "",
-    role: ((payload?.role as AuthUser["role"]) ?? (role as AuthUser["role"])),
+    role: (payload?.role as AuthUser["role"]) ?? (role as AuthUser["role"]),
     status: (payload?.status as AuthUser["status"]) ?? "ACTIVE",
     forcePasswordChange: (payload?.forcePasswordChange as boolean) ?? false,
     isAdmin: (payload?.isAdmin as boolean) ?? false,
@@ -310,9 +313,6 @@ export async function refreshTokens(): Promise<AuthResponse | null> {
   return null;
 }
 
-export async function changePassword(
-  currentPassword: string,
-  newPassword: string,
-): Promise<void> {
+export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
   await apiClient.post("/auth/change-password", { currentPassword, newPassword });
 }

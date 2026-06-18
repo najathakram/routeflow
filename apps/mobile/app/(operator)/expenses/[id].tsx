@@ -20,10 +20,14 @@ import { OptionPickerSheet } from "../../../components/OptionPickerSheet";
 
 function statusPill(status: ExpenseStatus) {
   switch (status) {
-    case "PENDING": return { variant: "orange" as const, label: "Pending" };
-    case "RECEIVED": return { variant: "orange" as const, label: "Received" };
-    case "PAID": return { variant: "green" as const, label: "Paid" };
-    case "VOID": return { variant: "gray" as const, label: "Void" };
+    case "PENDING":
+      return { variant: "orange" as const, label: "Pending" };
+    case "RECEIVED":
+      return { variant: "orange" as const, label: "Received" };
+    case "PAID":
+      return { variant: "green" as const, label: "Paid" };
+    case "VOID":
+      return { variant: "gray" as const, label: "Void" };
   }
 }
 
@@ -111,21 +115,22 @@ export default function ExpenseDetailScreen() {
         showToast("Expense updated");
         setEditing(false);
       },
-      onError: (e: any) =>
-        showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+      onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
     });
   };
 
   const onDelete = () =>
-    confirm("Delete expense?", "This cannot be undone.", () =>
-      deleteMut.mutate(id, {
-        onSuccess: () => {
-          showToast("Expense deleted");
-          router.back();
-        },
-        onError: (e: any) =>
-          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
-      }),
+    confirm(
+      "Delete expense?",
+      "This cannot be undone.",
+      () =>
+        deleteMut.mutate(id, {
+          onSuccess: () => {
+            showToast("Expense deleted");
+            router.back();
+          },
+          onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        }),
       { confirmText: "Delete", destructive: true },
     );
 
@@ -134,7 +139,9 @@ export default function ExpenseDetailScreen() {
   const pickPaymentMethod = () => setPmPickerOpen(true);
 
   const dateLabel = new Date(expense.date).toLocaleDateString(undefined, {
-    month: "long", day: "numeric", year: "numeric",
+    month: "long",
+    day: "numeric",
+    year: "numeric",
   });
 
   return (
@@ -163,7 +170,9 @@ export default function ExpenseDetailScreen() {
               <Text style={styles.amount}>{formatCurrency(expense.amount)}</Text>
               <Text style={styles.dateLine}>{dateLabel}</Text>
             </View>
-            <Pill variant={p.variant} dot>{p.label}</Pill>
+            <Pill variant={p.variant} dot>
+              {p.label}
+            </Pill>
           </View>
           {expense.description ? (
             <Text style={styles.description}>{expense.description}</Text>
@@ -171,7 +180,11 @@ export default function ExpenseDetailScreen() {
         </View>
 
         {/* Details — only render when at least one detail field exists */}
-        {(expense.category || expense.supplier || expense.paymentMethod || expense.referenceNumber || expense.notes) ? (
+        {expense.category ||
+        expense.supplier ||
+        expense.paymentMethod ||
+        expense.referenceNumber ||
+        expense.notes ? (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Details</Text>
             <View style={styles.detailCard}>
@@ -193,9 +206,7 @@ export default function ExpenseDetailScreen() {
               {expense.referenceNumber ? (
                 <DetailRow label="Reference #" value={expense.referenceNumber} />
               ) : null}
-              {expense.notes ? (
-                <DetailRow label="Notes" value={expense.notes} />
-              ) : null}
+              {expense.notes ? <DetailRow label="Notes" value={expense.notes} /> : null}
             </View>
           </View>
         ) : null}
@@ -206,13 +217,27 @@ export default function ExpenseDetailScreen() {
             <Text style={styles.sectionTitle}>Edit expense</Text>
             <View style={styles.editCard}>
               <EditRow label="Amount ($)">
-                <EditInput value={amount} onChangeText={setAmount} placeholder="0.00" keyboardType="decimal-pad" />
+                <EditInput
+                  value={amount}
+                  onChangeText={setAmount}
+                  placeholder="0.00"
+                  keyboardType="decimal-pad"
+                />
               </EditRow>
               <EditRow label="Date (YYYY-MM-DD)">
-                <EditInput value={date} onChangeText={setDate} placeholder="2025-06-01" keyboardType="numbers-and-punctuation" />
+                <EditInput
+                  value={date}
+                  onChangeText={setDate}
+                  placeholder="2025-06-01"
+                  keyboardType="numbers-and-punctuation"
+                />
               </EditRow>
               <EditRow label="Description">
-                <EditInput value={description} onChangeText={setDescription} placeholder="What was this for?" />
+                <EditInput
+                  value={description}
+                  onChangeText={setDescription}
+                  placeholder="What was this for?"
+                />
               </EditRow>
               <EditRow label="Category">
                 <Pressable style={styles.editPicker} onPress={pickCategory}>
@@ -232,16 +257,28 @@ export default function ExpenseDetailScreen() {
                 <Pressable style={styles.editPicker} onPress={pickPaymentMethod}>
                   <Text style={[styles.editPickerText, !paymentMethod && styles.placeholder]}>
                     {paymentMethod
-                      ? paymentMethod.charAt(0) + paymentMethod.slice(1).toLowerCase().replace("_", " ")
+                      ? paymentMethod.charAt(0) +
+                        paymentMethod.slice(1).toLowerCase().replace("_", " ")
                       : "Select…"}
                   </Text>
                 </Pressable>
               </EditRow>
               <EditRow label="Reference #">
-                <EditInput value={referenceNumber} onChangeText={setReferenceNumber} placeholder="INV-001…" />
+                <EditInput
+                  value={referenceNumber}
+                  onChangeText={setReferenceNumber}
+                  placeholder="INV-001…"
+                />
               </EditRow>
               <EditRow label="Notes" last>
-                <EditInput value={notes} onChangeText={setNotes} placeholder="Additional details…" multiline numberOfLines={2} style={{ minHeight: 56, textAlignVertical: "top" }} />
+                <EditInput
+                  value={notes}
+                  onChangeText={setNotes}
+                  placeholder="Additional details…"
+                  multiline
+                  numberOfLines={2}
+                  style={{ minHeight: 56, textAlignVertical: "top" }}
+                />
               </EditRow>
             </View>
             <Pressable
@@ -250,7 +287,9 @@ export default function ExpenseDetailScreen() {
               disabled={updateMut.isPending}
             >
               <Ionicons name="checkmark" size={16} color="#fff" />
-              <Text style={styles.saveBtnText}>{updateMut.isPending ? "Saving…" : "Save changes"}</Text>
+              <Text style={styles.saveBtnText}>
+                {updateMut.isPending ? "Saving…" : "Save changes"}
+              </Text>
             </Pressable>
           </View>
         ) : null}
@@ -258,11 +297,7 @@ export default function ExpenseDetailScreen() {
         {/* Delete */}
         {expense.status !== "VOID" && !editing ? (
           <View style={styles.dangerSection}>
-            <Pressable
-              style={styles.deleteBtn}
-              onPress={onDelete}
-              disabled={deleteMut.isPending}
-            >
+            <Pressable style={styles.deleteBtn} onPress={onDelete} disabled={deleteMut.isPending}>
               <Text style={styles.deleteBtnText}>
                 {deleteMut.isPending ? "Deleting…" : "Delete expense"}
               </Text>
@@ -281,7 +316,11 @@ export default function ExpenseDetailScreen() {
         nullable
         nullLabel="None"
         onClose={() => setCatPickerOpen(false)}
-        onSelect={(opt) => { setCategoryId(opt.id); setCategoryName(opt.id ? opt.label : ""); setCatPickerOpen(false); }}
+        onSelect={(opt) => {
+          setCategoryId(opt.id);
+          setCategoryName(opt.id ? opt.label : "");
+          setCatPickerOpen(false);
+        }}
       />
       <OptionPickerSheet
         visible={supPickerOpen}
@@ -291,15 +330,25 @@ export default function ExpenseDetailScreen() {
         nullable
         nullLabel="None"
         onClose={() => setSupPickerOpen(false)}
-        onSelect={(opt) => { setSupplierId(opt.id); setSupplierName(opt.id ? opt.label : ""); setSupPickerOpen(false); }}
+        onSelect={(opt) => {
+          setSupplierId(opt.id);
+          setSupplierName(opt.id ? opt.label : "");
+          setSupPickerOpen(false);
+        }}
       />
       <OptionPickerSheet
         visible={pmPickerOpen}
         title="Payment method"
-        options={PAYMENT_METHODS.map((m) => ({ id: m, label: m.charAt(0) + m.slice(1).toLowerCase().replace("_", " ") }))}
+        options={PAYMENT_METHODS.map((m) => ({
+          id: m,
+          label: m.charAt(0) + m.slice(1).toLowerCase().replace("_", " "),
+        }))}
         selectedId={paymentMethod}
         onClose={() => setPmPickerOpen(false)}
-        onSelect={(opt) => { setPaymentMethod(opt.id); setPmPickerOpen(false); }}
+        onSelect={(opt) => {
+          setPaymentMethod(opt.id);
+          setPmPickerOpen(false);
+        }}
       />
     </SafeAreaView>
   );
@@ -309,7 +358,9 @@ function DetailRow({ label, value }: { label: string; value: string }) {
   return (
     <View style={styles.detailRow}>
       <Text style={styles.detailLabel}>{label}</Text>
-      <Text style={styles.detailValue} numberOfLines={2}>{value}</Text>
+      <Text style={styles.detailValue} numberOfLines={2}>
+        {value}
+      </Text>
     </View>
   );
 }
@@ -379,7 +430,14 @@ const styles = StyleSheet.create({
   dateLine: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
   description: { fontSize: 15, fontFamily: "Inter_400Regular", color: ios.label2 },
   section: { paddingHorizontal: 16, paddingBottom: 16 },
-  sectionTitle: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: ios.label2, letterSpacing: 0.4, textTransform: "uppercase", marginBottom: 8 },
+  sectionTitle: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label2,
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
+    marginBottom: 8,
+  },
   detailCard: { backgroundColor: ios.bgElev, borderRadius: 12, overflow: "hidden" },
   detailRow: {
     flexDirection: "row",
@@ -392,13 +450,30 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   detailLabel: { fontSize: 14, fontFamily: "Inter_500Medium", color: ios.label2, flexShrink: 0 },
-  detailValue: { fontSize: 14, fontFamily: "Inter_400Regular", color: ios.label, flex: 1, textAlign: "right" },
+  detailValue: {
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    color: ios.label,
+    flex: 1,
+    textAlign: "right",
+  },
   editCard: { backgroundColor: ios.bgElev, borderRadius: 12, overflow: "hidden", marginBottom: 12 },
   editRow: { paddingHorizontal: 16, paddingVertical: 12, gap: 6 },
   editRowBorder: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: ios.separator },
-  editLabel: { fontSize: 12, fontFamily: "Inter_600SemiBold", color: ios.label2, letterSpacing: 0.3, textTransform: "uppercase" },
+  editLabel: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label2,
+    letterSpacing: 0.3,
+    textTransform: "uppercase",
+  },
   editControl: {},
-  editInputText: { fontSize: 15, fontFamily: "Inter_400Regular", color: ios.label, paddingVertical: 4 },
+  editInputText: {
+    fontSize: 15,
+    fontFamily: "Inter_400Regular",
+    color: ios.label,
+    paddingVertical: 4,
+  },
   editPicker: { paddingVertical: 4 },
   editPickerText: { fontSize: 15, fontFamily: "Inter_400Regular", color: ios.label },
   placeholder: { color: ios.label3 },

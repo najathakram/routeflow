@@ -45,8 +45,22 @@ describe("AuthService — password reset (RF-018)", () => {
       providers: [
         AuthService,
         { provide: PrismaService, useValue: prisma },
-        { provide: UsersService, useValue: { findByUsername: jest.fn(), findByUsernameCrossTenant: jest.fn().mockResolvedValue(null), findByEmailCrossTenant: jest.fn().mockResolvedValue(null) } },
-        { provide: JwtService, useValue: { sign: jest.fn().mockReturnValue("tok"), verify: jest.fn(), decode: jest.fn().mockReturnValue({ exp: Math.floor(Date.now() / 1000) + 3600 }) } },
+        {
+          provide: UsersService,
+          useValue: {
+            findByUsername: jest.fn(),
+            findByUsernameCrossTenant: jest.fn().mockResolvedValue(null),
+            findByEmailCrossTenant: jest.fn().mockResolvedValue(null),
+          },
+        },
+        {
+          provide: JwtService,
+          useValue: {
+            sign: jest.fn().mockReturnValue("tok"),
+            verify: jest.fn(),
+            decode: jest.fn().mockReturnValue({ exp: Math.floor(Date.now() / 1000) + 3600 }),
+          },
+        },
         { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(JWT_CONFIG) } },
         { provide: EmailService, useValue: emailService },
       ],
@@ -91,7 +105,10 @@ describe("AuthService — password reset (RF-018)", () => {
       // email is fire-and-forget — flush microtasks
       await Promise.resolve();
       expect(emailService.send).toHaveBeenCalledWith(
-        expect.objectContaining({ to: "alice@example.com", subject: expect.stringContaining("Reset") }),
+        expect.objectContaining({
+          to: "alice@example.com",
+          subject: expect.stringContaining("Reset"),
+        }),
       );
     });
 
@@ -123,7 +140,7 @@ describe("AuthService — password reset (RF-018)", () => {
     beforeEach(() => {
       // $transaction: call the callback with an array of operations
       (prisma.$transaction as jest.Mock).mockImplementation((ops: any[]) =>
-        Promise.all(ops.map(() => ({})))
+        Promise.all(ops.map(() => ({}))),
       );
       (bcrypt.hash as jest.Mock).mockResolvedValue("$2b$10$newhash");
     });

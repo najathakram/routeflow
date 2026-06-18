@@ -11,13 +11,20 @@ import { confirm } from "../../../lib/confirm";
 
 function orderPill(status: string) {
   switch (status) {
-    case "PENDING": return { variant: "orange" as const, label: "Pending" };
-    case "CONFIRMED": return { variant: "brand" as const, label: "Confirmed" };
-    case "DRAFT": return { variant: "gray" as const, label: "Draft" };
-    case "IN_TRANSIT": return { variant: "brand" as const, label: "In transit" };
-    case "DELIVERED": return { variant: "green" as const, label: "Delivered" };
-    case "CANCELLED": return { variant: "gray" as const, label: "Cancelled" };
-    default: return { variant: "gray" as const, label: status };
+    case "PENDING":
+      return { variant: "orange" as const, label: "Pending" };
+    case "CONFIRMED":
+      return { variant: "brand" as const, label: "Confirmed" };
+    case "DRAFT":
+      return { variant: "gray" as const, label: "Draft" };
+    case "IN_TRANSIT":
+      return { variant: "brand" as const, label: "In transit" };
+    case "DELIVERED":
+      return { variant: "green" as const, label: "Delivered" };
+    case "CANCELLED":
+      return { variant: "gray" as const, label: "Cancelled" };
+    default:
+      return { variant: "gray" as const, label: status };
   }
 }
 
@@ -30,8 +37,13 @@ export default function CustomerOrderDetailScreen() {
   if (isLoading) {
     return (
       <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
-        <NavBar inlineTitle="Order" leading={<NavBackButton label="Back" onPress={() => router.back()} />} />
-        <View style={styles.center}><ActivityIndicator color={ios.brand} /></View>
+        <NavBar
+          inlineTitle="Order"
+          leading={<NavBackButton label="Back" onPress={() => router.back()} />}
+        />
+        <View style={styles.center}>
+          <ActivityIndicator color={ios.brand} />
+        </View>
       </SafeAreaView>
     );
   }
@@ -39,10 +51,16 @@ export default function CustomerOrderDetailScreen() {
   if (isError || !order) {
     return (
       <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
-        <NavBar inlineTitle="Order" leading={<NavBackButton label="Back" onPress={() => router.back()} />} />
+        <NavBar
+          inlineTitle="Order"
+          leading={<NavBackButton label="Back" onPress={() => router.back()} />}
+        />
         <View style={styles.center}>
           <Text style={styles.notFoundTitle}>Order not found</Text>
-          <Pressable onPress={() => router.replace("/(customer)/(tabs)/orders")} style={styles.notFoundBtn}>
+          <Pressable
+            onPress={() => router.replace("/(customer)/(tabs)/orders")}
+            style={styles.notFoundBtn}
+          >
             <Text style={styles.notFoundBtnText}>Back to orders</Text>
           </Pressable>
         </View>
@@ -51,20 +69,24 @@ export default function CustomerOrderDetailScreen() {
   }
 
   const p = orderPill(order.status);
-  const total = Number(order.total) || order.lineItems.reduce((s, i) => s + Number(i.qty) * Number(i.unitPrice), 0);
+  const total =
+    Number(order.total) ||
+    order.lineItems.reduce((s, i) => s + Number(i.qty) * Number(i.unitPrice), 0);
   const canCancel = order.status === "PENDING" || order.status === "DRAFT";
   const canEdit = order.status === "PENDING" || order.status === "CONFIRMED";
 
   const onCancel = () =>
-    confirm("Cancel order?", "This cannot be undone.", () =>
-      cancelMut.mutate(id, {
-        onSuccess: () => {
-          showToast("Order cancelled");
-          router.back();
-        },
-        onError: (e: any) =>
-          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
-      }),
+    confirm(
+      "Cancel order?",
+      "This cannot be undone.",
+      () =>
+        cancelMut.mutate(id, {
+          onSuccess: () => {
+            showToast("Order cancelled");
+            router.back();
+          },
+          onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        }),
       { confirmText: "Cancel order", destructive: true },
     );
 
@@ -85,11 +107,15 @@ export default function CustomerOrderDetailScreen() {
               </Text>
               <Text style={styles.orderDate}>
                 {new Date(order.createdAt).toLocaleDateString(undefined, {
-                  month: "long", day: "numeric", year: "numeric",
+                  month: "long",
+                  day: "numeric",
+                  year: "numeric",
                 })}
               </Text>
             </View>
-            <Pill variant={p.variant} dot>{p.label}</Pill>
+            <Pill variant={p.variant} dot>
+              {p.label}
+            </Pill>
           </View>
           {order.subtotal != null && order.tax != null ? (
             <View style={{ marginTop: 4 }}>
@@ -102,7 +128,9 @@ export default function CustomerOrderDetailScreen() {
             <Text style={styles.deliveryDate}>
               Delivery:{" "}
               {new Date(order.requestedDeliveryDate).toLocaleDateString(undefined, {
-                month: "short", day: "numeric", year: "numeric",
+                month: "short",
+                day: "numeric",
+                year: "numeric",
               })}
             </Text>
           ) : null}
@@ -121,7 +149,10 @@ export default function CustomerOrderDetailScreen() {
                   key={item.id}
                   style={[
                     styles.itemRow,
-                    i > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: ios.separator },
+                    i > 0 && {
+                      borderTopWidth: StyleSheet.hairlineWidth,
+                      borderTopColor: ios.separator,
+                    },
                   ]}
                 >
                   <View style={{ flex: 1 }}>
@@ -133,7 +164,9 @@ export default function CustomerOrderDetailScreen() {
                       {item.product?.unit ? ` / ${item.product.unit}` : ""}
                     </Text>
                   </View>
-                  <Text style={styles.itemTotal}>${(Number(item.qty) * Number(item.unitPrice)).toFixed(2)}</Text>
+                  <Text style={styles.itemTotal}>
+                    ${(Number(item.qty) * Number(item.unitPrice)).toFixed(2)}
+                  </Text>
                 </View>
               ))}
             </View>
@@ -155,11 +188,7 @@ export default function CustomerOrderDetailScreen() {
         {/* Cancel */}
         {canCancel ? (
           <View style={{ paddingHorizontal: 16, marginTop: 24 }}>
-            <Pressable
-              style={styles.cancelBtn}
-              onPress={onCancel}
-              disabled={cancelMut.isPending}
-            >
+            <Pressable style={styles.cancelBtn} onPress={onCancel} disabled={cancelMut.isPending}>
               <Text style={styles.cancelBtnText}>
                 {cancelMut.isPending ? "Cancelling…" : "Cancel order"}
               </Text>
@@ -179,23 +208,61 @@ const styles = StyleSheet.create({
   notFoundTitle: { fontSize: 17, color: "#333", marginBottom: 16 },
   notFoundBtn: { paddingVertical: 10, paddingHorizontal: 20 },
   notFoundBtnText: { fontSize: 15, color: "#007AFF" },
-  editBtn: { borderWidth: 1, borderColor: "#007AFF", borderRadius: 12, paddingVertical: 14, alignItems: "center" },
+  editBtn: {
+    borderWidth: 1,
+    borderColor: "#007AFF",
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: "center",
+  },
   editBtnText: { color: "#007AFF", fontSize: 15, fontWeight: "600" },
   headerCard: { margin: 16, backgroundColor: ios.bgElev, borderRadius: 16, padding: 18, gap: 6 },
   headerRow: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
   orderNum: { fontSize: 18, fontFamily: "Inter_700Bold", color: ios.label, letterSpacing: -0.3 },
   orderDate: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
   totalLine: { fontSize: 13, color: ios.label2, marginTop: 2 },
-  total: { fontSize: 28, fontFamily: "Inter_700Bold", color: ios.label, letterSpacing: -0.6, marginTop: 4 },
+  total: {
+    fontSize: 28,
+    fontFamily: "Inter_700Bold",
+    color: ios.label,
+    letterSpacing: -0.6,
+    marginTop: 4,
+  },
   deliveryDate: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2 },
   notes: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2 },
   sectionRow: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 8 },
-  sectionTitle: { fontSize: 17, fontFamily: "Inter_700Bold", color: ios.label, letterSpacing: -0.3 },
-  itemsList: { marginHorizontal: 16, backgroundColor: ios.bgElev, borderRadius: 12, overflow: "hidden" },
-  itemRow: { paddingHorizontal: 16, paddingVertical: 12, flexDirection: "row", alignItems: "center", gap: 10 },
+  sectionTitle: {
+    fontSize: 17,
+    fontFamily: "Inter_700Bold",
+    color: ios.label,
+    letterSpacing: -0.3,
+  },
+  itemsList: {
+    marginHorizontal: 16,
+    backgroundColor: ios.bgElev,
+    borderRadius: 12,
+    overflow: "hidden",
+  },
+  itemRow: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
   itemName: { fontSize: 15, fontFamily: "Inter_500Medium", color: ios.label },
   itemMeta: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
-  itemTotal: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: ios.label, fontVariant: ["tabular-nums"] },
-  cancelBtn: { backgroundColor: ios.fill3, borderRadius: 14, paddingVertical: 14, alignItems: "center" },
+  itemTotal: {
+    fontSize: 14,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label,
+    fontVariant: ["tabular-nums"],
+  },
+  cancelBtn: {
+    backgroundColor: ios.fill3,
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: "center",
+  },
   cancelBtnText: { color: ios.system.redInk, fontSize: 15, fontFamily: "Inter_500Medium" },
 });

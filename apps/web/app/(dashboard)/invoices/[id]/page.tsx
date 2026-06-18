@@ -55,23 +55,35 @@ import { useTenant } from "@/components/tenant-provider";
 
 function methodLabel(method: string) {
   switch (method) {
-    case "CASH": return "Cash";
-    case "CHECK": return "Check";
-    case "ACH": return "ACH / Bank Transfer";
-    case "CREDIT_NOTE": return "Credit Note";
-    case "ADVANCE": return "Advance Payment";
-    default: return method;
+    case "CASH":
+      return "Cash";
+    case "CHECK":
+      return "Check";
+    case "ACH":
+      return "ACH / Bank Transfer";
+    case "CREDIT_NOTE":
+      return "Credit Note";
+    case "ADVANCE":
+      return "Advance Payment";
+    default:
+      return method;
   }
 }
 
 function methodBadgeClass(method: string) {
   switch (method) {
-    case "CREDIT_NOTE": return "bg-purple-100 text-purple-700";
-    case "ADVANCE": return "bg-teal-100 text-teal-700";
-    case "CASH": return "bg-green-100 text-green-700";
-    case "CHECK": return "bg-blue-100 text-blue-700";
-    case "ACH": return "bg-indigo-100 text-indigo-700";
-    default: return "bg-gray-100 text-gray-600";
+    case "CREDIT_NOTE":
+      return "bg-purple-100 text-purple-700";
+    case "ADVANCE":
+      return "bg-teal-100 text-teal-700";
+    case "CASH":
+      return "bg-green-100 text-green-700";
+    case "CHECK":
+      return "bg-blue-100 text-blue-700";
+    case "ACH":
+      return "bg-indigo-100 text-indigo-700";
+    default:
+      return "bg-gray-100 text-gray-600";
   }
 }
 
@@ -96,9 +108,7 @@ function InvoiceStatusBadge({ status }: { status: InvoiceStatus }) {
         STATUS_COLORS[status],
       )}
     >
-      {status === "WRITTEN_OFF"
-        ? "Written Off"
-        : status.charAt(0) + status.slice(1).toLowerCase()}
+      {status === "WRITTEN_OFF" ? "Written Off" : status.charAt(0) + status.slice(1).toLowerCase()}
     </span>
   );
 }
@@ -303,16 +313,9 @@ function RecordPaymentModal({
         </>
       }
     >
-      <form
-        id="invoice-payment-form"
-        onSubmit={handleSubmit}
-        noValidate
-        className="space-y-4"
-      >
+      <form id="invoice-payment-form" onSubmit={handleSubmit} noValidate className="space-y-4">
         <div>
-          <label className="mb-1.5 block text-sm font-medium text-navy/80">
-            Payment Method
-          </label>
+          <label className="mb-1.5 block text-sm font-medium text-navy/80">Payment Method</label>
           <select
             value={form.method}
             onChange={(e) =>
@@ -361,9 +364,7 @@ function RecordPaymentModal({
         </div>
 
         <div>
-          <label className="mb-1.5 block text-sm font-medium text-navy/80">
-            Notes (optional)
-          </label>
+          <label className="mb-1.5 block text-sm font-medium text-navy/80">Notes (optional)</label>
           <textarea
             rows={2}
             placeholder="Additional payment notes…"
@@ -450,7 +451,9 @@ function EditPaymentModal({
           <label className="mb-1.5 block text-sm font-medium text-navy/80">Payment Method</label>
           <select
             value={form.method}
-            onChange={(e) => setForm((f) => ({ ...f, method: e.target.value as PaymentFormState["method"] }))}
+            onChange={(e) =>
+              setForm((f) => ({ ...f, method: e.target.value as PaymentFormState["method"] }))
+            }
             className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
           >
             <option value="CASH">Cash</option>
@@ -476,7 +479,9 @@ function EditPaymentModal({
           {amountError && <p className="mt-1 text-xs text-danger">{amountError}</p>}
         </div>
         <div>
-          <label className="mb-1.5 block text-sm font-medium text-navy/80">Reference # (optional)</label>
+          <label className="mb-1.5 block text-sm font-medium text-navy/80">
+            Reference # (optional)
+          </label>
           <input
             type="text"
             value={form.reference}
@@ -556,12 +561,18 @@ function WriteOffModal({
   const [error, setError] = React.useState("");
 
   React.useEffect(() => {
-    if (isOpen) { setReason(""); setError(""); }
+    if (isOpen) {
+      setReason("");
+      setError("");
+    }
   }, [isOpen]);
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!reason.trim()) { setError("Please provide a reason for writing off this invoice."); return; }
+    if (!reason.trim()) {
+      setError("Please provide a reason for writing off this invoice.");
+      return;
+    }
     setError("");
     onConfirm(reason.trim());
   }
@@ -574,7 +585,9 @@ function WriteOffModal({
       description={`Mark invoice ${invoiceNumber} as uncollectible (bad debt).`}
       footer={
         <>
-          <Button variant="secondary" onClick={onClose} disabled={isPending}>Cancel</Button>
+          <Button variant="secondary" onClick={onClose} disabled={isPending}>
+            Cancel
+          </Button>
           <Button variant="danger" type="submit" form="write-off-form" loading={isPending}>
             Write Off
           </Button>
@@ -585,7 +598,8 @@ function WriteOffModal({
         <div className="flex items-start gap-2 rounded-lg bg-yellow-50 p-3">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-yellow-600" />
           <p className="text-sm text-yellow-800">
-            Writing off an invoice marks the remaining balance as uncollectible. This action cannot be undone.
+            Writing off an invoice marks the remaining balance as uncollectible. This action cannot
+            be undone.
           </p>
         </div>
         <div>
@@ -630,8 +644,12 @@ function DeletePaymentModal({
       description={`Remove payment of ${fmt(amount)} from this invoice?`}
       footer={
         <>
-          <Button variant="secondary" onClick={onClose} disabled={isPending}>Cancel</Button>
-          <Button variant="danger" onClick={onConfirm} loading={isPending}>Delete Payment</Button>
+          <Button variant="secondary" onClick={onClose} disabled={isPending}>
+            Cancel
+          </Button>
+          <Button variant="danger" onClick={onConfirm} loading={isPending}>
+            Delete Payment
+          </Button>
         </>
       }
     >
@@ -669,15 +687,34 @@ function NoEmailModal({
       description={`${customerName} has no email address saved. You can download or print the invoice to send it manually, or mark it as sent to update its status.`}
       footer={
         <>
-          <Button variant="secondary" onClick={onClose} disabled={isPending}>Cancel</Button>
-          <Button variant="secondary" leftIcon={<Printer className="h-4 w-4" />} onClick={onPrint} disabled={isPending}>Print</Button>
-          <Button variant="secondary" leftIcon={<Download className="h-4 w-4" />} onClick={onDownload} disabled={isPending}>Download PDF</Button>
-          <Button variant="primary" onClick={onMarkSent} loading={isPending}>Mark as Sent</Button>
+          <Button variant="secondary" onClick={onClose} disabled={isPending}>
+            Cancel
+          </Button>
+          <Button
+            variant="secondary"
+            leftIcon={<Printer className="h-4 w-4" />}
+            onClick={onPrint}
+            disabled={isPending}
+          >
+            Print
+          </Button>
+          <Button
+            variant="secondary"
+            leftIcon={<Download className="h-4 w-4" />}
+            onClick={onDownload}
+            disabled={isPending}
+          >
+            Download PDF
+          </Button>
+          <Button variant="primary" onClick={onMarkSent} loading={isPending}>
+            Mark as Sent
+          </Button>
         </>
       }
     >
       <p className="text-sm text-navy/70">
-        Add an email address to this customer&apos;s profile to send invoices by email in the future.
+        Add an email address to this customer&apos;s profile to send invoices by email in the
+        future.
       </p>
     </Modal>
   );
@@ -711,15 +748,18 @@ function DropdownMenu({
           {items.map((item, i) => (
             <button
               key={i}
-              onClick={() => { item.onClick(); setOpen(false); }}
+              onClick={() => {
+                item.onClick();
+                setOpen(false);
+              }}
               disabled={item.disabled}
               className={cn(
                 "flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm transition-colors",
                 item.disabled
                   ? "cursor-not-allowed text-navy/30"
                   : item.danger
-                  ? "text-danger hover:bg-danger/5"
-                  : "text-navy hover:bg-surface-raised",
+                    ? "text-danger hover:bg-danger/5"
+                    : "text-navy hover:bg-surface-raised",
               )}
             >
               {item.label}
@@ -733,19 +773,13 @@ function DropdownMenu({
 
 // ─── Adjust Prices Panel ──────────────────────────────────────────────────────
 
-function AdjustPricesPanel({
-  invoice,
-  onClose,
-}: {
-  invoice: Invoice;
-  onClose: () => void;
-}) {
+function AdjustPricesPanel({ invoice, onClose }: { invoice: Invoice; onClose: () => void }) {
   const { toast } = useToast();
   const adjust = useAdjustInvoicePrices();
 
   const items = invoice.items ?? [];
-  const [prices, setPrices] = React.useState<Record<string, string>>(
-    () => Object.fromEntries(items.map((it) => [it.id, String(Number(it.unitPrice).toFixed(2))])),
+  const [prices, setPrices] = React.useState<Record<string, string>>(() =>
+    Object.fromEntries(items.map((it) => [it.id, String(Number(it.unitPrice).toFixed(2))])),
   );
   const [scope, setScope] = React.useState<"SINGLE" | "ALL_CUSTOMER_SINCE">("SINGLE");
   const [sinceDate, setSinceDate] = React.useState(() => {
@@ -759,26 +793,39 @@ function AdjustPricesPanel({
       id: invoice.id,
       items: items.map((it) => ({
         itemId: it.id,
-        newUnitPrice: parseFloat(prices[it.id] ?? String(Number(it.unitPrice))) || Number(it.unitPrice),
+        newUnitPrice:
+          parseFloat(prices[it.id] ?? String(Number(it.unitPrice))) || Number(it.unitPrice),
       })),
       scope,
       ...(scope === "ALL_CUSTOMER_SINCE" ? { sinceDate } : {}),
     };
     adjust.mutate(dto, {
       onSuccess: () => {
-        toast({ title: "Prices updated", description: scope === "SINGLE" ? "Invoice prices have been adjusted." : "Prices updated across matching invoices.", variant: "success" });
+        toast({
+          title: "Prices updated",
+          description:
+            scope === "SINGLE"
+              ? "Invoice prices have been adjusted."
+              : "Prices updated across matching invoices.",
+          variant: "success",
+        });
         onClose();
       },
       onError: (err: any) => {
-        toast({ title: "Failed to adjust prices", description: err?.response?.data?.message ?? "Please try again.", variant: "error" });
+        toast({
+          title: "Failed to adjust prices",
+          description: err?.response?.data?.message ?? "Please try again.",
+          variant: "error",
+        });
       },
     });
   }
 
   return (
     <Card title="Adjust Prices">
-      <p className="mb-4 text-sm text-navy/60">
-        Override unit prices on this invoice. Totals will be recalculated and an audit note appended.
+      <p className="mb-4 text-sm text-navy/70">
+        Override unit prices on this invoice. Totals will be recalculated and an audit note
+        appended.
       </p>
 
       {/* Per-item price inputs */}
@@ -787,10 +834,12 @@ function AdjustPricesPanel({
           <div key={item.id} className="flex items-center justify-between gap-4 px-4 py-3">
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-medium text-navy">{item.description}</p>
-              <p className="text-xs text-navy/40">Qty: {item.qty} · Current: {fmt(Number(item.unitPrice))}</p>
+              <p className="text-xs text-navy/70">
+                Qty: {item.qty} · Current: {fmt(Number(item.unitPrice))}
+              </p>
             </div>
             <div className="flex items-center gap-1.5">
-              <span className="text-sm text-navy/40">$</span>
+              <span className="text-sm text-navy/70">$</span>
               <input
                 type="number"
                 step="0.01"
@@ -806,7 +855,7 @@ function AdjustPricesPanel({
 
       {/* Scope */}
       <div className="mb-5 space-y-2">
-        <p className="text-xs font-semibold uppercase tracking-wider text-navy/50">Scope</p>
+        <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">Scope</p>
         <label className="flex items-center gap-2.5 cursor-pointer">
           <input
             type="radio"
@@ -826,7 +875,8 @@ function AdjustPricesPanel({
             className="accent-brand-500"
           />
           <span className="text-sm text-navy">
-            All invoices for <strong>{invoice.customer?.businessName ?? "this customer"}</strong> from:
+            All invoices for <strong>{invoice.customer?.businessName ?? "this customer"}</strong>{" "}
+            from:
           </span>
         </label>
         {scope === "ALL_CUSTOMER_SINCE" && (
@@ -837,7 +887,9 @@ function AdjustPricesPanel({
               onChange={(e) => setSinceDate(e.target.value)}
               className="h-9 rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             />
-            <p className="mt-1 text-xs text-navy/40">All matching invoices created on or after this date will be updated.</p>
+            <p className="mt-1 text-xs text-navy/70">
+              All matching invoices created on or after this date will be updated.
+            </p>
           </div>
         )}
       </div>
@@ -845,7 +897,8 @@ function AdjustPricesPanel({
       {scope === "ALL_CUSTOMER_SINCE" && (
         <div className="mb-4 flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
-          Bulk update will modify all open invoices for this customer from the selected date. This cannot be undone.
+          Bulk update will modify all open invoices for this customer from the selected date. This
+          cannot be undone.
         </div>
       )}
 
@@ -853,7 +906,12 @@ function AdjustPricesPanel({
         <Button variant="secondary" size="sm" onClick={onClose} disabled={adjust.isPending}>
           Cancel
         </Button>
-        <Button size="sm" onClick={handleSave} loading={adjust.isPending} leftIcon={<SlidersHorizontal className="h-3.5 w-3.5" />}>
+        <Button
+          size="sm"
+          onClick={handleSave}
+          loading={adjust.isPending}
+          leftIcon={<SlidersHorizontal className="h-3.5 w-3.5" />}
+        >
           Apply Price Changes
         </Button>
       </div>
@@ -901,7 +959,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
   if (isLoading) {
     return (
       <div className="flex items-center justify-center p-12">
-        <Loader2 className="h-8 w-8 animate-spin text-navy/40" />
+        <Loader2 className="h-8 w-8 animate-spin text-navy/70" />
       </div>
     );
   }
@@ -921,12 +979,15 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
   const payments: InvoicePayment[] = invoice.payments ?? [];
   const amountPaid = payments.reduce((s, p) => s + Number(p.amount), 0);
   const status = invoice.status;
-  const balanceDue = status === "VOID" || status === "WRITTEN_OFF" ? 0 : Math.max(0, total - amountPaid);
+  const balanceDue =
+    status === "VOID" || status === "WRITTEN_OFF" ? 0 : Math.max(0, total - amountPaid);
   const discount = Number(invoice.discount ?? 0);
   const shippingFee = Number(invoice.shippingFee ?? 0);
 
-  const canRecordPayment = status === "SENT" || status === "VIEWED" || status === "PARTIAL" || status === "OVERDUE";
-  const canWriteOff = status === "SENT" || status === "VIEWED" || status === "PARTIAL" || status === "OVERDUE";
+  const canRecordPayment =
+    status === "SENT" || status === "VIEWED" || status === "PARTIAL" || status === "OVERDUE";
+  const canWriteOff =
+    status === "SENT" || status === "VIEWED" || status === "PARTIAL" || status === "OVERDUE";
   const canVoid = status !== "PAID" && status !== "VOID" && status !== "WRITTEN_OFF";
 
   // ── Action handlers ─────────────────────────────────────────────────────────
@@ -940,8 +1001,18 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
     sendInvoiceEmail.mutate(
       { id: invoice.id, email: customerEmail },
       {
-        onSuccess: (res) => toast({ title: "Invoice emailed", description: `Sent to ${res.sentTo}`, variant: "success" }),
-        onError: (e: any) => toast({ title: "Failed to send email", description: e?.response?.data?.message || e.message, variant: "error" }),
+        onSuccess: (res) =>
+          toast({
+            title: "Invoice emailed",
+            description: `Sent to ${res.sentTo}`,
+            variant: "success",
+          }),
+        onError: (e: any) =>
+          toast({
+            title: "Failed to send email",
+            description: e?.response?.data?.message || e.message,
+            variant: "error",
+          }),
       },
     );
   };
@@ -950,7 +1021,11 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
     sendInvoice.mutate(invoice.id, {
       onSuccess: () => {
         setIsNoEmailOpen(false);
-        toast({ title: "Invoice marked as sent", description: "Status updated — no email was sent.", variant: "success" });
+        toast({
+          title: "Invoice marked as sent",
+          description: "Status updated — no email was sent.",
+          variant: "success",
+        });
       },
       onError: (e) => toast({ title: "Failed", description: e.message, variant: "error" }),
     });
@@ -972,21 +1047,40 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
           }, 60_000);
         };
       },
-      onError: () => toast({ title: "Failed to generate PDF", description: "Please try again.", variant: "error" }),
+      onError: () =>
+        toast({
+          title: "Failed to generate PDF",
+          description: "Please try again.",
+          variant: "error",
+        }),
     });
   };
 
   const handleReminder = () => {
     const customerEmail = invoice.customer?.email;
     if (!customerEmail) {
-      toast({ title: "No email on file", description: "Add an email address to this customer first.", variant: "error" });
+      toast({
+        title: "No email on file",
+        description: "Add an email address to this customer first.",
+        variant: "error",
+      });
       return;
     }
     sendInvoiceReminder.mutate(
       { id: invoice.id, email: customerEmail },
       {
-        onSuccess: (res) => toast({ title: "Reminder sent", description: `Reminder emailed to ${res.sentTo}`, variant: "success" }),
-        onError: (e: any) => toast({ title: "Failed to send reminder", description: e?.response?.data?.message || e.message, variant: "error" }),
+        onSuccess: (res) =>
+          toast({
+            title: "Reminder sent",
+            description: `Reminder emailed to ${res.sentTo}`,
+            variant: "success",
+          }),
+        onError: (e: any) =>
+          toast({
+            title: "Failed to send reminder",
+            description: e?.response?.data?.message || e.message,
+            variant: "error",
+          }),
       },
     );
   };
@@ -995,10 +1089,18 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
     voidInvoice.mutate(invoice.id, {
       onSuccess: () => {
         setIsVoidOpen(false);
-        toast({ title: "Invoice voided", description: `Invoice ${invoice.invoiceNumber} has been voided.`, variant: "info" });
+        toast({
+          title: "Invoice voided",
+          description: `Invoice ${invoice.invoiceNumber} has been voided.`,
+          variant: "info",
+        });
       },
       onError: () => {
-        toast({ title: "Failed to void invoice", description: "Please try again.", variant: "error" });
+        toast({
+          title: "Failed to void invoice",
+          description: "Please try again.",
+          variant: "error",
+        });
       },
     });
   };
@@ -1007,36 +1109,69 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
     reopenInvoice.mutate(invoice.id, {
       onSuccess: () => {
         setIsReopenOpen(false);
-        toast({ title: "Invoice reopened", description: `Invoice ${invoice.invoiceNumber} has been reopened.`, variant: "success" });
+        toast({
+          title: "Invoice reopened",
+          description: `Invoice ${invoice.invoiceNumber} has been reopened.`,
+          variant: "success",
+        });
       },
       onError: () => {
-        toast({ title: "Failed to reopen invoice", description: "Please try again.", variant: "error" });
+        toast({
+          title: "Failed to reopen invoice",
+          description: "Please try again.",
+          variant: "error",
+        });
       },
     });
   };
 
   const handleWriteOff = (reason: string) => {
-    writeOffInvoice.mutate({ id: invoice.id, reason }, {
-      onSuccess: () => {
-        setIsWriteOffOpen(false);
-        toast({ title: "Invoice written off", description: `Invoice ${invoice.invoiceNumber} marked as written off.`, variant: "info" });
+    writeOffInvoice.mutate(
+      { id: invoice.id, reason },
+      {
+        onSuccess: () => {
+          setIsWriteOffOpen(false);
+          toast({
+            title: "Invoice written off",
+            description: `Invoice ${invoice.invoiceNumber} marked as written off.`,
+            variant: "info",
+          });
+        },
+        onError: (err: any) => {
+          toast({
+            title: "Failed to write off invoice",
+            description: err?.response?.data?.message ?? "Please try again.",
+            variant: "error",
+          });
+        },
       },
-      onError: (err: any) => {
-        toast({ title: "Failed to write off invoice", description: err?.response?.data?.message ?? "Please try again.", variant: "error" });
-      },
-    });
+    );
   };
 
   const handleRecordPayment = (data: PaymentFormState) => {
     recordPayment.mutate(
-      { id: invoice.id, method: data.method as "CASH" | "CHECK" | "ACH" | "OTHER" | "CREDIT_CARD", amount: parseFloat(data.amount), reference: data.reference.trim() || undefined, notes: data.notes.trim() || undefined },
+      {
+        id: invoice.id,
+        method: data.method as "CASH" | "CHECK" | "ACH" | "OTHER" | "CREDIT_CARD",
+        amount: parseFloat(data.amount),
+        reference: data.reference.trim() || undefined,
+        notes: data.notes.trim() || undefined,
+      },
       {
         onSuccess: () => {
           setIsPaymentOpen(false);
-          toast({ title: "Payment recorded", description: `Payment of ${fmt(parseFloat(data.amount))} recorded.`, variant: "success" });
+          toast({
+            title: "Payment recorded",
+            description: `Payment of ${fmt(parseFloat(data.amount))} recorded.`,
+            variant: "success",
+          });
         },
         onError: (err: any) => {
-          toast({ title: "Failed to record payment", description: err?.response?.data?.message ?? "Please try again.", variant: "error" });
+          toast({
+            title: "Failed to record payment",
+            description: err?.response?.data?.message ?? "Please try again.",
+            variant: "error",
+          });
         },
       },
     );
@@ -1045,14 +1180,25 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
   const handleSavePayment = (data: PaymentFormState) => {
     if (!editingPayment) return;
     updatePayment.mutate(
-      { invoiceId: invoice.id, paymentId: editingPayment.id, method: data.method as "CASH" | "CHECK" | "ACH" | "OTHER" | "CREDIT_CARD", amount: parseFloat(data.amount), reference: data.reference.trim() || undefined, notes: data.notes.trim() || undefined },
+      {
+        invoiceId: invoice.id,
+        paymentId: editingPayment.id,
+        method: data.method as "CASH" | "CHECK" | "ACH" | "OTHER" | "CREDIT_CARD",
+        amount: parseFloat(data.amount),
+        reference: data.reference.trim() || undefined,
+        notes: data.notes.trim() || undefined,
+      },
       {
         onSuccess: () => {
           setEditingPayment(null);
           toast({ title: "Payment updated", variant: "success" });
         },
         onError: (err: any) => {
-          toast({ title: "Failed to update payment", description: err?.response?.data?.message ?? "Please try again.", variant: "error" });
+          toast({
+            title: "Failed to update payment",
+            description: err?.response?.data?.message ?? "Please try again.",
+            variant: "error",
+          });
         },
       },
     );
@@ -1077,7 +1223,11 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
   const handleDuplicate = () => {
     const dto = {
       customerId: invoice.customerId,
-      dueDate: (() => { const d = new Date(); d.setDate(d.getDate() + 30); return d.toISOString().slice(0, 10); })(),
+      dueDate: (() => {
+        const d = new Date();
+        d.setDate(d.getDate() + 30);
+        return d.toISOString().slice(0, 10);
+      })(),
       items: (invoice.items ?? []).map((it) => ({
         productId: it.productId,
         description: it.description,
@@ -1090,7 +1240,11 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
     };
     createInvoice.mutate(dto, {
       onSuccess: (newInv) => {
-        toast({ title: "Invoice duplicated", description: `New invoice ${newInv.invoiceNumber} created as a draft.`, variant: "success" });
+        toast({
+          title: "Invoice duplicated",
+          description: `New invoice ${newInv.invoiceNumber} created as a draft.`,
+          variant: "success",
+        });
         router.push(`/invoices/${newInv.id}`);
       },
       onError: () => {
@@ -1128,7 +1282,8 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
 
   // For edit payment: max amount = total - (all other payments)
   const editPaymentMax = editingPayment
-    ? total - payments.filter((p) => p.id !== editingPayment.id).reduce((s, p) => s + Number(p.amount), 0)
+    ? total -
+      payments.filter((p) => p.id !== editingPayment.id).reduce((s, p) => s + Number(p.amount), 0)
     : 0;
 
   return (
@@ -1136,7 +1291,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
       {/* Back */}
       <Link
         href="/invoices"
-        className="flex items-center gap-1.5 text-sm text-navy/60 hover:text-navy transition-colors"
+        className="flex items-center gap-1.5 text-sm text-navy/70 hover:text-navy transition-colors"
       >
         <ArrowLeft className="h-4 w-4" />
         Invoices
@@ -1153,7 +1308,12 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
         <div className="flex flex-wrap items-center gap-1.5">
           {/* Edit — only for draft */}
           {status === "DRAFT" && (
-            <Button size="sm" variant="secondary" leftIcon={<Pencil className="h-3.5 w-3.5" />} href={`/invoices/${invoice.id}/edit`}>
+            <Button
+              size="sm"
+              variant="secondary"
+              leftIcon={<Pencil className="h-3.5 w-3.5" />}
+              href={`/invoices/${invoice.id}/edit`}
+            >
               Edit
             </Button>
           )}
@@ -1205,17 +1365,18 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
           </Button>
 
           {/* Revert to Draft — SENT/VIEWED/OVERDUE with no payments */}
-          {(status === "SENT" || status === "VIEWED" || status === "OVERDUE") && amountPaid === 0 && (
-            <Button
-              size="sm"
-              variant="secondary"
-              leftIcon={<RotateCcw className="h-4 w-4" />}
-              onClick={() => setIsRevertToDraftOpen(true)}
-              loading={revertToDraft.isPending}
-            >
-              Revert to Draft
-            </Button>
-          )}
+          {(status === "SENT" || status === "VIEWED" || status === "OVERDUE") &&
+            amountPaid === 0 && (
+              <Button
+                size="sm"
+                variant="secondary"
+                leftIcon={<RotateCcw className="h-4 w-4" />}
+                onClick={() => setIsRevertToDraftOpen(true)}
+                loading={revertToDraft.isPending}
+              >
+                Revert to Draft
+              </Button>
+            )}
 
           {/* Unvoid — VOID invoices */}
           {status === "VOID" && (
@@ -1268,13 +1429,22 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
           <DropdownMenu
             trigger={
               <button className="flex items-center justify-center rounded border border-surface-border bg-white p-1.5 shadow-sm transition-colors hover:bg-surface-raised">
-                <MoreHorizontal className="h-4 w-4 text-navy/60" />
+                <MoreHorizontal className="h-4 w-4 text-navy/70" />
               </button>
             }
             items={[
               { label: "Duplicate", onClick: handleDuplicate },
-              { label: "Reopen Invoice", onClick: () => setIsReopenOpen(true), disabled: status !== "PAID" },
-              { label: "Void Invoice", onClick: () => setIsVoidOpen(true), danger: true, disabled: !canVoid },
+              {
+                label: "Reopen Invoice",
+                onClick: () => setIsReopenOpen(true),
+                disabled: status !== "PAID",
+              },
+              {
+                label: "Void Invoice",
+                onClick: () => setIsVoidOpen(true),
+                danger: true,
+                disabled: !canVoid,
+              },
             ]}
           />
         </div>
@@ -1305,15 +1475,21 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
             <div className="mb-6 flex items-start justify-between gap-4">
               <div>
                 <div className="flex items-center gap-2">
-                  <TenantLogo className="h-8 w-8" showName nameClassName="text-lg font-bold text-navy" />
+                  <TenantLogo
+                    className="h-8 w-8"
+                    showName
+                    nameClassName="text-lg font-bold text-navy"
+                  />
                 </div>
               </div>
               <div className="text-right">
                 <p className="text-xl font-bold uppercase tracking-wide text-navy">Invoice</p>
-                <p className="mt-0.5 font-mono text-sm text-navy/60">{invoice.invoiceNumber}</p>
+                <p className="mt-0.5 font-mono text-sm text-navy/70">{invoice.invoiceNumber}</p>
                 {balanceDue > 0 && (
                   <div className="mt-2">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-navy/40">Balance Due</p>
+                    <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">
+                      Balance Due
+                    </p>
                     <p className="text-2xl font-bold text-danger">{fmt(balanceDue)}</p>
                   </div>
                 )}
@@ -1328,35 +1504,42 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
             {/* Billing + dates */}
             <div className="mb-6 grid grid-cols-2 gap-6 border-t border-surface-border pt-4">
               <div>
-                <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/40">Bill To</p>
-                <p className="text-sm font-semibold text-navy">{invoice.customer?.businessName ?? "—"}</p>
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/70">
+                  Bill To
+                </p>
+                <p className="text-sm font-semibold text-navy">
+                  {invoice.customer?.businessName ?? "—"}
+                </p>
                 {invoice.customer?.contactName && (
-                  <p className="text-sm text-navy/60">{invoice.customer.contactName}</p>
+                  <p className="text-sm text-navy/70">{invoice.customer.contactName}</p>
                 )}
                 {invoice.customer?.address && (
-                  <p className="mt-1 text-xs text-navy/50 whitespace-pre-line">{invoice.customer.address}</p>
+                  <p className="mt-1 text-xs text-navy/70 whitespace-pre-line">
+                    {invoice.customer.address}
+                  </p>
                 )}
               </div>
               <div className="text-right space-y-1">
-                <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/40">Invoice Details</p>
-                <p className="text-sm text-navy/60">
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/70">
+                  Invoice Details
+                </p>
+                <p className="text-sm text-navy/70">
                   <span className="font-medium text-navy">Issue Date:</span>{" "}
                   {fmtDate(invoice.issueDate ?? invoice.createdAt)}
                 </p>
                 {invoice.dueDate && (
-                  <p className="text-sm text-navy/60">
+                  <p className="text-sm text-navy/70">
                     <span className="font-medium text-navy">Due Date:</span>{" "}
                     {fmtDate(invoice.dueDate)}
                   </p>
                 )}
                 {(invoice as any).terms && (
-                  <p className="text-sm text-navy/60">
-                    <span className="font-medium text-navy">Terms:</span>{" "}
-                    {(invoice as any).terms}
+                  <p className="text-sm text-navy/70">
+                    <span className="font-medium text-navy">Terms:</span> {(invoice as any).terms}
                   </p>
                 )}
                 {(invoice as any).orderNumber && (
-                  <p className="text-sm text-navy/60">
+                  <p className="text-sm text-navy/70">
                     <span className="font-medium text-navy">Order #:</span>{" "}
                     {(invoice as any).orderNumber}
                   </p>
@@ -1389,17 +1572,29 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                       <td className="px-8 py-3 text-navy">{item.description}</td>
                       <td className="px-4 py-3 text-right text-navy/70">{item.qty}</td>
                       <td className="px-4 py-3 text-right">
-                        {item.priceType === 'SPECIAL' ? (
+                        {item.priceType === "SPECIAL" ? (
                           <div className="flex flex-col items-end gap-0.5">
-                            <span className="text-xs text-navy/40 line-through">{fmt(Number(item.originalPrice))}</span>
-                            <span className="font-medium text-emerald-600">{fmt(Number(item.unitPrice))}</span>
-                            <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">Special price</span>
+                            <span className="text-xs text-navy/70 line-through">
+                              {fmt(Number(item.originalPrice))}
+                            </span>
+                            <span className="font-medium text-emerald-600">
+                              {fmt(Number(item.unitPrice))}
+                            </span>
+                            <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">
+                              Special price
+                            </span>
                           </div>
-                        ) : item.priceType === 'DISCOUNTED' ? (
+                        ) : item.priceType === "DISCOUNTED" ? (
                           <div className="flex flex-col items-end gap-0.5">
-                            <span className="text-xs text-navy/40 line-through">{fmt(Number(item.originalPrice))}</span>
-                            <span className="font-medium text-amber-600">{fmt(Number(item.unitPrice))}</span>
-                            <span className="rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 ring-1 ring-amber-200">Discounted price</span>
+                            <span className="text-xs text-navy/70 line-through">
+                              {fmt(Number(item.originalPrice))}
+                            </span>
+                            <span className="font-medium text-amber-600">
+                              {fmt(Number(item.unitPrice))}
+                            </span>
+                            <span className="rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 ring-1 ring-amber-200">
+                              Discounted price
+                            </span>
                           </div>
                         ) : (
                           <span className="text-navy/70">{fmt(Number(item.unitPrice))}</span>
@@ -1464,7 +1659,9 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
             {/* Notes */}
             {invoice.notes && (
               <div className="mt-6 border-t border-surface-border pt-4">
-                <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/40">Notes</p>
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/70">
+                  Notes
+                </p>
                 <p className="text-sm text-navy/70 whitespace-pre-line">{invoice.notes}</p>
               </div>
             )}
@@ -1482,7 +1679,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
           {(invoice as any).orderId && (
             <Card title="Linked Order">
               <div className="flex items-center gap-2">
-                <Package className="h-4 w-4 text-navy/40" />
+                <Package className="h-4 w-4 text-navy/70" />
                 <Link
                   href={`/orders/${(invoice as any).orderId}`}
                   className="text-sm text-brand-500 hover:underline"
@@ -1496,11 +1693,16 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
           {/* Payment history */}
           <Card title="Payment History">
             {payments.length === 0 ? (
-              <p className="text-sm text-navy/40">No payments recorded.</p>
+              <p className="text-sm text-navy/70">No payments recorded.</p>
             ) : (
               <ul className="-mx-6 -mb-6 divide-y divide-surface-border">
                 {payments.map((pmt) => {
-                  const isEditable = pmt.method !== "CREDIT_NOTE" && pmt.method !== "ADVANCE" && status !== "VOID" && status !== "WRITTEN_OFF" && status !== "PAID";
+                  const isEditable =
+                    pmt.method !== "CREDIT_NOTE" &&
+                    pmt.method !== "ADVANCE" &&
+                    status !== "VOID" &&
+                    status !== "WRITTEN_OFF" &&
+                    status !== "PAID";
                   return (
                     <li key={pmt.id} className="group flex items-start gap-3 px-6 py-4">
                       <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-success-bg">
@@ -1508,9 +1710,11 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                       </div>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center justify-between gap-2">
-                          <span className="text-sm font-semibold text-navy">{fmt(Number(pmt.amount))}</span>
+                          <span className="text-sm font-semibold text-navy">
+                            {fmt(Number(pmt.amount))}
+                          </span>
                           <div className="flex items-center gap-1">
-                            <span className="text-xs text-navy/50">{fmtDate(pmt.createdAt)}</span>
+                            <span className="text-xs text-navy/70">{fmtDate(pmt.createdAt)}</span>
                             {isEditable && (
                               <>
                                 <button
@@ -1541,10 +1745,10 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                             {methodLabel(pmt.method)}
                           </span>
                           {pmt.reference && (
-                            <span className="text-xs text-navy/50">· {pmt.reference}</span>
+                            <span className="text-xs text-navy/70">· {pmt.reference}</span>
                           )}
                         </div>
-                        {pmt.notes && <p className="mt-0.5 text-xs text-navy/40">{pmt.notes}</p>}
+                        {pmt.notes && <p className="mt-0.5 text-xs text-navy/70">{pmt.notes}</p>}
                       </div>
                     </li>
                   );
@@ -1570,11 +1774,11 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
           <Card>
             <dl className="space-y-2 text-sm">
               <div className="flex justify-between">
-                <dt className="text-navy/60">Invoice Total</dt>
+                <dt className="text-navy/70">Invoice Total</dt>
                 <dd className="font-medium text-navy">{fmt(total)}</dd>
               </div>
               <div className="flex justify-between">
-                <dt className="text-navy/60">Paid</dt>
+                <dt className="text-navy/70">Paid</dt>
                 <dd className="font-medium text-success">{fmt(amountPaid)}</dd>
               </div>
               <div
@@ -1632,7 +1836,11 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
         description={`Invoice ${invoice.invoiceNumber} will be moved back to the appropriate open state.`}
         footer={
           <>
-            <Button variant="secondary" onClick={() => setIsReopenOpen(false)} disabled={reopenInvoice.isPending}>
+            <Button
+              variant="secondary"
+              onClick={() => setIsReopenOpen(false)}
+              disabled={reopenInvoice.isPending}
+            >
               Cancel
             </Button>
             <Button variant="primary" onClick={handleReopen} loading={reopenInvoice.isPending}>
@@ -1643,7 +1851,8 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
         }
       >
         <p className="text-sm text-navy/70">
-          Are you sure you want to reopen this invoice? This will change its status back to the appropriate state.
+          Are you sure you want to reopen this invoice? This will change its status back to the
+          appropriate state.
         </p>
       </Modal>
 
@@ -1662,7 +1871,11 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
         description={`Invoice ${invoice.invoiceNumber} will be moved back to Draft status.`}
         footer={
           <>
-            <Button variant="secondary" onClick={() => setIsRevertToDraftOpen(false)} disabled={revertToDraft.isPending}>
+            <Button
+              variant="secondary"
+              onClick={() => setIsRevertToDraftOpen(false)}
+              disabled={revertToDraft.isPending}
+            >
               Cancel
             </Button>
             <Button
@@ -1673,7 +1886,12 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                     setIsRevertToDraftOpen(false);
                     toast({ title: "Invoice reverted to Draft", variant: "success" });
                   },
-                  onError: (e: any) => toast({ title: "Failed to revert", description: e?.response?.data?.message ?? "Please try again.", variant: "error" }),
+                  onError: (e: any) =>
+                    toast({
+                      title: "Failed to revert",
+                      description: e?.response?.data?.message ?? "Please try again.",
+                      variant: "error",
+                    }),
                 });
               }}
               loading={revertToDraft.isPending}
@@ -1685,7 +1903,8 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
         }
       >
         <p className="text-sm text-navy/70">
-          This will undeliver the invoice from the customer. No payments have been recorded, so this is safe to revert.
+          This will undeliver the invoice from the customer. No payments have been recorded, so this
+          is safe to revert.
         </p>
       </Modal>
 
@@ -1696,7 +1915,11 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
         description={`Invoice ${invoice.invoiceNumber} will be moved back to Draft status.`}
         footer={
           <>
-            <Button variant="secondary" onClick={() => setIsUnvoidOpen(false)} disabled={unvoid.isPending}>
+            <Button
+              variant="secondary"
+              onClick={() => setIsUnvoidOpen(false)}
+              disabled={unvoid.isPending}
+            >
               Cancel
             </Button>
             <Button
@@ -1707,7 +1930,12 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                     setIsUnvoidOpen(false);
                     toast({ title: "Invoice unvoided — now in Draft", variant: "success" });
                   },
-                  onError: (e: any) => toast({ title: "Failed to unvoid", description: e?.response?.data?.message ?? "Please try again.", variant: "error" }),
+                  onError: (e: any) =>
+                    toast({
+                      title: "Failed to unvoid",
+                      description: e?.response?.data?.message ?? "Please try again.",
+                      variant: "error",
+                    }),
                 });
               }}
               loading={unvoid.isPending}
@@ -1719,7 +1947,8 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
         }
       >
         <p className="text-sm text-navy/70">
-          Are you sure you want to unvoid this invoice? It will return to Draft status and can be edited and re-sent.
+          Are you sure you want to unvoid this invoice? It will return to Draft status and can be
+          edited and re-sent.
         </p>
       </Modal>
 
@@ -1728,8 +1957,14 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
         onClose={() => setIsNoEmailOpen(false)}
         customerName={invoice.customer?.businessName ?? "This customer"}
         onMarkSent={handleMarkAsSent}
-        onDownload={() => { handleDownloadPdf(); setIsNoEmailOpen(false); }}
-        onPrint={() => { handlePrint(); setIsNoEmailOpen(false); }}
+        onDownload={() => {
+          handleDownloadPdf();
+          setIsNoEmailOpen(false);
+        }}
+        onPrint={() => {
+          handlePrint();
+          setIsNoEmailOpen(false);
+        }}
         isPending={sendInvoice.isPending}
       />
     </div>

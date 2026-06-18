@@ -2,16 +2,16 @@
 
 Headline: ❌ FLOW FAIL — Three production 500 errors block new-order creation and entire buyer experience.
 
-| Step | Status | Notes |
-|------|--------|-------|
-| 1. Operator login | ✅ | Landed on /home as ux_admin; "UX Audit Co" tenant confirmed. Throttler fired for ~2 min first (anomaly). |
-| 2. Place ad-hoc order | ❌ | "Choose customer" shows "No customers yet." GET /api/v1/customers → 500. Blocked. |
-| 3. Confirm order (PENDING → CONFIRMED) | ⚠️ | Confirmed via API PATCH (200 OK). UI deep-link to /orders/:id redirects to /home; cannot open order detail via URL. |
-| 4. Add order to route | ✅ | Navigated to UX Route A; UX Overdue Bistro already stop 5. Existing route used. |
-| 5. Dispatch / create run | ✅ | "Dispatch run" modal opened with date 2026-05-01; run confirmed IN_PROGRESS via API. |
-| 6. Buyer login (ux_buyer2) | ✅ | ux_buyer2 session found; linked to UX Delivered Deli / UX Audit Co. |
-| 7. Buyer sees orders | ❌ | GET /api/v1/buyer/orders?limit=30 → 500; spinner never resolves. |
-| 8. Buyer invoice view | ❌ | GET /api/v1/buyer/invoices?limit=30 → 500; Invoices tab shows infinite spinner. |
+| Step                                   | Status | Notes                                                                                                               |
+| -------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------- |
+| 1. Operator login                      | ✅     | Landed on /home as ux_admin; "UX Audit Co" tenant confirmed. Throttler fired for ~2 min first (anomaly).            |
+| 2. Place ad-hoc order                  | ❌     | "Choose customer" shows "No customers yet." GET /api/v1/customers → 500. Blocked.                                   |
+| 3. Confirm order (PENDING → CONFIRMED) | ⚠️     | Confirmed via API PATCH (200 OK). UI deep-link to /orders/:id redirects to /home; cannot open order detail via URL. |
+| 4. Add order to route                  | ✅     | Navigated to UX Route A; UX Overdue Bistro already stop 5. Existing route used.                                     |
+| 5. Dispatch / create run               | ✅     | "Dispatch run" modal opened with date 2026-05-01; run confirmed IN_PROGRESS via API.                                |
+| 6. Buyer login (ux_buyer2)             | ✅     | ux_buyer2 session found; linked to UX Delivered Deli / UX Audit Co.                                                 |
+| 7. Buyer sees orders                   | ❌     | GET /api/v1/buyer/orders?limit=30 → 500; spinner never resolves.                                                    |
+| 8. Buyer invoice view                  | ❌     | GET /api/v1/buyer/invoices?limit=30 → 500; Invoices tab shows infinite spinner.                                     |
 
 ## Anomalies (NEW findings)
 

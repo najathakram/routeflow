@@ -1,10 +1,7 @@
 import { ActivityIndicator, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
-import {
-  CustomerForm,
-  customerFormFromValues,
-} from "../../../../components/CustomerForm";
+import { CustomerForm, customerFormFromValues } from "../../../../components/CustomerForm";
 import { useCustomer, useUpdateCustomer } from "../../../../lib/api/customers";
 import { showToast } from "../../../../lib/toast";
 

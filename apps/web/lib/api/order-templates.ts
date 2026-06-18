@@ -1,5 +1,5 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiClient } from '../api-client';
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { apiClient } from "../api-client";
 
 export interface OrderTemplateItem {
   id: string;
@@ -24,18 +24,18 @@ export interface OrderTemplate {
 
 export function useOrderTemplates(customerId?: string) {
   return useQuery<OrderTemplate[]>({
-    queryKey: ['order-templates', customerId],
+    queryKey: ["order-templates", customerId],
     queryFn: () =>
       apiClient
-        .get('/order-templates', { params: customerId ? { customerId } : undefined })
-        .then((r) => Array.isArray(r.data) ? r.data : (r.data.data ?? [])),
+        .get("/order-templates", { params: customerId ? { customerId } : undefined })
+        .then((r) => (Array.isArray(r.data) ? r.data : (r.data.data ?? []))),
     enabled: customerId !== undefined ? !!customerId : true,
   });
 }
 
 export function useOrderTemplate(id: string) {
   return useQuery<OrderTemplate>({
-    queryKey: ['order-templates', id],
+    queryKey: ["order-templates", id],
     queryFn: () => apiClient.get(`/order-templates/${id}`).then((r) => r.data),
     enabled: !!id,
   });
@@ -54,10 +54,10 @@ export function useCreateOrderTemplate() {
       items: { productId: string; qty: number; notes?: string }[];
     }
   >({
-    mutationFn: (dto) => apiClient.post('/order-templates', dto).then((r) => r.data),
+    mutationFn: (dto) => apiClient.post("/order-templates", dto).then((r) => r.data),
     onSuccess: (data) => {
-      qc.invalidateQueries({ queryKey: ['order-templates', data.customerId] });
-      qc.invalidateQueries({ queryKey: ['order-templates'] });
+      qc.invalidateQueries({ queryKey: ["order-templates", data.customerId] });
+      qc.invalidateQueries({ queryKey: ["order-templates"] });
     },
   });
 }
@@ -72,8 +72,8 @@ export function useUpdateOrderTemplate() {
     mutationFn: ({ id, ...dto }) =>
       apiClient.patch(`/order-templates/${id}`, dto).then((r) => r.data),
     onSuccess: (data) => {
-      qc.invalidateQueries({ queryKey: ['order-templates', data.id] });
-      qc.invalidateQueries({ queryKey: ['order-templates', data.customerId] });
+      qc.invalidateQueries({ queryKey: ["order-templates", data.id] });
+      qc.invalidateQueries({ queryKey: ["order-templates", data.customerId] });
     },
   });
 }
@@ -83,8 +83,8 @@ export function useDeleteOrderTemplate() {
   return useMutation<{ success: boolean }, Error, { id: string; customerId: string }>({
     mutationFn: ({ id }) => apiClient.delete(`/order-templates/${id}`).then((r) => r.data),
     onSuccess: (_d, vars) => {
-      qc.invalidateQueries({ queryKey: ['order-templates', vars.customerId] });
-      qc.invalidateQueries({ queryKey: ['order-templates'] });
+      qc.invalidateQueries({ queryKey: ["order-templates", vars.customerId] });
+      qc.invalidateQueries({ queryKey: ["order-templates"] });
     },
   });
 }
@@ -99,7 +99,7 @@ export function useAddTemplateItem() {
     mutationFn: ({ templateId, ...dto }) =>
       apiClient.post(`/order-templates/${templateId}/items`, dto).then((r) => r.data),
     onSuccess: (_d, vars) => {
-      qc.invalidateQueries({ queryKey: ['order-templates', vars.templateId] });
+      qc.invalidateQueries({ queryKey: ["order-templates", vars.templateId] });
     },
   });
 }
@@ -110,7 +110,7 @@ export function useRemoveTemplateItem() {
     mutationFn: ({ templateId, itemId }) =>
       apiClient.delete(`/order-templates/${templateId}/items/${itemId}`).then((r) => r.data),
     onSuccess: (_d, vars) => {
-      qc.invalidateQueries({ queryKey: ['order-templates', vars.templateId] });
+      qc.invalidateQueries({ queryKey: ["order-templates", vars.templateId] });
     },
   });
 }
@@ -121,7 +121,7 @@ export function useGenerateTemplateOrder() {
     mutationFn: (templateId) =>
       apiClient.post(`/order-templates/${templateId}/generate`).then((r) => r.data),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['orders'] });
+      qc.invalidateQueries({ queryKey: ["orders"] });
     },
   });
 }

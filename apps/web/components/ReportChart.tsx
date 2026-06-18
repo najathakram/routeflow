@@ -2,15 +2,32 @@
 
 import * as React from "react";
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
-  PieChart, Pie, Cell,
-  LineChart, Line,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  PieChart,
+  Pie,
+  Cell,
+  LineChart,
+  Line,
   ResponsiveContainer,
 } from "recharts";
 
 const COLORS = [
-  "#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6",
-  "#ec4899", "#06b6d4", "#84cc16", "#f97316", "#6366f1",
+  "#3b82f6",
+  "#10b981",
+  "#f59e0b",
+  "#ef4444",
+  "#8b5cf6",
+  "#ec4899",
+  "#06b6d4",
+  "#84cc16",
+  "#f97316",
+  "#6366f1",
 ];
 
 interface ReportChartProps {
@@ -25,7 +42,11 @@ interface ReportChartProps {
 }
 
 const currencyFormatter = (value: number) =>
-  new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 0 }).format(value);
+  new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 0,
+  }).format(value);
 
 export function ReportChart({
   type,
@@ -87,7 +108,14 @@ export function ReportChart({
             <Tooltip {...tooltipStyle} formatter={(value) => formatValue(Number(value))} />
             <Legend />
             {dataKeys.map((key, idx) => (
-              <Line key={key} type="monotone" dataKey={key} stroke={colors[idx % colors.length]} strokeWidth={2} dot={{ r: 3 }} />
+              <Line
+                key={key}
+                type="monotone"
+                dataKey={key}
+                stroke={colors[idx % colors.length]}
+                strokeWidth={2}
+                dot={{ r: 3 }}
+              />
             ))}
           </LineChart>
         </ResponsiveContainer>
@@ -104,8 +132,17 @@ export function ReportChart({
           <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
           {horizontal ? (
             <>
-              <XAxis type="number" tick={{ fontSize: 12, fill: "#64748b" }} tickFormatter={formatValue} />
-              <YAxis dataKey={nameKey} type="category" tick={{ fontSize: 12, fill: "#64748b" }} width={160} />
+              <XAxis
+                type="number"
+                tick={{ fontSize: 12, fill: "#64748b" }}
+                tickFormatter={formatValue}
+              />
+              <YAxis
+                dataKey={nameKey}
+                type="category"
+                tick={{ fontSize: 12, fill: "#64748b" }}
+                width={160}
+              />
             </>
           ) : (
             <>

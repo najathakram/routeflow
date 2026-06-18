@@ -15,10 +15,15 @@ export default function CustomerMoreScreen() {
   const { data: dashboard } = useBuyerDashboard();
 
   const onSignOut = () =>
-    confirm("Sign out?", "You'll need to log in again.", async () => {
-      await signOut();
-      router.replace("/(auth)/customer-login");
-    }, { confirmText: "Sign out", destructive: true });
+    confirm(
+      "Sign out?",
+      "You'll need to log in again.",
+      async () => {
+        await signOut();
+        router.replace("/(auth)/customer-login");
+      },
+      { confirmText: "Sign out", destructive: true },
+    );
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
@@ -34,7 +39,9 @@ export default function CustomerMoreScreen() {
             <Text style={styles.accountName} numberOfLines={1}>
               {profile?.businessName ?? buyer?.name ?? buyer?.email ?? "Customer"}
             </Text>
-            <Text style={styles.accountEmail} numberOfLines={1}>{buyer?.email}</Text>
+            <Text style={styles.accountEmail} numberOfLines={1}>
+              {buyer?.email}
+            </Text>
             {activeSeller ? (
               <Text style={styles.accountSeller} numberOfLines={1}>
                 {activeSeller.tenant.name}
@@ -61,10 +68,12 @@ export default function CustomerMoreScreen() {
             </View>
             <View style={styles.statDivider} />
             <View style={styles.statCell}>
-              <Text style={[
-                styles.statValue,
-                (dashboard.stats.unpaidInvoices ?? 0) > 0 && { color: ios.system.orangeInk },
-              ]}>
+              <Text
+                style={[
+                  styles.statValue,
+                  (dashboard.stats.unpaidInvoices ?? 0) > 0 && { color: ios.system.orangeInk },
+                ]}
+              >
                 {dashboard.stats.unpaidInvoices ?? 0}
               </Text>
               <Text style={styles.statLabel}>Unpaid</Text>
@@ -77,7 +86,9 @@ export default function CustomerMoreScreen() {
           <Text style={styles.groupHeader}>ACCOUNT</Text>
           <View style={styles.groupCard}>
             <MenuRow
-              icon={<Ionicons name="document-text-outline" size={16} color={ios.system.purpleInk} />}
+              icon={
+                <Ionicons name="document-text-outline" size={16} color={ios.system.purpleInk} />
+              }
               iconBg={ios.system.purpleWash}
               title="Invoices"
               onPress={() => router.push("/(customer)/(tabs)/invoices")}
@@ -142,15 +153,14 @@ function MenuRow({
   last?: boolean;
 }) {
   return (
-    <Pressable
-      style={[styles.menuRow, !last && styles.menuRowBorder]}
-      onPress={onPress}
-    >
+    <Pressable style={[styles.menuRow, !last && styles.menuRowBorder]} onPress={onPress}>
       <View style={[styles.menuIcon, { backgroundColor: iconBg }]}>{icon}</View>
       <View style={{ flex: 1 }}>
         <Text style={styles.menuTitle}>{title}</Text>
         {subtitle ? (
-          <Text style={styles.menuSub} numberOfLines={1}>{subtitle}</Text>
+          <Text style={styles.menuSub} numberOfLines={1}>
+            {subtitle}
+          </Text>
         ) : null}
       </View>
       <Ionicons name="chevron-forward" size={16} color={ios.gray[3]} />
@@ -214,7 +224,13 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: ios.separator,
   },
-  menuIcon: { width: 32, height: 32, borderRadius: 8, alignItems: "center", justifyContent: "center" },
+  menuIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   menuTitle: { fontSize: 15, fontFamily: "Inter_500Medium", color: ios.label },
   menuSub: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 1 },
   signOutBtn: {

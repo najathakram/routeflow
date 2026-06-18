@@ -88,8 +88,7 @@ export function useCreateVendorBill() {
 export function useReceiveVendorBill() {
   const qc = useQueryClient();
   return useMutation<VendorBill, Error, string>({
-    mutationFn: (id) =>
-      apiClient.post(`/vendor-bills/${id}/receive`).then((r) => r.data),
+    mutationFn: (id) => apiClient.post(`/vendor-bills/${id}/receive`).then((r) => r.data),
     onSuccess: (_, id) => {
       qc.invalidateQueries({ queryKey: ["vendor-bills"] });
       qc.invalidateQueries({ queryKey: ["vendor-bills", id] });
@@ -100,8 +99,7 @@ export function useReceiveVendorBill() {
 export function useVoidVendorBill() {
   const qc = useQueryClient();
   return useMutation<VendorBill, Error, string>({
-    mutationFn: (id) =>
-      apiClient.post(`/vendor-bills/${id}/void`).then((r) => r.data),
+    mutationFn: (id) => apiClient.post(`/vendor-bills/${id}/void`).then((r) => r.data),
     onSuccess: (_, id) => {
       qc.invalidateQueries({ queryKey: ["vendor-bills"] });
       qc.invalidateQueries({ queryKey: ["vendor-bills", id] });
@@ -122,7 +120,11 @@ export function useScanInvoice() {
 }
 
 export function useSaveProductMapping() {
-  return useMutation<void, Error, { supplierName: string; rawDescription: string; productId?: string }>({
+  return useMutation<
+    void,
+    Error,
+    { supplierName: string; rawDescription: string; productId?: string }
+  >({
     mutationFn: (dto) =>
       apiClient.post("/vendor-bills/product-mappings", dto).then(() => undefined),
   });

@@ -18,15 +18,15 @@
 
 ## RFs addressed
 
-| RF | Sev | Status | Files | Commit | Test added | Migration? |
-|----|-----|--------|-------|--------|------------|-----------|
-| RF-016 | P1 | ✅ | `routes.service.ts` | fix(driver): RF-016/005/006/019/m1-1 driver flow fixes | Integration (auto-complete run on last stop) | No |
-| NEW-m1-1 | P1 | ✅ | `app/(driver)/route/stop/[stopId]/index.tsx` | same | Unit-level (useMemo prevents render loop) | No |
-| NEW-rmob-1 | P1 | ✅ | Already fixed — `auth.ts` + `api-client.ts` | — | — | No |
-| RF-005 | P1 | ✅ | `routes.service.ts`, `routes.controller.ts`, `lib/api/routes.ts`, `payment.tsx` | same | Integration (complete+payment in 1 tx) | No |
-| RF-006 | P1 | ✅ | `payment.tsx`, `routes.service.ts` | same | Integration (CASH amount=0 → 400) | No |
-| RF-019 | P1 | ✅ | `routes.service.ts`, `schema.prisma`, migration SQL | same | Integration (duplicate key returns cache) | **YES — see below** |
-| RF-167 | — | ✅ | `routes.service.ts` (findMyRuns unchanged) | same | Regression (my-runs returns data) | No |
+| RF         | Sev | Status | Files                                                                           | Commit                                                 | Test added                                   | Migration?          |
+| ---------- | --- | ------ | ------------------------------------------------------------------------------- | ------------------------------------------------------ | -------------------------------------------- | ------------------- |
+| RF-016     | P1  | ✅     | `routes.service.ts`                                                             | fix(driver): RF-016/005/006/019/m1-1 driver flow fixes | Integration (auto-complete run on last stop) | No                  |
+| NEW-m1-1   | P1  | ✅     | `app/(driver)/route/stop/[stopId]/index.tsx`                                    | same                                                   | Unit-level (useMemo prevents render loop)    | No                  |
+| NEW-rmob-1 | P1  | ✅     | Already fixed — `auth.ts` + `api-client.ts`                                     | —                                                      | —                                            | No                  |
+| RF-005     | P1  | ✅     | `routes.service.ts`, `routes.controller.ts`, `lib/api/routes.ts`, `payment.tsx` | same                                                   | Integration (complete+payment in 1 tx)       | No                  |
+| RF-006     | P1  | ✅     | `payment.tsx`, `routes.service.ts`                                              | same                                                   | Integration (CASH amount=0 → 400)            | No                  |
+| RF-019     | P1  | ✅     | `routes.service.ts`, `schema.prisma`, migration SQL                             | same                                                   | Integration (duplicate key returns cache)    | **YES — see below** |
+| RF-167     | —   | ✅     | `routes.service.ts` (findMyRuns unchanged)                                      | same                                                   | Regression (my-runs returns data)            | No                  |
 
 ---
 
@@ -60,7 +60,7 @@ After applying the migration, run `npx prisma generate` to surface the `Idempote
 
 - **RF-016**: Completing the last stop on a run now automatically sets the run card to "Completed" — driver no longer sees a stuck "In Progress" badge after the final delivery.
 - **RF-005**: If the server crashes between `completeStop` and `recordPayment`, the stop is no longer orphaned as "completed but unpaid" — both succeed or both roll back.
-- **RF-006**: Tapping "Receive payment & close" with $0 entered now shows a red inline error: *"Enter the cash amount received before closing."* — no spinner, no silent failure.
+- **RF-006**: Tapping "Receive payment & close" with $0 entered now shows a red inline error: _"Enter the cash amount received before closing."_ — no spinner, no silent failure.
 - **RF-019**: Tapping submit twice (e.g. on slow network) does not create duplicate deliveries — second request returns the first response immediately.
 - **NEW-m1-1**: Navigating to a DELIVERED stop no longer white-screens. Items list renders correctly with checkmarks.
 - **NEW-rmob-1**: Web driver login persists the refresh token to `localStorage` via the existing `storage` wrapper — "No refresh token" toast no longer appears on payment submit.

@@ -11,7 +11,12 @@ export interface SegmentedControlProps {
 }
 
 /** iOS-style segmented control — filled container with an active-pill + shadow. */
-export function SegmentedControl({ items, value, onChange, disabledItems = [] }: SegmentedControlProps) {
+export function SegmentedControl({
+  items,
+  value,
+  onChange,
+  disabledItems = [],
+}: SegmentedControlProps) {
   const isWeb = Platform.OS === "web";
   return (
     <View style={styles.container}>
@@ -36,7 +41,14 @@ export function SegmentedControl({ items, value, onChange, disabledItems = [] }:
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               {...({ onClick: () => !disabled && onChange(item) } as any)}
             >
-              <Text style={[styles.label, active && styles.labelActive, disabled && styles.labelDisabled]} numberOfLines={1}>
+              <Text
+                style={[
+                  styles.label,
+                  active && styles.labelActive,
+                  disabled && styles.labelDisabled,
+                ]}
+                numberOfLines={1}
+              >
                 {item}
               </Text>
             </View>
@@ -49,7 +61,10 @@ export function SegmentedControl({ items, value, onChange, disabledItems = [] }:
             onPressIn={() => !disabled && onChange(item)}
             disabled={disabled}
           >
-            <Text style={[styles.label, active && styles.labelActive, disabled && styles.labelDisabled]} numberOfLines={1}>
+            <Text
+              style={[styles.label, active && styles.labelActive, disabled && styles.labelDisabled]}
+              numberOfLines={1}
+            >
               {item}
             </Text>
           </Pressable>

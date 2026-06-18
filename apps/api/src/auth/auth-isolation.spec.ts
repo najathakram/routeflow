@@ -13,11 +13,19 @@ function makeLocalStorage(): Storage & { _data: Record<string, string> } {
   return {
     _data,
     getItem: (k: string) => _data[k] ?? null,
-    setItem: (k: string, v: string) => { _data[k] = v; },
-    removeItem: (k: string) => { delete _data[k]; },
-    clear: () => { Object.keys(_data).forEach((k) => delete _data[k]); },
+    setItem: (k: string, v: string) => {
+      _data[k] = v;
+    },
+    removeItem: (k: string) => {
+      delete _data[k];
+    },
+    clear: () => {
+      Object.keys(_data).forEach((k) => delete _data[k]);
+    },
     key: (i: number) => Object.keys(_data)[i] ?? null,
-    get length() { return Object.keys(_data).length; },
+    get length() {
+      return Object.keys(_data).length;
+    },
   };
 }
 
@@ -45,7 +53,9 @@ function parseJwtPayload(token: string): Record<string, unknown> | null {
   try {
     const part = token.split(".")[1];
     return JSON.parse(Buffer.from(part.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString());
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 }
 
 function migrateLegacyOpToken(ls: Storage): void {
@@ -238,7 +248,9 @@ describe("NEW-m2-1 / RF-077 — per-role token isolation", () => {
           if (event.key === OP_KEYS.accessToken && !event.newValue) cb();
         }
         listeners.push(handleStorageEvent);
-        return () => { /* no-op for this test */ };
+        return () => {
+          /* no-op for this test */
+        };
       }
 
       onCrossTabTokenChange(reauthCb);
@@ -261,7 +273,9 @@ describe("NEW-m2-1 / RF-077 — per-role token isolation", () => {
           if (event.key === OP_KEYS.accessToken && !event.newValue) cb();
         }
         listeners.push(handleStorageEvent);
-        return () => { /* no-op */ };
+        return () => {
+          /* no-op */
+        };
       }
 
       onCrossTabTokenChange(reauthCb);

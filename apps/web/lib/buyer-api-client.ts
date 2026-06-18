@@ -2,7 +2,10 @@ import axios from "axios";
 import type { BuyerSeller } from "./buyer-auth";
 import { BUYER_KEYS } from "./auth-keys";
 
-const BASE_URL = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000/api/v1").replace(/\/$/, "");
+const BASE_URL = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000/api/v1").replace(
+  /\/$/,
+  "",
+);
 
 export const buyerApiClient = axios.create({ baseURL: BASE_URL });
 
@@ -23,7 +26,9 @@ buyerApiClient.interceptors.request.use((config) => {
       try {
         const seller: BuyerSeller = JSON.parse(raw);
         if (seller?.tenant?.slug) config.headers["X-Tenant-Slug"] = seller.tenant.slug;
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     }
   }
   return config;
@@ -35,7 +40,10 @@ let isRefreshing = false;
 let failedQueue: Array<{ resolve: (token: string) => void; reject: (err: unknown) => void }> = [];
 
 function processQueue(error: unknown, token: string | null = null) {
-  failedQueue.forEach((p) => { if (error) p.reject(error); else p.resolve(token!); });
+  failedQueue.forEach((p) => {
+    if (error) p.reject(error);
+    else p.resolve(token!);
+  });
   failedQueue = [];
 }
 
@@ -61,7 +69,8 @@ buyerApiClient.interceptors.response.use(
     isRefreshing = true;
 
     try {
-      const refreshToken = typeof window !== "undefined" ? localStorage.getItem(BUYER_KEYS.refreshToken) : null;
+      const refreshToken =
+        typeof window !== "undefined" ? localStorage.getItem(BUYER_KEYS.refreshToken) : null;
       if (!refreshToken) throw new Error("No buyer refresh token");
 
       const { data } = await axios.post(`${BASE_URL}/buyer/auth/refresh`, { refreshToken });

@@ -1,4 +1,12 @@
-import { ActivityIndicator, Linking, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import {
+  ActivityIndicator,
+  Linking,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -15,8 +23,13 @@ export default function SupplierDetailScreen() {
   if (isLoading) {
     return (
       <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
-        <NavBar inlineTitle="Supplier" leading={<NavBackButton label="Back" onPress={() => router.back()} />} />
-        <View style={styles.center}><ActivityIndicator color={ios.brand} /></View>
+        <NavBar
+          inlineTitle="Supplier"
+          leading={<NavBackButton label="Back" onPress={() => router.back()} />}
+        />
+        <View style={styles.center}>
+          <ActivityIndicator color={ios.brand} />
+        </View>
       </SafeAreaView>
     );
   }
@@ -24,10 +37,16 @@ export default function SupplierDetailScreen() {
   if (!supplier) {
     return (
       <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
-        <NavBar inlineTitle="Supplier" leading={<NavBackButton label="Back" onPress={() => router.back()} />} />
+        <NavBar
+          inlineTitle="Supplier"
+          leading={<NavBackButton label="Back" onPress={() => router.back()} />}
+        />
         <View style={styles.center}>
           <Text style={styles.notFoundText}>Supplier not found</Text>
-          <Pressable onPress={() => router.replace("/(operator)/suppliers" as any)} style={styles.notFoundBtn}>
+          <Pressable
+            onPress={() => router.replace("/(operator)/suppliers" as any)}
+            style={styles.notFoundBtn}
+          >
             <Text style={styles.notFoundBtnText}>Back to suppliers</Text>
           </Pressable>
         </View>
@@ -59,7 +78,7 @@ export default function SupplierDetailScreen() {
           </View>
         </View>
 
-        {(supplier.phone || supplier.email) ? (
+        {supplier.phone || supplier.email ? (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Contact</Text>
             <View style={styles.card}>
@@ -104,7 +123,15 @@ function DetailRow({
   return (
     <View style={styles.row}>
       <Text style={styles.rowLabel}>{label}</Text>
-      <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 4, justifyContent: "flex-end" }}>
+      <View
+        style={{
+          flex: 1,
+          flexDirection: "row",
+          alignItems: "center",
+          gap: 4,
+          justifyContent: "flex-end",
+        }}
+      >
         <Text style={[styles.rowValue, tappable && { color: ios.brand }]} numberOfLines={1}>
           {value}
         </Text>
@@ -141,5 +168,11 @@ const styles = StyleSheet.create({
   },
   rowLabel: { fontSize: 14, fontFamily: "Inter_500Medium", color: ios.label2, flexShrink: 0 },
   rowValue: { fontSize: 14, fontFamily: "Inter_400Regular", color: ios.label, textAlign: "right" },
-  notes: { fontSize: 14, fontFamily: "Inter_400Regular", color: ios.label, padding: 16, lineHeight: 20 },
+  notes: {
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    color: ios.label,
+    padding: 16,
+    lineHeight: 20,
+  },
 });

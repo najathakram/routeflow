@@ -1,11 +1,6 @@
 import { useState } from "react";
 import { useRouter } from "expo-router";
-import {
-  FormField,
-  FormSection,
-  FormSheet,
-  FormTextInput,
-} from "../../../components/FormSheet";
+import { FormField, FormSection, FormSheet, FormTextInput } from "../../../components/FormSheet";
 import { useCreateDriver } from "../../../lib/api/drivers";
 import { showToast } from "../../../lib/toast";
 import { alertInfo } from "../../../lib/confirm";
@@ -46,8 +41,7 @@ export default function NewDriverScreen() {
           );
           router.back();
         },
-        onError: (e: any) =>
-          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
       },
     );
   };
@@ -97,7 +91,11 @@ export default function NewDriverScreen() {
           <FormTextInput value={vehicleMake} onChangeText={setVehicleMake} placeholder="Ford" />
         </FormField>
         <FormField label="Model">
-          <FormTextInput value={vehicleModel} onChangeText={setVehicleModel} placeholder="Transit" />
+          <FormTextInput
+            value={vehicleModel}
+            onChangeText={setVehicleModel}
+            placeholder="Transit"
+          />
         </FormField>
         <FormField label="License plate">
           <FormTextInput

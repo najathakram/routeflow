@@ -11,16 +11,16 @@
 ## Counts
 
 | Severity | Product bugs | Env artifacts |
-|----------|-------------|---------------|
-| P0       | 1           | 0             |
-| P1       | 5           | 4             |
-| P2       | 4           | 0             |
-| P3       | 0           | 0             |
+| -------- | ------------ | ------------- |
+| P0       | 1            | 0             |
+| P1       | 5            | 4             |
+| P2       | 4            | 0             |
+| P3       | 0            | 0             |
 
 ## Counts by category (product only)
 
 | Category          | Count |
-|-------------------|-------|
+| ----------------- | ----- |
 | flow-broken       | 3     |
 | security          | 3     |
 | data-integrity    | 1     |

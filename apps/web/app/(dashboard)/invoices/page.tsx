@@ -8,7 +8,6 @@ import {
   Calendar,
   X,
   Loader2,
-  FileText,
   ChevronDown,
   CreditCard,
   ChevronUp,
@@ -16,12 +15,17 @@ import {
   Trash2,
   Download,
 } from "lucide-react";
-import { Button, cn, useToast } from "@routeflow/ui/web";
+import { Button, cn, useToast, EmptyState } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useDebounce } from "@/lib/hooks/useDebounce";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
 import { downloadCsv, csvDate } from "@/lib/export";
-import { useInvoices, useDeleteInvoice, type Invoice, type InvoiceStatus } from "@/lib/api/invoices";
+import {
+  useInvoices,
+  useDeleteInvoice,
+  type Invoice,
+  type InvoiceStatus,
+} from "@/lib/api/invoices";
 import { apiClient } from "@/lib/api-client";
 import { useBookkeepingSummary } from "@/lib/api/bookkeeping";
 import { fmt, fmtDate } from "@/lib/formatting";
@@ -84,9 +88,7 @@ function renderStatus(status: InvoiceStatus, dueDate?: string | null): React.Rea
 
     if (status === "PARTIAL") {
       return (
-        <span className="text-xs font-semibold text-yellow-600">
-          Partial · Due in {diffDays}d
-        </span>
+        <span className="text-xs font-semibold text-yellow-600">Partial · Due in {diffDays}d</span>
       );
     }
 
@@ -144,20 +146,37 @@ function PaymentSummaryBar({
 
     for (const inv of all) {
       const total = Number(inv.total);
-      const paid = inv.paidAmount ?? (inv.payments ?? []).reduce((s: number, p: any) => s + Number(p.amount), 0);
-      const balance = inv.balanceDue !== undefined ? Number(inv.balanceDue) : Math.max(0, total - paid);
+      const paid =
+        inv.paidAmount ??
+        (inv.payments ?? []).reduce((s: number, p: any) => s + Number(p.amount), 0);
+      const balance =
+        inv.balanceDue !== undefined ? Number(inv.balanceDue) : Math.max(0, total - paid);
       const due = inv.dueDate ? new Date(inv.dueDate) : null;
       if (due) due.setHours(0, 0, 0, 0);
 
-      if (inv.status !== "PAID" && inv.status !== "VOID" && inv.status !== "WRITTEN_OFF" && inv.status !== "DRAFT") {
+      if (
+        inv.status !== "PAID" &&
+        inv.status !== "VOID" &&
+        inv.status !== "WRITTEN_OFF" &&
+        inv.status !== "DRAFT"
+      ) {
         totalOutstanding += balance;
       }
 
-      if (inv.status === "OVERDUE" || (due && due < today && inv.status !== "PAID" && inv.status !== "VOID")) {
+      if (
+        inv.status === "OVERDUE" ||
+        (due && due < today && inv.status !== "PAID" && inv.status !== "VOID")
+      ) {
         overdue += balance;
       } else if (due && due.getTime() === today.getTime() && inv.status !== "PAID") {
         dueToday += balance;
-      } else if (due && due <= in30 && due > today && inv.status !== "PAID" && inv.status !== "VOID") {
+      } else if (
+        due &&
+        due <= in30 &&
+        due > today &&
+        inv.status !== "PAID" &&
+        inv.status !== "VOID"
+      ) {
         dueIn30 += balance;
       }
 
@@ -220,10 +239,12 @@ function PaymentSummaryBar({
             className={cn(
               "flex flex-1 flex-col items-start gap-0.5 px-5 py-4 transition-all hover:bg-surface-raised",
               item.filter ? "cursor-pointer hover:shadow-inner" : "cursor-default",
-              item.filter && item.filter === activeFilter && "bg-brand-50 ring-1 ring-inset ring-brand-200",
+              item.filter &&
+                item.filter === activeFilter &&
+                "bg-brand-50 ring-1 ring-inset ring-brand-200",
             )}
           >
-            <span className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-navy/50">
+            <span className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-navy/70">
               {item.label}
               {item.filter && <span className="text-navy/30">↓</span>}
             </span>
@@ -257,7 +278,9 @@ export default function InvoicesPage() {
   const { setTitle } = usePageTitle();
   const { user } = useAuth();
   const isCustomer = user?.role === "CUSTOMER";
-  React.useEffect(() => { setTitle("Invoices"); }, [setTitle]);
+  React.useEffect(() => {
+    setTitle("Invoices");
+  }, [setTitle]);
 
   const { toast } = useToast();
   const deleteInvoice = useDeleteInvoice();
@@ -276,13 +299,20 @@ export default function InvoicesPage() {
 
   const toggleSort = (col: string) => {
     if (sortBy === col) setSortOrder((d) => (d === "asc" ? "desc" : "asc"));
-    else { setSortBy(col); setSortOrder("asc"); }
+    else {
+      setSortBy(col);
+      setSortOrder("asc");
+    }
     setPage(1);
   };
 
   const SortIcon = ({ col }: { col: string }) => {
     if (sortBy !== col) return <ChevronsUpDown className="h-3 w-3 ml-0.5 text-current/40 inline" />;
-    return sortOrder === "asc" ? <ChevronUp className="h-3 w-3 ml-0.5 inline" /> : <ChevronDown className="h-3 w-3 ml-0.5 inline" />;
+    return sortOrder === "asc" ? (
+      <ChevronUp className="h-3 w-3 ml-0.5 inline" />
+    ) : (
+      <ChevronDown className="h-3 w-3 ml-0.5 inline" />
+    );
   };
 
   const { data, isLoading, isError } = useInvoices({
@@ -360,25 +390,27 @@ export default function InvoicesPage() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <h1 className="text-xl font-bold text-navy">All Invoices</h1>
-          <ChevronDown className="h-4 w-4 text-navy/50" />
+          <ChevronDown className="h-4 w-4 text-navy/70" />
         </div>
         {!isCustomer && (
           <div className="flex items-center gap-2">
             <Button
               variant="secondary"
               size="sm"
-              leftIcon={isExporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+              leftIcon={
+                isExporting ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Download className="h-3.5 w-3.5" />
+                )
+              }
               onClick={handleExport}
               disabled={isExporting}
               title="Export filtered invoices as CSV"
             >
               {isExporting ? "Exporting…" : "Export"}
             </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => router.push("/invoices/payments")}
-            >
+            <Button variant="secondary" size="sm" onClick={() => router.push("/invoices/payments")}>
               Payments Received
             </Button>
             <Button
@@ -412,7 +444,7 @@ export default function InvoicesPage() {
               "-mb-px whitespace-nowrap border-b-2 px-3 py-2 text-sm font-medium transition-colors",
               statusFilter === tab.value
                 ? "border-brand-500 text-brand-500"
-                : "border-transparent text-navy/60 hover:text-navy",
+                : "border-transparent text-navy/70 hover:text-navy",
             )}
           >
             {tab.label}
@@ -426,32 +458,45 @@ export default function InvoicesPage() {
           type="search"
           placeholder="Search by invoice # or customer…"
           value={search}
-          onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-          className="h-9 w-56 rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/40 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+          onChange={(e) => {
+            setSearch(e.target.value);
+            setPage(1);
+          }}
+          className="h-9 w-56 rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/70 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
         />
         <div className="flex items-center gap-1.5">
-          <Calendar className="h-4 w-4 text-navy/40" />
+          <Calendar className="h-4 w-4 text-navy/70" />
           <input
             type="date"
             value={dateFrom}
-            onChange={(e) => { setFilter("dateFrom", e.target.value); setPage(1); }}
+            onChange={(e) => {
+              setFilter("dateFrom", e.target.value);
+              setPage(1);
+            }}
             max={dateTo || undefined}
             className="h-9 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             title="Issue date from"
           />
-          <span className="text-navy/40">–</span>
+          <span className="text-navy/70">–</span>
           <input
             type="date"
             value={dateTo}
             min={dateFrom || undefined}
-            onChange={(e) => { setFilter("dateTo", e.target.value); setPage(1); }}
+            onChange={(e) => {
+              setFilter("dateTo", e.target.value);
+              setPage(1);
+            }}
             className="h-9 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             title="Issue date to"
           />
           {(dateFrom || dateTo) && (
             <button
-              onClick={() => { setFilter("dateFrom", ""); setFilter("dateTo", ""); setPage(1); }}
-              className="rounded p-1 text-navy/40 hover:text-danger transition-colors"
+              onClick={() => {
+                setFilter("dateFrom", "");
+                setFilter("dateTo", "");
+                setPage(1);
+              }}
+              className="rounded p-1 text-navy/70 hover:text-danger transition-colors"
               title="Clear dates"
             >
               <X className="h-3.5 w-3.5" />
@@ -465,22 +510,37 @@ export default function InvoicesPage() {
         <table className="w-full text-sm">
           <thead className="border-b border-surface-border bg-gray-50">
             <tr>
-              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70 cursor-pointer select-none hover:text-navy transition-colors" onClick={() => toggleSort("issueDate")}>
+              <th
+                className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                onClick={() => toggleSort("issueDate")}
+              >
                 Date <SortIcon col="issueDate" />
               </th>
-              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70 cursor-pointer select-none hover:text-navy transition-colors" onClick={() => toggleSort("invoiceNumber")}>
+              <th
+                className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                onClick={() => toggleSort("invoiceNumber")}
+              >
                 Invoice # <SortIcon col="invoiceNumber" />
               </th>
               <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70">
                 Customer Name
               </th>
-              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70 cursor-pointer select-none hover:text-navy transition-colors" onClick={() => toggleSort("status")}>
+              <th
+                className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                onClick={() => toggleSort("status")}
+              >
                 Status <SortIcon col="status" />
               </th>
-              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70 cursor-pointer select-none hover:text-navy transition-colors" onClick={() => toggleSort("dueDate")}>
+              <th
+                className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                onClick={() => toggleSort("dueDate")}
+              >
                 Due Date <SortIcon col="dueDate" />
               </th>
-              <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-navy/70 cursor-pointer select-none hover:text-navy transition-colors" onClick={() => toggleSort("total")}>
+              <th
+                className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                onClick={() => toggleSort("total")}
+              >
                 Amount <SortIcon col="total" />
               </th>
               <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-navy/70">
@@ -493,7 +553,7 @@ export default function InvoicesPage() {
             {isLoading ? (
               <tr>
                 <td colSpan={8} className="px-4 py-12 text-center">
-                  <Loader2 className="mx-auto h-6 w-6 animate-spin text-navy/40" />
+                  <Loader2 className="mx-auto h-6 w-6 animate-spin text-navy/70" />
                 </td>
               </tr>
             ) : isError ? (
@@ -504,31 +564,51 @@ export default function InvoicesPage() {
               </tr>
             ) : invoices.length === 0 ? (
               <tr>
-                <td colSpan={8} className="px-4 py-12 text-center">
-                  <div className="flex flex-col items-center gap-2">
-                    <FileText className="h-8 w-8 text-navy/20" />
-                    <p className="text-sm text-navy/40">No invoices match your filters.</p>
-                    <button
-                      className="text-sm text-brand-500 hover:underline"
-                      onClick={() => {
-                        setSearch("");
-                        setFilter("status", "");
-                        setFilter("dateFrom", "");
-                        setFilter("dateTo", "");
-                        setPage(1);
-                      }}
-                    >
-                      Clear filters
-                    </button>
-                  </div>
+                <td colSpan={8} className="p-0">
+                  {search || statusFilter || dateFrom || dateTo ? (
+                    <EmptyState
+                      variant="invoices"
+                      title="No matching invoices"
+                      description="No invoices match your current search and filters."
+                      action={
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => {
+                            setSearch("");
+                            setFilter("status", "");
+                            setFilter("dateFrom", "");
+                            setFilter("dateTo", "");
+                            setPage(1);
+                          }}
+                        >
+                          Clear filters
+                        </Button>
+                      }
+                    />
+                  ) : (
+                    <EmptyState
+                      variant="invoices"
+                      title="No invoices yet"
+                      description="Create an invoice to bill a customer and start tracking receivables."
+                      action={
+                        <Button size="sm" onClick={() => router.push("/invoices/new")}>
+                          New invoice
+                        </Button>
+                      }
+                    />
+                  )}
                 </td>
               </tr>
             ) : (
               invoices.map((inv: Invoice) => {
-                const paid = inv.paidAmount ?? (inv.payments ?? []).reduce((s: number, p: any) => s + Number(p.amount), 0);
-                const balance = inv.balanceDue !== undefined
-                  ? Number(inv.balanceDue)
-                  : Math.max(0, Number(inv.total) - paid);
+                const paid =
+                  inv.paidAmount ??
+                  (inv.payments ?? []).reduce((s: number, p: any) => s + Number(p.amount), 0);
+                const balance =
+                  inv.balanceDue !== undefined
+                    ? Number(inv.balanceDue)
+                    : Math.max(0, Number(inv.total) - paid);
                 return (
                   <tr
                     key={inv.id}
@@ -543,12 +623,14 @@ export default function InvoicesPage() {
                         <span className="font-mono text-xs font-semibold text-brand-500">
                           {inv.invoiceNumber}
                         </span>
-                        <span className={cn(
-                          "inline-flex w-fit items-center rounded-full px-1.5 py-px text-[10px] font-medium leading-tight",
-                          (inv as any).orderId
-                            ? "bg-brand-50 text-brand-600"
-                            : "bg-surface-raised text-navy/40",
-                        )}>
+                        <span
+                          className={cn(
+                            "inline-flex w-fit items-center rounded-full px-1.5 py-px text-[10px] font-medium leading-tight",
+                            (inv as any).orderId
+                              ? "bg-brand-50 text-brand-600"
+                              : "bg-surface-raised text-navy/70",
+                          )}
+                        >
                           {(inv as any).orderId ? "From Order" : "Manual"}
                         </span>
                       </div>
@@ -556,24 +638,22 @@ export default function InvoicesPage() {
                     <td className="px-4 py-3 font-medium text-navy">
                       {inv.customer?.businessName ?? "—"}
                     </td>
-                    <td className="px-4 py-3">
-                      {renderStatus(inv.status, inv.dueDate)}
-                    </td>
-                    <td className="px-4 py-3 text-sm text-navy">
-                      {fmtDate(inv.dueDate)}
-                    </td>
+                    <td className="px-4 py-3">{renderStatus(inv.status, inv.dueDate)}</td>
+                    <td className="px-4 py-3 text-sm text-navy">{fmtDate(inv.dueDate)}</td>
                     <td className="px-4 py-3 text-right text-sm font-medium text-navy">
                       {fmt(Number(inv.total))}
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <span className={cn("text-sm font-semibold", balance > 0 ? "text-danger" : "text-navy")}>
+                      <span
+                        className={cn(
+                          "text-sm font-semibold",
+                          balance > 0 ? "text-danger" : "text-navy",
+                        )}
+                      >
                         {fmt(balance)}
                       </span>
                     </td>
-                    <td
-                      className="px-3 py-3"
-                      onClick={(e) => e.stopPropagation()}
-                    >
+                    <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
                       {!isCustomer && confirmDeleteId === inv.id ? (
                         <div className="flex items-center gap-1">
                           <button
@@ -588,19 +668,24 @@ export default function InvoicesPage() {
                                 setConfirmDeleteId(null);
                                 toast({
                                   title: "Delete failed",
-                                  description: err?.response?.data?.message ?? err?.message ?? "Unknown error",
+                                  description:
+                                    err?.response?.data?.message ?? err?.message ?? "Unknown error",
                                   variant: "error",
                                 });
                               }
                             }}
                             className="rounded px-2 py-1 text-xs font-semibold text-white bg-danger hover:bg-red-700 disabled:opacity-50 transition-colors"
                           >
-                            {deleteInvoice.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : "Delete"}
+                            {deleteInvoice.isPending ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                              "Delete"
+                            )}
                           </button>
                           <button
                             title="Cancel"
                             onClick={() => setConfirmDeleteId(null)}
-                            className="rounded p-1 text-navy/40 hover:text-navy transition-colors"
+                            className="rounded p-1 text-navy/70 hover:text-navy transition-colors"
                           >
                             <X className="h-3.5 w-3.5" />
                           </button>
@@ -610,7 +695,7 @@ export default function InvoicesPage() {
                           <button
                             title="View invoice"
                             onClick={() => router.push(`/invoices/${inv.id}`)}
-                            className="rounded p-1.5 text-navy/40 hover:bg-white hover:text-navy transition-colors"
+                            className="rounded p-1.5 text-navy/70 hover:bg-white hover:text-navy transition-colors"
                           >
                             <Eye className="h-4 w-4" />
                           </button>
@@ -618,7 +703,7 @@ export default function InvoicesPage() {
                             <button
                               title="Delete invoice"
                               onClick={() => setConfirmDeleteId(inv.id)}
-                              className="rounded p-1.5 text-navy/40 hover:bg-white hover:text-danger transition-colors"
+                              className="rounded p-1.5 text-navy/70 hover:bg-white hover:text-danger transition-colors"
                             >
                               <Trash2 className="h-4 w-4" />
                             </button>
@@ -638,19 +723,26 @@ export default function InvoicesPage() {
       {meta && (
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-3">
-            <p className="text-sm text-navy/50">
+            <p className="text-sm text-navy/70">
               {meta.total > 0
                 ? `Showing ${(page - 1) * limit + 1}–${Math.min(page * limit, meta.total)} of ${meta.total} invoices`
                 : "No invoices found"}
             </p>
             <div className="flex items-center gap-1.5">
-              <span className="text-xs text-navy/40">Per page:</span>
+              <span className="text-xs text-navy/70">Per page:</span>
               <select
                 value={limit}
-                onChange={(e) => { setLimit(Number(e.target.value)); setPage(1); }}
+                onChange={(e) => {
+                  setLimit(Number(e.target.value));
+                  setPage(1);
+                }}
                 className="h-8 rounded border border-surface-border bg-white px-2 text-xs text-navy focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
               >
-                {[10, 20, 50, 100].map((n) => <option key={n} value={n}>{n}</option>)}
+                {[10, 20, 50, 100].map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
               </select>
             </div>
           </div>

@@ -91,7 +91,9 @@ function Sidebar() {
         </div>
         <div>
           <div className="text-sm font-bold text-white">RouteFlow</div>
-          <div className="text-[10px] font-medium uppercase tracking-wider text-indigo-400">Platform Admin</div>
+          <div className="text-[10px] font-medium uppercase tracking-wider text-indigo-400">
+            Platform Admin
+          </div>
         </div>
       </div>
 
@@ -100,7 +102,9 @@ function Sidebar() {
         <ul className="flex flex-col gap-0.5">
           {NAV_ITEMS.map((item) => {
             const Icon = item.icon;
-            const active = pathname === item.href || (item.href !== "/admin/dashboard" && pathname.startsWith(item.href));
+            const active =
+              pathname === item.href ||
+              (item.href !== "/admin/dashboard" && pathname.startsWith(item.href));
             return (
               <li key={item.href}>
                 <Link

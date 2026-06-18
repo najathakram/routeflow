@@ -12,12 +12,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
-import {
-  FilterChipRow,
-  NavBar,
-  Pill,
-  SearchBar,
-} from "@routeflow/ui/mobile/ios";
+import { FilterChipRow, NavBar, Pill, SearchBar } from "@routeflow/ui/mobile/ios";
 import { useMyOrders, type Order } from "../../lib/api/orders";
 
 const STATUS_FILTERS = [
@@ -76,8 +71,7 @@ export default function DriverOrdersScreen() {
     );
   }, [orders, search]);
 
-  const chipLabel = (id: FilterId) =>
-    STATUS_FILTERS.find((f) => f.id === id)?.label ?? "All";
+  const chipLabel = (id: FilterId) => STATUS_FILTERS.find((f) => f.id === id)?.label ?? "All";
   const chipIdFromLabel = (label: string): FilterId =>
     (STATUS_FILTERS.find((f) => f.label === label)?.id ?? "ALL") as FilterId;
 
@@ -85,11 +79,7 @@ export default function DriverOrdersScreen() {
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <NavBar largeTitle="My orders" />
 
-      <SearchBar
-        placeholder="Search orders…"
-        value={search}
-        onChangeText={setSearch}
-      />
+      <SearchBar placeholder="Search orders…" value={search} onChangeText={setSearch} />
 
       <FilterChipRow
         chips={STATUS_FILTERS.map((f) => ({ label: f.label }))}
@@ -112,9 +102,7 @@ export default function DriverOrdersScreen() {
             <Ionicons name="cube-outline" size={40} color={ios.label3} />
             <Text style={styles.emptyTitle}>No orders</Text>
             <Text style={styles.emptySub}>
-              {search
-                ? "No orders match your search."
-                : "No orders in this status."}
+              {search ? "No orders match your search." : "No orders in this status."}
             </Text>
           </View>
         ) : (

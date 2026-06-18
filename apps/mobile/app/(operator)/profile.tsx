@@ -3,12 +3,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
-import {
-  ListGroup,
-  ListRow,
-  NavBackButton,
-  NavBar,
-} from "@routeflow/ui/mobile/ios";
+import { ListGroup, ListRow, NavBackButton, NavBar } from "@routeflow/ui/mobile/ios";
 import { useAuthStore } from "../../lib/auth-store";
 import { useTenantStore } from "../../lib/tenant-store";
 
@@ -37,9 +32,7 @@ export default function OperatorProfileScreen() {
             <Text style={styles.avatarText}>{initials}</Text>
           </View>
           <Text style={styles.name}>{displayName}</Text>
-          <Text style={styles.role}>
-            Operator{tenantName ? ` · ${tenantName}` : ""}
-          </Text>
+          <Text style={styles.role}>Operator{tenantName ? ` · ${tenantName}` : ""}</Text>
         </View>
 
         <ListGroup header="ACCOUNT">

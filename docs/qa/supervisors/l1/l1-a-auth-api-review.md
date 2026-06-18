@@ -1,4 +1,5 @@
 # L1-A Supervisor Review — Auth & API Contract
+
 **Workers reviewed:** W1 (Auth & Security), W2 (API Contract)
 **Date:** 2026-04-29
 **Reviewer:** L1-A
@@ -17,6 +18,7 @@
 W1 flagged `GET /credit-notes` and `GET /credit-notes/:id` as missing `@UseGuards(RolesGuard) + @Roles()`. This is **partially correct but overstates the risk**.
 
 Source verification (`apps/api/src/credit-notes/credit-notes.controller.ts`):
+
 - The controller class carries `@UseGuards(JwtAuthGuard)` — every endpoint requires a valid JWT. Authentication is enforced.
 - `GET /credit-notes` calls `creditNotesService.findAllForUser(user, ...)`. The service branches on `user.role === "CUSTOMER"` and scopes the query to that customer's records only. Operators see all records. This is **intentional role-based scoping inside the service**, not a missing guard.
 - `GET /credit-notes/:id` calls `creditNotesService.findOneForUser(id, user)` which presumably applies the same pattern.
@@ -27,6 +29,7 @@ Source verification (`apps/api/src/credit-notes/credit-notes.controller.ts`):
 W1 stated "OPERATOR can grant driver permissions without explicit validation." This is **inaccurate**.
 
 Source verification (`apps/api/src/users/users.controller.ts` line 100-105, `users.service.ts` line 217-256):
+
 - `PATCH /users/:id/driver-permit` is guarded by `@UseGuards(RolesGuard) @Roles(UserRole.OPERATOR)`.
 - `TENANT_ADMIN` satisfies `OPERATOR` per the role hierarchy in `roles.guard.ts` lines 20-21.
 - `toggleDriverPermit()` in the service checks that the **target user** is `OPERATOR` or `TENANT_ADMIN` before granting the permit.
@@ -35,6 +38,7 @@ Source verification (`apps/api/src/users/users.controller.ts` line 100-105, `use
 
 **W1-003 — TenantStatusGuard Fails Open: Confirmed with nuance**
 Source verification (`apps/api/src/tenant/tenant-status.guard.ts` lines 95-100):
+
 - The guard does fail open on DB exceptions (returns `true`).
 - However, there is an in-memory cache (60 s TTL). If the last known status was cached as SUSPENDED before the DB error occurred, the cache entry is stale and the guard will still query the DB — and then fail open. The cache does NOT help on the error path because the guard reads cache first and only hits the DB on a cache miss; a DB error on a cache miss means the request goes through.
 - W1's finding is confirmed. The recommended fix (fail closed; use cache if available) is correct and feasible: if a cache entry exists at the time of the DB error, use it; if no cache entry exists, the safest choice is to block with a 503 and log.
@@ -44,6 +48,7 @@ Source verification (`apps/api/src/tenant/tenant-status.guard.ts` lines 95-100):
 W1 said "Password change doesn't invalidate access tokens (~15 min window)."
 
 Source verification (`apps/api/src/auth/auth.service.ts` lines 322-344):
+
 - `changePassword()` does call `await this.prisma.refreshToken.deleteMany({ where: { userId } })` — all refresh tokens are revoked.
 - Access tokens are short-lived JWTs; they cannot be individually revoked without a blocklist. The ~15-min window gap is real but is standard JWT behavior.
 - W1's finding is **partially accurate**: refresh tokens ARE revoked (the most important protection), but outstanding access tokens remain valid for their remaining TTL. This is the standard trade-off and the code explicitly comments on it.
@@ -82,6 +87,7 @@ W2 listed `GET /buyer/products`, `GET /buyer/orders`, `POST /buyer/orders`, `GET
 ### W2 Verified: Mobile 401/403/500 Error Handling
 
 Source verification of `apps/mobile/lib/api-client.ts`:
+
 - **401 handling:** The response interceptor correctly intercepts 401s, attempts a token refresh via `POST /auth/refresh`, replays the original request, and on refresh failure deletes tokens and defers navigation to the auth store. This is a correct implementation.
 - **403 handling:** Not explicitly handled — 403 errors are rejected as-is (`Promise.reject(error)`). Individual screens/hooks are responsible for handling them. This is acceptable but means no unified "access denied" UX.
 - **500 handling:** Not explicitly handled — 500 errors propagate to callers. No global error boundary in the API client.
@@ -100,11 +106,13 @@ Source verification of `apps/mobile/lib/api-client.ts`:
 ## Cross-reference Findings
 
 ### Credit Notes — W1 + W2 Intersection
+
 W1 flagged `GET /credit-notes` as missing role guards (W1-001). W2 listed `GET /credit-notes` as verified OK. These are contradictory assessments of the same endpoint.
 
 **Resolution:** Both workers were looking at different things. W2 verified the HTTP path and method match between mobile and API — which is correct. W1 identified a missing role restriction — which is partially correct (DRIVER role can call this endpoint). The actual risk is: a driver user with a valid JWT can enumerate all credit notes in the tenant. The mobile app only calls this endpoint from the operator context, so there is no current mobile attack path — but it is a backend exposure if any DRIVER-role token is obtained.
 
 ### Auth Tokens — W1 + W2 Intersection
+
 W1 identified the access token validity window after password change (W1-006). W2's 401-refresh flow (verified above) correctly deletes refresh tokens on a failed refresh and clears stored tokens. These findings are complementary: W1 describes the server-side gap, W2's client behavior means a stolen access token is still valid for its TTL even after the legitimate user changes their password.
 
 ---
@@ -112,6 +120,7 @@ W1 identified the access token validity window after password change (W1-006). W
 ## L1-A Added Findings
 
 ### L1A-001 — GET /auth/google Nonce Endpoint Has No Rate Limit
+
 - **Severity:** P3
 - **File:** `apps/api/src/auth/auth.controller.ts` lines 138-165
 - **Issue:** `GET /auth/google` generates a one-time nonce and writes it to Redis with a 10-minute TTL. No `@Throttle` decorator is present. An unauthenticated attacker can call this endpoint at the global 100 req/60 s limit, which means up to 100 nonces/min per IP can be created. Over a sustained period this fills Redis with `oauth:nonce:*` keys (each alive for 10 min = up to 1000 live nonce keys per attacking IP) and increases Redis memory pressure.
@@ -120,6 +129,7 @@ W1 identified the access token validity window after password change (W1-006). W
 - **Expected after fix:** Nonce creation is capped at 10/min per IP, limiting Redis pollution to ~100 live keys per IP.
 
 ### L1A-002 — Redis Throttler Fails Open Silently During Outage
+
 - **Severity:** P2
 - **File:** `apps/api/src/common/redis-throttler.storage.ts` line 98
 - **Issue:** When Redis is unreachable, `increment()` catches the error, logs a warning, and returns `{ totalHits: 1, isBlocked: false }`. This makes every request appear to be the first in the window, so no rate limit is ever enforced. The login endpoint's brute-force protection (30 req/min) and all other throttle limits silently disappear during a Redis outage. Since `TenantStatusGuard` also fails open on DB errors (W1-003), a dual-outage scenario (Redis + DB) leaves the API with neither tenant status enforcement nor rate limiting.
@@ -128,6 +138,7 @@ W1 identified the access token validity window after password change (W1-006). W
 - **Expected after fix:** Rate limiting remains functional (possibly less accurate under distributed load) even when Redis is temporarily unavailable.
 
 ### L1A-003 — PATCH /users/me/preferences Accepts Unbounded Arbitrary Keys
+
 - **Severity:** P3
 - **File:** `apps/api/src/users/users.controller.ts` line 57; `apps/api/src/users/users.service.ts` lines 271-275
 - **Issue:** The body is typed as `Record<string, string>` with no class-validator pipe, no key whitelist, and no per-request size cap. Any authenticated user can write an unlimited number of arbitrarily named keys of arbitrary length. Each key becomes a `UserPreference` row. There is no cap on total preferences per user or on string length.
@@ -136,6 +147,7 @@ W1 identified the access token validity window after password change (W1-006). W
 - **Expected after fix:** Preferences endpoint cannot be used for storage exhaustion or unbounded writes.
 
 ### L1A-004 — No Self-Service Password Reset Flow
+
 - **Severity:** P2
 - **File:** `apps/api/src/auth/auth.controller.ts` (absent)
 - **Issue:** There is no `POST /auth/forgot-password` or equivalent endpoint. Users who forget their password and have no linked Google account cannot recover their account without operator intervention. For tenants where the only OPERATOR is also locked out, or for CUSTOMER-role users who have no direct operator contact, there is no recovery path. This is also a security gap: an operator resetting a password (`POST /users/:id/reset-password`) does not notify the account owner by email, meaning an operator can silently reset any user's password.
@@ -144,6 +156,7 @@ W1 identified the access token validity window after password change (W1-006). W
 - **Expected after fix:** Users can self-service recover accounts; operators resetting passwords do not create silent account takeover risk.
 
 ### L1A-005 — Legacy Google OAuth Path Tokens Passed in URL Query String
+
 - **Severity:** P2
 - **File:** `apps/api/src/auth/auth.controller.ts` lines 288-305 (legacy `GET /auth/google/:tenantSlug/callback`)
 - **Issue:** The legacy tenant Google callback at line 300-303 redirects to `${webUrl}/auth/callback?accessToken=...&refreshToken=...`. Both tokens are in URL query params. Modern browsers log query params in history, and many reverse proxies / CDNs log full URLs. This leaks both tokens in browser history, server access logs, and any analytics or APM tools that capture query strings. The primary (non-legacy) callback at lines 236-255 uses the same pattern. This affects all OAuth sign-in flows.
@@ -152,6 +165,7 @@ W1 identified the access token validity window after password change (W1-006). W
 - **Expected after fix:** Tokens are not present in server logs or browser history.
 
 ### L1A-006 — Mobile API Client Does Not Handle HTTP 429
+
 - **Severity:** P3
 - **File:** `apps/mobile/lib/api-client.ts` lines 63-143
 - **Issue:** The response interceptor handles 401 (token refresh) and network errors (offline queue) but has no branch for 429 (Too Many Requests). When the API throttles a mobile client, the raw axios error propagates to UI components that will likely show a generic error toast rather than "please slow down." This could also cause an infinite retry loop if any UI layer auto-retries on error without checking status code.

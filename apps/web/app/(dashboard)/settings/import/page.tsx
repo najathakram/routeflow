@@ -61,7 +61,8 @@ const IMPORT_SECTIONS: ImportSection[] = [
   {
     id: "inventory",
     label: "Inventory Stock Levels",
-    description: "Sync current stock quantities from Zoho Stock Summary Report (Item Name, SKU, Closing Stock)",
+    description:
+      "Sync current stock quantities from Zoho Stock Summary Report (Item Name, SKU, Closing Stock)",
     endpoint: "/import/inventory",
     icon: BarChart3,
     color: "text-teal-500 bg-teal-50",
@@ -88,7 +89,8 @@ const IMPORT_SECTIONS: ImportSection[] = [
   {
     id: "expenses",
     label: "Expenses",
-    description: "Import expense records from Zoho Expense CSV. Suppliers are auto-created from vendor names — no separate supplier import needed.",
+    description:
+      "Import expense records from Zoho Expense CSV. Suppliers are auto-created from vendor names — no separate supplier import needed.",
     endpoint: "/import/expenses",
     icon: Receipt,
     color: "text-danger bg-danger-bg",
@@ -148,9 +150,13 @@ function ImportCard({ section, step }: { section: ImportSection; step: number })
       if (d.suppliersCreated || d.suppliersUpdated) {
         const parts: string[] = [];
         if (d.suppliersCreated)
-          parts.push(`${d.suppliersCreated} supplier${d.suppliersCreated !== 1 ? "s" : ""} created`);
+          parts.push(
+            `${d.suppliersCreated} supplier${d.suppliersCreated !== 1 ? "s" : ""} created`,
+          );
         if (d.suppliersUpdated)
-          parts.push(`${d.suppliersUpdated} supplier${d.suppliersUpdated !== 1 ? "s" : ""} matched`);
+          parts.push(
+            `${d.suppliersUpdated} supplier${d.suppliersUpdated !== 1 ? "s" : ""} matched`,
+          );
         summary += ` · ${parts.join(", ")}`;
       }
       toast({ title: `${section.label} imported`, description: summary, variant: "success" });
@@ -181,12 +187,12 @@ function ImportCard({ section, step }: { section: ImportSection; step: number })
         </span>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-navy/10 text-[11px] font-bold text-navy/50 shrink-0">
+            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-navy/10 text-[11px] font-bold text-navy/70 shrink-0">
               {step}
             </span>
             <p className="font-semibold text-navy">{section.label}</p>
           </div>
-          <p className="text-xs text-navy/60 mt-0.5 leading-relaxed">{section.description}</p>
+          <p className="text-xs text-navy/70 mt-0.5 leading-relaxed">{section.description}</p>
         </div>
         {result && (
           <div className="flex flex-col items-end gap-1 text-xs shrink-0">
@@ -209,11 +215,10 @@ function ImportCard({ section, step }: { section: ImportSection; step: number })
       {/* Body */}
       <div className="flex flex-col flex-1 gap-3 p-4">
         {/* Export hint */}
-        <div className="flex items-start gap-2 rounded-lg bg-surface-raised px-3 py-2 text-xs text-navy/60">
-          <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0 text-navy/40" />
+        <div className="flex items-start gap-2 rounded-lg bg-surface-raised px-3 py-2 text-xs text-navy/70">
+          <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0 text-navy/70" />
           <span>
-            <strong className="text-navy/70">How to export:</strong>{" "}
-            {section.zohoExportPath}
+            <strong className="text-navy/70">How to export:</strong> {section.zohoExportPath}
           </span>
         </div>
 
@@ -240,17 +245,16 @@ function ImportCard({ section, step }: { section: ImportSection; step: number })
           {file ? (
             <div className="text-center">
               <p className="text-sm font-medium text-brand-600">{file.name}</p>
-              <p className="text-xs text-navy/40">
+              <p className="text-xs text-navy/70">
                 {(file.size / 1024).toFixed(1)} KB · Click to change
               </p>
             </div>
           ) : (
             <div className="text-center">
-              <p className="text-sm text-navy/60">
-                Drop CSV file here or{" "}
-                <span className="text-brand-500">browse</span>
+              <p className="text-sm text-navy/70">
+                Drop CSV file here or <span className="text-brand-500">browse</span>
               </p>
-              <p className="text-xs text-navy/40 mt-0.5">Zoho CSV export format</p>
+              <p className="text-xs text-navy/70 mt-0.5">Zoho CSV export format</p>
             </div>
           )}
         </div>
@@ -288,16 +292,14 @@ function ImportCard({ section, step }: { section: ImportSection; step: number })
               )}
             </button>
             {showErrors && (
-              <ul className="mt-2 space-y-0.5 text-xs text-navy/60 max-h-32 overflow-y-auto">
+              <ul className="mt-2 space-y-0.5 text-xs text-navy/70 max-h-32 overflow-y-auto">
                 {result.errors.slice(0, 20).map((e, i) => (
                   <li key={i} className="truncate">
                     • {e}
                   </li>
                 ))}
                 {result.errors.length > 20 && (
-                  <li className="text-navy/40">
-                    …and {result.errors.length - 20} more
-                  </li>
+                  <li className="text-navy/70">…and {result.errors.length - 20} more</li>
                 )}
               </ul>
             )}
@@ -321,7 +323,7 @@ export default function SettingsImportPage() {
       {/* Header */}
       <div>
         <h1 className="text-xl font-semibold text-navy">Import from Zoho</h1>
-        <p className="mt-1 text-sm text-navy/60">
+        <p className="mt-1 text-sm text-navy/70">
           Upload CSV exports from Zoho to migrate your data into RouteFlow.
         </p>
       </div>
@@ -330,7 +332,9 @@ export default function SettingsImportPage() {
       <div className="flex items-start gap-3 rounded-xl border border-brand-200 bg-brand-50 px-4 py-3">
         <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-brand-500" />
         <div>
-          <p className="text-sm font-semibold text-brand-700">Import in this order for best results</p>
+          <p className="text-sm font-semibold text-brand-700">
+            Import in this order for best results
+          </p>
           <div className="mt-2 flex flex-wrap items-center gap-x-1.5 gap-y-1">
             {STEP_LABELS.map((label, i) => (
               <React.Fragment key={label}>

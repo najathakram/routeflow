@@ -56,7 +56,7 @@ export function Table<TData>({
                   <th
                     key={header.id}
                     className={cn(
-                      "group px-4 py-3 text-left font-medium text-navy/60 whitespace-nowrap",
+                      "group px-4 py-3 text-left font-medium text-navy/70 whitespace-nowrap",
                       canSort && "cursor-pointer select-none hover:text-navy transition-colors",
                     )}
                     onClick={header.column.getToggleSortingHandler()}
@@ -81,7 +81,7 @@ export function Table<TData>({
                         // header chrome clean until the operator wants it.
                         <span
                           className={cn(
-                            "text-navy/40 transition-opacity",
+                            "text-navy/70 transition-opacity",
                             sorted ? "opacity-100" : "opacity-0 group-hover:opacity-100",
                           )}
                         >
@@ -116,7 +116,7 @@ export function Table<TData>({
             <tr>
               <td
                 colSpan={table.getVisibleLeafColumns().length}
-                className="px-4 py-12 text-center text-navy/40"
+                className="px-4 py-12 text-center text-navy/70"
               >
                 {emptyState ?? "No data available"}
               </td>

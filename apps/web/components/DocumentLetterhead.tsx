@@ -21,16 +21,10 @@ export function DocumentLetterhead({ tagline }: DocumentLetterheadProps) {
   return (
     <div>
       <div className="flex items-center gap-2">
-        <img
-          src={logoSrc}
-          alt={name}
-          className="h-10 w-10 shrink-0 rounded-lg object-contain"
-        />
+        <img src={logoSrc} alt={name} className="h-10 w-10 shrink-0 rounded-lg object-contain" />
         <span className="text-lg font-bold text-navy">{name}</span>
       </div>
-      {tagline && (
-        <p className="mt-1 text-xs text-navy/50">{tagline}</p>
-      )}
+      {tagline && <p className="mt-1 text-xs text-navy/70">{tagline}</p>}
     </div>
   );
 }

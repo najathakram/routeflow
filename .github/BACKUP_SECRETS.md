@@ -2,13 +2,13 @@
 
 Add these in: **GitHub → Settings → Secrets and variables → Actions → New repository secret**
 
-| Secret name | Where to get it | Example |
-|---|---|---|
+| Secret name               | Where to get it                                                   | Example                                                         |
+| ------------------------- | ----------------------------------------------------------------- | --------------------------------------------------------------- |
 | `PRODUCTION_DATABASE_URL` | Railway dashboard → Postgres service → Variables → `DATABASE_URL` | `postgresql://user:pass@gondola.proxy.rlwy.net:41006/routeflow` |
-| `R2_ACCOUNT_ID` | Cloudflare dashboard → R2 → Account ID (top right) | `abc123def456` |
-| `R2_ACCESS_KEY_ID` | Cloudflare → R2 → Manage API tokens → Create token | `abc...` |
-| `R2_SECRET_ACCESS_KEY` | Same token creation step (shown once only) | `xyz...` |
-| `R2_BACKUP_BUCKET` | Create a dedicated R2 bucket named `routeflow-backups` | `routeflow-backups` |
+| `R2_ACCOUNT_ID`           | Cloudflare dashboard → R2 → Account ID (top right)                | `abc123def456`                                                  |
+| `R2_ACCESS_KEY_ID`        | Cloudflare → R2 → Manage API tokens → Create token                | `abc...`                                                        |
+| `R2_SECRET_ACCESS_KEY`    | Same token creation step (shown once only)                        | `xyz...`                                                        |
+| `R2_BACKUP_BUCKET`        | Create a dedicated R2 bucket named `routeflow-backups`            | `routeflow-backups`                                             |
 
 ## Steps
 

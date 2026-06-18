@@ -1,6 +1,7 @@
 # W19 — Mobile Offline Queue & Sync Audit Findings
 
 ## Summary
+
 QA audit of the RouteFlow mobile offline queue and sync system identified **6 significant bugs** affecting data consistency, user experience, and error recovery.
 
 ---
@@ -8,6 +9,7 @@ QA audit of the RouteFlow mobile offline queue and sync system identified **6 si
 ## Findings
 
 ### W19-001 — Unbounded Queue Growth
+
 - **Severity:** P1
 - **File:** `apps/mobile/store/offlineQueue.ts:33-44`
 - **Issue:** The offline queue has no maximum size limit. A device that remains offline indefinitely will accumulate unlimited queued actions in AsyncStorage, potentially exhausting device storage.
@@ -17,6 +19,7 @@ QA audit of the RouteFlow mobile offline queue and sync system identified **6 si
 ---
 
 ### W19-002 — Silent Discard of Non-Retriable Client Errors
+
 - **Severity:** P1
 - **File:** `apps/mobile/hooks/useNetworkSync.ts:32-33`
 - **Issue:** When a queued action fails with a 4xx client error (e.g., 404 for a deleted stop, 409 for a conflict), it is silently dequeued without notifying the user. The driver is never informed that their action failed and was abandoned.
@@ -27,6 +30,7 @@ QA audit of the RouteFlow mobile offline queue and sync system identified **6 si
 ---
 
 ### W19-003 — POD Store Not Persisted Across App Crashes
+
 - **Severity:** P2
 - **File:** `apps/mobile/store/podStore.ts:16-36`
 - **Issue:** The POD store (photos, signature, notes for a stop) is in-memory only (no AsyncStorage persistence). If the app crashes after the driver captures a signature but before completing the stop, all POD data is lost.
@@ -37,6 +41,7 @@ QA audit of the RouteFlow mobile offline queue and sync system identified **6 si
 ---
 
 ### W19-004 — No User Feedback on Sync Failures
+
 - **Severity:** P2
 - **File:** `apps/mobile/hooks/useNetworkSync.ts:12-42`
 - **Issue:** The sync hook silently discards failed actions with no toast, alert, or banner feedback. The driver has no visibility into whether queued actions succeeded or failed on replay.
@@ -47,6 +52,7 @@ QA audit of the RouteFlow mobile offline queue and sync system identified **6 si
 ---
 
 ### W19-005 — Dependency Array Triggers Repeated Effect Registration
+
 - **Severity:** P1
 - **File:** `apps/mobile/hooks/useNetworkSync.ts:44-53`
 - **Issue:** The `useEffect` dependency array includes `[queue]`. Since `drainQueue()` calls `incrementRetry()` which updates queue state, the effect re-runs every time an item is retried, causing the NetInfo listener to be re-registered repeatedly.
@@ -57,6 +63,7 @@ QA audit of the RouteFlow mobile offline queue and sync system identified **6 si
 ---
 
 ### W19-006 — No Backoff on Retry Attempts
+
 - **Severity:** P2
 - **File:** `apps/mobile/hooks/useNetworkSync.ts:35-36`
 - **Issue:** Items that fail with retriable errors (5xx, network errors) are retried immediately with no backoff strategy. If the device regains partial connectivity (WiFi connected but no internet), the sync hook will repeatedly attempt to send all queued items immediately, consuming data and battery.
@@ -69,27 +76,30 @@ QA audit of the RouteFlow mobile offline queue and sync system identified **6 si
 ## Non-Issues (As Designed)
 
 ### ✓ Queue Persistence
+
 The offline queue correctly uses AsyncStorage and survives app restarts.
 
 ### ✓ Queue Replay Order
+
 Actions are replayed in FIFO order (insertion order preserved).
 
 ### ✓ Mileage Store Persistence
+
 Correctly persisted to AsyncStorage.
 
 ### ✓ Server-Side Conflict Detection
+
 Server rejects duplicate stop completions with BadRequestException (400). Mobile client treats as 4xx and discards (though silently — see W19-002).
 
 ---
 
 ## Summary Table
 
-| ID | Severity | Category | Fix |
-|---|---|---|---|
-| W19-001 | P1 | Data Loss | Max queue size + TTL |
-| W19-002 | P1 | UX | Notify user on permanent failure |
-| W19-003 | P2 | Data Loss | Persist POD store |
-| W19-004 | P2 | UX | Show toast on failures |
-| W19-005 | P1 | Reliability | Fix effect dependency array |
-| W19-006 | P2 | Performance | Add exponential backoff |
-
+| ID      | Severity | Category    | Fix                              |
+| ------- | -------- | ----------- | -------------------------------- |
+| W19-001 | P1       | Data Loss   | Max queue size + TTL             |
+| W19-002 | P1       | UX          | Notify user on permanent failure |
+| W19-003 | P2       | Data Loss   | Persist POD store                |
+| W19-004 | P2       | UX          | Show toast on failures           |
+| W19-005 | P1       | Reliability | Fix effect dependency array      |
+| W19-006 | P2       | Performance | Add exponential backoff          |

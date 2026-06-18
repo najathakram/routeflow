@@ -3,12 +3,34 @@
 import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Package, LayoutGrid, LayoutList, Plus, Trash2, ImagePlus, X as XIcon, CheckSquare, Pencil, Check, Undo2, Redo2, ChevronDown, ChevronRight, GitBranch } from "lucide-react";
-import { PageHeader, Table, Badge, Button, Select, cn } from "@routeflow/ui/web";
+import {
+  Package,
+  LayoutGrid,
+  LayoutList,
+  Plus,
+  Trash2,
+  ImagePlus,
+  X as XIcon,
+  CheckSquare,
+  Pencil,
+  Check,
+  Undo2,
+  Redo2,
+  ChevronDown,
+  ChevronRight,
+  GitBranch,
+} from "lucide-react";
+import { PageHeader, Table, Badge, Button, Select, cn, EmptyState } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useToast } from "@routeflow/ui/web";
 import { useDebounce } from "@/lib/hooks/useDebounce";
-import { useProducts, useCreateProduct, useUpdateProduct, useBulkDeleteProducts, uploadProductImages } from "@/lib/api/products";
+import {
+  useProducts,
+  useCreateProduct,
+  useUpdateProduct,
+  useBulkDeleteProducts,
+  uploadProductImages,
+} from "@/lib/api/products";
 import { objectPositionForUrl } from "@/lib/image-focal";
 import { GroupAsVariantsModal } from "@/components/GroupAsVariantsModal";
 import { SearchableProductPicker } from "@/components/SearchableProductPicker";
@@ -97,7 +119,10 @@ function ProductCard({
       {selectionMode && (
         <div
           className="absolute left-2 top-2 z-10"
-          onClick={(e) => { e.stopPropagation(); onSelect(e); }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onSelect(e);
+          }}
         >
           <input
             type="checkbox"
@@ -140,12 +165,9 @@ function ProductCard({
       </div>
 
       {/* Info */}
-      <div
-        className="flex flex-1 flex-col gap-2 p-3"
-        onClick={selectionMode ? undefined : onClick}
-      >
+      <div className="flex flex-1 flex-col gap-2 p-3" onClick={selectionMode ? undefined : onClick}>
         <div>
-          <p className="text-xs text-navy/40">{product.sku}</p>
+          <p className="text-xs text-navy/70">{product.sku}</p>
           <p className="mt-0.5 text-sm font-semibold leading-snug text-navy line-clamp-2">
             {/* Variants display just their flavor / variety name. Parent
                 context is rendered below as a small caption. Falls back to
@@ -157,9 +179,7 @@ function ProductCard({
         <div className="mt-auto flex items-end justify-between gap-1">
           <p className="text-base font-bold text-navy">
             ${parseFloat(String(product.pricePerUnit)).toFixed(2)}
-            <span className="ml-1 text-xs font-normal text-navy/40">
-              / {product.unit}
-            </span>
+            <span className="ml-1 text-xs font-normal text-navy/70">/ {product.unit}</span>
           </p>
           {product.variants && product.variants.length > 0 && (
             <span className="shrink-0 rounded-full bg-brand-50 px-1.5 py-0.5 text-[10px] font-medium text-brand-600 ring-1 ring-brand-200">
@@ -169,15 +189,18 @@ function ProductCard({
         </div>
         {/* Variant indicator */}
         {product.variantName && product.parent && (
-          <p className="text-[10px] text-navy/40 truncate">{product.parent.name}</p>
+          <p className="text-[10px] text-navy/70 truncate">{product.parent.name}</p>
         )}
         <StockBadge status={status} />
         {/* Add variant button for parent products */}
         {product.variants && product.variants.length > 0 && onAddVariant && !selectionMode && (
           <button
             type="button"
-            onClick={(e) => { e.stopPropagation(); onAddVariant(product.id); }}
-            className="mt-1 flex items-center gap-1 text-[10px] text-navy/40 hover:text-brand-500 transition-colors"
+            onClick={(e) => {
+              e.stopPropagation();
+              onAddVariant(product.id);
+            }}
+            className="mt-1 flex items-center gap-1 text-[10px] text-navy/70 hover:text-brand-500 transition-colors"
           >
             <Plus className="h-2.5 w-2.5" />
             Add variant
@@ -203,7 +226,12 @@ function makeTableColumns(
   onEditPriceSave: (id: string) => void,
   onEditPriceCancel: () => void,
   quickEditMode: boolean,
-  onQuickSave: (product: ApiProduct, field: string, newVal: string, record: EditRecord) => Promise<void>,
+  onQuickSave: (
+    product: ApiProduct,
+    field: string,
+    newVal: string,
+    record: EditRecord,
+  ) => Promise<void>,
   barcodeRefs: React.MutableRefObject<Record<string, React.RefObject<HTMLInputElement | null>>>,
   productIds: string[],
   categories: string[],
@@ -217,7 +245,9 @@ function makeTableColumns(
       <input
         type="checkbox"
         checked={allSelected}
-        ref={(el) => { if (el) el.indeterminate = someSelected; }}
+        ref={(el) => {
+          if (el) el.indeterminate = someSelected;
+        }}
         onChange={onToggleAll}
         className="h-4 w-4 cursor-pointer rounded border-navy/30 accent-brand-500"
       />
@@ -240,9 +270,7 @@ function makeTableColumns(
     {
       accessorKey: "name",
       header: "Product",
-      cell: ({ row }) => (
-        <p className="font-medium text-navy">{row.original.name}</p>
-      ),
+      cell: ({ row }) => <p className="font-medium text-navy">{row.original.name}</p>,
     },
     {
       accessorKey: "sku",
@@ -325,7 +353,7 @@ function makeTableColumns(
         if (editingPriceId === p.id) {
           return (
             <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-              <span className="text-sm text-navy/50">$</span>
+              <span className="text-sm text-navy/70">$</span>
               <input
                 autoFocus
                 type="number"
@@ -348,7 +376,7 @@ function makeTableColumns(
               </button>
               <button
                 onClick={onEditPriceCancel}
-                className="text-navy/40 hover:text-navy transition-colors"
+                className="text-navy/70 hover:text-navy transition-colors"
                 title="Cancel"
               >
                 <XIcon className="h-3.5 w-3.5" />
@@ -363,7 +391,7 @@ function makeTableColumns(
             </span>
             <button
               onClick={() => onEditPrice(p)}
-              className="opacity-0 group-hover:opacity-100 transition-opacity text-navy/40 hover:text-brand-500"
+              className="opacity-0 group-hover:opacity-100 transition-opacity text-navy/70 hover:text-brand-500"
               title="Edit price"
             >
               <Pencil className="h-3 w-3" />
@@ -378,11 +406,7 @@ function makeTableColumns(
       cell: ({ row }) => {
         const p = row.original;
         const cost = p.averageCost ? parseFloat(String(p.averageCost)) : null;
-        return (
-          <span className="text-navy/70">
-            {cost != null ? `$${cost.toFixed(2)}` : "—"}
-          </span>
-        );
+        return <span className="text-navy/70">{cost != null ? `$${cost.toFixed(2)}` : "—"}</span>;
       },
     },
     {
@@ -432,7 +456,11 @@ function makeTableColumns(
         // Normal view: read-only display
         return (
           <span className="text-sm text-navy/70">
-            {val && parseFloat(String(val)) > 0 ? `$${parseFloat(String(val)).toFixed(2)}` : <span className="text-navy/30">—</span>}
+            {val && parseFloat(String(val)) > 0 ? (
+              `$${parseFloat(String(val)).toFixed(2)}`
+            ) : (
+              <span className="text-navy/30">—</span>
+            )}
           </span>
         );
       },
@@ -445,7 +473,7 @@ function makeTableColumns(
         return (
           <div className="flex items-center gap-2">
             <StockBadge status={status} />
-            <span className="text-xs text-navy/50">
+            <span className="text-xs text-navy/70">
               {Number(row.original.currentStock).toFixed(0)} {row.original.unit}
             </span>
           </div>
@@ -476,9 +504,17 @@ function CreateProductModal({
   allProducts?: ApiProduct[];
 }) {
   const [form, setForm] = React.useState({
-    name: "", sku: "", unit: "", pricePerUnit: "", category: "", description: "",
-    costingMethod: "FIFO", standardCost: "", unitsPerBox: "",
-    parentProductId: defaultParentId ?? "", variantName: "",
+    name: "",
+    sku: "",
+    unit: "",
+    pricePerUnit: "",
+    category: "",
+    description: "",
+    costingMethod: "FIFO",
+    standardCost: "",
+    unitsPerBox: "",
+    parentProductId: defaultParentId ?? "",
+    variantName: "",
   });
 
   // Pre-populate fields from parent when a parent is selected
@@ -493,7 +529,7 @@ function CreateProductModal({
       pricePerUnit: f.pricePerUnit || String(parseFloat(String(parent.pricePerUnit)).toFixed(2)),
       unitsPerBox: f.unitsPerBox || String(parent.unitsPerBox ?? ""),
     }));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.parentProductId]);
   const [priceError, setPriceError] = React.useState("");
   const [pendingImages, setPendingImages] = React.useState<File[]>([]);
@@ -507,7 +543,9 @@ function CreateProductModal({
   const handleVariantOfScan = async (code: string) => {
     setVariantOfScanLoading(true);
     try {
-      const found = await apiClient.get(`/products/barcode/${encodeURIComponent(code)}`).then((r) => r.data);
+      const found = await apiClient
+        .get(`/products/barcode/${encodeURIComponent(code)}`)
+        .then((r) => r.data);
       const parentId: string = found.parentProductId || found.id;
       set("parentProductId", parentId);
     } catch {
@@ -525,8 +563,7 @@ function CreateProductModal({
     setPendingImages((prev) => [...prev, ...arr]);
     arr.forEach((file) => {
       const reader = new FileReader();
-      reader.onload = (e) =>
-        setPreviews((prev) => [...prev, e.target?.result as string]);
+      reader.onload = (e) => setPreviews((prev) => [...prev, e.target?.result as string]);
       reader.readAsDataURL(file);
     });
   };
@@ -559,9 +596,8 @@ function CreateProductModal({
       category: form.category || undefined,
       description: form.description || undefined,
       costingMethod: form.costingMethod || "FIFO",
-      standardCost: (form.costingMethod === "STANDARD" && form.standardCost)
-        ? form.standardCost
-        : undefined,
+      standardCost:
+        form.costingMethod === "STANDARD" && form.standardCost ? form.standardCost : undefined,
       unitsPerBox: form.unitsPerBox ? parseInt(form.unitsPerBox, 10) : undefined,
       parentProductId: form.parentProductId || undefined,
       variantName: form.variantName || undefined,
@@ -585,7 +621,9 @@ function CreateProductModal({
       <div className="w-full max-w-lg rounded-xl border border-surface-border bg-white shadow-xl">
         <div className="flex items-center justify-between border-b border-surface-border px-6 py-4">
           <h2 className="text-base font-semibold text-navy">New Product</h2>
-          <button onClick={onClose} className="text-navy/40 hover:text-navy transition-colors">✕</button>
+          <button onClick={onClose} className="text-navy/70 hover:text-navy transition-colors">
+            ✕
+          </button>
         </div>
 
         <form onSubmit={handleSubmit} className="max-h-[80vh] overflow-y-auto">
@@ -598,9 +636,16 @@ function CreateProductModal({
               {previews.length > 0 && (
                 <div className="mb-2 flex flex-wrap gap-2">
                   {previews.map((src, i) => (
-                    <div key={i} className="relative h-16 w-16 overflow-hidden rounded-lg border border-surface-border">
+                    <div
+                      key={i}
+                      className="relative h-16 w-16 overflow-hidden rounded-lg border border-surface-border"
+                    >
                       {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={src} alt={`preview ${i + 1}`} className="h-full w-full object-cover" />
+                      <img
+                        src={src}
+                        alt={`preview ${i + 1}`}
+                        className="h-full w-full object-cover"
+                      />
                       <button
                         type="button"
                         onClick={() => removeImage(i)}
@@ -617,7 +662,7 @@ function CreateProductModal({
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-surface-border bg-surface-raised py-3 text-sm text-navy/50 hover:border-brand-500/50 hover:text-brand-500 transition-colors"
+                className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-surface-border bg-surface-raised py-3 text-sm text-navy/70 hover:border-brand-500/50 hover:text-brand-500 transition-colors"
               >
                 <ImagePlus className="h-4 w-4" />
                 {previews.length === 0 ? "Add photos" : "Add more photos"}
@@ -634,14 +679,16 @@ function CreateProductModal({
 
             <div className="grid grid-cols-2 gap-4">
               {/* Variant of — optional parent selector */}
-              {allProducts && allProducts.filter(p => !p.parentProductId).length > 0 && (
+              {allProducts && allProducts.filter((p) => !p.parentProductId).length > 0 && (
                 <div className="col-span-2">
-                  <label className="mb-1 block text-sm font-medium text-navy">Variant of <span className="font-normal text-navy/40">(optional)</span></label>
+                  <label className="mb-1 block text-sm font-medium text-navy">
+                    Variant of <span className="font-normal text-navy/70">(optional)</span>
+                  </label>
                   <div className="flex items-stretch gap-2">
                     <SearchableProductPicker
                       value={form.parentProductId}
                       onChange={(id) => set("parentProductId", id)}
-                      products={allProducts.filter(p => !p.parentProductId)}
+                      products={allProducts.filter((p) => !p.parentProductId)}
                       placeholder="Standalone product (type to search)…"
                       className="flex-1"
                     />
@@ -650,15 +697,21 @@ function CreateProductModal({
                       title="Scan a variant's barcode to auto-select its parent"
                     />
                   </div>
-                  {variantOfScanLoading && <p className="mt-1 text-xs text-navy/50">Looking up product…</p>}
+                  {variantOfScanLoading && (
+                    <p className="mt-1 text-xs text-navy/70">Looking up product…</p>
+                  )}
                   {form.parentProductId && (
-                    <p className="mt-0.5 text-xs text-navy/40">Fields below have been pre-filled from the parent. Adjust as needed.</p>
+                    <p className="mt-0.5 text-xs text-navy/70">
+                      Fields below have been pre-filled from the parent. Adjust as needed.
+                    </p>
                   )}
                 </div>
               )}
               {form.parentProductId && (
                 <div className="col-span-2">
-                  <label className="mb-1 block text-sm font-medium text-navy">Flavor / variety <span className="text-danger">*</span></label>
+                  <label className="mb-1 block text-sm font-medium text-navy">
+                    Flavor / variety <span className="text-danger">*</span>
+                  </label>
                   <input
                     required={!!form.parentProductId}
                     autoFocus
@@ -667,16 +720,17 @@ function CreateProductModal({
                     onChange={(e) => set("variantName", e.target.value)}
                     className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
                   />
-                  {form.variantName.trim() && allProducts?.find(p => p.id === form.parentProductId) && (
-                    <p className="mt-1 rounded bg-surface-raised px-2.5 py-1.5 text-xs text-navy/60">
-                      Will appear as:{" "}
-                      <span className="font-medium text-navy">
-                        {allProducts.find(p => p.id === form.parentProductId)!.name}
-                      </span>
-                      <span className="text-navy/40"> · </span>
-                      <span className="font-medium text-navy">{form.variantName.trim()}</span>
-                    </p>
-                  )}
+                  {form.variantName.trim() &&
+                    allProducts?.find((p) => p.id === form.parentProductId) && (
+                      <p className="mt-1 rounded bg-surface-raised px-2.5 py-1.5 text-xs text-navy/70">
+                        Will appear as:{" "}
+                        <span className="font-medium text-navy">
+                          {allProducts.find((p) => p.id === form.parentProductId)!.name}
+                        </span>
+                        <span className="text-navy/70"> · </span>
+                        <span className="font-medium text-navy">{form.variantName.trim()}</span>
+                      </p>
+                    )}
                 </div>
               )}
               {/* Name — only for standalone products; variants use auto-composed name */}
@@ -723,7 +777,9 @@ function CreateProductModal({
               <div>
                 <label className="mb-1 block text-sm font-medium text-navy">Price per unit *</label>
                 <div className="flex items-center">
-                  <span className="flex h-[38px] items-center rounded-l border border-r-0 border-surface-border bg-surface-raised px-2.5 text-sm text-navy/50">$</span>
+                  <span className="flex h-[38px] items-center rounded-l border border-r-0 border-surface-border bg-surface-raised px-2.5 text-sm text-navy/70">
+                    $
+                  </span>
                   <input
                     required
                     type="number"
@@ -731,7 +787,10 @@ function CreateProductModal({
                     step="0.01"
                     placeholder="0.00"
                     value={form.pricePerUnit}
-                    onChange={(e) => { set("pricePerUnit", e.target.value); setPriceError(""); }}
+                    onChange={(e) => {
+                      set("pricePerUnit", e.target.value);
+                      setPriceError("");
+                    }}
                     className={`w-full rounded-r border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500 ${priceError ? "border-danger focus:ring-danger" : "border-surface-border"}`}
                   />
                 </div>
@@ -749,7 +808,9 @@ function CreateProductModal({
                   className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
                 />
                 <datalist id="create-category-options">
-                  {categories.map((c) => <option key={c} value={c} />)}
+                  {categories.map((c) => (
+                    <option key={c} value={c} />
+                  ))}
                 </datalist>
               </div>
 
@@ -780,7 +841,9 @@ function CreateProductModal({
 
               {form.costingMethod === "STANDARD" && (
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-navy">Standard Cost *</label>
+                  <label className="mb-1 block text-sm font-medium text-navy">
+                    Standard Cost *
+                  </label>
                   <input
                     required={form.costingMethod === "STANDARD"}
                     type="number"
@@ -805,7 +868,9 @@ function CreateProductModal({
                   onChange={(e) => set("unitsPerBox", e.target.value)}
                   className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
                 />
-                <p className="mt-0.5 text-xs text-navy/40">How many individual units are in one box (optional)</p>
+                <p className="mt-0.5 text-xs text-navy/70">
+                  How many individual units are in one box (optional)
+                </p>
               </div>
             </div>
           </div>
@@ -832,7 +897,9 @@ export default function ProductsPage() {
   const { setTitle } = usePageTitle();
   const { toast } = useToast();
 
-  React.useEffect(() => { setTitle("Products"); }, [setTitle]);
+  React.useEffect(() => {
+    setTitle("Products");
+  }, [setTitle]);
 
   const [search, setSearch] = React.useState("");
   const [categoryFilter, setCategoryFilter] = React.useState("");
@@ -860,24 +927,51 @@ export default function ProductsPage() {
   // Refs map for barcode scanner row-jump: productId → ref of its barcode input
   const barcodeRefs = React.useRef<Record<string, React.RefObject<HTMLInputElement | null>>>({});
 
-  const handleQuickSave = React.useCallback(async (product: ApiProduct, field: string, newVal: string, record: EditRecord) => {
-    const updates: { id: string; [k: string]: unknown } = { id: product.id, [field]: newVal || null };
+  const handleQuickSave = React.useCallback(
+    async (product: ApiProduct, field: string, newVal: string, record: EditRecord) => {
+      const updates: { id: string; [k: string]: unknown } = {
+        id: product.id,
+        [field]: newVal || null,
+      };
 
-    // Auto-copy pricePerUnit to all tiers if they were all the same as the old price
-    if (field === "pricePerUnit" && newVal) {
-      const newPrice = parseFloat(newVal);
-      const oldPrice = parseFloat(String(product.pricePerUnit)).toFixed(2);
-      const allSameAsOld = [product.priceTier2, product.priceTier3, product.priceTier4, product.priceTier5].every(
-        (t) => !t || parseFloat(String(t)).toFixed(2) === oldPrice || parseFloat(String(t)).toFixed(2) === "0.00",
-      );
-      if (allSameAsOld) {
-        updates.priceTier2 = newVal;
-        updates.priceTier3 = newVal;
-        updates.priceTier4 = newVal;
-        updates.priceTier5 = newVal;
-      } else {
-        // Cascade cap: higher tiers that are MORE expensive than T1 get capped
-        for (let m = 2; m <= 5; m++) {
+      // Auto-copy pricePerUnit to all tiers if they were all the same as the old price
+      if (field === "pricePerUnit" && newVal) {
+        const newPrice = parseFloat(newVal);
+        const oldPrice = parseFloat(String(product.pricePerUnit)).toFixed(2);
+        const allSameAsOld = [
+          product.priceTier2,
+          product.priceTier3,
+          product.priceTier4,
+          product.priceTier5,
+        ].every(
+          (t) =>
+            !t ||
+            parseFloat(String(t)).toFixed(2) === oldPrice ||
+            parseFloat(String(t)).toFixed(2) === "0.00",
+        );
+        if (allSameAsOld) {
+          updates.priceTier2 = newVal;
+          updates.priceTier3 = newVal;
+          updates.priceTier4 = newVal;
+          updates.priceTier5 = newVal;
+        } else {
+          // Cascade cap: higher tiers that are MORE expensive than T1 get capped
+          for (let m = 2; m <= 5; m++) {
+            const key = `priceTier${m}` as keyof ApiProduct;
+            const tierVal = product[key];
+            const tierPrice = tierVal ? parseFloat(String(tierVal)) : 0;
+            if (!tierVal || tierPrice > newPrice) {
+              updates[`priceTier${m}`] = newVal;
+            }
+          }
+        }
+      }
+
+      // Cascade tier prices: when saving priceTierN, cap all higher tiers that are more expensive
+      if (field.startsWith("priceTier") && newVal) {
+        const tier = parseInt(field.replace("priceTier", ""), 10); // 2,3,4,5
+        const newPrice = parseFloat(newVal);
+        for (let m = tier + 1; m <= 5; m++) {
           const key = `priceTier${m}` as keyof ApiProduct;
           const tierVal = product[key];
           const tierPrice = tierVal ? parseFloat(String(tierVal)) : 0;
@@ -886,27 +980,14 @@ export default function ProductsPage() {
           }
         }
       }
-    }
 
-    // Cascade tier prices: when saving priceTierN, cap all higher tiers that are more expensive
-    if (field.startsWith("priceTier") && newVal) {
-      const tier = parseInt(field.replace("priceTier", ""), 10); // 2,3,4,5
-      const newPrice = parseFloat(newVal);
-      for (let m = tier + 1; m <= 5; m++) {
-        const key = `priceTier${m}` as keyof ApiProduct;
-        const tierVal = product[key];
-        const tierPrice = tierVal ? parseFloat(String(tierVal)) : 0;
-        if (!tierVal || tierPrice > newPrice) {
-          updates[`priceTier${m}`] = newVal;
-        }
-      }
-    }
-
-    await updateProduct.mutateAsync(updates);
-    toast({ title: `${field} updated`, variant: "success" });
-    setUndoStack((prev) => [...prev.slice(-19), record]);
-    setRedoStack([]);
-  }, [updateProduct, toast]);
+      await updateProduct.mutateAsync(updates);
+      toast({ title: `${field} updated`, variant: "success" });
+      setUndoStack((prev) => [...prev.slice(-19), record]);
+      setRedoStack([]);
+    },
+    [updateProduct, toast],
+  );
 
   const handleUndo = async () => {
     const record = undoStack[undoStack.length - 1];
@@ -941,8 +1022,16 @@ export default function ProductsPage() {
       const updates: { id: string; [k: string]: unknown } = { id, pricePerUnit: newPriceStr };
       if (product) {
         const oldPrice = parseFloat(String(product.pricePerUnit)).toFixed(2);
-        const allSameAsOld = [product.priceTier2, product.priceTier3, product.priceTier4, product.priceTier5].every(
-          (t) => !t || parseFloat(String(t)).toFixed(2) === oldPrice || parseFloat(String(t)).toFixed(2) === "0.00",
+        const allSameAsOld = [
+          product.priceTier2,
+          product.priceTier3,
+          product.priceTier4,
+          product.priceTier5,
+        ].every(
+          (t) =>
+            !t ||
+            parseFloat(String(t)).toFixed(2) === oldPrice ||
+            parseFloat(String(t)).toFixed(2) === "0.00",
         );
         if (allSameAsOld) {
           updates.priceTier2 = newPriceStr;
@@ -1001,13 +1090,19 @@ export default function ProductsPage() {
     };
     input.addEventListener("keydown", handleKeyDown);
     return () => input.removeEventListener("keydown", handleKeyDown);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Reset to page 1 whenever filters change
-  React.useEffect(() => { setPage(1); }, [debouncedSearch, categoryFilter, stockFilter, pageSize]);
+  React.useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch, categoryFilter, stockFilter, pageSize]);
 
-  const { data: result, isLoading, isError } = useProducts({
+  const {
+    data: result,
+    isLoading,
+    isError,
+  } = useProducts({
     search: debouncedSearch,
     category: categoryFilter || undefined,
     stockStatus: (stockFilter || undefined) as any,
@@ -1025,11 +1120,15 @@ export default function ProductsPage() {
   const totalItems = meta?.total ?? 0;
 
   const categories = Array.from(
-    new Set((allProductsForCategories?.data ?? productList).map((p: ApiProduct) => p.category).filter(Boolean))
+    new Set(
+      (allProductsForCategories?.data ?? productList)
+        .map((p: ApiProduct) => p.category)
+        .filter(Boolean),
+    ),
   ) as string[];
 
   const existingUnits = Array.from(
-    new Set(productList.map((p) => p.unit).filter(Boolean))
+    new Set(productList.map((p) => p.unit).filter(Boolean)),
   ) as string[];
 
   // Items are now fully server-filtered — no client-side filtering needed
@@ -1060,7 +1159,10 @@ export default function ProductsPage() {
     try {
       const res = await bulkDelete.mutateAsync(ids);
       setSelected(new Set());
-      toast({ title: `${res.deleted} product${res.deleted !== 1 ? "s" : ""} deleted`, variant: "success" });
+      toast({
+        title: `${res.deleted} product${res.deleted !== 1 ? "s" : ""} deleted`,
+        variant: "success",
+      });
     } catch {
       toast({ title: "Failed to delete products", variant: "error" });
     }
@@ -1069,14 +1171,37 @@ export default function ProductsPage() {
   const productIdList = (result?.data ?? []).map((p: ApiProduct) => p.id);
 
   const tableColumns = React.useMemo(
-    () => makeTableColumns(
-      selected, toggleOne, filteredIds, toggleAll, selectMode,
-      handleEditPrice, editingPriceId, editPriceValue, setEditPriceValue,
-      handleEditPriceSave, handleEditPriceCancel,
-      quickEditMode, handleQuickSave, barcodeRefs, productIdList, categories,
-    ),
+    () =>
+      makeTableColumns(
+        selected,
+        toggleOne,
+        filteredIds,
+        toggleAll,
+        selectMode,
+        handleEditPrice,
+        editingPriceId,
+        editPriceValue,
+        setEditPriceValue,
+        handleEditPriceSave,
+        handleEditPriceCancel,
+        quickEditMode,
+        handleQuickSave,
+        barcodeRefs,
+        productIdList,
+        categories,
+      ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [selected, filteredIds.join(","), allFilteredSelected, selectMode, editingPriceId, editPriceValue, quickEditMode, productIdList.join(","), categories.join(",")],
+    [
+      selected,
+      filteredIds.join(","),
+      allFilteredSelected,
+      selectMode,
+      editingPriceId,
+      editPriceValue,
+      quickEditMode,
+      productIdList.join(","),
+      categories.join(","),
+    ],
   );
 
   return (
@@ -1088,15 +1213,23 @@ export default function ProductsPage() {
           <div className="flex items-center gap-2">
             <Button
               variant="secondary"
-              leftIcon={selectMode ? <XIcon className="h-4 w-4" /> : <CheckSquare className="h-4 w-4" />}
-              onClick={() => { setSelectMode((m) => !m); setSelected(new Set()); }}
+              leftIcon={
+                selectMode ? <XIcon className="h-4 w-4" /> : <CheckSquare className="h-4 w-4" />
+              }
+              onClick={() => {
+                setSelectMode((m) => !m);
+                setSelected(new Set());
+              }}
             >
               {selectMode ? "Cancel" : "Select"}
             </Button>
             <Button
               variant={quickEditMode ? "primary" : "secondary"}
               leftIcon={<Pencil className="h-4 w-4" />}
-              onClick={() => { setQuickEditMode((q) => !q); setViewMode("table"); }}
+              onClick={() => {
+                setQuickEditMode((q) => !q);
+                setViewMode("table");
+              }}
               title="Quickly add SKU, barcode, and category inline. Supports barcode scanners."
             >
               {quickEditMode ? "Exit Quick Edit" : "Quick Edit"}
@@ -1113,10 +1246,17 @@ export default function ProductsPage() {
         <div className="rounded-lg bg-brand-50 border border-brand-200 px-4 py-2.5 text-sm text-brand-700 flex items-center gap-2">
           <Pencil className="h-4 w-4 shrink-0" />
           <span>
-            <strong>Quick Edit Mode</strong> — click any SKU/Barcode, Category, or Tier Price cell to edit.
-            Press <kbd className="rounded border border-brand-300 bg-white px-1 py-0.5 text-xs font-mono">Enter</kbd> to save,{" "}
-            <kbd className="rounded border border-brand-300 bg-white px-1 py-0.5 text-xs font-mono">Esc</kbd> to cancel.
-            Tier prices cascade automatically — setting T2 caps T3–T5 to the same or lower. Use the 📷 camera button for mobile scanning.
+            <strong>Quick Edit Mode</strong> — click any SKU/Barcode, Category, or Tier Price cell
+            to edit. Press{" "}
+            <kbd className="rounded border border-brand-300 bg-white px-1 py-0.5 text-xs font-mono">
+              Enter
+            </kbd>{" "}
+            to save,{" "}
+            <kbd className="rounded border border-brand-300 bg-white px-1 py-0.5 text-xs font-mono">
+              Esc
+            </kbd>{" "}
+            to cancel. Tier prices cascade automatically — setting T2 caps T3–T5 to the same or
+            lower. Use the 📷 camera button for mobile scanning.
           </span>
         </div>
       )}
@@ -1124,14 +1264,21 @@ export default function ProductsPage() {
       {/* Create product modal */}
       {showCreate && (
         <CreateProductModal
-          onClose={() => { setShowCreate(false); setNewVariantParentId(undefined); }}
+          onClose={() => {
+            setShowCreate(false);
+            setNewVariantParentId(undefined);
+          }}
           onCreate={async (data) => {
             try {
               const product = await createProduct.mutateAsync(data as any);
               toast({ title: "Product created", variant: "success" });
               return product as { id: string };
             } catch (err: any) {
-              toast({ title: "Failed to create product", description: err?.message, variant: "error" });
+              toast({
+                title: "Failed to create product",
+                description: err?.message,
+                variant: "error",
+              });
               throw err;
             }
           }}
@@ -1155,12 +1302,14 @@ export default function ProductsPage() {
               type="checkbox"
               checked={allFilteredSelected}
               ref={(el) => {
-                if (el) el.indeterminate = !allFilteredSelected && filteredIds.some((id) => selected.has(id));
+                if (el)
+                  el.indeterminate =
+                    !allFilteredSelected && filteredIds.some((id) => selected.has(id));
               }}
               onChange={toggleAll}
               className="h-4 w-4 cursor-pointer rounded border-navy/30 accent-brand-500"
             />
-            <span className="text-sm text-navy/60">Select all</span>
+            <span className="text-sm text-navy/70">Select all</span>
           </label>
         )}
 
@@ -1170,7 +1319,7 @@ export default function ProductsPage() {
           placeholder="Search by name, SKU or scan barcode…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="h-10 w-72 rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/40 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+          className="h-10 w-72 rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/70 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
         />
         <div className="w-44">
           <Select
@@ -1216,7 +1365,7 @@ export default function ProductsPage() {
             onClick={() => setViewMode("grid")}
             className={cn(
               "rounded p-1.5 transition-colors",
-              viewMode === "grid" ? "bg-navy text-white" : "text-navy/40 hover:text-navy",
+              viewMode === "grid" ? "bg-navy text-white" : "text-navy/70 hover:text-navy",
             )}
             title="Grid view"
           >
@@ -1226,7 +1375,7 @@ export default function ProductsPage() {
             onClick={() => setViewMode("table")}
             className={cn(
               "rounded p-1.5 transition-colors",
-              viewMode === "table" ? "bg-navy text-white" : "text-navy/40 hover:text-navy",
+              viewMode === "table" ? "bg-navy text-white" : "text-navy/70 hover:text-navy",
             )}
             title="Table view"
           >
@@ -1244,7 +1393,7 @@ export default function ProductsPage() {
           <div className="flex items-center gap-2">
             <button
               onClick={() => setSelected(new Set())}
-              className="text-sm text-navy/50 hover:text-navy transition-colors"
+              className="text-sm text-navy/70 hover:text-navy transition-colors"
             >
               Deselect all
             </button>
@@ -1299,8 +1448,38 @@ export default function ProductsPage() {
           <span className="text-sm text-danger">Failed to load data. Please try refreshing.</span>
         </div>
       ) : filtered.length === 0 ? (
-        <div className="rounded-lg border border-surface-border bg-white py-12 text-center">
-          <p className="text-sm text-navy/40">No products match your filters.</p>
+        <div className="rounded-lg border border-surface-border bg-white">
+          {search || categoryFilter || stockFilter ? (
+            <EmptyState
+              variant="products"
+              title="No matching products"
+              description="No products match your current search and filters."
+              action={
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    setSearch("");
+                    setCategoryFilter("");
+                    setStockFilter("");
+                  }}
+                >
+                  Clear filters
+                </Button>
+              }
+            />
+          ) : (
+            <EmptyState
+              variant="products"
+              title="No products yet"
+              description="Add your first product to build your catalog and start taking orders."
+              action={
+                <Button size="sm" onClick={() => setShowCreate(true)}>
+                  New product
+                </Button>
+              }
+            />
+          )}
         </div>
       ) : viewMode === "grid" ? (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
@@ -1310,9 +1489,15 @@ export default function ProductsPage() {
               product={p}
               selected={selected.has(p.id)}
               selectionMode={selectMode}
-              onSelect={(e) => { e.stopPropagation(); toggleOne(p.id); }}
+              onSelect={(e) => {
+                e.stopPropagation();
+                toggleOne(p.id);
+              }}
               onClick={() => router.push(`/products/${p.id}`)}
-              onAddVariant={(parentId) => { setNewVariantParentId(parentId); setShowCreate(true); }}
+              onAddVariant={(parentId) => {
+                setNewVariantParentId(parentId);
+                setShowCreate(true);
+              }}
             />
           ))}
         </div>
@@ -1330,7 +1515,7 @@ export default function ProductsPage() {
       {/* Pagination bar */}
       {!isLoading && totalItems > 0 && pageSize !== 0 && totalPages > 1 && (
         <div className="flex items-center justify-between rounded-lg border border-surface-border bg-white px-4 py-3">
-          <p className="text-sm text-navy/60">
+          <p className="text-sm text-navy/70">
             Showing{" "}
             <span className="font-medium text-navy">
               {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, totalItems)}
@@ -1341,14 +1526,14 @@ export default function ProductsPage() {
             <button
               onClick={() => setPage(1)}
               disabled={page === 1}
-              className="rounded px-2 py-1.5 text-xs font-medium text-navy/50 hover:bg-surface-raised hover:text-navy disabled:cursor-not-allowed disabled:opacity-30 transition-colors"
+              className="rounded px-2 py-1.5 text-xs font-medium text-navy/70 hover:bg-surface-raised hover:text-navy disabled:cursor-not-allowed disabled:opacity-30 transition-colors"
             >
               «
             </button>
             <button
               onClick={() => setPage((p) => Math.max(1, p - 1))}
               disabled={page === 1}
-              className="rounded px-2 py-1.5 text-xs font-medium text-navy/50 hover:bg-surface-raised hover:text-navy disabled:cursor-not-allowed disabled:opacity-30 transition-colors"
+              className="rounded px-2 py-1.5 text-xs font-medium text-navy/70 hover:bg-surface-raised hover:text-navy disabled:cursor-not-allowed disabled:opacity-30 transition-colors"
             >
               ‹ Prev
             </button>
@@ -1363,7 +1548,9 @@ export default function ProductsPage() {
               }, [])
               .map((item, idx) =>
                 item === "…" ? (
-                  <span key={`ellipsis-${idx}`} className="px-1 text-xs text-navy/30">…</span>
+                  <span key={`ellipsis-${idx}`} className="px-1 text-xs text-navy/30">
+                    …
+                  </span>
                 ) : (
                   <button
                     key={item}
@@ -1372,7 +1559,7 @@ export default function ProductsPage() {
                       "min-w-[30px] rounded px-2 py-1.5 text-xs font-medium transition-colors",
                       page === item
                         ? "bg-navy text-white"
-                        : "text-navy/60 hover:bg-surface-raised hover:text-navy",
+                        : "text-navy/70 hover:bg-surface-raised hover:text-navy",
                     )}
                   >
                     {item}
@@ -1383,14 +1570,14 @@ export default function ProductsPage() {
             <button
               onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
               disabled={page === totalPages}
-              className="rounded px-2 py-1.5 text-xs font-medium text-navy/50 hover:bg-surface-raised hover:text-navy disabled:cursor-not-allowed disabled:opacity-30 transition-colors"
+              className="rounded px-2 py-1.5 text-xs font-medium text-navy/70 hover:bg-surface-raised hover:text-navy disabled:cursor-not-allowed disabled:opacity-30 transition-colors"
             >
               Next ›
             </button>
             <button
               onClick={() => setPage(totalPages)}
               disabled={page === totalPages}
-              className="rounded px-2 py-1.5 text-xs font-medium text-navy/50 hover:bg-surface-raised hover:text-navy disabled:cursor-not-allowed disabled:opacity-30 transition-colors"
+              className="rounded px-2 py-1.5 text-xs font-medium text-navy/70 hover:bg-surface-raised hover:text-navy disabled:cursor-not-allowed disabled:opacity-30 transition-colors"
             >
               »
             </button>
@@ -1400,7 +1587,7 @@ export default function ProductsPage() {
 
       {/* Total count when showing all */}
       {!isLoading && totalItems > 0 && pageSize === 0 && (
-        <p className="text-center text-sm text-navy/40">
+        <p className="text-center text-sm text-navy/70">
           Showing all <span className="font-medium text-navy">{totalItems}</span> products
         </p>
       )}
@@ -1428,7 +1615,10 @@ export default function ProductsPage() {
             </button>
           )}
           <button
-            onClick={() => { setUndoStack([]); setRedoStack([]); }}
+            onClick={() => {
+              setUndoStack([]);
+              setRedoStack([]);
+            }}
             className="ml-1 text-white/30 hover:text-white transition-colors"
             title="Clear history"
           >

@@ -1,11 +1,4 @@
-import {
-  ActivityIndicator,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -62,32 +55,110 @@ function statusActions(current: string): StatusAction[] {
   switch (current) {
     case "DRAFT":
       return [
-        { label: "Submit for review", toStatus: "PENDING", style: "primary", icon: "arrow-forward-circle-outline" },
+        {
+          label: "Submit for review",
+          toStatus: "PENDING",
+          style: "primary",
+          icon: "arrow-forward-circle-outline",
+        },
       ];
     case "PENDING":
       return [
-        { label: "Confirm order", toStatus: "CONFIRMED", style: "primary", icon: "checkmark-circle-outline" },
-        { label: "Cancel order", toStatus: "CANCELLED", style: "danger", icon: "close-circle-outline", confirmMessage: "Cancel this order? It cannot be undone easily." },
+        {
+          label: "Confirm order",
+          toStatus: "CONFIRMED",
+          style: "primary",
+          icon: "checkmark-circle-outline",
+        },
+        {
+          label: "Cancel order",
+          toStatus: "CANCELLED",
+          style: "danger",
+          icon: "close-circle-outline",
+          confirmMessage: "Cancel this order? It cannot be undone easily.",
+        },
       ];
     case "CONFIRMED":
       return [
-        { label: "Send for delivery", toStatus: "OUT_FOR_DELIVERY", style: "primary", icon: "car-outline" },
-        { label: "Quick deliver", toStatus: "DELIVERED", style: "secondary", icon: "flash-outline", confirmMessage: "Mark as delivered without going through dispatch?" },
-        { label: "Back to pending", toStatus: "PENDING", style: "warning", icon: "arrow-back-circle-outline", confirmMessage: "Revert order back to Pending?" },
-        { label: "Cancel order", toStatus: "CANCELLED", style: "danger", icon: "close-circle-outline", confirmMessage: "Cancel this order?" },
+        {
+          label: "Send for delivery",
+          toStatus: "OUT_FOR_DELIVERY",
+          style: "primary",
+          icon: "car-outline",
+        },
+        {
+          label: "Quick deliver",
+          toStatus: "DELIVERED",
+          style: "secondary",
+          icon: "flash-outline",
+          confirmMessage: "Mark as delivered without going through dispatch?",
+        },
+        {
+          label: "Back to pending",
+          toStatus: "PENDING",
+          style: "warning",
+          icon: "arrow-back-circle-outline",
+          confirmMessage: "Revert order back to Pending?",
+        },
+        {
+          label: "Cancel order",
+          toStatus: "CANCELLED",
+          style: "danger",
+          icon: "close-circle-outline",
+          confirmMessage: "Cancel this order?",
+        },
       ];
     case "OUT_FOR_DELIVERY":
       return [
-        { label: "Mark delivered", toStatus: "DELIVERED", style: "primary", icon: "checkmark-done-circle-outline" },
-        { label: "Partial delivery", toStatus: "PARTIALLY_DELIVERED", style: "secondary", icon: "git-branch-outline" },
-        { label: "Back to confirmed", toStatus: "CONFIRMED", style: "warning", icon: "arrow-back-circle-outline", confirmMessage: "Revert order back to Confirmed?" },
-        { label: "Cancel order", toStatus: "CANCELLED", style: "danger", icon: "close-circle-outline", confirmMessage: "Cancel this order?" },
+        {
+          label: "Mark delivered",
+          toStatus: "DELIVERED",
+          style: "primary",
+          icon: "checkmark-done-circle-outline",
+        },
+        {
+          label: "Partial delivery",
+          toStatus: "PARTIALLY_DELIVERED",
+          style: "secondary",
+          icon: "git-branch-outline",
+        },
+        {
+          label: "Back to confirmed",
+          toStatus: "CONFIRMED",
+          style: "warning",
+          icon: "arrow-back-circle-outline",
+          confirmMessage: "Revert order back to Confirmed?",
+        },
+        {
+          label: "Cancel order",
+          toStatus: "CANCELLED",
+          style: "danger",
+          icon: "close-circle-outline",
+          confirmMessage: "Cancel this order?",
+        },
       ];
     case "PARTIALLY_DELIVERED":
       return [
-        { label: "Mark fully delivered", toStatus: "DELIVERED", style: "primary", icon: "checkmark-done-circle-outline" },
-        { label: "Back out for delivery", toStatus: "OUT_FOR_DELIVERY", style: "warning", icon: "arrow-back-circle-outline", confirmMessage: "Revert back to Out for delivery?" },
-        { label: "Cancel order", toStatus: "CANCELLED", style: "danger", icon: "close-circle-outline", confirmMessage: "Cancel this order?" },
+        {
+          label: "Mark fully delivered",
+          toStatus: "DELIVERED",
+          style: "primary",
+          icon: "checkmark-done-circle-outline",
+        },
+        {
+          label: "Back out for delivery",
+          toStatus: "OUT_FOR_DELIVERY",
+          style: "warning",
+          icon: "arrow-back-circle-outline",
+          confirmMessage: "Revert back to Out for delivery?",
+        },
+        {
+          label: "Cancel order",
+          toStatus: "CANCELLED",
+          style: "danger",
+          icon: "close-circle-outline",
+          confirmMessage: "Cancel this order?",
+        },
       ];
     default:
       return [];
@@ -157,17 +228,20 @@ export default function OrderDetailScreen() {
   };
 
   const handleDelete = () => {
-    confirm("Delete order?", "This permanently removes the order.", () =>
-      deleteMut.mutate(order.id, {
-        onSuccess: () => {
-          showToast("Order deleted");
-          router.back();
-        },
-        onError: (e: unknown) => {
-          const err = e as { response?: { data?: { message?: string } }; message?: string };
-          showToast(err?.response?.data?.message ?? err?.message ?? "Try again.");
-        },
-      }),
+    confirm(
+      "Delete order?",
+      "This permanently removes the order.",
+      () =>
+        deleteMut.mutate(order.id, {
+          onSuccess: () => {
+            showToast("Order deleted");
+            router.back();
+          },
+          onError: (e: unknown) => {
+            const err = e as { response?: { data?: { message?: string } }; message?: string };
+            showToast(err?.response?.data?.message ?? err?.message ?? "Try again.");
+          },
+        }),
       { confirmText: "Delete", destructive: true },
     );
   };
@@ -216,9 +290,7 @@ export default function OrderDetailScreen() {
               </Pill>
               {order.urgent ? <Pill variant="red">Urgent</Pill> : null}
             </View>
-            <Text style={styles.customerName}>
-              {order.customer?.businessName ?? "Customer"}
-            </Text>
+            <Text style={styles.customerName}>{order.customer?.businessName ?? "Customer"}</Text>
             {order.customer?.contactName || order.customer?.phone ? (
               <Text style={styles.customerSub}>
                 {[order.customer?.contactName, order.customer?.phone].filter(Boolean).join(" · ")}
@@ -234,9 +306,7 @@ export default function OrderDetailScreen() {
                 Delivered {new Date(order.deliveredAt).toLocaleDateString()}
               </Text>
             ) : null}
-            {order.notes ? (
-              <Text style={styles.notes}>"{order.notes}"</Text>
-            ) : null}
+            {order.notes ? <Text style={styles.notes}>"{order.notes}"</Text> : null}
           </View>
 
           {/* Items */}
@@ -262,7 +332,8 @@ export default function OrderDetailScreen() {
                   if (li.boxes != null && li.boxes >= 0 && (li.boxes > 0 || (li.pieces ?? 0) > 0)) {
                     const parts: string[] = [];
                     if (li.boxes > 0) parts.push(`${li.boxes} box${li.boxes === 1 ? "" : "es"}`);
-                    if ((li.pieces ?? 0) > 0) parts.push(`${li.pieces} ${li.product?.unit ?? "pcs"}`);
+                    if ((li.pieces ?? 0) > 0)
+                      parts.push(`${li.pieces} ${li.product?.unit ?? "pcs"}`);
                     return parts.join(" + ");
                   }
                   return `${li.qty} ${li.product?.unit ?? "ea"}`;
@@ -272,7 +343,10 @@ export default function OrderDetailScreen() {
                     key={li.id}
                     style={[
                       styles.itemRow,
-                      i > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: ios.separator },
+                      i > 0 && {
+                        borderTopWidth: StyleSheet.hairlineWidth,
+                        borderTopColor: ios.separator,
+                      },
                     ]}
                   >
                     <View style={{ flex: 1, minWidth: 0 }}>
@@ -288,7 +362,13 @@ export default function OrderDetailScreen() {
                       <Text style={styles.itemTotal}>{formatCurrency(li.subtotal)}</Text>
                       {li.status && li.status !== "PENDING" ? (
                         <Pill
-                          variant={li.status === "DELIVERED" ? "green" : li.status === "PARTIAL" ? "orange" : "gray"}
+                          variant={
+                            li.status === "DELIVERED"
+                              ? "green"
+                              : li.status === "PARTIAL"
+                                ? "orange"
+                                : "gray"
+                          }
                           small
                           dot={false}
                         >
@@ -371,7 +451,9 @@ export default function OrderDetailScreen() {
               {/* Split into multiple invoices — available once the order has items
                   and isn't a draft / cancelled. The screen prevents over-invoicing via
                   OrderItem.invoicedQty. */}
-              {order.status !== "DRAFT" && order.status !== "CANCELLED" && (order.lineItems?.length ?? 0) > 0 ? (
+              {order.status !== "DRAFT" &&
+              order.status !== "CANCELLED" &&
+              (order.lineItems?.length ?? 0) > 0 ? (
                 <Pressable
                   style={[styles.actionBtn, styles.secondaryAction]}
                   onPress={() => router.push(`/(operator)/orders/${order.id}/split-invoice`)}
@@ -411,9 +493,7 @@ export default function OrderDetailScreen() {
                 disabled={deleteMut.isPending}
               >
                 <Ionicons name="trash-outline" size={18} color={ios.system.red} />
-                <Text style={[styles.actionBtnText, { color: ios.system.red }]}>
-                  Delete order
-                </Text>
+                <Text style={[styles.actionBtnText, { color: ios.system.red }]}>Delete order</Text>
               </Pressable>
             </View>
           </View>
@@ -463,7 +543,12 @@ const styles = StyleSheet.create({
   },
   totalRowMain: { paddingTop: 8, borderTopWidth: 0, marginTop: 0 },
   totalLabel: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2 },
-  totalValue: { fontSize: 13, fontFamily: "Inter_500Medium", color: ios.label, fontVariant: ["tabular-nums"] },
+  totalValue: {
+    fontSize: 13,
+    fontFamily: "Inter_500Medium",
+    color: ios.label,
+    fontVariant: ["tabular-nums"],
+  },
   totalLabelMain: { fontSize: 15, fontFamily: "Inter_700Bold", color: ios.label },
   totalValueMain: {
     fontSize: 17,

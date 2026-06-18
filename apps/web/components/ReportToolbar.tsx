@@ -29,13 +29,25 @@ function getPresets(): DatePreset[] {
   return [
     { label: "This Month", from: fmt(new Date(y, m, 1)), to: fmt(new Date(y, m + 1, 0)) },
     { label: "Last Month", from: fmt(new Date(y, m - 1, 1)), to: fmt(new Date(y, m, 0)) },
-    { label: "This Quarter", from: fmt(new Date(y, Math.floor(m / 3) * 3, 1)), to: fmt(new Date(y, Math.floor(m / 3) * 3 + 3, 0)) },
+    {
+      label: "This Quarter",
+      from: fmt(new Date(y, Math.floor(m / 3) * 3, 1)),
+      to: fmt(new Date(y, Math.floor(m / 3) * 3 + 3, 0)),
+    },
     { label: "This Year", from: fmt(new Date(y, 0, 1)), to: fmt(new Date(y, 11, 31)) },
     { label: "Last Year", from: fmt(new Date(y - 1, 0, 1)), to: fmt(new Date(y - 1, 11, 31)) },
   ];
 }
 
-export function ReportToolbar({ from, to, onFromChange, onToChange, onExportCSV, onPrint, children }: ReportToolbarProps) {
+export function ReportToolbar({
+  from,
+  to,
+  onFromChange,
+  onToChange,
+  onExportCSV,
+  onPrint,
+  children,
+}: ReportToolbarProps) {
   const presets = React.useMemo(() => getPresets(), []);
 
   return (
@@ -45,7 +57,10 @@ export function ReportToolbar({ from, to, onFromChange, onToChange, onExportCSV,
         {presets.map((p) => (
           <button
             key={p.label}
-            onClick={() => { onFromChange(p.from); onToChange(p.to); }}
+            onClick={() => {
+              onFromChange(p.from);
+              onToChange(p.to);
+            }}
             className={`rounded px-2.5 py-1.5 text-xs font-medium transition-colors ${
               from === p.from && to === p.to
                 ? "bg-brand-500 text-white"
@@ -65,7 +80,7 @@ export function ReportToolbar({ from, to, onFromChange, onToChange, onExportCSV,
           onChange={(e) => onFromChange(e.target.value)}
           className="h-9 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
         />
-        <span className="text-sm text-navy/40">to</span>
+        <span className="text-sm text-navy/70">to</span>
         <input
           type="date"
           value={to}

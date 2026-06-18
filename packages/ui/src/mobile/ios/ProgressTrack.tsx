@@ -22,12 +22,7 @@ export function ProgressTrack({ percent, fill = "brand", height = 4 }: ProgressT
   const clamped = Math.max(0, Math.min(100, percent));
   return (
     <View style={[styles.track, { height }]}>
-      <View
-        style={[
-          styles.fill,
-          { width: `${clamped}%`, backgroundColor: fillColor, height },
-        ]}
-      />
+      <View style={[styles.fill, { width: `${clamped}%`, backgroundColor: fillColor, height }]} />
     </View>
   );
 }

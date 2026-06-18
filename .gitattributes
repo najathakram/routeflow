@@ -1,0 +1,20 @@
+# Normalize line endings to LF for all text files.
+# Overrides core.autocrlf so Windows checkouts stay LF-consistent with Prettier.
+* text=auto eol=lf
+
+# Binary files — no line-ending conversion
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.pdf binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.eot binary
+*.zip binary
+*.tar binary
+*.gz binary

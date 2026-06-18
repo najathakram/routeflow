@@ -2,23 +2,10 @@
 
 import * as React from "react";
 import { useParams, useRouter } from "next/navigation";
-import {
-  Heart,
-  Plus,
-  Minus,
-  Package,
-  Loader2,
-  Trash2,
-  Store,
-  AlertTriangle,
-} from "lucide-react";
+import { Heart, Plus, Minus, Package, Loader2, Trash2, Store, AlertTriangle } from "lucide-react";
 import { Button } from "@routeflow/ui/web";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
-import {
-  useBuyerFavorites,
-  useBuyerRemoveFavorite,
-  type BuyerFavoriteItem,
-} from "@/lib/api/buyer";
+import { useBuyerFavorites, useBuyerRemoveFavorite, type BuyerFavoriteItem } from "@/lib/api/buyer";
 import { useBuyerCart } from "@/lib/buyer-cart";
 import { objectPositionForUrl } from "@/lib/image-focal";
 
@@ -75,15 +62,13 @@ function FavoriteCard({
       <div className="flex flex-1 flex-col gap-2 p-3">
         <div className="flex-1">
           <h3 className="text-sm font-semibold text-navy line-clamp-2">{item.name}</h3>
-          {item.sku && (
-            <p className="text-[11px] text-navy/40 mt-0.5">SKU: {item.sku}</p>
-          )}
+          {item.sku && <p className="text-[11px] text-navy/70 mt-0.5">SKU: {item.sku}</p>}
         </div>
 
         <div className="flex items-end justify-between gap-2">
           <div>
             <p className="text-lg font-bold text-navy">{fmt(item.buyerPrice)}</p>
-            <p className="text-[11px] text-navy/40">per {item.unit}</p>
+            <p className="text-[11px] text-navy/70">per {item.unit}</p>
           </div>
 
           {cartQty > 0 ? (
@@ -159,7 +144,7 @@ export default function BuyerFavoritesPage() {
     <div className="p-6">
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-navy">Favorites</h1>
-        <p className="text-sm text-navy/60 mt-1">
+        <p className="text-sm text-navy/70 mt-1">
           Your saved products from {activeSeller?.tenant.name}
         </p>
       </div>
@@ -173,7 +158,7 @@ export default function BuyerFavoritesPage() {
         <div className="rounded-xl border border-dashed border-surface-border bg-white p-12 text-center">
           <Heart className="mx-auto mb-4 h-12 w-12 text-navy/20" />
           <h2 className="text-lg font-semibold text-navy mb-2">No favorites yet</h2>
-          <p className="text-sm text-navy/60 mb-4">
+          <p className="text-sm text-navy/70 mb-4">
             Browse the shop and tap the heart icon on products you want to save.
           </p>
           <Button

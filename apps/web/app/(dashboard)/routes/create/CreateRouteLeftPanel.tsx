@@ -37,7 +37,10 @@ export function CreateRouteLeftPanel({
   isSubmitting,
 }: CreateRouteLeftPanelProps) {
   const router = useRouter();
-  const { register, formState: { errors } } = form;
+  const {
+    register,
+    formState: { errors },
+  } = form;
 
   // ── Customer search ──
   const [customerSearch, setCustomerSearch] = React.useState("");
@@ -55,8 +58,7 @@ export function CreateRouteLeftPanel({
     return customers
       .filter(
         (c) =>
-          c.businessName?.toLowerCase().includes(q) ||
-          c.contactName?.toLowerCase().includes(q),
+          c.businessName?.toLowerCase().includes(q) || c.contactName?.toLowerCase().includes(q),
       )
       .slice(0, 8);
   }, [customers, debouncedSearch]);
@@ -75,7 +77,10 @@ export function CreateRouteLeftPanel({
 
   return (
     <form
-      onSubmit={(e) => { e.preventDefault(); onSubmit(); }}
+      onSubmit={(e) => {
+        e.preventDefault();
+        onSubmit();
+      }}
       noValidate
       className="flex flex-1 flex-col overflow-hidden"
     >
@@ -100,7 +105,7 @@ export function CreateRouteLeftPanel({
 
       {/* Stops header */}
       <div className="shrink-0 border-b border-surface-border bg-surface-raised px-4 py-2.5">
-        <p className="text-xs font-semibold uppercase tracking-wider text-navy/50">
+        <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">
           Stops ({stops.length})
         </p>
       </div>
@@ -133,7 +138,7 @@ export function CreateRouteLeftPanel({
               setShowDropdown(true);
             }}
             onFocus={() => setShowDropdown(true)}
-            className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/40 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+            className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/70 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
           />
           {showDropdown && filteredCustomers.length > 0 && customerSearch && (
             <ul className="absolute left-0 right-0 top-full z-10 mt-1 max-h-64 overflow-y-auto rounded-lg border border-surface-border bg-white shadow-dropdown">
@@ -164,17 +169,15 @@ export function CreateRouteLeftPanel({
                       <div className="min-w-0 flex-1">
                         <span className="font-medium">{c.businessName}</span>
                         {c.contactName && (
-                          <span className="ml-1.5 text-xs text-navy/50">{c.contactName}</span>
+                          <span className="ml-1.5 text-xs text-navy/70">{c.contactName}</span>
                         )}
                         {routeAssigns && routeAssigns.length > 0 && (
-                          <p className="text-xs text-navy/40">
+                          <p className="text-xs text-navy/70">
                             Also in: {routeAssigns.map((r) => r.routeName).join(", ")}
                           </p>
                         )}
                       </div>
-                      {isAdded && (
-                        <span className="ml-auto text-xs text-navy/30">Added</span>
-                      )}
+                      {isAdded && <span className="ml-auto text-xs text-navy/30">Added</span>}
                     </button>
                   </li>
                 );
@@ -202,18 +205,16 @@ export function CreateRouteLeftPanel({
                   </span>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5">
-                      <p className="truncate text-sm font-medium text-navy">
-                        {stop.customerName}
-                      </p>
+                      <p className="truncate text-sm font-medium text-navy">{stop.customerName}</p>
                       {!hasCoords && (
                         <span title="No GPS coordinates">
                           <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-warning" />
                         </span>
                       )}
                     </div>
-                    <p className="truncate text-xs text-navy/50">{stop.address}</p>
+                    <p className="truncate text-xs text-navy/70">{stop.address}</p>
                     {routeAssigns && routeAssigns.length > 0 && (
-                      <p className="mt-0.5 text-xs text-navy/40">
+                      <p className="mt-0.5 text-xs text-navy/70">
                         Also in: {routeAssigns.map((r) => r.routeName).join(", ")}
                       </p>
                     )}
@@ -232,7 +233,7 @@ export function CreateRouteLeftPanel({
           </ul>
         ) : (
           <div className="rounded-lg border border-dashed border-surface-border bg-surface-raised py-12 text-center">
-            <p className="text-sm text-navy/40">
+            <p className="text-sm text-navy/70">
               Click pins on the map or search above to add stops.
             </p>
           </div>
@@ -250,11 +251,7 @@ export function CreateRouteLeftPanel({
           >
             Cancel
           </Button>
-          <Button
-            type="submit"
-            className="flex-1"
-            disabled={isSubmitting}
-          >
+          <Button type="submit" className="flex-1" disabled={isSubmitting}>
             {isSubmitting ? (
               <>
                 <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />

@@ -63,7 +63,16 @@ export interface IncomeChartData {
   expenses: number;
 }
 
-export function useCustomers(params?: { search?: string; status?: string; page?: number; limit?: number; tag?: string; customerType?: string; sortBy?: string; sortDir?: string }) {
+export function useCustomers(params?: {
+  search?: string;
+  status?: string;
+  page?: number;
+  limit?: number;
+  tag?: string;
+  customerType?: string;
+  sortBy?: string;
+  sortDir?: string;
+}) {
   return useQuery({
     queryKey: ["customers", params],
     queryFn: () => apiClient.get("/customers", { params }).then((r) => r.data),
@@ -196,7 +205,11 @@ export function useCustomerAdvancePayments(customerId: string) {
 
 export function useCreateAdvancePayment() {
   const qc = useQueryClient();
-  return useMutation<AdvancePayment, Error, { customerId: string; amount: number; method: string; reference?: string; notes?: string }>({
+  return useMutation<
+    AdvancePayment,
+    Error,
+    { customerId: string; amount: number; method: string; reference?: string; notes?: string }
+  >({
     mutationFn: ({ customerId, ...data }) =>
       apiClient.post(`/customers/${customerId}/advance-payments`, data).then((r) => r.data),
     onSuccess: (_d, vars) => {
@@ -208,9 +221,15 @@ export function useCreateAdvancePayment() {
 
 export function useApplyAdvancePayment() {
   const qc = useQueryClient();
-  return useMutation<unknown, Error, { customerId: string; advancePaymentId: string; invoiceId: string; amount?: number }>({
+  return useMutation<
+    unknown,
+    Error,
+    { customerId: string; advancePaymentId: string; invoiceId: string; amount?: number }
+  >({
     mutationFn: ({ customerId, advancePaymentId, ...data }) =>
-      apiClient.post(`/customers/${customerId}/advance-payments/${advancePaymentId}/apply`, data).then((r) => r.data),
+      apiClient
+        .post(`/customers/${customerId}/advance-payments/${advancePaymentId}/apply`, data)
+        .then((r) => r.data),
     onSuccess: (_d, vars) => {
       qc.invalidateQueries({ queryKey: ["customers", vars.customerId, "advance-payments"] });
       qc.invalidateQueries({ queryKey: ["customers", vars.customerId, "statement"] });
@@ -242,7 +261,7 @@ export interface CustomerPrice {
 
 export function useCustomerPrices(customerId: string | undefined) {
   return useQuery({
-    queryKey: ['customer-prices', customerId],
+    queryKey: ["customer-prices", customerId],
     queryFn: () => apiClient.get(`/customers/${customerId}/prices`).then((r) => r.data),
     enabled: !!customerId,
   });
@@ -251,10 +270,17 @@ export function useCustomerPrices(customerId: string | undefined) {
 export function useUpsertCustomerPrice() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ customerId, ...data }: { customerId: string; productId: string; pricingTier: number; notes?: string }) =>
-      apiClient.post(`/customers/${customerId}/prices`, data).then((r) => r.data),
+    mutationFn: ({
+      customerId,
+      ...data
+    }: {
+      customerId: string;
+      productId: string;
+      pricingTier: number;
+      notes?: string;
+    }) => apiClient.post(`/customers/${customerId}/prices`, data).then((r) => r.data),
     onSuccess: (_d, vars) => {
-      qc.invalidateQueries({ queryKey: ['customer-prices', vars.customerId] });
+      qc.invalidateQueries({ queryKey: ["customer-prices", vars.customerId] });
     },
   });
 }
@@ -265,7 +291,7 @@ export function useDeleteCustomerPrice() {
     mutationFn: ({ customerId, priceId }: { customerId: string; priceId: string }) =>
       apiClient.delete(`/customers/${customerId}/prices/${priceId}`).then((r) => r.data),
     onSuccess: (_d, vars) => {
-      qc.invalidateQueries({ queryKey: ['customer-prices', vars.customerId] });
+      qc.invalidateQueries({ queryKey: ["customer-prices", vars.customerId] });
     },
   });
 }
@@ -274,7 +300,9 @@ export function useDeleteCustomer() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => apiClient.delete(`/customers/${id}`).then((r) => r.data),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["customers"] }); },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["customers"] });
+    },
   });
 }
 
@@ -298,21 +326,14 @@ export function useCustomerDocuments(customerId: string) {
 
 export function useUploadCustomerDocuments(customerId: string) {
   const qc = useQueryClient();
-  return useMutation<
-    { uploaded: CustomerDocument[] },
-    Error,
-    { files: File[]; docType: string }
-  >({
+  return useMutation<{ uploaded: CustomerDocument[] }, Error, { files: File[]; docType: string }>({
     mutationFn: ({ files, docType }) => {
       const form = new FormData();
       files.forEach((f) => form.append("files", f));
       form.append("docType", docType);
-      return apiClient
-        .post(`/customers/${customerId}/documents`, form)
-        .then((r) => r.data);
+      return apiClient.post(`/customers/${customerId}/documents`, form).then((r) => r.data);
     },
-    onSuccess: () =>
-      qc.invalidateQueries({ queryKey: ["customers", customerId, "documents"] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["customers", customerId, "documents"] }),
   });
 }
 
@@ -321,8 +342,7 @@ export function useDeleteCustomerDocument(customerId: string) {
   return useMutation<void, Error, string>({
     mutationFn: (docId) =>
       apiClient.delete(`/customers/${customerId}/documents/${docId}`).then(() => undefined),
-    onSuccess: () =>
-      qc.invalidateQueries({ queryKey: ["customers", customerId, "documents"] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["customers", customerId, "documents"] }),
   });
 }
 
@@ -330,8 +350,12 @@ export function useBatchDeleteCustomers() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (ids: string[]) =>
-      apiClient.post("/customers/batch-delete", { ids }).then((r) => r.data as { deleted: number; failed: { id: string; reason: string }[] }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["customers"] }); },
+      apiClient
+        .post("/customers/batch-delete", { ids })
+        .then((r) => r.data as { deleted: number; failed: { id: string; reason: string }[] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["customers"] });
+    },
   });
 }
 
@@ -339,7 +363,9 @@ export function useDeleteAllCustomers() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => apiClient.delete("/customers/all").then((r) => r.data),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["customers"] }); },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["customers"] });
+    },
   });
 }
 
@@ -364,8 +390,7 @@ export function useCreateCustomerTag() {
 export function useDeleteCustomerTag() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (tagId: string) =>
-      apiClient.delete(`/customers/tags/${tagId}`).then((r) => r.data),
+    mutationFn: (tagId: string) => apiClient.delete(`/customers/tags/${tagId}`).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["customer-tags"] }),
   });
 }
@@ -407,18 +432,39 @@ export function useContactPersons(customerId: string) {
 export function useAddContactPerson() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ customerId, ...data }: { customerId: string; firstName: string; lastName?: string; email?: string; phone?: string; mobile?: string; salutation?: string; isPrimary?: boolean }) =>
-      apiClient.post(`/customers/${customerId}/contacts`, data).then((r) => r.data),
-    onSuccess: (_d, vars) => qc.invalidateQueries({ queryKey: ["customers", vars.customerId, "contacts"] }),
+    mutationFn: ({
+      customerId,
+      ...data
+    }: {
+      customerId: string;
+      firstName: string;
+      lastName?: string;
+      email?: string;
+      phone?: string;
+      mobile?: string;
+      salutation?: string;
+      isPrimary?: boolean;
+    }) => apiClient.post(`/customers/${customerId}/contacts`, data).then((r) => r.data),
+    onSuccess: (_d, vars) =>
+      qc.invalidateQueries({ queryKey: ["customers", vars.customerId, "contacts"] }),
   });
 }
 
 export function useUpdateContactPerson() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ customerId, contactId, ...data }: { customerId: string; contactId: string; [k: string]: unknown }) =>
+    mutationFn: ({
+      customerId,
+      contactId,
+      ...data
+    }: {
+      customerId: string;
+      contactId: string;
+      [k: string]: unknown;
+    }) =>
       apiClient.patch(`/customers/${customerId}/contacts/${contactId}`, data).then((r) => r.data),
-    onSuccess: (_d, vars) => qc.invalidateQueries({ queryKey: ["customers", vars.customerId, "contacts"] }),
+    onSuccess: (_d, vars) =>
+      qc.invalidateQueries({ queryKey: ["customers", vars.customerId, "contacts"] }),
   });
 }
 
@@ -427,7 +473,8 @@ export function useDeleteContactPerson() {
   return useMutation({
     mutationFn: ({ customerId, contactId }: { customerId: string; contactId: string }) =>
       apiClient.delete(`/customers/${customerId}/contacts/${contactId}`).then((r) => r.data),
-    onSuccess: (_d, vars) => qc.invalidateQueries({ queryKey: ["customers", vars.customerId, "contacts"] }),
+    onSuccess: (_d, vars) =>
+      qc.invalidateQueries({ queryKey: ["customers", vars.customerId, "contacts"] }),
   });
 }
 
@@ -446,7 +493,8 @@ export function useAddCustomerComment() {
   return useMutation({
     mutationFn: ({ customerId, content }: { customerId: string; content: string }) =>
       apiClient.post(`/customers/${customerId}/comments`, { content }).then((r) => r.data),
-    onSuccess: (_d, vars) => qc.invalidateQueries({ queryKey: ["customers", vars.customerId, "comments"] }),
+    onSuccess: (_d, vars) =>
+      qc.invalidateQueries({ queryKey: ["customers", vars.customerId, "comments"] }),
   });
 }
 
@@ -455,7 +503,8 @@ export function useDeleteCustomerComment() {
   return useMutation({
     mutationFn: ({ customerId, commentId }: { customerId: string; commentId: string }) =>
       apiClient.delete(`/customers/${customerId}/comments/${commentId}`).then((r) => r.data),
-    onSuccess: (_d, vars) => qc.invalidateQueries({ queryKey: ["customers", vars.customerId, "comments"] }),
+    onSuccess: (_d, vars) =>
+      qc.invalidateQueries({ queryKey: ["customers", vars.customerId, "comments"] }),
   });
 }
 
@@ -519,9 +568,20 @@ export function usePortalStatus(customerId: string) {
 export function useSendPortalInvite() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, method, overrideEmail }: { id: string; method: "EMAIL" | "SMS"; overrideEmail?: string }) =>
-      apiClient.post(`/customers/${id}/portal-invite`, { method, overrideEmail }).then((r) => r.data),
-    onSuccess: (_d, vars) => qc.invalidateQueries({ queryKey: ["customers", vars.id, "portal-status"] }),
+    mutationFn: ({
+      id,
+      method,
+      overrideEmail,
+    }: {
+      id: string;
+      method: "EMAIL" | "SMS";
+      overrideEmail?: string;
+    }) =>
+      apiClient
+        .post(`/customers/${id}/portal-invite`, { method, overrideEmail })
+        .then((r) => r.data),
+    onSuccess: (_d, vars) =>
+      qc.invalidateQueries({ queryKey: ["customers", vars.id, "portal-status"] }),
   });
 }
 
@@ -580,7 +640,6 @@ export function useApprovePortalFromList() {
   });
 }
 
-
 // ── Tax-exempt document hooks ─────────────────────────────────────────────────
 
 export interface TaxDocument {
@@ -615,7 +674,9 @@ export function useDeleteCustomerTaxDocument(customerId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (key: string): Promise<void> =>
-      apiClient.delete(`/customers/${customerId}/tax-documents`, { data: { key } }).then((r) => r.data),
+      apiClient
+        .delete(`/customers/${customerId}/tax-documents`, { data: { key } })
+        .then((r) => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["customers", customerId, "tax-documents"] });
       qc.invalidateQueries({ queryKey: ["customers", customerId] });

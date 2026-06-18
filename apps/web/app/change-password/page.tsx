@@ -14,9 +14,7 @@ import { changePassword } from "@/lib/auth";
 const schema = z
   .object({
     currentPassword: z.string().min(1, "Current password is required"),
-    newPassword: z
-      .string()
-      .min(8, "New password must be at least 8 characters"),
+    newPassword: z.string().min(8, "New password must be at least 8 characters"),
     confirmPassword: z.string().min(1, "Please confirm your new password"),
   })
   .refine((d) => d.newPassword === d.confirmPassword, {
@@ -54,8 +52,8 @@ export default function ChangePasswordPage() {
       window.location.href = "/dashboard";
     } catch (err: unknown) {
       const msg =
-        (err as { response?: { data?: { message?: string } } })?.response?.data
-          ?.message ?? "Failed to change password.";
+        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+        "Failed to change password.";
       setApiError(typeof msg === "string" ? msg : "Failed to change password.");
     }
   };
@@ -71,22 +69,16 @@ export default function ChangePasswordPage() {
             RF
           </div>
           <h1 className="text-2xl font-bold text-navy">Change Password</h1>
-          <p className="text-center text-sm text-navy/60">
+          <p className="text-center text-sm text-navy/70">
             You must set a new password before continuing.
           </p>
         </div>
 
         {/* Card */}
         <div className="rounded-xl bg-white p-6 shadow-card">
-          <form
-            onSubmit={handleSubmit(onSubmit)}
-            className="flex flex-col gap-4"
-            noValidate
-          >
+          <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4" noValidate>
             {apiError && (
-              <p className="rounded-lg bg-danger-bg px-3 py-2 text-sm text-danger">
-                {apiError}
-              </p>
+              <p className="rounded-lg bg-danger-bg px-3 py-2 text-sm text-danger">{apiError}</p>
             )}
             <PasswordInput
               label="Current password"

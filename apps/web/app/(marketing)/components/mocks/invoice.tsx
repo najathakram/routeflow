@@ -48,9 +48,7 @@ export function MockInvoice() {
           >
             <span style={{ flex: 1 }}>{name}</span>
             <span style={{ width: 60, color: "var(--rf-ink-3)", fontSize: 11 }}>{qty}</span>
-            <span
-              style={{ width: 70, textAlign: "right", fontVariantNumeric: "tabular-nums" }}
-            >
+            <span style={{ width: 70, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
               {amt}
             </span>
           </div>

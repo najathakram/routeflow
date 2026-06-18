@@ -1,11 +1,5 @@
 import * as React from "react";
-import {
-  Pressable,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
 interface Props {
@@ -43,7 +37,11 @@ export function BarcodeScanner({ onScanned, onClose }: Props) {
       rafRef.current = null;
     }
     if (readerRef.current) {
-      try { readerRef.current.reset(); } catch { /* ignore */ }
+      try {
+        readerRef.current.reset();
+      } catch {
+        /* ignore */
+      }
       readerRef.current = null;
     }
     const stream = streamRef.current;
@@ -113,7 +111,9 @@ export function BarcodeScanner({ onScanned, onClose }: Props) {
               fire(codes[0].rawValue);
               return;
             }
-          } catch { /* ignore per-frame errors */ }
+          } catch {
+            /* ignore per-frame errors */
+          }
           rafRef.current = requestAnimationFrame(tick);
         };
         rafRef.current = requestAnimationFrame(tick);
@@ -187,9 +187,7 @@ export function BarcodeScanner({ onScanned, onClose }: Props) {
       )}
 
       <View style={styles.overlay} pointerEvents="box-none">
-        {!manualMode ? (
-          <View style={styles.scanWindow} pointerEvents="none" />
-        ) : null}
+        {!manualMode ? <View style={styles.scanWindow} pointerEvents="none" /> : null}
 
         <View style={styles.bottomCard}>
           {error ? (
@@ -213,10 +211,7 @@ export function BarcodeScanner({ onScanned, onClose }: Props) {
               />
               <Pressable
                 onPress={submitManual}
-                style={[
-                  styles.manualBtn,
-                  !manualValue.trim() && styles.manualBtnDisabled,
-                ]}
+                style={[styles.manualBtn, !manualValue.trim() && styles.manualBtnDisabled]}
                 disabled={!manualValue.trim()}
               >
                 <Text style={styles.manualBtnText}>Use</Text>

@@ -98,8 +98,7 @@ export const useRouteStore = create<RouteState>((set) => ({
       return { itemResolutions, stopNotes, addedItems };
     }),
 
-  clearRun: () =>
-    set({ activeRunId: null, itemResolutions: {}, stopNotes: {}, addedItems: {} }),
+  clearRun: () => set({ activeRunId: null, itemResolutions: {}, stopNotes: {}, addedItems: {} }),
 }));
 
 // ─── Selectors ────────────────────────────────────────────────────────────────

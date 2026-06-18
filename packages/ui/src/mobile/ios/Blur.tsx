@@ -14,18 +14,9 @@ export interface BlurProps extends ViewProps {
  * On web, falls back to a translucent background + CSS backdrop-filter (applied
  * via inline style; react-native-web respects `backdropFilter`).
  */
-export function Blur({
-  intensity = 80,
-  tint = "light",
-  children,
-  style,
-  ...rest
-}: BlurProps) {
+export function Blur({ intensity = 80, tint = "light", children, style, ...rest }: BlurProps) {
   if (Platform.OS === "web") {
-    const bg =
-      tint === "dark"
-        ? "rgba(22,22,24,0.72)"
-        : "rgba(255,255,255,0.78)";
+    const bg = tint === "dark" ? "rgba(22,22,24,0.72)" : "rgba(255,255,255,0.78)";
     // react-native-web passes style straight to CSS, so backdrop-filter works;
     // TS typing doesn't know that, hence the cast.
     const webStyle = {

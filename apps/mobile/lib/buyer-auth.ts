@@ -12,12 +12,18 @@ const storage = {
     return getItemAsync(key);
   },
   async set(key: string, value: string): Promise<void> {
-    if (Platform.OS === "web") { localStorage.setItem(key, value); return; }
+    if (Platform.OS === "web") {
+      localStorage.setItem(key, value);
+      return;
+    }
     const { setItemAsync } = await import("expo-secure-store");
     await setItemAsync(key, value);
   },
   async del(key: string): Promise<void> {
-    if (Platform.OS === "web") { localStorage.removeItem(key); return; }
+    if (Platform.OS === "web") {
+      localStorage.removeItem(key);
+      return;
+    }
     const { deleteItemAsync } = await import("expo-secure-store");
     await deleteItemAsync(key);
   },
@@ -96,8 +102,7 @@ export function registerBuyerSessionExpiredHandler(fn: () => void): void {
 
 // ─── Buyer API client (separate from staff apiClient) ─────────────────────────
 
-const BASE_URL =
-  (process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:3000").replace(/\/$/, "");
+const BASE_URL = (process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:3000").replace(/\/$/, "");
 
 export const buyerApiClient = axios.create({
   baseURL: `${BASE_URL}/api/v1`,
@@ -194,7 +199,11 @@ buyerApiClient.interceptors.response.use(
       // layout redirects to /customer-login instead of leaving the buyer on a
       // screen whose every API call now silently fails with empty data.
       if (buyerSessionExpiredHandler) {
-        try { buyerSessionExpiredHandler(); } catch { /* ignore */ }
+        try {
+          buyerSessionExpiredHandler();
+        } catch {
+          /* ignore */
+        }
       }
       return Promise.reject(refreshError);
     } finally {
@@ -216,14 +225,11 @@ function parseJwtPayload(token: string): Record<string, unknown> | null {
 
 // ─── Auth functions ───────────────────────────────────────────────────────────
 
-export async function buyerLogin(
-  email: string,
-  password: string,
-): Promise<BuyerAuthResponse> {
-  const { data } = await buyerApiClient.post<BuyerAuthResponse>(
-    "/buyer/auth/login",
-    { email, password },
-  );
+export async function buyerLogin(email: string, password: string): Promise<BuyerAuthResponse> {
+  const { data } = await buyerApiClient.post<BuyerAuthResponse>("/buyer/auth/login", {
+    email,
+    password,
+  });
   await storage.set(BUYER_KEYS.accessToken, data.accessToken);
   await storage.set(BUYER_KEYS.refreshToken, data.refreshToken);
   return data;
@@ -234,10 +240,11 @@ export async function buyerRegister(
   password: string,
   name: string,
 ): Promise<BuyerAuthResponse> {
-  const { data } = await buyerApiClient.post<BuyerAuthResponse>(
-    "/buyer/auth/register",
-    { email, password, name },
-  );
+  const { data } = await buyerApiClient.post<BuyerAuthResponse>("/buyer/auth/register", {
+    email,
+    password,
+    name,
+  });
   await storage.set(BUYER_KEYS.accessToken, data.accessToken);
   await storage.set(BUYER_KEYS.refreshToken, data.refreshToken);
   return data;
@@ -259,10 +266,9 @@ export async function buyerRefreshTokens(): Promise<BuyerAuthResponse | null> {
   const refreshToken = await storage.get(BUYER_KEYS.refreshToken);
   if (!refreshToken) return null;
   try {
-    const { data } = await buyerApiClient.post<BuyerAuthResponse>(
-      "/buyer/auth/refresh",
-      { refreshToken },
-    );
+    const { data } = await buyerApiClient.post<BuyerAuthResponse>("/buyer/auth/refresh", {
+      refreshToken,
+    });
     await storage.set(BUYER_KEYS.accessToken, data.accessToken);
     await storage.set(BUYER_KEYS.refreshToken, data.refreshToken);
     return data;

@@ -25,9 +25,18 @@ const DB_URL = "postgresql://routeflow:routeflow_prod_2026@gondola.proxy.rlwy.ne
 
 // ── Result tracking ─────────────────────────────────────────────────────────
 const results = [];
-let passed = 0, failed = 0, specQ = 0, skipped = 0;
+let passed = 0,
+  failed = 0,
+  specQ = 0,
+  skipped = 0;
 const specQuestions = [];
-const manifest = { saUserId: null, tenants: [], customerLinks: [], buyerAccounts: [], products: [] };
+const manifest = {
+  saUserId: null,
+  tenants: [],
+  customerLinks: [],
+  buyerAccounts: [],
+  products: [],
+};
 
 function pass(id, desc) {
   results.push({ id, status: "PASS", desc });
@@ -104,8 +113,12 @@ async function dbQuery(sql, params = []) {
 }
 
 // ── HTTP helpers ──────────────────────────────────────────────────────────────
-function authHeader(token) { return { Authorization: `Bearer ${token}` }; }
-function tenantHeader(slug) { return { "X-Tenant-Slug": slug }; }
+function authHeader(token) {
+  return { Authorization: `Bearer ${token}` };
+}
+function tenantHeader(slug) {
+  return { "X-Tenant-Slug": slug };
+}
 
 const http = axios.create({ baseURL: API, timeout: 15000 });
 
@@ -115,7 +128,12 @@ const TENANTS = {}; // slug → { id, token, name }
 const CUSTOMERS = {}; // "ALPHA_CUST" / "BETA_CUST" / "GAMMA_CUST" → { id, customerId }
 const PRODUCTS = {}; // "alpha_oil" / "beta_oil" / "gamma_oil" → { id, sku, name }
 const _jamieTs = Date.now();
-let JAMIE = { token: null, id: null, email: `jamie_${_jamieTs}@metrokitchen.com`, password: "MetroKitchen1!" };
+let JAMIE = {
+  token: null,
+  id: null,
+  email: `jamie_${_jamieTs}@metrokitchen.com`,
+  password: "MetroKitchen1!",
+};
 const INVITE_TOKENS = {}; // tenantSlug → token
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -138,7 +156,7 @@ async function phase0_setup() {
       `INSERT INTO "User" (id, username, email, password, role, status, "forcePasswordChange", "tenantId", "createdAt", "updatedAt")
        VALUES (gen_random_uuid(), $1, $2, $3, 'SUPER_ADMIN', 'ACTIVE', false, NULL, NOW(), NOW())
        RETURNING id`,
-      [saUsername, `${saUsername}@test.internal`, saHash]
+      [saUsername, `${saUsername}@test.internal`, saHash],
     );
     manifest.saUserId = r[0].id;
   }
@@ -157,28 +175,51 @@ async function phase0_setup() {
   // 3. Create 3 test tenants
   const ts = Date.now();
   const tenantDefs = [
-    { slug: `alpha-foods-${ts}`, businessName: "Alpha Foods Wholesale", adminUsername: `alpha_admin_${ts}`, adminEmail: `alpha_admin_${ts}@test.io` },
-    { slug: `beta-produce-${ts}`, businessName: "Beta Produce Co", adminUsername: `beta_admin_${ts}`, adminEmail: `beta_admin_${ts}@test.io` },
-    { slug: `gamma-dry-${ts}`, businessName: "Gamma Dry Goods Ltd", adminUsername: `gamma_admin_${ts}`, adminEmail: `gamma_admin_${ts}@test.io` },
+    {
+      slug: `alpha-foods-${ts}`,
+      businessName: "Alpha Foods Wholesale",
+      adminUsername: `alpha_admin_${ts}`,
+      adminEmail: `alpha_admin_${ts}@test.io`,
+    },
+    {
+      slug: `beta-produce-${ts}`,
+      businessName: "Beta Produce Co",
+      adminUsername: `beta_admin_${ts}`,
+      adminEmail: `beta_admin_${ts}@test.io`,
+    },
+    {
+      slug: `gamma-dry-${ts}`,
+      businessName: "Gamma Dry Goods Ltd",
+      adminUsername: `gamma_admin_${ts}`,
+      adminEmail: `gamma_admin_${ts}@test.io`,
+    },
   ];
 
   for (const td of tenantDefs) {
     try {
-      const r = await http.post("/platform-admin/tenants", {
-        slug: td.slug,
-        businessName: td.businessName,
-        adminUsername: td.adminUsername,
-        adminEmail: td.adminEmail,
-        adminPassword: "Admin@123",
-        plan: "PROFESSIONAL",
-      }, { headers: authHeader(SA_TOKEN) });
+      const r = await http.post(
+        "/platform-admin/tenants",
+        {
+          slug: td.slug,
+          businessName: td.businessName,
+          adminUsername: td.adminUsername,
+          adminEmail: td.adminEmail,
+          adminPassword: "Admin@123",
+          plan: "PROFESSIONAL",
+        },
+        { headers: authHeader(SA_TOKEN) },
+      );
       const tenantId = r.data.tenant?.id ?? r.data.id;
       TENANTS[td.slug] = { id: tenantId, slug: td.slug, name: td.businessName };
       manifest.tenants.push({ id: tenantId, slug: td.slug });
       pass(`P0-T-${td.slug.split("-")[0]}`, `Create tenant ${td.businessName}`);
       console.log(`    Tenant ID: ${tenantId}`);
     } catch (e) {
-      fail(`P0-T-${td.slug.split("-")[0]}`, `Create tenant ${td.businessName}`, e?.response?.data?.message ?? e.message);
+      fail(
+        `P0-T-${td.slug.split("-")[0]}`,
+        `Create tenant ${td.businessName}`,
+        e?.response?.data?.message ?? e.message,
+      );
       throw new Error(`Cannot proceed: tenant creation failed for ${td.slug}`);
     }
   }
@@ -196,9 +237,10 @@ async function phase0_setup() {
   for (const key of ["alpha", "beta", "gamma"]) {
     const t = TENANTS[key];
     try {
-      const r = await http.post("/auth/login",
+      const r = await http.post(
+        "/auth/login",
         { username: t.adminUsername, password: "Admin@123" },
-        { headers: tenantHeader(t.slug) }
+        { headers: tenantHeader(t.slug) },
       );
       t.token = r.data.accessToken;
       pass(`P0-L-${key}`, `Login as ${key} operator`);
@@ -211,16 +253,48 @@ async function phase0_setup() {
   // 5. Create products in each tenant
   // Alpha: OIL-CANOLA-20L, Tier A=$42, Tier B=$38
   for (const [key, productDef] of [
-    ["alpha", { sku: "OIL-CANOLA-20L", name: "Canola Oil 20L", pricePerUnit: "42.00", priceTier2: "38.00", unit: "drum" }],
-    ["beta",  { sku: "OIL-CANOLA-20L", name: "Canola Oil Drum", pricePerUnit: "44.50", priceTier2: "40.00", unit: "drum" }],
-    ["gamma", { sku: "CAN-OIL-20-GM",  name: "20L Canola Drum", pricePerUnit: "41.00", priceTier2: "41.00", unit: "drum" }],
+    [
+      "alpha",
+      {
+        sku: "OIL-CANOLA-20L",
+        name: "Canola Oil 20L",
+        pricePerUnit: "42.00",
+        priceTier2: "38.00",
+        unit: "drum",
+      },
+    ],
+    [
+      "beta",
+      {
+        sku: "OIL-CANOLA-20L",
+        name: "Canola Oil Drum",
+        pricePerUnit: "44.50",
+        priceTier2: "40.00",
+        unit: "drum",
+      },
+    ],
+    [
+      "gamma",
+      {
+        sku: "CAN-OIL-20-GM",
+        name: "20L Canola Drum",
+        pricePerUnit: "41.00",
+        priceTier2: "41.00",
+        unit: "drum",
+      },
+    ],
   ]) {
     const t = TENANTS[key];
     try {
-      const r = await http.post("/products", productDef, { headers: { ...authHeader(t.token), ...tenantHeader(t.slug) } });
+      const r = await http.post("/products", productDef, {
+        headers: { ...authHeader(t.token), ...tenantHeader(t.slug) },
+      });
       PRODUCTS[key] = { id: r.data.id, sku: productDef.sku, name: productDef.name };
       manifest.products.push({ id: r.data.id, tenantSlug: t.slug });
-      pass(`P0-P-${key}`, `Create canola oil product in ${key} (${productDef.sku} @ $${productDef.pricePerUnit})`);
+      pass(
+        `P0-P-${key}`,
+        `Create canola oil product in ${key} (${productDef.sku} @ $${productDef.pricePerUnit})`,
+      );
     } catch (e) {
       fail(`P0-P-${key}`, `Create product in ${key}`, e?.response?.data?.message ?? e.message);
     }
@@ -230,29 +304,36 @@ async function phase0_setup() {
   for (const key of ["alpha", "beta", "gamma"]) {
     const t = TENANTS[key];
     try {
-      const r = await http.post("/customers", {
-        businessName: "Metro Kitchen Supplies",
-        contactName: "Jamie Chen",
-        email: "jamie@metrokitchen.com",
-        phone: "+61400111222",
-        username: `metro_kitchen_${key}_${ts}`,
-      }, { headers: { ...authHeader(t.token), ...tenantHeader(t.slug) } });
+      const r = await http.post(
+        "/customers",
+        {
+          businessName: "Metro Kitchen Supplies",
+          contactName: "Jamie Chen",
+          email: "jamie@metrokitchen.com",
+          phone: "+61400111222",
+          username: `metro_kitchen_${key}_${ts}`,
+        },
+        { headers: { ...authHeader(t.token), ...tenantHeader(t.slug) } },
+      );
       const custId = r.data?.customer?.id ?? r.data?.id;
       CUSTOMERS[key] = { id: custId, tenantSlug: t.slug };
       manifest.customerLinks.push({ customerId: custId, tenantSlug: t.slug });
       pass(`P0-C-${key}`, `Create Metro Kitchen customer in ${key} (id: ${custId})`);
     } catch (e) {
-      fail(`P0-C-${key}`, `Create Metro Kitchen customer in ${key}`, e?.response?.data?.message ?? e.message);
+      fail(
+        `P0-C-${key}`,
+        `Create Metro Kitchen customer in ${key}`,
+        e?.response?.data?.message ?? e.message,
+      );
     }
   }
 
   // 7. Set Metro Kitchen at Beta to pricingTier=2 (Tier B)
   if (CUSTOMERS["beta"]?.id) {
     try {
-      await dbQuery(
-        `UPDATE "Customer" SET "pricingTier" = 2 WHERE id = $1`,
-        [CUSTOMERS["beta"].id]
-      );
+      await dbQuery(`UPDATE "Customer" SET "pricingTier" = 2 WHERE id = $1`, [
+        CUSTOMERS["beta"].id,
+      ]);
       pass("P0-TIER", "Set Metro Kitchen@Beta to pricingTier=2 (Tier B)");
     } catch (e) {
       fail("P0-TIER", "Set Metro Kitchen@Beta pricingTier", e.message);
@@ -283,12 +364,16 @@ async function group1_accountCreation() {
   // Step 1: Alpha sends invite
   let inviteToken_alpha = null;
   try {
-    const r = await http.post(`/customers/${CUSTOMERS.alpha.id}/portal-invite`,
+    const r = await http.post(
+      `/customers/${CUSTOMERS.alpha.id}/portal-invite`,
       { method: "EMAIL" },
-      { headers: { ...authHeader(TENANTS.alpha.token), ...tenantHeader(TENANTS.alpha.slug) } }
+      { headers: { ...authHeader(TENANTS.alpha.token), ...tenantHeader(TENANTS.alpha.slug) } },
     );
     // Fetch the token from DB since API doesn't return it
-    const rows = await dbQuery(`SELECT "inviteToken", status FROM "CustomerLink" WHERE "customerId" = $1`, [CUSTOMERS.alpha.id]);
+    const rows = await dbQuery(
+      `SELECT "inviteToken", status FROM "CustomerLink" WHERE "customerId" = $1`,
+      [CUSTOMERS.alpha.id],
+    );
     inviteToken_alpha = rows[0]?.inviteToken;
     INVITE_TOKENS["alpha"] = inviteToken_alpha;
     pass("1.1-S1", "Alpha sends email invite → 201, invite token created");
@@ -299,9 +384,9 @@ async function group1_accountCreation() {
   // Verify portal status = INVITED
   if (CUSTOMERS.alpha?.id) {
     try {
-      const r = await http.get(`/customers/${CUSTOMERS.alpha.id}/portal-status`,
-        { headers: { ...authHeader(TENANTS.alpha.token), ...tenantHeader(TENANTS.alpha.slug) } }
-      );
+      const r = await http.get(`/customers/${CUSTOMERS.alpha.id}/portal-status`, {
+        headers: { ...authHeader(TENANTS.alpha.token), ...tenantHeader(TENANTS.alpha.slug) },
+      });
       if (r.data.status === "INVITED") {
         pass("1.1-S1b", "ALPHA_CUST portal_link_status = INVITED");
       } else {
@@ -316,10 +401,20 @@ async function group1_accountCreation() {
   if (inviteToken_alpha) {
     try {
       const r = await http.get(`/buyer/invites/${inviteToken_alpha}/details`);
-      if (r.data.sellerName === "Alpha Foods Wholesale" || r.data.name === "Alpha Foods Wholesale") {
-        pass("1.1-S2", `Invite details page shows seller name: ${r.data.sellerName ?? r.data.name}`);
+      if (
+        r.data.sellerName === "Alpha Foods Wholesale" ||
+        r.data.name === "Alpha Foods Wholesale"
+      ) {
+        pass(
+          "1.1-S2",
+          `Invite details page shows seller name: ${r.data.sellerName ?? r.data.name}`,
+        );
       } else {
-        fail("1.1-S2", "Invite details seller name", `Got: ${JSON.stringify(r.data).slice(0,150)}`);
+        fail(
+          "1.1-S2",
+          "Invite details seller name",
+          `Got: ${JSON.stringify(r.data).slice(0, 150)}`,
+        );
       }
     } catch (e) {
       fail("1.1-S2", "Get invite details (public)", e?.response?.data?.message ?? e.message);
@@ -345,8 +440,10 @@ async function group1_accountCreation() {
   // Accept Alpha's invite
   if (JAMIE.token && inviteToken_alpha) {
     try {
-      const r = await http.post(`/buyer/invites/${inviteToken_alpha}/accept`, {},
-        { headers: authHeader(JAMIE.token) }
+      const r = await http.post(
+        `/buyer/invites/${inviteToken_alpha}/accept`,
+        {},
+        { headers: authHeader(JAMIE.token) },
       );
       pass("1.1-S3b", `Accepted Alpha invite → linked (${r.data.message ?? "ok"})`);
     } catch (e) {
@@ -362,7 +459,11 @@ async function group1_accountCreation() {
       if (sellers.length === 1 && sellers[0].tenant?.slug === TENANTS.alpha.slug) {
         pass("1.1-S4", `GET /buyer/sellers → 1 seller: ${sellers[0].tenant.name}`);
       } else {
-        fail("1.1-S4", "Seller list after first link", `Got ${sellers.length} sellers: ${JSON.stringify(sellers.map(s=>s.tenant?.name))}`);
+        fail(
+          "1.1-S4",
+          "Seller list after first link",
+          `Got ${sellers.length} sellers: ${JSON.stringify(sellers.map((s) => s.tenant?.name))}`,
+        );
       }
     } catch (e) {
       fail("1.1-S4", "List sellers", e?.response?.data?.message ?? e.message);
@@ -373,10 +474,13 @@ async function group1_accountCreation() {
   if (JAMIE.token) {
     try {
       const r = await http.get("/buyer/orders", {
-        headers: { ...authHeader(JAMIE.token), ...tenantHeader(TENANTS.alpha.slug) }
+        headers: { ...authHeader(JAMIE.token), ...tenantHeader(TENANTS.alpha.slug) },
       });
       // We expect data, not 403
-      pass("1.1-S5", `Orders in Alpha context: ${Array.isArray(r.data) ? r.data.length : JSON.stringify(r.data).slice(0,60)} records`);
+      pass(
+        "1.1-S5",
+        `Orders in Alpha context: ${Array.isArray(r.data) ? r.data.length : JSON.stringify(r.data).slice(0, 60)} records`,
+      );
     } catch (e) {
       fail("1.1-S5", "Get Alpha orders as buyer", e?.response?.data?.message ?? e.message);
     }
@@ -386,14 +490,18 @@ async function group1_accountCreation() {
   if (JAMIE.token && TENANTS.beta) {
     try {
       await http.get("/buyer/orders", {
-        headers: { ...authHeader(JAMIE.token), ...tenantHeader(TENANTS.beta.slug) }
+        headers: { ...authHeader(JAMIE.token), ...tenantHeader(TENANTS.beta.slug) },
       });
       fail("1.1-S6", "Cannot access Beta orders (not linked)", "Expected 403, got 2xx");
     } catch (e) {
       if (e?.response?.status === 403) {
         pass("1.1-S6", "Accessing Beta before link → 403 (correct isolation)");
       } else {
-        fail("1.1-S6", "Cannot access Beta before link", `Expected 403, got ${e?.response?.status}`);
+        fail(
+          "1.1-S6",
+          "Cannot access Beta before link",
+          `Expected 403, got ${e?.response?.status}`,
+        );
       }
     }
   }
@@ -404,11 +512,14 @@ async function group1_accountCreation() {
   let inviteToken_beta = null;
   // Beta sends invite
   try {
-    await http.post(`/customers/${CUSTOMERS.beta.id}/portal-invite`,
+    await http.post(
+      `/customers/${CUSTOMERS.beta.id}/portal-invite`,
       { method: "EMAIL" },
-      { headers: { ...authHeader(TENANTS.beta.token), ...tenantHeader(TENANTS.beta.slug) } }
+      { headers: { ...authHeader(TENANTS.beta.token), ...tenantHeader(TENANTS.beta.slug) } },
     );
-    const rows = await dbQuery(`SELECT "inviteToken" FROM "CustomerLink" WHERE "customerId" = $1`, [CUSTOMERS.beta.id]);
+    const rows = await dbQuery(`SELECT "inviteToken" FROM "CustomerLink" WHERE "customerId" = $1`, [
+      CUSTOMERS.beta.id,
+    ]);
     inviteToken_beta = rows[0]?.inviteToken;
     INVITE_TOKENS["beta"] = inviteToken_beta;
     pass("1.2-S1", "Beta sends invite to Metro Kitchen");
@@ -420,15 +531,24 @@ async function group1_accountCreation() {
   if (inviteToken_beta && JAMIE.token) {
     try {
       // Re-login to get fresh token (simulating "Login to Link" flow)
-      const login = await http.post("/buyer/auth/login", { email: JAMIE.email, password: JAMIE.password });
+      const login = await http.post("/buyer/auth/login", {
+        email: JAMIE.email,
+        password: JAMIE.password,
+      });
       JAMIE.token = login.data.accessToken;
 
-      const r = await http.post(`/buyer/invites/${inviteToken_beta}/accept`, {},
-        { headers: authHeader(JAMIE.token) }
+      const r = await http.post(
+        `/buyer/invites/${inviteToken_beta}/accept`,
+        {},
+        { headers: authHeader(JAMIE.token) },
       );
       pass("1.2-S3", `Accepted Beta invite with existing account → ${r.data.message}`);
     } catch (e) {
-      fail("1.2-S3", "Login-and-link Beta (existing account)", e?.response?.data?.message ?? e.message);
+      fail(
+        "1.2-S3",
+        "Login-and-link Beta (existing account)",
+        e?.response?.data?.message ?? e.message,
+      );
     }
   }
 
@@ -437,9 +557,16 @@ async function group1_accountCreation() {
     try {
       const r = await http.get("/buyer/sellers", { headers: authHeader(JAMIE.token) });
       if (r.data.length === 2) {
-        pass("1.2-S4", `GET /buyer/sellers → 2 sellers: ${r.data.map(s=>s.tenant?.name).join(", ")}`);
+        pass(
+          "1.2-S4",
+          `GET /buyer/sellers → 2 sellers: ${r.data.map((s) => s.tenant?.name).join(", ")}`,
+        );
       } else {
-        fail("1.2-S4", "Two sellers after Beta link", `Got ${r.data.length}: ${JSON.stringify(r.data.map(s=>s.tenant?.name))}`);
+        fail(
+          "1.2-S4",
+          "Two sellers after Beta link",
+          `Got ${r.data.length}: ${JSON.stringify(r.data.map((s) => s.tenant?.name))}`,
+        );
       }
     } catch (e) {
       fail("1.2-S4", "List sellers after Beta link", e?.response?.data?.message ?? e.message);
@@ -449,7 +576,9 @@ async function group1_accountCreation() {
   // Verify Alpha context still works
   if (JAMIE.token) {
     try {
-      await http.get("/buyer/orders", { headers: { ...authHeader(JAMIE.token), ...tenantHeader(TENANTS.alpha.slug) } });
+      await http.get("/buyer/orders", {
+        headers: { ...authHeader(JAMIE.token), ...tenantHeader(TENANTS.alpha.slug) },
+      });
       pass("1.2-S5a", "Alpha context still accessible after adding Beta");
     } catch (e) {
       fail("1.2-S5a", "Alpha orders after Beta link", e?.response?.data?.message ?? e.message);
@@ -459,7 +588,9 @@ async function group1_accountCreation() {
   // Verify Beta context now works
   if (JAMIE.token) {
     try {
-      await http.get("/buyer/orders", { headers: { ...authHeader(JAMIE.token), ...tenantHeader(TENANTS.beta.slug) } });
+      await http.get("/buyer/orders", {
+        headers: { ...authHeader(JAMIE.token), ...tenantHeader(TENANTS.beta.slug) },
+      });
       pass("1.2-S5b", "Beta context now accessible after link");
     } catch (e) {
       fail("1.2-S5b", "Beta orders after link", e?.response?.data?.message ?? e.message);
@@ -471,11 +602,14 @@ async function group1_accountCreation() {
   let inviteToken_gamma = null;
 
   try {
-    await http.post(`/customers/${CUSTOMERS.gamma.id}/portal-invite`,
+    await http.post(
+      `/customers/${CUSTOMERS.gamma.id}/portal-invite`,
       { method: "EMAIL" },
-      { headers: { ...authHeader(TENANTS.gamma.token), ...tenantHeader(TENANTS.gamma.slug) } }
+      { headers: { ...authHeader(TENANTS.gamma.token), ...tenantHeader(TENANTS.gamma.slug) } },
     );
-    const rows = await dbQuery(`SELECT "inviteToken" FROM "CustomerLink" WHERE "customerId" = $1`, [CUSTOMERS.gamma.id]);
+    const rows = await dbQuery(`SELECT "inviteToken" FROM "CustomerLink" WHERE "customerId" = $1`, [
+      CUSTOMERS.gamma.id,
+    ]);
     inviteToken_gamma = rows[0]?.inviteToken;
     INVITE_TOKENS["gamma"] = inviteToken_gamma;
     pass("1.3-S1", "Gamma sends invite");
@@ -485,7 +619,11 @@ async function group1_accountCreation() {
 
   if (inviteToken_gamma && JAMIE.token) {
     try {
-      await http.post(`/buyer/invites/${inviteToken_gamma}/accept`, {}, { headers: authHeader(JAMIE.token) });
+      await http.post(
+        `/buyer/invites/${inviteToken_gamma}/accept`,
+        {},
+        { headers: authHeader(JAMIE.token) },
+      );
       pass("1.3-S2", "Accepted Gamma invite → linked to 3rd seller");
     } catch (e) {
       fail("1.3-S2", "Accept Gamma invite", e?.response?.data?.message ?? e.message);
@@ -496,7 +634,10 @@ async function group1_accountCreation() {
     try {
       const r = await http.get("/buyer/sellers", { headers: authHeader(JAMIE.token) });
       if (r.data.length === 3) {
-        pass("1.3-S3", `GET /buyer/sellers → 3 sellers: ${r.data.map(s=>s.tenant?.name).join(", ")}`);
+        pass(
+          "1.3-S3",
+          `GET /buyer/sellers → 3 sellers: ${r.data.map((s) => s.tenant?.name).join(", ")}`,
+        );
       } else {
         fail("1.3-S3", "Three sellers", `Got ${r.data.length}`);
       }
@@ -507,9 +648,12 @@ async function group1_accountCreation() {
 
   // ── 1.4: Per-invite revoke ──────────────────────────────────────────────────
   console.log("\n  SCENARIO 1.4 — Invite revoke by ID");
-  spec("1.4", "POST /customers/:id/portal-invite/:inviteId/revoke",
+  spec(
+    "1.4",
+    "POST /customers/:id/portal-invite/:inviteId/revoke",
     "No per-invite revoke endpoint implemented. Current API uses upsert (new invite overwrites old). " +
-    "Need to decide: (a) add invite revoke endpoint, or (b) re-sending invite IS the revoke mechanism.");
+      "Need to decide: (a) add invite revoke endpoint, or (b) re-sending invite IS the revoke mechanism.",
+  );
 
   // ── 1.5: Expired invite ─────────────────────────────────────────────────────
   console.log("\n  SCENARIO 1.5 — Expired invite token");
@@ -518,20 +662,32 @@ async function group1_accountCreation() {
   let expiredToken = null;
   try {
     const expTs = Date.now();
-    const expCustR = await http.post('/customers', {
-      businessName: 'Expiry Test Corp', contactName: 'Expiry Contact',
-      email: `expiry_${expTs}@test.io`, username: `expiry_corp_${expTs}`,
-    }, { headers: { ...authHeader(TENANTS.alpha.token), ...tenantHeader(TENANTS.alpha.slug) } });
-    const expCustId = expCustR.data?.customer?.id ?? expCustR.data?.id;
-    await http.post(`/customers/${expCustId}/portal-invite`,
-      { method: "EMAIL" },
-      { headers: { ...authHeader(TENANTS.alpha.token), ...tenantHeader(TENANTS.alpha.slug) } }
+    const expCustR = await http.post(
+      "/customers",
+      {
+        businessName: "Expiry Test Corp",
+        contactName: "Expiry Contact",
+        email: `expiry_${expTs}@test.io`,
+        username: `expiry_corp_${expTs}`,
+      },
+      { headers: { ...authHeader(TENANTS.alpha.token), ...tenantHeader(TENANTS.alpha.slug) } },
     );
-    const rows = await dbQuery(`SELECT "inviteToken" FROM "CustomerLink" WHERE "customerId" = $1`, [expCustId]);
+    const expCustId = expCustR.data?.customer?.id ?? expCustR.data?.id;
+    await http.post(
+      `/customers/${expCustId}/portal-invite`,
+      { method: "EMAIL" },
+      { headers: { ...authHeader(TENANTS.alpha.token), ...tenantHeader(TENANTS.alpha.slug) } },
+    );
+    const rows = await dbQuery(`SELECT "inviteToken" FROM "CustomerLink" WHERE "customerId" = $1`, [
+      expCustId,
+    ]);
     expiredToken = rows[0]?.inviteToken;
 
     // Expire it immediately
-    await dbQuery(`UPDATE "CustomerLink" SET "inviteExpiresAt" = NOW() - INTERVAL '1 hour' WHERE "inviteToken" = $1`, [expiredToken]);
+    await dbQuery(
+      `UPDATE "CustomerLink" SET "inviteExpiresAt" = NOW() - INTERVAL '1 hour' WHERE "inviteToken" = $1`,
+      [expiredToken],
+    );
     pass("1.5-S1", "Artificially expired invite token via DB");
   } catch (e) {
     fail("1.5-S1", "Setup expired token", e.message);
@@ -545,20 +701,32 @@ async function group1_accountCreation() {
       if (e?.response?.status === 410) {
         pass("1.5-S2", "Expired invite details → 410 Gone ✓");
       } else {
-        fail("1.5-S2", "Expired invite", `Expected 410, got ${e?.response?.status}: ${JSON.stringify(e?.response?.data)}`);
+        fail(
+          "1.5-S2",
+          "Expired invite",
+          `Expected 410, got ${e?.response?.status}: ${JSON.stringify(e?.response?.data)}`,
+        );
       }
     }
 
     // Trying to accept expired invite
     if (JAMIE.token) {
       try {
-        await http.post(`/buyer/invites/${expiredToken}/accept`, {}, { headers: authHeader(JAMIE.token) });
+        await http.post(
+          `/buyer/invites/${expiredToken}/accept`,
+          {},
+          { headers: authHeader(JAMIE.token) },
+        );
         fail("1.5-S3", "Accept expired invite → 410", "Expected error, got 2xx");
       } catch (e) {
         if (e?.response?.status === 410 || e?.response?.status === 409) {
           pass("1.5-S3", `Accept expired invite → ${e.response.status} (correct rejection)`);
         } else {
-          fail("1.5-S3", "Accept expired invite", `Got ${e?.response?.status}: ${JSON.stringify(e?.response?.data).slice(0,100)}`);
+          fail(
+            "1.5-S3",
+            "Accept expired invite",
+            `Got ${e?.response?.status}: ${JSON.stringify(e?.response?.data).slice(0, 100)}`,
+          );
         }
       }
     }
@@ -579,21 +747,32 @@ async function group1_accountCreation() {
   let tempCustomer = null;
   try {
     const tempTs = Date.now();
-    const r = await http.post("/customers", {
-      businessName: "Temp Test Corp",
-      contactName: "Temp Contact",
-      email: `temp_${tempTs}@test.io`,
-      username: `temp_corp_${tempTs}`,
-    }, { headers: { ...authHeader(TENANTS.beta.token), ...tenantHeader(TENANTS.beta.slug) } });
+    const r = await http.post(
+      "/customers",
+      {
+        businessName: "Temp Test Corp",
+        contactName: "Temp Contact",
+        email: `temp_${tempTs}@test.io`,
+        username: `temp_corp_${tempTs}`,
+      },
+      { headers: { ...authHeader(TENANTS.beta.token), ...tenantHeader(TENANTS.beta.slug) } },
+    );
     tempCustomer = r.data?.customer?.id ?? r.data?.id;
-  } catch (e) { /* ignore */ }
+  } catch (e) {
+    /* ignore */
+  }
 
   if (tempCustomer) {
-    await http.post(`/customers/${tempCustomer}/portal-invite`,
-      { method: "EMAIL", overrideEmail: "temp@test.io" },
-      { headers: { ...authHeader(TENANTS.beta.token), ...tenantHeader(TENANTS.beta.slug) } }
-    ).catch(() => {});
-    const rows = await dbQuery(`SELECT "inviteToken" FROM "CustomerLink" WHERE "customerId" = $1`, [tempCustomer]);
+    await http
+      .post(
+        `/customers/${tempCustomer}/portal-invite`,
+        { method: "EMAIL", overrideEmail: "temp@test.io" },
+        { headers: { ...authHeader(TENANTS.beta.token), ...tenantHeader(TENANTS.beta.slug) } },
+      )
+      .catch(() => {});
+    const rows = await dbQuery(`SELECT "inviteToken" FROM "CustomerLink" WHERE "customerId" = $1`, [
+      tempCustomer,
+    ]);
     const tempToken = rows[0]?.inviteToken;
 
     if (tempToken) {
@@ -609,19 +788,35 @@ async function group1_accountCreation() {
         const attackerId = attackerR.data.buyer?.id;
 
         // Try to accept temp's token as attacker
-        await http.post(`/buyer/invites/${tempToken}/accept`, {}, { headers: authHeader(attackerToken) });
+        await http.post(
+          `/buyer/invites/${tempToken}/accept`,
+          {},
+          { headers: authHeader(attackerToken) },
+        );
 
         // Verify the link is to tempCustomer, not any other
-        const link = await dbQuery(`SELECT "buyerAccountId", "customerId" FROM "CustomerLink" WHERE "inviteToken" IS NULL AND "customerId" = $1`, [tempCustomer]);
+        const link = await dbQuery(
+          `SELECT "buyerAccountId", "customerId" FROM "CustomerLink" WHERE "inviteToken" IS NULL AND "customerId" = $1`,
+          [tempCustomer],
+        );
         if (link[0]?.buyerAccountId === attackerId) {
           // This is actually correct behavior - token is valid, attacker is a valid buyer
-          pass("1.6-S1", "Cross-tenant token: token is valid for the customer it was sent to (correct)");
+          pass(
+            "1.6-S1",
+            "Cross-tenant token: token is valid for the customer it was sent to (correct)",
+          );
         } else {
-          pass("1.6-S1", "Cross-tenant token: token belongs to correct customer (isolation maintained)");
+          pass(
+            "1.6-S1",
+            "Cross-tenant token: token belongs to correct customer (isolation maintained)",
+          );
         }
 
         // Cleanup attacker
-        await dbQuery(`UPDATE "BuyerAccount" SET status = 'DELETED', "deletedAt" = NOW() WHERE id = $1`, [attackerId]);
+        await dbQuery(
+          `UPDATE "BuyerAccount" SET status = 'DELETED', "deletedAt" = NOW() WHERE id = $1`,
+          [attackerId],
+        );
       } catch (e) {
         if (e?.response?.status === 403 || e?.response?.status === 409) {
           pass("1.6-S1", `Cross-tenant token attack → ${e.response.status} rejected`);
@@ -632,14 +827,19 @@ async function group1_accountCreation() {
     }
 
     // Cleanup temp customer
-    await dbQuery(`UPDATE "CustomerLink" SET status = 'DISCONNECTED' WHERE "customerId" = $1`, [tempCustomer]).catch(() => {});
+    await dbQuery(`UPDATE "CustomerLink" SET status = 'DISCONNECTED' WHERE "customerId" = $1`, [
+      tempCustomer,
+    ]).catch(() => {});
   }
 
-  spec("1.6-S2", "Spec requirement: tenant context manipulation in POST body",
+  spec(
+    "1.6-S2",
+    "Spec requirement: tenant context manipulation in POST body",
     "Spec asks to submit token from Tenant A while manipulating tenantId in POST body for Tenant B. " +
-    "Actual implementation: acceptInvite only looks up CustomerLink by token — no tenantId in body. " +
-    "Isolation is guaranteed by the token → CustomerLink → tenant relationship. " +
-    "Token cannot be redirected to a different tenant. VERDICT: Architecture provides correct isolation.");
+      "Actual implementation: acceptInvite only looks up CustomerLink by token — no tenantId in body. " +
+      "Isolation is guaranteed by the token → CustomerLink → tenant relationship. " +
+      "Token cannot be redirected to a different tenant. VERDICT: Architecture provides correct isolation.",
+  );
 
   // ── 1.7: Duplicate link attempt ─────────────────────────────────────────────
   console.log("\n  SCENARIO 1.7 — Duplicate link attempt (already linked)");
@@ -648,13 +848,25 @@ async function group1_accountCreation() {
     // Try to accept the already-used Alpha token again
     if (JAMIE.token) {
       try {
-        await http.post(`/buyer/invites/${inviteToken_alpha}/accept`, {}, { headers: authHeader(JAMIE.token) });
+        await http.post(
+          `/buyer/invites/${inviteToken_alpha}/accept`,
+          {},
+          { headers: authHeader(JAMIE.token) },
+        );
         fail("1.7-S1", "Re-accept used invite → error", "Expected 409/404, got 2xx");
       } catch (e) {
-        if (e?.response?.status === 409 || e?.response?.status === 404 || e?.response?.status === 410) {
+        if (
+          e?.response?.status === 409 ||
+          e?.response?.status === 404 ||
+          e?.response?.status === 410
+        ) {
           pass("1.7-S1", `Re-accept used invite → ${e.response.status} (correct rejection)`);
         } else {
-          fail("1.7-S1", "Re-accept used invite", `Got ${e?.response?.status}: ${JSON.stringify(e?.response?.data).slice(0,100)}`);
+          fail(
+            "1.7-S1",
+            "Re-accept used invite",
+            `Got ${e?.response?.status}: ${JSON.stringify(e?.response?.data).slice(0, 100)}`,
+          );
         }
       }
     }
@@ -664,24 +876,34 @@ async function group1_accountCreation() {
     // We restore it after the test via DB
     let jamie_alpha_buyerAccountId_backup = JAMIE.id; // save for restore
     try {
-      const r = await http.post(`/customers/${CUSTOMERS.alpha.id}/portal-invite`,
+      const r = await http.post(
+        `/customers/${CUSTOMERS.alpha.id}/portal-invite`,
         { method: "EMAIL" },
-        { headers: { ...authHeader(TENANTS.alpha.token), ...tenantHeader(TENANTS.alpha.slug) } }
+        { headers: { ...authHeader(TENANTS.alpha.token), ...tenantHeader(TENANTS.alpha.slug) } },
       );
       // Current implementation upserts - so if link is ACTIVE it overwrites (by design)
-      spec("1.7-S2", "Re-invite already-linked customer behavior",
+      spec(
+        "1.7-S2",
+        "Re-invite already-linked customer behavior",
         `API returns 201 for re-invite of ACTIVE customer (upsert overwrites). ` +
-        "Spec expects 400/409 to prevent confusion. Need product decision: " +
-        "should already-linked customers get an error or a no-op? Current: silent overwrite.");
+          "Spec expects 400/409 to prevent confusion. Need product decision: " +
+          "should already-linked customers get an error or a no-op? Current: silent overwrite.",
+      );
     } catch (e) {
       if (e?.response?.status === 409 || e?.response?.status === 400) {
-        pass("1.7-S2", `Send invite to already-linked customer → ${e.response.status} (duplicate prevented)`);
+        pass(
+          "1.7-S2",
+          `Send invite to already-linked customer → ${e.response.status} (duplicate prevented)`,
+        );
       } else {
         // The upsert might succeed (overwrite) - which is implementation-specific
-        spec("1.7-S2b", "Re-invite already-linked customer behavior",
-          `API returns ${e?.response?.status ?? '2xx'} when re-inviting an ACTIVE customer. ` +
-          "Spec expects 400/409 to prevent confusion. Actual behavior: upsert overwrites existing link. " +
-          "Need product decision: should already-linked customers get an error or a no-op?");
+        spec(
+          "1.7-S2b",
+          "Re-invite already-linked customer behavior",
+          `API returns ${e?.response?.status ?? "2xx"} when re-inviting an ACTIVE customer. ` +
+            "Spec expects 400/409 to prevent confusion. Actual behavior: upsert overwrites existing link. " +
+            "Need product decision: should already-linked customers get an error or a no-op?",
+        );
       }
     }
   }
@@ -690,8 +912,8 @@ async function group1_accountCreation() {
   if (CUSTOMERS.alpha?.id && TENANTS.alpha?.id && JAMIE.id) {
     await dbQuery(
       `UPDATE "CustomerLink" SET "buyerAccountId" = $1, status = 'ACTIVE', "inviteToken" = NULL, "inviteExpiresAt" = NULL, "linkedAt" = NOW() WHERE "customerId" = $2 AND "tenantId" = $3`,
-      [JAMIE.id, CUSTOMERS.alpha.id, TENANTS.alpha.id]
-    ).catch(e => console.log('  (Alpha link restore error:', e.message, ')'));
+      [JAMIE.id, CUSTOMERS.alpha.id, TENANTS.alpha.id],
+    ).catch((e) => console.log("  (Alpha link restore error:", e.message, ")"));
     pass("1.7-RESTORE", "Restored Jamie→Alpha CustomerLink after 1.7 re-invite test ✓");
   }
 
@@ -700,19 +922,29 @@ async function group1_accountCreation() {
   // Use a FRESH temp customer — do NOT reuse ALPHA_CUST (upsert would overwrite Jamie's active link)
   try {
     const smsTs = Date.now();
-    const smsCustR = await http.post('/customers', {
-      businessName: 'SMS Test Corp', contactName: 'SMS Contact',
-      email: `sms_test_${smsTs}@test.io`, username: `sms_corp_${smsTs}`,
-    }, { headers: { ...authHeader(TENANTS.alpha.token), ...tenantHeader(TENANTS.alpha.slug) } });
+    const smsCustR = await http.post(
+      "/customers",
+      {
+        businessName: "SMS Test Corp",
+        contactName: "SMS Contact",
+        email: `sms_test_${smsTs}@test.io`,
+        username: `sms_corp_${smsTs}`,
+      },
+      { headers: { ...authHeader(TENANTS.alpha.token), ...tenantHeader(TENANTS.alpha.slug) } },
+    );
     const smsCustId = smsCustR.data?.customer?.id ?? smsCustR.data?.id;
-    const r = await http.post(`/customers/${smsCustId}/portal-invite`,
+    const r = await http.post(
+      `/customers/${smsCustId}/portal-invite`,
       { method: "SMS" },
-      { headers: { ...authHeader(TENANTS.alpha.token), ...tenantHeader(TENANTS.alpha.slug) } }
+      { headers: { ...authHeader(TENANTS.alpha.token), ...tenantHeader(TENANTS.alpha.slug) } },
     );
     // Will succeed (SMS InviteMethod is valid enum) but email service may not actually send SMS
-    spec("1.8", "SMS invite channel",
+    spec(
+      "1.8",
+      "SMS invite channel",
       "API accepts InviteMethod.SMS without error, but no SMS provider (Twilio/etc.) is configured. " +
-      "The invite token is created correctly. Need to configure an SMS gateway for full SMS flow.");
+        "The invite token is created correctly. Need to configure an SMS gateway for full SMS flow.",
+    );
   } catch (e) {
     if (e?.response?.status === 400 && e?.response?.data?.message?.includes("SMS")) {
       spec("1.8", "SMS invite channel", "SMS not supported — need SMS gateway integration.");
@@ -740,7 +972,7 @@ async function group2_catalogIsolation() {
   try {
     const r = await http.get("/buyer/orders", {
       params: {},
-      headers: { ...authHeader(JAMIE.token), ...tenantHeader(TENANTS.alpha.slug) }
+      headers: { ...authHeader(JAMIE.token), ...tenantHeader(TENANTS.alpha.slug) },
     });
     // Products are separate endpoint — verify orders endpoint works in alpha context
     pass("2.1-S1a", "Alpha seller context accessible with buyer JWT");
@@ -752,17 +984,25 @@ async function group2_catalogIsolation() {
   let alphaOrderId = null;
   if (PRODUCTS.alpha?.id && CUSTOMERS.alpha?.id) {
     try {
-      const r = await http.post("/orders", {
-        customerId: CUSTOMERS.alpha.id,
-        items: [{ productId: PRODUCTS.alpha.id, qty: 10 }],
-        requestedDeliveryDate: new Date(Date.now() + 2 * 86400000).toISOString().split("T")[0],
-      }, { headers: { ...authHeader(TENANTS.alpha.token), ...tenantHeader(TENANTS.alpha.slug) } });
+      const r = await http.post(
+        "/orders",
+        {
+          customerId: CUSTOMERS.alpha.id,
+          items: [{ productId: PRODUCTS.alpha.id, qty: 10 }],
+          requestedDeliveryDate: new Date(Date.now() + 2 * 86400000).toISOString().split("T")[0],
+        },
+        { headers: { ...authHeader(TENANTS.alpha.token), ...tenantHeader(TENANTS.alpha.slug) } },
+      );
       alphaOrderId = r.data?.id;
       const total = Number(r.data?.total ?? r.data?.totalAmount ?? 0);
       if (Math.abs(total - 420) < 5 || Math.abs(total - 462) < 5) {
         pass("2.1-S2", `Alpha order 10 drums → total ${total} (Tier A pricing applied ✓)`);
       } else {
-        fail("2.1-S2", "Alpha order total", `Expected ~$420, got $${total}: ${JSON.stringify(r.data).slice(0,200)}`);
+        fail(
+          "2.1-S2",
+          "Alpha order total",
+          `Expected ~$420, got $${total}: ${JSON.stringify(r.data).slice(0, 200)}`,
+        );
       }
     } catch (e) {
       fail("2.1-S2", "Create Alpha order (10 drums)", e?.response?.data?.message ?? e.message);
@@ -773,16 +1013,23 @@ async function group2_catalogIsolation() {
   let betaOrderId = null;
   if (PRODUCTS.beta?.id && CUSTOMERS.beta?.id) {
     try {
-      const r = await http.post("/orders", {
-        customerId: CUSTOMERS.beta.id,
-        items: [{ productId: PRODUCTS.beta.id, qty: 10 }],
-        requestedDeliveryDate: new Date(Date.now() + 2 * 86400000).toISOString().split("T")[0],
-      }, { headers: { ...authHeader(TENANTS.beta.token), ...tenantHeader(TENANTS.beta.slug) } });
+      const r = await http.post(
+        "/orders",
+        {
+          customerId: CUSTOMERS.beta.id,
+          items: [{ productId: PRODUCTS.beta.id, qty: 10 }],
+          requestedDeliveryDate: new Date(Date.now() + 2 * 86400000).toISOString().split("T")[0],
+        },
+        { headers: { ...authHeader(TENANTS.beta.token), ...tenantHeader(TENANTS.beta.slug) } },
+      );
       betaOrderId = r.data?.id;
       const total = Number(r.data?.total ?? r.data?.totalAmount ?? 0);
       // Beta customer is on tier 2 ($40) → 10 × $40 = $400
       if (Math.abs(total - 400) < 5 || Math.abs(total - 440) < 5) {
-        pass("2.1-S3", `Beta order 10 drums → total ${total} (Tier B pricing applied, different from Alpha ✓)`);
+        pass(
+          "2.1-S3",
+          `Beta order 10 drums → total ${total} (Tier B pricing applied, different from Alpha ✓)`,
+        );
       } else {
         fail("2.1-S3", "Beta Tier B order total", `Expected ~$400, got $${total}`);
       }
@@ -795,14 +1042,18 @@ async function group2_catalogIsolation() {
   if (alphaOrderId && JAMIE.token) {
     try {
       const r = await http.get("/buyer/orders", {
-        headers: { ...authHeader(JAMIE.token), ...tenantHeader(TENANTS.alpha.slug) }
+        headers: { ...authHeader(JAMIE.token), ...tenantHeader(TENANTS.alpha.slug) },
       });
-      const orders = Array.isArray(r.data) ? r.data : r.data?.data ?? [];
-      const hasBetaOrder = orders.some(o => o.id === betaOrderId);
+      const orders = Array.isArray(r.data) ? r.data : (r.data?.data ?? []);
+      const hasBetaOrder = orders.some((o) => o.id === betaOrderId);
       if (!hasBetaOrder) {
         pass("2.1-S4", "Alpha buyer context: Beta order NOT visible (isolation correct)");
       } else {
-        fail("2.1-S4", "Alpha context isolation", "Beta order is visible in Alpha context — DATA LEAK!");
+        fail(
+          "2.1-S4",
+          "Alpha context isolation",
+          "Beta order is visible in Alpha context — DATA LEAK!",
+        );
       }
     } catch (e) {
       fail("2.1-S4", "Alpha context orders", e?.response?.data?.message ?? e.message);
@@ -815,30 +1066,41 @@ async function group2_catalogIsolation() {
   // Beta customer starts at Tier 2 ($40). Change to Tier 1 ($44.50) via operator PATCH
   if (CUSTOMERS.beta?.id) {
     try {
-      await http.patch(`/customers/${CUSTOMERS.beta.id}`,
+      await http.patch(
+        `/customers/${CUSTOMERS.beta.id}`,
         { pricingTier: 1 },
-        { headers: { ...authHeader(TENANTS.beta.token), ...tenantHeader(TENANTS.beta.slug) } }
+        { headers: { ...authHeader(TENANTS.beta.token), ...tenantHeader(TENANTS.beta.slug) } },
       );
       pass("2.2-S1", "Beta OPERATOR changes Metro Kitchen to pricingTier=1 (Tier A)");
 
       // Create new order - should use $44.50
-      const r = await http.post("/orders", {
-        customerId: CUSTOMERS.beta.id,
-        items: [{ productId: PRODUCTS.beta.id, qty: 1 }],
-        requestedDeliveryDate: new Date(Date.now() + 2 * 86400000).toISOString().split("T")[0],
-      }, { headers: { ...authHeader(TENANTS.beta.token), ...tenantHeader(TENANTS.beta.slug) } });
+      const r = await http.post(
+        "/orders",
+        {
+          customerId: CUSTOMERS.beta.id,
+          items: [{ productId: PRODUCTS.beta.id, qty: 1 }],
+          requestedDeliveryDate: new Date(Date.now() + 2 * 86400000).toISOString().split("T")[0],
+        },
+        { headers: { ...authHeader(TENANTS.beta.token), ...tenantHeader(TENANTS.beta.slug) } },
+      );
       const total = Number(r.data?.total ?? r.data?.totalAmount ?? 0);
       if (Math.abs(total - 44.5) < 5 || Math.abs(total - 48.95) < 2 || Math.abs(total - 49.5) < 2) {
         pass("2.2-S2", `After tier change: 1 drum → ${total} (Tier A pricing ✓)`);
       } else {
-        fail("2.2-S2", "Tier change reflects in new order price", `Expected ~$44.50, got $${total}`);
+        fail(
+          "2.2-S2",
+          "Tier change reflects in new order price",
+          `Expected ~$44.50, got $${total}`,
+        );
       }
     } catch (e) {
       fail("2.2-S1", "Tier change via PATCH /customers", e?.response?.data?.message ?? e.message);
     }
 
     // Restore Beta to Tier 2
-    await dbQuery(`UPDATE "Customer" SET "pricingTier" = 2 WHERE id = $1`, [CUSTOMERS.beta.id]).catch(()=>{});
+    await dbQuery(`UPDATE "Customer" SET "pricingTier" = 2 WHERE id = $1`, [
+      CUSTOMERS.beta.id,
+    ]).catch(() => {});
     pass("2.2-S3", "Restored Beta Metro Kitchen to pricingTier=2");
   }
 
@@ -847,14 +1109,21 @@ async function group2_catalogIsolation() {
 
   if (PRODUCTS.gamma?.id && CUSTOMERS.gamma?.id) {
     try {
-      const r = await http.post("/orders", {
-        customerId: CUSTOMERS.gamma.id,
-        items: [{ productId: PRODUCTS.gamma.id, qty: 5 }],
-        requestedDeliveryDate: new Date(Date.now() + 2 * 86400000).toISOString().split("T")[0],
-      }, { headers: { ...authHeader(TENANTS.gamma.token), ...tenantHeader(TENANTS.gamma.slug) } });
+      const r = await http.post(
+        "/orders",
+        {
+          customerId: CUSTOMERS.gamma.id,
+          items: [{ productId: PRODUCTS.gamma.id, qty: 5 }],
+          requestedDeliveryDate: new Date(Date.now() + 2 * 86400000).toISOString().split("T")[0],
+        },
+        { headers: { ...authHeader(TENANTS.gamma.token), ...tenantHeader(TENANTS.gamma.slug) } },
+      );
       const total = Number(r.data?.total ?? r.data?.totalAmount ?? 0);
       if (Math.abs(total - 205) < 5 || Math.abs(total - 225.5) < 5) {
-        pass("2.4-S1", `Gamma order (CAN-OIL-20-GM): 5 drums → ${total} (Gamma catalog isolation ✓)`);
+        pass(
+          "2.4-S1",
+          `Gamma order (CAN-OIL-20-GM): 5 drums → ${total} (Gamma catalog isolation ✓)`,
+        );
       } else {
         fail("2.4-S1", "Gamma canola order total", `Expected ~$205, got $${total}`);
       }
@@ -869,16 +1138,17 @@ async function group2_catalogIsolation() {
   if (PRODUCTS.alpha?.id && alphaOrderId) {
     // Change Alpha product price
     try {
-      await http.patch(`/products/${PRODUCTS.alpha.id}`,
+      await http.patch(
+        `/products/${PRODUCTS.alpha.id}`,
         { pricePerUnit: "46.00" },
-        { headers: { ...authHeader(TENANTS.alpha.token), ...tenantHeader(TENANTS.alpha.slug) } }
+        { headers: { ...authHeader(TENANTS.alpha.token), ...tenantHeader(TENANTS.alpha.slug) } },
       );
       pass("2.5-S1", "Alpha OPERATOR increased canola price from $42 to $46");
 
       // Verify old order is still at $420 (10 × $42)
-      const r = await http.get(`/orders/${alphaOrderId}`,
-        { headers: { ...authHeader(TENANTS.alpha.token), ...tenantHeader(TENANTS.alpha.slug) } }
-      );
+      const r = await http.get(`/orders/${alphaOrderId}`, {
+        headers: { ...authHeader(TENANTS.alpha.token), ...tenantHeader(TENANTS.alpha.slug) },
+      });
       const total = Number(r.data?.total ?? r.data?.totalAmount ?? 0);
       if (Math.abs(total - 420) < 5 || Math.abs(total - 462) < 5) {
         pass("2.5-S2", `Existing order unchanged at ${total} (original Alpha price preserved ✓)`);
@@ -895,15 +1165,29 @@ async function group2_catalogIsolation() {
 
   if (TENANTS.alpha?.token) {
     try {
-      await http.post("/products", {
-        sku: "OIL-CANOLA-20L", name: "Canola Oil Duplicate", pricePerUnit: "42.00", unit: "drum"
-      }, { headers: { ...authHeader(TENANTS.alpha.token), ...tenantHeader(TENANTS.alpha.slug) } });
+      await http.post(
+        "/products",
+        {
+          sku: "OIL-CANOLA-20L",
+          name: "Canola Oil Duplicate",
+          pricePerUnit: "42.00",
+          unit: "drum",
+        },
+        { headers: { ...authHeader(TENANTS.alpha.token), ...tenantHeader(TENANTS.alpha.slug) } },
+      );
       fail("3.2-S1", "Duplicate SKU within tenant → 409", "Expected 409, got 2xx");
     } catch (e) {
       if (e?.response?.status === 409 || e?.response?.status === 400) {
-        pass("3.2-S1", `Duplicate SKU in same tenant → ${e.response.status} (unique constraint enforced) ✓`);
+        pass(
+          "3.2-S1",
+          `Duplicate SKU in same tenant → ${e.response.status} (unique constraint enforced) ✓`,
+        );
       } else {
-        fail("3.2-S1", "Duplicate SKU rejection", `Got ${e?.response?.status}: ${JSON.stringify(e?.response?.data).slice(0,150)}`);
+        fail(
+          "3.2-S1",
+          "Duplicate SKU rejection",
+          `Got ${e?.response?.status}: ${JSON.stringify(e?.response?.data).slice(0, 150)}`,
+        );
       }
     }
   }
@@ -918,18 +1202,26 @@ async function group3_orders() {
   // ── 3.1: Orders from two sellers in same session ────────────────────────────
   console.log("\n  SCENARIO 3.1 — Orders from two sellers in same buyer session");
 
-  let orderAlpha2 = null, orderBeta2 = null;
+  let orderAlpha2 = null,
+    orderBeta2 = null;
 
   // Alpha order
   if (PRODUCTS.alpha?.id && CUSTOMERS.alpha?.id) {
     try {
-      const r = await http.post("/orders", {
-        customerId: CUSTOMERS.alpha.id,
-        items: [{ productId: PRODUCTS.alpha.id, qty: 2 }],
-        requestedDeliveryDate: new Date(Date.now() + 2 * 86400000).toISOString().split("T")[0],
-      }, { headers: { ...authHeader(TENANTS.alpha.token), ...tenantHeader(TENANTS.alpha.slug) } });
+      const r = await http.post(
+        "/orders",
+        {
+          customerId: CUSTOMERS.alpha.id,
+          items: [{ productId: PRODUCTS.alpha.id, qty: 2 }],
+          requestedDeliveryDate: new Date(Date.now() + 2 * 86400000).toISOString().split("T")[0],
+        },
+        { headers: { ...authHeader(TENANTS.alpha.token), ...tenantHeader(TENANTS.alpha.slug) } },
+      );
       orderAlpha2 = r.data?.id;
-      pass("3.1-S1", `Alpha order created: 2 drums × $46 = $${r.data?.total ?? r.data?.totalAmount}`);
+      pass(
+        "3.1-S1",
+        `Alpha order created: 2 drums × $46 = $${r.data?.total ?? r.data?.totalAmount}`,
+      );
     } catch (e) {
       fail("3.1-S1", "Create second Alpha order", e?.response?.data?.message ?? e.message);
     }
@@ -938,13 +1230,20 @@ async function group3_orders() {
   // Beta order (same buyer session)
   if (PRODUCTS.beta?.id && CUSTOMERS.beta?.id) {
     try {
-      const r = await http.post("/orders", {
-        customerId: CUSTOMERS.beta.id,
-        items: [{ productId: PRODUCTS.beta.id, qty: 3 }],
-        requestedDeliveryDate: new Date(Date.now() + 2 * 86400000).toISOString().split("T")[0],
-      }, { headers: { ...authHeader(TENANTS.beta.token), ...tenantHeader(TENANTS.beta.slug) } });
+      const r = await http.post(
+        "/orders",
+        {
+          customerId: CUSTOMERS.beta.id,
+          items: [{ productId: PRODUCTS.beta.id, qty: 3 }],
+          requestedDeliveryDate: new Date(Date.now() + 2 * 86400000).toISOString().split("T")[0],
+        },
+        { headers: { ...authHeader(TENANTS.beta.token), ...tenantHeader(TENANTS.beta.slug) } },
+      );
       orderBeta2 = r.data?.id;
-      pass("3.1-S2", `Beta order created: 3 drums × $40 = $${r.data?.total ?? r.data?.totalAmount}`);
+      pass(
+        "3.1-S2",
+        `Beta order created: 3 drums × $40 = $${r.data?.total ?? r.data?.totalAmount}`,
+      );
     } catch (e) {
       fail("3.1-S2", "Create second Beta order", e?.response?.data?.message ?? e.message);
     }
@@ -953,27 +1252,41 @@ async function group3_orders() {
   // Cross-context isolation
   if (orderAlpha2 && orderBeta2 && JAMIE.token) {
     // Alpha context: see alpha order, not beta
-    const alphaOrders = await http.get("/buyer/orders", {
-      headers: { ...authHeader(JAMIE.token), ...tenantHeader(TENANTS.alpha.slug) }
-    }).then(r => Array.isArray(r.data) ? r.data : r.data?.data ?? []).catch(() => []);
+    const alphaOrders = await http
+      .get("/buyer/orders", {
+        headers: { ...authHeader(JAMIE.token), ...tenantHeader(TENANTS.alpha.slug) },
+      })
+      .then((r) => (Array.isArray(r.data) ? r.data : (r.data?.data ?? [])))
+      .catch(() => []);
 
-    const betaOrders = await http.get("/buyer/orders", {
-      headers: { ...authHeader(JAMIE.token), ...tenantHeader(TENANTS.beta.slug) }
-    }).then(r => Array.isArray(r.data) ? r.data : r.data?.data ?? []).catch(() => []);
+    const betaOrders = await http
+      .get("/buyer/orders", {
+        headers: { ...authHeader(JAMIE.token), ...tenantHeader(TENANTS.beta.slug) },
+      })
+      .then((r) => (Array.isArray(r.data) ? r.data : (r.data?.data ?? [])))
+      .catch(() => []);
 
-    const alphaIds = alphaOrders.map(o => o.id);
-    const betaIds = betaOrders.map(o => o.id);
+    const alphaIds = alphaOrders.map((o) => o.id);
+    const betaIds = betaOrders.map((o) => o.id);
 
     if (!alphaIds.includes(orderBeta2)) {
       pass("3.1-S3", "Alpha buyer view: Beta's order NOT visible ✓");
     } else {
-      fail("3.1-S3", "Cross-tenant order isolation", `Beta order ${orderBeta2} appeared in Alpha buyer context — DATA LEAK`);
+      fail(
+        "3.1-S3",
+        "Cross-tenant order isolation",
+        `Beta order ${orderBeta2} appeared in Alpha buyer context — DATA LEAK`,
+      );
     }
 
     if (!betaIds.includes(orderAlpha2)) {
       pass("3.1-S4", "Beta buyer view: Alpha's order NOT visible ✓");
     } else {
-      fail("3.1-S4", "Cross-tenant order isolation", `Alpha order ${orderAlpha2} appeared in Beta buyer context — DATA LEAK`);
+      fail(
+        "3.1-S4",
+        "Cross-tenant order isolation",
+        `Alpha order ${orderAlpha2} appeared in Beta buyer context — DATA LEAK`,
+      );
     }
   }
 
@@ -982,33 +1295,52 @@ async function group3_orders() {
 
   if (PRODUCTS.gamma?.id && CUSTOMERS.gamma?.id) {
     // Set Gamma product stock to 0
-    await dbQuery(`UPDATE "Product" SET "stockLevel" = 0, "trackInventory" = true WHERE id = $1`, [PRODUCTS.gamma.id]).catch(()=>{});
+    await dbQuery(`UPDATE "Product" SET "stockLevel" = 0, "trackInventory" = true WHERE id = $1`, [
+      PRODUCTS.gamma.id,
+    ]).catch(() => {});
 
     try {
-      await http.post("/orders", {
-        customerId: CUSTOMERS.gamma.id,
-        items: [{ productId: PRODUCTS.gamma.id, qty: 10 }],
-        requestedDeliveryDate: new Date(Date.now() + 2 * 86400000).toISOString().split("T")[0],
-      }, { headers: { ...authHeader(TENANTS.gamma.token), ...tenantHeader(TENANTS.gamma.slug) } });
-      spec("3.3-S1", "Zero stock order behavior",
+      await http.post(
+        "/orders",
+        {
+          customerId: CUSTOMERS.gamma.id,
+          items: [{ productId: PRODUCTS.gamma.id, qty: 10 }],
+          requestedDeliveryDate: new Date(Date.now() + 2 * 86400000).toISOString().split("T")[0],
+        },
+        { headers: { ...authHeader(TENANTS.gamma.token), ...tenantHeader(TENANTS.gamma.slug) } },
+      );
+      spec(
+        "3.3-S1",
+        "Zero stock order behavior",
         "Order created despite zero stock. Need product decision: " +
-        "should system (a) block the order with 400 out-of-stock, (b) allow backorder, or " +
-        "(c) allow always and track stock separately? Current behavior: allows order.");
+          "should system (a) block the order with 400 out-of-stock, (b) allow backorder, or " +
+          "(c) allow always and track stock separately? Current behavior: allows order.",
+      );
     } catch (e) {
       if (e?.response?.status === 400) {
         pass("3.3-S1", `Zero stock → 400 out-of-stock rejected ✓`);
       } else {
-        fail("3.3-S1", "Zero stock order", `Got ${e?.response?.status}: ${JSON.stringify(e?.response?.data).slice(0,100)}`);
+        fail(
+          "3.3-S1",
+          "Zero stock order",
+          `Got ${e?.response?.status}: ${JSON.stringify(e?.response?.data).slice(0, 100)}`,
+        );
       }
     }
 
     // Restore Gamma stock
-    await dbQuery(`UPDATE "Product" SET "stockLevel" = 100, "trackInventory" = false WHERE id = $1`, [PRODUCTS.gamma.id]).catch(()=>{});
+    await dbQuery(
+      `UPDATE "Product" SET "stockLevel" = 100, "trackInventory" = false WHERE id = $1`,
+      [PRODUCTS.gamma.id],
+    ).catch(() => {});
 
     // Beta's stock is unaffected
-    const betaProduct = await http.get(`/products/${PRODUCTS.beta.id}`,
-      { headers: { ...authHeader(TENANTS.beta.token), ...tenantHeader(TENANTS.beta.slug) } }
-    ).then(r => r.data).catch(() => null);
+    const betaProduct = await http
+      .get(`/products/${PRODUCTS.beta.id}`, {
+        headers: { ...authHeader(TENANTS.beta.token), ...tenantHeader(TENANTS.beta.slug) },
+      })
+      .then((r) => r.data)
+      .catch(() => null);
     if (betaProduct) {
       pass("3.3-S2", "Beta product stock unaffected by Gamma zero-stock scenario ✓");
     }
@@ -1020,14 +1352,22 @@ async function group3_orders() {
   // Gamma customer (GAMMA_CUST) had no portal link yet; try to create an order directly
   if (CUSTOMERS.gamma?.id && TENANTS.gamma?.token) {
     try {
-      const r = await http.post("/orders", {
-        customerId: CUSTOMERS.gamma.id,
-        items: [{ productId: PRODUCTS.gamma.id, qty: 1 }],
-        requestedDeliveryDate: new Date(Date.now() + 2 * 86400000).toISOString().split("T")[0],
-      }, { headers: { ...authHeader(TENANTS.gamma.token), ...tenantHeader(TENANTS.gamma.slug) } });
+      const r = await http.post(
+        "/orders",
+        {
+          customerId: CUSTOMERS.gamma.id,
+          items: [{ productId: PRODUCTS.gamma.id, qty: 1 }],
+          requestedDeliveryDate: new Date(Date.now() + 2 * 86400000).toISOString().split("T")[0],
+        },
+        { headers: { ...authHeader(TENANTS.gamma.token), ...tenantHeader(TENANTS.gamma.slug) } },
+      );
       pass("3.4-S1", `Operator can create order for customer with no portal link → 201 ✓`);
     } catch (e) {
-      fail("3.4-S1", "Operator order for unlinked customer", e?.response?.data?.message ?? e.message);
+      fail(
+        "3.4-S1",
+        "Operator order for unlinked customer",
+        e?.response?.data?.message ?? e.message,
+      );
     }
   }
 
@@ -1044,23 +1384,29 @@ async function group3_orders() {
       // Create a random non-linked tenant
       const randomSlug = `unlinked-${Date.now()}`;
       await http.get("/buyer/orders", {
-        headers: { ...authHeader(JAMIE.token), "X-Tenant-Slug": randomSlug }
+        headers: { ...authHeader(JAMIE.token), "X-Tenant-Slug": randomSlug },
       });
       fail("3.5-S1", "Non-linked tenant → 403", "Expected 403, got 2xx");
     } catch (e) {
       if (e?.response?.status === 403 || e?.response?.status === 404) {
-        pass("3.5-S1", `Non-linked tenant in X-Tenant-Slug → ${e.response.status} (correct rejection) ✓`);
+        pass(
+          "3.5-S1",
+          `Non-linked tenant in X-Tenant-Slug → ${e.response.status} (correct rejection) ✓`,
+        );
       } else {
         fail("3.5-S1", "Non-linked tenant rejection", `Got ${e?.response?.status}`);
       }
     }
   }
 
-  spec("3.5-S2", "Buyer JWT tenant scoping",
+  spec(
+    "3.5-S2",
+    "Buyer JWT tenant scoping",
     "Spec expects JWT token to be scoped per tenant (containing tenantId). " +
-    "Actual implementation: buyer JWT is tenant-agnostic; isolation is enforced per-request via " +
-    "X-Tenant-Slug header + BuyerSellerContextGuard (verifies ACTIVE CustomerLink). " +
-    "This is MORE secure (stateless isolation) but different from spec's session model.");
+      "Actual implementation: buyer JWT is tenant-agnostic; isolation is enforced per-request via " +
+      "X-Tenant-Slug header + BuyerSellerContextGuard (verifies ACTIVE CustomerLink). " +
+      "This is MORE secure (stateless isolation) but different from spec's session model.",
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1073,34 +1419,49 @@ async function group4_creditBalances() {
   console.log("\n  SCENARIO 4.1 — Independent credit balances per seller");
 
   // Check statement endpoint for each seller
-  for (const [key, expected] of [["alpha", "Alpha"], ["beta", "Beta"], ["gamma", "Gamma"]]) {
+  for (const [key, expected] of [
+    ["alpha", "Alpha"],
+    ["beta", "Beta"],
+    ["gamma", "Gamma"],
+  ]) {
     if (!JAMIE.token || !TENANTS[key]?.slug || !CUSTOMERS[key]?.id) continue;
     try {
       const r = await http.get("/buyer/statement", {
-        headers: { ...authHeader(JAMIE.token), ...tenantHeader(TENANTS[key].slug) }
+        headers: { ...authHeader(JAMIE.token), ...tenantHeader(TENANTS[key].slug) },
       });
-      pass(`4.1-S${["alpha","beta","gamma"].indexOf(key)+1}`, `${expected} credit statement accessible independently`);
+      pass(
+        `4.1-S${["alpha", "beta", "gamma"].indexOf(key) + 1}`,
+        `${expected} credit statement accessible independently`,
+      );
     } catch (e) {
-      fail(`4.1-S${["alpha","beta","gamma"].indexOf(key)+1}`, `${expected} statement`, e?.response?.data?.message ?? e.message);
+      fail(
+        `4.1-S${["alpha", "beta", "gamma"].indexOf(key) + 1}`,
+        `${expected} statement`,
+        e?.response?.data?.message ?? e.message,
+      );
     }
   }
 
   // Verify no cross-contamination at DB level
-  if (TENANTS.alpha?.id && CUSTOMERS.alpha?.id && TENANTS.beta?.id && CUSTOMERS.beta?.id) { try {
-    const alphaLink = await dbQuery(
-      `SELECT status FROM "CustomerLink" WHERE "tenantId" = $1 AND "customerId" = $2`,
-      [TENANTS.alpha.id, CUSTOMERS.alpha.id]
-    );
-    const betaLink = await dbQuery(
-      `SELECT status FROM "CustomerLink" WHERE "tenantId" = $1 AND "customerId" = $2`,
-      [TENANTS.beta.id, CUSTOMERS.beta.id]
-    );
-    if (alphaLink[0]?.status === "ACTIVE" && betaLink[0]?.status === "ACTIVE") {
-      pass("4.1-DB", "DB: Alpha and Beta CustomerLinks are independent ACTIVE records ✓");
+  if (TENANTS.alpha?.id && CUSTOMERS.alpha?.id && TENANTS.beta?.id && CUSTOMERS.beta?.id) {
+    try {
+      const alphaLink = await dbQuery(
+        `SELECT status FROM "CustomerLink" WHERE "tenantId" = $1 AND "customerId" = $2`,
+        [TENANTS.alpha.id, CUSTOMERS.alpha.id],
+      );
+      const betaLink = await dbQuery(
+        `SELECT status FROM "CustomerLink" WHERE "tenantId" = $1 AND "customerId" = $2`,
+        [TENANTS.beta.id, CUSTOMERS.beta.id],
+      );
+      if (alphaLink[0]?.status === "ACTIVE" && betaLink[0]?.status === "ACTIVE") {
+        pass("4.1-DB", "DB: Alpha and Beta CustomerLinks are independent ACTIVE records ✓");
+      }
+    } catch (e) {
+      fail("4.1-DB", "DB isolation check", e.message);
     }
-  } catch (e) {
-    fail("4.1-DB", "DB isolation check", e.message);
-  } } else { skip("4.1-DB", "DB isolation", "Missing IDs"); }
+  } else {
+    skip("4.1-DB", "DB isolation", "Missing IDs");
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1113,8 +1474,10 @@ async function group5_disconnections() {
   console.log("\n  SCENARIO 5.1 — Seller (Beta) disconnects Metro Kitchen");
 
   try {
-    const r = await http.post(`/customers/${CUSTOMERS.beta.id}/portal-disconnect`, {},
-      { headers: { ...authHeader(TENANTS.beta.token), ...tenantHeader(TENANTS.beta.slug) } }
+    const r = await http.post(
+      `/customers/${CUSTOMERS.beta.id}/portal-disconnect`,
+      {},
+      { headers: { ...authHeader(TENANTS.beta.token), ...tenantHeader(TENANTS.beta.slug) } },
     );
     pass("5.1-S1", `Beta OPERATOR disconnects Metro Kitchen → ${r.data.message}`);
   } catch (e) {
@@ -1124,7 +1487,7 @@ async function group5_disconnections() {
   // Verify DB state
   const betaLink = await dbQuery(
     `SELECT status, "disconnectedBy", "disconnectedAt" FROM "CustomerLink" WHERE "tenantId" = $1 AND "customerId" = $2`,
-    [TENANTS.beta.id, CUSTOMERS.beta.id]
+    [TENANTS.beta.id, CUSTOMERS.beta.id],
   ).catch(() => []);
   if (betaLink[0]?.status === "DISCONNECTED" && betaLink[0]?.disconnectedBy === "SELLER") {
     pass("5.1-S2", `DB: Beta link → DISCONNECTED, disconnectedBy=SELLER ✓`);
@@ -1136,11 +1499,18 @@ async function group5_disconnections() {
   if (JAMIE.token) {
     try {
       const r = await http.get("/buyer/sellers", { headers: authHeader(JAMIE.token) });
-      const active = r.data.filter(s => s.linkStatus === "ACTIVE");
+      const active = r.data.filter((s) => s.linkStatus === "ACTIVE");
       if (active.length >= 1) {
-        pass("5.1-S3", `Seller list: ${active.length} active sellers remain after Beta disconnect: ${active.map(s=>s.tenant?.name).join(", ")} ✓`);
+        pass(
+          "5.1-S3",
+          `Seller list: ${active.length} active sellers remain after Beta disconnect: ${active.map((s) => s.tenant?.name).join(", ")} ✓`,
+        );
       } else {
-        fail("5.1-S3", "Active sellers after Beta disconnect", `Expected ≥1 active, got ${active.length}: ${JSON.stringify(r.data.map(s=>({name:s.tenant?.name,status:s.linkStatus})))}`);
+        fail(
+          "5.1-S3",
+          "Active sellers after Beta disconnect",
+          `Expected ≥1 active, got ${active.length}: ${JSON.stringify(r.data.map((s) => ({ name: s.tenant?.name, status: s.linkStatus })))}`,
+        );
       }
     } catch (e) {
       fail("5.1-S3", "List sellers after Beta disconnect", e?.response?.data?.message ?? e.message);
@@ -1149,7 +1519,7 @@ async function group5_disconnections() {
     // Jamie can no longer access Beta context
     try {
       await http.get("/buyer/orders", {
-        headers: { ...authHeader(JAMIE.token), ...tenantHeader(TENANTS.beta.slug) }
+        headers: { ...authHeader(JAMIE.token), ...tenantHeader(TENANTS.beta.slug) },
       });
       fail("5.1-S4", "Beta access after disconnect → 403", "Expected 403, got 2xx");
     } catch (e) {
@@ -1164,11 +1534,15 @@ async function group5_disconnections() {
   // Beta operator can still create manual orders
   if (TENANTS.beta?.token && CUSTOMERS.beta?.id && PRODUCTS.beta?.id) {
     try {
-      await http.post("/orders", {
-        customerId: CUSTOMERS.beta.id,
-        items: [{ productId: PRODUCTS.beta.id, qty: 1 }],
-        requestedDeliveryDate: new Date(Date.now() + 2 * 86400000).toISOString().split("T")[0],
-      }, { headers: { ...authHeader(TENANTS.beta.token), ...tenantHeader(TENANTS.beta.slug) } });
+      await http.post(
+        "/orders",
+        {
+          customerId: CUSTOMERS.beta.id,
+          items: [{ productId: PRODUCTS.beta.id, qty: 1 }],
+          requestedDeliveryDate: new Date(Date.now() + 2 * 86400000).toISOString().split("T")[0],
+        },
+        { headers: { ...authHeader(TENANTS.beta.token), ...tenantHeader(TENANTS.beta.slug) } },
+      );
       pass("5.1-S5", "Beta operator can still create manual orders post-disconnect ✓");
     } catch (e) {
       fail("5.1-S5", "Manual order after disconnect", e?.response?.data?.message ?? e.message);
@@ -1180,18 +1554,22 @@ async function group5_disconnections() {
 
   if (JAMIE.token) {
     try {
-      const r = await http.delete(`/buyer/sellers/${TENANTS.gamma.slug}`,
-        { headers: authHeader(JAMIE.token) }
-      );
+      const r = await http.delete(`/buyer/sellers/${TENANTS.gamma.slug}`, {
+        headers: authHeader(JAMIE.token),
+      });
       pass("5.2-S1", `Jamie disconnects from Gamma → ${r.data.message}`);
     } catch (e) {
-      fail("5.2-S1", "Customer self-disconnect from Gamma", e?.response?.data?.message ?? e.message);
+      fail(
+        "5.2-S1",
+        "Customer self-disconnect from Gamma",
+        e?.response?.data?.message ?? e.message,
+      );
     }
 
     // Verify DB
     const gammaLink = await dbQuery(
       `SELECT status, "disconnectedBy" FROM "CustomerLink" WHERE "tenantId" = $1 AND "customerId" = $2`,
-      [TENANTS.gamma.id, CUSTOMERS.gamma.id]
+      [TENANTS.gamma.id, CUSTOMERS.gamma.id],
     ).catch(() => []);
     if (gammaLink[0]?.status === "DISCONNECTED" && gammaLink[0]?.disconnectedBy === "BUYER") {
       pass("5.2-S2", `DB: Gamma link → DISCONNECTED, disconnectedBy=BUYER ✓`);
@@ -1200,12 +1578,18 @@ async function group5_disconnections() {
     }
 
     // Only Alpha remains
-    const sellers = await http.get("/buyer/sellers", { headers: authHeader(JAMIE.token) })
-      .then(r => r.data.filter(s => s.linkStatus === "ACTIVE")).catch(() => []);
+    const sellers = await http
+      .get("/buyer/sellers", { headers: authHeader(JAMIE.token) })
+      .then((r) => r.data.filter((s) => s.linkStatus === "ACTIVE"))
+      .catch(() => []);
     if (sellers.length === 1 && sellers[0]?.tenant?.slug === TENANTS.alpha.slug) {
       pass("5.2-S3", "Only Alpha remains after Gamma self-disconnect ✓");
     } else {
-      fail("5.2-S3", "Sellers after Gamma disconnect", `Got ${JSON.stringify(sellers.map(s=>s.tenant?.name))}`);
+      fail(
+        "5.2-S3",
+        "Sellers after Gamma disconnect",
+        `Got ${JSON.stringify(sellers.map((s) => s.tenant?.name))}`,
+      );
     }
   }
 
@@ -1214,20 +1598,30 @@ async function group5_disconnections() {
 
   // Beta sends new invite
   try {
-    await http.post(`/customers/${CUSTOMERS.beta.id}/portal-invite`,
+    await http.post(
+      `/customers/${CUSTOMERS.beta.id}/portal-invite`,
       { method: "EMAIL" },
-      { headers: { ...authHeader(TENANTS.beta.token), ...tenantHeader(TENANTS.beta.slug) } }
+      { headers: { ...authHeader(TENANTS.beta.token), ...tenantHeader(TENANTS.beta.slug) } },
     );
-    const rows = await dbQuery(`SELECT "inviteToken" FROM "CustomerLink" WHERE "customerId" = $1`, [CUSTOMERS.beta.id]);
+    const rows = await dbQuery(`SELECT "inviteToken" FROM "CustomerLink" WHERE "customerId" = $1`, [
+      CUSTOMERS.beta.id,
+    ]);
     const reconnectToken = rows[0]?.inviteToken;
 
     if (reconnectToken && JAMIE.token) {
-      await http.post(`/buyer/invites/${reconnectToken}/accept`, {}, { headers: authHeader(JAMIE.token) });
+      await http.post(
+        `/buyer/invites/${reconnectToken}/accept`,
+        {},
+        { headers: authHeader(JAMIE.token) },
+      );
       pass("5.3-S1", "Jamie accepts Beta re-invite → reconnected ✓");
 
       // Verify reconnected
-      const sellers = await http.get("/buyer/sellers", { headers: authHeader(JAMIE.token) })
-        .then(r => r.data.filter(s => s.linkStatus === "ACTIVE" && s.tenant?.slug === TENANTS.beta.slug))
+      const sellers = await http
+        .get("/buyer/sellers", { headers: authHeader(JAMIE.token) })
+        .then((r) =>
+          r.data.filter((s) => s.linkStatus === "ACTIVE" && s.tenant?.slug === TENANTS.beta.slug),
+        )
         .catch(() => []);
       if (sellers.length === 1) {
         pass("5.3-S2", "Beta reappears in buyer's active seller list ✓");
@@ -1236,13 +1630,23 @@ async function group5_disconnections() {
       }
 
       // Historical orders still accessible
-      const betaOrders = await http.get("/buyer/orders", {
-        headers: { ...authHeader(JAMIE.token), ...tenantHeader(TENANTS.beta.slug) }
-      }).then(r => Array.isArray(r.data) ? r.data : r.data?.data ?? []).catch(() => []);
+      const betaOrders = await http
+        .get("/buyer/orders", {
+          headers: { ...authHeader(JAMIE.token), ...tenantHeader(TENANTS.beta.slug) },
+        })
+        .then((r) => (Array.isArray(r.data) ? r.data : (r.data?.data ?? [])))
+        .catch(() => []);
       if (betaOrders.length > 0) {
-        pass("5.3-S3", `Historical Beta orders visible after reconnect: ${betaOrders.length} orders ✓`);
+        pass(
+          "5.3-S3",
+          `Historical Beta orders visible after reconnect: ${betaOrders.length} orders ✓`,
+        );
       } else {
-        fail("5.3-S3", "Historical orders after reconnect", "No Beta orders visible post-reconnect");
+        fail(
+          "5.3-S3",
+          "Historical orders after reconnect",
+          "No Beta orders visible post-reconnect",
+        );
       }
     }
   } catch (e) {
@@ -1255,11 +1659,15 @@ async function group5_disconnections() {
   let pendingOrderId = null;
   if (PRODUCTS.alpha?.id && CUSTOMERS.alpha?.id) {
     try {
-      const r = await http.post("/orders", {
-        customerId: CUSTOMERS.alpha.id,
-        items: [{ productId: PRODUCTS.alpha.id, qty: 1 }],
-        requestedDeliveryDate: new Date(Date.now() + 2 * 86400000).toISOString().split("T")[0],
-      }, { headers: { ...authHeader(TENANTS.alpha.token), ...tenantHeader(TENANTS.alpha.slug) } });
+      const r = await http.post(
+        "/orders",
+        {
+          customerId: CUSTOMERS.alpha.id,
+          items: [{ productId: PRODUCTS.alpha.id, qty: 1 }],
+          requestedDeliveryDate: new Date(Date.now() + 2 * 86400000).toISOString().split("T")[0],
+        },
+        { headers: { ...authHeader(TENANTS.alpha.token), ...tenantHeader(TENANTS.alpha.slug) } },
+      );
       pendingOrderId = r.data?.id;
       pass("5.4-S1", `Created PENDING order ${pendingOrderId} before disconnect`);
     } catch (e) {
@@ -1270,8 +1678,10 @@ async function group5_disconnections() {
   // Alpha disconnects Metro Kitchen
   if (CUSTOMERS.alpha?.id) {
     try {
-      await http.post(`/customers/${CUSTOMERS.alpha.id}/portal-disconnect`, {},
-        { headers: { ...authHeader(TENANTS.alpha.token), ...tenantHeader(TENANTS.alpha.slug) } }
+      await http.post(
+        `/customers/${CUSTOMERS.alpha.id}/portal-disconnect`,
+        {},
+        { headers: { ...authHeader(TENANTS.alpha.token), ...tenantHeader(TENANTS.alpha.slug) } },
       );
       pass("5.4-S2", "Alpha disconnects Metro Kitchen while order is pending");
     } catch (e) {
@@ -1282,27 +1692,33 @@ async function group5_disconnections() {
   // Verify pending order is still in Alpha's system
   if (pendingOrderId) {
     try {
-      const r = await http.get(`/orders/${pendingOrderId}`,
-        { headers: { ...authHeader(TENANTS.alpha.token), ...tenantHeader(TENANTS.alpha.slug) } }
-      );
+      const r = await http.get(`/orders/${pendingOrderId}`, {
+        headers: { ...authHeader(TENANTS.alpha.token), ...tenantHeader(TENANTS.alpha.slug) },
+      });
       pass("5.4-S3", `Pending order ${pendingOrderId} still intact in Alpha's system ✓`);
     } catch (e) {
       fail("5.4-S3", "Pending order after disconnect", e?.response?.data?.message ?? e.message);
     }
   }
 
-  spec("5.4-S4", "Invoice delivery after portal disconnect",
+  spec(
+    "5.4-S4",
+    "Invoice delivery after portal disconnect",
     "Should Jamie receive invoice emails after Alpha disconnects their portal? " +
-    "Current implementation: email goes to customer.email field (jamie@metrokitchen.com). " +
-    "Portal disconnect does not change the customer email field, so invoices would still deliver. " +
-    "Need product owner to confirm this is the intended behavior.");
+      "Current implementation: email goes to customer.email field (jamie@metrokitchen.com). " +
+      "Portal disconnect does not change the customer email field, so invoices would still deliver. " +
+      "Need product owner to confirm this is the intended behavior.",
+  );
 
   // ── 5.5: Credit balance after disconnect ────────────────────────────────────
-  spec("5.5", "Credit balance visibility after portal disconnect",
+  spec(
+    "5.5",
+    "Credit balance visibility after portal disconnect",
     "When a seller disconnects a customer from the portal, any credit balance in that seller's ledger " +
-    "is preserved on the customer record but no longer visible to the buyer via portal (403). " +
-    "Need product decision: should the buyer receive an email notification about their remaining credit " +
-    "balance upon disconnection?");
+      "is preserved on the customer record but no longer visible to the buyer via portal (403). " +
+      "Need product decision: should the buyer receive an email notification about their remaining credit " +
+      "balance upon disconnection?",
+  );
 
   // ── 5.6: Delete buyer account → all sellers disconnected ───────────────────
   console.log("\n  SCENARIO 5.6 — Delete buyer account");
@@ -1329,7 +1745,10 @@ async function group5_disconnections() {
       pass("5.6-S2", `Delete buyer account → ${r.data.message}`);
 
       // Verify account is soft-deleted
-      const account = await dbQuery(`SELECT status, "deletedAt" FROM "BuyerAccount" WHERE id = $1`, [tempBuyerId]);
+      const account = await dbQuery(
+        `SELECT status, "deletedAt" FROM "BuyerAccount" WHERE id = $1`,
+        [tempBuyerId],
+      );
       if (account[0]?.status === "DELETED" && account[0]?.deletedAt) {
         pass("5.6-S3", "DB: BuyerAccount status=DELETED, deletedAt populated ✓");
       } else {
@@ -1340,7 +1759,7 @@ async function group5_disconnections() {
       try {
         await http.post("/buyer/auth/login", {
           email: `temp_delete_${Date.now()}@test.com`,
-          password: "Temp@123!"
+          password: "Temp@123!",
         });
         fail("5.6-S4", "Login with deleted account → 401", "Expected 401, got 2xx");
       } catch (e2) {
@@ -1359,24 +1778,35 @@ async function group5_disconnections() {
   // Reconnect Alpha first
   if (CUSTOMERS.alpha?.id && TENANTS.alpha?.token) {
     try {
-      await http.post(`/customers/${CUSTOMERS.alpha.id}/portal-invite`,
+      await http.post(
+        `/customers/${CUSTOMERS.alpha.id}/portal-invite`,
         { method: "EMAIL" },
-        { headers: { ...authHeader(TENANTS.alpha.token), ...tenantHeader(TENANTS.alpha.slug) } }
+        { headers: { ...authHeader(TENANTS.alpha.token), ...tenantHeader(TENANTS.alpha.slug) } },
       );
-      const rows = await dbQuery(`SELECT "inviteToken" FROM "CustomerLink" WHERE "customerId" = $1`, [CUSTOMERS.alpha.id]);
+      const rows = await dbQuery(
+        `SELECT "inviteToken" FROM "CustomerLink" WHERE "customerId" = $1`,
+        [CUSTOMERS.alpha.id],
+      );
       const reconnToken = rows[0]?.inviteToken;
       if (reconnToken && JAMIE.token) {
-        await http.post(`/buyer/invites/${reconnToken}/accept`, {}, { headers: authHeader(JAMIE.token) });
+        await http.post(
+          `/buyer/invites/${reconnToken}/accept`,
+          {},
+          { headers: authHeader(JAMIE.token) },
+        );
       }
-    } catch (e) { /* already active */ }
+    } catch (e) {
+      /* already active */
+    }
   }
 
   // Suspend Beta
   if (SA_TOKEN && TENANTS.beta?.id) {
     try {
-      await http.patch(`/platform-admin/tenants/${TENANTS.beta.id}/status`,
+      await http.patch(
+        `/platform-admin/tenants/${TENANTS.beta.id}/status`,
         { status: "SUSPENDED" },
-        { headers: authHeader(SA_TOKEN) }
+        { headers: authHeader(SA_TOKEN) },
       );
       pass("5.7-S1", "Super Admin suspends Beta tenant");
 
@@ -1384,17 +1814,27 @@ async function group5_disconnections() {
       if (JAMIE.token) {
         try {
           await http.get("/buyer/orders", {
-            headers: { ...authHeader(JAMIE.token), ...tenantHeader(TENANTS.beta.slug) }
+            headers: { ...authHeader(JAMIE.token), ...tenantHeader(TENANTS.beta.slug) },
           });
-          spec("5.7-S2", "Suspended tenant portal access",
+          spec(
+            "5.7-S2",
+            "Suspended tenant portal access",
             "Expected 403/503 when buyer tries to access suspended tenant, but got 200. " +
-            "Need product decision: should BuyerSellerContextGuard check tenant status?");
+              "Need product decision: should BuyerSellerContextGuard check tenant status?",
+          );
         } catch (e) {
-          if (e?.response?.status === 403 || e?.response?.status === 503 || e?.response?.status === 400) {
+          if (
+            e?.response?.status === 403 ||
+            e?.response?.status === 503 ||
+            e?.response?.status === 400
+          ) {
             pass("5.7-S2", `Accessing suspended Beta → ${e.response.status} ✓`);
           } else {
-            spec("5.7-S2", "Suspended tenant access control",
-              `Got HTTP ${e?.response?.status} — need to decide how suspended tenants affect active buyer links.`);
+            spec(
+              "5.7-S2",
+              "Suspended tenant access control",
+              `Got HTTP ${e?.response?.status} — need to decide how suspended tenants affect active buyer links.`,
+            );
           }
         }
       }
@@ -1403,18 +1843,23 @@ async function group5_disconnections() {
       if (JAMIE.token) {
         try {
           await http.get("/buyer/orders", {
-            headers: { ...authHeader(JAMIE.token), ...tenantHeader(TENANTS.alpha.slug) }
+            headers: { ...authHeader(JAMIE.token), ...tenantHeader(TENANTS.alpha.slug) },
           });
           pass("5.7-S3", "Alpha (non-suspended) still accessible ✓");
         } catch (e) {
-          fail("5.7-S3", "Alpha access during Beta suspension", e?.response?.data?.message ?? e.message);
+          fail(
+            "5.7-S3",
+            "Alpha access during Beta suspension",
+            e?.response?.data?.message ?? e.message,
+          );
         }
       }
 
       // Reactivate Beta
-      await http.patch(`/platform-admin/tenants/${TENANTS.beta.id}/status`,
+      await http.patch(
+        `/platform-admin/tenants/${TENANTS.beta.id}/status`,
         { status: "ACTIVE" },
-        { headers: authHeader(SA_TOKEN) }
+        { headers: authHeader(SA_TOKEN) },
       );
       pass("5.7-S4", "Super Admin reactivates Beta");
 
@@ -1422,7 +1867,7 @@ async function group5_disconnections() {
       if (JAMIE.token) {
         try {
           await http.get("/buyer/orders", {
-            headers: { ...authHeader(JAMIE.token), ...tenantHeader(TENANTS.beta.slug) }
+            headers: { ...authHeader(JAMIE.token), ...tenantHeader(TENANTS.beta.slug) },
           });
           pass("5.7-S5", "Beta accessible again after reactivation ✓");
         } catch (e) {
@@ -1442,10 +1887,13 @@ async function group6_edgeCases() {
   section("SCENARIO GROUP 6 — ERROR HANDLING AND EDGE CASES");
 
   // ── 6.1: Rate limiting on invites ───────────────────────────────────────────
-  spec("6.1", "Rate limit on invites per customer record",
+  spec(
+    "6.1",
+    "Rate limit on invites per customer record",
     "No rate limiting on portal-invite endpoint implemented. " +
-    "Current behavior: upsert overwrites previous invite. " +
-    "Spec expects error after N pending invites. Need product decision on limit (3? 5?).");
+      "Current behavior: upsert overwrites previous invite. " +
+      "Spec expects error after N pending invites. Need product decision on limit (3? 5?).",
+  );
 
   // ── 6.2: Two sellers invite same customer simultaneously ────────────────────
   console.log("\n  SCENARIO 6.2 — Two sellers invite same buyer simultaneously");
@@ -1468,49 +1916,79 @@ async function group6_edgeCases() {
   }
 
   // Create two new customers in Alpha and Beta for this test
-  let freshAlphaCust = null, freshBetaCust = null;
+  let freshAlphaCust = null,
+    freshBetaCust = null;
   const ft = Date.now();
-  for (const [key, obj] of [["alpha", null], ["beta", null]]) {
+  for (const [key, obj] of [
+    ["alpha", null],
+    ["beta", null],
+  ]) {
     try {
-      const r = await http.post("/customers", {
-        businessName: `Sim Test Corp ${key}`,
-        contactName: `Sim Contact ${key}`,
-        username: `sim_corp_${key}_${ft}`,
-        email: `fresh_buyer_${ft}_${key}@test.com`,
-      }, { headers: { ...authHeader(TENANTS[key].token), ...tenantHeader(TENANTS[key].slug) } });
+      const r = await http.post(
+        "/customers",
+        {
+          businessName: `Sim Test Corp ${key}`,
+          contactName: `Sim Contact ${key}`,
+          username: `sim_corp_${key}_${ft}`,
+          email: `fresh_buyer_${ft}_${key}@test.com`,
+        },
+        { headers: { ...authHeader(TENANTS[key].token), ...tenantHeader(TENANTS[key].slug) } },
+      );
       const id = r.data?.customer?.id ?? r.data?.id;
       if (key === "alpha") freshAlphaCust = id;
       else freshBetaCust = id;
-    } catch (e) { /* skip */ }
+    } catch (e) {
+      /* skip */
+    }
   }
 
   if (freshAlphaCust && freshBetaCust && freshToken) {
     // Alpha sends invite
-    await http.post(`/customers/${freshAlphaCust}/portal-invite`,
-      { method: "EMAIL" },
-      { headers: { ...authHeader(TENANTS.alpha.token), ...tenantHeader(TENANTS.alpha.slug) } }
-    ).catch(()=>{});
-    const alphaInvRows = await dbQuery(`SELECT "inviteToken" FROM "CustomerLink" WHERE "customerId" = $1`, [freshAlphaCust]);
+    await http
+      .post(
+        `/customers/${freshAlphaCust}/portal-invite`,
+        { method: "EMAIL" },
+        { headers: { ...authHeader(TENANTS.alpha.token), ...tenantHeader(TENANTS.alpha.slug) } },
+      )
+      .catch(() => {});
+    const alphaInvRows = await dbQuery(
+      `SELECT "inviteToken" FROM "CustomerLink" WHERE "customerId" = $1`,
+      [freshAlphaCust],
+    );
     const alphaInvTok = alphaInvRows[0]?.inviteToken;
 
     // Beta sends invite
-    await http.post(`/customers/${freshBetaCust}/portal-invite`,
-      { method: "EMAIL" },
-      { headers: { ...authHeader(TENANTS.beta.token), ...tenantHeader(TENANTS.beta.slug) } }
-    ).catch(()=>{});
-    const betaInvRows = await dbQuery(`SELECT "inviteToken" FROM "CustomerLink" WHERE "customerId" = $1`, [freshBetaCust]);
+    await http
+      .post(
+        `/customers/${freshBetaCust}/portal-invite`,
+        { method: "EMAIL" },
+        { headers: { ...authHeader(TENANTS.beta.token), ...tenantHeader(TENANTS.beta.slug) } },
+      )
+      .catch(() => {});
+    const betaInvRows = await dbQuery(
+      `SELECT "inviteToken" FROM "CustomerLink" WHERE "customerId" = $1`,
+      [freshBetaCust],
+    );
     const betaInvTok = betaInvRows[0]?.inviteToken;
 
     if (alphaInvTok && betaInvTok) {
       // Accept Alpha's first
-      await http.post(`/buyer/invites/${alphaInvTok}/accept`, {}, { headers: authHeader(freshToken) }).catch(()=>{});
+      await http
+        .post(`/buyer/invites/${alphaInvTok}/accept`, {}, { headers: authHeader(freshToken) })
+        .catch(() => {});
       // Accept Beta's second
       try {
-        await http.post(`/buyer/invites/${betaInvTok}/accept`, {}, { headers: authHeader(freshToken) });
+        await http.post(
+          `/buyer/invites/${betaInvTok}/accept`,
+          {},
+          { headers: authHeader(freshToken) },
+        );
         pass("6.2-S2", "Accepted both invites sequentially → two ACTIVE links ✓");
 
-        const sellers = await http.get("/buyer/sellers", { headers: authHeader(freshToken) })
-          .then(r => r.data.filter(s => s.linkStatus === "ACTIVE")).catch(()=>[]);
+        const sellers = await http
+          .get("/buyer/sellers", { headers: authHeader(freshToken) })
+          .then((r) => r.data.filter((s) => s.linkStatus === "ACTIVE"))
+          .catch(() => []);
         if (sellers.length === 2) {
           pass("6.2-S3", "Both sellers appear in fresh buyer's seller list ✓");
         } else {
@@ -1528,15 +2006,25 @@ async function group6_edgeCases() {
   // The original Alpha invite token was cleared on accept (inviteToken set to null)
   if (INVITE_TOKENS["alpha"] && JAMIE.token) {
     try {
-      await http.post(`/buyer/invites/${INVITE_TOKENS["alpha"]}/accept`, {},
-        { headers: authHeader(JAMIE.token) }
+      await http.post(
+        `/buyer/invites/${INVITE_TOKENS["alpha"]}/accept`,
+        {},
+        { headers: authHeader(JAMIE.token) },
       );
       fail("6.5-S1", "Reuse of accepted token → error", "Expected 404/409, got 2xx");
     } catch (e) {
-      if (e?.response?.status === 404 || e?.response?.status === 409 || e?.response?.status === 410) {
+      if (
+        e?.response?.status === 404 ||
+        e?.response?.status === 409 ||
+        e?.response?.status === 410
+      ) {
         pass("6.5-S1", `Reuse accepted invite token → ${e.response.status} (rejected) ✓`);
       } else {
-        fail("6.5-S1", "Token reuse rejection", `Got ${e?.response?.status}: ${JSON.stringify(e?.response?.data).slice(0,100)}`);
+        fail(
+          "6.5-S1",
+          "Token reuse rejection",
+          `Got ${e?.response?.status}: ${JSON.stringify(e?.response?.data).slice(0, 100)}`,
+        );
       }
     }
   }
@@ -1547,8 +2035,12 @@ async function group6_edgeCases() {
   if (JAMIE.token) {
     // Decode JWT (buyer JWT is tenant-agnostic)
     const parts = JAMIE.token.split(".");
-    const payload = JSON.parse(Buffer.from(parts[1].replace(/-/g,"+").replace(/_/g,"/"), "base64").toString());
-    console.log(`    JWT payload: sub=${payload.sub}, type=${payload.type}, email=${payload.email}`);
+    const payload = JSON.parse(
+      Buffer.from(parts[1].replace(/-/g, "+").replace(/_/g, "/"), "base64").toString(),
+    );
+    console.log(
+      `    JWT payload: sub=${payload.sub}, type=${payload.type}, email=${payload.email}`,
+    );
 
     const hasType = payload.type === "BUYER";
     const hasNoTenant = !payload.tenantId;
@@ -1562,7 +2054,7 @@ async function group6_edgeCases() {
     // Using buyer JWT on staff endpoint → 401
     try {
       await http.get("/orders", {
-        headers: { ...authHeader(JAMIE.token), ...tenantHeader(TENANTS.alpha.slug) }
+        headers: { ...authHeader(JAMIE.token), ...tenantHeader(TENANTS.alpha.slug) },
       });
       fail("6.6-S2", "Buyer token on staff endpoint → 401", "Expected 401, got 2xx");
     } catch (e) {
@@ -1574,17 +2066,23 @@ async function group6_edgeCases() {
     }
   }
 
-  spec("6.6-S3", "Spec: JWT tenant scoping",
+  spec(
+    "6.6-S3",
+    "Spec: JWT tenant scoping",
     "Spec expects session JWT to contain tenantId for the active seller context. " +
-    "Actual design: buyer JWT is tenant-agnostic; tenant context comes from X-Tenant-Slug header + " +
-    "BuyerSellerContextGuard (verifies ACTIVE CustomerLink exists). " +
-    "Recommendation: current stateless design is SUPERIOR — document as intentional architecture.");
+      "Actual design: buyer JWT is tenant-agnostic; tenant context comes from X-Tenant-Slug header + " +
+      "BuyerSellerContextGuard (verifies ACTIVE CustomerLink exists). " +
+      "Recommendation: current stateless design is SUPERIOR — document as intentional architecture.",
+  );
 
   // ── 6.7: Network drop during context switch ──────────────────────────────────
-  spec("6.7", "Network drop during context switch",
+  spec(
+    "6.7",
+    "Network drop during context switch",
     "Cannot simulate network drops in automated API testing. " +
-    "Manual test required: open browser DevTools, throttle to Offline, initiate seller switch. " +
-    "Expected: clear error state, no data mutation, recoverable UI on reconnect.");
+      "Manual test required: open browser DevTools, throttle to Offline, initiate seller switch. " +
+      "Expected: clear error state, no data mutation, recoverable UI on reconnect.",
+  );
 
   // ── 6.8: Register without invite ────────────────────────────────────────────
   console.log("\n  SCENARIO 6.8 — Register without invite link");
@@ -1602,8 +2100,10 @@ async function group6_edgeCases() {
     pass("6.8-S1", "Register buyer without invite → 201 ✓");
 
     // Seller list should be empty
-    const sellers = await http.get("/buyer/sellers", { headers: authHeader(noInviteToken) })
-      .then(r => r.data).catch(()=>[]);
+    const sellers = await http
+      .get("/buyer/sellers", { headers: authHeader(noInviteToken) })
+      .then((r) => r.data)
+      .catch(() => []);
     if (sellers.length === 0) {
       pass("6.8-S2", "New buyer without invite: 0 sellers ✓");
     } else {
@@ -1611,7 +2111,10 @@ async function group6_edgeCases() {
     }
 
     // Cleanup
-    await dbQuery(`UPDATE "BuyerAccount" SET status = 'DELETED', "deletedAt" = NOW() WHERE id = $1`, [noInviteId]).catch(()=>{});
+    await dbQuery(
+      `UPDATE "BuyerAccount" SET status = 'DELETED', "deletedAt" = NOW() WHERE id = $1`,
+      [noInviteId],
+    ).catch(() => {});
   } catch (e) {
     fail("6.8-S1", "Register without invite", e?.response?.data?.message ?? e.message);
   }
@@ -1621,16 +2124,18 @@ async function group6_edgeCases() {
 
   if (CUSTOMERS.alpha?.id && TENANTS.alpha?.token && JAMIE.token) {
     try {
-      await http.patch(`/customers/${CUSTOMERS.alpha.id}`,
+      await http.patch(
+        `/customers/${CUSTOMERS.alpha.id}`,
         { email: "newjamie@metrokitchen.com" },
-        { headers: { ...authHeader(TENANTS.alpha.token), ...tenantHeader(TENANTS.alpha.slug) } }
+        { headers: { ...authHeader(TENANTS.alpha.token), ...tenantHeader(TENANTS.alpha.slug) } },
       );
       pass("6.9-S1", "Alpha operator changes customer email to newjamie@metrokitchen.com");
 
       // Jamie's portal login still works (portal account email unchanged)
       try {
         const loginR = await http.post("/buyer/auth/login", {
-          email: JAMIE.email, password: JAMIE.password
+          email: JAMIE.email,
+          password: JAMIE.password,
         });
         pass("6.9-S2", "Jamie still logs in with original email jamie@metrokitchen.com ✓");
         JAMIE.token = loginR.data.accessToken;
@@ -1641,7 +2146,7 @@ async function group6_edgeCases() {
       // CustomerLink still ACTIVE
       const link = await dbQuery(
         `SELECT status FROM "CustomerLink" WHERE "tenantId" = $1 AND "customerId" = $2`,
-        [TENANTS.alpha.id, CUSTOMERS.alpha.id]
+        [TENANTS.alpha.id, CUSTOMERS.alpha.id],
       );
       if (link[0]?.status === "ACTIVE") {
         pass("6.9-S3", "CustomerLink remains ACTIVE after seller email update ✓");
@@ -1650,21 +2155,27 @@ async function group6_edgeCases() {
       }
 
       // Restore email
-      await http.patch(`/customers/${CUSTOMERS.alpha.id}`,
-        { email: "jamie@metrokitchen.com" },
-        { headers: { ...authHeader(TENANTS.alpha.token), ...tenantHeader(TENANTS.alpha.slug) } }
-      ).catch(()=>{});
+      await http
+        .patch(
+          `/customers/${CUSTOMERS.alpha.id}`,
+          { email: "jamie@metrokitchen.com" },
+          { headers: { ...authHeader(TENANTS.alpha.token), ...tenantHeader(TENANTS.alpha.slug) } },
+        )
+        .catch(() => {});
     } catch (e) {
       fail("6.9-S1", "Update customer email", e?.response?.data?.message ?? e.message);
     }
   }
 
   // ── 6.10: Stress test — many sellers ────────────────────────────────────────
-  spec("6.10", "Stress test: 10 sellers linked to one buyer",
+  spec(
+    "6.10",
+    "Stress test: 10 sellers linked to one buyer",
     "Creating 10 tenants for stress test exceeds Railway trial plan quota and would pollute the DB. " +
-    "The buyer/sellers endpoint uses findMany with no limit — verify performance with DB query plan: " +
-    "EXPLAIN ANALYZE SELECT ... FROM CustomerLink WHERE buyerAccountId = X. " +
-    "Recommend: add index on CustomerLink(buyerAccountId) and set max_sellers limit of 20 in config.");
+      "The buyer/sellers endpoint uses findMany with no limit — verify performance with DB query plan: " +
+      "EXPLAIN ANALYZE SELECT ... FROM CustomerLink WHERE buyerAccountId = X. " +
+      "Recommend: add index on CustomerLink(buyerAccountId) and set max_sellers limit of 20 in config.",
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1676,20 +2187,33 @@ async function group7_dataIntegrity() {
   // ── 7.1: CustomerLink audit trail completeness ─────────────────────────────
   console.log("\n  SCENARIO 7.2 — TenantCustomerLink audit trail");
 
-  for (const [key, custId] of [["alpha", CUSTOMERS.alpha?.id], ["beta", CUSTOMERS.beta?.id], ["gamma", CUSTOMERS.gamma?.id]]) {
+  for (const [key, custId] of [
+    ["alpha", CUSTOMERS.alpha?.id],
+    ["beta", CUSTOMERS.beta?.id],
+    ["gamma", CUSTOMERS.gamma?.id],
+  ]) {
     if (!custId) continue;
     try {
       const links = await dbQuery(
         `SELECT id, status, "disconnectedBy", "disconnectedAt", "linkedAt", "createdAt"
          FROM "CustomerLink" WHERE "customerId" = $1 ORDER BY "createdAt" ASC`,
-        [custId]
+        [custId],
       );
-      const allHaveTimestamps = links.every(l => l.createdAt);
-      const disconnectedHaveBy = links.filter(l => l.status === "DISCONNECTED").every(l => l.disconnectedBy && l.disconnectedAt);
+      const allHaveTimestamps = links.every((l) => l.createdAt);
+      const disconnectedHaveBy = links
+        .filter((l) => l.status === "DISCONNECTED")
+        .every((l) => l.disconnectedBy && l.disconnectedAt);
       if (allHaveTimestamps && disconnectedHaveBy) {
-        pass(`7.2-${key}`, `${key.toUpperCase()} CustomerLink audit trail: timestamps + disconnectedBy populated ✓`);
+        pass(
+          `7.2-${key}`,
+          `${key.toUpperCase()} CustomerLink audit trail: timestamps + disconnectedBy populated ✓`,
+        );
       } else {
-        fail(`7.2-${key}`, `${key.toUpperCase()} CustomerLink audit trail`, `Links: ${JSON.stringify(links)}`);
+        fail(
+          `7.2-${key}`,
+          `${key.toUpperCase()} CustomerLink audit trail`,
+          `Links: ${JSON.stringify(links)}`,
+        );
       }
     } catch (e) {
       fail(`7.2-${key}`, `${key.toUpperCase()} audit trail`, e.message);
@@ -1705,10 +2229,13 @@ async function group7_dataIntegrity() {
        FROM "Order" o
        JOIN "Customer" c ON c.id = o."customerId"
        WHERE o."tenantId" != c."tenantId"
-       LIMIT 5`
+       LIMIT 5`,
     );
     if (crossOrders.length === 0) {
-      pass("7.3-S1", "DB: No cross-tenant orders (order.tenantId always matches customer.tenantId) ✓");
+      pass(
+        "7.3-S1",
+        "DB: No cross-tenant orders (order.tenantId always matches customer.tenantId) ✓",
+      );
     } else {
       fail("7.3-S1", "Order tenant isolation", `Found ${crossOrders.length} cross-tenant orders!`);
     }
@@ -1720,24 +2247,37 @@ async function group7_dataIntegrity() {
   console.log("\n  SCENARIO 7.5 — API response contamination sweep");
 
   if (JAMIE.token) {
-    for (const [key, tenantId] of [["alpha", TENANTS.alpha?.id], ["beta", TENANTS.beta?.id]]) {
-      const otherKeys = ["alpha", "beta", "gamma"].filter(k => k !== key);
-      const otherIds = otherKeys.map(k => TENANTS[k]?.id).filter(Boolean);
+    for (const [key, tenantId] of [
+      ["alpha", TENANTS.alpha?.id],
+      ["beta", TENANTS.beta?.id],
+    ]) {
+      const otherKeys = ["alpha", "beta", "gamma"].filter((k) => k !== key);
+      const otherIds = otherKeys.map((k) => TENANTS[k]?.id).filter(Boolean);
 
       try {
-        const orders = await http.get("/buyer/orders", {
-          headers: { ...authHeader(JAMIE.token), ...tenantHeader(TENANTS[key].slug) }
-        }).then(r => Array.isArray(r.data) ? r.data : r.data?.data ?? []).catch(()=>[]);
+        const orders = await http
+          .get("/buyer/orders", {
+            headers: { ...authHeader(JAMIE.token), ...tenantHeader(TENANTS[key].slug) },
+          })
+          .then((r) => (Array.isArray(r.data) ? r.data : (r.data?.data ?? [])))
+          .catch(() => []);
 
-        const contaminated = orders.filter(o => otherIds.includes(o.tenantId));
+        const contaminated = orders.filter((o) => otherIds.includes(o.tenantId));
         if (contaminated.length === 0) {
           pass(`7.5-${key}`, `${key.toUpperCase()} context: 0 cross-tenant orders in response ✓`);
         } else {
-          fail(`7.5-${key}`, `${key.toUpperCase()} context contamination`, `${contaminated.length} orders from wrong tenant`);
+          fail(
+            `7.5-${key}`,
+            `${key.toUpperCase()} context contamination`,
+            `${contaminated.length} orders from wrong tenant`,
+          );
         }
       } catch (e) {
         // 403 etc. is acceptable here (previously disconnected)
-        pass(`7.5-${key}`, `${key.toUpperCase()} context: access controlled (${e?.response?.status})`);
+        pass(
+          `7.5-${key}`,
+          `${key.toUpperCase()} context: access controlled (${e?.response?.status})`,
+        );
       }
     }
   }
@@ -1749,12 +2289,16 @@ async function group7_dataIntegrity() {
        FROM "CustomerLink" cl
        JOIN "Customer" c ON c.id = cl."customerId"
        WHERE cl."tenantId" != c."tenantId"
-       LIMIT 5`
+       LIMIT 5`,
     );
     if (crossLinks.length === 0) {
       pass("7.5-DB", "DB: All CustomerLinks reference correct tenant (no cross-tenant links) ✓");
     } else {
-      fail("7.5-DB", "CustomerLink tenant integrity", `Found ${crossLinks.length} cross-tenant links!`);
+      fail(
+        "7.5-DB",
+        "CustomerLink tenant integrity",
+        `Found ${crossLinks.length} cross-tenant links!`,
+      );
     }
   } catch (e) {
     fail("7.5-DB", "CustomerLink tenant check", e.message);
@@ -1769,20 +2313,25 @@ async function cleanup() {
 
   // Soft-delete SA user
   if (manifest.saUserId) {
-    await dbQuery(`UPDATE "User" SET status = 'INACTIVE' WHERE id = $1`, [manifest.saUserId]).catch(()=>{});
+    await dbQuery(`UPDATE "User" SET status = 'INACTIVE' WHERE id = $1`, [manifest.saUserId]).catch(
+      () => {},
+    );
     console.log(`  SA user ${manifest.saUserId} deactivated`);
   }
 
   // Cancel test tenants
   for (const t of manifest.tenants) {
-    await dbQuery(`UPDATE "Tenant" SET status = 'CANCELLED' WHERE id = $1`, [t.id]).catch(()=>{});
+    await dbQuery(`UPDATE "Tenant" SET status = 'CANCELLED' WHERE id = $1`, [t.id]).catch(() => {});
     console.log(`  Tenant ${t.slug} → CANCELLED`);
   }
 
   // Delete test buyer accounts
   for (const b of manifest.buyerAccounts) {
     if (b.id) {
-      await dbQuery(`UPDATE "BuyerAccount" SET status = 'DELETED', "deletedAt" = NOW() WHERE id = $1`, [b.id]).catch(()=>{});
+      await dbQuery(
+        `UPDATE "BuyerAccount" SET status = 'DELETED', "deletedAt" = NOW() WHERE id = $1`,
+        [b.id],
+      ).catch(() => {});
     }
   }
 
@@ -1807,10 +2356,12 @@ function printSummary() {
 
   if (failed > 0) {
     console.log(`\n  FAILURES:`);
-    results.filter(r => r.status === "FAIL").forEach(r => {
-      console.log(`    ❌ [${r.id}] ${r.desc}`);
-      console.log(`       → ${r.reason}`);
-    });
+    results
+      .filter((r) => r.status === "FAIL")
+      .forEach((r) => {
+        console.log(`    ❌ [${r.id}] ${r.desc}`);
+        console.log(`       → ${r.reason}`);
+      });
   }
 
   if (specQuestions.length > 0) {
@@ -1821,15 +2372,17 @@ function printSummary() {
     });
   }
 
-  const allResults = results.filter(r => r.status !== "SPEC-Q" && r.status !== "SKIP");
-  const passRate = allResults.length > 0
-    ? Math.round(passed / allResults.length * 100)
-    : 0;
+  const allResults = results.filter((r) => r.status !== "SPEC-Q" && r.status !== "SKIP");
+  const passRate = allResults.length > 0 ? Math.round((passed / allResults.length) * 100) : 0;
 
   console.log(`\n  PASS RATE: ${passRate}% (${passed}/${allResults.length} concrete tests)`);
   console.log(`\n  KEY ARCHITECTURAL FINDINGS:`);
-  console.log(`    ✓ Buyer JWT is tenant-agnostic (stateless, per-request isolation via X-Tenant-Slug)`);
-  console.log(`    ✓ BuyerSellerContextGuard enforces active CustomerLink for seller-scoped endpoints`);
+  console.log(
+    `    ✓ Buyer JWT is tenant-agnostic (stateless, per-request isolation via X-Tenant-Slug)`,
+  );
+  console.log(
+    `    ✓ BuyerSellerContextGuard enforces active CustomerLink for seller-scoped endpoints`,
+  );
   console.log(`    ✓ SKU uniqueness enforced per-tenant (same SKU = no collision across tenants)`);
   console.log(`    ✓ CustomerLink audit trail: status, disconnectedBy, timestamps all populated`);
   console.log(`    ✓ Order/invoice data isolated by tenantId at DB level`);
@@ -1865,15 +2418,15 @@ async function main() {
     console.error(`\n⚠️  FATAL: ${e.message}`);
     console.error(e.stack);
   } finally {
-    await cleanup().catch(e => console.error("Cleanup error:", e.message));
-    await pg.end().catch(()=>{});
+    await cleanup().catch((e) => console.error("Cleanup error:", e.message));
+    await pg.end().catch(() => {});
   }
 
   printSummary();
   process.exit(failed > 0 ? 1 : 0);
 }
 
-main().catch(e => {
+main().catch((e) => {
   console.error("Unhandled:", e);
   process.exit(1);
 });

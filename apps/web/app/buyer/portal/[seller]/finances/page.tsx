@@ -11,15 +11,7 @@ import {
   CheckCircle2,
   Loader2,
 } from "lucide-react";
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-} from "recharts";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { useBuyerAnalytics } from "@/lib/api/buyer";
 
@@ -46,7 +38,10 @@ function fmtDate(dateStr: string): string {
 }
 
 function formatPaymentMethod(method: string): string {
-  return method.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+  return method
+    .replace(/_/g, " ")
+    .toLowerCase()
+    .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 // ─── Stat Card ────────────────────────────────────────────────────────────────
@@ -68,9 +63,9 @@ function StatCard({
     <div className="rounded-xl border border-surface-border bg-white p-5 shadow-sm">
       <div className="flex items-start justify-between">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-wider text-navy/50">{label}</p>
+          <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">{label}</p>
           <p className="mt-1.5 text-2xl font-bold text-navy">{value}</p>
-          {sub && <p className="mt-0.5 text-xs text-navy/50">{sub}</p>}
+          {sub && <p className="mt-0.5 text-xs text-navy/70">{sub}</p>}
         </div>
         <div className={`flex h-10 w-10 items-center justify-center rounded-xl ${color}`}>
           <Icon className="h-5 w-5" />
@@ -89,7 +84,9 @@ function ChartTooltip({ active, payload, label }: any) {
       <p className="font-semibold text-navy mb-1">{label}</p>
       <p className="text-buyer-600">{fmt(payload[0].value)}</p>
       {payload[1] && (
-        <p className="text-navy/50 text-xs mt-0.5">{payload[1].value} order{payload[1].value !== 1 ? "s" : ""}</p>
+        <p className="text-navy/70 text-xs mt-0.5">
+          {payload[1].value} order{payload[1].value !== 1 ? "s" : ""}
+        </p>
       )}
     </div>
   );
@@ -133,7 +130,7 @@ export default function FinancesPage() {
       <div>
         <h1 className="text-2xl font-bold text-navy">Finances</h1>
         {activeSeller && (
-          <p className="text-sm text-navy/60 mt-1">
+          <p className="text-sm text-navy/70 mt-1">
             {activeSeller.customer.businessName} at {activeSeller.tenant.name}
           </p>
         )}
@@ -178,7 +175,7 @@ export default function FinancesPage() {
           <h2 className="text-sm font-semibold text-navy">Monthly Spend (Last 12 Months)</h2>
         </div>
         {chartData.length === 0 ? (
-          <div className="py-12 text-center text-sm text-navy/40">No spend data yet</div>
+          <div className="py-12 text-center text-sm text-navy/70">No spend data yet</div>
         ) : (
           <ResponsiveContainer width="100%" height={220}>
             <BarChart data={chartData} margin={{ top: 4, right: 4, bottom: 4, left: 4 }}>
@@ -209,23 +206,38 @@ export default function FinancesPage() {
           <h2 className="text-sm font-semibold text-navy mb-4">Invoice Status</h2>
           <div className="space-y-3">
             {[
-              { label: "Paid", count: invoiceBreakdown.paid, color: "bg-success", text: "text-success" },
-              { label: "Unpaid", count: invoiceBreakdown.unpaid, color: "bg-warning", text: "text-warning" },
-              { label: "Overdue", count: invoiceBreakdown.overdue, color: "bg-danger", text: "text-danger" },
+              {
+                label: "Paid",
+                count: invoiceBreakdown.paid,
+                color: "bg-success",
+                text: "text-success",
+              },
+              {
+                label: "Unpaid",
+                count: invoiceBreakdown.unpaid,
+                color: "bg-warning",
+                text: "text-warning",
+              },
+              {
+                label: "Overdue",
+                count: invoiceBreakdown.overdue,
+                color: "bg-danger",
+                text: "text-danger",
+              },
             ].map(({ label, count, color, text }) => {
-              const total = invoiceBreakdown.paid + invoiceBreakdown.unpaid + invoiceBreakdown.overdue;
+              const total =
+                invoiceBreakdown.paid + invoiceBreakdown.unpaid + invoiceBreakdown.overdue;
               const pct = total > 0 ? Math.round((count / total) * 100) : 0;
               return (
                 <div key={label}>
                   <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs text-navy/60">{label}</span>
-                    <span className={`text-xs font-semibold ${text}`}>{count} ({pct}%)</span>
+                    <span className="text-xs text-navy/70">{label}</span>
+                    <span className={`text-xs font-semibold ${text}`}>
+                      {count} ({pct}%)
+                    </span>
                   </div>
                   <div className="h-1.5 w-full rounded-full bg-surface-raised overflow-hidden">
-                    <div
-                      className={`h-full rounded-full ${color}`}
-                      style={{ width: `${pct}%` }}
-                    />
+                    <div className={`h-full rounded-full ${color}`} style={{ width: `${pct}%` }} />
                   </div>
                 </div>
               );
@@ -237,7 +249,7 @@ export default function FinancesPage() {
         <div className="rounded-xl border border-surface-border bg-white p-5 shadow-sm">
           <h2 className="text-sm font-semibold text-navy mb-4">Recent Payments</h2>
           {recentPayments.length === 0 ? (
-            <p className="py-8 text-center text-xs text-navy/40">No payments recorded yet</p>
+            <p className="py-8 text-center text-xs text-navy/70">No payments recorded yet</p>
           ) : (
             <div className="divide-y divide-surface-border">
               {recentPayments.slice(0, 8).map((p, i) => (
@@ -246,7 +258,7 @@ export default function FinancesPage() {
                     <p className="text-xs font-medium text-navy truncate">
                       Invoice #{p.invoiceNumber}
                     </p>
-                    <p className="text-[11px] text-navy/40 mt-0.5">
+                    <p className="text-[11px] text-navy/70 mt-0.5">
                       {fmtDate(p.date)} · {formatPaymentMethod(p.method)}
                     </p>
                   </div>

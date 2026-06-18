@@ -61,7 +61,8 @@ export function BuyerAuthProvider({ children }: { children: React.ReactNode }) {
           if (data) {
             setBuyer(data.buyer);
             setActiveSellerState(getStoredActiveSeller());
-            const token = typeof window !== "undefined" ? localStorage.getItem("buyerAccessToken") : null;
+            const token =
+              typeof window !== "undefined" ? localStorage.getItem("buyerAccessToken") : null;
             if (token) {
               getBuyerSellers(token)
                 .then(setSellers)
@@ -84,12 +85,15 @@ export function BuyerAuthProvider({ children }: { children: React.ReactNode }) {
     return data.buyer;
   }, []);
 
-  const register = React.useCallback(async (email: string, password: string, name: string): Promise<BuyerUser> => {
-    const data = await buyerRegister(email, password, name);
-    setBuyer(data.buyer);
-    setSellers([]);
-    return data.buyer;
-  }, []);
+  const register = React.useCallback(
+    async (email: string, password: string, name: string): Promise<BuyerUser> => {
+      const data = await buyerRegister(email, password, name);
+      setBuyer(data.buyer);
+      setSellers([]);
+      return data.buyer;
+    },
+    [],
+  );
 
   const logout = React.useCallback(async () => {
     await buyerLogout();

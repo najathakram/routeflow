@@ -1,4 +1,5 @@
 # L1-B Supervisor Review — Finance & Buyer Portal
+
 **Workers reviewed:** W3, W5
 **Date:** 2026-04-29
 **Reviewer:** L1-B
@@ -16,9 +17,11 @@ Code confirmed: `invoices.service.ts` computes tax per-line using per-line disco
 
 **W3-002 — Decimal Precision Loss in Order Tax** — verified ✓ (partially misstated)
 `orders.service.ts:606` uses native JavaScript float multiplication:
+
 ```
 const tax = subtotal * (await this.getTaxRate());
 ```
+
 `subtotal` is built by summing `unitPrice * qty` (both plain JS numbers). `getTaxRate()` returns a `parseFloat()`. There is no rounding step before the value is stored in the DB. W3 correctly identified the risk. The description says "Tax rate loaded as float, multiplied with Decimal" — there is no Decimal.js library in use here; both operands are plain JS floats. The finding severity is correct (P2) but the word "Decimal" is misleading; there is no Decimal.js object involved at any point.
 
 **W3-003 — Credit Note Validation Against Original, Not Remaining Balance** — verified ✓
@@ -35,11 +38,13 @@ Code confirmed at `invoices.service.ts:547-641`. The update path has two branche
 
 **W3-007 — Order Discount Not Applied to Tax Base** — verified ✓
 `orders.service.ts:605-607`:
+
 ```
 const orderDiscount = dto.discountAmount ?? 0;
 const tax = subtotal * (await this.getTaxRate());
 const total = subtotal + tax - orderDiscount;
 ```
+
 Tax is applied to the pre-discount subtotal. The discount only reduces the final total. This is inconsistent with W3-001's invoice behavior (where the discount does not reduce the line-level tax base either, but both should be aligned under one policy). W3-007 finding is accurate.
 
 **W3-008 — Price Tier Fallback is Silent** — verified ✓ (directional)
@@ -54,10 +59,12 @@ Not re-read in full, but pattern is consistent; W3's description is accepted as 
 
 **M-W3-A — Invoice edit allowed while in SENT/PARTIAL/PAID status?**
 The review task asked specifically about editing after payment. Code at `invoices.service.ts:547-550` shows:
+
 ```
 if (inv.status !== InvoiceStatus.DRAFT)
   throw new BadRequestException("Only DRAFT invoices can be edited");
 ```
+
 Editing is correctly blocked for non-DRAFT invoices. This is safe. W3 did not call this out, but it is verified correct — not a missed bug, it is a confirmed safeguard. W3 should have explicitly checked and confirmed this in their VERIFIED CORRECT list. Minor completeness gap only.
 
 **M-W3-B — Standing orders use live prices** — W3-012 accurately flags this. However, W3 only cited `orders.service.ts:854-870`. The actual generation code is in `order-templates/order-templates.service.ts:282`, method `createOrderFromTemplate()`. That method fetches the live product price at generation time: `const unitPrice = Number(product.pricePerUnit)`. The standing order template stores only `productId` and `qty`, no `unitPrice`. W3 cited the right symptom but wrong file location. The finding stands but the file reference should be corrected to `apps/api/src/order-templates/order-templates.service.ts:282`.
@@ -86,9 +93,11 @@ Editing is correctly blocked for non-DRAFT invoices. This is safe. W3 did not ca
 
 **W5-007 — Invoice Hardcodes "GST (10%)"** — verified ✓
 `apps/mobile/app/(customer)/invoices/[id].tsx:73`:
+
 ```
 <Text style={styles.totalLine}>GST (10%): ${Number(invoice.tax).toFixed(2)}</Text>
 ```
+
 The label "GST (10%)" is a string literal. The actual `invoice.tax` amount is dynamic (read from API), but the label always says 10% regardless of the tenant's configured rate. W5-007 is accurate. Note: the API response does not include the tax rate percentage — only the computed tax amount — so the fix requires either computing `(tax/subtotal)*100` client-side or adding a `taxRate` field to the invoice response.
 
 **W5-013 — Deleted Favorites Show Broken Cards** — directional finding accepted; not re-verified at code level.
@@ -100,11 +109,13 @@ The label "GST (10%)" is a string literal. The actual `invoice.tax` amount is dy
 
 **M-W5-B — IDOR on buyer invoice detail** — verified SAFE (W5 did not check this)
 `buyer.controller.ts:146-160` `getInvoice()` correctly performs an explicit ownership check:
+
 ```
 if ((invoice as any).customerId !== ctx.customerId) {
   throw new ForbiddenException("This invoice does not belong to your account");
 }
 ```
+
 The invoice is fetched first and then ownership is asserted. However, the FIRST call `invoicesService.findOne(id)` runs inside the tenant context (set by `BuyerTenantInterceptor`) so cross-tenant IDOR is already blocked by tenant scoping. The same-tenant same-seller IDOR is blocked by the explicit ownership check above. No IDOR present. This is a verified correct control that W5 did not document in their verified list — a completeness gap in W5's positive findings.
 
 **M-W5-C — W5-010 conflicts with W5-007**
@@ -128,6 +139,7 @@ The buyer portal has no mechanism to see or dispute overpayment credits. Excess 
 ## L1-B added findings
 
 ### L1B-001 — Cron jobs use server UTC time, breaking day-of-week scheduling for non-UTC tenants
+
 - **Severity:** P2
 - **Files:**
   - `apps/api/src/order-templates/order-templates.service.ts:222-263` (`@Cron("0 6 * * *")`)
@@ -138,6 +150,7 @@ The buyer portal has no mechanism to see or dispute overpayment credits. Excess 
 - **Expected after fix:** Standing orders and recurring invoices fire on the correct calendar day in the tenant's local timezone regardless of server UTC offset.
 
 ### L1B-002 — Standing order cron does not scope to per-tenant context
+
 - **Severity:** P1
 - **File:** `apps/api/src/order-templates/order-templates.service.ts:222-263`
 - **Issue:** `generateDailyOrders()` calls `this.prisma.forTenant().orderTemplate.findMany(...)`. In a multi-tenant architecture, `forTenant()` requires an active tenant context (AsyncLocalStorage). Cron jobs run outside any HTTP request scope, so no tenant context is set. The behavior of `forTenant()` in this situation depends on the `PrismaService` implementation — if it falls back to a global context or throws, either silent cross-tenant data access or a runtime crash is possible every day at 06:00 UTC.
@@ -146,6 +159,7 @@ The buyer portal has no mechanism to see or dispute overpayment credits. Excess 
 - **Expected after fix:** Each tenant's standing orders are processed in isolated tenant contexts; no cross-tenant data access.
 
 ### L1B-003 — Recurring invoice cron has the same multi-tenant context problem as L1B-002
+
 - **Severity:** P1
 - **File:** `apps/api/src/recurring-invoices/recurring-invoices.service.ts:198-226`
 - **Issue:** `generateDueRecurringInvoices()` calls `this.prisma.forTenant().recurringInvoice.findMany(...)` outside any HTTP request, with no tenant context established. Same root cause as L1B-002.
@@ -153,6 +167,7 @@ The buyer portal has no mechanism to see or dispute overpayment credits. Excess 
 - **Expected after fix:** Recurring invoices generated in correct per-tenant isolation.
 
 ### L1B-004 — Order number generation uses sequential DB scan with no locking, creating race condition
+
 - **Severity:** P2
 - **File:** `apps/api/src/orders/orders.service.ts:543-551`
 - **Issue:** Order number is generated by fetching the last `ORD-NNNNN` order and incrementing:
@@ -166,6 +181,7 @@ The buyer portal has no mechanism to see or dispute overpayment credits. Excess 
 - **Expected after fix:** Duplicate order numbers cannot be created under concurrent load.
 
 ### L1B-005 — Invoice update allows changing discount/shippingFee on a PAID or PARTIAL invoice if no items are sent
+
 - **Severity:** P1
 - **File:** `apps/api/src/invoices/invoices.service.ts:547-641`
 - **Issue:** The `update()` method starts with:

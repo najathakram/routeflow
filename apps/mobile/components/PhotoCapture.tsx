@@ -60,7 +60,11 @@ export function PhotoCapture({
 
   return (
     <View style={styles.container}>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.row}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.row}
+      >
         {photos.map((uri) => (
           <View key={uri} style={styles.thumb}>
             <Image source={{ uri }} style={styles.thumbImg} />
@@ -77,7 +81,9 @@ export function PhotoCapture({
         )}
       </ScrollView>
       {photos.length > 0 && (
-        <Text style={styles.hint}>{photos.length} / {maxPhotos} photo{photos.length !== 1 ? "s" : ""}</Text>
+        <Text style={styles.hint}>
+          {photos.length} / {maxPhotos} photo{photos.length !== 1 ? "s" : ""}
+        </Text>
       )}
     </View>
   );

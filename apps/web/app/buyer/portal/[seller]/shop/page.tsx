@@ -86,9 +86,13 @@ function QtyStepper({
       </button>
 
       {/* Stepper group */}
-      <div className={`flex items-center rounded-lg border border-buyer-200 bg-buyer-50 ${size === "sm" ? "gap-0" : "gap-0"}`}>
+      <div
+        className={`flex items-center rounded-lg border border-buyer-200 bg-buyer-50 ${size === "sm" ? "gap-0" : "gap-0"}`}
+      >
         <button
-          onClick={() => { if (qty > 1) onUpdate(qty - 1); }}
+          onClick={() => {
+            if (qty > 1) onUpdate(qty - 1);
+          }}
           className={`rounded-l-lg ${btnCls}`}
           disabled={qty <= 1}
         >
@@ -110,10 +114,7 @@ function QtyStepper({
           }}
           className={`${inputW} border-none bg-transparent text-center text-sm font-semibold text-buyer-700 focus:outline-none focus:ring-1 focus:ring-buyer-400 rounded [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none`}
         />
-        <button
-          onClick={() => onUpdate(qty + 1)}
-          className={`rounded-r-lg ${btnCls}`}
-        >
+        <button onClick={() => onUpdate(qty + 1)} className={`rounded-r-lg ${btnCls}`}>
           <Plus className={iconCls} />
         </button>
       </div>
@@ -180,26 +181,20 @@ function ProductCard({
       <div className="flex flex-1 flex-col gap-2 p-3">
         <div className="flex-1">
           <h3 className="text-sm font-semibold text-navy line-clamp-2">{product.name}</h3>
-          {product.sku && (
-            <p className="text-[11px] text-navy/40 mt-0.5">SKU: {product.sku}</p>
-          )}
+          {product.sku && <p className="text-[11px] text-navy/70 mt-0.5">SKU: {product.sku}</p>}
         </div>
 
         <div className="flex items-end justify-between gap-2">
           <div>
             <p className="text-lg font-bold text-navy">{fmt(product.buyerPrice)}</p>
-            <p className="text-[11px] text-navy/40">
+            <p className="text-[11px] text-navy/70">
               per {product.unit}
               {product.unitsPerBox ? ` (${product.unitsPerBox}/box)` : ""}
             </p>
           </div>
 
           {cartQty > 0 ? (
-            <QtyStepper
-              qty={cartQty}
-              onUpdate={onUpdateQty}
-              onRemove={() => onUpdateQty(0)}
-            />
+            <QtyStepper qty={cartQty} onUpdate={onUpdateQty} onRemove={() => onUpdateQty(0)} />
           ) : (
             <button
               onClick={onAdd}
@@ -240,9 +235,15 @@ export default function BuyerShopPage() {
   }, [search]);
 
   // Reset page on filter change
-  React.useEffect(() => { setPage(1); }, [category, sort]);
+  React.useEffect(() => {
+    setPage(1);
+  }, [category, sort]);
 
-  const { data: result, isLoading, isError } = useBuyerProducts({
+  const {
+    data: result,
+    isLoading,
+    isError,
+  } = useBuyerProducts({
     search: debouncedSearch || undefined,
     category: category || undefined,
     page,
@@ -284,7 +285,7 @@ export default function BuyerShopPage() {
         {/* Header */}
         <div className="mb-6">
           <h1 className="text-2xl font-bold text-navy">Shop</h1>
-          <p className="text-sm text-navy/60 mt-1">
+          <p className="text-sm text-navy/70 mt-1">
             Browse products from {activeSeller?.tenant.name}
           </p>
         </div>
@@ -293,18 +294,18 @@ export default function BuyerShopPage() {
         <div className="mb-4 flex flex-wrap items-center gap-3">
           {/* Search */}
           <div className="relative flex-1 min-w-[260px]">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-navy/40" />
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-navy/70" />
             <input
               type="search"
               placeholder="Search products by name, SKU, or barcode..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="h-10 w-full rounded-lg border border-surface-border bg-white pl-10 pr-3 text-sm text-navy placeholder:text-navy/40 focus:border-buyer-500 focus:outline-none focus:ring-1 focus:ring-buyer-500"
+              className="h-10 w-full rounded-lg border border-surface-border bg-white pl-10 pr-3 text-sm text-navy placeholder:text-navy/70 focus:border-buyer-500 focus:outline-none focus:ring-1 focus:ring-buyer-500"
             />
             {search && (
               <button
                 onClick={() => setSearch("")}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-navy/40 hover:text-navy"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-navy/70 hover:text-navy"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -327,13 +328,13 @@ export default function BuyerShopPage() {
           <div className="flex items-center rounded-lg border border-surface-border bg-white">
             <button
               onClick={() => setViewMode("grid")}
-              className={`rounded-l-lg p-2.5 transition-colors ${viewMode === "grid" ? "bg-buyer-50 text-buyer-600" : "text-navy/40 hover:text-navy"}`}
+              className={`rounded-l-lg p-2.5 transition-colors ${viewMode === "grid" ? "bg-buyer-50 text-buyer-600" : "text-navy/70 hover:text-navy"}`}
             >
               <Grid3X3 className="h-4 w-4" />
             </button>
             <button
               onClick={() => setViewMode("list")}
-              className={`rounded-r-lg p-2.5 transition-colors ${viewMode === "list" ? "bg-buyer-50 text-buyer-600" : "text-navy/40 hover:text-navy"}`}
+              className={`rounded-r-lg p-2.5 transition-colors ${viewMode === "list" ? "bg-buyer-50 text-buyer-600" : "text-navy/70 hover:text-navy"}`}
             >
               <List className="h-4 w-4" />
             </button>
@@ -346,11 +347,14 @@ export default function BuyerShopPage() {
             {["", ...categories].map((c) => (
               <button
                 key={c || "__all__"}
-                onClick={() => { setCategory(c); setPage(1); }}
+                onClick={() => {
+                  setCategory(c);
+                  setPage(1);
+                }}
                 className={`flex-shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
                   category === c
                     ? "border-buyer-500 bg-buyer-500 text-white"
-                    : "border-surface-border bg-white text-navy/60 hover:border-buyer-300 hover:text-buyer-600"
+                    : "border-surface-border bg-white text-navy/70 hover:border-buyer-300 hover:text-buyer-600"
                 }`}
               >
                 {c || "All"}
@@ -361,7 +365,7 @@ export default function BuyerShopPage() {
 
         {/* Results count */}
         {meta && (
-          <p className="mb-4 text-xs text-navy/50">
+          <p className="mb-4 text-xs text-navy/70">
             Showing {meta.total === 0 ? 0 : (page - 1) * limit + 1} to{" "}
             {Math.min(page * limit, meta.total)} of {meta.total} products
           </p>
@@ -380,12 +384,17 @@ export default function BuyerShopPage() {
           <div className="rounded-xl border border-dashed border-surface-border bg-white p-12 text-center">
             <Package className="mx-auto mb-4 h-12 w-12 text-navy/20" />
             <h2 className="text-lg font-semibold text-navy mb-2">No products found</h2>
-            <p className="text-sm text-navy/60 mb-4">
-              {search || category ? "Try adjusting your search or filters." : "No products available from this seller yet."}
+            <p className="text-sm text-navy/70 mb-4">
+              {search || category
+                ? "Try adjusting your search or filters."
+                : "No products available from this seller yet."}
             </p>
             {(search || category) && (
               <button
-                onClick={() => { setSearch(""); setCategory(""); }}
+                onClick={() => {
+                  setSearch("");
+                  setCategory("");
+                }}
                 className="text-sm text-buyer-500 hover:underline"
               >
                 Clear all filters
@@ -422,7 +431,7 @@ export default function BuyerShopPage() {
           <div className="rounded-xl border border-surface-border bg-white overflow-hidden">
             <table className="w-full">
               <thead>
-                <tr className="border-b border-surface-border bg-surface-raised text-xs text-navy/50 uppercase tracking-wider">
+                <tr className="border-b border-surface-border bg-surface-raised text-xs text-navy/70 uppercase tracking-wider">
                   <th className="px-4 py-2.5 text-left">Product</th>
                   <th className="px-4 py-2.5 text-left w-28">Category</th>
                   <th className="px-4 py-2.5 text-left w-24">SKU</th>
@@ -451,13 +460,15 @@ export default function BuyerShopPage() {
                           </div>
                           <div>
                             <p className="text-sm font-medium text-navy">{p.name}</p>
-                            <p className="text-xs text-navy/40">per {p.unit}</p>
+                            <p className="text-xs text-navy/70">per {p.unit}</p>
                           </div>
                         </div>
                       </td>
-                      <td className="px-4 py-3 text-xs text-navy/60">{p.category ?? "N/A"}</td>
-                      <td className="px-4 py-3 text-xs text-navy/50">{p.sku ?? "N/A"}</td>
-                      <td className="px-4 py-3 text-right text-sm font-semibold text-navy">{fmt(p.buyerPrice)}</td>
+                      <td className="px-4 py-3 text-xs text-navy/70">{p.category ?? "N/A"}</td>
+                      <td className="px-4 py-3 text-xs text-navy/70">{p.sku ?? "N/A"}</td>
+                      <td className="px-4 py-3 text-right text-sm font-semibold text-navy">
+                        {fmt(p.buyerPrice)}
+                      </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center justify-end gap-2">
                           <button
@@ -467,9 +478,13 @@ export default function BuyerShopPage() {
                                 ? "text-danger hover:bg-danger-bg"
                                 : "text-navy/30 hover:text-danger"
                             }`}
-                            title={favoriteIds.has(p.id) ? "Remove from favorites" : "Add to favorites"}
+                            title={
+                              favoriteIds.has(p.id) ? "Remove from favorites" : "Add to favorites"
+                            }
                           >
-                            <Heart className={`h-4 w-4 ${favoriteIds.has(p.id) ? "fill-current" : ""}`} />
+                            <Heart
+                              className={`h-4 w-4 ${favoriteIds.has(p.id) ? "fill-current" : ""}`}
+                            />
                           </button>
                           {qty > 0 ? (
                             <QtyStepper
@@ -480,7 +495,18 @@ export default function BuyerShopPage() {
                             />
                           ) : (
                             <button
-                              onClick={() => cart.addItem({ productId: p.id, qty: p.unitsPerBox ? p.unitsPerBox : 1, name: p.name, unit: p.unit, thumbnailUrl: p.thumbnailUrl, unitsPerBox: p.unitsPerBox, boxes: p.unitsPerBox ? 1 : undefined, pieces: p.unitsPerBox ? 0 : undefined })}
+                              onClick={() =>
+                                cart.addItem({
+                                  productId: p.id,
+                                  qty: p.unitsPerBox ? p.unitsPerBox : 1,
+                                  name: p.name,
+                                  unit: p.unit,
+                                  thumbnailUrl: p.thumbnailUrl,
+                                  unitsPerBox: p.unitsPerBox,
+                                  boxes: p.unitsPerBox ? 1 : undefined,
+                                  pieces: p.unitsPerBox ? 0 : undefined,
+                                })
+                              }
                               className="flex items-center gap-1 rounded-lg bg-buyer-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-buyer-600 transition-colors"
                             >
                               <Plus className="h-3.5 w-3.5" /> Add
@@ -499,22 +525,24 @@ export default function BuyerShopPage() {
         {/* Pagination */}
         {meta && meta.totalPages > 1 && (
           <div className="mt-6 flex items-center justify-between">
-            <p className="text-sm text-navy/60">
+            <p className="text-sm text-navy/70">
               Page {meta.page} of {meta.totalPages}
             </p>
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setPage((p) => p - 1)}
                 disabled={page === 1}
-                className="flex h-8 w-8 items-center justify-center rounded-lg border border-surface-border bg-white text-navy/60 hover:bg-surface-raised disabled:opacity-40 disabled:cursor-not-allowed"
+                className="flex h-8 w-8 items-center justify-center rounded-lg border border-surface-border bg-white text-navy/70 hover:bg-surface-raised disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <ChevronLeft className="h-4 w-4" />
               </button>
-              <span className="text-sm text-navy">{meta.page} / {meta.totalPages}</span>
+              <span className="text-sm text-navy">
+                {meta.page} / {meta.totalPages}
+              </span>
               <button
                 onClick={() => setPage((p) => p + 1)}
                 disabled={page === meta.totalPages}
-                className="flex h-8 w-8 items-center justify-center rounded-lg border border-surface-border bg-white text-navy/60 hover:bg-surface-raised disabled:opacity-40 disabled:cursor-not-allowed"
+                className="flex h-8 w-8 items-center justify-center rounded-lg border border-surface-border bg-white text-navy/70 hover:bg-surface-raised disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <ChevronRight className="h-4 w-4" />
               </button>
@@ -535,7 +563,7 @@ export default function BuyerShopPage() {
                 <p className="text-sm font-semibold text-navy">
                   {cart.totalQty} {cart.totalQty === 1 ? "item" : "items"} in cart
                 </p>
-                <p className="text-xs text-navy/50">
+                <p className="text-xs text-navy/70">
                   {cart.itemCount} {cart.itemCount === 1 ? "product" : "products"}
                 </p>
               </div>

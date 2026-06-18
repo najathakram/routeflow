@@ -20,6 +20,7 @@ App: https://routeflowmobile-production.up.railway.app
 ## Test 13.3 - PARTIAL
 
 GET /route-runs (operator) HTTP 200:
+
 - Run 3dac51c0-eaad-4dd6-a134-0cef7341b638: SCHEDULED, driverId d79a6f4a, tenantId 8ee7bbf5 (SET), date 2026-04-30
 - Run 140784f6-be36-430b-8391-452d0b7bf005: IN_PROGRESS, driverId d79a6f4a, tenantId 8ee7bbf5 (SET)
 
@@ -48,9 +49,10 @@ WORKING: PATCH /route-runs/:id/status {status:IN_PROGRESS} -> HTTP 200, startedA
 Operator GET /route-runs/:id after start: {status: IN_PROGRESS} PASS
 
 Browser real-time check (30 second wait):
+
 - Dashboard text identical before and after additional stop completions via API
 - Route A progress stayed at 50% despite more stops being completed
-- No WebSocket connections: window._wsConnections = [] (intercepted constructor)
+- No WebSocket connections: window.\_wsConnections = [] (intercepted constructor)
 - typeof io === undefined - socket.io-client NOT loaded in browser
 - No API polling network requests in 30-second observation window
 
@@ -91,6 +93,7 @@ The POST .../complete endpoint works; the PATCH route crashes.
 ## Test 13.6 - BLOCKED
 
 All attempted payment endpoints returned HTTP 404:
+
 - POST /route-runs/:runId/stops/:stopId/payment
 - POST /route-runs/:runId/stops/:stopId/collect-payment
 - POST /payments
@@ -160,9 +163,10 @@ Note: No general PATCH /orders/:id endpoint exists. Only PATCH /orders/:id/statu
 ## Phase 9.E - FAIL
 
 Client-side check:
+
 - typeof io -> "undefined" (socket.io-client NOT loaded)
 - typeof WebSocket -> "function" (native, unused)
-- window._wsConnections -> [] (no connections created even after intercepting constructor)
+- window.\_wsConnections -> [] (no connections created even after intercepting constructor)
 - EventSource: available but never used
 
 Server-side check:

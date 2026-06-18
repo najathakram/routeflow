@@ -25,7 +25,9 @@ export default function DriverMapScreen() {
       const perm = await Location.requestForegroundPermissionsAsync();
       if (perm.status !== "granted" || cancelled) return;
       try {
-        const cur = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        const cur = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
         if (!cancelled) {
           setForegroundLoc({ lat: cur.coords.latitude, lng: cur.coords.longitude });
         }
@@ -61,9 +63,7 @@ export default function DriverMapScreen() {
     }
 
     const stops = activeRun.stops ?? [];
-    const currentIdx = stops.findIndex(
-      (x) => x.status === "PENDING" || x.status === "IN_PROGRESS",
-    );
+    const currentIdx = stops.findIndex((x) => x.status === "PENDING" || x.status === "IN_PROGRESS");
 
     stops.forEach((s, idx) => {
       const lat = s.customerAddress?.lat;

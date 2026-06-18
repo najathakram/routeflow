@@ -122,31 +122,31 @@ Finance home is AP-only (vendor bills + expenses); no AR Aging report exists any
 
 ## PASS Items
 
-| Test | Result |
-|------|--------|
-| Expense amount=0 validation | PASS — blocked |
-| Expense categories present | PASS — Advertising, Car and Truck, etc. |
-| Invoice View PDF button | PASS — opens correct PDF in new tab |
-| Invoice Void confirmation dialog | PASS — dialog shown before void |
-| Invoice Record Payment form | PASS — Cash/Check/ACH/Credit card/Advance/Credit note/Other; %-fill shortcuts work |
-| Invoice filter tabs | PASS — All/Draft/Sent/Overdue/Paid/Voided all render |
-| Expense filter tabs | PASS — All/Pending/Paid/Void all render |
-| Vendor bill filter tabs | PASS — All/Draft/Received/Paid/Void all render |
-| Expense creation roundtrip | PASS — expense created and visible in list |
+| Test                             | Result                                                                             |
+| -------------------------------- | ---------------------------------------------------------------------------------- |
+| Expense amount=0 validation      | PASS — blocked                                                                     |
+| Expense categories present       | PASS — Advertising, Car and Truck, etc.                                            |
+| Invoice View PDF button          | PASS — opens correct PDF in new tab                                                |
+| Invoice Void confirmation dialog | PASS — dialog shown before void                                                    |
+| Invoice Record Payment form      | PASS — Cash/Check/ACH/Credit card/Advance/Credit note/Other; %-fill shortcuts work |
+| Invoice filter tabs              | PASS — All/Draft/Sent/Overdue/Paid/Voided all render                               |
+| Expense filter tabs              | PASS — All/Pending/Paid/Void all render                                            |
+| Vendor bill filter tabs          | PASS — All/Draft/Received/Paid/Void all render                                     |
+| Expense creation roundtrip       | PASS — expense created and visible in list                                         |
 
 ---
 
 ## Summary Table
 
-| ID | Severity | Section | Title |
-|----|----------|---------|-------|
-| W17-001 | HIGH (P1) | Finance Home | No AR Aging dashboard — Finance is AP-only |
-| W17-002 | MEDIUM (P2) | Vendor Bills / Invoices | Date fields default to 2025-06-01 |
-| W17-003 | MEDIUM (P2) | Vendor Bills / Expenses | Dates displayed 1 day earlier (UTC offset) |
-| W17-004 | MEDIUM (P2) | Vendor Bills | "Mark received" not disabled on Received bills |
-| W17-005 | HIGH (P1) | Vendor Bills | No "Mark paid" transition — stuck at Received |
-| W17-006 | HIGH (P1) | Expenses | No status-change actions — stuck at Pending |
-| W17-007 | HIGH (P1) | Invoices | Duplicate entries in Overdue filter list |
-| W17-008 | MEDIUM (P2) | Invoices | PDF due date 1 day later than in-app display |
-| W17-009 | LOW (P3) | Auth | Staff & Drivers company-code routes to Customer Portal |
-| W17-010 | INFO | Finance | No dedicated Payments section |
+| ID      | Severity    | Section                 | Title                                                  |
+| ------- | ----------- | ----------------------- | ------------------------------------------------------ |
+| W17-001 | HIGH (P1)   | Finance Home            | No AR Aging dashboard — Finance is AP-only             |
+| W17-002 | MEDIUM (P2) | Vendor Bills / Invoices | Date fields default to 2025-06-01                      |
+| W17-003 | MEDIUM (P2) | Vendor Bills / Expenses | Dates displayed 1 day earlier (UTC offset)             |
+| W17-004 | MEDIUM (P2) | Vendor Bills            | "Mark received" not disabled on Received bills         |
+| W17-005 | HIGH (P1)   | Vendor Bills            | No "Mark paid" transition — stuck at Received          |
+| W17-006 | HIGH (P1)   | Expenses                | No status-change actions — stuck at Pending            |
+| W17-007 | HIGH (P1)   | Invoices                | Duplicate entries in Overdue filter list               |
+| W17-008 | MEDIUM (P2) | Invoices                | PDF due date 1 day later than in-app display           |
+| W17-009 | LOW (P3)    | Auth                    | Staff & Drivers company-code routes to Customer Portal |
+| W17-010 | INFO        | Finance                 | No dedicated Payments section                          |

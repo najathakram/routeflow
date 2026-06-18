@@ -2,19 +2,19 @@
 
 Headline: ⚠️ FLOW DEGRADED — Login, route navigation, stop entry, and payment UI all reachable; payment submission blocked by missing refresh token on web.
 
-| Step | Status | Notes |
-|------|--------|--------|
-| 1. Resize 375x667 + navigate sign-in | ✅ | Window resized; /sign-in loaded; "Staff & Drivers" option visible |
-| 1b. Select Staff & Drivers | ✅ | Company code screen shown correctly |
-| 1c. Enter tenant + credentials | ⚠️ | Rate-limited (ThrottlerException 429) on first attempt; backed off 90s; succeeded on retry |
-| 2. Confirm driver runs/routes screen | ✅ | Landed on /route — "Today's Route · UX Route A (assigned) · On route" |
-| 3. Find today's Route A run | ✅ | UX Route A present and assigned; status "On route"; 5 stops visible |
-| 4. Tap "Start run" | ⚠️ | Run already "On route" from prior QA session; no "Start run" button shown |
-| 5. Open first stop | ✅ | Stop 1/5 "UX Empty Cafe" opened; $207.72 due; items list + POD section visible |
-| 5b. Mark items delivered | ⚠️ | Item radio buttons not toggleable (display-only); "Complete & collect" CTA proceeds to payment |
-| 6. Signature capture | ⚠️ | Signature button visible in POD section; not tested (skipped to payment flow) |
-| 7. Record CASH payment $208 | ❌ | Payment UI opened; $208 entered; "Receive payment & close" shows "No refresh token" toast; only OPTIONS 204 preflight seen in network — no POST fired |
-| 8. Verify stop COMPLETED/DELIVERED | ⚠️ | Route list already shows stop "Delivered" (pre-existing); stop detail still re-enterable — state mismatch |
+| Step                                 | Status | Notes                                                                                                                                                 |
+| ------------------------------------ | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1. Resize 375x667 + navigate sign-in | ✅     | Window resized; /sign-in loaded; "Staff & Drivers" option visible                                                                                     |
+| 1b. Select Staff & Drivers           | ✅     | Company code screen shown correctly                                                                                                                   |
+| 1c. Enter tenant + credentials       | ⚠️     | Rate-limited (ThrottlerException 429) on first attempt; backed off 90s; succeeded on retry                                                            |
+| 2. Confirm driver runs/routes screen | ✅     | Landed on /route — "Today's Route · UX Route A (assigned) · On route"                                                                                 |
+| 3. Find today's Route A run          | ✅     | UX Route A present and assigned; status "On route"; 5 stops visible                                                                                   |
+| 4. Tap "Start run"                   | ⚠️     | Run already "On route" from prior QA session; no "Start run" button shown                                                                             |
+| 5. Open first stop                   | ✅     | Stop 1/5 "UX Empty Cafe" opened; $207.72 due; items list + POD section visible                                                                        |
+| 5b. Mark items delivered             | ⚠️     | Item radio buttons not toggleable (display-only); "Complete & collect" CTA proceeds to payment                                                        |
+| 6. Signature capture                 | ⚠️     | Signature button visible in POD section; not tested (skipped to payment flow)                                                                         |
+| 7. Record CASH payment $208          | ❌     | Payment UI opened; $208 entered; "Receive payment & close" shows "No refresh token" toast; only OPTIONS 204 preflight seen in network — no POST fired |
+| 8. Verify stop COMPLETED/DELIVERED   | ⚠️     | Route list already shows stop "Delivered" (pre-existing); stop detail still re-enterable — state mismatch                                             |
 
 ## Anomalies (NEW findings)
 

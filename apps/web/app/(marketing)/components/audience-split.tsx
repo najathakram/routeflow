@@ -135,8 +135,8 @@ export function AudienceSplit() {
                   fontWeight: 500,
                 }}
               >
-                I order stock between customers. I want my suppliers&apos; catalogs in my pocket — at{" "}
-                <em>my</em> price.
+                I order stock between customers. I want my suppliers&apos; catalogs in my pocket —
+                at <em>my</em> price.
               </p>
             </div>
 
@@ -271,9 +271,7 @@ export function AudienceSplit() {
               }}
             >
               <div>
-                <div
-                  style={{ fontSize: 13, fontWeight: 600, color: "rgba(250,246,238,0.85)" }}
-                >
+                <div style={{ fontSize: 13, fontWeight: 600, color: "rgba(250,246,238,0.85)" }}>
                   Distributors · Wholesalers · Jobbers · FMCG
                 </div>
               </div>
@@ -392,9 +390,7 @@ export function AudienceSplit() {
           </Link>
         </div>
 
-        <div
-          style={{ textAlign: "center", marginTop: 24, fontSize: 13, color: "var(--rf-ink-3)" }}
-        >
+        <div style={{ textAlign: "center", marginTop: 24, fontSize: 13, color: "var(--rf-ink-3)" }}>
           Already use RouteFlow? Pick your side above to sign in.
         </div>
       </div>

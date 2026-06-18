@@ -13,12 +13,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
-import {
-  NavAction,
-  NavBackButton,
-  NavBar,
-  SearchBar,
-} from "@routeflow/ui/mobile/ios";
+import { NavAction, NavBackButton, NavBar, SearchBar } from "@routeflow/ui/mobile/ios";
 import { useAdminCustomers } from "../../../../lib/api/admin";
 import { useProducts } from "../../../../lib/api/products";
 import { useCreateInvoice, type CreateInvoiceItem } from "../../../../lib/api/invoices";
@@ -149,15 +144,8 @@ function CustomerPicker({
 
   return (
     <>
-      <NavBar
-        inlineTitle="New invoice"
-        leading={<NavBackButton label="Back" onPress={onBack} />}
-      />
-      <SearchBar
-        placeholder="Search customers…"
-        value={search}
-        onChangeText={setSearch}
-      />
+      <NavBar inlineTitle="New invoice" leading={<NavBackButton label="Back" onPress={onBack} />} />
+      <SearchBar placeholder="Search customers…" value={search} onChangeText={setSearch} />
       <ScrollView showsVerticalScrollIndicator={false}>
         {isLoading ? (
           <View style={styles.center}>
@@ -438,11 +426,7 @@ function InvoiceComposer({
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false}>
-        <SearchBar
-          placeholder="Search items…"
-          value={search}
-          onChangeText={setSearch}
-        />
+        <SearchBar placeholder="Search items…" value={search} onChangeText={setSearch} />
 
         {productsLoading ? (
           <View style={styles.center}>
@@ -450,9 +434,7 @@ function InvoiceComposer({
           </View>
         ) : filtered.length === 0 ? (
           <View style={styles.center}>
-            <Text style={styles.emptyText}>
-              No products{search ? " match your search" : ""}.
-            </Text>
+            <Text style={styles.emptyText}>No products{search ? " match your search" : ""}.</Text>
           </View>
         ) : (
           <View style={{ paddingHorizontal: 16, paddingTop: 14, gap: 10 }}>
@@ -510,12 +492,7 @@ function InvoiceComposer({
                   style={[styles.termPill, active && styles.termPillActive]}
                   onPress={() => onTermsChange(t)}
                 >
-                  <Text
-                    style={[
-                      styles.termPillText,
-                      active && styles.termPillTextActive,
-                    ]}
-                  >
+                  <Text style={[styles.termPillText, active && styles.termPillTextActive]}>
                     {t}
                   </Text>
                 </Pressable>
@@ -529,10 +506,7 @@ function InvoiceComposer({
             placeholder="YYYY-MM-DD"
             style={styles.dueInput}
           />
-          <Pressable
-            style={styles.sendRow}
-            onPress={() => setSend((s) => !s)}
-          >
+          <Pressable style={styles.sendRow} onPress={() => setSend((s) => !s)}>
             <View style={[styles.checkbox, send && styles.checkboxOn]}>
               {send ? <Text style={styles.checkboxTick}>✓</Text> : null}
             </View>
@@ -557,11 +531,7 @@ function InvoiceComposer({
         </Pressable>
         <View style={styles.footerActions}>
           {totalItems > 0 ? (
-            <Pressable
-              style={styles.viewBtn}
-              onPress={() => setReviewOpen(true)}
-              hitSlop={4}
-            >
+            <Pressable style={styles.viewBtn} onPress={() => setReviewOpen(true)} hitSlop={4}>
               <Ionicons name="list-outline" size={14} color={ios.brand} />
               <Text style={styles.viewBtnText}>View / edit</Text>
             </Pressable>
@@ -574,9 +544,7 @@ function InvoiceComposer({
             disabled={!canSave}
             onPress={onSave}
           >
-            <Text style={styles.confirmBtnText}>
-              {createMut.isPending ? "Saving…" : "Create"}
-            </Text>
+            <Text style={styles.confirmBtnText}>{createMut.isPending ? "Saving…" : "Create"}</Text>
             <Ionicons name="arrow-forward" size={14} color="#fff" />
           </Pressable>
         </View>
@@ -632,12 +600,7 @@ function ReviewSheet({
   }, [items, productById]);
 
   return (
-    <Modal
-      visible={open}
-      animationType="slide"
-      transparent
-      onRequestClose={onClose}
-    >
+    <Modal visible={open} animationType="slide" transparent onRequestClose={onClose}>
       <View style={styles.sheetBackdrop}>
         <View style={styles.sheet}>
           <View style={styles.sheetHeader}>
@@ -937,7 +900,13 @@ const styles = StyleSheet.create({
     borderBottomColor: ios.separator,
   },
   sheetHeaderBtn: { width: 32, height: 32, alignItems: "center", justifyContent: "center" },
-  sheetTitle: { flex: 1, textAlign: "center", fontSize: 16, fontFamily: "Inter_700Bold", color: ios.label },
+  sheetTitle: {
+    flex: 1,
+    textAlign: "center",
+    fontSize: 16,
+    fontFamily: "Inter_700Bold",
+    color: ios.label,
+  },
   sheetCount: {
     width: 80,
     textAlign: "right",

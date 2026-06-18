@@ -16,16 +16,8 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { ios } from "@routeflow/ui/tokens";
-import {
-  NavBackButton,
-  NavBar,
-  Pill,
-} from "@routeflow/ui/mobile/ios";
-import {
-  FormField,
-  FormSection,
-  FormTextInput,
-} from "../../../components/FormSheet";
+import { NavBackButton, NavBar, Pill } from "@routeflow/ui/mobile/ios";
+import { FormField, FormSection, FormTextInput } from "../../../components/FormSheet";
 import {
   useAdminUsers,
   useBusinessSettings,
@@ -75,8 +67,7 @@ function GeneralTab() {
       },
       {
         onSuccess: () => showToast("Settings saved"),
-        onError: (e: any) =>
-          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
       },
     );
   };
@@ -175,8 +166,7 @@ function UsersTab() {
           showToast(user.isActive ? "User deactivated" : "User activated");
           refetch();
         },
-        onError: (e: any) =>
-          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
       },
     );
   };
@@ -213,7 +203,8 @@ function UsersTab() {
                   {!u.isActive ? <Pill variant="gray">Inactive</Pill> : null}
                 </View>
                 <Text style={styles.userSub} numberOfLines={1}>
-                  @{u.username}{u.email ? ` · ${u.email}` : ""}
+                  @{u.username}
+                  {u.email ? ` · ${u.email}` : ""}
                 </Text>
               </View>
               <Pressable
@@ -244,9 +235,9 @@ function BrandingTab() {
           <Ionicons name="color-palette-outline" size={32} color={ios.brand} />
           <Text style={styles.infoTitle}>Branding</Text>
           <Text style={styles.infoBody}>
-            Logo uploads and custom brand colours are configured in the operator web portal.
-            Open the web dashboard to set your logo and primary colour — changes apply across
-            the mobile app automatically.
+            Logo uploads and custom brand colours are configured in the operator web portal. Open
+            the web dashboard to set your logo and primary colour — changes apply across the mobile
+            app automatically.
           </Text>
         </View>
 
@@ -290,8 +281,8 @@ function IntegrationsTab() {
           <Ionicons name="link-outline" size={32} color={ios.brand} />
           <Text style={styles.infoTitle}>Integrations</Text>
           <Text style={styles.infoBody}>
-            Connect your RouteFlow account with third-party services.
-            All integrations are configured in the web dashboard.
+            Connect your RouteFlow account with third-party services. All integrations are
+            configured in the web dashboard.
           </Text>
         </View>
         {INTEGRATIONS.map((it) => (
@@ -301,7 +292,9 @@ function IntegrationsTab() {
             </View>
             <View style={{ flex: 1, minWidth: 0 }}>
               <Text style={styles.integrationName}>{it.name}</Text>
-              <Text style={styles.integrationDesc} numberOfLines={1}>{it.desc}</Text>
+              <Text style={styles.integrationDesc} numberOfLines={1}>
+                {it.desc}
+              </Text>
             </View>
             <View style={styles.comingSoonBadge}>
               <Text style={styles.comingSoonBadgeText}>Coming soon</Text>
@@ -434,7 +427,12 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   integrationName: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: ios.label },
-  integrationDesc: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
+  integrationDesc: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    color: ios.label2,
+    marginTop: 2,
+  },
   comingSoonBadge: {
     backgroundColor: ios.fill3,
     paddingHorizontal: 8,

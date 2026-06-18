@@ -175,7 +175,7 @@ function GoogleCallbackInner() {
         >
           RF
         </div>
-        <p className="text-sm text-navy/60">Signing you in…</p>
+        <p className="text-sm text-navy/70">Signing you in…</p>
         <div
           className="h-5 w-5 animate-spin rounded-full border-2 border-brand-500 border-t-transparent"
           role="status"
@@ -231,7 +231,7 @@ function GoogleCallbackInner() {
             Back to login
           </a>
         ) : (
-          <p className="text-xs text-navy/50">Redirecting you back in a moment…</p>
+          <p className="text-xs text-navy/70">Redirecting you back in a moment…</p>
         )}
       </div>
     </div>
@@ -251,7 +251,7 @@ export default function GoogleCallbackPage() {
           >
             RF
           </div>
-          <p className="text-sm text-navy/60">Signing you in…</p>
+          <p className="text-sm text-navy/70">Signing you in…</p>
         </div>
       }
     >

@@ -143,13 +143,13 @@ export function SplitInvoiceModal({
     >
       <div className="space-y-4">
         {billable.length === 0 ? (
-          <p className="text-sm text-navy/60">
+          <p className="text-sm text-navy/70">
             All items on this order have already been invoiced.
           </p>
         ) : (
           <div className="overflow-hidden rounded-md border border-surface-border">
             <table className="w-full text-sm">
-              <thead className="bg-surface-raised text-xs uppercase text-navy/60">
+              <thead className="bg-surface-raised text-xs uppercase text-navy/70">
                 <tr>
                   <th className="px-3 py-2 text-left">Product</th>
                   <th className="px-3 py-2 text-right">Remaining</th>
@@ -204,7 +204,9 @@ export function SplitInvoiceModal({
               className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
             >
               {Object.keys(TERM_DAYS).map((t) => (
-                <option key={t} value={t}>{t}</option>
+                <option key={t} value={t}>
+                  {t}
+                </option>
               ))}
             </select>
           </div>
@@ -230,7 +232,7 @@ export function SplitInvoiceModal({
         </label>
 
         <div className="flex items-center justify-between border-t border-surface-border pt-3 text-sm">
-          <span className="text-navy/60">Invoice subtotal</span>
+          <span className="text-navy/70">Invoice subtotal</span>
           <span className="text-base font-semibold text-navy">${selectedTotal.toFixed(2)}</span>
         </div>
       </div>

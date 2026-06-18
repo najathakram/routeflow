@@ -25,13 +25,7 @@ function todayLocalISO(): string {
   return `${y}-${m}-${d}`;
 }
 
-function CardShell({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
+function CardShell({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="rounded-lg border border-surface-border bg-white shadow-card">
       <header className="border-b border-surface-border px-5 py-3.5">
@@ -56,7 +50,7 @@ function RunRow({ run }: { run: RouteRun }) {
     <li className="flex items-center justify-between gap-3 py-3">
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium text-navy">{routeName}</p>
-        <p className="mt-0.5 text-xs text-navy/60">
+        <p className="mt-0.5 text-xs text-navy/70">
           {dateLabel} · {total} stop{total === 1 ? "" : "s"}
         </p>
       </div>
@@ -103,7 +97,7 @@ function RunsList({
     );
   }
   if (runs.length === 0) {
-    return <p className="text-sm text-navy/50">{emptyText}</p>;
+    return <p className="text-sm text-navy/70">{emptyText}</p>;
   }
   return (
     <ul className="divide-y divide-surface-border">
@@ -155,8 +149,8 @@ export default function MyRunsPage() {
         <PageHeader title="My Routes" subtitle="Runs assigned to you." />
         <section className="rounded-lg border border-surface-border bg-white p-6 shadow-card">
           <p className="text-sm text-navy/70">
-            This view is only available to operators who can also act as drivers. Ask your admin
-            to enable driver mode on your account.
+            This view is only available to operators who can also act as drivers. Ask your admin to
+            enable driver mode on your account.
           </p>
         </section>
       </div>

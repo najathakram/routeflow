@@ -29,14 +29,28 @@ type FilterId = (typeof FILTERS)[number]["id"];
 
 function orderPill(status: string) {
   switch (status) {
-    case "PENDING": return { variant: "orange" as const, label: "Pending" };
-    case "CONFIRMED": return { variant: "brand" as const, label: "Confirmed" };
-    case "DRAFT": return { variant: "gray" as const, label: "Draft" };
-    case "IN_TRANSIT": return { variant: "brand" as const, label: "In transit" };
-    case "OUT_FOR_DELIVERY": return { variant: "brand" as const, label: "Out for delivery" };
-    case "DELIVERED": return { variant: "green" as const, label: "Delivered" };
-    case "CANCELLED": return { variant: "gray" as const, label: "Cancelled" };
-    default: return { variant: "gray" as const, label: status.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase()) };
+    case "PENDING":
+      return { variant: "orange" as const, label: "Pending" };
+    case "CONFIRMED":
+      return { variant: "brand" as const, label: "Confirmed" };
+    case "DRAFT":
+      return { variant: "gray" as const, label: "Draft" };
+    case "IN_TRANSIT":
+      return { variant: "brand" as const, label: "In transit" };
+    case "OUT_FOR_DELIVERY":
+      return { variant: "brand" as const, label: "Out for delivery" };
+    case "DELIVERED":
+      return { variant: "green" as const, label: "Delivered" };
+    case "CANCELLED":
+      return { variant: "gray" as const, label: "Cancelled" };
+    default:
+      return {
+        variant: "gray" as const,
+        label: status
+          .replace(/_/g, " ")
+          .toLowerCase()
+          .replace(/\b\w/g, (c) => c.toUpperCase()),
+      };
   }
 }
 
@@ -60,19 +74,14 @@ export default function CustomerOrdersScreen() {
   });
   const orders = data?.data ?? [];
 
-  const totalItems = (order: BuyerOrder) =>
-    order.lineItems.reduce((s, i) => s + Number(i.qty), 0);
+  const totalItems = (order: BuyerOrder) => order.lineItems.reduce((s, i) => s + Number(i.qty), 0);
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <NavBar
         inlineTitle={activeSeller?.tenant.name ?? "Orders"}
         trailing={
-          <NavAction
-            label="New"
-            bold
-            onPress={() => router.push("/(customer)/orders/cart")}
-          />
+          <NavAction label="New" bold onPress={() => router.push("/(customer)/orders/cart")} />
         }
       />
 
@@ -80,9 +89,7 @@ export default function CustomerOrdersScreen() {
         chips={FILTERS.map((f) => ({ label: f.label }))}
         value={FILTERS.find((f) => f.id === filter)?.label ?? "All"}
         onChange={(label) =>
-          setFilter(
-            (FILTERS.find((f) => f.label === label)?.id as FilterId) ?? "ALL",
-          )
+          setFilter((FILTERS.find((f) => f.label === label)?.id as FilterId) ?? "ALL")
         }
       />
 
@@ -113,10 +120,14 @@ export default function CustomerOrdersScreen() {
             {orders.map((order) => {
               const p = orderPill(order.status);
               const dateLabel = new Date(order.createdAt).toLocaleDateString(undefined, {
-                month: "short", day: "numeric", year: "numeric",
+                month: "short",
+                day: "numeric",
+                year: "numeric",
               });
               const itemCount = totalItems(order);
-              const total = Number(order.total) || order.lineItems.reduce((s, i) => s + Number(i.qty) * Number(i.unitPrice), 0);
+              const total =
+                Number(order.total) ||
+                order.lineItems.reduce((s, i) => s + Number(i.qty) * Number(i.unitPrice), 0);
 
               return (
                 <Pressable
@@ -133,7 +144,9 @@ export default function CustomerOrdersScreen() {
                         {dateLabel} · {itemCount} item{itemCount !== 1 ? "s" : ""}
                       </Text>
                     </View>
-                    <Pill variant={p.variant} dot>{p.label}</Pill>
+                    <Pill variant={p.variant} dot>
+                      {p.label}
+                    </Pill>
                   </View>
                   <View style={styles.cardFoot}>
                     <Text style={styles.cardTotal}>{formatCurrency(total)}</Text>
@@ -166,8 +179,23 @@ const styles = StyleSheet.create({
   list: { paddingHorizontal: 16, gap: 8, paddingBottom: 32 },
   card: { backgroundColor: ios.bgElev, borderRadius: 14, padding: 14 },
   cardHead: { flexDirection: "row", alignItems: "center", gap: 10 },
-  cardNumber: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: ios.label, letterSpacing: -0.2 },
+  cardNumber: {
+    fontSize: 15,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label,
+    letterSpacing: -0.2,
+  },
   cardMeta: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
-  cardFoot: { marginTop: 10, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  cardTotal: { fontSize: 15, fontFamily: "Inter_700Bold", color: ios.label, fontVariant: ["tabular-nums"] },
+  cardFoot: {
+    marginTop: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  cardTotal: {
+    fontSize: 15,
+    fontFamily: "Inter_700Bold",
+    color: ios.label,
+    fontVariant: ["tabular-nums"],
+  },
 });

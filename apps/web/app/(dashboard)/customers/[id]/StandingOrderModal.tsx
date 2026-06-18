@@ -4,7 +4,11 @@ import * as React from "react";
 import { X } from "lucide-react";
 import { Modal, Button, cn, useToast } from "@routeflow/ui/web";
 import { useProducts } from "@/lib/api/products";
-import { useCreateOrderTemplate, useUpdateOrderTemplate, type OrderTemplate } from "@/lib/api/order-templates";
+import {
+  useCreateOrderTemplate,
+  useUpdateOrderTemplate,
+  type OrderTemplate,
+} from "@/lib/api/order-templates";
 
 // ─── Day of week config ───────────────────────────────────────────────────────
 
@@ -116,7 +120,6 @@ export function StandingOrderModal({
 
   // ── Item management ────────────────────────────────────────────────────────
 
-
   const addLineItem = (product: any) => {
     if (lineItems.some((li) => li.productId === product.id)) return;
     setLineItems((prev) => [
@@ -159,9 +162,18 @@ export function StandingOrderModal({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     let hasErrors = false;
-    if (!name.trim()) { setNameError("Name is required"); hasErrors = true; }
-    if (selectedDays.length === 0) { setDaysError("Select at least one day"); hasErrors = true; }
-    if (lineItems.length === 0) { setItemsError("Add at least one product"); hasErrors = true; }
+    if (!name.trim()) {
+      setNameError("Name is required");
+      hasErrors = true;
+    }
+    if (selectedDays.length === 0) {
+      setDaysError("Select at least one day");
+      hasErrors = true;
+    }
+    if (lineItems.length === 0) {
+      setItemsError("Add at least one product");
+      hasErrors = true;
+    }
     if (hasErrors) return;
 
     if (isEditing && template) {
@@ -201,7 +213,10 @@ export function StandingOrderModal({
 
   const isPending = createTemplate.isPending || updateTemplate.isPending;
   const apiError = (() => {
-    const err = (createTemplate.error ?? updateTemplate.error) as { response?: { data?: { message?: string } }; message?: string } | null;
+    const err = (createTemplate.error ?? updateTemplate.error) as {
+      response?: { data?: { message?: string } };
+      message?: string;
+    } | null;
     if (!err) return null;
     return err.response?.data?.message || err.message || "Something went wrong.";
   })();
@@ -239,16 +254,19 @@ export function StandingOrderModal({
 
           {/* ── Name ── */}
           <div className="space-y-1">
-            <label className="block text-xs font-medium text-navy/60">
+            <label className="block text-xs font-medium text-navy/70">
               Template Name <span className="text-danger">*</span>
             </label>
             <input
               type="text"
               value={name}
-              onChange={(e) => { setName(e.target.value); setNameError(""); }}
+              onChange={(e) => {
+                setName(e.target.value);
+                setNameError("");
+              }}
               placeholder="e.g. Weekly Produce Order"
               className={cn(
-                "h-10 w-full rounded border bg-white px-3 text-sm text-navy placeholder:text-navy/40 focus:outline-none focus:ring-2 focus:ring-brand-500",
+                "h-10 w-full rounded border bg-white px-3 text-sm text-navy placeholder:text-navy/70 focus:outline-none focus:ring-2 focus:ring-brand-500",
                 nameError ? "border-danger" : "border-surface-border",
               )}
             />
@@ -257,7 +275,7 @@ export function StandingOrderModal({
 
           {/* ── Days of week ── */}
           <div className="space-y-2">
-            <p className="text-xs font-semibold uppercase tracking-wider text-navy/40">
+            <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">
               Repeat on <span className="text-danger">*</span>
             </p>
             <div className="flex gap-2 flex-wrap">
@@ -270,7 +288,7 @@ export function StandingOrderModal({
                     "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
                     selectedDays.includes(iso)
                       ? "border-brand-500 bg-brand-500 text-white"
-                      : "border-surface-border bg-white text-navy/60 hover:border-navy/40 hover:text-navy",
+                      : "border-surface-border bg-white text-navy/70 hover:border-navy/40 hover:text-navy",
                   )}
                 >
                   {label}
@@ -282,7 +300,7 @@ export function StandingOrderModal({
 
           {/* ── Products / Line Items ── */}
           <section className="space-y-2">
-            <p className="text-xs font-semibold uppercase tracking-wider text-navy/40">
+            <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">
               Products <span className="text-danger">*</span>
             </p>
 
@@ -296,15 +314,12 @@ export function StandingOrderModal({
                   setItemsError("");
                 }}
                 className={cn(
-                  "h-10 w-full rounded border bg-white px-3 text-sm text-navy placeholder:text-navy/40 focus:outline-none focus:ring-2 focus:ring-brand-500",
-                  itemsError && lineItems.length === 0
-                    ? "border-danger"
-                    : "border-surface-border",
+                  "h-10 w-full rounded border bg-white px-3 text-sm text-navy placeholder:text-navy/70 focus:outline-none focus:ring-2 focus:ring-brand-500",
+                  itemsError && lineItems.length === 0 ? "border-danger" : "border-surface-border",
                 )}
               />
               {filteredProducts.length > 0 && productSearch && (
                 <ul className="absolute left-0 right-0 top-full z-10 mt-1 overflow-hidden rounded-lg border border-surface-border bg-white shadow-dropdown">
-                  
                   {filteredProducts.map((p: any) => (
                     <li key={p.id}>
                       <button
@@ -314,9 +329,9 @@ export function StandingOrderModal({
                       >
                         <div>
                           <span className="font-medium">{p.name}</span>
-                          <span className="ml-2 text-xs text-navy/50">{p.unit}</span>
+                          <span className="ml-2 text-xs text-navy/70">{p.unit}</span>
                         </div>
-                        <span className="text-xs font-medium text-navy/60">
+                        <span className="text-xs font-medium text-navy/70">
                           ${Number(p.pricePerUnit ?? 0).toFixed(2)}
                         </span>
                       </button>
@@ -336,14 +351,14 @@ export function StandingOrderModal({
                   <li key={li.tempId} className="flex items-center gap-3 px-3 py-2.5">
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium text-navy">{li.productName}</p>
-                      <p className="text-xs text-navy/50">{li.unit}</p>
+                      <p className="text-xs text-navy/70">{li.unit}</p>
                     </div>
                     <div className="flex items-center gap-1">
                       <button
                         type="button"
                         onClick={() => updateQty(li.tempId, -1)}
                         disabled={li.qty <= 1}
-                        className="flex h-6 w-6 items-center justify-center rounded border border-surface-border text-sm text-navy/60 hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-30 transition-colors"
+                        className="flex h-6 w-6 items-center justify-center rounded border border-surface-border text-sm text-navy/70 hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-30 transition-colors"
                       >
                         −
                       </button>
@@ -353,7 +368,7 @@ export function StandingOrderModal({
                       <button
                         type="button"
                         onClick={() => updateQty(li.tempId, 1)}
-                        className="flex h-6 w-6 items-center justify-center rounded border border-surface-border text-sm text-navy/60 hover:bg-surface-raised transition-colors"
+                        className="flex h-6 w-6 items-center justify-center rounded border border-surface-border text-sm text-navy/70 hover:bg-surface-raised transition-colors"
                       >
                         +
                       </button>
@@ -371,14 +386,14 @@ export function StandingOrderModal({
               </ul>
             ) : (
               <div className="rounded-lg border border-dashed border-surface-border bg-surface-raised py-6 text-center">
-                <p className="text-sm text-navy/40">Search for products above to add line items.</p>
+                <p className="text-sm text-navy/70">Search for products above to add line items.</p>
               </div>
             )}
           </section>
 
           {/* ── Notes ── */}
           <div className="space-y-1">
-            <label className="block text-xs font-medium text-navy/60">
+            <label className="block text-xs font-medium text-navy/70">
               Notes <span className="text-navy/30 font-normal">(optional)</span>
             </label>
             <textarea
@@ -386,7 +401,7 @@ export function StandingOrderModal({
               onChange={(e) => setNotes(e.target.value)}
               placeholder="Any recurring instructions..."
               rows={2}
-              className="w-full resize-none rounded border border-surface-border bg-white px-3 py-2 text-sm text-navy placeholder:text-navy/40 focus:outline-none focus:ring-2 focus:ring-brand-500"
+              className="w-full resize-none rounded border border-surface-border bg-white px-3 py-2 text-sm text-navy placeholder:text-navy/70 focus:outline-none focus:ring-2 focus:ring-brand-500"
             />
           </div>
         </div>

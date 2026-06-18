@@ -51,7 +51,10 @@ function OrderMiniRow({
         <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--rf-ink)" }}>{label}</div>
         <div style={{ fontSize: 11, color: "var(--rf-ink-3)" }}>{sub}</div>
       </div>
-      <div className={`chip ${statusTone === "teal" ? "chip-teal" : ""}`} style={{ fontSize: 10.5 }}>
+      <div
+        className={`chip ${statusTone === "teal" ? "chip-teal" : ""}`}
+        style={{ fontSize: 10.5 }}
+      >
         {status}
       </div>
     </div>
@@ -73,9 +76,21 @@ export function MockOrdersTable() {
         <div style={{ fontSize: 13, fontWeight: 600 }}>Today&apos;s orders</div>
         <div className="chip chip-teal">8 new</div>
       </div>
-      <OrderMiniRow tone="teal" label="Maple Grocery" sub="ORD-2451 · $1,580" status="Picking" statusTone="teal" />
+      <OrderMiniRow
+        tone="teal"
+        label="Maple Grocery"
+        sub="ORD-2451 · $1,580"
+        status="Picking"
+        statusTone="teal"
+      />
       <OrderMiniRow tone="cream" label="Karim Market" sub="ORD-2450 · $1,040" status="Confirmed" />
-      <OrderMiniRow tone="rust" label="Hayes &amp; Sons" sub="ORD-2449 · $3,090" status="On route" statusTone="teal" />
+      <OrderMiniRow
+        tone="rust"
+        label="Hayes &amp; Sons"
+        sub="ORD-2449 · $3,090"
+        status="On route"
+        statusTone="teal"
+      />
       <OrderMiniRow tone="teal" label="Riverside Deli" sub="ORD-2448 · $594" status="New" />
     </div>
   );

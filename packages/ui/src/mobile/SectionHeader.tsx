@@ -8,11 +8,7 @@ export interface SectionHeaderProps {
   onActionPress?: () => void;
 }
 
-export function SectionHeader({
-  title,
-  actionLabel,
-  onActionPress,
-}: SectionHeaderProps) {
+export function SectionHeader({ title, actionLabel, onActionPress }: SectionHeaderProps) {
   return (
     <View style={styles.container}>
       <Text style={styles.title}>{title}</Text>

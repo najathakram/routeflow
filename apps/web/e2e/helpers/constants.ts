@@ -4,8 +4,7 @@
  * Override PLAYWRIGHT_TENANT_SLUG env var if you use a different seed tenant.
  */
 
-export const TENANT_SLUG =
-  process.env.PLAYWRIGHT_TENANT_SLUG ?? "e2e-routeflow";
+export const TENANT_SLUG = process.env.PLAYWRIGHT_TENANT_SLUG ?? "e2e-routeflow";
 
 export const CREDENTIALS = {
   superAdmin: { username: "najathakram", password: "Najath123!" },

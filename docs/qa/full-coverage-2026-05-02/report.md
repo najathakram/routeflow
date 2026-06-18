@@ -12,21 +12,21 @@
 
 ## 1. Executive summary
 
-| Severity | Count |
-|---|---|
-| Blocker  | 0 |
-| Critical | 6 |
-| Major    | 16 |
-| Minor    | 9 |
-| Cosmetic | 1 |
-| **Total**| **32** |
+| Severity  | Count  |
+| --------- | ------ |
+| Blocker   | 0      |
+| Critical  | 6      |
+| Major     | 16     |
+| Minor     | 9      |
+| Cosmetic  | 1      |
+| **Total** | **32** |
 
 Findings split by source:
 
-| Source | Count | Notes |
-|---|---|---|
-| UI-verified  | 2  | T&C regression PASS (no bug); BUG-AUTH-6 buyer→/settings leak (confirmed in-browser). |
-| Code-audit   | 30 | Located by 3 parallel Researcher subagents reading the source. Each cites file:line with an exact fix. UI repro steps are written but not yet exercised in a real browser session — see "Verifier follow-up" below. |
+| Source      | Count | Notes                                                                                                                                                                                                               |
+| ----------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| UI-verified | 2     | T&C regression PASS (no bug); BUG-AUTH-6 buyer→/settings leak (confirmed in-browser).                                                                                                                               |
+| Code-audit  | 30    | Located by 3 parallel Researcher subagents reading the source. Each cites file:line with an exact fix. UI repro steps are written but not yet exercised in a real browser session — see "Verifier follow-up" below. |
 
 Highlights:
 
@@ -41,6 +41,7 @@ Highlights:
 - Recurring "merged column" pattern (Reference + Subject + Notes squeezed into one DB column) silently corrupts data on Edit, Duplicate, and bulk-price-adjust audit logs (`BUG-INV-7`, `-10`, `-12`).
 
 The recently-shipped regression fixes hold where verified:
+
 - T&C / Customer Notes default persistence (`a798f6d`) — **PASS** (UI-verified end-to-end).
 - Active-run-list visibility, edit/cancel/delete on active run, RF-016 stale-run backfill — code-audit confirmed wired. See `BUG-RT-7` for a partial-fix gap (notes-edit on IN_PROGRESS still blocked at `canEdit`).
 - Adjust Prices hidden on PAID/WRITTEN_OFF in the toolbar (`223cdcf`) — UI gate holds; **server-side** has matching gap on VOID and on the bulk path (`BUG-INV-1`, `BUG-INV-2`).
@@ -670,71 +671,71 @@ Pass = exercised in UI and worked. Fail = exercised and broke (filed as bug).
 Code-audit = located by Researcher reading source; UI repro pending.
 Skipped = could not run within budget / required a second tenant or driver mobile.
 
-| Domain | Scenario | Status |
-|---|---|---|
-| Auth | Login w/ workspace+username+password (operator) | **Pass** (UI-verified — `ux_admin` reached /dashboard). |
-| Auth | Login w/ email+password (buyer) | **Pass** (UI-verified — buyer reached /buyer/portal). |
-| Auth | Google sign-in cancel + complete | Skipped (would create an OAuth grant on a real Google account — out of scope without explicit approval). |
-| Auth | Wrong password throttling | Skipped — out of budget. |
-| Auth | Wrong workspace | Skipped — out of budget. |
-| Auth | Forgot password full round-trip | Skipped — out of budget. |
-| Auth | Force-password-change first login | **Fail** (`BUG-AUTH-2`, code-audit). |
-| Auth | Session expiry / silent refresh | Code-audit confirmed wired correctly in api-clients. |
-| Auth | Cross-tab logout | **Fail** (`BUG-AUTH-1`, code-audit — listener dead code). |
-| Auth | Stale tenant-slug cookie graceful recovery (login) | Skipped — out of budget. |
-| Auth | Stale tenant-slug cookie + empty Google workspace | **Fail** (`BUG-AUTH-7`, code-audit). |
-| Tenant settings | Business Profile edit/save/refresh | Skipped — out of budget. |
-| Tenant settings | Invoicing → Numbering save + apply on new invoice | Skipped — out of budget. |
-| Tenant settings | Invoicing → Defaults T&C + Notes (regression) | **Pass** (UI-verified end-to-end). |
-| Tenant settings | Email / Notifications / Integrations / Users / Import smoke | Skipped — out of budget. |
-| Tenant settings | Save button visibility @ 720/800/900/1080 | Skipped — Chrome MCP viewport stuck at 786×482; my resize_window calls didn't stick (likely user's other window grabbing focus). Recommend manual repro. |
-| Customers | Create with full / partial / dup / invalid email | Skipped — out of budget. |
-| Customers | Edit / soft-delete / restore | Skipped. |
-| Customers | Per-customer pricing | Skipped. |
-| Customers | Buyer portal account creation | Skipped. |
-| Products & inventory | Create with/without barcode + image upload | Skipped. |
-| Products & inventory | Stock adjust + audit log | Skipped. |
-| Products & inventory | Block negative-stock delivery | Skipped. |
-| Orders | Operator create / edit / cancel / reopen | Skipped. |
-| Orders | Buyer create → operator sees it | Skipped. |
-| Orders | Standing orders generation | Skipped. |
-| Orders | Edge: zero qty / no price / no address | Skipped. |
-| Routes & dispatch | Create template, add stops, drag reorder | Code-audit — `BUG-RT-5` reorder unique-constraint risk. |
-| Routes & dispatch | Dispatch + active-run guard visibility regression | Code-audit confirmed fix is wired (`activeOnly` + status filter). |
-| Routes & dispatch | Active run Edit / Cancel / Delete from card | Code-audit — `BUG-RT-1`, `-2`, `-7`, `-9`. |
-| Routes & dispatch | Reorder stops mid-run | Code-audit — `BUG-RT-3` (failed reorder leaves stale UI). |
-| Routes & dispatch | Driver completes run end-to-end | Skipped (no mobile session). |
-| Routes & dispatch | Driver isolation check | **Fail** (`BUG-RT-10`, code-audit — Critical). |
-| Routes & dispatch | Auto-complete propagation to operator | **Fail** (`BUG-RT-6`, code-audit). |
-| Invoices | Create from /invoices/new (zero-order customer) | Partially — opened form, picked customer, added line item; final Save click did not POST in this run (Chrome MCP focus issue). Pre-fill of T&C confirmed. |
-| Invoices | Create from delivery completion | Skipped. |
-| Invoices | Edit / send / reminder / void / unvoid / reopen / duplicate / write off | Code-audit — `BUG-INV-3`, `-6`, `-7`, `-10`, `-11`. |
-| Invoices | Adjust Prices hidden on PAID/VOID/WRITTEN_OFF | Server gap: `BUG-INV-1`, `-2` (Critical). UI gate confirmed in code (`apps/web/.../invoices/[id]/page.tsx:1181`). |
-| Invoices | PDF download (same-origin file, not 401 in new tab) | Code-audit — `BUG-INV-8` operator preview/download against R2 absolute URL; `BUG-AUTH-3` buyer-side broken. |
-| Invoices | Record Payment full / partial / bank charges / edit / void | Code-audit — `BUG-INV-5`, `-9`. |
-| Invoices | Credit notes + Returns + apply credit | Skipped. |
-| Buyer portal | Browse / search / filter / paginate | Skipped. |
-| Buyer portal | Add to cart / modify qty / checkout | Skipped. |
-| Buyer portal | Order history + invoices + PDF | **Fail** (`BUG-AUTH-3`, code-audit). |
-| Buyer portal | Edit profile | Skipped. |
-| Buyer portal | Sign out / sign in / cart persistence | Code-audit — `BUG-AUTH-8`. |
-| Buyer portal | Buyer pasting tenant URL → permission boundary | **Fail** (`BUG-AUTH-6`, **UI-verified**). |
-| Buyer portal | Cross-tenant invoice access | Code-audit confirmed clean (BuyerSellerContextGuard + ownership). |
-| Realtime | Operator dispatches → driver sees w/o refresh | Skipped (no mobile session). |
-| Realtime | Buyer order → operator Orders updates w/o refresh | Skipped. |
-| Non-ideal | Slow 3G multi-step | Skipped — out of budget. |
-| Non-ideal | Mid-flow refresh draft recovery | Skipped. |
-| Non-ideal | Two tabs editing same record | Skipped. |
-| Non-ideal | Permission boundaries (buyer pasting tenant URL) | **Fail** (`BUG-AUTH-6`). |
-| Non-ideal | Cross-tenant isolation by URL | **Fail** for the PDF endpoint (`BUG-INV-4`, code-audit). |
-| Non-ideal | Validation: blank / max-length / non-ASCII | Skipped. |
-| Non-ideal | Idempotency: double-click submits | Code-audit — `BUG-RT-9` on Delete-run modal. |
-| Non-ideal | Browser back/forward sanity | Skipped. |
-| Non-ideal | Direct URL to non-existent or cross-tenant record | **Fail** for the PDF (`BUG-INV-4`). |
-| Non-ideal | Floating UI overlap @ 720/800/900/1080 | Skipped — see settings row above. |
-| Non-ideal | Toast visibility ≥3s on error | Skipped — toasts I observed (e.g. "Invoice defaults saved") rendered but I did not measure their dismissal time. |
-| Non-ideal | Empty states on every list | Skipped. |
-| Non-ideal | Long-content overflow | Skipped. |
+| Domain               | Scenario                                                                | Status                                                                                                                                                    |
+| -------------------- | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Auth                 | Login w/ workspace+username+password (operator)                         | **Pass** (UI-verified — `ux_admin` reached /dashboard).                                                                                                   |
+| Auth                 | Login w/ email+password (buyer)                                         | **Pass** (UI-verified — buyer reached /buyer/portal).                                                                                                     |
+| Auth                 | Google sign-in cancel + complete                                        | Skipped (would create an OAuth grant on a real Google account — out of scope without explicit approval).                                                  |
+| Auth                 | Wrong password throttling                                               | Skipped — out of budget.                                                                                                                                  |
+| Auth                 | Wrong workspace                                                         | Skipped — out of budget.                                                                                                                                  |
+| Auth                 | Forgot password full round-trip                                         | Skipped — out of budget.                                                                                                                                  |
+| Auth                 | Force-password-change first login                                       | **Fail** (`BUG-AUTH-2`, code-audit).                                                                                                                      |
+| Auth                 | Session expiry / silent refresh                                         | Code-audit confirmed wired correctly in api-clients.                                                                                                      |
+| Auth                 | Cross-tab logout                                                        | **Fail** (`BUG-AUTH-1`, code-audit — listener dead code).                                                                                                 |
+| Auth                 | Stale tenant-slug cookie graceful recovery (login)                      | Skipped — out of budget.                                                                                                                                  |
+| Auth                 | Stale tenant-slug cookie + empty Google workspace                       | **Fail** (`BUG-AUTH-7`, code-audit).                                                                                                                      |
+| Tenant settings      | Business Profile edit/save/refresh                                      | Skipped — out of budget.                                                                                                                                  |
+| Tenant settings      | Invoicing → Numbering save + apply on new invoice                       | Skipped — out of budget.                                                                                                                                  |
+| Tenant settings      | Invoicing → Defaults T&C + Notes (regression)                           | **Pass** (UI-verified end-to-end).                                                                                                                        |
+| Tenant settings      | Email / Notifications / Integrations / Users / Import smoke             | Skipped — out of budget.                                                                                                                                  |
+| Tenant settings      | Save button visibility @ 720/800/900/1080                               | Skipped — Chrome MCP viewport stuck at 786×482; my resize_window calls didn't stick (likely user's other window grabbing focus). Recommend manual repro.  |
+| Customers            | Create with full / partial / dup / invalid email                        | Skipped — out of budget.                                                                                                                                  |
+| Customers            | Edit / soft-delete / restore                                            | Skipped.                                                                                                                                                  |
+| Customers            | Per-customer pricing                                                    | Skipped.                                                                                                                                                  |
+| Customers            | Buyer portal account creation                                           | Skipped.                                                                                                                                                  |
+| Products & inventory | Create with/without barcode + image upload                              | Skipped.                                                                                                                                                  |
+| Products & inventory | Stock adjust + audit log                                                | Skipped.                                                                                                                                                  |
+| Products & inventory | Block negative-stock delivery                                           | Skipped.                                                                                                                                                  |
+| Orders               | Operator create / edit / cancel / reopen                                | Skipped.                                                                                                                                                  |
+| Orders               | Buyer create → operator sees it                                         | Skipped.                                                                                                                                                  |
+| Orders               | Standing orders generation                                              | Skipped.                                                                                                                                                  |
+| Orders               | Edge: zero qty / no price / no address                                  | Skipped.                                                                                                                                                  |
+| Routes & dispatch    | Create template, add stops, drag reorder                                | Code-audit — `BUG-RT-5` reorder unique-constraint risk.                                                                                                   |
+| Routes & dispatch    | Dispatch + active-run guard visibility regression                       | Code-audit confirmed fix is wired (`activeOnly` + status filter).                                                                                         |
+| Routes & dispatch    | Active run Edit / Cancel / Delete from card                             | Code-audit — `BUG-RT-1`, `-2`, `-7`, `-9`.                                                                                                                |
+| Routes & dispatch    | Reorder stops mid-run                                                   | Code-audit — `BUG-RT-3` (failed reorder leaves stale UI).                                                                                                 |
+| Routes & dispatch    | Driver completes run end-to-end                                         | Skipped (no mobile session).                                                                                                                              |
+| Routes & dispatch    | Driver isolation check                                                  | **Fail** (`BUG-RT-10`, code-audit — Critical).                                                                                                            |
+| Routes & dispatch    | Auto-complete propagation to operator                                   | **Fail** (`BUG-RT-6`, code-audit).                                                                                                                        |
+| Invoices             | Create from /invoices/new (zero-order customer)                         | Partially — opened form, picked customer, added line item; final Save click did not POST in this run (Chrome MCP focus issue). Pre-fill of T&C confirmed. |
+| Invoices             | Create from delivery completion                                         | Skipped.                                                                                                                                                  |
+| Invoices             | Edit / send / reminder / void / unvoid / reopen / duplicate / write off | Code-audit — `BUG-INV-3`, `-6`, `-7`, `-10`, `-11`.                                                                                                       |
+| Invoices             | Adjust Prices hidden on PAID/VOID/WRITTEN_OFF                           | Server gap: `BUG-INV-1`, `-2` (Critical). UI gate confirmed in code (`apps/web/.../invoices/[id]/page.tsx:1181`).                                         |
+| Invoices             | PDF download (same-origin file, not 401 in new tab)                     | Code-audit — `BUG-INV-8` operator preview/download against R2 absolute URL; `BUG-AUTH-3` buyer-side broken.                                               |
+| Invoices             | Record Payment full / partial / bank charges / edit / void              | Code-audit — `BUG-INV-5`, `-9`.                                                                                                                           |
+| Invoices             | Credit notes + Returns + apply credit                                   | Skipped.                                                                                                                                                  |
+| Buyer portal         | Browse / search / filter / paginate                                     | Skipped.                                                                                                                                                  |
+| Buyer portal         | Add to cart / modify qty / checkout                                     | Skipped.                                                                                                                                                  |
+| Buyer portal         | Order history + invoices + PDF                                          | **Fail** (`BUG-AUTH-3`, code-audit).                                                                                                                      |
+| Buyer portal         | Edit profile                                                            | Skipped.                                                                                                                                                  |
+| Buyer portal         | Sign out / sign in / cart persistence                                   | Code-audit — `BUG-AUTH-8`.                                                                                                                                |
+| Buyer portal         | Buyer pasting tenant URL → permission boundary                          | **Fail** (`BUG-AUTH-6`, **UI-verified**).                                                                                                                 |
+| Buyer portal         | Cross-tenant invoice access                                             | Code-audit confirmed clean (BuyerSellerContextGuard + ownership).                                                                                         |
+| Realtime             | Operator dispatches → driver sees w/o refresh                           | Skipped (no mobile session).                                                                                                                              |
+| Realtime             | Buyer order → operator Orders updates w/o refresh                       | Skipped.                                                                                                                                                  |
+| Non-ideal            | Slow 3G multi-step                                                      | Skipped — out of budget.                                                                                                                                  |
+| Non-ideal            | Mid-flow refresh draft recovery                                         | Skipped.                                                                                                                                                  |
+| Non-ideal            | Two tabs editing same record                                            | Skipped.                                                                                                                                                  |
+| Non-ideal            | Permission boundaries (buyer pasting tenant URL)                        | **Fail** (`BUG-AUTH-6`).                                                                                                                                  |
+| Non-ideal            | Cross-tenant isolation by URL                                           | **Fail** for the PDF endpoint (`BUG-INV-4`, code-audit).                                                                                                  |
+| Non-ideal            | Validation: blank / max-length / non-ASCII                              | Skipped.                                                                                                                                                  |
+| Non-ideal            | Idempotency: double-click submits                                       | Code-audit — `BUG-RT-9` on Delete-run modal.                                                                                                              |
+| Non-ideal            | Browser back/forward sanity                                             | Skipped.                                                                                                                                                  |
+| Non-ideal            | Direct URL to non-existent or cross-tenant record                       | **Fail** for the PDF (`BUG-INV-4`).                                                                                                                       |
+| Non-ideal            | Floating UI overlap @ 720/800/900/1080                                  | Skipped — see settings row above.                                                                                                                         |
+| Non-ideal            | Toast visibility ≥3s on error                                           | Skipped — toasts I observed (e.g. "Invoice defaults saved") rendered but I did not measure their dismissal time.                                          |
+| Non-ideal            | Empty states on every list                                              | Skipped.                                                                                                                                                  |
+| Non-ideal            | Long-content overflow                                                   | Skipped.                                                                                                                                                  |
 
 ### Coverage gaps to call out
 
@@ -747,12 +748,12 @@ Skipped = could not run within budget / required a second tenant or driver mobil
 
 ## 5. Cleanup checklist
 
-| Artifact | State | Action |
-|---|---|---|
-| Settings → Invoicing → Defaults: Customer Notes set to `QA-2026-05-02-NOTES: …` | **Persisted on tenant `ux-audit-1777265477001`** | Operator can clear in Settings → Invoicing → Defaults → Save Defaults with empty fields. (Left in place because the tenant is the dedicated UX-audit tenant — non-customer-facing.) |
-| Settings → Invoicing → Defaults: T&C set to `QA-2026-05-02-TANDC: …` | **Persisted on tenant `ux-audit-1777265477001`** | Same as above. |
-| Draft invoice with line item `QA-2026-05-02 Test Item` for customer `UX Delivered Deli` | **Not actually saved** — Save as Draft did not POST during the run (Chrome focus blocker). No artifact created on server. | None. |
-| Browser tabs (operator + buyer) | Open | User can close at end of session. |
+| Artifact                                                                                | State                                                                                                                     | Action                                                                                                                                                                              |
+| --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Settings → Invoicing → Defaults: Customer Notes set to `QA-2026-05-02-NOTES: …`         | **Persisted on tenant `ux-audit-1777265477001`**                                                                          | Operator can clear in Settings → Invoicing → Defaults → Save Defaults with empty fields. (Left in place because the tenant is the dedicated UX-audit tenant — non-customer-facing.) |
+| Settings → Invoicing → Defaults: T&C set to `QA-2026-05-02-TANDC: …`                    | **Persisted on tenant `ux-audit-1777265477001`**                                                                          | Same as above.                                                                                                                                                                      |
+| Draft invoice with line item `QA-2026-05-02 Test Item` for customer `UX Delivered Deli` | **Not actually saved** — Save as Draft did not POST during the run (Chrome focus blocker). No artifact created on server. | None.                                                                                                                                                                               |
+| Browser tabs (operator + buyer)                                                         | Open                                                                                                                      | User can close at end of session.                                                                                                                                                   |
 
 If the QA-prefixed defaults are undesired in the test tenant, manually clear them via the Settings → Invoicing → Defaults UI; no API artifacts to reap.
 

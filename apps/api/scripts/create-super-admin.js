@@ -37,7 +37,9 @@ const { username, password, email } = args;
 const force = !!args.force;
 
 if (!username || !password || !email) {
-  console.error("Usage: node create-super-admin.js --username <u> --password <p> --email <e> [--force]");
+  console.error(
+    "Usage: node create-super-admin.js --username <u> --password <p> --email <e> [--force]",
+  );
   process.exit(1);
 }
 
@@ -73,10 +75,9 @@ async function main() {
 
   try {
     // Check if username already exists (any role)
-    const existing = await pool.query(
-      'SELECT id, username, role FROM "User" WHERE username = $1',
-      [username]
-    );
+    const existing = await pool.query('SELECT id, username, role FROM "User" WHERE username = $1', [
+      username,
+    ]);
 
     if (existing.rows.length > 0) {
       const user = existing.rows[0];
@@ -87,7 +88,7 @@ async function main() {
         const now = new Date().toISOString();
         await pool.query(
           `UPDATE "User" SET password = $1, "updatedAt" = $2 WHERE username = $3 AND role = 'SUPER_ADMIN'`,
-          [hashedPassword, now, username]
+          [hashedPassword, now, username],
         );
         console.log("\nSUPER_ADMIN password updated successfully (--force)!");
         console.log("─────────────────────────────────────");
@@ -100,16 +101,13 @@ async function main() {
       }
 
       console.error(
-        `ERROR: User "${username}" already exists (id=${user.id}, role=${user.role}). Use --force to update the password.`
+        `ERROR: User "${username}" already exists (id=${user.id}, role=${user.role}). Use --force to update the password.`,
       );
       process.exit(1);
     }
 
     // Check if email already exists
-    const emailCheck = await pool.query(
-      'SELECT id FROM "User" WHERE email = $1',
-      [email]
-    );
+    const emailCheck = await pool.query('SELECT id FROM "User" WHERE email = $1', [email]);
     if (emailCheck.rows.length > 0) {
       console.error(`ERROR: Email "${email}" is already in use. Aborting.`);
       process.exit(1);
@@ -129,7 +127,7 @@ async function main() {
         $1, $2, $3, $4, 'SUPER_ADMIN', 'ACTIVE',
         false, NULL, $5, $5
       ) RETURNING id, username, email, role, status, "createdAt"`,
-      [id, username, email, hashedPassword, now]
+      [id, username, email, hashedPassword, now],
     );
 
     const created = result.rows[0];

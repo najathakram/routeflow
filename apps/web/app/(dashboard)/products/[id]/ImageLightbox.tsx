@@ -17,14 +17,8 @@ export function ImageLightbox({ images, startIndex = 0, onClose }: ImageLightbox
   const [idx, setIdx] = React.useState(startIndex);
   const count = images.length;
 
-  const prev = React.useCallback(
-    () => setIdx((i) => (i - 1 + count) % count),
-    [count],
-  );
-  const next = React.useCallback(
-    () => setIdx((i) => (i + 1) % count),
-    [count],
-  );
+  const prev = React.useCallback(() => setIdx((i) => (i - 1 + count) % count), [count]);
+  const next = React.useCallback(() => setIdx((i) => (i + 1) % count), [count]);
 
   // Keyboard navigation
   React.useEffect(() => {
@@ -41,7 +35,9 @@ export function ImageLightbox({ images, startIndex = 0, onClose }: ImageLightbox
   React.useEffect(() => {
     const original = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-    return () => { document.body.style.overflow = original; };
+    return () => {
+      document.body.style.overflow = original;
+    };
   }, []);
 
   return (
@@ -68,7 +64,10 @@ export function ImageLightbox({ images, startIndex = 0, onClose }: ImageLightbox
       {/* Prev arrow */}
       {count > 1 && (
         <button
-          onClick={(e) => { e.stopPropagation(); prev(); }}
+          onClick={(e) => {
+            e.stopPropagation();
+            prev();
+          }}
           aria-label="Previous image"
           className="absolute left-4 top-1/2 -translate-y-1/2 flex h-11 w-11 items-center justify-center rounded-full bg-white/10 text-white backdrop-blur-sm hover:bg-white/20 transition-colors"
         >
@@ -89,7 +88,10 @@ export function ImageLightbox({ images, startIndex = 0, onClose }: ImageLightbox
       {/* Next arrow */}
       {count > 1 && (
         <button
-          onClick={(e) => { e.stopPropagation(); next(); }}
+          onClick={(e) => {
+            e.stopPropagation();
+            next();
+          }}
           aria-label="Next image"
           className="absolute right-4 top-1/2 -translate-y-1/2 flex h-11 w-11 items-center justify-center rounded-full bg-white/10 text-white backdrop-blur-sm hover:bg-white/20 transition-colors"
         >
@@ -103,7 +105,10 @@ export function ImageLightbox({ images, startIndex = 0, onClose }: ImageLightbox
           {images.map((_, i) => (
             <button
               key={i}
-              onClick={(e) => { e.stopPropagation(); setIdx(i); }}
+              onClick={(e) => {
+                e.stopPropagation();
+                setIdx(i);
+              }}
               aria-label={`Go to image ${i + 1}`}
               className={`h-2 rounded-full transition-all ${
                 i === idx ? "w-5 bg-white" : "w-2 bg-white/40 hover:bg-white/60"

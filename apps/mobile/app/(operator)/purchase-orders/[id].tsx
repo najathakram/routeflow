@@ -1,11 +1,4 @@
-import {
-  ActivityIndicator,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
@@ -72,23 +65,27 @@ export default function PurchaseOrderDetailScreen() {
   const canClose = po.status === "RECEIVED";
 
   const handleSend = () => {
-    confirm("Send PO?", "This will mark the PO as Sent to the supplier.", () =>
-      sendMut.mutate(id ?? "", {
-        onSuccess: () => showToast("PO sent to supplier"),
-        onError: (e: any) =>
-          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
-      }),
+    confirm(
+      "Send PO?",
+      "This will mark the PO as Sent to the supplier.",
+      () =>
+        sendMut.mutate(id ?? "", {
+          onSuccess: () => showToast("PO sent to supplier"),
+          onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        }),
       { confirmText: "Send" },
     );
   };
 
   const handleClose = () => {
-    confirm("Close PO?", "Mark as closed. This cannot be undone.", () =>
-      closeMut.mutate(id ?? "", {
-        onSuccess: () => showToast("PO closed"),
-        onError: (e: any) =>
-          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
-      }),
+    confirm(
+      "Close PO?",
+      "Mark as closed. This cannot be undone.",
+      () =>
+        closeMut.mutate(id ?? "", {
+          onSuccess: () => showToast("PO closed"),
+          onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        }),
       { confirmText: "Close", destructive: true },
     );
   };
@@ -107,9 +104,7 @@ export default function PurchaseOrderDetailScreen() {
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <NavBar
         inlineTitle={po.poNumber}
-        leading={
-          <NavBackButton label="Purchase Orders" onPress={() => router.back()} />
-        }
+        leading={<NavBackButton label="Purchase Orders" onPress={() => router.back()} />}
       />
 
       <ScrollView showsVerticalScrollIndicator={false}>
@@ -121,9 +116,7 @@ export default function PurchaseOrderDetailScreen() {
                 {s.label}
               </Pill>
             </View>
-            <Text style={styles.supplierName}>
-              {po.supplier?.name ?? "Supplier"}
-            </Text>
+            <Text style={styles.supplierName}>{po.supplier?.name ?? "Supplier"}</Text>
             {po.expectedDate ? (
               <Text style={styles.meta}>
                 Expected{" "}
@@ -134,9 +127,7 @@ export default function PurchaseOrderDetailScreen() {
                 })}
               </Text>
             ) : null}
-            {po.notes ? (
-              <Text style={styles.notes}>{po.notes}</Text>
-            ) : null}
+            {po.notes ? <Text style={styles.notes}>{po.notes}</Text> : null}
           </View>
 
           {/* Receipt progress */}
@@ -163,9 +154,7 @@ export default function PurchaseOrderDetailScreen() {
           {canReceive ? (
             <Pressable
               style={styles.receiveBtn}
-              onPress={() =>
-                router.push(`/(operator)/purchase-orders/${id}/receive`)
-              }
+              onPress={() => router.push(`/(operator)/purchase-orders/${id}/receive`)}
             >
               <Text style={styles.receiveBtnText}>Receive Items</Text>
             </Pressable>
@@ -202,17 +191,11 @@ export default function PurchaseOrderDetailScreen() {
             <View style={styles.card}>
               <Text style={styles.cardTitle}>Items</Text>
               {po.items.map((item, i) => (
-                <ItemRow
-                  key={item.id}
-                  item={item}
-                  isFirst={i === 0}
-                />
+                <ItemRow key={item.id} item={item} isFirst={i === 0} />
               ))}
               <View style={styles.totalRow}>
                 <Text style={styles.totalLabelMain}>Total</Text>
-                <Text style={styles.totalValueMain}>
-                  {fmtCurrency(displayTotal)}
-                </Text>
+                <Text style={styles.totalValueMain}>{fmtCurrency(displayTotal)}</Text>
               </View>
             </View>
           ) : null}
@@ -246,9 +229,7 @@ function ItemRow({ item, isFirst }: { item: POItem; isFirst: boolean }) {
           Ordered: {item.qtyOrdered} · Received: {item.qtyReceived}
           {remaining > 0 ? ` · Remaining: ${remaining}` : ""}
         </Text>
-        <Text style={styles.itemSub}>
-          {fmtCurrency(item.unitCost)} / unit
-        </Text>
+        <Text style={styles.itemSub}>{fmtCurrency(item.unitCost)} / unit</Text>
       </View>
       <Text style={styles.itemTotal}>{fmtCurrency(subtotal)}</Text>
     </View>

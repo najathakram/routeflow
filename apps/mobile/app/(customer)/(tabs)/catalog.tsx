@@ -13,7 +13,13 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBar } from "@routeflow/ui/mobile/ios";
-import { useBuyerProducts, useBuyerCategories, useBuyerFavorites, useToggleFavorite, type BuyerProduct } from "../../../lib/api/buyer";
+import {
+  useBuyerProducts,
+  useBuyerCategories,
+  useBuyerFavorites,
+  useToggleFavorite,
+  type BuyerProduct,
+} from "../../../lib/api/buyer";
 import { useCartStore } from "../../../store/cartStore";
 
 function formatCurrency(n: number | string | null | undefined): string {
@@ -89,7 +95,10 @@ export default function CustomerCatalogScreen() {
         </ScrollView>
       )}
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: cartCount > 0 ? 100 : 32 }}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: cartCount > 0 ? 100 : 32 }}
+      >
         {isLoading ? (
           <View style={styles.center}>
             <ActivityIndicator color={ios.brand} />
@@ -106,7 +115,10 @@ export default function CustomerCatalogScreen() {
                 product={product}
                 isFavorite={favoriteIds.has(product.id)}
                 onToggleFavorite={() =>
-                  toggleFavorite.mutate({ productId: product.id, isFavorite: favoriteIds.has(product.id) })
+                  toggleFavorite.mutate({
+                    productId: product.id,
+                    isFavorite: favoriteIds.has(product.id),
+                  })
                 }
               />
             ))}
@@ -146,7 +158,9 @@ function ProductCard({
     <View style={styles.productCard}>
       <View style={styles.productInfo}>
         <View style={styles.productNameRow}>
-          <Text style={[styles.productName, { flex: 1 }]} numberOfLines={2}>{product.name}</Text>
+          <Text style={[styles.productName, { flex: 1 }]} numberOfLines={2}>
+            {product.name}
+          </Text>
           <Pressable onPress={onToggleFavorite} hitSlop={8} style={styles.heartBtn}>
             <Ionicons
               name={isFavorite ? "heart" : "heart-outline"}
@@ -155,9 +169,7 @@ function ProductCard({
             />
           </Pressable>
         </View>
-        {product.category ? (
-          <Text style={styles.productCategory}>{product.category}</Text>
-        ) : null}
+        {product.category ? <Text style={styles.productCategory}>{product.category}</Text> : null}
         <Text style={styles.productPrice}>
           {`$${(Number(product.buyerPrice ?? product.basePrice ?? product.price) || 0).toFixed(2)}`}
           {product.unit ? <Text style={styles.productUnit}> / {product.unit}</Text> : null}
@@ -168,26 +180,23 @@ function ProductCard({
         <Pressable
           style={styles.addBtn}
           onPress={() =>
-            add({ productId: product.id, name: product.name, unitPrice: Number(product.buyerPrice ?? product.basePrice ?? product.price) || 0, unit: product.unit })
+            add({
+              productId: product.id,
+              name: product.name,
+              unitPrice: Number(product.buyerPrice ?? product.basePrice ?? product.price) || 0,
+              unit: product.unit,
+            })
           }
         >
           <Ionicons name="add" size={18} color="#fff" />
         </Pressable>
       ) : (
         <View style={styles.qtyRow}>
-          <Pressable
-            style={styles.qtyBtn}
-            onPress={() => setQty(product.id, qty - 1)}
-            hitSlop={4}
-          >
+          <Pressable style={styles.qtyBtn} onPress={() => setQty(product.id, qty - 1)} hitSlop={4}>
             <Ionicons name="remove" size={16} color={ios.brand} />
           </Pressable>
           <Text style={styles.qtyText}>{qty}</Text>
-          <Pressable
-            style={styles.qtyBtn}
-            onPress={() => setQty(product.id, qty + 1)}
-            hitSlop={4}
-          >
+          <Pressable style={styles.qtyBtn} onPress={() => setQty(product.id, qty + 1)} hitSlop={4}>
             <Ionicons name="add" size={16} color={ios.brand} />
           </Pressable>
         </View>
@@ -223,8 +232,18 @@ const styles = StyleSheet.create({
   productInfo: { flex: 1 },
   productNameRow: { flexDirection: "row", alignItems: "flex-start", gap: 4 },
   heartBtn: { paddingTop: 1 },
-  productName: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: ios.label, letterSpacing: -0.1 },
-  productCategory: { fontSize: 11, fontFamily: "Inter_400Regular", color: ios.label3, marginTop: 2 },
+  productName: {
+    fontSize: 14,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label,
+    letterSpacing: -0.1,
+  },
+  productCategory: {
+    fontSize: 11,
+    fontFamily: "Inter_400Regular",
+    color: ios.label3,
+    marginTop: 2,
+  },
   productPrice: { fontSize: 15, fontFamily: "Inter_700Bold", color: ios.label, marginTop: 6 },
   productUnit: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2 },
   addBtn: {
@@ -247,7 +266,13 @@ const styles = StyleSheet.create({
     flexShrink: 0,
   },
   qtyBtn: { alignItems: "center", justifyContent: "center" },
-  qtyText: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: ios.label, minWidth: 20, textAlign: "center" },
+  qtyText: {
+    fontSize: 14,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label,
+    minWidth: 20,
+    textAlign: "center",
+  },
   pillsRow: { paddingHorizontal: 16, paddingBottom: 8, gap: 8 },
   pill: {
     borderRadius: 20,
@@ -286,5 +311,10 @@ const styles = StyleSheet.create({
   },
   cartBadgeText: { color: "#fff", fontSize: 12, fontFamily: "Inter_700Bold" },
   cartBarText: { flex: 1, color: "#fff", fontSize: 15, fontFamily: "Inter_600SemiBold" },
-  cartBarTotal: { color: "#fff", fontSize: 15, fontFamily: "Inter_700Bold", fontVariant: ["tabular-nums"] },
+  cartBarTotal: {
+    color: "#fff",
+    fontSize: 15,
+    fontFamily: "Inter_700Bold",
+    fontVariant: ["tabular-nums"],
+  },
 });

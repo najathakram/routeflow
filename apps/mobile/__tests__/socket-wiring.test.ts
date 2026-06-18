@@ -56,8 +56,8 @@ jest.mock("react", () => {
   const actual = jest.requireActual("react") as Record<string, unknown>;
   return {
     ...actual,
-    useEffect: (fn: () => unknown) => fn(),           // run immediately
-    useRef: (init: unknown) => ({ current: init }),   // simple ref
+    useEffect: (fn: () => unknown) => fn(), // run immediately
+    useRef: (init: unknown) => ({ current: init }), // simple ref
   };
 });
 
@@ -68,8 +68,12 @@ jest.mock("react", () => {
 const localStorageStore: Record<string, string> = {};
 const mockLocalStorage = {
   getItem: (key: string) => localStorageStore[key] ?? null,
-  setItem: (key: string, val: string) => { localStorageStore[key] = val; },
-  removeItem: (key: string) => { delete localStorageStore[key]; },
+  setItem: (key: string, val: string) => {
+    localStorageStore[key] = val;
+  },
+  removeItem: (key: string) => {
+    delete localStorageStore[key];
+  },
 };
 
 // Initial property definition (configurable so SSR tests can override)
@@ -83,20 +87,22 @@ Object.defineProperty(global, "localStorage", {
 process.env.EXPO_PUBLIC_API_URL = "https://routeflowapi-production-d504.up.railway.app";
 
 // ── Auth key constants (must match lib/auth-keys.ts) ─────────────────────────
-const OP_ACCESS_KEY    = "rf:op:accessToken";
+const OP_ACCESS_KEY = "rf:op:accessToken";
 const DRIVER_ACCESS_KEY = "rf:driver:accessToken";
-const BUYER_ACCESS_KEY  = "rf:buyer:accessToken";
-const LEGACY_BUYER_KEY  = "buyerAccessToken";
+const BUYER_ACCESS_KEY = "rf:buyer:accessToken";
+const LEGACY_BUYER_KEY = "buyerAccessToken";
 
 // ── Fake JWT (non-expiring for tests, role injected as readable payload) ──────
 function fakeJwt(role: string): string {
   const header = btoa(JSON.stringify({ alg: "HS256", typ: "JWT" }));
-  const payload = btoa(JSON.stringify({
-    sub: "user-123",
-    username: "testuser",
-    role,
-    exp: Math.floor(Date.now() / 1000) + 3600,
-  }));
+  const payload = btoa(
+    JSON.stringify({
+      sub: "user-123",
+      username: "testuser",
+      role,
+      exp: Math.floor(Date.now() / 1000) + 3600,
+    }),
+  );
   return `${header}.${payload}.fakesig`;
 }
 
@@ -325,7 +331,7 @@ describe("useBuyerSocket — RF-002 / NEW-m2-1 key fix", () => {
     // there it means migration hasn't run, so we should not connect with a
     // potentially stale token from an unrelated session).
     const token = fakeJwt("BUYER");
-    localStorageStore[LEGACY_BUYER_KEY] = token;   // legacy key only
+    localStorageStore[LEGACY_BUYER_KEY] = token; // legacy key only
     mockBuyerStore.buyer = { id: "buyer-789" };
 
     const { useBuyerSocket } = await import("../hooks/useBuyerSocket");

@@ -59,8 +59,7 @@ export default function RecordPaymentScreen() {
         showToast("Payment recorded");
         router.back();
       },
-      onError: (e: any) =>
-        showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+      onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
     });
   };
 
@@ -116,9 +115,7 @@ export default function RecordPaymentScreen() {
               <Pressable
                 key={pct}
                 style={styles.preset}
-                onPress={() =>
-                  setAmount((Number(balance) * pct / 100).toFixed(2))
-                }
+                onPress={() => setAmount(((Number(balance) * pct) / 100).toFixed(2))}
               >
                 <Text style={styles.presetText}>{pct}%</Text>
               </Pressable>

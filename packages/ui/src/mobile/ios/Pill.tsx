@@ -2,14 +2,7 @@ import React from "react";
 import { StyleSheet, Text, View } from "react-native";
 import { ios } from "../../tokens";
 
-export type PillVariant =
-  | "brand"
-  | "green"
-  | "orange"
-  | "red"
-  | "gray"
-  | "yellow"
-  | "purple";
+export type PillVariant = "brand" | "green" | "orange" | "red" | "gray" | "yellow" | "purple";
 
 export interface PillProps {
   variant?: PillVariant;
@@ -32,13 +25,7 @@ const VARIANT_COLORS: Record<PillVariant, { bg: string; text: string }> = {
 export function Pill({ variant = "gray", dot = false, small = false, children }: PillProps) {
   const c = VARIANT_COLORS[variant];
   return (
-    <View
-      style={[
-        styles.pill,
-        small && styles.pillSmall,
-        { backgroundColor: c.bg },
-      ]}
-    >
+    <View style={[styles.pill, small && styles.pillSmall, { backgroundColor: c.bg }]}>
       {dot ? <View style={[styles.dot, { backgroundColor: c.text }]} /> : null}
       <Text style={[styles.label, small && styles.labelSmall, { color: c.text }]}>{children}</Text>
     </View>

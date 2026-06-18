@@ -135,15 +135,7 @@ const PIE_COLORS = [
 // ─── Skeleton helpers ─────────────────────────────────────────────────────────
 
 function SkeletonLine({ w = "full", h = 4 }: { w?: string; h?: number }) {
-  return (
-    <div
-      className={cn(
-        "animate-pulse rounded bg-navy/10",
-        `w-${w}`,
-        `h-${h}`,
-      )}
-    />
-  );
+  return <div className={cn("animate-pulse rounded bg-navy/10", `w-${w}`, `h-${h}`)} />;
 }
 
 function TableSkeleton({ rows = 5, cols = 4 }: { rows?: number; cols?: number }) {
@@ -164,11 +156,7 @@ function ChartSkeleton() {
   return (
     <div className="animate-pulse flex h-64 items-end gap-2 px-4 pb-4">
       {[60, 80, 45, 90, 70, 55, 85, 40, 75, 65, 50, 95].map((h, i) => (
-        <div
-          key={i}
-          className="flex-1 rounded-t bg-navy/10"
-          style={{ height: `${h}%` }}
-        />
+        <div key={i} className="flex-1 rounded-t bg-navy/10" style={{ height: `${h}%` }} />
       ))}
     </div>
   );
@@ -192,7 +180,7 @@ function TabButton({
         "whitespace-nowrap px-4 py-2.5 text-sm font-medium transition-colors border-b-2",
         active
           ? "border-brand-500 text-brand-600"
-          : "border-transparent text-navy/60 hover:text-navy hover:border-navy/20",
+          : "border-transparent text-navy/70 hover:text-navy hover:border-navy/20",
       )}
     >
       {children}
@@ -204,9 +192,7 @@ function TabButton({
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
-    <h3 className="mb-4 text-sm font-semibold uppercase tracking-wider text-navy/50">
-      {children}
-    </h3>
+    <h3 className="mb-4 text-sm font-semibold uppercase tracking-wider text-navy/70">{children}</h3>
   );
 }
 
@@ -240,12 +226,12 @@ function AnalyticsTable<T extends { id: string }>({
               <th
                 key={i}
                 className={cn(
-                  "pb-2 text-xs font-semibold uppercase tracking-wider text-navy/50",
+                  "pb-2 text-xs font-semibold uppercase tracking-wider text-navy/70",
                   col.align === "right"
                     ? "text-right"
                     : col.align === "center"
-                    ? "text-center"
-                    : "text-left",
+                      ? "text-center"
+                      : "text-left",
                   i > 0 ? "pl-4" : "",
                 )}
               >
@@ -257,10 +243,7 @@ function AnalyticsTable<T extends { id: string }>({
         <tbody className="divide-y divide-surface-border">
           {data.length === 0 ? (
             <tr>
-              <td
-                colSpan={columns.length}
-                className="py-8 text-center text-sm text-navy/40"
-              >
+              <td colSpan={columns.length} className="py-8 text-center text-sm text-navy/70">
                 {emptyText ?? "No data available"}
               </td>
             </tr>
@@ -275,8 +258,8 @@ function AnalyticsTable<T extends { id: string }>({
                       col.align === "right"
                         ? "text-right"
                         : col.align === "center"
-                        ? "text-center"
-                        : "text-left",
+                          ? "text-center"
+                          : "text-left",
                       i > 0 ? "pl-4" : "",
                     )}
                   >
@@ -294,13 +277,7 @@ function AnalyticsTable<T extends { id: string }>({
 
 // ─── Tab 1: Revenue ────────────────────────────────────────────────────────────
 
-function RevenueTab({
-  from,
-  to,
-}: {
-  from: string;
-  to: string;
-}) {
+function RevenueTab({ from, to }: { from: string; to: string }) {
   const { toast } = useToast();
 
   const [revenueTrend, setRevenueTrend] = React.useState<RevenuePeriod[]>([]);
@@ -375,7 +352,10 @@ function RevenueTab({
         {revenueTrendLoading ? (
           <>
             {[1, 2, 3, 4].map((i) => (
-              <div key={i} className="animate-pulse rounded-lg border border-surface-border bg-white p-5">
+              <div
+                key={i}
+                className="animate-pulse rounded-lg border border-surface-border bg-white p-5"
+              >
                 <div className="mb-3 h-4 w-24 rounded bg-navy/10" />
                 <div className="h-8 w-20 rounded bg-navy/10" />
               </div>
@@ -404,8 +384,8 @@ function RevenueTab({
                 grossMarginLoading
                   ? "—"
                   : grossMargin !== null
-                  ? pct(grossMargin.grossMarginPct)
-                  : "—"
+                    ? pct(grossMargin.grossMarginPct)
+                    : "—"
               }
               icon={<Percent className="h-5 w-5" />}
             />
@@ -418,7 +398,7 @@ function RevenueTab({
         {revenueTrendLoading ? (
           <ChartSkeleton />
         ) : revenueTrend.length === 0 ? (
-          <div className="flex h-64 items-center justify-center text-sm text-navy/40">
+          <div className="flex h-64 items-center justify-center text-sm text-navy/70">
             No revenue data for this period
           </div>
         ) : (
@@ -463,15 +443,15 @@ function RevenueTab({
           ) : grossMargin ? (
             <dl className="space-y-3 text-sm">
               <div className="flex items-center justify-between rounded-lg bg-surface-raised px-4 py-3">
-                <dt className="text-navy/60">Revenue</dt>
+                <dt className="text-navy/70">Revenue</dt>
                 <dd className="font-semibold text-navy">{usd(grossMargin.revenue)}</dd>
               </div>
               <div className="flex items-center justify-between rounded-lg bg-surface-raised px-4 py-3">
-                <dt className="text-navy/60">COGS</dt>
+                <dt className="text-navy/70">COGS</dt>
                 <dd className="font-semibold text-danger">{usd(grossMargin.cogs)}</dd>
               </div>
               <div className="flex items-center justify-between rounded-lg bg-surface-raised px-4 py-3">
-                <dt className="text-navy/60">Gross Profit</dt>
+                <dt className="text-navy/70">Gross Profit</dt>
                 <dd className="font-semibold text-success">{usd(grossMargin.grossProfit)}</dd>
               </div>
               <div className="flex items-center justify-between rounded-lg bg-brand-50 px-4 py-3">
@@ -482,7 +462,7 @@ function RevenueTab({
               </div>
             </dl>
           ) : (
-            <p className="text-sm text-navy/40">No margin data available</p>
+            <p className="text-sm text-navy/70">No margin data available</p>
           )}
         </Card>
 
@@ -490,7 +470,7 @@ function RevenueTab({
           {salesByCategoryLoading ? (
             <ChartSkeleton />
           ) : salesByCategory.length === 0 ? (
-            <div className="flex h-64 items-center justify-center text-sm text-navy/40">
+            <div className="flex h-64 items-center justify-center text-sm text-navy/70">
               No category data for this period
             </div>
           ) : (
@@ -503,16 +483,11 @@ function RevenueTab({
                   cx="50%"
                   cy="50%"
                   outerRadius={90}
-                  label={({ name, percent }) =>
-                    `${name} ${((percent ?? 0) * 100).toFixed(0)}%`
-                  }
+                  label={({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`}
                   labelLine={false}
                 >
                   {salesByCategory.map((_, index) => (
-                    <Cell
-                      key={`cell-${index}`}
-                      fill={PIE_COLORS[index % PIE_COLORS.length]}
-                    />
+                    <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
                   ))}
                 </Pie>
                 <Tooltip formatter={(v) => usd(Number(v))} />
@@ -585,22 +560,16 @@ function ProductsInventoryTab({ from, to }: { from: string; to: string }) {
   const topProductColumns: Column<TopProduct>[] = [
     {
       header: "Product",
-      accessor: (row) => (
-        <span className="font-medium text-navy">{row.name}</span>
-      ),
+      accessor: (row) => <span className="font-medium text-navy">{row.name}</span>,
     },
     {
       header: "Revenue",
-      accessor: (row) => (
-        <span className="text-navy/80">{usd(row.totalRevenue)}</span>
-      ),
+      accessor: (row) => <span className="text-navy/80">{usd(row.totalRevenue)}</span>,
       align: "right",
     },
     {
       header: "Units Sold",
-      accessor: (row) => (
-        <span className="text-navy/80">{row.unitsSold.toLocaleString()}</span>
-      ),
+      accessor: (row) => <span className="text-navy/80">{row.unitsSold.toLocaleString()}</span>,
       align: "right",
     },
   ];
@@ -626,7 +595,11 @@ function ProductsInventoryTab({ from, to }: { from: string; to: string }) {
         <span
           className={cn(
             "font-medium",
-            row.turnoverRate >= 4 ? "text-success" : row.turnoverRate >= 1 ? "text-navy" : "text-warning",
+            row.turnoverRate >= 4
+              ? "text-success"
+              : row.turnoverRate >= 1
+                ? "text-navy"
+                : "text-warning",
           )}
         >
           {row.turnoverRate.toFixed(2)}x
@@ -649,7 +622,7 @@ function ProductsInventoryTab({ from, to }: { from: string; to: string }) {
     {
       header: "Last Movement",
       accessor: (row) => (
-        <span className="text-navy/60">
+        <span className="text-navy/70">
           {row.lastMovement
             ? new Date(row.lastMovement).toLocaleDateString("en-US", {
                 month: "short",
@@ -666,7 +639,11 @@ function ProductsInventoryTab({ from, to }: { from: string; to: string }) {
         <span
           className={cn(
             "font-medium",
-            row.daysInactive > 90 ? "text-danger" : row.daysInactive > 30 ? "text-warning" : "text-navy",
+            row.daysInactive > 90
+              ? "text-danger"
+              : row.daysInactive > 30
+                ? "text-warning"
+                : "text-navy",
           )}
         >
           {row.daysInactive}d
@@ -700,8 +677,8 @@ function ProductsInventoryTab({ from, to }: { from: string; to: string }) {
             row.marginPct < 10
               ? "bg-danger/10 text-danger"
               : row.marginPct < 20
-              ? "bg-warning/10 text-warning"
-              : "bg-success/10 text-success",
+                ? "bg-warning/10 text-warning"
+                : "bg-success/10 text-success",
           )}
         >
           {row.marginPct < 10 && <AlertTriangle className="h-3 w-3" />}
@@ -793,7 +770,7 @@ function CustomersTab({ from, to }: { from: string; to: string }) {
     {
       header: "#",
       accessor: (_row, index?: number) => (
-        <span className="text-sm font-semibold text-navy/40">{(index ?? 0) + 1}</span>
+        <span className="text-sm font-semibold text-navy/70">{(index ?? 0) + 1}</span>
       ),
     },
     {
@@ -807,9 +784,7 @@ function CustomersTab({ from, to }: { from: string; to: string }) {
     },
     {
       header: "Orders",
-      accessor: (row) => (
-        <span className="text-navy/80">{row.orderCount.toLocaleString()}</span>
-      ),
+      accessor: (row) => <span className="text-navy/80">{row.orderCount.toLocaleString()}</span>,
       align: "right",
     },
   ];
@@ -820,9 +795,7 @@ function CustomersTab({ from, to }: { from: string; to: string }) {
     accessor: (row: TopCustomer) => {
       if (ci === 0) {
         const idx = customers.indexOf(row);
-        return (
-          <span className="text-sm font-semibold text-navy/40">{idx + 1}</span>
-        );
+        return <span className="text-sm font-semibold text-navy/70">{idx + 1}</span>;
       }
       return col.accessor(row);
     },
@@ -891,9 +864,7 @@ function OperationsTab({ from, to }: { from: string; to: string }) {
     },
     {
       header: "Total Runs",
-      accessor: (row) => (
-        <span className="text-navy/80">{row.totalRuns.toLocaleString()}</span>
-      ),
+      accessor: (row) => <span className="text-navy/80">{row.totalRuns.toLocaleString()}</span>,
       align: "right",
     },
     {
@@ -914,8 +885,8 @@ function OperationsTab({ from, to }: { from: string; to: string }) {
                 row.completionRate >= 90
                   ? "bg-success"
                   : row.completionRate >= 70
-                  ? "bg-warning"
-                  : "bg-danger",
+                    ? "bg-warning"
+                    : "bg-danger",
               )}
               style={{ width: `${Math.min(100, row.completionRate)}%` }}
             />
@@ -926,8 +897,8 @@ function OperationsTab({ from, to }: { from: string; to: string }) {
               row.completionRate >= 90
                 ? "text-success"
                 : row.completionRate >= 70
-                ? "text-warning"
-                : "text-danger",
+                  ? "text-warning"
+                  : "text-danger",
             )}
           >
             {pct(row.completionRate)}
@@ -953,9 +924,7 @@ function OperationsTab({ from, to }: { from: string; to: string }) {
     {
       header: "Completed",
       accessor: (row) => (
-        <span className="text-success font-medium">
-          {row.completedDeliveries.toLocaleString()}
-        </span>
+        <span className="text-success font-medium">{row.completedDeliveries.toLocaleString()}</span>
       ),
       align: "right",
     },
@@ -970,8 +939,8 @@ function OperationsTab({ from, to }: { from: string; to: string }) {
                 row.completionRate >= 90
                   ? "bg-success"
                   : row.completionRate >= 70
-                  ? "bg-warning"
-                  : "bg-danger",
+                    ? "bg-warning"
+                    : "bg-danger",
               )}
               style={{ width: `${Math.min(100, row.completionRate)}%` }}
             />
@@ -982,8 +951,8 @@ function OperationsTab({ from, to }: { from: string; to: string }) {
               row.completionRate >= 90
                 ? "text-success"
                 : row.completionRate >= 70
-                ? "text-warning"
-                : "text-danger",
+                  ? "text-warning"
+                  : "text-danger",
             )}
           >
             {pct(row.completionRate)}
@@ -1108,7 +1077,7 @@ export default function AnalyticsPage() {
         title="Analytics"
         action={
           <div className="flex items-center gap-2">
-            <Calendar className="h-4 w-4 text-navy/40 flex-shrink-0" />
+            <Calendar className="h-4 w-4 text-navy/70 flex-shrink-0" />
             <input
               type="date"
               value={fromInput}
@@ -1117,7 +1086,7 @@ export default function AnalyticsPage() {
               className="h-9 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
               title="From date"
             />
-            <span className="text-navy/40 text-sm">–</span>
+            <span className="text-navy/70 text-sm">–</span>
             <input
               type="date"
               value={toInput}
@@ -1146,7 +1115,7 @@ export default function AnalyticsPage() {
                 "rounded-full px-3 py-1 text-sm font-medium transition-colors",
                 isActive
                   ? "bg-brand-100 text-brand-700"
-                  : "bg-surface-raised text-navy/60 hover:text-navy",
+                  : "bg-surface-raised text-navy/70 hover:text-navy",
               )}
             >
               {preset.label}
@@ -1174,18 +1143,10 @@ export default function AnalyticsPage() {
       </div>
 
       {/* Tab panels */}
-      {activeTab === "revenue" && (
-        <RevenueTab from={appliedFrom} to={appliedTo} />
-      )}
-      {activeTab === "products" && (
-        <ProductsInventoryTab from={appliedFrom} to={appliedTo} />
-      )}
-      {activeTab === "customers" && (
-        <CustomersTab from={appliedFrom} to={appliedTo} />
-      )}
-      {activeTab === "operations" && (
-        <OperationsTab from={appliedFrom} to={appliedTo} />
-      )}
+      {activeTab === "revenue" && <RevenueTab from={appliedFrom} to={appliedTo} />}
+      {activeTab === "products" && <ProductsInventoryTab from={appliedFrom} to={appliedTo} />}
+      {activeTab === "customers" && <CustomersTab from={appliedFrom} to={appliedTo} />}
+      {activeTab === "operations" && <OperationsTab from={appliedFrom} to={appliedTo} />}
     </div>
   );
 }

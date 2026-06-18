@@ -16,7 +16,12 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { BrandGlyph } from "@routeflow/ui/mobile/ios";
 import { OptionPickerSheet } from "../../components/OptionPickerSheet";
-import { buyerLogin, buyerLoginWithGoogle, getBuyerSellers, type BuyerSeller } from "../../lib/buyer-auth";
+import {
+  buyerLogin,
+  buyerLoginWithGoogle,
+  getBuyerSellers,
+  type BuyerSeller,
+} from "../../lib/buyer-auth";
 import { useBuyerSessionStore } from "../../lib/buyer-session-store";
 import { GoogleButton } from "@routeflow/ui/mobile/ios";
 
@@ -44,8 +49,14 @@ export default function CustomerLoginScreen() {
   const [sellerPickerOpen, setSellerPickerOpen] = useState(false);
 
   const onLogin = async () => {
-    if (!email.trim()) { setError("Email is required."); return; }
-    if (!password) { setError("Password is required."); return; }
+    if (!email.trim()) {
+      setError("Email is required.");
+      return;
+    }
+    if (!password) {
+      setError("Password is required.");
+      return;
+    }
 
     setError(null);
     setLoading(true);
@@ -57,7 +68,9 @@ export default function CustomerLoginScreen() {
       const sellers = await getBuyerSellers();
 
       if (sellers.length === 0) {
-        setError("Your account is not connected to any supplier. Ask your supplier to send you a portal invite.");
+        setError(
+          "Your account is not connected to any supplier. Ask your supplier to send you a portal invite.",
+        );
         setLoading(false);
         return;
       }
@@ -75,7 +88,9 @@ export default function CustomerLoginScreen() {
       if (e?.response?.status === 429) {
         const retryAfter = e?.response?.data?.retryAfter;
         const minutes = retryAfter ? Math.max(1, Math.round(retryAfter / 60)) : 5;
-        setError(`Too many login attempts. Please try again in ${minutes} minute${minutes === 1 ? "" : "s"}.`);
+        setError(
+          `Too many login attempts. Please try again in ${minutes} minute${minutes === 1 ? "" : "s"}.`,
+        );
         setLoading(false);
         return;
       }
@@ -94,7 +109,9 @@ export default function CustomerLoginScreen() {
       setBuyer(buyer);
 
       if (sellerCount === 0) {
-        setError("Your account is not connected to any supplier. Ask your supplier to send you a portal invite.");
+        setError(
+          "Your account is not connected to any supplier. Ask your supplier to send you a portal invite.",
+        );
         return;
       }
 
@@ -228,9 +245,7 @@ export default function CustomerLoginScreen() {
 
         <Text style={styles.footer}>
           Don&apos;t have an account?{" "}
-          <Text style={styles.footerLink}>
-            Ask your supplier for a portal invite.
-          </Text>
+          <Text style={styles.footerLink}>Ask your supplier for a portal invite.</Text>
         </Text>
       </ScrollView>
 
@@ -312,8 +327,19 @@ const styles = StyleSheet.create({
     marginTop: 14,
   },
   signInBtnBusy: { opacity: 0.7 },
-  signInLabel: { fontSize: 17, fontFamily: "Inter_600SemiBold", color: "#ffffff", letterSpacing: -0.2 },
-  footer: { textAlign: "center", fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 24 },
+  signInLabel: {
+    fontSize: 17,
+    fontFamily: "Inter_600SemiBold",
+    color: "#ffffff",
+    letterSpacing: -0.2,
+  },
+  footer: {
+    textAlign: "center",
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    color: ios.label2,
+    marginTop: 24,
+  },
   footerLink: { color: ios.brand, fontFamily: "Inter_500Medium" },
   orRow: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 6 },
   orLine: { flex: 1, height: 1, backgroundColor: ios.separator },

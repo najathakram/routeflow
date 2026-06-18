@@ -67,7 +67,7 @@ describe("InvoicesService", () => {
     it("should throw BadRequestException when invoice is linked to an order", async () => {
       prisma.invoice.findUnique.mockResolvedValue({
         id: "inv-1",
-        orderId: "ord-1",      // linked to an order
+        orderId: "ord-1", // linked to an order
         customerId: "cust-1",
         invoiceNumber: "INV-2026-0001",
         status: InvoiceStatus.SENT,
@@ -82,15 +82,13 @@ describe("InvoicesService", () => {
       });
 
       await expect(service.duplicate("inv-1")).rejects.toThrow(BadRequestException);
-      await expect(service.duplicate("inv-1")).rejects.toThrow(
-        /order-linked/i,
-      );
+      await expect(service.duplicate("inv-1")).rejects.toThrow(/order-linked/i);
     });
 
     it("should succeed when invoice is NOT linked to an order", async () => {
       const baseInv = {
         id: "inv-2",
-        orderId: null,         // no order link — duplication is allowed
+        orderId: null, // no order link — duplication is allowed
         customerId: "cust-1",
         invoiceNumber: "INV-2026-0002",
         status: InvoiceStatus.SENT,

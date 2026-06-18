@@ -12,13 +12,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
-import {
-  FilterChipRow,
-  NavAction,
-  NavBar,
-  Pill,
-  SearchBar,
-} from "@routeflow/ui/mobile/ios";
+import { FilterChipRow, NavAction, NavBar, Pill, SearchBar } from "@routeflow/ui/mobile/ios";
 import { useAdminOrders, type AdminOrder } from "../../../../lib/api/admin";
 
 // Default filter is "All" so operators land on the full picture rather than
@@ -43,7 +37,10 @@ function labelForFilter(id: StatusFilter): string {
   return STATUS_FILTERS.find((f) => f.id === id)?.label ?? "All";
 }
 
-function statusPill(status: string): { variant: "brand" | "green" | "orange" | "red" | "gray"; label: string } {
+function statusPill(status: string): {
+  variant: "brand" | "green" | "orange" | "red" | "gray";
+  label: string;
+} {
   switch (status) {
     case "PENDING":
       return { variant: "orange", label: "Pending" };
@@ -100,19 +97,11 @@ export default function OrdersListScreen() {
       <NavBar
         largeTitle="Orders"
         trailing={
-          <NavAction
-            label="New"
-            bold
-            onPress={() => router.push("/(operator)/new-order")}
-          />
+          <NavAction label="New" bold onPress={() => router.push("/(operator)/new-order")} />
         }
       />
 
-      <SearchBar
-        placeholder="Search orders, customers…"
-        value={search}
-        onChangeText={setSearch}
-      />
+      <SearchBar placeholder="Search orders, customers…" value={search} onChangeText={setSearch} />
 
       <FilterChipRow
         chips={STATUS_FILTERS.map((f) => ({ label: f.label }))}
@@ -150,7 +139,9 @@ export default function OrdersListScreen() {
               <OrderRow
                 key={o.id}
                 order={o}
-                duplicateCount={o.customer?.id ? (pendingCountByCustomer.get(o.customer?.id) ?? 0) : 0}
+                duplicateCount={
+                  o.customer?.id ? (pendingCountByCustomer.get(o.customer?.id) ?? 0) : 0
+                }
                 onPress={() => router.push(`/(operator)/orders/${o.id}`)}
               />
             ))}
@@ -161,7 +152,15 @@ export default function OrdersListScreen() {
   );
 }
 
-function OrderRow({ order, duplicateCount = 0, onPress }: { order: AdminOrder; duplicateCount?: number; onPress: () => void }) {
+function OrderRow({
+  order,
+  duplicateCount = 0,
+  onPress,
+}: {
+  order: AdminOrder;
+  duplicateCount?: number;
+  onPress: () => void;
+}) {
   const s = statusPill(order.status);
   const itemCount = order.lineItems?.length ?? 0;
   const customer = order.customer?.businessName ?? "Unknown customer";
@@ -186,7 +185,15 @@ function OrderRow({ order, duplicateCount = 0, onPress }: { order: AdminOrder; d
               </View>
             ) : null}
           </View>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2, flexWrap: "wrap" }}>
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 6,
+              marginTop: 2,
+              flexWrap: "wrap",
+            }}
+          >
             <Text style={styles.rowSub} numberOfLines={1}>
               {customer} · {itemCount} item{itemCount === 1 ? "" : "s"}
               {createdAt ? ` · ${createdAt}` : ""}

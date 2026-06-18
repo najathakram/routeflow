@@ -7,7 +7,13 @@
  */
 
 import { test, expect } from "@playwright/test";
-import { setTenantCookie, loginAsSuperAdmin, loginAsOperator, loginAsBuyer, logout } from "./helpers/auth";
+import {
+  setTenantCookie,
+  loginAsSuperAdmin,
+  loginAsOperator,
+  loginAsBuyer,
+  logout,
+} from "./helpers/auth";
 import { TENANT_SLUG, CREDENTIALS } from "./helpers/constants";
 
 test.describe("Cross-cutting — Auth Guards & Role Isolation", () => {
@@ -18,7 +24,9 @@ test.describe("Cross-cutting — Auth Guards & Role Isolation", () => {
     // Navigate first so localStorage is in scope, then clear tokens
     await page.goto("/login");
     await page.evaluate(() => {
-      try { ["accessToken", "refreshToken"].forEach((k) => localStorage.removeItem(k)); } catch {}
+      try {
+        ["accessToken", "refreshToken"].forEach((k) => localStorage.removeItem(k));
+      } catch {}
     });
     await context.clearCookies();
     await page.goto("/dashboard");
@@ -32,7 +40,11 @@ test.describe("Cross-cutting — Auth Guards & Role Isolation", () => {
   }) => {
     await context.clearCookies();
     await page.goto("/admin-login");
-    await page.evaluate(() => { try { localStorage.removeItem("superAdminToken"); } catch {} });
+    await page.evaluate(() => {
+      try {
+        localStorage.removeItem("superAdminToken");
+      } catch {}
+    });
     await context.clearCookies();
     await page.goto("/admin/dashboard");
     await page.waitForURL(/\/admin[\-\/]login/, { timeout: 15_000 });
@@ -46,7 +58,9 @@ test.describe("Cross-cutting — Auth Guards & Role Isolation", () => {
     await context.clearCookies();
     await page.goto("/buyer/login");
     await page.evaluate(() => {
-      try { ["buyerAccessToken", "buyerRefreshToken"].forEach((k) => localStorage.removeItem(k)); } catch {}
+      try {
+        ["buyerAccessToken", "buyerRefreshToken"].forEach((k) => localStorage.removeItem(k));
+      } catch {}
     });
     await context.clearCookies();
     await page.goto("/buyer/portal");
@@ -57,7 +71,8 @@ test.describe("Cross-cutting — Auth Guards & Role Isolation", () => {
   // ── Role cross-access is blocked ──────────────────────────────────────────
 
   test("CC-04 operator cannot access /admin/dashboard → blocked", async ({ page, context }) => {
-    const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "https://routeflowweb-production.up.railway.app";
+    const baseURL =
+      process.env.PLAYWRIGHT_BASE_URL ?? "https://routeflowweb-production.up.railway.app";
     await setTenantCookie(context, baseURL, TENANT_SLUG);
     await loginAsOperator(page);
     await page.goto("/admin/dashboard");
@@ -81,8 +96,7 @@ test.describe("Cross-cutting — Auth Guards & Role Isolation", () => {
     await loginAsSuperAdmin(page);
     // API URL must be set separately — the web URL is NOT the API URL
     const apiURL =
-      process.env.PLAYWRIGHT_API_URL ??
-      "https://routeflowapi-production.up.railway.app/api/v1";
+      process.env.PLAYWRIGHT_API_URL ?? "https://routeflowapi-production.up.railway.app/api/v1";
 
     // Get SA token from localStorage
     const saToken = await page.evaluate(() => localStorage.getItem("superAdminToken") ?? "");
@@ -128,17 +142,15 @@ test.describe("Cross-cutting — Auth Guards & Role Isolation", () => {
     await page.goto("/buyer/invite/completely-invalid-token-xyz");
     // Page shows "Invalid Invite" card with subtitle "Invite not found or already used"
     await expect(
-      page.getByText(/invalid invite|invite not found|expired|not found/i).first()
+      page.getByText(/invalid invite|invite not found|expired|not found/i).first(),
     ).toBeVisible({ timeout: 20_000 });
   });
 
   // ── Google OAuth buttons redirect to Google ───────────────────────────────
 
-  test("CC-07 Google OAuth button on /login navigates to Google", async ({
-    page,
-    context,
-  }) => {
-    const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "https://routeflowweb-production.up.railway.app";
+  test("CC-07 Google OAuth button on /login navigates to Google", async ({ page, context }) => {
+    const baseURL =
+      process.env.PLAYWRIGHT_BASE_URL ?? "https://routeflowweb-production.up.railway.app";
     await setTenantCookie(context, baseURL, TENANT_SLUG);
     await page.goto("/login");
     const googleBtn = page
@@ -160,7 +172,11 @@ test.describe("Cross-cutting — Auth Guards & Role Isolation", () => {
   }) => {
     await context.clearCookies();
     await page.goto("/admin-login");
-    await page.evaluate(() => { try { localStorage.removeItem("superAdminToken"); } catch {} });
+    await page.evaluate(() => {
+      try {
+        localStorage.removeItem("superAdminToken");
+      } catch {}
+    });
     const googleBtn = page
       .getByRole("button", { name: /google/i })
       .or(page.getByText(/continue with google/i))
@@ -180,7 +196,8 @@ test.describe("Cross-cutting — Auth Guards & Role Isolation", () => {
     page,
     context,
   }) => {
-    const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "https://routeflowweb-production.up.railway.app";
+    const baseURL =
+      process.env.PLAYWRIGHT_BASE_URL ?? "https://routeflowweb-production.up.railway.app";
     await setTenantCookie(context, baseURL, TENANT_SLUG);
     await loginAsOperator(page);
     await page.reload();

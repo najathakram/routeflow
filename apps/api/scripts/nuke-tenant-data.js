@@ -21,15 +21,13 @@ const { Pool } = require("../../../node_modules/pg");
 if (!process.argv.includes("--confirm")) {
   console.error(
     "\n⚠️  DESTRUCTIVE OPERATION — This will delete ALL tenant data.\n" +
-    "   Re-run with --confirm to proceed:\n\n" +
-    "   node apps/api/scripts/nuke-tenant-data.js --confirm\n"
+      "   Re-run with --confirm to proceed:\n\n" +
+      "   node apps/api/scripts/nuke-tenant-data.js --confirm\n",
   );
   process.exit(1);
 }
 
-const dbUrl =
-  process.env.DATABASE_URL ??
-  "postgresql://user:pass@localhost:5432/routeflow_dev";
+const dbUrl = process.env.DATABASE_URL ?? "postgresql://user:pass@localhost:5432/routeflow_dev";
 
 const pool = new Pool({ connectionString: dbUrl });
 const adapter = new PrismaPg(pool);
@@ -45,16 +43,15 @@ async function main() {
   console.log("========================================================\n");
 
   // ── Pre-flight counts ────────────────────────────────────────────────────
-  const [tenants, buyers, users, customers, products, orders, invoices] =
-    await Promise.all([
-      prisma.tenant.count(),
-      prisma.buyerAccount.count(),
-      prisma.user.count({ where: { tenantId: { not: null } } }),
-      prisma.customer.count(),
-      prisma.product.count(),
-      prisma.order.count(),
-      prisma.invoice.count(),
-    ]);
+  const [tenants, buyers, users, customers, products, orders, invoices] = await Promise.all([
+    prisma.tenant.count(),
+    prisma.buyerAccount.count(),
+    prisma.user.count({ where: { tenantId: { not: null } } }),
+    prisma.customer.count(),
+    prisma.product.count(),
+    prisma.order.count(),
+    prisma.invoice.count(),
+  ]);
 
   const superAdmins = await prisma.user.count({ where: { tenantId: null } });
 
@@ -78,7 +75,7 @@ async function main() {
 
   // ── Step 1: Buyer portal ─────────────────────────────────────────────────
   await prisma.$executeRawUnsafe(
-    `TRUNCATE TABLE "BuyerRefreshToken", "CustomerLink", "BuyerAccount" CASCADE`
+    `TRUNCATE TABLE "BuyerRefreshToken", "CustomerLink", "BuyerAccount" CASCADE`,
   );
   console.log("✓ Buyer portal data cleared");
 

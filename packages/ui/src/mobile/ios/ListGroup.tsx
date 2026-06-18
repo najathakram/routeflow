@@ -61,9 +61,7 @@ export function ListRow({
   const inner = (
     <View style={[styles.row, padY !== undefined && { paddingVertical: padY }]}>
       {icon !== undefined ? (
-        <View style={[styles.rowIcon, iconBg ? { backgroundColor: iconBg } : null]}>
-          {icon}
-        </View>
+        <View style={[styles.rowIcon, iconBg ? { backgroundColor: iconBg } : null]}>{icon}</View>
       ) : null}
       <View style={styles.rowText}>
         <Text style={styles.title} numberOfLines={1}>

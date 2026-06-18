@@ -96,7 +96,7 @@ export const transactions: Transaction[] = [
       { description: "Microfiber Towel Pack", sku: "CLN-005", qty: 4, unitPrice: 27.99 },
     ],
     payments: [
-      { id: "PMT-001", date: "Mar 9, 2026", method: "ACH", amount: 200.00, reference: "ACH-774892" },
+      { id: "PMT-001", date: "Mar 9, 2026", method: "ACH", amount: 200.0, reference: "ACH-774892" },
     ],
     status: "PARTIAL",
   },
@@ -115,7 +115,13 @@ export const transactions: Transaction[] = [
       { description: "Pecan Pralines", sku: "SNK-004", qty: 2, unitPrice: 14.99 },
     ],
     payments: [
-      { id: "PMT-002", date: "Mar 8, 2026", method: "Check", amount: 418.25, reference: "CHK-3812" },
+      {
+        id: "PMT-002",
+        date: "Mar 8, 2026",
+        method: "Check",
+        amount: 418.25,
+        reference: "CHK-3812",
+      },
     ],
     status: "PAID",
   },
@@ -146,9 +152,7 @@ export const transactions: Transaction[] = [
     date: "Mar 3, 2026",
     dueDate: "Mar 18, 2026",
     taxRate: 8.25,
-    lineItems: [
-      { description: "Beef Jerky Strips", sku: "SNK-003", qty: 4, unitPrice: 9.99 },
-    ],
+    lineItems: [{ description: "Beef Jerky Strips", sku: "SNK-003", qty: 4, unitPrice: 9.99 }],
     payments: [
       { id: "PMT-003", date: "Mar 5, 2026", method: "Cash", amount: 39.96, reference: undefined },
     ],
@@ -170,7 +174,7 @@ export const transactions: Transaction[] = [
       { description: "Sanitizer Concentrate", sku: "CLN-003", qty: 1, unitPrice: 31.99 },
     ],
     payments: [
-      { id: "PMT-004", date: "Mar 7, 2026", method: "ACH", amount: 100.00, reference: "ACH-779021" },
+      { id: "PMT-004", date: "Mar 7, 2026", method: "ACH", amount: 100.0, reference: "ACH-779021" },
     ],
     status: "PARTIAL",
   },
@@ -189,7 +193,7 @@ export const transactions: Transaction[] = [
       { description: "Lone Star Beer", sku: "BEV-002", qty: 4, unitPrice: 13.49 },
     ],
     payments: [
-      { id: "PMT-005", date: "Mar 4, 2026", method: "ACH", amount: 167.90, reference: "ACH-781044" },
+      { id: "PMT-005", date: "Mar 4, 2026", method: "ACH", amount: 167.9, reference: "ACH-781044" },
     ],
     status: "PAID",
   },

@@ -47,13 +47,7 @@ function stopProgress(run: RouteRun): { done: number; total: number } {
   return { done, total };
 }
 
-function CardShell({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
+function CardShell({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="rounded-lg border border-surface-border bg-white shadow-card">
       <header className="border-b border-surface-border px-5 py-3.5">
@@ -87,7 +81,7 @@ function ActiveNowCard() {
           <span className="text-sm text-danger">Failed to load data. Please try refreshing.</span>
         </div>
       ) : runs.length === 0 ? (
-        <p className="text-sm text-navy/50">No active runs right now.</p>
+        <p className="text-sm text-navy/70">No active runs right now.</p>
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {runs.map((run) => {
@@ -103,16 +97,16 @@ function ActiveNowCard() {
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <p className="truncate font-semibold text-navy">{routeName}</p>
-                    <p className="mt-0.5 truncate text-sm text-navy/60">{driverName}</p>
+                    <p className="mt-0.5 truncate text-sm text-navy/70">{driverName}</p>
                   </div>
                   {statusBadge(run.status)}
                 </div>
-                <div className="flex items-center justify-between text-xs text-navy/60">
+                <div className="flex items-center justify-between text-xs text-navy/70">
                   <span>
                     {done} / {total} completed
                   </span>
                   {elapsed && (
-                    <span className="flex items-center gap-1 text-navy/50">
+                    <span className="flex items-center gap-1 text-navy/70">
                       <Clock className="h-3.5 w-3.5" />
                       {elapsed}
                     </span>
@@ -161,7 +155,7 @@ function TodaysScheduleCard({
           <span className="text-sm text-danger">Failed to load data. Please try refreshing.</span>
         </div>
       ) : runs.length === 0 ? (
-        <p className="text-sm text-navy/50">Nothing scheduled today.</p>
+        <p className="text-sm text-navy/70">Nothing scheduled today.</p>
       ) : (
         <ul className="divide-y divide-surface-border">
           {runs.map((run) => {
@@ -183,14 +177,14 @@ function TodaysScheduleCard({
               >
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium text-navy">{routeName}</p>
-                  <div className="mt-0.5 flex items-center gap-2 text-xs text-navy/60">
+                  <div className="mt-0.5 flex items-center gap-2 text-xs text-navy/70">
                     {driverName ? (
                       <span className="truncate">{driverName}</span>
                     ) : (
                       <Badge variant="warning" label="Unassigned" />
                     )}
                     {startTime && (
-                      <span className="flex items-center gap-1 text-navy/50">
+                      <span className="flex items-center gap-1 text-navy/70">
                         <Clock className="h-3 w-3" />
                         {startTime}
                       </span>
@@ -238,7 +232,7 @@ function DriversCard({ todaysRuns }: { todaysRuns: RouteRun[] }) {
           <span className="text-sm text-danger">Failed to load data. Please try refreshing.</span>
         </div>
       ) : drivers.length === 0 ? (
-        <p className="text-sm text-navy/50">No drivers yet.</p>
+        <p className="text-sm text-navy/70">No drivers yet.</p>
       ) : (
         <ul className="divide-y divide-surface-border">
           {drivers.map((d: Driver) => {
@@ -251,10 +245,8 @@ function DriversCard({ todaysRuns }: { todaysRuns: RouteRun[] }) {
               >
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium text-navy">{d.contactName}</p>
-                  <p className="mt-0.5 text-xs text-navy/50">
-                    {count === 0
-                      ? "No runs today"
-                      : `${count} run${count === 1 ? "" : "s"} today`}
+                  <p className="mt-0.5 text-xs text-navy/70">
+                    {count === 0 ? "No runs today" : `${count} run${count === 1 ? "" : "s"} today`}
                   </p>
                 </div>
                 <Badge status={d.status} />
@@ -291,11 +283,7 @@ export default function DispatchPage() {
       <ActiveNowCard />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <TodaysScheduleCard
-          runs={todaysRuns}
-          isLoading={todaysLoading}
-          isError={todaysError}
-        />
+        <TodaysScheduleCard runs={todaysRuns} isLoading={todaysLoading} isError={todaysError} />
         <DriversCard todaysRuns={todaysRuns} />
       </div>
     </div>

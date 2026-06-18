@@ -140,7 +140,10 @@ export const QuickEditCell = React.forwardRef<HTMLInputElement, QuickEditCellPro
               ref={inputRef}
               type={type}
               value={draft}
-              onChange={(e) => { setDraft(e.target.value); setHighlightedIndex(-1); }}
+              onChange={(e) => {
+                setDraft(e.target.value);
+                setHighlightedIndex(-1);
+              }}
               onKeyDown={(e) => {
                 if (showDropdown) {
                   if (e.key === "ArrowDown") {
@@ -159,12 +162,20 @@ export const QuickEditCell = React.forwardRef<HTMLInputElement, QuickEditCellPro
                     return;
                   }
                 }
-                if (e.key === "Enter") { e.preventDefault(); commit(); }
-                if (e.key === "Escape") { e.preventDefault(); cancel(); }
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  commit();
+                }
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  cancel();
+                }
               }}
               onBlur={() => {
                 // Delay so clicking a dropdown item or the check button doesn't double-fire
-                setTimeout(() => { if (editing) commit(); }, 150);
+                setTimeout(() => {
+                  if (editing) commit();
+                }, 150);
               }}
               placeholder={placeholder}
               disabled={saving}
@@ -211,7 +222,7 @@ export const QuickEditCell = React.forwardRef<HTMLInputElement, QuickEditCellPro
             type="button"
             onMouseDown={(e) => e.preventDefault()}
             onClick={cancel}
-            className="rounded p-0.5 text-navy/40 hover:bg-surface-raised transition-colors"
+            className="rounded p-0.5 text-navy/70 hover:bg-surface-raised transition-colors"
             title="Cancel (Escape)"
           >
             <X className="h-3.5 w-3.5" />
@@ -226,7 +237,7 @@ export const QuickEditCell = React.forwardRef<HTMLInputElement, QuickEditCellPro
         <button
           type="button"
           onClick={startEdit}
-          className="inline-flex items-center gap-0.5 rounded-full border border-dashed border-navy/20 px-2 py-0.5 text-[11px] text-navy/40 hover:border-brand-400 hover:text-brand-600 transition-colors"
+          className="inline-flex items-center gap-0.5 rounded-full border border-dashed border-navy/20 px-2 py-0.5 text-[11px] text-navy/70 hover:border-brand-400 hover:text-brand-600 transition-colors"
           title={`Add ${field}`}
         >
           <Plus className="h-3 w-3" />

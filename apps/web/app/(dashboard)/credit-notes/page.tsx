@@ -2,16 +2,8 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import {
-  Plus,
-  Eye,
-  Calendar,
-  X,
-  Loader2,
-  FileText,
-  Search,
-} from "lucide-react";
-import { PageHeader, Button, Select, cn, Modal, useToast } from "@routeflow/ui/web";
+import { Plus, Eye, Calendar, X, Loader2, Search } from "lucide-react";
+import { PageHeader, Button, Select, cn, Modal, useToast, EmptyState } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import {
   useCreditNotes,
@@ -68,8 +60,8 @@ function KpiChip({
         active
           ? "border-brand-500 bg-brand-500 text-white"
           : danger && value > 0
-          ? "border-red-200 bg-red-50 text-red-700 hover:border-red-300"
-          : "border-surface-border bg-white text-navy hover:bg-surface-raised",
+            ? "border-red-200 bg-red-50 text-red-700 hover:border-red-300"
+            : "border-surface-border bg-white text-navy hover:bg-surface-raised",
       )}
     >
       <span>{label}</span>
@@ -79,8 +71,8 @@ function KpiChip({
           active
             ? "bg-white/20 text-white"
             : danger && value > 0
-            ? "bg-red-200 text-red-700"
-            : "bg-surface-raised text-navy/60",
+              ? "bg-red-200 text-red-700"
+              : "bg-surface-raised text-navy/70",
         )}
       >
         {value}
@@ -137,9 +129,7 @@ function CreateCreditNoteModal({
   const { data: customersData } = useCustomers({ search: customerSearch || undefined });
   const customers = customersData?.data ?? (Array.isArray(customersData) ? customersData : []);
 
-  const { data: invoicesData } = useInvoices(
-    form.customerId ? { limit: 100 } : undefined,
-  );
+  const { data: invoicesData } = useInvoices(form.customerId ? { limit: 100 } : undefined);
   const invoices = React.useMemo(() => {
     const all = invoicesData?.data ?? [];
     return form.customerId ? all.filter((inv) => inv.customerId === form.customerId) : [];
@@ -166,7 +156,10 @@ function CreateCreditNoteModal({
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const errs = validate();
-    if (Object.keys(errs).length > 0) { setErrors(errs); return; }
+    if (Object.keys(errs).length > 0) {
+      setErrors(errs);
+      return;
+    }
     setErrors({});
 
     createCreditNote.mutate(
@@ -180,12 +173,20 @@ function CreateCreditNoteModal({
       },
       {
         onSuccess: (cn) => {
-          toast({ title: "Credit note created", description: cn.creditNoteNumber, variant: "success" });
+          toast({
+            title: "Credit note created",
+            description: cn.creditNoteNumber,
+            variant: "success",
+          });
           onClose();
           onSuccess(cn.id);
         },
         onError: () => {
-          toast({ title: "Failed to create credit note", description: "Please try again.", variant: "error" });
+          toast({
+            title: "Failed to create credit note",
+            description: "Please try again.",
+            variant: "error",
+          });
         },
       },
     );
@@ -235,7 +236,9 @@ function CreateCreditNoteModal({
           >
             <option value="">Select customer…</option>
             {customers.map((c: { id: string; businessName: string }) => (
-              <option key={c.id} value={c.id}>{c.businessName}</option>
+              <option key={c.id} value={c.id}>
+                {c.businessName}
+              </option>
             ))}
           </select>
           {errors.customerId && <p className="mt-1 text-xs text-danger">{errors.customerId}</p>}
@@ -244,7 +247,7 @@ function CreateCreditNoteModal({
         {/* Invoice (optional) */}
         <div>
           <label className="mb-1.5 block text-sm font-medium text-navy/80">
-            Invoice # <span className="text-navy/40">(optional)</span>
+            Invoice # <span className="text-navy/70">(optional)</span>
           </label>
           <select
             value={form.invoiceId}
@@ -254,7 +257,9 @@ function CreateCreditNoteModal({
           >
             <option value="">None</option>
             {invoices.map((inv) => (
-              <option key={inv.id} value={inv.id}>{inv.invoiceNumber}</option>
+              <option key={inv.id} value={inv.id}>
+                {inv.invoiceNumber}
+              </option>
             ))}
           </select>
         </div>
@@ -305,7 +310,7 @@ function CreateCreditNoteModal({
         {/* Notes */}
         <div>
           <label className="mb-1.5 block text-sm font-medium text-navy/80">
-            Notes <span className="text-navy/40">(optional)</span>
+            Notes <span className="text-navy/70">(optional)</span>
           </label>
           <textarea
             rows={2}
@@ -325,7 +330,9 @@ function CreateCreditNoteModal({
 export default function CreditNotesPage() {
   const router = useRouter();
   const { setTitle } = usePageTitle();
-  React.useEffect(() => { setTitle("Credit Notes"); }, [setTitle]);
+  React.useEffect(() => {
+    setTitle("Credit Notes");
+  }, [setTitle]);
 
   const [statusFilter, setStatusFilter] = React.useState("");
   const [search, setSearch] = React.useState("");
@@ -368,10 +375,7 @@ export default function CreditNotesPage() {
       <PageHeader
         title="Credit Notes"
         action={
-          <Button
-            leftIcon={<Plus className="h-4 w-4" />}
-            onClick={() => setIsCreateOpen(true)}
-          >
+          <Button leftIcon={<Plus className="h-4 w-4" />} onClick={() => setIsCreateOpen(true)}>
             New Credit Note
           </Button>
         }
@@ -383,32 +387,47 @@ export default function CreditNotesPage() {
           label="All"
           value={kpiCounts.total}
           active={statusFilter === ""}
-          onClick={() => { setStatusFilter(""); setPage(1); }}
+          onClick={() => {
+            setStatusFilter("");
+            setPage(1);
+          }}
         />
         <KpiChip
           label="Draft"
           value={kpiCounts.draft}
           active={statusFilter === "DRAFT"}
-          onClick={() => { setStatusFilter("DRAFT"); setPage(1); }}
+          onClick={() => {
+            setStatusFilter("DRAFT");
+            setPage(1);
+          }}
         />
         <KpiChip
           label="Issued"
           value={kpiCounts.issued}
           active={statusFilter === "ISSUED"}
-          onClick={() => { setStatusFilter("ISSUED"); setPage(1); }}
+          onClick={() => {
+            setStatusFilter("ISSUED");
+            setPage(1);
+          }}
         />
         <KpiChip
           label="Applied"
           value={kpiCounts.applied}
           active={statusFilter === "APPLIED"}
-          onClick={() => { setStatusFilter("APPLIED"); setPage(1); }}
+          onClick={() => {
+            setStatusFilter("APPLIED");
+            setPage(1);
+          }}
         />
         <KpiChip
           label="Void"
           value={kpiCounts.void}
           danger
           active={statusFilter === "VOID"}
-          onClick={() => { setStatusFilter("VOID"); setPage(1); }}
+          onClick={() => {
+            setStatusFilter("VOID");
+            setPage(1);
+          }}
         />
       </div>
 
@@ -418,39 +437,55 @@ export default function CreditNotesPage() {
           type="search"
           placeholder="Search by CN # or customer…"
           value={search}
-          onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-          className="h-10 w-64 rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/40 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+          onChange={(e) => {
+            setSearch(e.target.value);
+            setPage(1);
+          }}
+          className="h-10 w-64 rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/70 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
         />
         <div className="w-44">
           <Select
             options={STATUS_OPTIONS}
             value={statusFilter}
-            onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
+            onChange={(e) => {
+              setStatusFilter(e.target.value);
+              setPage(1);
+            }}
           />
         </div>
         {/* Date range */}
         <div className="flex items-center gap-1.5">
-          <Calendar className="h-4 w-4 text-navy/40" />
+          <Calendar className="h-4 w-4 text-navy/70" />
           <input
             type="date"
             value={dateFrom}
-            onChange={(e) => { setDateFrom(e.target.value); setPage(1); }}
+            onChange={(e) => {
+              setDateFrom(e.target.value);
+              setPage(1);
+            }}
             className="h-10 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             title="Issue date from"
           />
-          <span className="text-navy/40">–</span>
+          <span className="text-navy/70">–</span>
           <input
             type="date"
             value={dateTo}
             min={dateFrom || undefined}
-            onChange={(e) => { setDateTo(e.target.value); setPage(1); }}
+            onChange={(e) => {
+              setDateTo(e.target.value);
+              setPage(1);
+            }}
             className="h-10 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             title="Issue date to"
           />
           {(dateFrom || dateTo) && (
             <button
-              onClick={() => { setDateFrom(""); setDateTo(""); setPage(1); }}
-              className="rounded p-1.5 text-navy/40 hover:text-danger transition-colors"
+              onClick={() => {
+                setDateFrom("");
+                setDateTo("");
+                setPage(1);
+              }}
+              className="rounded p-1.5 text-navy/70 hover:text-danger transition-colors"
               title="Clear dates"
             >
               <X className="h-3.5 w-3.5" />
@@ -464,12 +499,12 @@ export default function CreditNotesPage() {
         <table className="w-full text-sm">
           <thead className="border-b border-surface-border bg-surface-raised">
             <tr>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60">CN #</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60">Customer</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60">Invoice #</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60">Issue Date</th>
-              <th className="px-4 py-3 text-right text-xs font-medium text-navy/60">Amount</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60">Status</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">CN #</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Customer</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Invoice #</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Issue Date</th>
+              <th className="px-4 py-3 text-right text-xs font-medium text-navy/70">Amount</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Status</th>
               <th className="w-10 px-3 py-3" />
             </tr>
           </thead>
@@ -477,7 +512,7 @@ export default function CreditNotesPage() {
             {isLoading ? (
               <tr>
                 <td colSpan={7} className="px-4 py-12 text-center">
-                  <Loader2 className="mx-auto h-6 w-6 animate-spin text-navy/40" />
+                  <Loader2 className="mx-auto h-6 w-6 animate-spin text-navy/70" />
                 </td>
               </tr>
             ) : isError ? (
@@ -488,23 +523,40 @@ export default function CreditNotesPage() {
               </tr>
             ) : creditNotes.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-4 py-12 text-center">
-                  <div className="flex flex-col items-center gap-2">
-                    <FileText className="h-8 w-8 text-navy/20" />
-                    <p className="text-sm text-navy/40">No credit notes match your filters.</p>
-                    <button
-                      className="text-sm text-brand-500 hover:underline"
-                      onClick={() => {
-                        setSearch("");
-                        setStatusFilter("");
-                        setDateFrom("");
-                        setDateTo("");
-                        setPage(1);
-                      }}
-                    >
-                      Clear filters
-                    </button>
-                  </div>
+                <td colSpan={7} className="p-0">
+                  {search || statusFilter || dateFrom || dateTo ? (
+                    <EmptyState
+                      variant="invoices"
+                      title="No matching credit notes"
+                      description="No credit notes match your current search and filters."
+                      action={
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => {
+                            setSearch("");
+                            setStatusFilter("");
+                            setDateFrom("");
+                            setDateTo("");
+                            setPage(1);
+                          }}
+                        >
+                          Clear filters
+                        </Button>
+                      }
+                    />
+                  ) : (
+                    <EmptyState
+                      variant="invoices"
+                      title="No credit notes yet"
+                      description="Issue a credit note to refund or adjust a customer's balance."
+                      action={
+                        <Button size="sm" onClick={() => setIsCreateOpen(true)}>
+                          New credit note
+                        </Button>
+                      }
+                    />
+                  )}
                 </td>
               </tr>
             ) : (
@@ -520,10 +572,10 @@ export default function CreditNotesPage() {
                   <td className="px-4 py-3 font-medium text-navy">
                     {cn.customer?.businessName ?? "—"}
                   </td>
-                  <td className="px-4 py-3 font-mono text-xs text-navy/60">
+                  <td className="px-4 py-3 font-mono text-xs text-navy/70">
                     {cn.invoiceId ? <span className="text-brand-600">{cn.invoiceId}</span> : "—"}
                   </td>
-                  <td className="px-4 py-3 text-navy/60">
+                  <td className="px-4 py-3 text-navy/70">
                     {fmtDate((cn as any).issueDate ?? cn.createdAt)}
                   </td>
                   <td className="px-4 py-3 text-right font-medium text-navy">
@@ -536,7 +588,7 @@ export default function CreditNotesPage() {
                     <button
                       title="View credit note"
                       onClick={() => router.push(`/credit-notes/${cn.id}`)}
-                      className="rounded p-1.5 text-navy/40 hover:bg-surface-raised hover:text-navy transition-colors"
+                      className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
                     >
                       <Eye className="h-4 w-4" />
                     </button>
@@ -552,19 +604,26 @@ export default function CreditNotesPage() {
       {meta && (
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-3">
-            <p className="text-sm text-navy/50">
+            <p className="text-sm text-navy/70">
               {meta.total > 0
                 ? `Showing ${(page - 1) * limit + 1}–${Math.min(page * limit, meta.total)} of ${meta.total} credit notes`
                 : "No credit notes found"}
             </p>
             <div className="flex items-center gap-1.5">
-              <span className="text-xs text-navy/40">Per page:</span>
+              <span className="text-xs text-navy/70">Per page:</span>
               <select
                 value={limit}
-                onChange={(e) => { setLimit(Number(e.target.value)); setPage(1); }}
+                onChange={(e) => {
+                  setLimit(Number(e.target.value));
+                  setPage(1);
+                }}
                 className="h-8 rounded border border-surface-border bg-white px-2 text-xs text-navy focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
               >
-                {[10, 20, 50, 100].map((n) => <option key={n} value={n}>{n}</option>)}
+                {[10, 20, 50, 100].map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
               </select>
             </div>
           </div>

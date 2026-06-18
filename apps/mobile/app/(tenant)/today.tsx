@@ -1,12 +1,5 @@
 import { useMemo } from "react";
-import {
-  ActivityIndicator,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
@@ -20,10 +13,7 @@ import {
   type AdminRoute,
   type AdminDriver,
 } from "../../lib/api/admin";
-import {
-  useActiveRouteRun,
-  useScheduledRouteRuns,
-} from "../../lib/api/routes";
+import { useActiveRouteRun, useScheduledRouteRuns } from "../../lib/api/routes";
 import { useAuthStore } from "../../lib/auth-store";
 
 function routeStatusLabel(r: AdminRoute): {
@@ -96,14 +86,13 @@ export default function TenantTodayScreen() {
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <NavBar
         largeTitle="Today"
-        subtitle={routesLoading ? " " : `${routes.length} route${routes.length === 1 ? "" : "s"} today`}
+        subtitle={
+          routesLoading ? " " : `${routes.length} route${routes.length === 1 ? "" : "s"} today`
+        }
         leading={<Text style={styles.dateEyebrow}>{dateLabel}</Text>}
         trailing={
           <View style={{ flexDirection: "row", gap: 10, alignItems: "center" }}>
-            <Pressable
-              style={styles.navIcon}
-              onPress={() => router.push("/(operator)/exceptions")}
-            >
+            <Pressable style={styles.navIcon} onPress={() => router.push("/(operator)/exceptions")}>
               <Ionicons name="notifications-outline" size={17} color={ios.label} />
               {stats && stats.returnsToProcess > 0 ? <View style={styles.badge} /> : null}
             </Pressable>
@@ -118,7 +107,6 @@ export default function TenantTodayScreen() {
         }
       />
 
-
       <ScrollView showsVerticalScrollIndicator={false}>
         {/* My route card (driver section) */}
         <View style={{ paddingHorizontal: 16, paddingTop: 14, gap: 10 }}>
@@ -127,10 +115,7 @@ export default function TenantTodayScreen() {
               <ActivityIndicator color={ios.brand} />
             </View>
           ) : activeRun ? (
-            <Pressable
-              style={styles.routeRunCard}
-              onPress={() => router.push("/(driver)/route")}
-            >
+            <Pressable style={styles.routeRunCard} onPress={() => router.push("/(driver)/route")}>
               <View style={styles.routeRunHead}>
                 <View style={styles.driveBadge}>
                   <Ionicons name="car" size={16} color="#fff" />
@@ -141,14 +126,13 @@ export default function TenantTodayScreen() {
                   </Text>
                   <Text style={styles.routeRunSub}>Tap to open driver view</Text>
                 </View>
-                <Pill variant="brand" dot>On route</Pill>
+                <Pill variant="brand" dot>
+                  On route
+                </Pill>
               </View>
             </Pressable>
           ) : nextRun ? (
-            <Pressable
-              style={styles.routeRunCard}
-              onPress={() => router.push("/(driver)/route")}
-            >
+            <Pressable style={styles.routeRunCard} onPress={() => router.push("/(driver)/route")}>
               <View style={styles.routeRunHead}>
                 <View style={[styles.driveBadge, { backgroundColor: ios.gray[3] }]}>
                   <Ionicons name="car-outline" size={16} color="#fff" />
@@ -168,7 +152,9 @@ export default function TenantTodayScreen() {
                 <View style={[styles.driveBadge, { backgroundColor: ios.fill3 }]}>
                   <Ionicons name="car-outline" size={16} color={ios.label2} />
                 </View>
-                <Text style={[styles.routeRunTitle, { color: ios.label2 }]}>No route assigned today</Text>
+                <Text style={[styles.routeRunTitle, { color: ios.label2 }]}>
+                  No route assigned today
+                </Text>
               </View>
             </View>
           )}
@@ -222,7 +208,10 @@ export default function TenantTodayScreen() {
         ) : (
           <>
             <View style={styles.kpiGrid}>
-              <Pressable style={{ flex: 1 }} onPress={() => router.push("/(operator)/orders?status=PENDING")}>
+              <Pressable
+                style={{ flex: 1 }}
+                onPress={() => router.push("/(operator)/orders?status=PENDING")}
+              >
                 <KpiCard
                   icon={<Ionicons name="receipt-outline" size={18} color={ios.brand} />}
                   iconBg={ios.brandWash}
@@ -242,13 +231,18 @@ export default function TenantTodayScreen() {
             <View style={[styles.kpiGrid, { marginTop: 12 }]}>
               <Pressable style={{ flex: 1 }} onPress={() => router.push("/(operator)/warehouse")}>
                 <KpiCard
-                  icon={<Ionicons name="alert-circle-outline" size={18} color={ios.system.orangeInk} />}
+                  icon={
+                    <Ionicons name="alert-circle-outline" size={18} color={ios.system.orangeInk} />
+                  }
                   iconBg={ios.system.orangeWash}
                   value={String(stats.lowStockProducts)}
                   label="Low stock"
                 />
               </Pressable>
-              <Pressable style={{ flex: 1 }} onPress={() => router.push("/(operator)/invoices?status=OVERDUE")}>
+              <Pressable
+                style={{ flex: 1 }}
+                onPress={() => router.push("/(operator)/invoices?status=OVERDUE")}
+              >
                 <KpiCard
                   icon={<Ionicons name="card-outline" size={18} color={ios.system.redInk} />}
                   iconBg={ios.system.redWash}
@@ -284,11 +278,15 @@ export default function TenantTodayScreen() {
               );
               const status = routeStatusLabel(r);
               const badgeColor =
-                status.variant === "green" ? ios.system.green
-                  : status.variant === "brand" ? ios.brand
-                  : status.variant === "orange" ? ios.system.orange
-                  : status.variant === "red" ? ios.system.red
-                  : ios.gray[3];
+                status.variant === "green"
+                  ? ios.system.green
+                  : status.variant === "brand"
+                    ? ios.brand
+                    : status.variant === "orange"
+                      ? ios.system.orange
+                      : status.variant === "red"
+                        ? ios.system.red
+                        : ios.gray[3];
               const stopCount = r._count?.stops ?? 0;
               const todaysRunId = r.runs?.[0]?.id;
               const onPress = () =>
@@ -311,17 +309,22 @@ export default function TenantTodayScreen() {
                         {stopCount} stop{stopCount === 1 ? "" : "s"}
                       </Text>
                     </View>
-                    <Pill variant={status.variant} dot>{status.label}</Pill>
+                    <Pill variant={status.variant} dot>
+                      {status.label}
+                    </Pill>
                   </View>
                   <View style={styles.routeProgress}>
                     <View style={{ flex: 1 }}>
                       <ProgressTrack
                         percent={status.pct}
                         fill={
-                          status.variant === "brand" ? "brand"
-                            : status.variant === "green" ? "green"
-                            : status.variant === "red" ? "red"
-                            : "orange"
+                          status.variant === "brand"
+                            ? "brand"
+                            : status.variant === "green"
+                              ? "green"
+                              : status.variant === "red"
+                                ? "red"
+                                : "orange"
                         }
                       />
                     </View>
@@ -341,18 +344,36 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: ios.bg },
   center: { alignItems: "center", justifyContent: "center", padding: 24, gap: 6 },
   emptyTitle: { fontSize: 16, fontFamily: "Inter_600SemiBold", color: ios.label2 },
-  dateEyebrow: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: ios.label2, letterSpacing: 0.4 },
+  dateEyebrow: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label2,
+    letterSpacing: 0.4,
+  },
   navIcon: {
-    width: 34, height: 34, borderRadius: 999,
-    backgroundColor: ios.fill3, alignItems: "center", justifyContent: "center",
+    width: 34,
+    height: 34,
+    borderRadius: 999,
+    backgroundColor: ios.fill3,
+    alignItems: "center",
+    justifyContent: "center",
   },
   badge: {
-    position: "absolute", top: 4, right: 4,
-    width: 8, height: 8, borderRadius: 999, backgroundColor: ios.system.red,
+    position: "absolute",
+    top: 4,
+    right: 4,
+    width: 8,
+    height: 8,
+    borderRadius: 999,
+    backgroundColor: ios.system.red,
   },
   navAvatar: {
-    width: 34, height: 34, borderRadius: 999,
-    backgroundColor: ios.brand, alignItems: "center", justifyContent: "center",
+    width: 34,
+    height: 34,
+    borderRadius: 999,
+    backgroundColor: ios.brand,
+    alignItems: "center",
+    justifyContent: "center",
   },
   navAvatarText: { color: "#fff", fontSize: 13, fontFamily: "Inter_700Bold" },
   routeRunCard: {
@@ -362,52 +383,104 @@ const styles = StyleSheet.create({
   },
   routeRunHead: { flexDirection: "row", alignItems: "center", gap: 10 },
   driveBadge: {
-    width: 32, height: 32, borderRadius: 10,
-    backgroundColor: ios.brand, alignItems: "center", justifyContent: "center",
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    backgroundColor: ios.brand,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  routeRunTitle: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: ios.label, letterSpacing: -0.2 },
+  routeRunTitle: {
+    fontSize: 15,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label,
+    letterSpacing: -0.2,
+  },
   routeRunSub: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 1 },
   hero: { borderRadius: 20, padding: 18, overflow: "hidden" },
-  heroEyebrow: { fontSize: 12, fontFamily: "Inter_700Bold", color: "rgba(255,255,255,0.8)", letterSpacing: 1.2 },
+  heroEyebrow: {
+    fontSize: 12,
+    fontFamily: "Inter_700Bold",
+    color: "rgba(255,255,255,0.8)",
+    letterSpacing: 1.2,
+  },
   heroRow: { flexDirection: "row", alignItems: "baseline", gap: 8, marginTop: 4 },
   heroValue: {
-    fontSize: 42, fontFamily: "Inter_700Bold", color: "#fff",
-    letterSpacing: -1.2, fontVariant: ["tabular-nums"],
+    fontSize: 42,
+    fontFamily: "Inter_700Bold",
+    color: "#fff",
+    letterSpacing: -1.2,
+    fontVariant: ["tabular-nums"],
   },
   heroSub: { fontSize: 14, fontFamily: "Inter_400Regular", color: "rgba(255,255,255,0.85)" },
   heroTrack: {
-    height: 6, backgroundColor: "rgba(255,255,255,0.24)",
-    borderRadius: 999, marginTop: 12, overflow: "hidden",
+    height: 6,
+    backgroundColor: "rgba(255,255,255,0.24)",
+    borderRadius: 999,
+    marginTop: 12,
+    overflow: "hidden",
   },
   heroTrackFill: { height: "100%", backgroundColor: "#fff", borderRadius: 999 },
   heroActions: { flexDirection: "row", gap: 6, marginTop: 14 },
   heroBtnFilled: {
-    backgroundColor: "#fff", paddingHorizontal: 12, paddingVertical: 8,
-    borderRadius: 10, flexDirection: "row", alignItems: "center", gap: 4,
+    backgroundColor: "#fff",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
   },
   heroBtnFilledText: { color: ios.brandInk, fontSize: 13, fontFamily: "Inter_600SemiBold" },
   heroBtnGhost: {
-    backgroundColor: "rgba(255,255,255,0.2)", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10,
+    backgroundColor: "rgba(255,255,255,0.2)",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
   },
   heroBtnGhostText: { color: "#fff", fontSize: 13, fontFamily: "Inter_600SemiBold" },
   kpiGrid: { flexDirection: "row", gap: 12, paddingHorizontal: 16, marginTop: 14 },
   kpiLoading: { padding: 24, alignItems: "center" },
   sectionHeader: {
-    flexDirection: "row", justifyContent: "space-between", alignItems: "baseline",
-    paddingHorizontal: 20, paddingTop: 24, paddingBottom: 8,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "baseline",
+    paddingHorizontal: 20,
+    paddingTop: 24,
+    paddingBottom: 8,
   },
-  sectionTitle: { fontSize: 17, fontFamily: "Inter_700Bold", color: ios.label, letterSpacing: -0.3 },
+  sectionTitle: {
+    fontSize: 17,
+    fontFamily: "Inter_700Bold",
+    color: ios.label,
+    letterSpacing: -0.3,
+  },
   sectionLink: { fontSize: 15, fontFamily: "Inter_400Regular", color: ios.brand },
   routeCard: { backgroundColor: ios.bgElev, borderRadius: 14, padding: 12, paddingHorizontal: 14 },
   routeHead: { flexDirection: "row", alignItems: "center", gap: 10 },
-  routeBadge: { width: 34, height: 34, borderRadius: 10, alignItems: "center", justifyContent: "center" },
+  routeBadge: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   routeBadgeText: { color: "#fff", fontSize: 12, fontFamily: "Inter_700Bold" },
-  routeName: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: ios.label, letterSpacing: -0.2 },
+  routeName: {
+    fontSize: 15,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label,
+    letterSpacing: -0.2,
+  },
   routeMeta: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 1 },
   routeProgress: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 10 },
   routePct: {
-    fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2,
-    minWidth: 34, textAlign: "right", fontVariant: ["tabular-nums"],
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    color: ios.label2,
+    minWidth: 34,
+    textAlign: "right",
+    fontVariant: ["tabular-nums"],
   },
   modeBar: { paddingHorizontal: 16, paddingBottom: 10 },
   modeTrack: {

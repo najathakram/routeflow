@@ -40,12 +40,12 @@ PRODUCTION SAFETY CONTEXT — READ BEFORE DOING ANYTHING:
 
 ## Quick reference — safe vs dangerous commands on Railway
 
-| Safe | Dangerous (never) |
-|------|-------------------|
-| `railway run npx prisma migrate deploy` | `npx prisma migrate reset` |
-| `railway connect postgres` | `npx prisma db push --force-reset` |
-| `git push origin master` | `node DANGER-fresh-data-*.js` |
-| | `npm run seed` |
+| Safe                                    | Dangerous (never)                  |
+| --------------------------------------- | ---------------------------------- |
+| `railway run npx prisma migrate deploy` | `npx prisma migrate reset`         |
+| `railway connect postgres`              | `npx prisma db push --force-reset` |
+| `git push origin master`                | `node DANGER-fresh-data-*.js`      |
+|                                         | `npm run seed`                     |
 
 ## Pre-session checklist (30 seconds)
 

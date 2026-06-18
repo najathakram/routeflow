@@ -27,8 +27,7 @@ export interface SendMessageDto {
 export function useMessages(runId: string) {
   return useQuery<Message[]>({
     queryKey: ["messages", runId],
-    queryFn: () =>
-      apiClient.get("/messages", { params: { runId } }).then((r) => r.data),
+    queryFn: () => apiClient.get("/messages", { params: { runId } }).then((r) => r.data),
     enabled: !!runId,
     refetchInterval: 10_000, // poll every 10 s for new messages
     staleTime: 5_000,

@@ -36,7 +36,7 @@ test.describe("Super Admin — Platform Admin Panel", () => {
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
     // Error may say "invalid credentials", "incorrect", "wrong", or "too many requests" (rate limited)
     await expect(
-      page.getByText(/invalid|incorrect|wrong|too many|error|failed/i).first()
+      page.getByText(/invalid|incorrect|wrong|too many|error|failed/i).first(),
     ).toBeVisible({ timeout: 15_000 });
     await expect(page).not.toHaveURL(/\/admin\/dashboard/);
   });
@@ -62,7 +62,10 @@ test.describe("Super Admin — Platform Admin Panel", () => {
 
   test("SA-05 tenants list — search filters results", async ({ page }) => {
     await page.goto("/admin/tenants");
-    const searchInput = page.getByPlaceholder(/search/i).or(page.getByRole("searchbox")).first();
+    const searchInput = page
+      .getByPlaceholder(/search/i)
+      .or(page.getByRole("searchbox"))
+      .first();
     // Search for "e2e" — should match our seeded "e2e-routeflow" tenant
     await searchInput.fill("e2e");
     // Wait for debounce
@@ -109,9 +112,7 @@ test.describe("Super Admin — Platform Admin Panel", () => {
     await page.goto("/admin/audit-logs");
     await expect(page).not.toHaveURL(/error/);
     // Either a table with rows or an empty state should be visible
-    const content = page
-      .locator("table, [class*='empty'], [data-testid='audit-empty']")
-      .first();
+    const content = page.locator("table, [class*='empty'], [data-testid='audit-empty']").first();
     await expect(content).toBeVisible({ timeout: 15_000 });
   });
 
@@ -151,7 +152,10 @@ test.describe("Super Admin — Platform Admin Panel", () => {
 
   // ── Google OAuth button ──────────────────────────────────────────────────
 
-  test("SA-12 Google OAuth button on admin-login redirects to Google", async ({ page, context }) => {
+  test("SA-12 Google OAuth button on admin-login redirects to Google", async ({
+    page,
+    context,
+  }) => {
     await logout(page);
     await context.clearCookies();
     await page.goto("/admin-login");

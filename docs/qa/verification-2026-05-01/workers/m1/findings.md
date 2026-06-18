@@ -1,12 +1,12 @@
 # m1
 
-| RF | Status | Evidence (≤ 30 words) |
-|-----|--------|----------------------|
-| RF-004 | ✅ VERIFIED | ux_driver_b navigating to ux_driver_a stop UUID `07c4bc82-…` shows "Stop not found. It may have been removed from your route." — access correctly denied. |
-| RF-005 | ⛔ BLOCKED | All driver stops in ux-audit tenant are DELIVERED. Cannot enter payment flow to test offline disconnect. See NEW-m1-1. |
-| RF-006 | ⛔ BLOCKED | All driver stops are DELIVERED. "Complete & collect" button present but no-ops (no API call fires). Items can't be checked due to React crash #185. |
-| RF-016 | ⚠️ PARTIAL | Route does NOT auto-flip on last stop delivery. Driver must manually tap "Mark route complete" → confirms modal → UI transitions to next run. Server-side status verified only by IN_PROGRESS list disappearing. |
-| RF-019 | ⛔ BLOCKED | All stops DELIVERED. Cannot reach payment submission screen for double-tap test. |
+| RF     | Status      | Evidence (≤ 30 words)                                                                                                                                                                                            |
+| ------ | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| RF-004 | ✅ VERIFIED | ux_driver_b navigating to ux_driver_a stop UUID `07c4bc82-…` shows "Stop not found. It may have been removed from your route." — access correctly denied.                                                        |
+| RF-005 | ⛔ BLOCKED  | All driver stops in ux-audit tenant are DELIVERED. Cannot enter payment flow to test offline disconnect. See NEW-m1-1.                                                                                           |
+| RF-006 | ⛔ BLOCKED  | All driver stops are DELIVERED. "Complete & collect" button present but no-ops (no API call fires). Items can't be checked due to React crash #185.                                                              |
+| RF-016 | ⚠️ PARTIAL  | Route does NOT auto-flip on last stop delivery. Driver must manually tap "Mark route complete" → confirms modal → UI transitions to next run. Server-side status verified only by IN_PROGRESS list disappearing. |
+| RF-019 | ⛔ BLOCKED  | All stops DELIVERED. Cannot reach payment submission screen for double-tap test.                                                                                                                                 |
 
 ## Failures
 

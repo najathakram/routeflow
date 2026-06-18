@@ -11,8 +11,8 @@ export interface RouteStop {
   id: string;
   stopNumber: number;
   businessName: string;
-  address: string;        // full street address
-  mapsQuery: string;      // address string passed to Maps deeplink
+  address: string; // full street address
+  mapsQuery: string; // address string passed to Maps deeplink
   items: StopItem[];
   status: StopStatus;
 }
@@ -21,7 +21,7 @@ export interface DriverRoute {
   id: string;
   name: string;
   status: "ACTIVE" | "COMPLETED" | "DRAFT";
-  date: string;           // ISO date
+  date: string; // ISO date
   stops: RouteStop[];
 }
 

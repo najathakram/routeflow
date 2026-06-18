@@ -30,7 +30,9 @@ function getInitials(name: string): string {
 export const Avatar = React.forwardRef<HTMLDivElement, AvatarProps>(
   ({ className, src, alt, name, size = "md", ...props }, ref) => {
     const [imgError, setImgError] = React.useState(false);
-    React.useEffect(() => { setImgError(false); }, [src]);
+    React.useEffect(() => {
+      setImgError(false);
+    }, [src]);
     const showImage = src && !imgError;
 
     return (

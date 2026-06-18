@@ -42,8 +42,8 @@ export default function ProductPage() {
               lineHeight: 1.55,
             }}
           >
-            Everything that used to live in spreadsheets, paper books and three different apps —
-            now in a single, connected workspace.
+            Everything that used to live in spreadsheets, paper books and three different apps — now
+            in a single, connected workspace.
           </p>
         </div>
       </section>
@@ -61,9 +61,18 @@ export default function ProductPage() {
           intro:
             "Customers can place orders through their portal, the mobile app, or you can key in phone orders. RouteFlow normalises them all into one queue your team works from.",
           points: [
-            ["Smart deduplication", "If the same retailer orders via two channels, we merge it. No double picks."],
-            ["Tier pricing applied automatically", "The right price for the right customer, every time."],
-            ["Credit limit & overdue checks", "Confirm with confidence — risky orders are flagged before they ship."],
+            [
+              "Smart deduplication",
+              "If the same retailer orders via two channels, we merge it. No double picks.",
+            ],
+            [
+              "Tier pricing applied automatically",
+              "The right price for the right customer, every time.",
+            ],
+            [
+              "Credit limit & overdue checks",
+              "Confirm with confidence — risky orders are flagged before they ship.",
+            ],
           ],
         }}
         mock={
@@ -108,7 +117,10 @@ export default function ProductPage() {
           intro:
             "The moment a delivery is signed off, the invoice is generated, sent and reconciled — in your books and in your customer's portal. No more end-of-day data entry.",
           points: [
-            ["Auto-generate from POD", "Pickers can swap items at the door — invoice matches what was actually delivered."],
+            [
+              "Auto-generate from POD",
+              "Pickers can swap items at the door — invoice matches what was actually delivered.",
+            ],
             ["Multi-channel send", "Email or SMS. Customers click and pay via ACH."],
             ["Credit notes & part-payments", "All the messy reality of trade, handled cleanly."],
           ],
@@ -135,7 +147,10 @@ export default function ProductPage() {
             "Every retailer gets their own branded ordering experience — web portal and a native iOS/Android app. They reorder when they're stocking shelves at midnight; you see it in the morning.",
           points: [
             ["Branded with your colors & logo", "Looks like your business, not a generic SaaS."],
-            ["Voice search in English & Spanish", "Built for North America. The clerk just says \"Cheerios, two boxes\"."],
+            [
+              "Voice search in English & Spanish",
+              'Built for North America. The clerk just says "Cheerios, two boxes".',
+            ],
             ["Reorder lists & favourites", "Their last order, ready in two taps."],
           ],
         }}
@@ -163,9 +178,15 @@ export default function ProductPage() {
           intro:
             "Bookkeeping is the byproduct of running RouteFlow, not a separate job. Every payment ties to an invoice; every expense ties to a run; every tax line is filing-ready.",
           points: [
-            ["ACH & card reconciliation", "Match payments to invoices automatically. Flag the rest for review."],
+            [
+              "ACH & card reconciliation",
+              "Match payments to invoices automatically. Flag the rest for review.",
+            ],
             ["Tax-ready exports", "Sales tax & 1099, e-invoicing — generated, not assembled."],
-            ["Real-time P&L by route", "Know which van, which territory, which customer is profitable."],
+            [
+              "Real-time P&L by route",
+              "Know which van, which territory, which customer is profitable.",
+            ],
           ],
         }}
         mock={
@@ -222,9 +243,15 @@ export default function ProductPage() {
           intro:
             "Multi-warehouse, multi-currency, multi-brand, role-based access. Whether you run one van or fifty, RouteFlow flexes around how you already work.",
           points: [
-            ["Custom roles & permissions", "Pickers, drivers, dispatchers, finance — each sees exactly what they need."],
+            [
+              "Custom roles & permissions",
+              "Pickers, drivers, dispatchers, finance — each sees exactly what they need.",
+            ],
             ["Multi-warehouse stock", "Per-warehouse inventory with smart fulfilment routing."],
-            ["Open API & webhooks", "Push to QuickBooks, pull from your e-commerce, integrate anything."],
+            [
+              "Open API & webhooks",
+              "Push to QuickBooks, pull from your e-commerce, integrate anything.",
+            ],
           ],
         }}
         mock={
@@ -239,9 +266,7 @@ export default function ProductPage() {
               lineHeight: 1.6,
             }}
           >
-            <div style={{ color: "var(--rf-teal-bright)", marginBottom: 8 }}>
-              POST /api/orders
-            </div>
+            <div style={{ color: "var(--rf-teal-bright)", marginBottom: 8 }}>POST /api/orders</div>
             <pre
               style={{
                 opacity: 0.8,
@@ -250,7 +275,7 @@ export default function ProductPage() {
                 whiteSpace: "pre-wrap",
               }}
             >
-{`{
+              {`{
   "customer_id": "cust_4abc",
   "items": [
     { "sku": "PG-800", "qty": 24 },
@@ -277,8 +302,7 @@ export default function ProductPage() {
             className="display"
             style={{ fontSize: 56, color: "var(--rf-cream)", margin: "0 0 20px" }}
           >
-            See it on{" "}
-            <em style={{ color: "var(--rf-teal-bright)" }}>your data.</em>
+            See it on <em style={{ color: "var(--rf-teal-bright)" }}>your data.</em>
           </h2>
           <p
             style={{
@@ -290,9 +314,7 @@ export default function ProductPage() {
             Bring your customer list. We&apos;ll show you a working RouteFlow seeded with your real
             business in 30 minutes.
           </p>
-          <div
-            style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}
-          >
+          <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
             <Link
               href="/signup"
               className="btn"

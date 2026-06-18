@@ -82,7 +82,10 @@ export function InstallAppButton({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className={className || `inline-flex items-center gap-2 rounded-xl ${styles.accent} px-5 py-2.5 text-sm font-semibold text-white transition-colors`}
+        className={
+          className ||
+          `inline-flex items-center gap-2 rounded-xl ${styles.accent} px-5 py-2.5 text-sm font-semibold text-white transition-colors`
+        }
       >
         {children ?? (
           <>
@@ -225,7 +228,7 @@ function IosInstructions({ styles }: { styles: (typeof STYLES)[Variant] }) {
           icon={<Smartphone className="h-5 w-5" />}
         />
       </ol>
-      <div className="mt-5 rounded-xl border border-surface-border bg-surface-raised px-4 py-3 text-xs text-navy/60">
+      <div className="mt-5 rounded-xl border border-surface-border bg-surface-raised px-4 py-3 text-xs text-navy/70">
         <strong className="text-navy/80">Tip:</strong> This only works in Safari, not in Chrome or
         other iOS browsers.
       </div>
@@ -262,9 +265,7 @@ function AndroidInstructions({
 
   return (
     <div>
-      <p className="mb-5 text-sm text-navy/70">
-        Your browser needs a couple of taps to install:
-      </p>
+      <p className="mb-5 text-sm text-navy/70">Your browser needs a couple of taps to install:</p>
       <ol className="space-y-4">
         <Step
           number={1}
@@ -295,22 +296,22 @@ function DesktopInstructions({ styles }: { styles: (typeof STYLES)[Variant] }) {
       <div className="mb-5 flex items-start gap-3 rounded-xl bg-surface-raised p-4">
         <Monitor className={`h-6 w-6 shrink-0 ${styles.accentIcon}`} />
         <div className="text-sm text-navy/70">
-          You&apos;re on a desktop. Open this page on your phone to install the mobile app, or install
-          the desktop app from your browser&apos;s address bar.
+          You&apos;re on a desktop. Open this page on your phone to install the mobile app, or
+          install the desktop app from your browser&apos;s address bar.
         </div>
       </div>
       <div className="rounded-xl border border-surface-border p-4">
         <h4 className="mb-2 text-sm font-semibold text-navy">On your phone</h4>
-        <p className="text-xs text-navy/60">
+        <p className="text-xs text-navy/70">
           Visit <strong className="text-navy">routeflow.info</strong> on your iPhone or Android to
           install. Works best in Safari (iOS) and Chrome (Android).
         </p>
       </div>
       <div className="mt-3 rounded-xl border border-surface-border p-4">
         <h4 className="mb-2 text-sm font-semibold text-navy">On this computer</h4>
-        <p className="text-xs text-navy/60">
-          Click the install icon (a small screen with a down arrow) in your browser&apos;s address bar.
-          Available in Chrome, Edge, and Brave.
+        <p className="text-xs text-navy/70">
+          Click the install icon (a small screen with a down arrow) in your browser&apos;s address
+          bar. Available in Chrome, Edge, and Brave.
         </p>
       </div>
     </div>
@@ -342,7 +343,7 @@ function Step({
           <h4 className="text-sm font-semibold text-navy">{title}</h4>
           {icon && <span className={styles.accentIcon}>{icon}</span>}
         </div>
-        <p className="mt-0.5 text-xs text-navy/60 leading-relaxed">{description}</p>
+        <p className="mt-0.5 text-xs text-navy/70 leading-relaxed">{description}</p>
       </div>
     </li>
   );

@@ -15,6 +15,7 @@ The Settings section is significantly underdeveloped. The app renders a **single
 ---
 
 ### W16-001 — Settings — Missing Tabbed Layout
+
 - **Severity:** P1
 - **Tab:** All
 - **Issue:** Settings page (`/settings`) is one flat form: Contact Phone, Address (City/ZIP), Invoicing (Tax Rate), Notifications (Push toggle). No tabs for Users, Branding, or detailed Invoicing.
@@ -25,6 +26,7 @@ The Settings section is significantly underdeveloped. The app renders a **single
 ---
 
 ### W16-002 — Business Profile — No ZIP Validation (Accepts "ABC")
+
 - **Severity:** P2
 - **Tab:** Business-Profile
 - **Issue:** ZIP field accepts non-numeric strings like "ABC". Save shows "Settings saved" toast without any validation error.
@@ -35,6 +37,7 @@ The Settings section is significantly underdeveloped. The app renders a **single
 ---
 
 ### W16-003 — Business Profile — No Business Name / Email Edit Fields
+
 - **Severity:** P2
 - **Tab:** Business-Profile
 - **Issue:** Tenant name ("UX Audit Co") and admin email shown as read-only header text. No editable inputs.
@@ -45,6 +48,7 @@ The Settings section is significantly underdeveloped. The app renders a **single
 ---
 
 ### W16-004 — Invoicing — No Tax Rate Range Validation (Accepts 101 and -1)
+
 - **Severity:** P2
 - **Tab:** Invoicing
 - **Issue:** Tax rate accepts `101` and `-1` with no validation error — both saved successfully.
@@ -55,6 +59,7 @@ The Settings section is significantly underdeveloped. The app renders a **single
 ---
 
 ### W16-005 — Users Tab — Entirely Absent
+
 - **Severity:** P0
 - **Tab:** Users
 - **Issue:** No Users management tab in Settings. Routes `/settings/users` and `/users` both return "Unmatched Route — Page could not be found." The Drivers section (`/drivers`) manages only driver accounts.
@@ -65,6 +70,7 @@ The Settings section is significantly underdeveloped. The app renders a **single
 ---
 
 ### W16-006 — canActAsDriver Toggle — Not Exposed in UI (F-012 Root Cause)
+
 - **Severity:** P0
 - **Tab:** Users
 - **Issue:** `canActAsDriver` toggle not visible anywhere — not in Settings, not on Profile page (`/profile`). `ux_admin` (TENANT_ADMIN) cannot enable dual-role mode from the UI.
@@ -75,6 +81,7 @@ The Settings section is significantly underdeveloped. The app renders a **single
 ---
 
 ### W16-007 — Home Screen — Mode-Switcher Pill Absent for TENANT_ADMIN (F-012 Confirmed)
+
 - **Severity:** P1
 - **Tab:** Home (Users side effect)
 - **Issue:** After login as ux_admin (TENANT_ADMIN), Home screen header shows only bell icon and "UA" avatar. No Operator/Driver mode-switcher pill visible.
@@ -85,6 +92,7 @@ The Settings section is significantly underdeveloped. The app renders a **single
 ---
 
 ### W16-008 — Notifications — No Test Notification Button; No Channel Preferences
+
 - **Severity:** P2
 - **Tab:** Notifications
 - **Issue:** Only a single push toggle in Notifications. No test notification button. No per-channel or per-event preferences.
@@ -95,6 +103,7 @@ The Settings section is significantly underdeveloped. The app renders a **single
 ---
 
 ### W16-009 — Branding Tab — Entirely Absent
+
 - **Severity:** P2
 - **Tab:** Branding
 - **Issue:** No Branding tab in Settings. No logo upload, color picker, or branding preview.
@@ -105,6 +114,7 @@ The Settings section is significantly underdeveloped. The app renders a **single
 ---
 
 ### W16-010 — Invoicing — No Invoice Prefix or Due Days Fields
+
 - **Severity:** P2
 - **Tab:** Invoicing
 - **Issue:** Invoicing settings only has Default Tax Rate. No invoice number prefix or payment due days fields.
@@ -115,6 +125,7 @@ The Settings section is significantly underdeveloped. The app renders a **single
 ---
 
 ### W16-011 — Settings — "Save changes" Toast Fires Without Confirming PATCH
+
 - **Severity:** P2
 - **Tab:** Business-Profile
 - **Issue:** Network monitoring after "Save changes" captured only OPTIONS (204) preflight and GET `/api/v1/settings` (200). No PATCH/PUT captured. ZIP=99999 did not persist (reverted to 12345 from earlier save) while earlier saves did persist. Toast fires on every click regardless.
@@ -125,6 +136,7 @@ The Settings section is significantly underdeveloped. The app renders a **single
 ---
 
 ### W16-012 — Settings — Business Name Header Flash on Load
+
 - **Severity:** P3
 - **Tab:** Business-Profile
 - **Issue:** Header briefly shows generic "Business" text instead of "UX Audit Co" until GET `/api/v1/settings` completes.
@@ -135,6 +147,7 @@ The Settings section is significantly underdeveloped. The app renders a **single
 ---
 
 ### W16-013 — Profile Page — Role Displays Raw Enum String
+
 - **Severity:** P3
 - **Tab:** Users/Profile
 - **Issue:** Profile page (`/profile`) shows Role as "TENANT_ADMIN" (raw enum string).
@@ -146,21 +159,21 @@ The Settings section is significantly underdeveloped. The app renders a **single
 
 ## Summary Table
 
-| Finding | Severity | Tab | Issue |
-|---------|----------|-----|-------|
-| W16-001 | P1 | All | Missing tabbed layout |
-| W16-002 | P2 | Business-Profile | No ZIP validation |
-| W16-003 | P2 | Business-Profile | No name/email edit fields |
-| W16-004 | P2 | Invoicing | No tax rate range validation |
-| W16-005 | P0 | Users | Users tab entirely absent |
-| W16-006 | P0 | Users | canActAsDriver toggle not exposed |
-| W16-007 | P1 | Home | Mode-switcher pill absent (F-012) |
-| W16-008 | P2 | Notifications | No test button, no channel prefs |
-| W16-009 | P2 | Branding | Branding tab entirely absent |
-| W16-010 | P2 | Invoicing | No prefix/due-days fields |
-| W16-011 | P2 | Business-Profile | Toast fires without confirmed PATCH |
-| W16-012 | P3 | Business-Profile | Business name header flash |
-| W16-013 | P3 | Users/Profile | Role shows raw enum string |
+| Finding | Severity | Tab              | Issue                               |
+| ------- | -------- | ---------------- | ----------------------------------- |
+| W16-001 | P1       | All              | Missing tabbed layout               |
+| W16-002 | P2       | Business-Profile | No ZIP validation                   |
+| W16-003 | P2       | Business-Profile | No name/email edit fields           |
+| W16-004 | P2       | Invoicing        | No tax rate range validation        |
+| W16-005 | P0       | Users            | Users tab entirely absent           |
+| W16-006 | P0       | Users            | canActAsDriver toggle not exposed   |
+| W16-007 | P1       | Home             | Mode-switcher pill absent (F-012)   |
+| W16-008 | P2       | Notifications    | No test button, no channel prefs    |
+| W16-009 | P2       | Branding         | Branding tab entirely absent        |
+| W16-010 | P2       | Invoicing        | No prefix/due-days fields           |
+| W16-011 | P2       | Business-Profile | Toast fires without confirmed PATCH |
+| W16-012 | P3       | Business-Profile | Business name header flash          |
+| W16-013 | P3       | Users/Profile    | Role shows raw enum string          |
 
 ---
 

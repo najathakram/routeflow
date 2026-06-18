@@ -19,10 +19,7 @@ const slug = process.argv[2] ?? "affa";
   });
   await c.connect();
   try {
-    const t = await c.query(
-      'SELECT id, slug, name FROM "Tenant" WHERE slug = $1 LIMIT 1',
-      [slug],
-    );
+    const t = await c.query('SELECT id, slug, name FROM "Tenant" WHERE slug = $1 LIMIT 1', [slug]);
     if (t.rows.length === 0) {
       console.error(`No tenant with slug ${slug}`);
       process.exit(2);
@@ -49,7 +46,9 @@ const slug = process.argv[2] ?? "affa";
     );
     console.log(`\nLatest 5 invoices (pdfUrl = cached key, NULL = will regenerate):`);
     for (const r of inv.rows) {
-      console.log(`  ${r.invoiceNumber}  cached=${r.pdfUrl ?? "<NULL>"}  ${r.createdAt.toISOString().slice(0, 19)}`);
+      console.log(
+        `  ${r.invoiceNumber}  cached=${r.pdfUrl ?? "<NULL>"}  ${r.createdAt.toISOString().slice(0, 19)}`,
+      );
     }
   } finally {
     await c.end();

@@ -2,8 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000/api/v1";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000/api/v1";
 
 /**
  * Fetches the Google Maps API key from the backend at runtime.
@@ -65,7 +64,9 @@ export function useGoogleMapsKey(): { key: string; loading: boolean } {
       }
     });
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   return { key, loading };

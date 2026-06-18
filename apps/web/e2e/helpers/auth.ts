@@ -70,24 +70,26 @@ export async function loginAsBuyer(page: Page, email: string, password: string) 
  * NEW-m2-1 / RF-077: includes both namespaced and legacy key names.
  */
 export async function logout(page: Page) {
-  await page.evaluate(() => {
-    try {
-      [
-        // Namespaced keys (post-NEW-m2-1)
-        "rf:op:accessToken",
-        "rf:op:refreshToken",
-        "rf:buyer:accessToken",
-        "rf:buyer:refreshToken",
-        "rf:buyer:activeSeller",
-        // Legacy keys (pre-migration; kept here so old sessions are also wiped)
-        "accessToken",
-        "refreshToken",
-        "buyerAccessToken",
-        "buyerRefreshToken",
-        "superAdminToken",
-      ].forEach((k) => localStorage.removeItem(k));
-    } catch {
-      // Ignore SecurityError when page is about:blank or cross-origin
-    }
-  }).catch(() => {});
+  await page
+    .evaluate(() => {
+      try {
+        [
+          // Namespaced keys (post-NEW-m2-1)
+          "rf:op:accessToken",
+          "rf:op:refreshToken",
+          "rf:buyer:accessToken",
+          "rf:buyer:refreshToken",
+          "rf:buyer:activeSeller",
+          // Legacy keys (pre-migration; kept here so old sessions are also wiped)
+          "accessToken",
+          "refreshToken",
+          "buyerAccessToken",
+          "buyerRefreshToken",
+          "superAdminToken",
+        ].forEach((k) => localStorage.removeItem(k));
+      } catch {
+        // Ignore SecurityError when page is about:blank or cross-origin
+      }
+    })
+    .catch(() => {});
 }

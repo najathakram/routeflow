@@ -48,7 +48,16 @@ const driverPayload = {
 describe("RoutesService", () => {
   let service: RoutesService;
   let prisma: ReturnType<typeof createMockPrisma>;
-  let gateway: jest.Mocked<Pick<RouteFlowGateway, "emitStopCompleted" | "emitOrderCreated" | "emitOrderStatusChanged" | "emitLowStock" | "emitToDriver">>;
+  let gateway: jest.Mocked<
+    Pick<
+      RouteFlowGateway,
+      | "emitStopCompleted"
+      | "emitOrderCreated"
+      | "emitOrderStatusChanged"
+      | "emitLowStock"
+      | "emitToDriver"
+    >
+  >;
   let notifications: jest.Mocked<Pick<NotificationsService, "sendToDriver">>;
 
   beforeEach(async () => {
@@ -364,7 +373,10 @@ describe("RoutesService", () => {
         $executeRaw: jest.fn().mockResolvedValue(0),
       };
       (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(txMock));
-      prisma.routeRunStop.findUniqueOrThrow.mockResolvedValue({ id: "stop-1", status: "COMPLETED" });
+      prisma.routeRunStop.findUniqueOrThrow.mockResolvedValue({
+        id: "stop-1",
+        status: "COMPLETED",
+      });
 
       await service.completeStop("run-1", "stop-1", {}, operatorPayload);
 
@@ -402,7 +414,10 @@ describe("RoutesService", () => {
         $executeRaw: jest.fn().mockResolvedValue(0),
       };
       (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(txMock));
-      prisma.routeRunStop.findUniqueOrThrow.mockResolvedValue({ id: "stop-1", status: "COMPLETED" });
+      prisma.routeRunStop.findUniqueOrThrow.mockResolvedValue({
+        id: "stop-1",
+        status: "COMPLETED",
+      });
 
       await service.completeStop("run-1", "stop-1", {}, operatorPayload);
 
@@ -444,7 +459,10 @@ describe("RoutesService", () => {
         $executeRaw: jest.fn().mockResolvedValue(0),
       };
       (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(txMock));
-      prisma.routeRunStop.findUniqueOrThrow.mockResolvedValue({ id: "stop-1", status: "COMPLETED" });
+      prisma.routeRunStop.findUniqueOrThrow.mockResolvedValue({
+        id: "stop-1",
+        status: "COMPLETED",
+      });
 
       await service.completeWithPayment(
         "run-1",

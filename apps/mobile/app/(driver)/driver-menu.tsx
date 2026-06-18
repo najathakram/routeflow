@@ -12,12 +12,13 @@ export default function DriverMoreScreen() {
   const { user, logout, setActiveRole } = useAuthStore();
   const tenantName = useTenantStore((s) => s.branding?.businessName);
 
-  const initials = user?.username
-    ?.split(/[._\s]/)
-    .filter(Boolean)
-    .map((p) => p[0]?.toUpperCase())
-    .slice(0, 2)
-    .join("") ?? "??";
+  const initials =
+    user?.username
+      ?.split(/[._\s]/)
+      .filter(Boolean)
+      .map((p) => p[0]?.toUpperCase())
+      .slice(0, 2)
+      .join("") ?? "??";
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
@@ -30,9 +31,7 @@ export default function DriverMoreScreen() {
           </View>
           <View>
             <Text style={styles.name}>{user?.username ?? "Driver"}</Text>
-            <Text style={styles.sub}>
-              Driver{tenantName ? ` · ${tenantName}` : ""}
-            </Text>
+            <Text style={styles.sub}>Driver{tenantName ? ` · ${tenantName}` : ""}</Text>
           </View>
         </View>
 
@@ -63,7 +62,9 @@ export default function DriverMoreScreen() {
             chevron
           />
           <ListRow
-            icon={<Ionicons name="swap-horizontal-outline" size={16} color={ios.system.orangeInk} />}
+            icon={
+              <Ionicons name="swap-horizontal-outline" size={16} color={ios.system.orangeInk} />
+            }
             iconBg={ios.system.orangeWash}
             title="Switch role"
             subtitle="Go to operator view"

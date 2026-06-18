@@ -8,12 +8,12 @@
 
 ## Counts (after cross-squad dedup, env artifacts excluded)
 
-| Severity | New bugs | Notes |
-|---|---|---|
-| **P0** | **2** | tax math; buyer invoices 400 on `statuses[]` |
-| **P1** | **13** | 3 auth-cluster (token priority + incomplete logout + no storage signal counted as 3 distinct fixes) · 4 silent-failure CTAs · 2 a11y systemic · 4 money/flow |
-| **P2** | ~10 | misc UX, edge inputs, print, beforeunload |
-| **P3** | ~2 | label leaks, hardcoded copy |
+| Severity | New bugs | Notes                                                                                                                                                        |
+| -------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **P0**   | **2**    | tax math; buyer invoices 400 on `statuses[]`                                                                                                                 |
+| **P1**   | **13**   | 3 auth-cluster (token priority + incomplete logout + no storage signal counted as 3 distinct fixes) · 4 silent-failure CTAs · 2 a11y systemic · 4 money/flow |
+| **P2**   | ~10      | misc UX, edge inputs, print, beforeunload                                                                                                                    |
+| **P3**   | ~2       | label leaks, hardcoded copy                                                                                                                                  |
 
 Env artifacts (not real product bugs, downstream of auth-cluster + multi-agent shared incognito) were filtered: 4 in BUYER, 3 in OPS, 2 in DRIVER. Code-only-suspected findings (3 in DRIVER) flagged separately; a manual single-tester run is required to upgrade them to confirmed.
 

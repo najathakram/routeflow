@@ -12,7 +12,8 @@ function OfflineBanner() {
     <View style={styles.offlineBanner}>
       <Ionicons name="cloud-offline-outline" size={14} color={ios.system.orangeInk} />
       <Text style={styles.offlineText}>
-        Offline{queueLength > 0 ? ` — ${queueLength} action${queueLength !== 1 ? "s" : ""} queued` : ""}
+        Offline
+        {queueLength > 0 ? ` — ${queueLength} action${queueLength !== 1 ? "s" : ""} queued` : ""}
       </Text>
     </View>
   );

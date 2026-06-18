@@ -1,5 +1,5 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiClient } from '../api-client';
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { apiClient } from "../api-client";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -32,13 +32,13 @@ export interface StockPurchaseDto {
 
 export function useStockOverview() {
   return useQuery<StockItem[]>({
-    queryKey: ['inventory', 'overview'],
+    queryKey: ["inventory", "overview"],
     queryFn: () =>
-      apiClient.get('/inventory/overview').then((r) =>
+      apiClient.get("/inventory/overview").then((r) =>
         (r.data as any[]).map((p) => ({
           productId: p.id,
           productName: p.name,
-          unit: p.unit ?? '',
+          unit: p.unit ?? "",
           currentStock: p.currentStock ?? 0,
           reorderPoint: p.reorderPoint ?? undefined,
           reorderQty: p.reorderQty ?? undefined,
@@ -53,24 +53,22 @@ export function useStockOverview() {
 export function useRecordAdjustment() {
   const qc = useQueryClient();
   return useMutation<unknown, Error, StockAdjustmentDto>({
-    mutationFn: (dto) =>
-      apiClient.post('/inventory/movements/adjustment', dto).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['inventory'] }),
+    mutationFn: (dto) => apiClient.post("/inventory/movements/adjustment", dto).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["inventory"] }),
   });
 }
 
 export function useRecordPurchase() {
   const qc = useQueryClient();
   return useMutation<unknown, Error, StockPurchaseDto>({
-    mutationFn: (dto) =>
-      apiClient.post('/inventory/movements/purchase', dto).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['inventory'] }),
+    mutationFn: (dto) => apiClient.post("/inventory/movements/purchase", dto).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["inventory"] }),
   });
 }
 
 // ─── Movements / history ──────────────────────────────────────────────────────
 
-export type MovementType = 'PURCHASE' | 'SALE' | 'ADJUSTMENT' | 'RETURN';
+export type MovementType = "PURCHASE" | "SALE" | "ADJUSTMENT" | "RETURN";
 
 export interface InventoryMovement {
   id: string;
@@ -91,10 +89,10 @@ export function useInventoryMovements(params?: {
   limit?: number;
 }) {
   return useQuery<{ data: InventoryMovement[]; meta: any }>({
-    queryKey: ['inventory', 'movements', params],
+    queryKey: ["inventory", "movements", params],
     queryFn: () =>
       apiClient
-        .get('/inventory/movements', { params })
+        .get("/inventory/movements", { params })
         .then((r) => r.data)
         .catch(() => ({ data: [], meta: { total: 0 } })),
     staleTime: 30_000,

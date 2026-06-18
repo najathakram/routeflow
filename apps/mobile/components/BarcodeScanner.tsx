@@ -32,9 +32,7 @@ export function BarcodeScanner({ onScanned, onClose }: Props) {
       <View style={styles.overlay}>
         <View style={styles.permissionBox}>
           <Text style={styles.permissionTitle}>Camera Access Required</Text>
-          <Text style={styles.permissionBody}>
-            Allow camera access to scan barcodes.
-          </Text>
+          <Text style={styles.permissionBody}>Allow camera access to scan barcodes.</Text>
           <TouchableOpacity style={styles.permissionButton} onPress={requestPermission}>
             <Text style={styles.permissionButtonText}>Grant Access</Text>
           </TouchableOpacity>

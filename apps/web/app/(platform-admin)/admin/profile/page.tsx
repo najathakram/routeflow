@@ -115,7 +115,9 @@ function SessionsPanel() {
       // Revoke all sessions except the current one by revoking them all
       // The server /auth/logout deletes all — but we want to stay logged in.
       // Instead, revoke each session individually.
-      await Promise.all(sessions.map((s) => superAdminClient.delete(`/auth/sessions/${s.id}`).catch(() => null)));
+      await Promise.all(
+        sessions.map((s) => superAdminClient.delete(`/auth/sessions/${s.id}`).catch(() => null)),
+      );
       setSessions([]);
     } catch {
       setError("Failed to revoke all sessions.");
@@ -197,7 +199,9 @@ function SessionsPanel() {
                   <p className="text-sm font-medium text-white">
                     {session.deviceName}
                     {" · "}
-                    <span className="font-normal text-slate-400">{parseBrowserName(session.userAgent)}</span>
+                    <span className="font-normal text-slate-400">
+                      {parseBrowserName(session.userAgent)}
+                    </span>
                   </p>
                   {session.ipAddress && (
                     <p className="mt-0.5 text-xs text-slate-500">

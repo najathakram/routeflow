@@ -33,12 +33,18 @@ export default function BuyerHomeScreen() {
   } = useBuyerDashboard();
 
   // Balance: unpaid / overdue invoices total
-  const { data: invoiceData, isFetching: invFetching, refetch: refetchInv } =
-    useBuyerInvoices({ statuses: ["SENT", "OVERDUE", "PARTIAL"], limit: 50 });
+  const {
+    data: invoiceData,
+    isFetching: invFetching,
+    refetch: refetchInv,
+  } = useBuyerInvoices({ statuses: ["SENT", "OVERDUE", "PARTIAL"], limit: 50 });
 
   const isLoading = dashLoading;
   const isFetching = dashFetching || invFetching;
-  const onRefresh = () => { refetchDash(); refetchInv(); };
+  const onRefresh = () => {
+    refetchDash();
+    refetchInv();
+  };
 
   const stats = dashboard?.stats;
   const recentOrders = dashboard?.recentOrders ?? [];
@@ -48,7 +54,9 @@ export default function BuyerHomeScreen() {
     (sum, inv) => sum + Number(inv.amountDue ?? inv.balanceDue ?? inv.total ?? 0),
     0,
   );
-  const overdueCount = (invoiceData?.data ?? []).filter((inv) => inv.status === "OVERDUE" || inv.isOverdue).length;
+  const overdueCount = (invoiceData?.data ?? []).filter(
+    (inv) => inv.status === "OVERDUE" || inv.isOverdue,
+  ).length;
 
   const templateCount = stats?.templateCount ?? 0;
   const activeOrderCount = stats?.activeOrders ?? 0;
@@ -87,7 +95,9 @@ export default function BuyerHomeScreen() {
             >
               <View style={{ flex: 1 }}>
                 <Text style={styles.balanceLabel}>Outstanding balance</Text>
-                <Text style={[styles.balanceAmount, unpaidTotal > 0 && { color: ios.system.orangeInk }]}>
+                <Text
+                  style={[styles.balanceAmount, unpaidTotal > 0 && { color: ios.system.orangeInk }]}
+                >
                   ${unpaidTotal.toFixed(2)}
                 </Text>
                 {overdueCount > 0 ? (
@@ -133,10 +143,14 @@ export default function BuyerHomeScreen() {
                     </Text>
                     <Text style={styles.orderMeta}>
                       {new Date(lastOrder.createdAt).toLocaleDateString(undefined, {
-                        month: "short", day: "numeric", year: "numeric",
+                        month: "short",
+                        day: "numeric",
+                        year: "numeric",
                       })}
                       {" · "}
-                      {lastOrder.itemCount ?? (lastOrder.lineItems ?? []).reduce((s, i) => s + Number(i.qty), 0)} items
+                      {lastOrder.itemCount ??
+                        (lastOrder.lineItems ?? []).reduce((s, i) => s + Number(i.qty), 0)}{" "}
+                      items
                     </Text>
                   </View>
                   <View style={{ alignItems: "flex-end", gap: 4 }}>
@@ -186,7 +200,10 @@ export default function BuyerHomeScreen() {
 }
 
 function StatusPill({ status }: { status: string }) {
-  const map: Record<string, { variant: "green" | "orange" | "brand" | "gray" | "red"; label: string }> = {
+  const map: Record<
+    string,
+    { variant: "green" | "orange" | "brand" | "gray" | "red"; label: string }
+  > = {
     PENDING: { variant: "orange", label: "Pending" },
     CONFIRMED: { variant: "brand", label: "Confirmed" },
     OUT_FOR_DELIVERY: { variant: "brand", label: "Out for delivery" },
@@ -194,7 +211,11 @@ function StatusPill({ status }: { status: string }) {
     CANCELLED: { variant: "gray", label: "Cancelled" },
   };
   const p = map[status] ?? { variant: "gray" as const, label: status };
-  return <Pill variant={p.variant} dot>{p.label}</Pill>;
+  return (
+    <Pill variant={p.variant} dot>
+      {p.label}
+    </Pill>
+  );
 }
 
 function ActionRow({
@@ -215,10 +236,7 @@ function ActionRow({
   last?: boolean;
 }) {
   return (
-    <Pressable
-      style={[styles.actionRow, !last && styles.actionRowBorder]}
-      onPress={onPress}
-    >
+    <Pressable style={[styles.actionRow, !last && styles.actionRowBorder]} onPress={onPress}>
       <View style={[styles.actionIcon, { backgroundColor: iconBg }]}>
         <Ionicons name={icon} size={16} color={iconColor} />
       </View>
@@ -244,10 +262,32 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     padding: 18,
   },
-  balanceLabel: { fontSize: 12, fontFamily: "Inter_600SemiBold", color: ios.label2, textTransform: "uppercase", letterSpacing: 0.6 },
-  balanceAmount: { fontSize: 32, fontFamily: "Inter_700Bold", color: ios.label, letterSpacing: -1, marginTop: 2 },
-  overdueNote: { fontSize: 12, fontFamily: "Inter_500Medium", color: ios.system.redInk, marginTop: 3 },
-  allClearNote: { fontSize: 12, fontFamily: "Inter_500Medium", color: ios.system.greenInk, marginTop: 3 },
+  balanceLabel: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label2,
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+  },
+  balanceAmount: {
+    fontSize: 32,
+    fontFamily: "Inter_700Bold",
+    color: ios.label,
+    letterSpacing: -1,
+    marginTop: 2,
+  },
+  overdueNote: {
+    fontSize: 12,
+    fontFamily: "Inter_500Medium",
+    color: ios.system.redInk,
+    marginTop: 3,
+  },
+  allClearNote: {
+    fontSize: 12,
+    fontFamily: "Inter_500Medium",
+    color: ios.system.greenInk,
+    marginTop: 3,
+  },
   statsRow: {
     flexDirection: "row",
     marginHorizontal: 16,
@@ -259,7 +299,13 @@ const styles = StyleSheet.create({
   statCell: { flex: 1, alignItems: "center", paddingVertical: 14 },
   statDivider: { width: StyleSheet.hairlineWidth, backgroundColor: ios.separator },
   statValue: { fontSize: 20, fontFamily: "Inter_700Bold", color: ios.label, letterSpacing: -0.5 },
-  statLabel: { fontSize: 11, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2, textAlign: "center" },
+  statLabel: {
+    fontSize: 11,
+    fontFamily: "Inter_400Regular",
+    color: ios.label2,
+    marginTop: 2,
+    textAlign: "center",
+  },
   section: { paddingHorizontal: 16, marginBottom: 16 },
   sectionTitle: {
     fontSize: 12,
@@ -278,9 +324,19 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 10,
   },
-  orderNum: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: ios.label, letterSpacing: -0.2 },
+  orderNum: {
+    fontSize: 15,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label,
+    letterSpacing: -0.2,
+  },
   orderMeta: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
-  orderTotal: { fontSize: 13, fontFamily: "Inter_700Bold", color: ios.label, fontVariant: ["tabular-nums"] },
+  orderTotal: {
+    fontSize: 13,
+    fontFamily: "Inter_700Bold",
+    color: ios.label,
+    fontVariant: ["tabular-nums"],
+  },
   actionsCard: { backgroundColor: ios.bgElev, borderRadius: 14, overflow: "hidden" },
   actionRow: {
     flexDirection: "row",
@@ -293,7 +349,13 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: ios.separator,
   },
-  actionIcon: { width: 32, height: 32, borderRadius: 8, alignItems: "center", justifyContent: "center" },
+  actionIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   actionTitle: { flex: 1, fontSize: 15, fontFamily: "Inter_500Medium", color: ios.label },
   badge: {
     backgroundColor: ios.brand,

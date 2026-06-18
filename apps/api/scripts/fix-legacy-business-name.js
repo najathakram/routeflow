@@ -22,7 +22,7 @@ async function run() {
        FROM "TenantConfig" tc
        JOIN "Tenant" t ON t.id = tc."tenantId"
        WHERE t.slug = 'legacy'
-       LIMIT 1`
+       LIMIT 1`,
     );
 
     if (rows.length === 0) {
@@ -42,13 +42,13 @@ async function run() {
     await client.query(
       `UPDATE "TenantConfig" SET "businessName" = 'RouteFlow', "updatedAt" = NOW()
        WHERE id = $1`,
-      [row.id]
+      [row.id],
     );
 
     // Also update tenant name
     await client.query(
       `UPDATE "Tenant" SET name = 'Legacy', "updatedAt" = NOW()
-       WHERE slug = 'legacy'`
+       WHERE slug = 'legacy'`,
     );
 
     console.log(`Updated businessName to "RouteFlow" and tenant name to "Legacy".`);

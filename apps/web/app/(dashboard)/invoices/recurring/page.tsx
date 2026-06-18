@@ -45,7 +45,9 @@ export default function RecurringInvoicesPage() {
   const { toast } = useToast();
   const router = useRouter();
 
-  React.useEffect(() => { setTitle("Recurring Invoices"); }, [setTitle]);
+  React.useEffect(() => {
+    setTitle("Recurring Invoices");
+  }, [setTitle]);
 
   const { data: recurringList, isLoading } = useRecurringInvoices();
   const deactivate = useDeactivateRecurringInvoice();
@@ -71,7 +73,11 @@ export default function RecurringInvoicesPage() {
   const handleRunNow = (ri: RecurringInvoice) => {
     runNow.mutate(ri.id, {
       onSuccess: (inv) => {
-        toast({ title: "Invoice generated", description: `${(inv as any).invoiceNumber} created.`, variant: "success" });
+        toast({
+          title: "Invoice generated",
+          description: `${(inv as any).invoiceNumber} created.`,
+          variant: "success",
+        });
         router.push(`/invoices/${(inv as any).id}`);
       },
       onError: () => toast({ title: "Failed to generate invoice", variant: "error" }),
@@ -84,10 +90,14 @@ export default function RecurringInvoicesPage() {
       <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-navy">Recurring Invoices</h1>
-          <p className="mt-1 text-sm text-navy/60">Automatically generate invoices on a schedule.</p>
+          <p className="mt-1 text-sm text-navy/70">
+            Automatically generate invoices on a schedule.
+          </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="secondary" href="/invoices">All Invoices</Button>
+          <Button variant="secondary" href="/invoices">
+            All Invoices
+          </Button>
           <Button leftIcon={<Plus className="h-4 w-4" />} href="/invoices/recurring/new">
             New Template
           </Button>
@@ -97,13 +107,15 @@ export default function RecurringInvoicesPage() {
       {/* List */}
       {isLoading ? (
         <div className="flex items-center justify-center p-12">
-          <Loader2 className="h-8 w-8 animate-spin text-navy/40" />
+          <Loader2 className="h-8 w-8 animate-spin text-navy/70" />
         </div>
       ) : items.length === 0 ? (
         <Card>
           <div className="flex flex-col items-center gap-4 py-12 text-center">
             <p className="text-base font-medium text-navy">No recurring invoice templates yet.</p>
-            <p className="text-sm text-navy/50">Create a template to automatically generate invoices on a schedule.</p>
+            <p className="text-sm text-navy/70">
+              Create a template to automatically generate invoices on a schedule.
+            </p>
             <Button leftIcon={<Plus className="h-4 w-4" />} href="/invoices/recurring/new">
               Create First Template
             </Button>
@@ -122,23 +134,25 @@ export default function RecurringInvoicesPage() {
                     <span
                       className={cn(
                         "shrink-0 rounded-full px-2 py-0.5 text-xs font-medium",
-                        ri.isActive ? "bg-success-bg text-success" : "bg-surface-raised text-navy/40",
+                        ri.isActive
+                          ? "bg-success-bg text-success"
+                          : "bg-surface-raised text-navy/70",
                       )}
                     >
                       {ri.isActive ? "Active" : "Paused"}
                     </span>
                   </div>
-                  <p className="mt-1 text-xs text-navy/60">
+                  <p className="mt-1 text-xs text-navy/70">
                     {freqLabel(ri.frequency, ri.dayOfWeek, ri.dayOfMonth)}
                   </p>
-                  <p className="text-xs text-navy/50">
+                  <p className="text-xs text-navy/70">
                     {ri.items.length} item{ri.items.length !== 1 ? "s" : ""}
                     {ri.autoSend ? " · Auto-send" : ""}
                   </p>
                 </div>
               </div>
 
-              <div className="mt-3 space-y-1 text-xs text-navy/50">
+              <div className="mt-3 space-y-1 text-xs text-navy/70">
                 <div className="flex justify-between">
                   <span>Next run</span>
                   <span className="font-medium text-navy">{fmtDate(ri.nextRunAt)}</span>
@@ -164,7 +178,7 @@ export default function RecurringInvoicesPage() {
                 </Button>
                 <button
                   onClick={() => handleToggleActive(ri)}
-                  className="flex h-8 w-8 items-center justify-center rounded-lg border border-surface-border text-navy/50 hover:bg-surface-raised hover:text-navy transition-colors"
+                  className="flex h-8 w-8 items-center justify-center rounded-lg border border-surface-border text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
                   title={ri.isActive ? "Pause" : "Activate"}
                 >
                   {ri.isActive ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}

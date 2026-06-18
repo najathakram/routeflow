@@ -14,8 +14,7 @@ interface ProductPickerState {
 
 export const useProductPickerStore = create<ProductPickerState>((set) => ({
   selections: {},
-  setSelection: (key, product) =>
-    set((s) => ({ selections: { ...s.selections, [key]: product } })),
+  setSelection: (key, product) => set((s) => ({ selections: { ...s.selections, [key]: product } })),
   clearSelection: (key) =>
     set((s) => {
       const next = { ...s.selections };

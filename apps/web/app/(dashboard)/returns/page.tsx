@@ -2,7 +2,16 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Eye, Loader2, FileText, Trash2, RotateCcw, DollarSign, Calendar } from "lucide-react";
+import {
+  Plus,
+  Eye,
+  Loader2,
+  FileText,
+  Trash2,
+  RotateCcw,
+  DollarSign,
+  Calendar,
+} from "lucide-react";
 import { PageHeader, Button, cn, Modal, useToast, EmptyState } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useDebounce } from "@/lib/hooks/useDebounce";
@@ -106,13 +115,7 @@ interface ReturnItemRow {
   notes: string;
 }
 
-function CreateReturnModal({
-  isOpen,
-  onClose,
-}: {
-  isOpen: boolean;
-  onClose: () => void;
-}) {
+function CreateReturnModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
   const { toast } = useToast();
   const createReturn = useCreateReturn();
 
@@ -251,7 +254,9 @@ function CreateReturnModal({
       <form id="create-return-form" onSubmit={handleSubmit} noValidate className="space-y-4">
         {/* Customer */}
         <div>
-          <label className="mb-1.5 block text-sm font-medium text-navy/80">Customer<span className="text-danger ml-0.5">*</span></label>
+          <label className="mb-1.5 block text-sm font-medium text-navy/80">
+            Customer<span className="text-danger ml-0.5">*</span>
+          </label>
           <input
             type="search"
             placeholder="Search customers…"
@@ -269,17 +274,19 @@ function CreateReturnModal({
           >
             <option value="">Select customer…</option>
             {customers.map((c) => (
-              <option key={c.id} value={c.id}>{c.businessName}</option>
+              <option key={c.id} value={c.id}>
+                {c.businessName}
+              </option>
             ))}
           </select>
-          {errors.customerId && (
-            <p className="mt-1 text-xs text-danger">{errors.customerId}</p>
-          )}
+          {errors.customerId && <p className="mt-1 text-xs text-danger">{errors.customerId}</p>}
         </div>
 
         {/* Order */}
         <div>
-          <label className="mb-1.5 block text-sm font-medium text-navy/80">Order<span className="text-danger ml-0.5">*</span></label>
+          <label className="mb-1.5 block text-sm font-medium text-navy/80">
+            Order<span className="text-danger ml-0.5">*</span>
+          </label>
           <select
             value={orderId}
             onChange={(e) => setOrderId(e.target.value)}
@@ -289,9 +296,13 @@ function CreateReturnModal({
               errors.orderId ? "border-danger" : "border-surface-border",
             )}
           >
-            <option value="">{customerId && ordersLoading ? "Loading orders…" : "Select delivered order…"}</option>
+            <option value="">
+              {customerId && ordersLoading ? "Loading orders…" : "Select delivered order…"}
+            </option>
             {orders.map((o) => (
-              <option key={o.id} value={o.id}>{o.orderNumber}</option>
+              <option key={o.id} value={o.id}>
+                {o.orderNumber}
+              </option>
             ))}
           </select>
           {errors.orderId && <p className="mt-1 text-xs text-danger">{errors.orderId}</p>}
@@ -299,7 +310,9 @@ function CreateReturnModal({
 
         {/* Return Reason */}
         <div>
-          <label className="mb-1.5 block text-sm font-medium text-navy/80">Return Reason<span className="text-danger ml-0.5">*</span></label>
+          <label className="mb-1.5 block text-sm font-medium text-navy/80">
+            Return Reason<span className="text-danger ml-0.5">*</span>
+          </label>
           <select
             value={reason}
             onChange={(e) => setReason(e.target.value as ReturnReason | "")}
@@ -310,7 +323,9 @@ function CreateReturnModal({
           >
             <option value="">Select reason…</option>
             {Object.entries(REASON_LABELS).map(([value, label]) => (
-              <option key={value} value={value}>{label}</option>
+              <option key={value} value={value}>
+                {label}
+              </option>
             ))}
           </select>
           {errors.reason && <p className="mt-1 text-xs text-danger">{errors.reason}</p>}
@@ -319,25 +334,31 @@ function CreateReturnModal({
         {/* Items to return */}
         {returnItems.length > 0 && (
           <div>
-            <label className="mb-2 block text-sm font-medium text-navy/80">
-              Items to Return
-            </label>
+            <label className="mb-2 block text-sm font-medium text-navy/80">Items to Return</label>
             {errors.items && <p className="mb-2 text-xs text-danger">{errors.items}</p>}
             <div className="overflow-hidden rounded-lg border border-surface-border">
               <table className="w-full text-sm">
                 <thead className="border-b border-surface-border bg-surface-raised">
                   <tr>
-                    <th className="px-3 py-2.5 text-left text-xs font-medium text-navy/60">Product</th>
-                    <th className="px-3 py-2.5 text-center text-xs font-medium text-navy/60">Ordered</th>
-                    <th className="px-3 py-2.5 text-center text-xs font-medium text-navy/60">Return Qty</th>
-                    <th className="px-3 py-2.5 text-left text-xs font-medium text-navy/60">Notes</th>
+                    <th className="px-3 py-2.5 text-left text-xs font-medium text-navy/70">
+                      Product
+                    </th>
+                    <th className="px-3 py-2.5 text-center text-xs font-medium text-navy/70">
+                      Ordered
+                    </th>
+                    <th className="px-3 py-2.5 text-center text-xs font-medium text-navy/70">
+                      Return Qty
+                    </th>
+                    <th className="px-3 py-2.5 text-left text-xs font-medium text-navy/70">
+                      Notes
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-surface-border">
                   {returnItems.map((row, i) => (
                     <tr key={row.productId}>
                       <td className="px-3 py-2 text-navy font-medium">{row.productName}</td>
-                      <td className="px-3 py-2 text-center text-navy/60">{row.orderedQty}</td>
+                      <td className="px-3 py-2 text-center text-navy/70">{row.orderedQty}</td>
                       <td className="px-3 py-2">
                         <input
                           type="number"
@@ -373,7 +394,7 @@ function CreateReturnModal({
         {/* General notes */}
         <div>
           <label className="mb-1.5 block text-sm font-medium text-navy/80">
-            Notes <span className="text-navy/40 font-normal">(optional)</span>
+            Notes <span className="text-navy/70 font-normal">(optional)</span>
           </label>
           <textarea
             rows={3}
@@ -393,7 +414,9 @@ function CreateReturnModal({
 export default function ReturnsPage() {
   const router = useRouter();
   const { setTitle } = usePageTitle();
-  React.useEffect(() => { setTitle("Returns"); }, [setTitle]);
+  React.useEffect(() => {
+    setTitle("Returns");
+  }, [setTitle]);
 
   const [statusFilter, setStatusFilter] = React.useState("");
   const [reasonFilter, setReasonFilter] = React.useState("");
@@ -413,7 +436,9 @@ export default function ReturnsPage() {
 
   // Unfiltered summary query for KPI cards
   const { data: summaryData } = useReturns({ limit: 500 });
-  const allReturns: Return[] = Array.isArray(summaryData) ? (summaryData as Return[]) : (summaryData?.data ?? []);
+  const allReturns: Return[] = Array.isArray(summaryData)
+    ? (summaryData as Return[])
+    : (summaryData?.data ?? []);
   const pendingCount = allReturns.filter((r) => r.status === "PENDING").length;
   const now = new Date();
   const thisMonthCount = allReturns.filter((r) => {
@@ -434,10 +459,7 @@ export default function ReturnsPage() {
       <PageHeader
         title="Returns"
         action={
-          <Button
-            leftIcon={<Plus className="h-4 w-4" />}
-            onClick={() => setIsCreateOpen(true)}
-          >
+          <Button leftIcon={<Plus className="h-4 w-4" />} onClick={() => setIsCreateOpen(true)}>
             New Return
           </Button>
         }
@@ -447,29 +469,31 @@ export default function ReturnsPage() {
       <div className="grid grid-cols-3 gap-4">
         <div className="rounded-xl border border-surface-border bg-white p-4">
           <div className="flex items-center justify-between">
-            <p className="text-xs font-semibold uppercase tracking-wide text-navy/50">Pending Review</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-navy/70">
+              Pending Review
+            </p>
             <RotateCcw className="h-4 w-4 text-yellow-500" />
           </div>
           <p className="mt-2 text-2xl font-bold text-navy">{pendingCount}</p>
-          <p className="text-xs text-navy/40">awaiting approval</p>
+          <p className="text-xs text-navy/70">awaiting approval</p>
         </div>
         <div className="rounded-xl border border-surface-border bg-white p-4">
           <div className="flex items-center justify-between">
-            <p className="text-xs font-semibold uppercase tracking-wide text-navy/50">Total Return Value</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-navy/70">
+              Total Return Value
+            </p>
             <DollarSign className="h-4 w-4 text-brand-500" />
           </div>
-          <p className="mt-2 text-2xl font-bold text-navy">
-            ${totalReturnValue.toFixed(2)}
-          </p>
-          <p className="text-xs text-navy/40">across all returns</p>
+          <p className="mt-2 text-2xl font-bold text-navy">${totalReturnValue.toFixed(2)}</p>
+          <p className="text-xs text-navy/70">across all returns</p>
         </div>
         <div className="rounded-xl border border-surface-border bg-white p-4">
           <div className="flex items-center justify-between">
-            <p className="text-xs font-semibold uppercase tracking-wide text-navy/50">This Month</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-navy/70">This Month</p>
             <Calendar className="h-4 w-4 text-brand-500" />
           </div>
           <p className="mt-2 text-2xl font-bold text-navy">{thisMonthCount}</p>
-          <p className="text-xs text-navy/40">returns created</p>
+          <p className="text-xs text-navy/70">returns created</p>
         </div>
       </div>
 
@@ -479,31 +503,49 @@ export default function ReturnsPage() {
           type="search"
           placeholder="Search by return # or customer / order…"
           value={search}
-          onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-          className="h-10 w-72 rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/40 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+          onChange={(e) => {
+            setSearch(e.target.value);
+            setPage(1);
+          }}
+          className="h-10 w-72 rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/70 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
         />
         <select
           value={statusFilter}
-          onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
+          onChange={(e) => {
+            setStatusFilter(e.target.value);
+            setPage(1);
+          }}
           className="h-10 rounded border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
         >
           {STATUS_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>{o.label}</option>
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
           ))}
         </select>
         <select
           value={reasonFilter}
-          onChange={(e) => { setReasonFilter(e.target.value); setPage(1); }}
+          onChange={(e) => {
+            setReasonFilter(e.target.value);
+            setPage(1);
+          }}
           className="h-10 rounded border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
         >
           {REASON_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>{o.label}</option>
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
           ))}
         </select>
         {(statusFilter || reasonFilter || search) && (
           <button
-            onClick={() => { setStatusFilter(""); setReasonFilter(""); setSearch(""); setPage(1); }}
-            className="text-sm text-navy/50 hover:text-danger transition-colors"
+            onClick={() => {
+              setStatusFilter("");
+              setReasonFilter("");
+              setSearch("");
+              setPage(1);
+            }}
+            className="text-sm text-navy/70 hover:text-danger transition-colors"
           >
             Clear filters
           </button>
@@ -515,13 +557,13 @@ export default function ReturnsPage() {
         <table className="w-full text-sm">
           <thead className="border-b border-surface-border bg-surface-raised">
             <tr>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60">Return #</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60">Customer</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60">Order #</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60">Date</th>
-              <th className="px-4 py-3 text-center text-xs font-medium text-navy/60">Items</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60">Reason</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/60">Status</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Return #</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Customer</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Order #</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Date</th>
+              <th className="px-4 py-3 text-center text-xs font-medium text-navy/70">Items</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Reason</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Status</th>
               <th className="w-10 px-3 py-3" />
             </tr>
           </thead>
@@ -529,7 +571,7 @@ export default function ReturnsPage() {
             {isLoading ? (
               <tr>
                 <td colSpan={8} className="px-4 py-12 text-center">
-                  <Loader2 className="mx-auto h-6 w-6 animate-spin text-navy/40" />
+                  <Loader2 className="mx-auto h-6 w-6 animate-spin text-navy/70" />
                 </td>
               </tr>
             ) : isError ? (
@@ -549,9 +591,9 @@ export default function ReturnsPage() {
                 <td colSpan={8} className="px-4 py-12 text-center">
                   <div className="flex flex-col items-center gap-2">
                     <FileText className="h-8 w-8 text-navy/20" />
-                    {(statusFilter || reasonFilter || search) ? (
+                    {statusFilter || reasonFilter || search ? (
                       <>
-                        <p className="text-sm text-navy/40">No returns match your filters.</p>
+                        <p className="text-sm text-navy/70">No returns match your filters.</p>
                         <button
                           className="text-sm text-brand-500 hover:underline"
                           onClick={() => {
@@ -571,7 +613,10 @@ export default function ReturnsPage() {
                           title="No returns yet"
                           description="Returns will appear here when customers report damaged, wrong, or excess items."
                           action={
-                            <button className="text-sm text-brand-600 hover:underline" onClick={() => setIsCreateOpen(true)}>
+                            <button
+                              className="text-sm text-brand-600 hover:underline"
+                              onClick={() => setIsCreateOpen(true)}
+                            >
                               Create a return
                             </button>
                           }
@@ -594,18 +639,12 @@ export default function ReturnsPage() {
                   <td className="px-4 py-3 font-medium text-navy">
                     {ret.customer?.businessName ?? "—"}
                   </td>
-                  <td className="px-4 py-3 font-mono text-xs text-navy/60">
+                  <td className="px-4 py-3 font-mono text-xs text-navy/70">
                     {ret.order?.orderNumber ?? "—"}
                   </td>
-                  <td className="px-4 py-3 text-navy/60">
-                    {fmtDate(ret.createdAt)}
-                  </td>
-                  <td className="px-4 py-3 text-center text-navy/60">
-                    {ret.items.length}
-                  </td>
-                  <td className="px-4 py-3 text-navy/60">
-                    {REASON_LABELS[ret.reason]}
-                  </td>
+                  <td className="px-4 py-3 text-navy/70">{fmtDate(ret.createdAt)}</td>
+                  <td className="px-4 py-3 text-center text-navy/70">{ret.items.length}</td>
+                  <td className="px-4 py-3 text-navy/70">{REASON_LABELS[ret.reason]}</td>
                   <td className="px-4 py-3">
                     <ReturnStatusBadge status={ret.status} />
                   </td>
@@ -613,7 +652,7 @@ export default function ReturnsPage() {
                     <button
                       title="View return"
                       onClick={() => router.push(`/returns/${ret.id}`)}
-                      className="rounded p-1.5 text-navy/40 hover:bg-surface-raised hover:text-navy transition-colors"
+                      className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
                     >
                       <Eye className="h-4 w-4" />
                     </button>
@@ -628,8 +667,9 @@ export default function ReturnsPage() {
       {/* Pagination */}
       {meta && meta.totalPages > 1 && (
         <div className="flex items-center justify-between">
-          <p className="text-sm text-navy/50">
-            Showing {(page - 1) * LIMIT + 1}–{Math.min(page * LIMIT, meta.total)} of {meta.total} returns
+          <p className="text-sm text-navy/70">
+            Showing {(page - 1) * LIMIT + 1}–{Math.min(page * LIMIT, meta.total)} of {meta.total}{" "}
+            returns
           </p>
           <div className="flex items-center gap-1">
             <button
