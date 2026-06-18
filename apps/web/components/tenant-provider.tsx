@@ -25,13 +25,11 @@ const TenantContext = React.createContext<TenantContextValue>({
   refresh: async () => {},
 });
 
-/** Read the tenant-slug cookie set by middleware (or a manual dev override).
- *  Falls back to NEXT_PUBLIC_DEFAULT_TENANT for single-tenant deployments
- *  (e.g. Railway without custom domains). */
+/** Read the tenant-slug cookie set by middleware or the login form. */
 function getTenantSlugFromCookie(): string | null {
   if (typeof document === "undefined") return null;
   const match = document.cookie.match(/(?:^|;\s*)tenant-slug=([^;]+)/);
-  return match ? decodeURIComponent(match[1]) : (process.env.NEXT_PUBLIC_DEFAULT_TENANT ?? null);
+  return match ? decodeURIComponent(match[1]) : null;
 }
 
 const DEFAULT_PRIMARY = "#2563eb"; // brand-600
@@ -64,8 +62,7 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
     setIsLoading(true);
     try {
       const apiBase =
-        process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") ??
-        "http://localhost:3000/api/v1";
+        process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") ?? "http://localhost:3000/api/v1";
       const res = await fetch(
         `${apiBase}/public/tenants/${encodeURIComponent(tenantSlug)}/branding`,
         // Bust the browser cache so a freshly uploaded logo shows up immediately.
@@ -96,9 +93,7 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <TenantContext.Provider
-      value={{ branding, slug, isLoading, refresh: fetchBranding }}
-    >
+    <TenantContext.Provider value={{ branding, slug, isLoading, refresh: fetchBranding }}>
       {children}
     </TenantContext.Provider>
   );

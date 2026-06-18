@@ -55,29 +55,37 @@ const nextConfig = {
 
   // Security headers applied to all routes
   async headers() {
+    // F11-001: real Content-Security-Policy replacing the legacy X-XSS-Protection stub.
+    // 'unsafe-inline' is required for Tailwind's runtime style injection and for
+    // react-pdf's inline SVG; 'unsafe-eval' is required by Next.js dev overlay and by
+    // some Radix/Framer internals. Both should be tightened to nonces once the app
+    // migrates to a nonce-based CSP. connect-src covers the Railway API + socket.io.
+    const isDev = process.env.NODE_ENV !== "production";
+    const csp = [
+      "default-src 'self'",
+      `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ""}`,
+      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+      "font-src 'self' https://fonts.gstatic.com data:",
+      "img-src 'self' data: blob: https:",
+      "connect-src 'self' https: wss:",
+      "frame-ancestors 'none'",
+      "object-src 'none'",
+      "base-uri 'self'",
+      "form-action 'self'",
+    ].join("; ");
+
     return [
       {
         source: "/(.*)",
         headers: [
-          // Prevent clickjacking — only allow same-origin framing
-          { key: "X-Frame-Options", value: "SAMEORIGIN" },
-          // Prevent MIME type sniffing attacks
+          { key: "X-Frame-Options", value: "DENY" },
           { key: "X-Content-Type-Options", value: "nosniff" },
-          // Control referrer information — don't leak full URLs to third parties
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
-          // Restrict browser features/APIs that the app doesn't need
           {
             key: "Permissions-Policy",
-            value:
-              "camera=(), microphone=(), geolocation=(), payment=(self)",
+            value: "camera=(), microphone=(), geolocation=(), payment=(self)",
           },
-          // Prevent XSS attacks with a strict CSP
-          // NOTE: Next.js needs 'unsafe-eval' in development; in production
-          // consider removing it and using nonces instead.
-          {
-            key: "X-XSS-Protection",
-            value: "1; mode=block",
-          },
+          { key: "Content-Security-Policy", value: csp },
         ],
       },
     ];
