@@ -435,8 +435,24 @@ export class CustomersController {
       storage: memoryStorage(),
       limits: { fileSize: 15 * 1024 * 1024 },
       fileFilter: (_req, file, cb) => {
-        const ok = file.mimetype.startsWith("image/") || file.mimetype === "application/pdf";
-        cb(null, ok);
+        // RF-076/RF-157: Strict MIME allowlist — raster images and PDF only.
+        // SVG is explicitly blocked (can embed JS). Any other type is also rejected.
+        const ALLOWED_CUSTOMER_DOC_MIMES = new Set([
+          "image/jpeg",
+          "image/png",
+          "image/webp",
+          "application/pdf",
+        ]);
+        if (!ALLOWED_CUSTOMER_DOC_MIMES.has(file.mimetype)) {
+          cb(
+            new BadRequestException(
+              `File type "${file.mimetype}" is not permitted. Allowed types: JPEG, PNG, WEBP, PDF.`,
+            ),
+            false,
+          );
+          return;
+        }
+        cb(null, true);
       },
     }),
   )

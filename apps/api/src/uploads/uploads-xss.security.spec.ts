@@ -70,6 +70,34 @@ function runTaxDocFilter(mimetype: string, filename: string): Error | null {
   return captured;
 }
 
+/**
+ * Runs the multer fileFilter used in customers.controller.ts (generic documents).
+ */
+function runCustomerDocFilter(mimetype: string, filename: string): Error | null {
+  const ALLOWED_CUSTOMER_DOC_MIMES = new Set([
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "application/pdf",
+  ]);
+  let captured: Error | null = null;
+  const cb = (err: Error | null, _accept?: boolean) => {
+    captured = err;
+  };
+  const file = { mimetype, originalname: filename } as Express.Multer.File;
+  if (!ALLOWED_CUSTOMER_DOC_MIMES.has(file.mimetype)) {
+    cb(
+      new BadRequestException(
+        `File type "${file.mimetype}" is not permitted. Allowed types: JPEG, PNG, WEBP, PDF.`,
+      ),
+      false,
+    );
+  } else {
+    cb(null, true);
+  }
+  return captured;
+}
+
 // ─── Product image upload MIME allowlist ──────────────────────────────────────
 
 describe("RF-076/RF-157 — Product image MIME allowlist", () => {
@@ -130,6 +158,31 @@ describe("RF-076/RF-157 — Tax-document MIME allowlist", () => {
 
   it("accepts image/jpeg", () => {
     const err = runTaxDocFilter("image/jpeg", "scan.jpg");
+    expect(err).toBeNull();
+  });
+});
+
+// ─── Customer-document MIME allowlist ─────────────────────────────────────────
+
+describe("RF-076/RF-157 — Customer-document MIME allowlist", () => {
+  it("rejects image/svg+xml", () => {
+    const err = runCustomerDocFilter("image/svg+xml", "evil.svg");
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect((err as BadRequestException).message).toContain("not permitted");
+  });
+
+  it("rejects text/html", () => {
+    const err = runCustomerDocFilter("text/html", "xss.html");
+    expect(err).toBeInstanceOf(BadRequestException);
+  });
+
+  it("accepts application/pdf", () => {
+    const err = runCustomerDocFilter("application/pdf", "agreement.pdf");
+    expect(err).toBeNull();
+  });
+
+  it("accepts image/jpeg", () => {
+    const err = runCustomerDocFilter("image/jpeg", "scan.jpg");
     expect(err).toBeNull();
   });
 });
