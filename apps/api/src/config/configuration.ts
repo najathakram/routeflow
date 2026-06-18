@@ -1,3 +1,30 @@
+import * as crypto from "crypto";
+
+/**
+ * F5-001: resolve the storage-URL HMAC signing secret WITHOUT reusing JWT_SECRET
+ * verbatim. If STORAGE_URL_SIGNING_SECRET is set explicitly, use it. Otherwise
+ * derive a cryptographically independent key from JWT_SECRET via HKDF-SHA256 with
+ * a fixed domain-separation label. This removes the secret-reuse blast radius (a
+ * disclosure of one secret no longer reveals the other) while requiring no new
+ * env var and never crashing boot. Note: changing the derivation invalidates
+ * any URLs signed before deploy; those expire within urlExpirySeconds (≤1h) and
+ * are re-minted on the next page load.
+ */
+function resolveStorageSigningSecret(): string {
+  const explicit = process.env.STORAGE_URL_SIGNING_SECRET;
+  if (explicit) return explicit;
+  const jwtSecret = process.env.JWT_SECRET ?? "";
+  if (!jwtSecret) return "";
+  const derived = crypto.hkdfSync(
+    "sha256",
+    Buffer.from(jwtSecret, "utf8"),
+    Buffer.alloc(0),
+    Buffer.from("routeflow:storage-url-signing:v1", "utf8"),
+    32,
+  );
+  return Buffer.from(derived).toString("hex");
+}
+
 export interface AppConfig {
   nodeEnv: string;
   port: number;
@@ -28,7 +55,7 @@ export interface AppConfig {
   };
   uploadDir: string;
   storage: {
-    /** Secret used to HMAC-sign local-disk presigned URLs. Falls back to JWT secret. */
+    /** Secret used to HMAC-sign local-disk presigned URLs. Derived from JWT_SECRET via HKDF when not set explicitly (F5-001). */
     urlSigningSecret: string;
     /** Lifetime in seconds for signed local-disk URLs. Default 1 hour. */
     urlExpirySeconds: number;
@@ -84,7 +111,7 @@ export const configuration = (): AppConfig => ({
   },
   uploadDir: process.env.UPLOAD_DIR ?? "",
   storage: {
-    urlSigningSecret: process.env.STORAGE_URL_SIGNING_SECRET ?? process.env.JWT_SECRET ?? "",
+    urlSigningSecret: resolveStorageSigningSecret(),
     urlExpirySeconds: parseInt(process.env.STORAGE_URL_EXPIRY_SECONDS ?? "3600", 10),
   },
   ors: {

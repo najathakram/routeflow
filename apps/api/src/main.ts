@@ -41,6 +41,20 @@ function assertSecrets() {
     console.error("   JWT secrets must be set in ALL environments (including development).\n");
     process.exit(1);
   }
+
+  // F5-001/F5-002: warn (do NOT crash) when production-recommended secrets are
+  // unset. ENCRYPTION_KEY missing → encrypt() is disabled in prod; STORAGE_URL_
+  // SIGNING_SECRET missing → the key is derived from JWT_SECRET via HKDF.
+  if (process.env.NODE_ENV === "production") {
+    const warn: string[] = [];
+    const encKey = process.env.ENCRYPTION_KEY ?? "";
+    if (encKey.length !== 64) warn.push("ENCRYPTION_KEY (expected 64 hex chars)");
+    if (!process.env.STORAGE_URL_SIGNING_SECRET)
+      warn.push("STORAGE_URL_SIGNING_SECRET (deriving from JWT_SECRET)");
+    if (warn.length > 0) {
+      console.warn(`\n⚠️  Production secrets not fully configured: ${warn.join(", ")}\n`);
+    }
+  }
 }
 
 /** One-time idempotent migration: add invoiceNotes/invoiceTerms to TenantConfig. */
