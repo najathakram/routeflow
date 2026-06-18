@@ -221,6 +221,21 @@ export class OrderTemplatesService {
     return this.createOrderFromTemplate(template);
   }
 
+  // ─── SECURITY (F2-003): ownership-enforced wrappers ──────────────────────────
+  // The customer-reachable item-removal and order-generation endpoints previously
+  // had no role guard and no ownership check, letting any CUSTOMER edit/generate
+  // from ANOTHER customer's template. findOneForUser() throws for a non-owner.
+
+  async removeItemForUser(templateId: string, itemId: string, user: JwtPayload) {
+    await this.findOneForUser(templateId, user);
+    return this.removeItem(templateId, itemId);
+  }
+
+  async generateOrderForUser(templateId: string, user: JwtPayload) {
+    await this.findOneForUser(templateId, user);
+    return this.generateOrder(templateId);
+  }
+
   @Cron("0 6 * * *")
   async generateDailyOrders() {
     const today = new Date();

@@ -1197,11 +1197,15 @@ export class ImportService {
    * Returns their count so the caller can decide whether to adopt them.
    */
   async diagnoseOrphanedContacts(tenantId: string) {
-    // this.prisma (unscoped base client — NOT forTenant()) sees across all tenants
+    // An "orphan" is a contact with NO tenant (tenantId === null) — e.g. imported
+    // by a super-admin without active impersonation. We must NEVER surface another
+    // active tenant's records here (that was a cross-tenant disclosure), so we match
+    // tenantId: null only, never `NOT: { tenantId }`. The current tenantId is the
+    // destination the caller would adopt into, not a filter exclusion.
     const orphans = await this.prisma.customer.findMany({
       where: {
         zohoContactId: { not: null },
-        NOT: { tenantId },
+        tenantId: null,
       },
       select: { id: true, businessName: true, tenantId: true },
       take: 100,
@@ -1222,11 +1226,16 @@ export class ImportService {
    * tenant context (e.g. by a super-admin without active impersonation).
    */
   async adoptOrphanedContacts(tenantId: string): Promise<{ adopted: number }> {
-    // this.prisma (unscoped) — sees across ALL tenants
+    // SECURITY (F1-001): an "orphan" is strictly a contact with NO tenant
+    // (tenantId === null). We must NEVER match `NOT: { tenantId }`, which would
+    // pull in OTHER active tenants' customers/users and reassign them to the
+    // caller — a cross-tenant data takeover. Match tenantId: null only, and
+    // repeat the null guard on every write so a record owned by another tenant
+    // can never be reassigned even if an id is supplied/raced.
     const orphans = await this.prisma.customer.findMany({
       where: {
         zohoContactId: { not: null },
-        NOT: { tenantId },
+        tenantId: null,
       },
       select: { id: true, userId: true },
     });
@@ -1236,23 +1245,24 @@ export class ImportService {
     const customerIds = orphans.map((o) => o.id);
     const userIds = orphans.map((o) => o.userId).filter((id): id is string => !!id);
 
-    // Reassign Customer records (unscoped updateMany)
+    // Reassign only genuinely orphaned (null-tenant) Customer records.
     await this.prisma.customer.updateMany({
-      where: { id: { in: customerIds } },
+      where: { id: { in: customerIds }, tenantId: null },
       data: { tenantId },
     });
 
-    // Reassign associated User records
+    // Reassign only the associated User records that are themselves orphaned —
+    // never move a User that already belongs to another tenant.
     if (userIds.length > 0) {
       await this.prisma.user.updateMany({
-        where: { id: { in: userIds } },
+        where: { id: { in: userIds }, tenantId: null },
         data: { tenantId },
       });
     }
 
-    // Reassign CustomerAddress records
+    // Reassign only orphaned CustomerAddress records.
     await this.prisma.customerAddress.updateMany({
-      where: { customerId: { in: customerIds } },
+      where: { customerId: { in: customerIds }, tenantId: null },
       data: { tenantId },
     });
 

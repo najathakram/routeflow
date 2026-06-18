@@ -233,12 +233,22 @@ export class ReturnsService {
     return this.prisma.forTenant().return.update({ where: { id }, data: { status: "REFUNDED" } });
   }
 
-  async cancel(id: string) {
+  async cancel(id: string, user: JwtPayload) {
     const ret = await this.prisma.forTenant().return.findUnique({
       where: { id },
       include: { items: true },
     });
     if (!ret) throw new NotFoundException("Return not found");
+    // SECURITY (F2-001): a CUSTOMER may only cancel their OWN return. Without this
+    // check any customer could cancel a tenant-mate's return and reverse stock.
+    if (user.role === "CUSTOMER") {
+      const customer = await this.prisma
+        .forTenant()
+        .customer.findFirst({ where: { userId: user.sub } });
+      if (!customer || ret.customerId !== customer.id) {
+        throw new ForbiddenException("You can only cancel your own returns");
+      }
+    }
     if (ret.status === "CANCELLED") throw new BadRequestException("Return is already cancelled");
     if (ret.status === "REFUNDED")
       throw new BadRequestException("Refunded returns cannot be cancelled");

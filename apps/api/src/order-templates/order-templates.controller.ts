@@ -71,12 +71,20 @@ export class OrderTemplatesController {
   }
 
   @Delete(":id/items/:itemId")
-  removeItem(@Param("id") templateId: string, @Param("itemId") itemId: string) {
-    return this.service.removeItem(templateId, itemId);
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR, UserRole.CUSTOMER, UserRole.DRIVER)
+  removeItem(
+    @Param("id") templateId: string,
+    @Param("itemId") itemId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.service.removeItemForUser(templateId, itemId, user);
   }
 
   @Post(":id/generate")
-  generateOrder(@Param("id") templateId: string) {
-    return this.service.generateOrder(templateId);
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR, UserRole.CUSTOMER)
+  generateOrder(@Param("id") templateId: string, @CurrentUser() user: JwtPayload) {
+    return this.service.generateOrderForUser(templateId, user);
   }
 }
