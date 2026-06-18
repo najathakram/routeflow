@@ -95,8 +95,15 @@ export class RedisThrottlerStorage implements ThrottlerStorage, OnModuleDestroy 
 
       return { totalHits, timeToExpire, isBlocked, timeToBlockExpire };
     } catch (err) {
-      this.logger.warn("Redis throttler increment failed, failing open", err);
-      return { totalHits: 1, timeToExpire: ttlSeconds, isBlocked: false, timeToBlockExpire: 0 };
+      // F9-004: fail CLOSED — treat Redis failure as limit exceeded so auth/reset
+      // routes are not trivially bypassable by forcing a Redis outage.
+      this.logger.warn("Redis throttler increment failed, failing closed", err);
+      return {
+        totalHits: limit + 1,
+        timeToExpire: ttlSeconds,
+        isBlocked: true,
+        timeToBlockExpire: ttlSeconds,
+      };
     }
   }
 }

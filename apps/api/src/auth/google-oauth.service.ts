@@ -304,6 +304,12 @@ export class GoogleOAuthService {
       });
 
     const idPayload = ticket.getPayload()!;
+    // F3-001: reject accounts where Google has not verified the email address.
+    // Unverified emails can be claimed with arbitrary addresses (workspace aliases,
+    // edu domains), enabling account-takeover via a spoofed email match.
+    if (!idPayload.email_verified) {
+      throw new UnauthorizedException("google_email_not_verified");
+    }
     return {
       googleId: idPayload.sub,
       email: idPayload.email!.toLowerCase(),

@@ -1,9 +1,50 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { BadRequestException, Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Resend } from "resend";
 import * as nodemailer from "nodemailer";
 import { PrismaService } from "../prisma/prisma.service";
 import { EncryptionService } from "../common/encryption.service";
+
+// F6-001: SSRF guard — block private/loopback/metadata IPs as SMTP hosts.
+// Tenants control smtpHost; without this guard they could point it at
+// 169.254.169.254 (cloud metadata), 127.x, or internal network hosts.
+const SSRF_BLOCKED_PATTERNS = [
+  /^127\./, // loopback
+  /^0\./, // this-network
+  /^10\./, // RFC1918 class A
+  /^172\.(1[6-9]|2\d|3[01])\./, // RFC1918 class B
+  /^192\.168\./, // RFC1918 class C
+  /^169\.254\./, // link-local / cloud metadata endpoint
+  /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./, // CGNAT
+  /^::1$/, // IPv6 loopback
+  /^fc00:/i, // IPv6 unique-local
+  /^fe80:/i, // IPv6 link-local
+];
+const BLOCKED_SMTP_HOSTNAMES = new Set([
+  "localhost",
+  "metadata.google.internal",
+  "metadata.gce.internal",
+  "169.254.169.254",
+  "100.100.100.200",
+]);
+const ALLOWED_SMTP_PORTS = new Set([25, 465, 587, 2525]);
+
+function assertSafeSmtpEndpoint(host: string, port: number): void {
+  const h = host.toLowerCase().trim();
+  if (BLOCKED_SMTP_HOSTNAMES.has(h)) {
+    throw new BadRequestException("SMTP host is not permitted");
+  }
+  for (const pattern of SSRF_BLOCKED_PATTERNS) {
+    if (pattern.test(h)) {
+      throw new BadRequestException("SMTP host is not permitted");
+    }
+  }
+  if (!ALLOWED_SMTP_PORTS.has(port)) {
+    throw new BadRequestException(
+      `SMTP port ${port} is not permitted. Allowed ports: 25, 465, 587, 2525`,
+    );
+  }
+}
 
 @Injectable()
 export class EmailService {
@@ -43,9 +84,12 @@ export class EmailService {
     const pass = this.encryption.decryptNullable(cfg.smtpPassword);
     if (!pass) return null;
 
+    const port = cfg.smtpPort ?? 587;
+    assertSafeSmtpEndpoint(cfg.smtpHost, port);
+
     return nodemailer.createTransport({
       host: cfg.smtpHost,
-      port: cfg.smtpPort ?? 587,
+      port,
       secure: cfg.smtpSecure,
       auth: { user: cfg.smtpUser, pass },
     });
@@ -80,7 +124,12 @@ export class EmailService {
       await this.send({ to: toEmail, subject: `${businessName} — Test Email`, html });
       return { success: true, message: "Test email sent successfully" };
     } catch (err: any) {
-      return { success: false, message: err?.message ?? "Failed to send test email" };
+      // Return a generic message to avoid leaking SMTP server internals to the caller.
+      // The full error is already logged by the send/transport layer.
+      return {
+        success: false,
+        message: "Failed to send test email. Check your SMTP configuration.",
+      };
     }
   }
 
