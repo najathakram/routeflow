@@ -1,0 +1,37 @@
+# RouteFlow .claudeignore — keep Claude's context focused on real source.
+# Excludes build artefacts, dependencies, generated output, and bulky data.
+
+# ── Dependencies (never read these) ──────────────────────────────
+**/node_modules/
+
+# ── Build artefacts ──────────────────────────────────────────────
+**/.next/
+**/dist/
+**/build/
+**/out/
+**/.turbo/
+**/.expo/
+**/coverage/
+*.tsbuildinfo
+
+# ── Lockfiles & generated (no reasoning value) ───────────────────
+package-lock.json
+**/migration_lock.toml
+
+# ── Test artefacts / auth storage state ──────────────────────────
+**/playwright-report/
+**/test-results/
+apps/web/e2e/setup/.auth/
+
+# ── Data dumps & logs ────────────────────────────────────────────
+*.sql
+*.dump
+*.log
+
+# ── OS / editor noise ────────────────────────────────────────────
+.DS_Store
+.idea/
+.vscode/
+
+# NOTE: static design dirs (mockups/, routeflow-app/, apps/operator-app-design/)
+# are intentionally NOT ignored — they are sometimes edited directly.

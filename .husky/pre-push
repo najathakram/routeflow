@@ -1,0 +1,9 @@
+# Last local gate before push: types must compile, and no direct push to the trunk.
+# (Lint + full test suite run in CI — api tests need Postgres/Redis/JWT.)
+npm run check-types
+
+branch="$(git rev-parse --abbrev-ref HEAD)"
+if [ "$branch" = "main" ] || [ "$branch" = "master" ]; then
+  echo "Direct push to $branch is blocked — open a PR from a feat/* or fix/* branch."
+  exit 1
+fi
