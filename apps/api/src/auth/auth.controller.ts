@@ -10,6 +10,7 @@ import {
   Query,
   Req,
   Res,
+  UnauthorizedException,
   UseGuards,
 } from "@nestjs/common";
 import { ApiTags, ApiOperation, ApiBearerAuth } from "@nestjs/swagger";
@@ -27,6 +28,7 @@ import { RefreshDto } from "./dto/refresh.dto";
 import { ChangePasswordDto } from "./dto/change-password.dto";
 import { RequestPasswordResetDto } from "./dto/request-password-reset.dto";
 import { ResetPasswordDto } from "./dto/reset-password.dto";
+import { ExchangeCodeDto } from "./dto/exchange-code.dto";
 
 @ApiTags("auth")
 @Controller("auth")
@@ -251,33 +253,60 @@ export class AuthController {
       // ── Sign-in flow ─────────────────────────────────────────────────────────
       const result = await this.googleOAuth.findOrCreateUser(profile);
 
+      // Build the param bundle the web callback page expects.
+      let bundle: Record<string, string>;
       if (result.kind === "staff" || result.kind === "platform") {
         const r = result as any;
-        return res.redirect(
-          `${callbackBase}` +
-            `?accessToken=${r.accessToken}` +
-            `&refreshToken=${r.refreshToken}` +
-            `&role=${r.user.role}` +
-            `&tenantSlug=${r.user.tenantSlug ?? ""}`,
-        );
+        bundle = {
+          accessToken: r.accessToken,
+          refreshToken: r.refreshToken,
+          role: r.user.role,
+          tenantSlug: r.user.tenantSlug ?? "",
+        };
+      } else {
+        const r = result as any;
+        bundle = {
+          accessToken: r.accessToken,
+          refreshToken: r.refreshToken,
+          type: "BUYER",
+          sellerCount: String(r.sellerCount),
+          linked: profile.inviteToken ? "true" : "false",
+        };
       }
 
-      // Buyer portal result
-      const r = result as any;
-      const linked = profile.inviteToken ? "true" : "false";
-      return res.redirect(
-        `${callbackBase}` +
-          `?accessToken=${r.accessToken}` +
-          `&refreshToken=${r.refreshToken}` +
-          `&type=BUYER` +
-          `&sellerCount=${r.sellerCount}` +
-          `&linked=${linked}`,
-      );
+      // Mobile deep-link path is unchanged: the native app reads tokens from the
+      // routeflow:// deep link (not exposed to web CDN/proxy logs or Referer).
+      if (profile.mobile) {
+        const q = new URLSearchParams(bundle).toString();
+        return res.redirect(`${callbackBase}?${q}`);
+      }
+
+      // Web (F8-001): hand off via a single-use opaque code — tokens never appear
+      // in the redirect URL. The callback page POSTs the code to /auth/google/exchange.
+      const exchangeCode = await this.googleOAuth.createExchangeCode(bundle);
+      return res.redirect(`${callbackBase}?code=${exchangeCode}`);
     } catch (err: any) {
       const errCode = err?.message ?? "unknown_error";
       const safeCode = this.mapErrorCode(errCode);
       return res.redirect(`${base}?error=${safeCode}`);
     }
+  }
+
+  /**
+   * POST /api/v1/auth/google/exchange
+   *
+   * F8-001: trade the single-use opaque code from the OAuth callback redirect for
+   * the token bundle. Public (the user is mid-sign-in, no JWT yet) and rate-limited
+   * to blunt brute-forcing of the 256-bit code space.
+   */
+  @Post("google/exchange")
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { ttl: 60_000, limit: 30 } })
+  @ApiOperation({ summary: "Exchange a one-time Google sign-in code for tokens" })
+  async googleExchange(@Body() dto: ExchangeCodeDto) {
+    const bundle = await this.googleOAuth.consumeExchangeCode(dto.code);
+    if (!bundle) throw new UnauthorizedException("exchange_code_invalid");
+    return bundle;
   }
 
   /**

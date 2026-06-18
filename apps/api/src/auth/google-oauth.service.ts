@@ -324,6 +324,55 @@ export class GoogleOAuthService {
     };
   }
 
+  // ─── One-time token handoff (F8-001) ───────────────────────────────────────
+  // Instead of redirecting the browser to the web app with tokens embedded in the
+  // URL query string (which leaks into CDN/proxy/server access logs, browser
+  // history and the Referer header), we stash the token bundle in Redis under a
+  // single-use opaque code with a short TTL. The callback page exchanges the code
+  // for the bundle via a POST, so secrets never touch the URL.
+
+  private static readonly EXCHANGE_TTL_SECS = 120;
+
+  /** Store a token bundle and return a single-use opaque exchange code. */
+  async createExchangeCode(bundle: Record<string, string>): Promise<string> {
+    const code = crypto.randomBytes(32).toString("base64url");
+    await this.redis.set(
+      `oauth:xchg:${code}`,
+      JSON.stringify(bundle),
+      "EX",
+      GoogleOAuthService.EXCHANGE_TTL_SECS,
+    );
+    return code;
+  }
+
+  /**
+   * Atomically fetch-and-delete a token bundle for an exchange code (single-use).
+   * Returns null if the code is unknown, already consumed, or expired.
+   */
+  async consumeExchangeCode(code: string): Promise<Record<string, string> | null> {
+    if (!code) return null;
+    const key = `oauth:xchg:${code}`;
+    let stored: string | null = null;
+    try {
+      stored = await (this.redis as any).getdel(key);
+    } catch {
+      const luaResult = await this.redis
+        .eval(
+          `local v = redis.call('GET', KEYS[1]); if v then redis.call('DEL', KEYS[1]) end; return v`,
+          1,
+          key,
+        )
+        .catch(() => null);
+      stored = luaResult as string | null;
+    }
+    if (!stored) return null;
+    try {
+      return JSON.parse(stored) as Record<string, string>;
+    } catch {
+      return null;
+    }
+  }
+
   /** Find or create the appropriate user record and return a token pair. */
   async findOrCreateUser(profile: GoogleProfile): Promise<GoogleAuthResult> {
     return profile.type === "platform"

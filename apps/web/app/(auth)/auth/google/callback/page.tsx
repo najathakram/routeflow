@@ -10,12 +10,10 @@ import { OP_KEYS, BUYER_KEYS } from "@/lib/auth-keys";
 // ─── Error messages shown to the user ────────────────────────────────────────
 
 const ERROR_MESSAGES: Record<string, string> = {
-  state_invalid:
-    "Sign-in could not be completed. The link may have expired — please try again.",
+  state_invalid: "Sign-in could not be completed. The link may have expired — please try again.",
   unauthorized:
     "Your Google account is not authorized for this system. Contact your administrator.",
-  tenant_suspended:
-    "This account is currently suspended. Please contact support.",
+  tenant_suspended: "This account is currently suspended. Please contact support.",
   google_email_is_staff:
     "This email is registered as a staff account. Please sign in from the staff login page instead.",
   google_already_linked:
@@ -36,13 +34,6 @@ function GoogleCallbackInner() {
   const [errorCode, setErrorCode] = React.useState<string | null>(null);
 
   React.useEffect(() => {
-    const accessToken = params.get("accessToken");
-    const refreshToken = params.get("refreshToken");
-    const type = params.get("type"); // "BUYER" or absent (staff)
-    const role = params.get("role"); // OPERATOR, DRIVER, CUSTOMER, TENANT_ADMIN
-    const tenantSlug = params.get("tenantSlug");
-    const sellerCount = params.get("sellerCount");
-    const linked = params.get("linked");
     const action = params.get("action"); // "linked" = Google account just linked
     const error = params.get("error");
 
@@ -68,52 +59,108 @@ function GoogleCallbackInner() {
       return;
     }
 
-    // ── Success path ─────────────────────────────────────────────────────────
-    if (!accessToken || !refreshToken) {
+    const failUnknown = () => {
       setErrorMsg(ERROR_MESSAGES.unknown_error);
       setErrorCode("unknown_error");
       setStatus("error");
       setTimeout(() => router.replace("/login?error=google_failed"), 4000);
-      return;
+    };
+
+    // ── Resolve tokens: one-time code (F8-001) or legacy direct params ─────────
+    async function resolveBundle(): Promise<Record<string, string> | null> {
+      const code = params.get("code");
+      if (code) {
+        const apiBase = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000/api/v1").replace(
+          /\/$/,
+          "",
+        );
+        try {
+          const res = await fetch(`${apiBase}/auth/google/exchange`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ code }),
+          });
+          if (!res.ok) return null;
+          return (await res.json()) as Record<string, string>;
+        } catch {
+          return null;
+        }
+      }
+      // Backward-compat: tokens delivered directly in the URL (deploy skew / legacy)
+      const accessToken = params.get("accessToken");
+      const refreshToken = params.get("refreshToken");
+      if (!accessToken || !refreshToken) return null;
+      return {
+        accessToken,
+        refreshToken,
+        type: params.get("type") ?? "",
+        role: params.get("role") ?? "",
+        tenantSlug: params.get("tenantSlug") ?? "",
+        sellerCount: params.get("sellerCount") ?? "",
+        linked: params.get("linked") ?? "",
+      };
     }
 
-    if (type === "BUYER") {
-      // Store buyer tokens under the namespaced keys that `BuyerAuthProvider`
-      // and `getStoredBuyer()` actually read. Also keep the legacy keys
-      // populated for any code path that hasn't been migrated yet
-      // (e.g. /buyer/portal/page.tsx, /buyer/invite, buyer change-password).
-      localStorage.setItem(BUYER_KEYS.accessToken, accessToken);
-      localStorage.setItem(BUYER_KEYS.refreshToken, refreshToken);
-      localStorage.setItem("buyerAccessToken", accessToken);
-      localStorage.setItem("buyerRefreshToken", refreshToken);
-      // Set the buyer presence cookie that the dashboard middleware checks
-      // (without this the middleware can't tell a buyer apart from a
-      // logged-out user and may misroute them).
-      document.cookie = `rf-buyer-auth=1; path=/; max-age=${60 * 60 * 24 * 30}; samesite=lax`;
-      // Redirect to buyer portal — show linked banner if just accepted an invite
-      const destination = linked === "true" ? "/buyer/portal?linked=true" : "/buyer/portal";
-      router.replace(destination);
-    } else {
-      // Store staff tokens under both the namespaced keys (read by
-      // `AuthProvider` / `getStoredUser`) and the legacy keys (read by
-      // any unmigrated code path).
-      localStorage.setItem(OP_KEYS.accessToken, accessToken);
-      localStorage.setItem(OP_KEYS.refreshToken, refreshToken);
-      localStorage.setItem("accessToken", accessToken);
-      localStorage.setItem("refreshToken", refreshToken);
-      // Set the operator presence cookie so middleware path guards work.
-      document.cookie = `rf-op-auth=1; path=/; max-age=${60 * 60 * 24 * 30}; samesite=lax`;
-
-      // Restore tenant cookie so API calls include X-Tenant-Slug header
-      if (tenantSlug) {
-        setTenantCookie(tenantSlug);
+    void resolveBundle().then((bundle) => {
+      if (!bundle?.accessToken || !bundle?.refreshToken) {
+        failUnknown();
+        return;
       }
+      const { accessToken, refreshToken } = bundle;
+      const type = bundle.type || null; // "BUYER" or absent (staff)
+      const role = bundle.role || null; // OPERATOR, DRIVER, CUSTOMER, TENANT_ADMIN
+      const tenantSlug = bundle.tenantSlug || null;
+      const linked = bundle.linked || null;
 
-      // Role-based post-login destination
-      if (role === "CUSTOMER") {
-        router.replace("/dashboard"); // Customers see limited dashboard view
+      handleTokens(accessToken, refreshToken, type, role, tenantSlug, linked);
+    });
+
+    function handleTokens(
+      accessToken: string,
+      refreshToken: string,
+      type: string | null,
+      role: string | null,
+      tenantSlug: string | null,
+      linked: string | null,
+    ) {
+      if (type === "BUYER") {
+        // Store buyer tokens under the namespaced keys that `BuyerAuthProvider`
+        // and `getStoredBuyer()` actually read. Also keep the legacy keys
+        // populated for any code path that hasn't been migrated yet
+        // (e.g. /buyer/portal/page.tsx, /buyer/invite, buyer change-password).
+        localStorage.setItem(BUYER_KEYS.accessToken, accessToken);
+        localStorage.setItem(BUYER_KEYS.refreshToken, refreshToken);
+        localStorage.setItem("buyerAccessToken", accessToken);
+        localStorage.setItem("buyerRefreshToken", refreshToken);
+        // Set the buyer presence cookie that the dashboard middleware checks
+        // (without this the middleware can't tell a buyer apart from a
+        // logged-out user and may misroute them).
+        document.cookie = `rf-buyer-auth=1; path=/; max-age=${60 * 60 * 24 * 30}; samesite=lax`;
+        // Redirect to buyer portal — show linked banner if just accepted an invite
+        const destination = linked === "true" ? "/buyer/portal?linked=true" : "/buyer/portal";
+        router.replace(destination);
       } else {
-        router.replace("/dashboard");
+        // Store staff tokens under both the namespaced keys (read by
+        // `AuthProvider` / `getStoredUser`) and the legacy keys (read by
+        // any unmigrated code path).
+        localStorage.setItem(OP_KEYS.accessToken, accessToken);
+        localStorage.setItem(OP_KEYS.refreshToken, refreshToken);
+        localStorage.setItem("accessToken", accessToken);
+        localStorage.setItem("refreshToken", refreshToken);
+        // Set the operator presence cookie so middleware path guards work.
+        document.cookie = `rf-op-auth=1; path=/; max-age=${60 * 60 * 24 * 30}; samesite=lax`;
+
+        // Restore tenant cookie so API calls include X-Tenant-Slug header
+        if (tenantSlug) {
+          setTenantCookie(tenantSlug);
+        }
+
+        // Role-based post-login destination
+        if (role === "CUSTOMER") {
+          router.replace("/dashboard"); // Customers see limited dashboard view
+        } else {
+          router.replace("/dashboard");
+        }
       }
     }
   }, [params, router]);
@@ -150,9 +197,18 @@ function GoogleCallbackInner() {
 
       <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-card text-center">
         <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-danger-bg mx-auto">
-          <svg className="h-5 w-5 text-danger" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-              d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+          <svg
+            className="h-5 w-5 text-danger"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"
+            />
           </svg>
         </div>
 

@@ -114,9 +114,13 @@ export class PlatformGoogleAuthController {
         return res.redirect(`${base}/auth/callback?error=unauthorized`);
       }
 
-      return res.redirect(
-        `${base}/auth/callback?accessToken=${result.accessToken}&refreshToken=${result.refreshToken}&role=${result.user.role}`,
-      );
+      // F8-001: hand off via a single-use opaque code instead of tokens-in-URL.
+      const exchangeCode = await this.googleOAuth.createExchangeCode({
+        accessToken: result.accessToken,
+        refreshToken: result.refreshToken,
+        role: result.user.role,
+      });
+      return res.redirect(`${base}/auth/callback?code=${exchangeCode}`);
     } catch (err: any) {
       const errCode = err?.message ?? "unknown_error";
 
