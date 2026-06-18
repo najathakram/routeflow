@@ -579,28 +579,32 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
                   )}
                 />
                 {customerError && <p className="mt-1 text-xs text-danger">{customerError}</p>}
-                {filteredCustomers.length > 0 && customerSearch && (
-                  <ul className="absolute left-0 right-0 top-full z-10 mt-1 overflow-hidden rounded-lg border border-surface-border bg-white shadow-dropdown">
-                    {filteredCustomers.map((c: any) => (
-                      <li key={c.id}>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSelectedCustomer(c);
-                            setCustomerSearch("");
-                            setDebouncedCustomerSearch("");
-                          }}
-                          className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-navy hover:bg-surface-raised"
-                        >
-                          <span className="font-medium">{c.businessName}</span>
-                          {c.contactName && (
-                            <span className="text-xs text-navy/70">{c.contactName}</span>
-                          )}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
+                {customerSearch &&
+                  (filteredCustomers.length > 0 || debouncedCustomerSearch.length > 0) && (
+                    <ul className="absolute left-0 right-0 top-full z-10 mt-1 overflow-hidden rounded-lg border border-surface-border bg-white shadow-dropdown">
+                      {filteredCustomers.length === 0 && debouncedCustomerSearch.length > 0 && (
+                        <li className="px-3 py-2 text-sm text-navy/70">No customers found.</li>
+                      )}
+                      {filteredCustomers.map((c: any) => (
+                        <li key={c.id}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedCustomer(c);
+                              setCustomerSearch("");
+                              setDebouncedCustomerSearch("");
+                            }}
+                            className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-navy hover:bg-surface-raised"
+                          >
+                            <span className="font-medium">{c.businessName}</span>
+                            {c.contactName && (
+                              <span className="text-xs text-navy/70">{c.contactName}</span>
+                            )}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
               </div>
             )}
           </section>

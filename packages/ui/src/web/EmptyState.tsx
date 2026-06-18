@@ -81,7 +81,7 @@ export function EmptyState({
 
       <div className="space-y-1.5 max-w-sm">
         <p className="text-base font-semibold text-navy">{title}</p>
-        {description && <p className="text-sm text-navy/50 leading-relaxed">{description}</p>}
+        {description && <p className="text-sm text-navy/70 leading-relaxed">{description}</p>}
       </div>
 
       {action && <div className="mt-2">{action}</div>}

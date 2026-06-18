@@ -5,7 +5,16 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Eye, Play, Calendar, CheckSquare, X, Trash2, Pencil, Ban } from "lucide-react";
-import { PageHeader, Badge, Table, Button, Modal, useToast, cn } from "@routeflow/ui/web";
+import {
+  PageHeader,
+  Badge,
+  Table,
+  Button,
+  Modal,
+  useToast,
+  cn,
+  EmptyState,
+} from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import {
   useRoutes,
@@ -613,6 +622,14 @@ export default function RoutesPage() {
               if (selectMode) toggleSelect(row.original.id);
               else router.push(`/routes/templates/${row.original.id}`);
             }}
+            emptyState={
+              <EmptyState
+                variant="routes"
+                size={56}
+                title="No route templates yet"
+                description="Create a route template to plan stops and dispatch runs to drivers."
+              />
+            }
           />
         )}
       </section>

@@ -22,7 +22,7 @@ import {
   PackageCheck,
   CheckCircle2,
 } from "lucide-react";
-import { PageHeader, Button, cn, Modal, useToast } from "@routeflow/ui/web";
+import { PageHeader, Button, cn, Modal, useToast, EmptyState } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import {
   useVendorBills,
@@ -978,25 +978,40 @@ function InventoryPurchasesTab() {
               </tr>
             ) : bills.length === 0 ? (
               <tr>
-                <td colSpan={11} className="px-4 py-12 text-center">
-                  <div className="flex flex-col items-center gap-2">
-                    <FileText className="h-8 w-8 text-navy/20" />
-                    <p className="text-sm text-navy/70">
-                      No inventory purchases match your filters.
-                    </p>
-                    <button
-                      className="text-sm text-brand-500 hover:underline"
-                      onClick={() => {
-                        setSearch("");
-                        setStatusFilter("");
-                        setDateFrom("");
-                        setDateTo("");
-                        setPage(1);
-                      }}
-                    >
-                      Clear filters
-                    </button>
-                  </div>
+                <td colSpan={11} className="p-0">
+                  {search || statusFilter || dateFrom || dateTo ? (
+                    <EmptyState
+                      variant="data"
+                      title="No matching purchases"
+                      description="No inventory purchases match your current search and filters."
+                      action={
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => {
+                            setSearch("");
+                            setStatusFilter("");
+                            setDateFrom("");
+                            setDateTo("");
+                            setPage(1);
+                          }}
+                        >
+                          Clear filters
+                        </Button>
+                      }
+                    />
+                  ) : (
+                    <EmptyState
+                      variant="data"
+                      title="No purchases yet"
+                      description="Record an inventory purchase to track supplier bills and expenses."
+                      action={
+                        <Button size="sm" onClick={() => setIsCreateOpen(true)}>
+                          New purchase
+                        </Button>
+                      }
+                    />
+                  )}
                 </td>
               </tr>
             ) : (

@@ -8,7 +8,6 @@ import {
   Calendar,
   X,
   Loader2,
-  FileText,
   ChevronDown,
   CreditCard,
   ChevronUp,
@@ -16,7 +15,7 @@ import {
   Trash2,
   Download,
 } from "lucide-react";
-import { Button, cn, useToast } from "@routeflow/ui/web";
+import { Button, cn, useToast, EmptyState } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useDebounce } from "@/lib/hooks/useDebounce";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
@@ -565,23 +564,40 @@ export default function InvoicesPage() {
               </tr>
             ) : invoices.length === 0 ? (
               <tr>
-                <td colSpan={8} className="px-4 py-12 text-center">
-                  <div className="flex flex-col items-center gap-2">
-                    <FileText className="h-8 w-8 text-navy/20" />
-                    <p className="text-sm text-navy/70">No invoices match your filters.</p>
-                    <button
-                      className="text-sm text-brand-500 hover:underline"
-                      onClick={() => {
-                        setSearch("");
-                        setFilter("status", "");
-                        setFilter("dateFrom", "");
-                        setFilter("dateTo", "");
-                        setPage(1);
-                      }}
-                    >
-                      Clear filters
-                    </button>
-                  </div>
+                <td colSpan={8} className="p-0">
+                  {search || statusFilter || dateFrom || dateTo ? (
+                    <EmptyState
+                      variant="invoices"
+                      title="No matching invoices"
+                      description="No invoices match your current search and filters."
+                      action={
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => {
+                            setSearch("");
+                            setFilter("status", "");
+                            setFilter("dateFrom", "");
+                            setFilter("dateTo", "");
+                            setPage(1);
+                          }}
+                        >
+                          Clear filters
+                        </Button>
+                      }
+                    />
+                  ) : (
+                    <EmptyState
+                      variant="invoices"
+                      title="No invoices yet"
+                      description="Create an invoice to bill a customer and start tracking receivables."
+                      action={
+                        <Button size="sm" onClick={() => router.push("/invoices/new")}>
+                          New invoice
+                        </Button>
+                      }
+                    />
+                  )}
                 </td>
               </tr>
             ) : (

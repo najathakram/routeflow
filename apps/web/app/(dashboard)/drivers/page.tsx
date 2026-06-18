@@ -226,6 +226,7 @@ export default function DriversPage() {
           <div className="flex items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
             <button
               title="View driver"
+              aria-label="View driver"
               onClick={() => router.push(`/drivers/${row.original.id}`)}
               className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
             >
@@ -233,6 +234,7 @@ export default function DriversPage() {
             </button>
             <button
               title="Edit driver"
+              aria-label="Edit driver"
               onClick={() => setEditTarget(row.original)}
               className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
             >
@@ -240,6 +242,7 @@ export default function DriversPage() {
             </button>
             <button
               title="Delete driver"
+              aria-label="Delete driver"
               onClick={() => setDeleteTarget(row.original)}
               className="rounded p-1.5 text-navy/70 hover:bg-red-50 hover:text-danger transition-colors"
             >

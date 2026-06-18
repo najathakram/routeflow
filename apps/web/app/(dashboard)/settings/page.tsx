@@ -2647,7 +2647,9 @@ export default function SettingsPage() {
   }, []);
 
   return (
-    <div className="space-y-0 p-6">
+    // Centred, width-capped column so settings forms don't strand the whole
+    // right half of wide screens empty.
+    <div className="mx-auto max-w-5xl space-y-0 p-6">
       <h1 className="mb-5 text-2xl font-bold text-navy">Settings</h1>
 
       <Tabs.Root defaultValue={defaultTab} className="flex flex-col">
@@ -2678,11 +2680,11 @@ export default function SettingsPage() {
           </TabTrigger>
         </Tabs.List>
 
-        <Tabs.Content value="profile" className="mt-6 max-w-2xl focus:outline-none">
+        <Tabs.Content value="profile" className="mt-6 max-w-3xl focus:outline-none">
           <BusinessProfileTab />
         </Tabs.Content>
 
-        <Tabs.Content value="notifications" className="mt-6 max-w-2xl focus:outline-none">
+        <Tabs.Content value="notifications" className="mt-6 max-w-3xl focus:outline-none">
           <NotificationsTab />
         </Tabs.Content>
 
@@ -2694,19 +2696,19 @@ export default function SettingsPage() {
           <ImportTab />
         </Tabs.Content>
 
-        <Tabs.Content value="email" className="mt-6 max-w-2xl focus:outline-none">
+        <Tabs.Content value="email" className="mt-6 max-w-3xl focus:outline-none">
           <EmailSettingsTab />
         </Tabs.Content>
 
-        <Tabs.Content value="invoicing" className="mt-6 max-w-2xl focus:outline-none">
+        <Tabs.Content value="invoicing" className="mt-6 max-w-3xl focus:outline-none">
           <InvoicingTab />
         </Tabs.Content>
 
-        <Tabs.Content value="integrations" className="mt-6 max-w-2xl focus:outline-none">
+        <Tabs.Content value="integrations" className="mt-6 max-w-3xl focus:outline-none">
           <AIIntegrationsTab />
         </Tabs.Content>
 
-        <Tabs.Content value="account" className="mt-6 max-w-2xl focus:outline-none">
+        <Tabs.Content value="account" className="mt-6 max-w-3xl focus:outline-none">
           <MyAccountTab />
         </Tabs.Content>
       </Tabs.Root>

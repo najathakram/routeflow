@@ -2,8 +2,8 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Eye, Calendar, X, Loader2, FileText, Trash2, Search } from "lucide-react";
-import { PageHeader, Button, Select, cn, Modal, useToast } from "@routeflow/ui/web";
+import { Plus, Eye, Calendar, X, Loader2, Trash2, Search } from "lucide-react";
+import { PageHeader, Button, Select, cn, Modal, useToast, EmptyState } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import {
   useEstimates,
@@ -891,23 +891,40 @@ export default function EstimatesPage() {
               </tr>
             ) : estimates.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-4 py-12 text-center">
-                  <div className="flex flex-col items-center gap-2">
-                    <FileText className="h-8 w-8 text-navy/20" />
-                    <p className="text-sm text-navy/70">No estimates match your filters.</p>
-                    <button
-                      className="text-sm text-brand-500 hover:underline"
-                      onClick={() => {
-                        setSearch("");
-                        setStatusFilter("");
-                        setDateFrom("");
-                        setDateTo("");
-                        setPage(1);
-                      }}
-                    >
-                      Clear filters
-                    </button>
-                  </div>
+                <td colSpan={7} className="p-0">
+                  {search || statusFilter || dateFrom || dateTo ? (
+                    <EmptyState
+                      variant="invoices"
+                      title="No matching estimates"
+                      description="No estimates match your current search and filters."
+                      action={
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => {
+                            setSearch("");
+                            setStatusFilter("");
+                            setDateFrom("");
+                            setDateTo("");
+                            setPage(1);
+                          }}
+                        >
+                          Clear filters
+                        </Button>
+                      }
+                    />
+                  ) : (
+                    <EmptyState
+                      variant="invoices"
+                      title="No estimates yet"
+                      description="Create an estimate to quote a customer before converting it to an invoice."
+                      action={
+                        <Button size="sm" onClick={() => setIsCreateOpen(true)}>
+                          New estimate
+                        </Button>
+                      }
+                    />
+                  )}
                 </td>
               </tr>
             ) : (

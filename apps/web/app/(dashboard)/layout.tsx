@@ -35,6 +35,8 @@ import {
   PieChart,
   ShoppingBag,
   Search,
+  Menu,
+  X,
   type LucideIcon,
 } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
@@ -219,16 +221,20 @@ function NavLink({
   item,
   collapsed,
   active,
+  onNavigate,
 }: {
   item: NavLeaf;
   collapsed: boolean;
   active: boolean;
+  onNavigate?: () => void;
 }) {
   const Icon = item.icon;
   return (
     <Link
       href={item.href}
       title={collapsed ? item.label : undefined}
+      onClick={onNavigate}
+      aria-current={active ? "page" : undefined}
       className={cn(
         "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
         collapsed && "justify-center",
@@ -247,27 +253,38 @@ function NavGroupSection({
   group,
   collapsed,
   pathname,
+  open,
+  onToggle,
+  onNavigate,
 }: {
   group: NavGroup;
   collapsed: boolean;
   pathname: string;
+  /** Whether the parent accordion currently has this group expanded. */
+  open: boolean;
+  /** Ask the parent to toggle this group (single-open accordion). */
+  onToggle: (label: string) => void;
+  onNavigate?: () => void;
 }) {
   const isAnyChildActive = group.children.some((c) => pathname.startsWith(c.href));
-  const [open, setOpen] = React.useState(isAnyChildActive);
-
-  React.useEffect(() => {
-    if (isAnyChildActive) setOpen(true);
-  }, [isAnyChildActive]);
+  // The group holding the active route is always shown expanded so the current
+  // page is never hidden inside a collapsed group.
+  const expanded = open || isAnyChildActive;
 
   const Icon = group.icon;
 
-  // Collapsed: render each child as a flat icon-only link
+  // Collapsed rail: render each child as a flat icon-only link
   if (collapsed) {
     return (
       <>
         {group.children.map((child) => (
           <li key={child.href}>
-            <NavLink item={child} collapsed={true} active={pathname.startsWith(child.href)} />
+            <NavLink
+              item={child}
+              collapsed={true}
+              active={pathname.startsWith(child.href)}
+              onNavigate={onNavigate}
+            />
           </li>
         ))}
       </>
@@ -278,10 +295,12 @@ function NavGroupSection({
   return (
     <li>
       <button
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => onToggle(group.label)}
+        aria-expanded={expanded}
         className={cn(
           "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-xs font-semibold uppercase tracking-wider transition-colors",
-          isAnyChildActive ? "text-white/90" : "text-white/40 hover:text-white/70",
+          // /70 (5.28:1) clears WCAG AA; the old /40 inactive label was 3.23:1.
+          isAnyChildActive ? "text-white" : "text-white/70 hover:text-white",
         )}
       >
         <Icon className="h-4 w-4 shrink-0" />
@@ -289,20 +308,85 @@ function NavGroupSection({
         <ChevronRight
           className={cn(
             "h-3.5 w-3.5 shrink-0 transition-transform duration-150",
-            open && "rotate-90",
+            expanded && "rotate-90",
           )}
         />
       </button>
-      {open && (
+      {expanded && (
         <ul className="mt-0.5 flex flex-col gap-0.5 pl-3">
           {group.children.map((child) => (
             <li key={child.href}>
-              <NavLink item={child} collapsed={false} active={pathname.startsWith(child.href)} />
+              <NavLink
+                item={child}
+                collapsed={false}
+                active={pathname.startsWith(child.href)}
+                onNavigate={onNavigate}
+              />
             </li>
           ))}
         </ul>
       )}
     </li>
+  );
+}
+
+// ─── Sidebar nav list (shared by desktop rail + mobile drawer) ─────────────────
+
+function SidebarNav({
+  navStructure,
+  collapsed,
+  pathname,
+  onNavigate,
+}: {
+  navStructure: NavEntry[];
+  collapsed: boolean;
+  pathname: string;
+  onNavigate?: () => void;
+}) {
+  // Single-open accordion: at most one group expanded at a time, so the nav
+  // never overflows when every group is opened. The group containing the
+  // active route stays open regardless.
+  const activeGroupLabel =
+    navStructure.find(
+      (e) => e.kind === "group" && e.children.some((c) => pathname.startsWith(c.href)),
+    )?.label ?? null;
+  const [openGroup, setOpenGroup] = React.useState<string | null>(activeGroupLabel);
+
+  React.useEffect(() => {
+    if (activeGroupLabel) setOpenGroup(activeGroupLabel);
+  }, [activeGroupLabel]);
+
+  const toggleGroup = (label: string) => setOpenGroup((cur) => (cur === label ? null : label));
+
+  return (
+    <ul className="flex flex-col gap-0.5">
+      {navStructure.map((entry) =>
+        entry.kind === "leaf" ? (
+          <li key={entry.href}>
+            <NavLink
+              item={entry}
+              collapsed={collapsed}
+              active={
+                entry.href === "/dashboard"
+                  ? pathname === "/dashboard"
+                  : pathname.startsWith(entry.href)
+              }
+              onNavigate={onNavigate}
+            />
+          </li>
+        ) : (
+          <NavGroupSection
+            key={entry.label}
+            group={entry}
+            collapsed={collapsed}
+            pathname={pathname}
+            open={openGroup === entry.label}
+            onToggle={toggleGroup}
+            onNavigate={onNavigate}
+          />
+        ),
+      )}
+    </ul>
   );
 }
 
@@ -345,7 +429,13 @@ function NotificationIcon({ type }: { type: AppNotification["type"] }) {
 
 // ─── Header ───────────────────────────────────────────────────────────────────
 
-function Header({ onOpenPalette }: { onOpenPalette: () => void }) {
+function Header({
+  onOpenPalette,
+  onOpenMobileNav,
+}: {
+  onOpenPalette: () => void;
+  onOpenMobileNav: () => void;
+}) {
   const { title } = usePageTitle();
   const { user, logout } = useAuth();
   const pathname = usePathname();
@@ -357,6 +447,15 @@ function Header({ onOpenPalette }: { onOpenPalette: () => void }) {
 
   return (
     <header className="flex h-16 shrink-0 items-center gap-4 border-b border-surface-border bg-white px-4">
+      {/* Mobile nav trigger — opens the sidebar drawer below the lg breakpoint */}
+      <button
+        onClick={onOpenMobileNav}
+        className="rounded-lg p-2 text-navy/70 transition-colors hover:bg-surface-raised hover:text-navy lg:hidden"
+        aria-label="Open navigation menu"
+      >
+        <Menu className="h-5 w-5" />
+      </button>
+
       {isSubPage ? (
         <button
           onClick={() => router.back()}
@@ -574,15 +673,28 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
       return next;
     });
 
-  // Auto-collapse sidebar on narrow viewports
+  // Below lg the static rail is hidden and replaced by an off-canvas drawer.
+  const [mobileNavOpen, setMobileNavOpen] = React.useState(false);
+
+  // Close the mobile drawer whenever the route changes.
   React.useEffect(() => {
-    const mq = window.matchMedia("(max-width: 767px)");
-    const handler = (e: MediaQueryListEvent) => {
-      if (e.matches) setCollapsed(true);
+    setMobileNavOpen(false);
+  }, [pathname]);
+
+  // Esc closes the mobile drawer; lock body scroll while it is open.
+  React.useEffect(() => {
+    if (!mobileNavOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMobileNavOpen(false);
     };
-    mq.addEventListener("change", handler);
-    return () => mq.removeEventListener("change", handler);
-  }, []);
+    window.addEventListener("keydown", onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [mobileNavOpen]);
 
   useRealtimeUpdates();
 
@@ -670,11 +782,11 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
       >
         Skip to content
       </a>
-      {/* Sidebar */}
+      {/* Sidebar — static rail on lg+, replaced by a drawer below lg */}
       <aside
         className={cn(
-          "flex shrink-0 flex-col overflow-hidden bg-navy transition-[width] duration-200 ease-in-out",
-          collapsed ? "w-16" : "w-60",
+          "hidden shrink-0 flex-col overflow-hidden bg-navy transition-[width] duration-200 ease-in-out lg:flex",
+          collapsed ? "lg:w-16" : "lg:w-60",
         )}
       >
         {/* Logo */}
@@ -693,30 +805,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
 
         {/* Nav */}
         <nav className="flex-1 overflow-y-auto px-2 py-3">
-          <ul className="flex flex-col gap-0.5">
-            {navStructure.map((entry) =>
-              entry.kind === "leaf" ? (
-                <li key={entry.href}>
-                  <NavLink
-                    item={entry}
-                    collapsed={collapsed}
-                    active={
-                      entry.href === "/dashboard"
-                        ? pathname === "/dashboard"
-                        : pathname.startsWith(entry.href)
-                    }
-                  />
-                </li>
-              ) : (
-                <NavGroupSection
-                  key={entry.label}
-                  group={entry}
-                  collapsed={collapsed}
-                  pathname={pathname}
-                />
-              ),
-            )}
-          </ul>
+          <SidebarNav navStructure={navStructure} collapsed={collapsed} pathname={pathname} />
         </nav>
 
         {/* Collapse toggle */}
@@ -741,10 +830,53 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         </div>
       </aside>
 
+      {/* Mobile nav drawer — off-canvas sidebar below the lg breakpoint */}
+      {mobileNavOpen && (
+        <div
+          className="fixed inset-0 z-50 lg:hidden"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Navigation"
+        >
+          <div
+            className="absolute inset-0 bg-black/40 animate-in fade-in-0"
+            aria-hidden="true"
+            onClick={() => setMobileNavOpen(false)}
+          />
+          <aside className="absolute inset-y-0 left-0 flex w-64 max-w-[82%] flex-col bg-navy shadow-modal animate-in slide-in-from-left duration-200">
+            <div className="flex h-16 shrink-0 items-center justify-between border-b border-white/10 px-3">
+              <TenantLogo
+                className="h-8 w-8"
+                showName
+                nameClassName="text-lg font-bold text-white truncate"
+              />
+              <button
+                onClick={() => setMobileNavOpen(false)}
+                className="rounded-lg p-2 text-white/70 transition-colors hover:bg-white/10 hover:text-white"
+                aria-label="Close navigation menu"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <nav className="flex-1 overflow-y-auto px-2 py-3">
+              <SidebarNav
+                navStructure={navStructure}
+                collapsed={false}
+                pathname={pathname}
+                onNavigate={() => setMobileNavOpen(false)}
+              />
+            </nav>
+          </aside>
+        </div>
+      )}
+
       {/* Right column */}
       <div className="flex flex-1 flex-col overflow-hidden">
         <ImpersonationBanner />
-        <Header onOpenPalette={() => setPaletteOpen(true)} />
+        <Header
+          onOpenPalette={() => setPaletteOpen(true)}
+          onOpenMobileNav={() => setMobileNavOpen(true)}
+        />
         {/* pb-24 reserves 96px of clearance below page content so the
             floating PwaInstallPrompt (fixed bottom-4) and similar
             bottom-anchored UI never sit on top of bottom-aligned form

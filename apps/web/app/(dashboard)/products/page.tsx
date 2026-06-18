@@ -20,7 +20,7 @@ import {
   ChevronRight,
   GitBranch,
 } from "lucide-react";
-import { PageHeader, Table, Badge, Button, Select, cn } from "@routeflow/ui/web";
+import { PageHeader, Table, Badge, Button, Select, cn, EmptyState } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useToast } from "@routeflow/ui/web";
 import { useDebounce } from "@/lib/hooks/useDebounce";
@@ -1448,8 +1448,38 @@ export default function ProductsPage() {
           <span className="text-sm text-danger">Failed to load data. Please try refreshing.</span>
         </div>
       ) : filtered.length === 0 ? (
-        <div className="rounded-lg border border-surface-border bg-white py-12 text-center">
-          <p className="text-sm text-navy/70">No products match your filters.</p>
+        <div className="rounded-lg border border-surface-border bg-white">
+          {search || categoryFilter || stockFilter ? (
+            <EmptyState
+              variant="products"
+              title="No matching products"
+              description="No products match your current search and filters."
+              action={
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    setSearch("");
+                    setCategoryFilter("");
+                    setStockFilter("");
+                  }}
+                >
+                  Clear filters
+                </Button>
+              }
+            />
+          ) : (
+            <EmptyState
+              variant="products"
+              title="No products yet"
+              description="Add your first product to build your catalog and start taking orders."
+              action={
+                <Button size="sm" onClick={() => setShowCreate(true)}>
+                  New product
+                </Button>
+              }
+            />
+          )}
         </div>
       ) : viewMode === "grid" ? (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">

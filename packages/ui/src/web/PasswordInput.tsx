@@ -30,7 +30,7 @@ export const PasswordInput = React.forwardRef<HTMLInputElement, PasswordInputPro
             id={inputId}
             type={visible ? "text" : "password"}
             className={cn(
-              "h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 text-sm text-navy placeholder:text-navy/40 transition-colors",
+              "h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 text-sm text-navy placeholder:text-navy/70 transition-colors",
               "focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent",
               error && "border-danger focus:ring-danger",
               props.disabled && "opacity-50 cursor-not-allowed bg-surface-raised",
@@ -46,7 +46,7 @@ export const PasswordInput = React.forwardRef<HTMLInputElement, PasswordInputPro
             type="button"
             tabIndex={-1}
             onClick={() => setVisible((v) => !v)}
-            className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-navy/40 hover:text-navy transition-colors"
+            className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-navy/70 hover:text-navy transition-colors"
             aria-label={visible ? "Hide password" : "Show password"}
           >
             {visible ? (

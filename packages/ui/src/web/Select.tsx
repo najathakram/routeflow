@@ -58,7 +58,7 @@ export const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
               </option>
             ))}
           </select>
-          <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-navy/40" />
+          <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-navy/70" />
         </div>
         {error && (
           <p id={`${inputId}-error`} className="text-xs text-danger">

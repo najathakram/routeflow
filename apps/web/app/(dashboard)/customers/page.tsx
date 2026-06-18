@@ -29,6 +29,7 @@ import {
   Select,
   Modal,
   cn,
+  EmptyState,
   type BadgeStatus,
 } from "@routeflow/ui/web";
 import { useToast } from "@routeflow/ui/web";
@@ -541,6 +542,7 @@ export default function CustomersPage() {
             <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
               <button
                 title="Edit customer"
+                aria-label="Edit customer"
                 onClick={() => setEditingCustomer(row.original)}
                 className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
               >
@@ -548,6 +550,7 @@ export default function CustomersPage() {
               </button>
               <button
                 title={status === "ACTIVE" ? "Deactivate" : "Activate"}
+                aria-label={status === "ACTIVE" ? "Deactivate customer" : "Activate customer"}
                 onClick={() => toggleStatus(row.original.id, status, row.original.businessName)}
                 className={cn(
                   "rounded p-1.5 transition-colors",
@@ -564,6 +567,7 @@ export default function CustomersPage() {
               </button>
               <button
                 title="View customer"
+                aria-label="View customer"
                 onClick={() => router.push(`/customers/${row.original.id}`)}
                 className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
               >
@@ -829,22 +833,26 @@ export default function CustomersPage() {
               else router.push(`/customers/${row.original.id}`);
             }}
             emptyState={
-              <span className="text-sm">
-                {unassignedOnly ? (
-                  <>
-                    All customers are assigned to routes.{" "}
-                    <button
-                      className="text-brand-500 hover:underline"
-                      onClick={() => setUnassignedOnly(false)}
-                    >
-                      Show all
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    No customers match your search.{" "}
-                    <button
-                      className="text-brand-500 hover:underline"
+              unassignedOnly ? (
+                <EmptyState
+                  variant="customers"
+                  title="No unassigned customers"
+                  description="Every customer is already assigned to a route."
+                  action={
+                    <Button variant="secondary" size="sm" onClick={() => setUnassignedOnly(false)}>
+                      Show all customers
+                    </Button>
+                  }
+                />
+              ) : search || statusFilter || typeFilter || tagFilter ? (
+                <EmptyState
+                  variant="customers"
+                  title="No matching customers"
+                  description="No customers match your current search and filters."
+                  action={
+                    <Button
+                      variant="secondary"
+                      size="sm"
                       onClick={() => {
                         setSearch("");
                         setStatusFilter("");
@@ -853,10 +861,21 @@ export default function CustomersPage() {
                       }}
                     >
                       Clear filters
-                    </button>
-                  </>
-                )}
-              </span>
+                    </Button>
+                  }
+                />
+              ) : (
+                <EmptyState
+                  variant="customers"
+                  title="No customers yet"
+                  description="Add your first customer to start taking orders and sending invoices."
+                  action={
+                    <Button size="sm" onClick={() => setIsAddOpen(true)}>
+                      Add customer
+                    </Button>
+                  }
+                />
+              )
             }
           />
           {/* Pagination */}

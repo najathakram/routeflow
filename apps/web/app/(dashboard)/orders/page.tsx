@@ -15,7 +15,7 @@ import {
   ChevronsUpDown,
   Download,
 } from "lucide-react";
-import { PageHeader, Badge, Select, Button, cn, useToast } from "@routeflow/ui/web";
+import { PageHeader, Badge, Select, Button, cn, useToast, EmptyState } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useOrders, useUpdateOrderStatus, useBulkDeleteOrders, type Order } from "@/lib/api/orders";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
@@ -570,20 +570,37 @@ export default function OrdersPage() {
               </tr>
             ) : filtered.length === 0 ? (
               <tr>
-                <td
-                  colSpan={selectMode ? 10 : 9}
-                  className="px-4 py-12 text-center text-sm text-navy/70"
-                >
-                  No orders match your filters.{" "}
-                  <button
-                    className="text-brand-500 hover:underline"
-                    onClick={() => {
-                      setCustomerSearch("");
-                      clearFilters();
-                    }}
-                  >
-                    Clear filters
-                  </button>
+                <td colSpan={selectMode ? 10 : 9} className="p-0">
+                  {statusFilter || urgentOnly || dateFrom || dateTo || customerSearch ? (
+                    <EmptyState
+                      variant="orders"
+                      title="No matching orders"
+                      description="No orders match your current search and filters."
+                      action={
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => {
+                            setCustomerSearch("");
+                            clearFilters();
+                          }}
+                        >
+                          Clear filters
+                        </Button>
+                      }
+                    />
+                  ) : (
+                    <EmptyState
+                      variant="orders"
+                      title="No orders yet"
+                      description="Create an order on behalf of a customer to get started."
+                      action={
+                        <Button size="sm" onClick={() => setIsCreateOpen(true)}>
+                          Create order
+                        </Button>
+                      }
+                    />
+                  )}
                 </td>
               </tr>
             ) : (

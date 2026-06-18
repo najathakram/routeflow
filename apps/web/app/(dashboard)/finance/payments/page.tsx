@@ -13,7 +13,7 @@ import {
 } from "@/lib/api/invoices";
 import { useInvoices } from "@/lib/api/invoices";
 import { useCustomers } from "@/lib/api/customers";
-import { useToast } from "@routeflow/ui/web";
+import { useToast, EmptyState, Button } from "@routeflow/ui/web";
 import Link from "next/link";
 import { fmt, fmtDate } from "@/lib/formatting";
 
@@ -652,8 +652,41 @@ export default function FinancePaymentsPage() {
             <tbody className="divide-y divide-surface-border">
               {payments.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="px-5 py-12 text-center text-sm text-navy/70">
-                    No payments match your filters
+                  <td colSpan={9} className="p-0">
+                    {search || method || status || dateFrom || dateTo || customerId ? (
+                      <EmptyState
+                        variant="invoices"
+                        title="No matching payments"
+                        description="No payments match your current search and filters."
+                        action={
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => {
+                              setSearch("");
+                              setMethod("");
+                              setStatus("");
+                              setDateFrom("");
+                              setDateTo("");
+                              setCustomerId("");
+                            }}
+                          >
+                            Clear filters
+                          </Button>
+                        }
+                      />
+                    ) : (
+                      <EmptyState
+                        variant="invoices"
+                        title="No payments yet"
+                        description="Record a payment to mark invoices as paid and track receipts."
+                        action={
+                          <Button size="sm" onClick={() => setShowModal(true)}>
+                            Record payment
+                          </Button>
+                        }
+                      />
+                    )}
                   </td>
                 </tr>
               )}

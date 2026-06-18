@@ -24,7 +24,7 @@ export const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
         <textarea
           id={inputId}
           className={cn(
-            "w-full rounded border border-surface-border bg-white px-3 py-2 text-sm text-navy placeholder:text-navy/40 transition-colors resize-y min-h-[80px]",
+            "w-full rounded border border-surface-border bg-white px-3 py-2 text-sm text-navy placeholder:text-navy/70 transition-colors resize-y min-h-[80px]",
             "focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent",
             error && "border-danger focus:ring-danger",
             props.disabled && "opacity-50 cursor-not-allowed bg-surface-raised",

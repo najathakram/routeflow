@@ -22,7 +22,7 @@ import {
   Briefcase,
   type LucideIcon,
 } from "lucide-react";
-import { StatCard, Badge, Table, Button, Card, cn } from "@routeflow/ui/web";
+import { StatCard, Badge, Table, Button, Card, cn, EmptyState } from "@routeflow/ui/web";
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api-client";
 import { usePageTitle } from "@/lib/page-title-context";
@@ -932,6 +932,14 @@ export default function DashboardPage() {
                     data={activeRoutes}
                     columns={routeColumns}
                     onRowClick={(row) => router.push(`/routes/${row.original.id}`)}
+                    emptyState={
+                      <EmptyState
+                        variant="routes"
+                        size={56}
+                        title="No runs scheduled"
+                        description="Dispatch a route to see today's runs here."
+                      />
+                    }
                   />
                 </div>
               )}
@@ -1017,7 +1025,18 @@ export default function DashboardPage() {
           <ErrorBanner message="Could not load recent orders." />
         ) : (
           <div className="-mx-6 -mb-6">
-            <Table data={recentOrders} columns={orderColumns} />
+            <Table
+              data={recentOrders}
+              columns={orderColumns}
+              emptyState={
+                <EmptyState
+                  variant="orders"
+                  size={56}
+                  title="No orders yet"
+                  description="New orders will appear here as they come in."
+                />
+              }
+            />
           </div>
         )}
       </Card>

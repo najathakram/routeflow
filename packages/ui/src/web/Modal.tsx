@@ -47,7 +47,7 @@ export const Modal = ({
               <Dialog.Title className="sr-only">Dialog</Dialog.Title>
             )}
             {description ? (
-              <Dialog.Description className="mt-1 text-sm text-navy/60">
+              <Dialog.Description className="mt-1 text-sm text-navy/70">
                 {description}
               </Dialog.Description>
             ) : (
@@ -56,7 +56,7 @@ export const Modal = ({
           </div>
           {/* No onClick — Dialog.Close triggers onOpenChange which calls onClose via Root */}
           <Dialog.Close
-            className="ml-auto flex-shrink-0 rounded p-1 text-navy/40 hover:bg-surface-raised hover:text-navy transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500"
+            className="ml-auto flex-shrink-0 rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500"
             aria-label="Close"
           >
             <X className="h-4 w-4" />
