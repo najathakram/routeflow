@@ -1,4 +1,9 @@
-import { Injectable, NotFoundException, BadRequestException } from "@nestjs/common";
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+  ForbiddenException,
+} from "@nestjs/common";
 import { OAuth2Client } from "google-auth-library";
 import { PrismaService } from "../prisma/prisma.service";
 import { EncryptionService } from "../common/encryption.service";
@@ -73,22 +78,24 @@ export class TenantGoogleOAuthService {
     });
     const payload = ticket.getPayload();
     if (!payload?.email) throw new BadRequestException("Could not retrieve email from Google");
+    // F3-001: reject unverified emails to prevent account-takeover via spoofed email match.
+    if (!payload.email_verified) throw new ForbiddenException("google_email_not_verified");
 
     const googleId = payload.sub;
     const email = payload.email;
-    const name = payload.name ?? email.split("@")[0];
 
-    // Find existing user by googleId within this tenant, or by email
+    // F3-002: only MATCH existing active staff users — never auto-provision.
+    // Auto-provisioning let any Google user with a verified email claim an OPERATOR
+    // role on any tenant that had this OAuth config enabled.
     let user = await this.prisma.user.findFirst({
-      where: { tenantId: tenant.id, googleId },
+      where: { tenantId: tenant.id, deletedAt: null, googleId },
     });
 
     if (!user) {
       user = await this.prisma.user.findFirst({
-        where: { tenantId: tenant.id, email },
+        where: { tenantId: tenant.id, deletedAt: null, email },
       });
       if (user) {
-        // Link the Google ID to the existing account
         user = await this.prisma.user.update({
           where: { id: user.id },
           data: { googleId },
@@ -96,20 +103,8 @@ export class TenantGoogleOAuthService {
       }
     }
 
-    if (!user) {
-      // Auto-provision a new user for this tenant
-      const username = await this.generateUniqueUsername(name, tenant.id);
-      user = await this.prisma.user.create({
-        data: {
-          email,
-          username,
-          googleId,
-          role: "OPERATOR",
-          status: "ACTIVE",
-          forcePasswordChange: false,
-          tenantId: tenant.id,
-        },
-      });
+    if (!user || user.status !== "ACTIVE") {
+      throw new ForbiddenException("unauthorized");
     }
 
     return {
@@ -120,18 +115,5 @@ export class TenantGoogleOAuthService {
       status: user.status,
       tenantId: user.tenantId!,
     };
-  }
-
-  private async generateUniqueUsername(name: string, tenantId: string): Promise<string> {
-    const base = name
-      .toLowerCase()
-      .replace(/[^a-z0-9]/g, "_")
-      .slice(0, 20);
-    let candidate = base;
-    let suffix = 1;
-    while (await this.prisma.user.findFirst({ where: { tenantId, username: candidate } })) {
-      candidate = `${base}_${suffix++}`;
-    }
-    return candidate;
   }
 }

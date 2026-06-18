@@ -36,10 +36,13 @@ export class ProductsService {
 
   async findAll(query: ListProductsDto) {
     const page = Number(query.page ?? 1);
-    // limit=0 means "all" — use a high ceiling internally
+    // limit=0 is the internal "fetch-all" sentinel used by BuyerCatalogService for
+    // price-based sorts (buyer pricing is resolved in-memory so can't use DB ORDER BY).
+    // External callers are blocked from setting limit=0 by the @Min(1) DTO constraint.
+    // Hard-cap at 10_000 to bound memory use even for internal callers.
     const limitRaw = Number(query.limit ?? 20);
     const fetchAll = limitRaw === 0;
-    const limit = fetchAll ? 100_000 : limitRaw;
+    const limit = fetchAll ? 10_000 : limitRaw;
     const skip = (page - 1) * limit;
 
     const where: any = {};

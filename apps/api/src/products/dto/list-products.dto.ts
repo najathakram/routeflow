@@ -1,4 +1,4 @@
-import { IsBoolean, IsEnum, IsInt, IsOptional, IsString, Min } from "class-validator";
+import { IsBoolean, IsEnum, IsInt, IsOptional, IsString, Max, Min } from "class-validator";
 import { Type, Transform } from "class-transformer";
 
 export enum StockStatusFilter {
@@ -13,6 +13,6 @@ export class ListProductsDto {
   @IsOptional() @Transform(({ value }) => value === "true") @IsBoolean() isActive?: boolean;
   @IsOptional() @IsEnum(StockStatusFilter) stockStatus?: StockStatusFilter;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) page?: number;
-  @IsOptional() @Type(() => Number) @IsInt() @Min(0) limit?: number;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(200) limit?: number;
   @IsOptional() @Transform(({ value }) => value === "true") @IsBoolean() includeVariants?: boolean;
 }
