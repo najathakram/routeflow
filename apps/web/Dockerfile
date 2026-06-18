@@ -40,9 +40,6 @@ ARG NEXT_PUBLIC_API_URL=https://routeflowapi-production.up.railway.app/api/v1
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ARG NEXT_PUBLIC_GOOGLE_MAPS_KEY=""
 ENV NEXT_PUBLIC_GOOGLE_MAPS_KEY=$NEXT_PUBLIC_GOOGLE_MAPS_KEY
-ARG NEXT_PUBLIC_DEFAULT_TENANT=""
-ENV NEXT_PUBLIC_DEFAULT_TENANT=$NEXT_PUBLIC_DEFAULT_TENANT
-
 # Purge any Next.js build cache to ensure a completely fresh build.
 # Then build the Next.js application (output: standalone is set in next.config.mjs)
 WORKDIR /app/apps/web

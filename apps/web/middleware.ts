@@ -3,14 +3,29 @@ import type { NextRequest } from "next/server";
 
 // Subdomains that are platform-level, never tenant slugs
 const PLATFORM_HOSTS = new Set([
-  "www", "app", "api", "admin", "static", "assets",
-  "mail", "support", "platform", "billing", "localhost",
+  "www",
+  "app",
+  "api",
+  "admin",
+  "static",
+  "assets",
+  "mail",
+  "support",
+  "platform",
+  "billing",
+  "localhost",
 ]);
 
 // Hosting provider base domains — never extract tenant slug from these
 const HOSTING_PROVIDER_DOMAINS = new Set([
-  "railway.app", "up.railway.app", "vercel.app", "netlify.app",
-  "render.com", "fly.dev", "onrender.com", "herokuapp.com",
+  "railway.app",
+  "up.railway.app",
+  "vercel.app",
+  "netlify.app",
+  "render.com",
+  "fly.dev",
+  "onrender.com",
+  "herokuapp.com",
 ]);
 
 // Mobile-web build served by the @routeflow/mobile Railway service. When phones
@@ -43,12 +58,9 @@ export function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
   const url = request.nextUrl;
   const optedOutOfMobile =
-    url.searchParams.get("desktop") === "1" ||
-    request.cookies.get("prefer-desktop")?.value === "1";
+    url.searchParams.get("desktop") === "1" || request.cookies.get("prefer-desktop")?.value === "1";
   const skipMobileRedirect =
-    optedOutOfMobile ||
-    pathname.startsWith("/api/") ||
-    pathname.startsWith("/_next/");
+    optedOutOfMobile || pathname.startsWith("/api/") || pathname.startsWith("/_next/");
 
   if (!skipMobileRedirect) {
     const ua = request.headers.get("user-agent") ?? "";
@@ -66,10 +78,24 @@ export function middleware(request: NextRequest) {
   // Buyer-only guard: signed-in buyers without an operator session must not be
   // able to reach operator surfaces — bounce them back to the buyer portal.
   const OPERATOR_PATH_PREFIXES = [
-    "/dashboard", "/settings", "/invoices", "/customers", "/products",
-    "/routes", "/orders", "/finance", "/credit-notes", "/estimates",
-    "/inventory", "/suppliers", "/purchases", "/vendor-bills", "/returns",
-    "/analytics", "/bookkeeping", "/drivers",
+    "/dashboard",
+    "/settings",
+    "/invoices",
+    "/customers",
+    "/products",
+    "/routes",
+    "/orders",
+    "/finance",
+    "/credit-notes",
+    "/estimates",
+    "/inventory",
+    "/suppliers",
+    "/purchases",
+    "/vendor-bills",
+    "/returns",
+    "/analytics",
+    "/bookkeeping",
+    "/drivers",
   ];
   const isOperatorPath = OPERATOR_PATH_PREFIXES.some(
     (p) => pathname === p || pathname.startsWith(`${p}/`),
@@ -126,12 +152,9 @@ export function middleware(request: NextRequest) {
 
   // Tenant resolution precedence:
   //   1. Real subdomain (e.g. affa.routeflow.info) → authoritative, overwrites cookie
-  //   2. Existing cookie (e.g. user picked a workspace on the login form, or
+  //   2. Existing cookie (user picked a workspace on the login form, or
   //      previous successful login anchored it to the user's actual tenant) → preserve
-  //   3. DEFAULT_TENANT env var → single-tenant fallback (Railway/Vercel deploys
-  //      that serve only one tenant). Do NOT apply this when an existing cookie
-  //      is present — we'd clobber the user's workspace selection on every nav.
-  //   4. Otherwise → no cookie set; the login page asks the user for a workspace.
+  //   3. Otherwise → no cookie set; the login page asks the user for a workspace.
   let subdomainSlug: string | null = null;
 
   if (parts.length >= 3) {
@@ -139,8 +162,7 @@ export function middleware(request: NextRequest) {
     const twoPartBase = parts.slice(-2).join(".");
     const threePartBase = parts.slice(-3).join(".");
     const isHostingProvider =
-      HOSTING_PROVIDER_DOMAINS.has(twoPartBase) ||
-      HOSTING_PROVIDER_DOMAINS.has(threePartBase);
+      HOSTING_PROVIDER_DOMAINS.has(twoPartBase) || HOSTING_PROVIDER_DOMAINS.has(threePartBase);
 
     if (!isHostingProvider) {
       const subdomain = parts[0];
@@ -158,8 +180,6 @@ export function middleware(request: NextRequest) {
   } else if (existingCookieSlug) {
     // Preserve — do not overwrite below
     resolvedSlug = null;
-  } else if (process.env.DEFAULT_TENANT) {
-    resolvedSlug = process.env.DEFAULT_TENANT;
   }
 
   if (resolvedSlug) {

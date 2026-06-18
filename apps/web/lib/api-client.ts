@@ -8,19 +8,17 @@
 import axios from "axios";
 import { OP_KEYS, BUYER_KEYS } from "./auth-keys";
 
-const BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000/api/v1";
+const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000/api/v1";
 
 export const apiClient = axios.create({ baseURL: BASE_URL });
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-/** Read the tenant-slug cookie set by the Next.js middleware.
- *  Falls back to NEXT_PUBLIC_DEFAULT_TENANT for single-tenant deployments. */
+/** Read the tenant-slug cookie set by the Next.js middleware or login form. */
 function getTenantSlugFromCookie(): string | null {
   if (typeof document === "undefined") return null;
   const match = document.cookie.match(/(?:^|;\s*)tenant-slug=([^;]+)/);
-  return match ? decodeURIComponent(match[1]) : (process.env.NEXT_PUBLIC_DEFAULT_TENANT ?? null);
+  return match ? decodeURIComponent(match[1]) : null;
 }
 
 /** Public marketing routes — these must NEVER be redirected to /login when a
@@ -28,8 +26,15 @@ function getTenantSlugFromCookie(): string | null {
  *  expire; tokens linger), and a stray 401 should clear those tokens silently
  *  rather than punting the visitor off the marketing site they came to see. */
 const MARKETING_ROUTES = new Set([
-  "/", "/retailers", "/wholesalers", "/distributors", "/buyer",
-  "/product", "/pricing", "/company", "/contact",
+  "/",
+  "/retailers",
+  "/wholesalers",
+  "/distributors",
+  "/buyer",
+  "/product",
+  "/pricing",
+  "/company",
+  "/contact",
 ]);
 
 function isOnMarketingRoute(): boolean {
@@ -107,9 +112,7 @@ apiClient.interceptors.response.use(
 
     try {
       const refreshToken =
-        typeof window !== "undefined"
-          ? localStorage.getItem(OP_KEYS.refreshToken)
-          : null;
+        typeof window !== "undefined" ? localStorage.getItem(OP_KEYS.refreshToken) : null;
       if (!refreshToken) throw new Error("No refresh token");
 
       const { data } = await axios.post(`${BASE_URL}/auth/refresh`, {
