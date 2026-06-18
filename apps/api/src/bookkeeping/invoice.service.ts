@@ -94,9 +94,13 @@ export class InvoiceService {
   // ─── Return a fresh 15-min presigned URL (or null if PDF not yet ready) ───
 
   async getPresignedUrl(transactionId: string): Promise<string | null> {
-    const txn = await this.prisma.transaction.findUnique({
+    // SECURITY (F1-002): scope the lookup to the caller's tenant. The bare client
+    // would mint a presigned URL for ANY tenant's invoice PDF (cross-tenant IDOR).
+    // forTenant().findUnique post-filters cross-tenant rows to null; we also select
+    // tenantId so the post-filter has the column to compare on.
+    const txn = await this.prisma.forTenant().transaction.findUnique({
       where: { id: transactionId },
-      select: { pdfUrl: true },
+      select: { pdfUrl: true, tenantId: true },
     });
 
     if (!txn) throw new NotFoundException("Transaction not found");

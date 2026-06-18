@@ -27,6 +27,7 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { RequestSellerDto } from "./dto/request-seller.dto";
 import { PrismaService } from "../prisma/prisma.service";
 import { BuyerCreateOrderDto } from "./dto/buyer-create-order.dto";
+import { UpdateBuyerProfileDto } from "./dto/update-buyer-profile.dto";
 import { OrdersService } from "../orders/orders.service";
 import { InvoicesService } from "../invoices/invoices.service";
 import { InvoicePdfService } from "../invoices/invoice-pdf.service";
@@ -386,7 +387,10 @@ export class BuyerController {
   @UseInterceptors(BuyerTenantInterceptor)
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "Update authenticated buyer's own profile" })
-  updateMe(@CurrentBuyerCustomer() ctx: any, @Body() dto: any) {
+  updateMe(@CurrentBuyerCustomer() ctx: any, @Body() dto: UpdateBuyerProfileDto) {
+    // SECURITY (F4-001): dto is a strict buyer-profile DTO — seller-controlled
+    // commercial fields (pricingTier/creditLimit/isTaxExempt/...) are not part of
+    // it, so the ValidationPipe rejects them and update() can only touch profile.
     return this.customersService.update(ctx.customerId, dto);
   }
 
