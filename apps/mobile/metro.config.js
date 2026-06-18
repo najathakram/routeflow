@@ -6,9 +6,16 @@ const workspaceRoot = path.resolve(projectRoot, "../..");
 
 const config = getDefaultConfig(projectRoot);
 
-// Watch only the shared packages directory (not the entire monorepo root,
-// which would cause Metro to index all node_modules and slow startup to a crawl)
-config.watchFolders = [path.resolve(workspaceRoot, "packages")];
+// Metro can only bundle files that live under a watched root. npm hoists most
+// mobile deps (expo-router, react-native, expo, …) up to the workspace-root
+// node_modules, so Metro must watch that folder too — otherwise `expo export`
+// fails with "Unable to resolve module ./node_modules/expo-router/entry".
+// We watch the shared packages and the root node_modules specifically (not the
+// whole monorepo root) so Metro still skips apps/web + apps/api sources.
+config.watchFolders = [
+  path.resolve(workspaceRoot, "packages"),
+  path.resolve(workspaceRoot, "node_modules"),
+];
 
 // Resolve modules from workspace root first
 config.resolver.nodeModulesPaths = [
